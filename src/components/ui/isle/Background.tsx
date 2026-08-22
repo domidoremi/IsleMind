@@ -3,6 +3,7 @@ import { MotiView } from 'moti'
 import Svg, { Circle, Path, Rect } from 'react-native-svg'
 import { motionTokens } from '@/theme/animation'
 import type { AppPalette, ThemeBackgroundMode } from '@/theme/colors'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
 export type IsleBackgroundMode = 'default' | ThemeBackgroundMode | 'none'
 export type IsleBackgroundState = 'idle' | 'active' | 'input' | 'modal' | 'error'
 
@@ -16,14 +17,17 @@ interface IsleBackgroundProps {
 export function IsleBackground({ colors, mode = 'default', state = 'idle', intensity = 1 }: IsleBackgroundProps) {
   const resolvedMode = resolveBackgroundMode(colors, mode)
   const experienceBackground = colors.ui.experience.background
+  const motion = useMotionPreference()
   if (resolvedMode === 'none' || experienceBackground === 'plain') return null
 
-  const animated = false
+  const animated = motion === 'full'
+    && colors.background.motion !== 'none'
+    && (state === 'idle' || state === 'active')
   const profile = backgroundProfile(colors, resolvedMode, state, intensity)
 
   if (experienceBackground === 'document') {
     return (
-      <View pointerEvents="none" style={styles.backdrop}>
+      <View pointerEvents="none" testID="theme-background-document" style={styles.backdrop}>
         <View style={[StyleSheet.absoluteFill, { backgroundColor: profile.canvas }]} />
         <DocumentField
           primary={colors.background.trace.primary}
@@ -36,8 +40,42 @@ export function IsleBackground({ colors, mode = 'default', state = 'idle', inten
     )
   }
 
+  if (experienceBackground === 'tonal') {
+    return (
+      <View pointerEvents="none" testID="theme-background-tonal" style={styles.backdrop}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: profile.canvas }]} />
+        <TonalHierarchyField
+          primary={colors.background.mist.primary}
+          secondary={colors.background.mist.secondary}
+          accent={colors.background.trace.accent}
+          grid={colors.background.grid}
+          opacity={Math.min(0.56, profile.traceOpacity * 0.76 + profile.coolOpacity * 0.34)}
+        />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background.scrim, opacity: profile.scrimOpacity * 0.42 }]} />
+      </View>
+    )
+  }
+
+  if (experienceBackground === 'glass') {
+    return (
+      <View pointerEvents="none" testID="theme-background-glass" style={styles.backdrop}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: profile.canvas }]} />
+        <GlassEnvironmentField
+          enabled={animated}
+          opacity={Math.min(0.82, profile.coolOpacity + profile.warmOpacity * 0.58)}
+          primary={colors.background.mist.primary}
+          secondary={colors.background.mist.secondary}
+          accent={colors.background.trace.accent}
+          edge={colors.background.trace.primary}
+          motionScale={profile.motionScale}
+        />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background.scrim, opacity: profile.scrimOpacity * 0.52 }]} />
+      </View>
+    )
+  }
+
   return (
-    <View pointerEvents="none" style={styles.backdrop}>
+    <View pointerEvents="none" testID="theme-background-road" style={styles.backdrop}>
       <View style={[StyleSheet.absoluteFill, { backgroundColor: profile.canvas }]} />
       <AmbientMistField
         enabled={animated}
@@ -79,6 +117,71 @@ export function IsleBackground({ colors, mode = 'default', state = 'idle', inten
       />
       <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background.scrim, opacity: profile.scrimOpacity }]} />
     </View>
+  )
+}
+
+function TonalHierarchyField({
+  primary,
+  secondary,
+  accent,
+  grid,
+  opacity,
+}: {
+  primary: string
+  secondary: string
+  accent: string
+  grid: string
+  opacity: number
+}) {
+  return (
+    <View style={[styles.fieldLayer, { opacity }]}>
+      <View style={[styles.tonalPlane, styles.tonalPlanePrimary, { backgroundColor: primary }]} />
+      <View style={[styles.tonalPlane, styles.tonalPlaneSecondary, { backgroundColor: secondary }]} />
+      <View style={[styles.tonalPlane, styles.tonalPlaneAccent, { backgroundColor: accent }]} />
+      <View style={[styles.tonalGrid, { borderColor: grid }]} />
+    </View>
+  )
+}
+
+function GlassEnvironmentField({
+  enabled,
+  opacity,
+  primary,
+  secondary,
+  accent,
+  edge,
+  motionScale,
+}: {
+  enabled: boolean
+  opacity: number
+  primary: string
+  secondary: string
+  accent: string
+  edge: string
+  motionScale: number
+}) {
+  const field = (
+    <Svg width="100%" height="100%" viewBox="0 0 390 844" preserveAspectRatio="none">
+      <Path d="M-84 118C58 32 136 126 246 68C318 30 372 16 474 42" stroke={primary} strokeWidth="164" strokeLinecap="round" fill="none" opacity={0.5} />
+      <Path d="M-92 712C44 626 148 720 246 650C326 594 384 574 480 608" stroke={secondary} strokeWidth="142" strokeLinecap="round" fill="none" opacity={0.46} />
+      <Path d="M32 260C104 208 168 226 230 180C286 140 330 134 378 102" stroke={edge} strokeWidth="2" fill="none" opacity={0.52} />
+      <Path d="M-20 510C96 448 168 516 270 442C318 406 358 396 420 362" stroke={accent} strokeWidth="3" fill="none" opacity={0.34} />
+      <Circle cx="294" cy="174" r="34" fill={secondary} opacity={0.18} />
+      <Circle cx="72" cy="612" r="46" fill={primary} opacity={0.16} />
+    </Svg>
+  )
+
+  if (!enabled) return <View style={[styles.fieldLayer, { opacity }]}>{field}</View>
+
+  return (
+    <MotiView
+      from={{ opacity: opacity * 0.82, translateX: -4 * motionScale, translateY: 2 * motionScale, scale: 1 }}
+      animate={{ opacity, translateX: 4 * motionScale, translateY: -2 * motionScale, scale: 1.006 }}
+      transition={{ loop: true, type: 'timing', duration: motionTokens.duration.ambient * 2.8 }}
+      style={styles.fieldLayer}
+    >
+      {field}
+    </MotiView>
   )
 }
 
@@ -313,5 +416,37 @@ const styles = StyleSheet.create({
   },
   traceLayer: {
     ...StyleSheet.absoluteFill,
+  },
+  tonalPlane: {
+    position: 'absolute',
+    borderRadius: 56,
+  },
+  tonalPlanePrimary: {
+    top: '8%',
+    left: '-18%',
+    width: '76%',
+    height: '27%',
+  },
+  tonalPlaneSecondary: {
+    top: '34%',
+    right: '-22%',
+    width: '78%',
+    height: '31%',
+  },
+  tonalPlaneAccent: {
+    bottom: '4%',
+    left: '12%',
+    width: '76%',
+    height: '20%',
+  },
+  tonalGrid: {
+    position: 'absolute',
+    top: '16%',
+    right: '9%',
+    width: '36%',
+    height: '26%',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 24,
+    opacity: 0.42,
   },
 })

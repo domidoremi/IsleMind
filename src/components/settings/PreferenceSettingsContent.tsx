@@ -18,12 +18,13 @@ import {
 } from '@/modules/providers'
 import { useSettingsStore } from '@/store/settingsStore'
 import {
-  LimeRoadPreferenceSettingsExperience,
-  MarkdownPreferenceSettingsExperience,
+  LiquidGlassPreferenceSettingsExperience,
+  MaterialPreferenceSettingsExperience,
   MinimalPreferenceSettingsExperience,
+  MonetPreferenceSettingsExperience,
 } from '@/components/settings/theme-experiences/PreferenceSettingsExperiences'
 export function PreferenceSettingsContent() {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const settings = useSettingsStore((state) => state.settings)
@@ -44,7 +45,7 @@ export function PreferenceSettingsContent() {
   const workflowMaxSteps = settings.agentWorkflowMaxSteps ?? 3
   const workflowMaxToolCalls = settings.agentWorkflowMaxToolCallsPerStep ?? 1
   const workflowOutputLimit = settings.agentWorkflowOutputCharLimit ?? 4800
-  const capabilityTileWidth: ViewStyle['flexBasis'] = themeId === 'markdown' ? '100%' : compact ? '48%' : themeId === 'minimal' ? '48%' : '24%'
+  const capabilityTileWidth: ViewStyle['flexBasis'] = canonicalThemeId === 'material' ? '100%' : compact ? '48%' : canonicalThemeId === 'minimal' ? '48%' : '24%'
   const identitySection = (
       <View testID="preference-section-identity">
         <PreferenceSectionHeading icon="bot" title={t('preferences.identity')} detail={settings.assistantDisplayName ?? t('preferences.identityDefault')} />
@@ -129,15 +130,15 @@ export function PreferenceSettingsContent() {
         accessibilityState={{ expanded: workflowOpen }}
         onPress={() => setWorkflowOpen((value) => !value)}
         style={{
-          minHeight: themeId === 'markdown' ? 46 : 54,
-          borderRadius: themeId === 'markdown' ? 4 : Math.min(colors.ui.radius.controlLarge, 8),
+          minHeight: canonicalThemeId === 'material' ? 46 : 54,
+          borderRadius: canonicalThemeId === 'material' ? 4 : Math.min(colors.ui.radius.controlLarge, 8),
           paddingHorizontal: 12,
           flexDirection: 'row',
           alignItems: 'center',
           gap: 10,
-          backgroundColor: themeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted,
-          borderWidth: themeId === 'minimal' ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-          borderBottomWidth: themeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
+          backgroundColor: canonicalThemeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted,
+          borderWidth: canonicalThemeId === 'minimal' ? 0 : canonicalThemeId === 'monet' ? 1 : StyleSheet.hairlineWidth,
+          borderBottomWidth: canonicalThemeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
           borderColor: colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border,
         }}
       >
@@ -151,7 +152,7 @@ export function PreferenceSettingsContent() {
         </MotiView>
       </IslePressable>
       {workflowOpen ? (
-        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : { opacity: 0 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={[foldoutCardStyle, themeId === 'markdown' ? { borderRadius: 4, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider } : null]}>
+        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : { opacity: 0 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={[foldoutCardStyle, canonicalThemeId === 'material' ? { borderRadius: 4, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider } : canonicalThemeId === 'liquid-glass' ? { borderRadius: colors.ui.radius.panel, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border } : null]}>
           <PreferenceFoldoutHeader title={t('preferences.agentWorkflow')} description={t('preferences.agentWorkflowSubtitle')} />
           <View style={fieldRowStyle}>
             <PreferenceNumericField
@@ -208,11 +209,13 @@ export function PreferenceSettingsContent() {
       ) : null}
       </View>
   )
-  const Experience = themeId === 'lime-road'
-    ? LimeRoadPreferenceSettingsExperience
-    : themeId === 'markdown'
-      ? MarkdownPreferenceSettingsExperience
-      : MinimalPreferenceSettingsExperience
+  const Experience = canonicalThemeId === 'monet'
+    ? MonetPreferenceSettingsExperience
+    : canonicalThemeId === 'material'
+      ? MaterialPreferenceSettingsExperience
+      : canonicalThemeId === 'liquid-glass'
+        ? LiquidGlassPreferenceSettingsExperience
+        : MinimalPreferenceSettingsExperience
   return (
     <Experience
       identity={identitySection}
@@ -239,8 +242,8 @@ function PreferenceSectionHeading({
   title: string
   detail?: string
 }) {
-  const { colors, themeId } = useAppTheme()
-  if (themeId === 'minimal') {
+  const { colors, canonicalThemeId } = useAppTheme()
+  if (canonicalThemeId === 'minimal') {
     return (
       <View style={{ paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13.5, lineHeight: 18, fontWeight: '800' }}>{title}</Text>
@@ -248,7 +251,7 @@ function PreferenceSectionHeading({
       </View>
     )
   }
-  if (themeId === 'markdown') {
+  if (canonicalThemeId === 'material') {
     return (
       <View style={{ gap: 2 }}>
         <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800' }}>{title}</Text>
@@ -282,9 +285,9 @@ function PreferenceCapabilityTile({
   width: ViewStyle['flexBasis']
   onPress: () => void
 }) {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
-  if (themeId === 'minimal') {
+  if (canonicalThemeId === 'minimal') {
     return (
       <IslePressable
         haptic
@@ -300,7 +303,7 @@ function PreferenceCapabilityTile({
       </IslePressable>
     )
   }
-  if (themeId === 'markdown') {
+  if (canonicalThemeId === 'material') {
     return (
       <IslePressable
         haptic

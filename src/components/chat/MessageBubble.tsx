@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type ViewStyle } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
@@ -31,7 +31,7 @@ import {
 } from './tracePresentation'
 import { MessageBubbleThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 import { RenderGuard } from '@/components/ui/RenderGuard'
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import { useMotionPreference, type MotionIntensity } from '@/hooks/useMotionPreference'
 import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage, getWorkflowRecoveryActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
 import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
 import { clampTraceText, redactSensitiveText } from '@/core'
@@ -40,6 +40,7 @@ import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
 import { getAssistantThinkingLabel } from './messageActivityPreview'
 import { createProcessTraceSignature } from './messageTraceSignature'
+import { resolveThemeComponentExpression, resolveThemeExpression, type ThemeMotionGrammar } from '@/theme/themeExpression'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
 const STREAMING_RENDER_TEXT_STEP = 32
@@ -125,7 +126,7 @@ function MessageBubbleComponent({
   multiSelectActive = false,
   selected = false,
 }: MessageBubbleProps) {
-  const { colors, isGlass, themeId } = useAppTheme()
+  const { colors, isGlass, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const { width: windowWidth } = useWindowDimensions()
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
@@ -332,7 +333,7 @@ function MessageBubbleComponent({
         }}
       >
         <View style={{ position: 'relative' }}>
-          <MessageBubbleThemeSurface themeId={themeId} colors={colors} isUser={isUser} selected={selected}>
+          <MessageBubbleThemeSurface themeId={canonicalThemeId} colors={colors} isUser={isUser} selected={selected}>
             {multiSelectActive ? (
               <IslePressable
                 haptic
@@ -703,8 +704,10 @@ function MessageProcessLayer({
   writingResponse: boolean
   compactSettled: boolean
 }) {
-  const { colors, isGlass } = useAppTheme()
-  const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  const { colors, canonicalThemeId } = useAppTheme()
+  const processExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
+  const processGrammar = processExpression.motion
+  const actionChrome = resolveMessageActionChrome(colors, canonicalThemeId === 'liquid-glass')
   const { t } = useTranslation()
   const active = message.status === 'streaming' || message.status === 'sending'
   const processStatusLabel = processLayerLabel(message, traces, t, writingResponse, assistantDisplayName)
@@ -748,15 +751,25 @@ function MessageProcessLayer({
       : message.status === 'cancelled'
         ? colors.ui.tone.warning.background
         : active
-          ? colors.ui.tone.info.background
-          : actionChrome.itemSurface
+          ? processGrammar === 'precision'
+            ? 'transparent'
+            : processGrammar === 'fluid'
+              ? colors.ui.actionBar.itemBackground
+              : colors.ui.tone.info.background
+          : processGrammar === 'precision'
+            ? 'transparent'
+            : processGrammar === 'material'
+              ? colors.ui.semantic.surface.raised
+              : actionChrome.itemSurface
   const statusBorder =
     message.status === 'error'
       ? colors.ui.tone.danger.border
       : message.status === 'cancelled'
         ? colors.ui.tone.warning.border
       : active
-        ? colors.ui.tone.info.border
+        ? processGrammar === 'precision'
+          ? colors.ui.icon.accentForeground
+          : colors.ui.tone.info.border
         : actionChrome.itemBorder
   const statusIcon: AppIconName = message.status === 'error'
     ? 'warning'
@@ -765,6 +778,34 @@ function MessageProcessLayer({
       : active
         ? 'spark'
         : 'check'
+  const statusRadius = processExpression.shape === 'capsule'
+    ? colors.ui.radius.chip
+    : processExpression.shape === 'material'
+      ? colors.ui.radius.controlMiddle
+      : processExpression.shape === 'soft'
+        ? colors.ui.radius.controlLarge
+        : 2
+  const statusBorderWidth = processGrammar === 'precision'
+    ? 0
+    : processExpression.border === 'none'
+      ? 0
+      : processGrammar === 'organic' || processGrammar === 'fluid'
+        ? 1
+        : StyleSheet.hairlineWidth
+  const iconFrame = processGrammar === 'precision'
+    ? 18
+    : processGrammar === 'organic'
+      ? 28
+      : processGrammar === 'fluid'
+        ? 27
+        : 24
+  const iconSurface = processGrammar === 'precision'
+    ? 'transparent'
+    : processGrammar === 'fluid'
+      ? colors.ui.semantic.surface.overlay
+      : active
+        ? colors.ui.tone.info.border
+        : colors.ui.semantic.surface.base
 
   return (
     <View style={{ marginBottom: 10, minWidth: showStatusLabel ? 176 : undefined }}>
@@ -786,24 +827,36 @@ function MessageProcessLayer({
           alignSelf: 'flex-start',
           width: '100%',
           maxWidth: '100%',
-          borderRadius: colors.ui.radius.controlSmall,
-          paddingVertical: emphasizedStatus ? 6 : 5,
-          paddingHorizontal: 8,
+          overflow: 'hidden',
+          borderRadius: statusRadius,
+          paddingVertical: emphasizedStatus ? 6 : processGrammar === 'precision' ? 4 : 5,
+          paddingHorizontal: processGrammar === 'precision' ? 4 : processGrammar === 'organic' ? 10 : 8,
           paddingRight: emphasizedStatus && trailingActionSpace ? 48 : 8,
           backgroundColor: statusBackground,
-          borderWidth: StyleSheet.hairlineWidth,
+          borderWidth: statusBorderWidth,
+          borderLeftWidth: processGrammar === 'precision' ? 2 : statusBorderWidth,
           borderColor: statusBorder,
+          shadowColor: colors.shadowTint,
+          shadowOpacity: processGrammar === 'organic' ? 0.07 : processGrammar === 'fluid' ? 0.12 : 0,
+          shadowRadius: processGrammar === 'organic' ? 12 : processGrammar === 'fluid' ? 16 : 0,
+          shadowOffset: { width: 0, height: processGrammar === 'organic' || processGrammar === 'fluid' ? 4 : 0 },
+          elevation: processGrammar === 'fluid' ? 2 : processGrammar === 'organic' ? 1 : 0,
         }}
       >
+        {processGrammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 18, right: 18, height: 2, borderRadius: 2, backgroundColor: colors.ui.control.focus, opacity: 0.24 }} /> : null}
+        {processGrammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: active ? 0.06 : 0.025 }} /> : null}
+        {processGrammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 12, right: 12, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.62 }} /> : null}
         <View
           accessible={false}
           style={{
-            width: 24,
-            height: 24,
-            borderRadius: colors.ui.radius.controlSmall,
+            width: iconFrame,
+            height: iconFrame,
+            borderRadius: processGrammar === 'precision' ? 0 : processGrammar === 'material' ? iconFrame / 2 : colors.ui.radius.controlSmall,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: active ? colors.ui.tone.info.border : colors.ui.semantic.surface.base,
+            backgroundColor: iconSurface,
+            borderWidth: processGrammar === 'fluid' ? StyleSheet.hairlineWidth : 0,
+            borderColor: processGrammar === 'fluid' ? colors.ui.actionBar.itemBorder : 'transparent',
           }}
         >
           <AppIcon name={statusIcon} color={tone} size={14} strokeWidth={appIconStroke.strong} />
@@ -819,11 +872,11 @@ function MessageProcessLayer({
             key={writingResponse ? 'writing' : active ? 'active-process' : 'settled-process'}
             style={{ flexDirection: 'row', alignItems: 'center', minHeight: 16 }}
           >
-            <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} />
+            <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} grammar={processGrammar} />
           </View>
         </View>
         {canExpand ? (
-          <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 112 : 1, easing: Easing.out(Easing.cubic) }}>
+          <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? (processGrammar === 'precision' ? 88 : processGrammar === 'organic' ? 220 : processGrammar === 'material' ? 160 : 200) : 1, easing: processGrammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.out(Easing.cubic) }}>
             <AppIcon name="back-next" color={colors.textTertiary} size={14} strokeWidth={appIconStroke.strong} />
           </MotiView>
         ) : null}
@@ -848,9 +901,30 @@ function SettledThinkingDisclosure({
   onToggle: () => void
   motion: MotionIntensity
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const label = settledThinkingDisclosureLabel(message, traces, t)
+  const disclosureExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
+  const grammar = disclosureExpression.motion
+  const disclosureBackground = grammar === 'precision'
+    ? 'transparent'
+    : grammar === 'organic'
+      ? colors.ui.semantic.surface.base
+      : grammar === 'material'
+        ? colors.ui.semantic.surface.raised
+        : colors.ui.actionBar.itemBackground
+  const disclosureBorder = grammar === 'precision'
+    ? colors.ui.semantic.chrome.border
+    : grammar === 'fluid'
+      ? colors.ui.actionBar.itemBorder
+      : colors.ui.semantic.chrome.border
+  const disclosureRadius = disclosureExpression.shape === 'capsule'
+    ? colors.ui.radius.chip
+    : disclosureExpression.shape === 'material'
+      ? colors.ui.radius.controlMiddle
+      : disclosureExpression.shape === 'soft'
+        ? colors.ui.radius.controlLarge
+        : 2
 
   return (
     <View style={{ marginBottom: expanded ? 8 : 4 }}>
@@ -868,15 +942,24 @@ function SettledThinkingDisclosure({
           alignSelf: 'flex-start',
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 6,
-          paddingHorizontal: 2,
+          gap: grammar === 'precision' ? 5 : 7,
+          overflow: 'hidden',
+          paddingHorizontal: grammar === 'precision' ? 3 : 9,
+          backgroundColor: disclosureBackground,
+          borderRadius: disclosureRadius,
+          borderWidth: grammar === 'precision' ? 0 : disclosureExpression.border === 'none' ? 0 : StyleSheet.hairlineWidth,
+          borderBottomWidth: grammar === 'precision' ? StyleSheet.hairlineWidth : undefined,
+          borderColor: disclosureBorder,
         }}
       >
+        {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 14, right: 14, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.2 }} /> : null}
+        {grammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: expanded ? 0.08 : 0.03 }} /> : null}
+        {grammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 10, right: 10, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.56 }} /> : null}
         <AppIcon name="reasoning" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
         <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>
           {label}
         </Text>
-        <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 112 : 1, easing: Easing.out(Easing.cubic) }}>
+        <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? (grammar === 'precision' ? 88 : grammar === 'organic' ? 220 : grammar === 'material' ? 160 : 200) : 1, easing: grammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.out(Easing.cubic) }}>
           <AppIcon name="back-next" color={colors.textTertiary} size={12} strokeWidth={appIconStroke.strong} />
         </MotiView>
       </IslePressable>
@@ -885,28 +968,36 @@ function SettledThinkingDisclosure({
   )
 }
 
-function AnimatedProcessStatusText({ active, label, tone, motion }: { active: boolean; label: string; tone: string; motion: MotionIntensity }) {
+function AnimatedProcessStatusText({ active, label, tone, motion, grammar }: { active: boolean; label: string; tone: string; motion: MotionIntensity; grammar: ThemeMotionGrammar }) {
   const [dotCount, setDotCount] = useState(1)
-  const shimmer = active && motion === 'full'
+  const shimmer = active && motion === 'full' && grammar !== 'precision'
   const baseLabel = label.replace(/[.\u2026]+$/u, '').trimEnd()
   const displayLabel = active
-    ? `${baseLabel}${'.'.repeat(motion === 'none' ? 3 : dotCount)}`
+    ? grammar === 'precision'
+      ? `${baseLabel} /`
+      : grammar === 'material'
+        ? `${baseLabel}\u2026`
+        : `${baseLabel}${'.'.repeat(motion === 'full' ? dotCount : 3)}`
     : label
+  const cycleMs = grammar === 'organic' ? 520 : grammar === 'fluid' ? 420 : 360
+  const shimmerDuration = grammar === 'organic' ? 1800 : grammar === 'fluid' ? 1380 : 980
+  const shimmerWidth = grammar === 'organic' ? 42 : grammar === 'fluid' ? 30 : 24
+  const shimmerOpacity = grammar === 'organic' ? 0.1 : grammar === 'fluid' ? 0.18 : 0.12
 
   useEffect(() => {
-    if (!active || motion === 'none') {
+    if (!active || motion !== 'full') {
       setDotCount(3)
       return
     }
     setDotCount(1)
     const timer = setInterval(() => {
       setDotCount((current) => current >= 3 ? 1 : current + 1)
-    }, motion === 'full' ? 360 : 520)
+    }, cycleMs)
     return () => clearInterval(timer)
-  }, [active, motion])
+  }, [active, cycleMs, motion])
 
   return (
-    <View style={{ flex: 1, flexShrink: 1, minWidth: 0, minHeight: 16, justifyContent: 'center', overflow: 'hidden' }}>
+    <View testID={`message-thinking-status-${grammar}`} style={{ flex: 1, flexShrink: 1, minWidth: 0, minHeight: 16, justifyContent: 'center', overflow: 'hidden' }}>
       <View
         key={label}
       >
@@ -923,37 +1014,69 @@ function AnimatedProcessStatusText({ active, label, tone, motion }: { active: bo
         accessible={false}
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
-        from={{ translateX: -48, opacity: 0 }}
-        animate={shimmer ? { translateX: 320, opacity: 0.16 } : { translateX: -48, opacity: 0 }}
-        transition={{ loop: shimmer, type: 'timing', duration: shimmer ? 1260 : 1, easing: Easing.inOut(Easing.cubic) }}
-        style={{ position: 'absolute', top: -6, bottom: -6, left: 0, width: 28, borderRadius: 8, backgroundColor: tone, transform: [{ rotate: '12deg' }] }}
+        from={{ translateX: -shimmerWidth, opacity: 0 }}
+        animate={shimmer ? { translateX: 320, opacity: shimmerOpacity } : { translateX: -shimmerWidth, opacity: 0 }}
+        transition={{ loop: shimmer, type: 'timing', duration: shimmer ? shimmerDuration : 1, easing: grammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.inOut(Easing.cubic) }}
+        style={{ position: 'absolute', top: -6, bottom: -6, left: 0, width: shimmerWidth, borderRadius: grammar === 'material' ? 2 : 12, backgroundColor: tone, transform: [{ rotate: grammar === 'material' ? '0deg' : '12deg' }] }}
       />
     </View>
   )
 }
 
 function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: Message; traces: ProcessTrace[]; maxHeight: number; motion: MotionIntensity }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const scrollRef = useRef<ScrollView>(null)
   const thinkingSummaries = collectThinkingSummaries(traces)
   const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
   const running = message.status === 'streaming' || message.status === 'sending'
+  const panelExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
+  const grammar = panelExpression.motion
+  const panelBackground = grammar === 'precision'
+    ? 'transparent'
+    : grammar === 'organic'
+      ? colors.ui.semantic.surface.base
+      : grammar === 'material'
+        ? colors.ui.semantic.surface.raised
+        : colors.ui.actionBar.itemBackground
+  const panelBorder = grammar === 'fluid' ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const panelRadius = panelExpression.shape === 'capsule'
+    ? colors.ui.radius.controlLarge
+    : panelExpression.shape === 'material'
+      ? colors.ui.radius.controlMiddle
+      : panelExpression.shape === 'soft'
+        ? colors.ui.radius.controlLarge
+        : 2
 
   useEffect(() => {
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: running }))
-  }, [contentLength, running, thinkingSummaries.length])
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: running && motion === 'full' }))
+  }, [contentLength, motion, running, thinkingSummaries.length])
 
   return (
     <View
       testID="message-thinking-panel"
       style={{
         marginTop: 7,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: isGlass ? colors.ui.actionBar.itemBorder : colors.material.stroke,
-        paddingTop: 8,
+        overflow: 'hidden',
+        borderRadius: panelRadius,
+        borderWidth: grammar === 'precision' ? 0 : panelExpression.border === 'none' ? 0 : StyleSheet.hairlineWidth,
+        borderTopWidth: grammar === 'precision' ? StyleSheet.hairlineWidth : undefined,
+        borderTopColor: panelBorder,
+        borderColor: panelBorder,
+        backgroundColor: panelBackground,
+        paddingTop: grammar === 'precision' ? 8 : 10,
+        paddingHorizontal: grammar === 'precision' ? 0 : grammar === 'organic' ? 11 : 10,
+        paddingBottom: grammar === 'precision' ? 0 : 9,
+        shadowColor: colors.shadowTint,
+        shadowOpacity: grammar === 'organic' ? 0.06 : grammar === 'fluid' ? 0.12 : 0,
+        shadowRadius: grammar === 'organic' ? 12 : grammar === 'fluid' ? 16 : 0,
+        shadowOffset: { width: 0, height: grammar === 'organic' || grammar === 'fluid' ? 4 : 0 },
+        elevation: grammar === 'fluid' ? 2 : grammar === 'organic' ? 1 : 0,
       }}
     >
+      {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 18, right: 18, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.22 }} /> : null}
+      {grammar === 'material' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 3, bottom: 0, backgroundColor: colors.primary, opacity: 0.72 }} /> : null}
+      {grammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 12, right: 12, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.58 }} /> : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
         <AppIcon name="reasoning" color={colors.ui.icon.accentForeground} size={13} strokeWidth={appIconStroke.strong} />
         <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
@@ -967,11 +1090,28 @@ function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: 
       </View>
       <ScrollView ref={scrollRef} nestedScrollEnabled showsVerticalScrollIndicator={contentLength > 360 || thinkingSummaries.length > 2} style={{ maxHeight }}>
         {thinkingSummaries.length ? (
-          <View style={{ gap: 8 }}>
+          <View style={{ gap: grammar === 'precision' ? 6 : grammar === 'organic' ? 10 : 8 }}>
             {thinkingSummaries.map((summary, index) => (
-              <Text key={`${index}-${summary.slice(0, 24)}`} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '700' }}>
-                {summary}
-              </Text>
+              <View
+                key={`${index}-${summary.slice(0, 24)}`}
+                style={{
+                  borderLeftWidth: grammar === 'precision' ? 1 : grammar === 'material' ? 3 : 0,
+                  borderLeftColor: grammar === 'precision' ? colors.ui.semantic.chrome.border : colors.primary,
+                  borderRadius: grammar === 'organic' ? colors.ui.radius.controlSmall : grammar === 'fluid' ? colors.ui.radius.controlLarge : 0,
+                  paddingLeft: grammar === 'precision' ? 7 : grammar === 'material' ? 8 : grammar === 'organic' || grammar === 'fluid' ? 9 : 0,
+                  paddingRight: grammar === 'organic' || grammar === 'fluid' ? 8 : 0,
+                  paddingVertical: grammar === 'organic' || grammar === 'fluid' ? 6 : 0,
+                  backgroundColor: grammar === 'organic'
+                    ? colors.ui.semantic.surface.muted
+                    : grammar === 'fluid'
+                      ? colors.ui.semantic.surface.overlay
+                      : 'transparent',
+                }}
+              >
+                <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: grammar === 'material' ? '700' : '600' }}>
+                  {summary}
+                </Text>
+              </View>
             ))}
           </View>
         ) : running ? (
@@ -1359,11 +1499,55 @@ function MessageActionSheet({
   onEdit?: () => void
   onStartMultiSelect?: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isGlass, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
+  const motion = useMotionPreference()
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
   const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  const menuExpression = resolveThemeComponentExpression(canonicalThemeId, 'menu')
+  const themeExpression = resolveThemeExpression(canonicalThemeId)
+  const menuRadius = menuExpression.shape === 'angular'
+    ? 2
+    : menuExpression.shape === 'soft'
+      ? 20
+      : menuExpression.shape === 'material'
+        ? 16
+        : 24
+  const menuSurface = menuExpression.surface === 'boundary'
+    ? colors.ui.semantic.surface.base
+    : menuExpression.surface === 'atmosphere'
+      ? colors.ui.semantic.surface.overlay
+      : menuExpression.surface === 'tonal'
+        ? colors.ui.semantic.surface.raised
+        : colors.ui.semantic.chrome.background
+  const menuBorder = menuExpression.surface === 'atmosphere'
+    ? colors.ui.control.focus
+    : menuExpression.surface === 'lens'
+      ? colors.ui.actionBar.itemBorder
+      : actionChrome.barBorder
+  const menuBorderWidth = menuExpression.border === 'none'
+    ? 0
+    : menuExpression.border === 'outline' || menuExpression.border === 'edge-highlight'
+      ? 1
+      : StyleSheet.hairlineWidth
+  const menuFrom = motion !== 'full'
+    ? { opacity: 1, translateY: 0, scale: 1 }
+    : menuExpression.motion === 'precision'
+      ? { opacity: 0, translateY: 6, scale: 1 }
+      : menuExpression.motion === 'organic'
+        ? { opacity: 0, translateY: 18, scale: 0.985 }
+        : menuExpression.motion === 'material'
+          ? { opacity: 0, translateY: 24, scale: 0.99 }
+          : { opacity: 0, translateY: 30, scale: 0.965 }
+  const menuTransition = motion !== 'full'
+    ? { type: 'timing' as const, duration: 1 }
+    : menuExpression.motion === 'fluid'
+      ? { type: 'spring' as const, damping: 19, stiffness: 190, mass: 0.9 }
+      : { type: 'timing' as const, duration: themeExpression.motion.duration.panel }
+  const webGlassStyle = menuExpression.surface === 'lens' && Platform.OS === 'web'
+    ? ({ backdropFilter: 'blur(18px) saturate(1.12)', WebkitBackdropFilter: 'blur(18px) saturate(1.12)' } as unknown as ViewStyle)
+    : undefined
   const [showMore, setShowMore] = useState(false)
   const actionLockedRef = useRef(false)
   const unlockTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1438,29 +1622,35 @@ function MessageActionSheet({
           onPress={onClose}
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }}
         />
-        <View
+        <MotiView
           testID="message-action-sheet"
           accessibilityRole="menu"
           accessibilityLabel={t('messageBubble.actions')}
           accessibilityViewIsModal
-          style={{
-            width: '100%',
-            maxWidth: MESSAGE_ACTION_SHEET_MAX_WIDTH,
-            maxHeight: sheetMaxHeight,
-            alignSelf: 'center',
-            borderRadius: 8,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: actionChrome.barBorder,
-            backgroundColor: actionChrome.barSurface,
-            overflow: 'hidden',
-            elevation: 18,
-            shadowColor: colors.shadowTint,
-            shadowOpacity: 0.2,
-            shadowRadius: 20,
-            shadowOffset: { width: 0, height: 8 },
-          }}
+          from={menuFrom}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={menuTransition}
+          style={[
+            {
+              width: '100%',
+              maxWidth: MESSAGE_ACTION_SHEET_MAX_WIDTH,
+              maxHeight: sheetMaxHeight,
+              alignSelf: 'center',
+              borderRadius: menuRadius,
+              borderWidth: menuBorderWidth,
+              borderColor: menuBorder,
+              backgroundColor: menuSurface,
+              overflow: 'hidden',
+              elevation: menuExpression.elevation === 'layered' ? 18 : menuExpression.elevation === 'none' ? 0 : 8,
+              shadowColor: colors.shadowTint,
+              shadowOpacity: menuExpression.elevation === 'layered' ? 0.2 : menuExpression.elevation === 'none' ? 0 : 0.1,
+              shadowRadius: menuExpression.elevation === 'layered' ? 20 : menuExpression.elevation === 'none' ? 0 : 12,
+              shadowOffset: { width: 0, height: menuExpression.elevation === 'none' ? 0 : 8 },
+            },
+            webGlassStyle,
+          ]}
         >
-          <View style={{ minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 16, paddingRight: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: actionChrome.barBorder }}>
+          <View style={{ minHeight: menuExpression.density === 'compact' ? 50 : 58, flexDirection: 'row', alignItems: 'center', gap: menuExpression.density === 'airy' ? 12 : 10, paddingLeft: menuExpression.shape === 'angular' ? 12 : 16, paddingRight: 7, borderBottomWidth: menuExpression.border === 'none' ? 0 : StyleSheet.hairlineWidth, borderBottomColor: menuBorder }}>
             {showMore ? (
               <IslePressable
                 haptic
@@ -1473,7 +1663,7 @@ function MessageActionSheet({
               </IslePressable>
             ) : null}
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '900' }}>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: menuExpression.density === 'compact' ? 14 : 15, lineHeight: 20, fontWeight: menuExpression.motion === 'material' ? '700' : '900', letterSpacing: menuExpression.motion === 'precision' ? 0.3 : 0 }}>
                 {showMore ? t('messageBubble.moreActions') : t('messageBubble.actions')}
               </Text>
               <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>
@@ -1492,7 +1682,7 @@ function MessageActionSheet({
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={visibleActions.length > 6}
-            contentContainerStyle={{ padding: 8, gap: 2 }}
+            contentContainerStyle={{ padding: menuExpression.density === 'compact' ? 6 : 8, gap: menuExpression.motion === 'precision' ? 0 : menuExpression.motion === 'organic' ? 5 : 2 }}
           >
             {visibleActions.map((item) => (
               <MessageActionSheetRow key={item.id} action={item} onPress={() => run(item)} />
@@ -1509,15 +1699,16 @@ function MessageActionSheet({
               />
             ) : null}
           </ScrollView>
-        </View>
+        </MotiView>
       </View>
     </Modal>
   )
 }
 
 function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheetAction; onPress: () => void }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isGlass, canonicalThemeId } = useAppTheme()
   const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  const menuExpression = resolveThemeComponentExpression(canonicalThemeId, 'menu')
   const foreground = action.danger
     ? colors.ui.tone.danger.foreground
     : action.emphasized
@@ -1527,10 +1718,34 @@ function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheet
     ? colors.ui.tone.danger.background
     : action.emphasized
       ? colors.ui.actionBar.itemActiveBackground
-      : actionChrome.itemSurface
+      : menuExpression.surface === 'boundary'
+        ? 'transparent'
+        : menuExpression.surface === 'atmosphere'
+          ? colors.ui.semantic.surface.base
+          : menuExpression.surface === 'tonal'
+            ? colors.ui.semantic.surface.muted
+            : actionChrome.itemSurface
+  const rowRadius = menuExpression.shape === 'angular'
+    ? 0
+    : menuExpression.shape === 'soft'
+      ? 16
+      : menuExpression.shape === 'material'
+        ? 12
+        : 18
+  const iconSurface = menuExpression.motion === 'organic'
+    ? colors.ui.icon.accentBackground
+    : menuExpression.motion === 'fluid'
+      ? colors.ui.semantic.chrome.background
+      : 'transparent'
+  const pressedOpacity = menuExpression.interaction === 'direct'
+    ? 0.72
+    : menuExpression.interaction === 'physical'
+      ? 0.86
+      : 0.9
   return (
     <IslePressable
       haptic
+      testID={`message-action-menu-item-${canonicalThemeId}-${action.id}`}
       accessibilityRole="menuitem"
       accessibilityLabel={action.label}
       onPress={onPress}
@@ -1538,19 +1753,20 @@ function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheet
         minHeight: 50,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
-        paddingHorizontal: 12,
-        borderRadius: 7,
+        gap: menuExpression.density === 'airy' ? 13 : 10,
+        paddingHorizontal: menuExpression.density === 'compact' ? 10 : 13,
+        borderRadius: rowRadius,
         backgroundColor: pressed ? colors.ui.actionBar.itemActiveBackground : background,
-        borderWidth: StyleSheet.hairlineWidth,
+        borderWidth: action.danger || menuExpression.border === 'edge-highlight' ? StyleSheet.hairlineWidth : 0,
+        borderBottomWidth: !action.danger && menuExpression.border === 'divider' ? StyleSheet.hairlineWidth : undefined,
         borderColor: action.danger ? colors.ui.tone.danger.border : actionChrome.itemBorder,
-        opacity: pressed ? 0.78 : 1,
+        opacity: pressed ? pressedOpacity : 1,
       })}
     >
-      <View style={{ width: 30, height: 30, borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: actionChrome.barSurface }}>
+      <View style={{ width: menuExpression.motion === 'precision' ? 24 : 30, height: menuExpression.motion === 'precision' ? 24 : 30, borderRadius: menuExpression.motion === 'organic' || menuExpression.motion === 'fluid' ? 15 : menuExpression.motion === 'material' ? 8 : 0, alignItems: 'center', justifyContent: 'center', backgroundColor: iconSurface, borderWidth: menuExpression.motion === 'fluid' ? StyleSheet.hairlineWidth : 0, borderColor: actionChrome.itemBorder }}>
         <AppIcon name={action.icon} color={foreground} size={17} strokeWidth={appIconStroke.strong} />
       </View>
-      <Text numberOfLines={2} style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>
+      <Text numberOfLines={2} style={{ flex: 1, minWidth: 0, color: foreground, fontSize: menuExpression.density === 'compact' ? 13 : 13.5, lineHeight: 18, fontWeight: menuExpression.motion === 'material' ? '600' : '800', letterSpacing: menuExpression.motion === 'precision' ? 0.15 : 0 }}>
         {action.label}
       </Text>
       {action.id === 'more' ? <AppIcon name="back-next" color={colors.textTertiary} size={16} /> : null}
@@ -1780,17 +1996,61 @@ function translateMessageBubbleLabel(t: TFunction, key: string, fallback: string
 }
 
 function TypingDots({ motion }: { motion: MotionIntensity }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
+  const grammar = resolveThemeComponentExpression(canonicalThemeId, 'loading').motion
+
+  if (grammar === 'precision') {
+    return (
+      <View testID={`message-streaming-indicator-${canonicalThemeId}`} style={{ gap: 4, paddingVertical: 6 }}>
+        {[14, 9, 5].map((width, index) => (
+          <MotiView
+            key={width}
+            from={motion === 'full' ? { opacity: 0.22 } : { opacity: index === 0 ? 0.88 : 0.52 }}
+            animate={{ opacity: index === 0 ? 0.88 : 0.52 }}
+            transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 420 : 1, delay: motion === 'full' ? index * 60 : 0 }}
+            style={{ width, height: 2, borderRadius: 1, backgroundColor: colors.textSecondary }}
+          />
+        ))}
+      </View>
+    )
+  }
+
+  if (grammar === 'material') {
+    return (
+      <View testID={`message-streaming-indicator-${canonicalThemeId}`} style={{ width: 38, height: 4, marginVertical: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: colors.ui.semantic.surface.muted }}>
+        <MotiView
+          from={{ translateX: motion === 'full' ? -14 : 10, opacity: 0.78 }}
+          animate={{ translateX: motion === 'full' ? 38 : 10, opacity: 1 }}
+          transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 680 : 1 }}
+          style={{ width: 14, height: 4, borderRadius: 4, backgroundColor: colors.ui.control.primaryBackground }}
+        />
+      </View>
+    )
+  }
+
+  if (grammar === 'fluid') {
+    return (
+      <View testID={`message-streaming-indicator-${canonicalThemeId}`} style={{ width: 42, height: 12, marginVertical: 5, borderRadius: 8, overflow: 'hidden', backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.actionBar.itemBorder }}>
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 7, right: 7, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.56 }} />
+        <MotiView
+          from={{ translateX: motion === 'full' ? -18 : 13, opacity: 0.32, scaleX: 0.72 }}
+          animate={{ translateX: motion === 'full' ? 42 : 13, opacity: 0.92, scaleX: 1 }}
+          transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 920 : 1 }}
+          style={{ width: 16, height: 10, marginTop: 1, borderRadius: 7, backgroundColor: colors.ui.icon.accentForeground }}
+        />
+      </View>
+    )
+  }
 
   return (
-    <View style={{ flexDirection: 'row', gap: 5, paddingVertical: 6 }}>
+    <View testID={`message-streaming-indicator-${canonicalThemeId}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 7 }}>
       {[0, 1, 2].map((item) => (
         <MotiView
           key={item}
-          from={motion === 'full' ? { opacity: 0.22, scale: 0.92 } : { opacity: 0.82, scale: 1 }}
-          animate={{ opacity: 0.82, scale: 1 }}
-          transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 512 : 1, delay: motion === 'full' ? item * 112 : 0 }}
-          style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textSecondary }}
+          from={motion === 'full' ? { opacity: 0.24, scale: 0.8, translateY: 2 } : { opacity: 0.82, scale: 1, translateY: 0 }}
+          animate={{ opacity: 0.82, scale: 1, translateY: motion === 'full' ? -2 : 0 }}
+          transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 760 : 1, delay: motion === 'full' ? item * 150 : 0 }}
+          style={{ width: item === 1 ? 9 : 7, height: item === 1 ? 9 : 7, borderRadius: 6, backgroundColor: colors.textSecondary }}
         />
       ))}
     </View>
@@ -1798,14 +2058,30 @@ function TypingDots({ motion }: { motion: MotionIntensity }) {
 }
 
 function Cursor({ motion }: { motion: MotionIntensity }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
+  const grammar = resolveThemeComponentExpression(canonicalThemeId, 'loading').motion
+  const cursorStyle = grammar === 'organic'
+    ? { width: 7, height: 7, borderRadius: 7, marginTop: 8, marginLeft: 3 }
+    : grammar === 'material'
+      ? { width: 3, height: 18, borderRadius: 2, marginTop: 3, marginLeft: 2 }
+      : grammar === 'fluid'
+        ? { width: 14, height: 5, borderRadius: 5, marginTop: 10, marginLeft: 3 }
+        : { width: 1, height: 18, borderRadius: 0, marginTop: 3, marginLeft: 1 }
+  const duration = grammar === 'precision' ? 520 : grammar === 'organic' ? 920 : grammar === 'material' ? 600 : 820
 
   return (
     <MotiView
-      from={motion === 'full' ? { opacity: 0.28, scaleY: 0.82 } : { opacity: 0.82, scaleY: 1 }}
-      animate={{ opacity: 0.82, scaleY: 1 }}
-      transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 768 : 1 }}
-      style={{ width: 2, height: 18, borderRadius: 1, backgroundColor: colors.ui.icon.accentForeground, marginTop: 3, marginLeft: 1 }}
+      testID={`message-streaming-cursor-${canonicalThemeId}`}
+      from={motion === 'full'
+        ? grammar === 'organic'
+          ? { opacity: 0.24, scale: 0.78 }
+          : grammar === 'fluid'
+            ? { opacity: 0.36, scaleX: 0.68 }
+            : { opacity: 0.28, scaleY: 0.82 }
+        : { opacity: 0.82, scale: 1, scaleX: 1, scaleY: 1 }}
+      animate={{ opacity: 0.86, scale: 1, scaleX: 1, scaleY: 1 }}
+      transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? duration : 1 }}
+      style={[cursorStyle, { backgroundColor: colors.ui.icon.accentForeground }]}
     />
   )
 }

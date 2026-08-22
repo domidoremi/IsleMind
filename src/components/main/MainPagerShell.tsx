@@ -59,11 +59,15 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
   const showHome = useCallback(() => switchToRef.current('home'), [])
   const showHistory = useCallback(() => switchToRef.current('history'), [])
   const showSettings = useCallback(() => switchToRef.current('settings'), [])
-  const backgroundMode: IsleBackgroundMode = colors.ui.experience.background === 'road'
-    ? 'surface'
-    : colors.ui.experience.background === 'document'
-      ? 'ambient'
-      : 'none'
+  const backgroundMode: IsleBackgroundMode = colors.ui.experience.background === 'plain'
+    ? 'none'
+    : colors.ui.experience.background === 'tonal'
+      ? 'surface'
+      : colors.ui.experience.background === 'document'
+        ? 'ambient'
+        : colors.ui.experience.background === 'glass'
+          ? 'ambient'
+          : 'surface'
   const backgroundState: IsleBackgroundState = gestureLock?.locked ? 'input' : 'idle'
 
   const pages = [

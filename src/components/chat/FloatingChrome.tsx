@@ -77,7 +77,7 @@ export function FloatingChrome({
   optionsPanelPlacement: ChatOptionsPlacement
   optionsPanelKeyboardInset: number
 }) {
-  const { themeId } = useAppTheme()
+  const { canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const header = getProviderHeaderState(conversation, t)
   const chromeTopPadding = visualTopInset + topChromeInset + FLOATING_CHROME_SAFE_AREA_GAP
@@ -102,7 +102,7 @@ export function FloatingChrome({
     <View pointerEvents="box-none" style={shellStyle}>
       <View style={{ marginTop: FLOATING_CHROME_ANDROID_TOP_GAP, paddingTop: chromeTopPadding, paddingHorizontal: 8, paddingBottom: FLOATING_CHROME_BOTTOM_PADDING }}>
         <ChatPersistentHeader
-          themeId={themeId}
+          themeId={canonicalThemeId}
           colors={colors}
           title={header.title}
           leadingGlyph={leadingChromeIsBack ? 'back' : 'conversation'}

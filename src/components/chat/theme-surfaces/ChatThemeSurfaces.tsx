@@ -1,20 +1,52 @@
 import type { ReactNode } from 'react'
 import {
-  StyleSheet,
-  View,
   type LayoutChangeEvent,
 } from 'react-native'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
-import type { ThemeId } from '@/types/settingsContracts'
+import type { CanonicalThemeId } from '@/types/settingsContracts'
+import { ThemeExpressionSurface } from '@/components/ui/isle/ThemeExpressionSurface'
 
 type ThemeColors = ReturnType<typeof useAppTheme>['colors']
 
 interface ThemeSurfaceProps {
-  themeId: ThemeId
+  /** Surface dispatch is always keyed by canonical theme family. */
+  themeId: CanonicalThemeId
   colors: ThemeColors
   children: ReactNode
 }
+
+// Keep stable test and accessibility hooks while the renderer moves behind the
+// shared expression layer. The values are intentionally explicit so adding a
+// family cannot silently fall back to a neighbouring visual grammar.
+type ThemeSurfaceKind = 'composer' | 'chrome' | 'message' | 'message-content'
+
+const CHAT_SURFACE_TEST_IDS = {
+  composer: {
+    minimal: 'chat-composer-surface-minimal',
+    monet: 'chat-composer-surface-monet',
+    material: 'chat-composer-surface-material',
+    'liquid-glass': 'chat-composer-surface-liquid-glass',
+  },
+  chrome: {
+    minimal: 'chat-chrome-surface-minimal',
+    monet: 'chat-chrome-surface-monet',
+    material: 'chat-chrome-surface-material',
+    'liquid-glass': 'chat-chrome-surface-liquid-glass',
+  },
+  message: {
+    minimal: 'chat-message-surface-minimal',
+    monet: 'chat-message-surface-monet',
+    material: 'chat-message-surface-material',
+    'liquid-glass': 'chat-message-surface-liquid-glass',
+  },
+  'message-content': {
+    minimal: 'chat-message-content-surface-minimal',
+    monet: 'chat-message-content-surface-monet',
+    material: 'chat-message-content-surface-material',
+    'liquid-glass': 'chat-message-content-surface-liquid-glass',
+  },
+} as const satisfies Record<ThemeSurfaceKind, Record<CanonicalThemeId, string>>
 
 export function ChatComposerThemeSurface({
   themeId,
@@ -22,19 +54,7 @@ export function ChatComposerThemeSurface({
   horizontalPadding,
   children,
 }: ThemeSurfaceProps & { horizontalPadding: number }) {
-  switch (themeId) {
-    case 'lime-road':
-      return <LimeRoadComposerSurface colors={colors}>{children}</LimeRoadComposerSurface>
-    case 'markdown':
-      return <MarkdownComposerSurface colors={colors}>{children}</MarkdownComposerSurface>
-    case 'minimal':
-    default:
-      return (
-        <MinimalComposerSurface colors={colors} horizontalPadding={horizontalPadding}>
-          {children}
-        </MinimalComposerSurface>
-      )
-  }
+  return <ThemeExpressionSurface family={themeId} colors={colors} kind="composer" horizontalPadding={horizontalPadding} testID={CHAT_SURFACE_TEST_IDS.composer[themeId]}>{children}</ThemeExpressionSurface>
 }
 
 export function ChatChromeThemeSurface({
@@ -47,27 +67,7 @@ export function ChatChromeThemeSurface({
   alertBorder?: string
   onLayout?: (event: LayoutChangeEvent) => void
 }) {
-  switch (themeId) {
-    case 'lime-road':
-      return (
-        <LimeRoadChromeSurface colors={colors} alertBorder={alertBorder} onLayout={onLayout}>
-          {children}
-        </LimeRoadChromeSurface>
-      )
-    case 'markdown':
-      return (
-        <MarkdownChromeSurface colors={colors} alertBorder={alertBorder} onLayout={onLayout}>
-          {children}
-        </MarkdownChromeSurface>
-      )
-    case 'minimal':
-    default:
-      return (
-        <MinimalChromeSurface colors={colors} alertBorder={alertBorder} onLayout={onLayout}>
-          {children}
-        </MinimalChromeSurface>
-      )
-  }
+  return <ThemeExpressionSurface family={themeId} colors={colors} kind="chrome" alertBorder={alertBorder} onLayout={onLayout} testID={CHAT_SURFACE_TEST_IDS.chrome[themeId]}>{children}</ThemeExpressionSurface>
 }
 
 export function MessageBubbleThemeSurface({
@@ -77,27 +77,7 @@ export function MessageBubbleThemeSurface({
   selected,
   children,
 }: ThemeSurfaceProps & { isUser: boolean; selected: boolean }) {
-  switch (themeId) {
-    case 'lime-road':
-      return (
-        <LimeRoadMessageSurface colors={colors} isUser={isUser} selected={selected}>
-          {children}
-        </LimeRoadMessageSurface>
-      )
-    case 'markdown':
-      return (
-        <MarkdownMessageSurface colors={colors} isUser={isUser} selected={selected}>
-          {children}
-        </MarkdownMessageSurface>
-      )
-    case 'minimal':
-    default:
-      return (
-        <MinimalMessageSurface colors={colors} isUser={isUser} selected={selected}>
-          {children}
-        </MinimalMessageSurface>
-      )
-  }
+  return <ThemeExpressionSurface family={themeId} colors={colors} kind="message" isUser={isUser} selected={selected} testID={CHAT_SURFACE_TEST_IDS.message[themeId]}>{children}</ThemeExpressionSurface>
 }
 
 export function MessageContentThemeSurface({
@@ -106,338 +86,5 @@ export function MessageContentThemeSurface({
   isUser,
   children,
 }: ThemeSurfaceProps & { isUser: boolean }) {
-  switch (themeId) {
-    case 'lime-road':
-      return <LimeRoadMessageContentSurface colors={colors} isUser={isUser}>{children}</LimeRoadMessageContentSurface>
-    case 'markdown':
-      return <MarkdownMessageContentSurface colors={colors} isUser={isUser}>{children}</MarkdownMessageContentSurface>
-    case 'minimal':
-    default:
-      return <MinimalMessageContentSurface>{children}</MinimalMessageContentSurface>
-  }
-}
-
-function MinimalComposerSurface({
-  colors,
-  horizontalPadding,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { horizontalPadding: number }) {
-  return (
-    <View
-      testID="chat-composer-surface-minimal"
-      style={{
-        marginHorizontal: -horizontalPadding,
-        paddingHorizontal: horizontalPadding,
-        paddingTop: 3,
-        backgroundColor: colors.ui.semantic.surface.base,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: colors.ui.semantic.chrome.border,
-      }}
-    >
-      {children}
-    </View>
-  )
-}
-
-function LimeRoadComposerSurface({ colors, children }: Omit<ThemeSurfaceProps, 'themeId'>) {
-  return (
-    <View
-      testID="chat-composer-surface-lime-road"
-      style={{
-        padding: 6,
-        borderRadius: colors.ui.radius.panel + 2,
-        backgroundColor: colors.ui.composer.shellBackground,
-        borderWidth: 1,
-        borderColor: colors.material.stroke,
-        overflow: 'hidden',
-        shadowColor: colors.shadowTint,
-        shadowOpacity: Math.min(colors.ui.card.shadowOpacity, 0.08),
-        shadowRadius: Math.max(4, colors.ui.card.shadowRadius - 4),
-        shadowOffset: { width: 0, height: 3 },
-        elevation: 2,
-      }}
-    >
-      <RouteRail colors={colors} />
-      <View style={{ paddingTop: 6 }}>{children}</View>
-    </View>
-  )
-}
-
-function MarkdownComposerSurface({ colors, children }: Omit<ThemeSurfaceProps, 'themeId'>) {
-  return (
-    <View
-      testID="chat-composer-surface-markdown"
-      style={{
-        borderRadius: colors.ui.radius.controlSmall,
-        backgroundColor: colors.ui.semantic.surface.base,
-        borderWidth: 1,
-        borderColor: colors.ui.semantic.chrome.border,
-        overflow: 'hidden',
-      }}
-    >
-      <DocumentCommandRail colors={colors} />
-      <View style={{ padding: 6 }}>{children}</View>
-    </View>
-  )
-}
-
-function MinimalChromeSurface({
-  colors,
-  alertBorder,
-  onLayout,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { alertBorder?: string; onLayout?: (event: LayoutChangeEvent) => void }) {
-  return (
-    <View
-      testID="chat-chrome-surface-minimal"
-      onLayout={onLayout}
-      style={{
-        minHeight: 48,
-        marginHorizontal: -8,
-        justifyContent: 'center',
-        backgroundColor: colors.ui.semantic.surface.canvas,
-        borderBottomWidth: alertBorder ? 1 : StyleSheet.hairlineWidth,
-        borderBottomColor: alertBorder ?? colors.ui.semantic.chrome.border,
-      }}
-    >
-      {children}
-    </View>
-  )
-}
-
-function LimeRoadChromeSurface({
-  colors,
-  alertBorder,
-  onLayout,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { alertBorder?: string; onLayout?: (event: LayoutChangeEvent) => void }) {
-  return (
-    <View
-      testID="chat-chrome-surface-lime-road"
-      onLayout={onLayout}
-      style={{
-        minHeight: 48,
-        marginHorizontal: -8,
-        justifyContent: 'center',
-        backgroundColor: colors.ui.semantic.surface.canvas,
-        borderBottomWidth: alertBorder ? 2 : 3,
-        borderBottomColor: alertBorder ?? colors.ui.control.primaryBackground,
-        overflow: 'hidden',
-        shadowOpacity: 0,
-        elevation: 0,
-      }}
-    >
-      {children}
-    </View>
-  )
-}
-
-function MarkdownChromeSurface({
-  colors,
-  alertBorder,
-  onLayout,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { alertBorder?: string; onLayout?: (event: LayoutChangeEvent) => void }) {
-  return (
-    <View
-      testID="chat-chrome-surface-markdown"
-      onLayout={onLayout}
-      style={{
-        minHeight: 48,
-        marginHorizontal: -8,
-        justifyContent: 'center',
-        backgroundColor: colors.ui.semantic.surface.canvas,
-        borderBottomWidth: alertBorder ? 2 : 1,
-        borderBottomColor: alertBorder ?? colors.material.strokeStrong,
-        overflow: 'hidden',
-      }}
-    >
-      {children}
-    </View>
-  )
-}
-
-function MinimalMessageSurface({
-  colors,
-  isUser,
-  selected,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { isUser: boolean; selected: boolean }) {
-  return (
-    <View
-      testID="chat-message-surface-minimal"
-      style={{
-        position: 'relative',
-        paddingHorizontal: isUser ? 12 : 2,
-        paddingVertical: isUser ? 9 : 7,
-        borderRadius: isUser ? colors.ui.radius.controlSmall : 0,
-        backgroundColor: isUser ? colors.ui.message.userBackground : selected ? colors.ui.semantic.surface.muted : 'transparent',
-        borderWidth: selected ? 2 : isUser ? StyleSheet.hairlineWidth : 0,
-        borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.message.userBorder,
-      }}
-    >
-      {children}
-    </View>
-  )
-}
-
-function LimeRoadMessageSurface({
-  colors,
-  isUser,
-  selected,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { isUser: boolean; selected: boolean }) {
-  return (
-    <View
-      testID="chat-message-surface-lime-road"
-      style={{
-        position: 'relative',
-        paddingHorizontal: 13,
-        paddingTop: 16,
-        paddingBottom: 10,
-        borderRadius: colors.ui.radius.panel,
-        borderBottomRightRadius: isUser ? colors.ui.radius.controlSmall : colors.ui.radius.panel,
-        borderTopLeftRadius: isUser ? colors.ui.radius.panel : colors.ui.radius.controlSmall,
-        backgroundColor: isUser ? colors.ui.message.userBackground : colors.ui.semantic.surface.base,
-        borderWidth: selected ? 2 : 1,
-        borderColor: selected ? colors.ui.control.primaryBorder : isUser ? colors.ui.message.userBorder : colors.material.stroke,
-        overflow: 'hidden',
-        shadowColor: colors.shadowTint,
-        shadowOpacity: Math.min(colors.ui.card.shadowOpacity, 0.05),
-        shadowRadius: Math.max(3, colors.ui.card.shadowRadius - 6),
-        shadowOffset: { width: 0, height: 2 },
-        elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
-      }}
-    >
-      <RouteRail colors={colors} compact />
-      {children}
-    </View>
-  )
-}
-
-function MarkdownMessageSurface({
-  colors,
-  isUser,
-  selected,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { isUser: boolean; selected: boolean }) {
-  return (
-    <View
-      testID="chat-message-surface-markdown"
-      style={{
-        position: 'relative',
-        borderRadius: colors.ui.radius.controlSmall,
-        backgroundColor: isUser ? colors.ui.message.userBackground : colors.ui.semantic.surface.base,
-        borderWidth: selected ? 2 : 1,
-        borderColor: selected ? colors.ui.control.primaryBorder : isUser ? colors.ui.message.userBorder : colors.ui.semantic.chrome.border,
-        overflow: 'hidden',
-      }}
-    >
-      <DocumentCommandRail colors={colors} />
-      <View style={{ paddingHorizontal: 12, paddingTop: 9, paddingBottom: 10 }}>{children}</View>
-    </View>
-  )
-}
-
-function MinimalMessageContentSurface({ children }: { children: ReactNode }) {
-  return (
-    <View testID="chat-message-content-surface-minimal" style={{ gap: 5, width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
-      {children}
-    </View>
-  )
-}
-
-function LimeRoadMessageContentSurface({
-  colors,
-  isUser,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { isUser: boolean }) {
-  return (
-    <View testID="chat-message-content-surface-lime-road" style={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
-      {!isUser ? (
-        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.ui.icon.accentForeground }} />
-          <View style={{ height: 1, flex: 1, backgroundColor: colors.material.stroke }} />
-        </View>
-      ) : null}
-      <View style={{ gap: 7 }}>{children}</View>
-    </View>
-  )
-}
-
-function MarkdownMessageContentSurface({
-  colors,
-  isUser,
-  children,
-}: Omit<ThemeSurfaceProps, 'themeId'> & { isUser: boolean }) {
-  return (
-    <View testID="chat-message-content-surface-markdown" style={{ width: '100%', maxWidth: '100%', overflow: 'hidden', flexDirection: 'row', alignItems: 'stretch' }}>
-      <View
-        pointerEvents="none"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={{
-          width: 14,
-          alignItems: 'center',
-          paddingTop: 3,
-          marginRight: 8,
-          borderRightWidth: StyleSheet.hairlineWidth,
-          borderRightColor: isUser ? colors.ui.message.userBorder : colors.ui.semantic.chrome.border,
-        }}
-      >
-        <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: isUser ? colors.ui.message.userForeground : colors.textTertiary }} />
-      </View>
-      <View style={{ flex: 1, minWidth: 0, gap: 8 }}>{children}</View>
-    </View>
-  )
-}
-
-function RouteRail({ colors, compact = false }: { colors: ThemeColors; compact?: boolean }) {
-  return (
-    <View
-      pointerEvents="none"
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={{
-        position: 'absolute',
-        top: compact ? 4 : 5,
-        left: compact ? 8 : 10,
-        right: compact ? 8 : 10,
-        height: compact ? 5 : 7,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: compact ? 4 : 5,
-      }}
-    >
-      <View style={{ width: compact ? 5 : 7, height: compact ? 5 : 7, borderRadius: 99, backgroundColor: colors.ui.icon.accentForeground }} />
-      <View style={{ flex: 1, height: 1, backgroundColor: colors.material.strokeStrong }} />
-      <View style={{ width: compact ? 12 : 18, height: compact ? 3 : 4, borderRadius: 2, backgroundColor: colors.primary }} />
-      <View style={{ width: compact ? 8 : 12, height: compact ? 3 : 4, borderRadius: 2, backgroundColor: colors.accent }} />
-    </View>
-  )
-}
-
-function DocumentCommandRail({ colors, compact = false }: { colors: ThemeColors; compact?: boolean }) {
-  return (
-    <View
-      pointerEvents="none"
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={{
-        height: compact ? 6 : 16,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: compact ? 5 : 7,
-        backgroundColor: colors.ui.semantic.chrome.toolbar,
-        borderBottomWidth: compact ? 0 : StyleSheet.hairlineWidth,
-        borderBottomColor: colors.ui.semantic.chrome.border,
-      }}
-    >
-      <View style={{ width: compact ? 8 : 12, height: 2, backgroundColor: colors.textTertiary }} />
-      <View style={{ width: compact ? 4 : 7, height: 2, backgroundColor: colors.ui.control.primaryBackground }} />
-      <View style={{ flex: 1 }} />
-      <View style={{ width: compact ? 10 : 16, height: 2, backgroundColor: colors.ui.semantic.chrome.border }} />
-    </View>
-  )
+  return <ThemeExpressionSurface family={themeId} colors={colors} kind="message-content" isUser={isUser} testID={CHAT_SURFACE_TEST_IDS['message-content'][themeId]}>{children}</ThemeExpressionSurface>
 }

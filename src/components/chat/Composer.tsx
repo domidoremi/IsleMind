@@ -10,6 +10,7 @@ import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { normalizeSearchText } from '@/utils/text'
 import { type ChatMultimodalEntry, type ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
 import { PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, resolveProductMobileComposerToolsLayout } from '@/presentation/layout/productMobileLayout'
+import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import {
   resolveAppliedInitialDraftKeyAfterSuccessfulSend,
   resolveComposerInitialDraft,
@@ -98,7 +99,7 @@ export function Composer({
   onSend,
   onSendWhileStreaming,
 }: ComposerProps) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isGlass, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const { width: composerWindowWidth } = useWindowDimensions()
@@ -207,6 +208,8 @@ export function Composer({
   const raisedBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
   const chipSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
   const chipBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const attachmentExpression = resolveThemeComponentExpression(canonicalThemeId, 'attachment')
+  const attachmentGrammar = attachmentExpression.motion
   const shellBorder = colors.ui.limeRoad
     ? colors.material.stroke
     : colors.ui.glass
@@ -386,7 +389,29 @@ export function Composer({
               accessibilityHint={t('chat.removeAttachmentAccessibilityHint', { name: item.name })}
               style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
             >
-              <View style={{ paddingHorizontal: 10, height: 28, borderRadius: chipRadius, backgroundColor: chipSurface, borderWidth: subtleBorderWidth, borderColor: chipBorder, justifyContent: 'center' }}>
+              <View
+                testID={`composer-attachment-${canonicalThemeId}`}
+                style={{
+                  position: 'relative',
+                  paddingHorizontal: attachmentGrammar === 'precision' ? 2 : 10,
+                  minHeight: attachmentGrammar === 'precision' ? 26 : 30,
+                  borderRadius: attachmentGrammar === 'precision' ? 0 : attachmentGrammar === 'organic' ? 12 : attachmentGrammar === 'material' ? 8 : chipRadius,
+                  backgroundColor: attachmentGrammar === 'precision' ? 'transparent' : chipSurface,
+                  borderWidth: attachmentExpression.border === 'none' ? 0 : attachmentGrammar === 'precision' ? 0 : subtleBorderWidth,
+                  borderBottomWidth: attachmentGrammar === 'precision' ? StyleSheet.hairlineWidth : undefined,
+                  borderColor: chipBorder,
+                  justifyContent: 'center',
+                  shadowColor: attachmentGrammar === 'fluid' || attachmentGrammar === 'organic' ? colors.shadowTint : undefined,
+                  shadowOpacity: attachmentGrammar === 'fluid' ? 0.12 : attachmentGrammar === 'organic' ? 0.05 : 0,
+                  shadowRadius: attachmentGrammar === 'fluid' ? 8 : 5,
+                  shadowOffset: { width: 0, height: 3 },
+                  elevation: attachmentGrammar === 'fluid' ? 1 : 0,
+                  overflow: 'hidden',
+                }}
+              >
+                {attachmentGrammar === 'organic' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', width: 30, height: 18, borderRadius: 15, right: -5, top: -5, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.26 }} /> : null}
+                {attachmentGrammar === 'material' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.1 }} /> : null}
+                {attachmentGrammar === 'fluid' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 1, right: 8, left: 8, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.5 }} /> : null}
                 <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: attachmentLabelMaxWidth }}>
                   {item.name}
                 </Text>
@@ -972,7 +997,9 @@ interface IconButtonProps {
 }
 
 function AttachmentChip({ label, accessibilityHint, active = false, disabled = false, minWidth, maxWidth, children, onPress }: IconButtonProps) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isGlass, canonicalThemeId } = useAppTheme()
+  const expression = resolveThemeComponentExpression(canonicalThemeId, 'attachment')
+  const grammar = expression.motion
   const idleBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
   const idleBorder = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
@@ -984,21 +1011,32 @@ function AttachmentChip({ label, accessibilityHint, active = false, disabled = f
       accessibilityLabel={label}
       accessibilityHint={accessibilityHint}
       accessibilityState={active ? { selected: true, busy: true } : undefined}
+      testID={`composer-attachment-action-${canonicalThemeId}`}
       hitSlop={COMPOSER_CONTROL_HIT_SLOP}
       style={{
         minHeight: 44,
         minWidth,
         maxWidth,
-        paddingHorizontal: 12,
-        borderRadius: colors.ui.radius.controlLarge,
+        paddingHorizontal: grammar === 'precision' ? 8 : grammar === 'organic' ? 14 : 12,
+        borderRadius: grammar === 'precision' ? 2 : grammar === 'organic' ? 14 : grammar === 'material' ? 10 : colors.ui.radius.controlLarge,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
-        backgroundColor: disabled ? 'transparent' : active ? colors.ui.tone.danger.background : idleBackground,
-        borderWidth: disabled || colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+        gap: grammar === 'organic' ? 8 : 6,
+        backgroundColor: disabled ? 'transparent' : active ? colors.ui.tone.danger.background : grammar === 'precision' ? 'transparent' : idleBackground,
+        borderWidth: disabled ? 1 : expression.border === 'none' ? 0 : grammar === 'precision' ? 0 : 1,
+        borderBottomWidth: !disabled && grammar === 'precision' ? StyleSheet.hairlineWidth : undefined,
         borderColor: disabled ? colors.ui.control.disabledBorder : active ? colors.ui.tone.danger.border : idleBorder,
+        shadowColor: grammar === 'fluid' || grammar === 'organic' ? colors.shadowTint : undefined,
+        shadowOpacity: grammar === 'fluid' ? 0.12 : grammar === 'organic' ? 0.05 : 0,
+        shadowRadius: grammar === 'fluid' ? 8 : 5,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: grammar === 'fluid' ? 2 : 0,
+        overflow: 'hidden',
       }}
     >
+      {grammar === 'organic' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', width: 34, height: 20, borderRadius: 17, right: -6, top: -5, backgroundColor: colors.ui.icon.accentBackground, opacity: active ? 0.36 : 0.2 }} /> : null}
+      {grammar === 'material' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.ui.icon.accentBackground, opacity: active ? 0.2 : 0.08 }} /> : null}
+      {grammar === 'fluid' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 1, right: 10, left: 10, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: active ? 0.72 : 0.42 }} /> : null}
       {children}
       <Text numberOfLines={1} style={{ color: disabled ? colors.ui.control.disabledForeground : active ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 11, fontWeight: '800', flexShrink: 1 }}>{label}</Text>
     </IslePressable>

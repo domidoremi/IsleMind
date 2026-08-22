@@ -117,7 +117,7 @@ export function ChatSetupWorkspace({
   topChromeInset,
   visualTopInset,
 }: ChatSetupWorkspaceProps) {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const { width: setupViewportWidth, height: setupViewportHeight } = useWindowDimensions()
   const setupLayout = resolveProductMobileChatSetupLayout(
@@ -161,7 +161,7 @@ export function ChatSetupWorkspace({
       style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 8, paddingTop: visualTopInset + topChromeInset, paddingBottom: 4 }}
     >
       <ChatPersistentHeader
-        themeId={themeId}
+        themeId={canonicalThemeId}
         colors={colors}
         title={t('chat.startChat')}
         leadingGlyph="conversation"
@@ -276,7 +276,7 @@ export function ChatSetupWorkspace({
     <>
       <ChatScreenFrame embedded={embedded} backgroundState={backgroundState} compactViewport={compactViewport}>
         <ChatSetupThemeExperience
-          themeId={themeId}
+          themeId={canonicalThemeId}
           colors={colors}
           compactViewport={compactViewport}
           chrome={setupChrome}

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
-import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
@@ -13,7 +12,7 @@ import { getSettingsModelDisplayAlias, SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH
 import { getModelConfig } from '@/types/modelCatalog'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIModel, AIProvider } from '@/types/providerContracts'
-import type { SettingsModelDisplayAlias } from '@/types/settingsContracts'
+import type { CanonicalThemeId, SettingsModelDisplayAlias } from '@/types/settingsContracts'
 import { normalizeSearchText } from '@/utils/text'
 import { getReasoningControlOptions, getReasoningControlValue, getReasoningEffortOptions, modelSupportsSamplingControls, resolveReasoningControlValue } from '@/utils/modelReasoning'
 import { getProviderDisplayModel, resolveProviderModelAlias } from '@/utils/providerModels'
@@ -23,8 +22,6 @@ import { getProviderParameterEntry } from '@/bootstrap/providerParameterMatrix'
 import { resolveConversationGenerationParameterRanges } from '@/bootstrap/providerConversationGeneration'
 import { providerSupportsNativeSearch } from '@/bootstrap/conversationProviderNativeSearchAdmission'
 import { providerSupportsVisionInput, resolveProviderNativeToolSupport } from '@/services/chatProviderNativeToolUtils'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
-import { motionTokens } from '@/theme/animation'
 import { resolveGenerationParameterSources, type GenerationParameterKey } from '@/core'
 import { getChatModelCanonicalDisplayName, resolveChatModelDisplayName } from './chatIdentityPresentation'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
@@ -77,7 +74,7 @@ export function ChatOptionsPanel({
   scope?: 'essential' | 'full'
 }) {
   const { t } = useTranslation()
-  const { isGlass, isLimeRoad } = useAppTheme()
+  const { isGlass, isLimeRoad, canonicalThemeId } = useAppTheme()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
   const updateConversation = useChatStore((state) => state.updateConversation)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
@@ -366,93 +363,28 @@ export function ChatOptionsPanel({
         {showPickerEmptyState ? (
           <PickerEmptyState title={pickerEmptyTitle} description={pickerEmptyDescription} minHeight={pickerEmptyMinHeight} />
         ) : (
-          <View style={{ flexDirection: compactPicker ? 'column' : 'row', gap: 12, alignItems: 'stretch', minHeight: pickerMinHeight }}>
-            <View style={{ flex: compactPicker ? undefined : 0.42, minWidth: compactPicker ? undefined : 0, gap: 8 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700' }}>{t('settings.providerManagement')}</Text>
-                <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
-                  {normalizedQuery ? `${visibleProviders.length}/${policySwitchableProviders.length}` : t('chat.countItems', { count: policySwitchableProviders.length })}
-                </Text>
-              </View>
-              <View
-                style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}
-                pointerEvents="box-none"
-              >
-                {visibleProviders.map((item) => (
-                  <IslePressable
-                    key={item.id}
-                    haptic
-                    onPress={() => setSelectedProviderId(item.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${resolveProviderDisplayName(item, providerFallbackName)}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`}
-                    accessibilityHint={t('chat.selectProviderAccessibilityHint', { provider: resolveProviderDisplayName(item, providerFallbackName) })}
-                    accessibilityState={{ selected: selectedProvider?.id === item.id }}
-                    hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
-                    style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
-                  >
-                    <PickerChip
-                      active={selectedProvider?.id === item.id}
-                      label={`${resolveProviderDisplayName(item, providerFallbackName)}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`}
-                      maxWidth={compactPicker ? panelWidth - 48 : Math.max(112, panelWidth * 0.34)}
-                    />
-                  </IslePressable>
-                ))}
-              </View>
-            </View>
-
-            <View style={{ flex: 1, minWidth: 0, gap: 8 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700' }}>{t('chat.model')}</Text>
-                <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', flexShrink: 1 }}>
-                  {selectedProvider ? resolveProviderDisplayName(selectedProvider, providerFallbackName) : t('chat.notSelected')} · {selectedModels.length || t('chat.none')}
-                </Text>
-              </View>
-              {selectedModels.length ? (
-                <View
-                  style={{ gap: 10, paddingRight: 4, paddingBottom: 2 }}
-                  pointerEvents="box-none"
-                >
-                  {selectedModelGroups.map((group) => (
-                    <View key={group.id} style={{ gap: 7 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>
-                          {group.label}
-                        </Text>
-                        <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 13, fontWeight: '800' }}>
-                          {t('chat.countItems', { count: group.models.length })}
-                        </Text>
-                      </View>
-                      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                        {group.models.map((model) => (
-                          <IslePressable
-                            key={`${group.id}:${model.id}`}
-                            haptic
-                            onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}
-                            accessibilityRole="button"
-                            accessibilityLabel={`${group.label} · ${model.name} · ${model.id}`}
-                            accessibilityHint={t('chat.selectModelAccessibilityHint', { provider: selectedProvider ? resolveProviderDisplayName(selectedProvider, providerFallbackName) : t('chat.notSelected'), model: `${model.name} · ${model.id}` })}
-                            accessibilityState={{ selected: selectedProviderIsCurrent && conversation.model === model.id }}
-                            hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
-                            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
-                          >
-                            <PickerChip
-                              active={selectedProviderIsCurrent && conversation.model === model.id}
-                              label={model.name}
-                              subtitle={model.subtitle}
-                              badges={model.badges}
-                              maxWidth={compactPicker ? panelWidth - 48 : Math.max(128, panelWidth * 0.42)}
-                            />
-                          </IslePressable>
-                        ))}
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <PickerEmptyState title={modelEmptyTitle} description={t('chat.providerNoModelsSyncHint')} minHeight={modelListHeight} />
-              )}
-            </View>
-          </View>
+          <ThemeModelPicker
+            family={canonicalThemeId}
+            colors={colors}
+            compactPicker={compactPicker}
+            panelWidth={panelWidth}
+            providerFallbackName={providerFallbackName}
+            visibleProviders={visibleProviders}
+            providerCount={policySwitchableProviders.length}
+            normalizedQuery={normalizedQuery}
+            selectedProvider={selectedProvider}
+            selectedProviderIsCurrent={selectedProviderIsCurrent}
+            selectedModels={selectedModels}
+            selectedModelGroups={selectedModelGroups}
+            conversationModel={conversation.model}
+            modelEmptyTitle={modelEmptyTitle}
+            modelEmptyDescription={t('chat.providerNoModelsSyncHint')}
+            modelListHeight={modelListHeight}
+            pickerMinHeight={pickerMinHeight}
+            onSelectProvider={setSelectedProviderId}
+            onSwitchModel={(model) => selectedProvider && onSwitchModel(selectedProvider, model)}
+            t={t}
+          />
         )}
         </View>
         {currentCapabilityBadges.length ? (
@@ -611,6 +543,209 @@ function matrixParameterSendable(
   return field ? field.status === 'sendable' : entry?.status === 'sendable'
 }
 
+type ThemeModelPickerProps = {
+  family: CanonicalThemeId
+  colors: ReturnType<typeof useAppTheme>['colors']
+  compactPicker: boolean
+  panelWidth: number
+  providerFallbackName: string
+  visibleProviders: AIProvider[]
+  providerCount: number
+  normalizedQuery: string
+  selectedProvider?: AIProvider
+  selectedProviderIsCurrent: boolean
+  selectedModels: ModelPickerItem[]
+  selectedModelGroups: ModelPickerGroup[]
+  conversationModel: string
+  modelEmptyTitle: string
+  modelEmptyDescription: string
+  modelListHeight: number
+  pickerMinHeight?: number
+  onSelectProvider: (providerId: string) => void
+  onSwitchModel: (modelId: string) => void
+  t: TFunction
+}
+
+function ThemeModelPicker(props: ThemeModelPickerProps) {
+  switch (props.family) {
+    case 'minimal': return <MinimalModelPicker {...props} />
+    case 'monet': return <MonetModelPicker {...props} />
+    case 'material': return <MaterialModelPicker {...props} />
+    case 'liquid-glass': return <LiquidGlassModelPicker {...props} />
+  }
+}
+
+function PickerSectionHeading({ label, detail, colors, accent = false }: { label: string; detail?: string; colors: ThemeModelPickerProps['colors']; accent?: boolean }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <Text style={{ color: accent ? colors.text : colors.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: accent ? 0.2 : 0 }}>{label}</Text>
+      {detail ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', flexShrink: 1 }}>{detail}</Text> : null}
+    </View>
+  )
+}
+
+function ProviderOption({ item, active, family, maxWidth, colors, providerFallbackName, t, onPress }: { item: AIProvider; active: boolean; family: CanonicalThemeId; maxWidth: number; colors: ThemeModelPickerProps['colors']; providerFallbackName: string; t: TFunction; onPress: () => void }) {
+  const label = `${resolveProviderDisplayName(item, providerFallbackName)}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`
+  return (
+    <IslePressable
+      haptic
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={t('chat.selectProviderAccessibilityHint', { provider: resolveProviderDisplayName(item, providerFallbackName) })}
+      accessibilityState={{ selected: active }}
+      hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, minWidth: 0, maxWidth, flexShrink: 1, justifyContent: 'center' }}
+    >
+      {family === 'minimal' ? (
+        <View style={{ minHeight: 42, paddingHorizontal: 4, justifyContent: 'center', borderBottomWidth: active ? 2 : StyleSheet.hairlineWidth, borderBottomColor: active ? colors.text : colors.ui.semantic.chrome.border }}>
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: active ? '900' : '700' }}>{label}</Text>
+        </View>
+      ) : family === 'monet' ? (
+        <View style={{ minHeight: 44, minWidth: 0, maxWidth, paddingHorizontal: 12, borderTopLeftRadius: 14, borderBottomRightRadius: 16, justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+        </View>
+      ) : family === 'material' ? (
+        <View style={{ minHeight: 48, minWidth: 0, maxWidth, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center', backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
+          {active ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, borderRadius: 2, backgroundColor: colors.primary }} /> : null}
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+        </View>
+      ) : (
+        <View style={{ minHeight: 48, minWidth: 0, maxWidth, paddingHorizontal: 12, borderRadius: 18, justifyContent: 'center', backgroundColor: active ? colors.ui.semantic.surface.overlay : colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+        </View>
+      )}
+    </IslePressable>
+  )
+}
+
+function ModelOption({ model, groupLabel, active, family, maxWidth, colors, selectedProvider, providerFallbackName, t, onPress }: { model: ModelPickerItem; groupLabel: string; active: boolean; family: CanonicalThemeId; maxWidth: number; colors: ThemeModelPickerProps['colors']; selectedProvider?: AIProvider; providerFallbackName: string; t: TFunction; onPress: () => void }) {
+  return (
+    <IslePressable
+      haptic
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${groupLabel} · ${model.name} · ${model.id}`}
+      accessibilityHint={t('chat.selectModelAccessibilityHint', { provider: selectedProvider ? resolveProviderDisplayName(selectedProvider, providerFallbackName) : t('chat.notSelected'), model: `${model.name} · ${model.id}` })}
+      accessibilityState={{ selected: active }}
+      hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, minWidth: 0, maxWidth, flexShrink: 1, justifyContent: 'center' }}
+    >
+      {family === 'minimal' ? (
+        <View style={{ minHeight: 42, maxWidth, paddingHorizontal: 4, justifyContent: 'center', borderBottomWidth: active ? 2 : StyleSheet.hairlineWidth, borderBottomColor: active ? colors.text : colors.ui.semantic.chrome.border }}>
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: active ? '900' : '700' }}>{model.name}</Text>
+          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 9, marginTop: 1 }}>{model.subtitle}</Text> : null}
+          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 8.5, marginTop: 1 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
+        </View>
+      ) : family === 'monet' ? (
+        <View style={{ minHeight: model.subtitle ? 54 : 46, maxWidth, minWidth: 0, paddingHorizontal: 12, borderTopLeftRadius: 14, borderBottomRightRadius: 16, justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{model.name}</Text>
+          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: 9, marginTop: 2 }}>{model.subtitle}</Text> : null}
+          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: 8.5, marginTop: 1 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
+        </View>
+      ) : family === 'material' ? (
+        <View style={{ minHeight: model.subtitle ? 56 : 48, maxWidth, minWidth: 0, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center', backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
+          {active ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, borderRadius: 2, backgroundColor: colors.primary }} /> : null}
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{model.name}</Text>
+          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textTertiary, fontSize: 9, marginTop: 2 }}>{model.subtitle}</Text> : null}
+          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 9, marginTop: 2 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
+        </View>
+      ) : (
+        <View style={{ minHeight: model.subtitle ? 56 : 48, maxWidth, minWidth: 0, paddingHorizontal: 12, borderRadius: 18, justifyContent: 'center', backgroundColor: active ? colors.ui.semantic.surface.overlay : colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
+          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{model.name}</Text>
+          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 9, marginTop: 2 }}>{model.subtitle}</Text> : null}
+          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 8.5, marginTop: 1 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
+        </View>
+      )}
+    </IslePressable>
+  )
+}
+
+function ModelGroups({ props, family, modelMaxWidth, groupStyle }: { props: ThemeModelPickerProps; family: CanonicalThemeId; modelMaxWidth: number; groupStyle?: object }) {
+  return (
+    <View style={[{ gap: family === 'minimal' ? 8 : 12 }, groupStyle]} pointerEvents="box-none">
+      {props.selectedModelGroups.map((group) => (
+        <View key={group.id} style={{ gap: family === 'material' ? 7 : 8 }}>
+          <PickerSectionHeading label={group.label} detail={props.t('chat.countItems', { count: group.models.length })} colors={props.colors} accent={family === 'material'} />
+          <View style={{ flexDirection: 'row', gap: family === 'minimal' ? 10 : 8, flexWrap: 'wrap' }}>
+            {group.models.map((model) => (
+              <ModelOption key={`${group.id}:${model.id}`} model={model} groupLabel={group.label} active={props.selectedProviderIsCurrent && props.conversationModel === model.id} family={family} maxWidth={modelMaxWidth} colors={props.colors} selectedProvider={props.selectedProvider} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSwitchModel(model.id)} />
+            ))}
+          </View>
+        </View>
+      ))}
+    </View>
+  )
+}
+
+function MinimalModelPicker(props: ThemeModelPickerProps) {
+  return (
+    <View testID="chat-model-picker-minimal" style={{ flexDirection: props.compactPicker ? 'column' : 'row', gap: 18, minHeight: props.pickerMinHeight }}>
+      <View style={{ flex: props.compactPicker ? undefined : 0.36, gap: 8 }}>
+        <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
+        <View style={{ gap: 2 }} pointerEvents="box-none">
+          {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item} active={props.selectedProvider?.id === item.id} family="minimal" maxWidth={props.compactPicker ? props.panelWidth - 48 : props.panelWidth * 0.34} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSelectProvider(item.id)} />)}
+        </View>
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 8 }}>
+        <PickerSectionHeading label={props.t('chat.model')} detail={`${props.selectedProvider ? resolveProviderDisplayName(props.selectedProvider, props.providerFallbackName) : props.t('chat.notSelected')} · ${props.selectedModels.length || props.t('chat.none')}`} colors={props.colors} />
+        {props.selectedModels.length ? <ModelGroups props={props} family="minimal" modelMaxWidth={props.compactPicker ? props.panelWidth - 48 : props.panelWidth * 0.42} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}
+      </View>
+    </View>
+  )
+}
+
+function MonetModelPicker(props: ThemeModelPickerProps) {
+  return (
+    <View testID="chat-model-picker-monet" style={{ gap: 14, minHeight: props.pickerMinHeight, paddingHorizontal: 2 }}>
+      <View style={{ gap: 9 }}>
+        <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }} pointerEvents="box-none">
+          {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item} active={props.selectedProvider?.id === item.id} family="monet" maxWidth={props.compactPicker ? props.panelWidth - 52 : props.panelWidth * 0.36} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSelectProvider(item.id)} />)}
+        </View>
+      </View>
+      <View style={{ marginLeft: props.compactPicker ? 0 : 12, paddingTop: 2 }}>
+        <PickerSectionHeading label={props.t('chat.model')} detail={`${props.selectedProvider ? resolveProviderDisplayName(props.selectedProvider, props.providerFallbackName) : props.t('chat.notSelected')} · ${props.selectedModels.length || props.t('chat.none')}`} colors={props.colors} />
+        <View style={{ marginTop: 10 }}>{props.selectedModels.length ? <ModelGroups props={props} family="monet" modelMaxWidth={props.compactPicker ? props.panelWidth - 52 : props.panelWidth * 0.44} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}</View>
+      </View>
+    </View>
+  )
+}
+
+function MaterialModelPicker(props: ThemeModelPickerProps) {
+  return (
+    <View testID="chat-model-picker-material" style={{ flexDirection: props.compactPicker ? 'column' : 'row', gap: 10, minHeight: props.pickerMinHeight }}>
+      <View style={{ flex: props.compactPicker ? undefined : 0.4, padding: 10, borderRadius: 14, backgroundColor: props.colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: props.colors.ui.semantic.chrome.border, gap: 8 }}>
+        <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} accent />
+        <View style={{ gap: 7 }} pointerEvents="box-none">
+          {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item} active={props.selectedProvider?.id === item.id} family="material" maxWidth={props.compactPicker ? props.panelWidth - 44 : props.panelWidth * 0.34} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSelectProvider(item.id)} />)}
+        </View>
+      </View>
+      <View style={{ flex: 1, minWidth: 0, padding: 10, borderRadius: 14, backgroundColor: props.colors.ui.semantic.surface.raised, borderWidth: 1, borderColor: props.colors.ui.semantic.chrome.border, gap: 8 }}>
+        <PickerSectionHeading label={props.t('chat.model')} detail={`${props.selectedProvider ? resolveProviderDisplayName(props.selectedProvider, props.providerFallbackName) : props.t('chat.notSelected')} · ${props.selectedModels.length || props.t('chat.none')}`} colors={props.colors} accent />
+        {props.selectedModels.length ? <ModelGroups props={props} family="material" modelMaxWidth={props.compactPicker ? props.panelWidth - 44 : props.panelWidth * 0.44} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}
+      </View>
+    </View>
+  )
+}
+
+function LiquidGlassModelPicker(props: ThemeModelPickerProps) {
+  return (
+    <View testID="chat-model-picker-liquid-glass" style={{ gap: 12, minHeight: props.pickerMinHeight, padding: 2, borderRadius: 20, backgroundColor: props.colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: props.colors.ui.actionBar.itemBorder }}>
+      <View style={{ padding: 8 }}>
+        <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }} pointerEvents="box-none">
+          {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item} active={props.selectedProvider?.id === item.id} family="liquid-glass" maxWidth={props.compactPicker ? props.panelWidth - 52 : props.panelWidth * 0.36} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSelectProvider(item.id)} />)}
+        </View>
+      </View>
+      <View style={{ marginLeft: props.compactPicker ? 0 : 10, padding: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: props.colors.ui.actionBar.itemBorder }}>
+        <PickerSectionHeading label={props.t('chat.model')} detail={`${props.selectedProvider ? resolveProviderDisplayName(props.selectedProvider, props.providerFallbackName) : props.t('chat.notSelected')} · ${props.selectedModels.length || props.t('chat.none')}`} colors={props.colors} />
+        <View style={{ marginTop: 8 }}>{props.selectedModels.length ? <ModelGroups props={props} family="liquid-glass" modelMaxWidth={props.compactPicker ? props.panelWidth - 52 : props.panelWidth * 0.44} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}</View>
+      </View>
+    </View>
+  )
+}
+
 const MODEL_MENU_ACTION_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 }
 const MODEL_MENU_CHIP_HIT_SLOP = { top: 6, bottom: 6, left: 4, right: 4 }
 
@@ -635,55 +770,6 @@ function PickerEmptyState({ title, description, minHeight }: { title: string; de
       <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
       <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>{description}</Text>
     </View>
-  )
-}
-
-function PickerChip({ label, subtitle, active, maxWidth, badges = [] }: { label: string; subtitle?: string; active: boolean; maxWidth: number; badges?: ModelCapabilityBadge[] }) {
-  const { colors, isGlass, isLimeRoad } = useAppTheme()
-  const motion = useMotionPreference()
-  const activeBackground = colors.ui.control.primaryBackground
-  const activeForeground = colors.ui.control.primaryForeground
-  const idleBackground = isLimeRoad ? colors.ui.semantic.surface.base : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const idleBorder = isLimeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const labelMaxWidth = Math.max(24, maxWidth - 22 - (badges.length ? badges.length * 18 + 6 : 0))
-  return (
-    <MotiView
-      animate={{
-        backgroundColor: active ? activeBackground : idleBackground,
-        borderColor: active ? colors.ui.control.primaryBorder : idleBorder,
-      }}
-      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
-      style={{
-        maxWidth,
-        minHeight: subtitle ? 52 : 44,
-        borderRadius: colors.ui.radius.controlLarge,
-        paddingHorizontal: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
-        gap: 6,
-        alignSelf: 'flex-start',
-        borderWidth: isLimeRoad ? 1 : StyleSheet.hairlineWidth,
-      }}
-    >
-      <View style={{ maxWidth: labelMaxWidth, minWidth: 0 }}>
-        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: active ? activeForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}>
-          {label}
-        </Text>
-        {subtitle ? (
-          <Text numberOfLines={1} ellipsizeMode="middle" style={{ color: active ? activeForeground : colors.textTertiary, opacity: active ? 0.82 : 1, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false, marginTop: 1 }}>
-            {subtitle}
-          </Text>
-        ) : null}
-      </View>
-      {badges.length ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-          {badges.slice(0, 4).map((badge) => (
-            <AppIcon key={badge.key} name={badge.icon} color={active ? activeForeground : colors.textTertiary} size={12} strokeWidth={appIconStroke.strong} />
-          ))}
-        </View>
-      ) : null}
-    </MotiView>
   )
 }
 

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import { IsleButton } from './Controls'
 import { IslePanel } from './Panel'
+import { IslePressable } from './Pressable'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import {
   createAppConfirmSettlementRegistry,
@@ -20,6 +21,7 @@ import {
 import { resolveAppFeedbackTimeout } from '@/components/ui/appFeedbackTimeout'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
 
 type DialogTone = AppFeedbackTone
 
@@ -106,7 +108,7 @@ function dialogBorderWidth(colors: ReturnType<typeof useAppTheme>['colors']) {
 }
 
 export function IsleDialogProvider({ children, updateNotice }: { children: ReactNode; updateNotice?: string | null }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const motion = useMotionPreference()
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
@@ -116,8 +118,20 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const modalPaddingBottom = Math.max(insets.bottom, 12)
   const dialogMaxWidth = Math.min(460, Math.max(240, width - modalPaddingHorizontal * 2))
   const dialogMaxHeight = Math.max(240, height - modalPaddingTop - modalPaddingBottom)
-  const routeDialog = colors.ui.family === 'lime-road'
+  const routeDialog = canonicalThemeId === 'monet'
   const toastMaxWidth = Math.min(420, Math.max(240, width - 32))
+  const themeExpression = resolveThemeExpression(canonicalThemeId)
+  const dialogExpression = resolveThemeComponentExpression(canonicalThemeId, 'dialog')
+  const toastExpression = resolveThemeComponentExpression(canonicalThemeId, 'toast')
+  const dialogEnter = dialogExpression.motion === 'precision'
+    ? { opacity: 0, translateY: 4, scale: 1 }
+    : dialogExpression.motion === 'organic'
+      ? { opacity: 0, translateY: 24, scale: 0.99 }
+      : dialogExpression.motion === 'material'
+        ? { opacity: 0, translateY: 14, scale: 0.96 }
+        : { opacity: 0, translateY: 18, scale: 0.94 }
+  const toastTravel = toastExpression.motion === 'precision' ? 4 : toastExpression.motion === 'organic' ? 14 : toastExpression.motion === 'material' ? 8 : 12
+  const toastScale = toastExpression.motion === 'precision' ? 1 : toastExpression.motion === 'organic' ? 0.98 : toastExpression.motion === 'material' ? 0.96 : 0.92
   const [dialogQueue, setDialogQueue] = useState<DialogState[]>([])
   const [toastQueue, setToastQueue] = useState(EMPTY_APP_TOAST_QUEUE)
   const [banners, setBanners] = useState<BannerState[]>([])
@@ -240,9 +254,9 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
           {dialog ? (
             <MotiView
               key={dialog.id}
-              from={motion === 'full' ? { opacity: 0, translateY: routeDialog ? 28 : 10 } : { opacity: 1, translateY: 0 }}
-              animate={{ opacity: 1, translateY: 0 }}
-              transition={{ type: 'timing', duration: motion === 'full' ? (routeDialog ? 188 : 144) : 1 }}
+              from={motion === 'full' ? dialogEnter : { opacity: 1, translateY: 0, scale: 1 }}
+              animate={{ opacity: 1, translateY: 0, scale: 1 }}
+              transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.panel : 1 }}
               style={{ width: '100%', maxWidth: routeDialog ? Math.min(520, width - modalPaddingHorizontal * 2) : dialogMaxWidth, maxHeight: dialogMaxHeight, alignSelf: 'center' }}
             >
               <View accessibilityViewIsModal style={{ maxHeight: '100%' }}>
@@ -282,11 +296,11 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
           <MotiView
             key={toast.id}
             from={motion === 'full'
-              ? { opacity: 0, translateY: toast.position === 'bottom' ? 10 : -10 }
-              : { opacity: 1, translateY: 0 }}
-            animate={{ opacity: 1, translateY: 0 }}
-            transition={{ type: 'timing', duration: motion === 'full' ? 112 : 1 }}
-            exit={motion === 'full' ? { opacity: 0, translateY: toast.position === 'bottom' ? 8 : -8 } : { opacity: 0 }}
+              ? { opacity: 0, translateY: toast.position === 'bottom' ? toastTravel : -toastTravel, scale: toastScale }
+              : { opacity: 1, translateY: 0, scale: 1 }}
+            animate={{ opacity: 1, translateY: 0, scale: 1 }}
+            transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.emphasis : 1 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: toast.position === 'bottom' ? toastTravel * 0.7 : -toastTravel * 0.7, scale: toastScale } : { opacity: 0 }}
             style={{ width: '100%', maxWidth: toastMaxWidth }}
           >
             <AppToastSurface
@@ -314,20 +328,48 @@ function AppToastSurface({
   onAction: () => void
   onDismiss: () => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const tone = toast.tone ?? 'default'
   const toneToken = dialogToneToken(colors, tone === 'default' ? 'info' : tone)
+  const toastExpression = resolveThemeComponentExpression(canonicalThemeId, 'toast')
+  const grammar = toastExpression.motion
+  const radius = toastExpression.shape === 'capsule'
+    ? colors.ui.radius.panel
+    : toastExpression.shape === 'material'
+      ? colors.ui.radius.controlMiddle
+      : toastExpression.shape === 'soft'
+        ? colors.ui.radius.controlLarge
+        : 2
+  const surface = grammar === 'precision'
+    ? colors.ui.semantic.surface.base
+    : grammar === 'organic'
+      ? colors.ui.semantic.surface.base
+      : grammar === 'material'
+        ? colors.ui.semantic.surface.raised
+        : colors.ui.semantic.surface.overlay
+  const material = grammar === 'fluid' ? 'glass' : grammar === 'material' ? 'raised' : 'chrome'
 
   return (
     <IslePanel
-      material="chrome"
+      material={material}
+      blur={grammar === 'fluid'}
       elevated
-      radius={Math.min(colors.ui.radius.panel, 8)}
-      style={{ backgroundColor: colors.ui.semantic.chrome.background, borderColor: toneToken.border }}
-      contentStyle={{ padding: 0, backgroundColor: colors.ui.semantic.chrome.background }}
+      radius={radius}
+      style={{
+        backgroundColor: surface,
+        borderColor: toneToken.border,
+        borderWidth: grammar === 'precision' ? 0 : grammar === 'organic' || grammar === 'fluid' ? 1 : StyleSheet.hairlineWidth,
+        borderLeftWidth: grammar === 'precision' || grammar === 'material' ? 3 : undefined,
+        borderLeftColor: toneToken.foreground,
+      }}
+      contentStyle={{ padding: 0, backgroundColor: grammar === 'fluid' ? 'transparent' : surface }}
     >
-      <View style={{ height: 2, backgroundColor: toneToken.foreground }} />
+      <View testID={`theme-toast-${canonicalThemeId}`} style={{ overflow: 'hidden', borderRadius: radius }}>
+      {grammar === 'precision' ? <View style={{ height: 1, backgroundColor: toneToken.foreground }} /> : null}
+      {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.26 }} /> : null}
+      {grammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: toneToken.foreground, opacity: 0.035 }} /> : null}
+      {grammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 20, right: 20, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.64 }} /> : null}
       <View
         accessible
         accessibilityRole="alert"
@@ -335,7 +377,7 @@ function AppToastSurface({
         accessibilityLabel={[toast.title, toast.message, toast.occurrences > 1 ? String(toast.occurrences) : null].filter(Boolean).join('. ')}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingLeft: 12, paddingRight: 7, paddingVertical: 10 }}
       >
-        <View style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: toastToneSurface(tone, colors) }}>
+        <View style={{ width: grammar === 'precision' ? 22 : 30, height: grammar === 'precision' ? 22 : 30, alignItems: 'center', justifyContent: 'center', borderRadius: grammar === 'precision' ? 2 : grammar === 'material' ? 15 : 8, backgroundColor: grammar === 'precision' ? 'transparent' : toastToneSurface(tone, colors), borderWidth: grammar === 'fluid' ? StyleSheet.hairlineWidth : 0, borderColor: toneToken.border }}>
           <AppIcon name={toastIconName(tone)} color={toastToneForeground(tone, colors)} size={16} strokeWidth={appIconStroke.strong} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -350,29 +392,29 @@ function AppToastSurface({
           {toast.message ? <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2 }}>{toast.message}</Text> : null}
         </View>
         {toast.actionLabel ? (
-          <Pressable
+          <IslePressable
             accessibilityRole="button"
             onPress={onAction}
-            style={({ pressed }) => ({
+            style={{
               minHeight: 44,
               maxWidth: 112,
               justifyContent: 'center',
               paddingHorizontal: 9,
-              opacity: pressed ? 0.7 : 1,
-            })}
+            }}
           >
             <Text numberOfLines={2} style={{ color: colors.ui.control.link, fontSize: 12, lineHeight: 16, fontWeight: '900', textAlign: 'center' }}>{toast.actionLabel}</Text>
-          </Pressable>
+          </IslePressable>
         ) : null}
-        <Pressable
+        <IslePressable
           accessibilityRole="button"
           accessibilityLabel={t('common.close')}
           hitSlop={4}
           onPress={onDismiss}
-          style={({ pressed }) => ({ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.6 : 1 })}
+          style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
         >
           <AppIcon name="close" color={colors.textTertiary} size={17} strokeWidth={appIconStroke.strong} />
-        </Pressable>
+        </IslePressable>
+      </View>
       </View>
     </IslePanel>
   )
@@ -471,10 +513,14 @@ export function useIsleDialog(): IsleDialogApi {
 }
 
 function ThemeDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
-  const { colors } = useAppTheme()
-  if (colors.ui.family === 'lime-road') return <LimeRoadDialogSurface dialog={dialog} onClose={onClose} />
-  if (colors.ui.family === 'markdown') return <MarkdownDialogSurface dialog={dialog} onClose={onClose} />
-  return <MinimalDialogSurface dialog={dialog} onClose={onClose} />
+  const { canonicalThemeId } = useAppTheme()
+  switch (canonicalThemeId) {
+    case 'monet': return <LimeRoadDialogSurface dialog={dialog} onClose={onClose} />
+    case 'material': return <MarkdownDialogSurface dialog={dialog} onClose={onClose} />
+    case 'liquid-glass': return <LiquidGlassDialogSurface dialog={dialog} onClose={onClose} />
+    case 'minimal':
+    default: return <MinimalDialogSurface dialog={dialog} onClose={onClose} />
+  }
 }
 
 function MinimalDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
@@ -543,18 +589,22 @@ function LimeRoadDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
   const material = colors.material.sheet
   const tone = dialogToneToken(colors, dialog.tone === 'default' || !dialog.tone ? 'info' : dialog.tone)
   return (
-    <View testID="dialog-experience-lime-road" accessibilityRole="alert" style={{ maxHeight: '100%' }}>
+    <View testID="dialog-experience-monet" accessibilityRole="alert" style={{ maxHeight: '100%' }}>
       <IslePanel
-        material="chrome"
+        material="raised"
         elevated
-        radius={4}
+        radius={colors.ui.radius.modal}
         style={{ maxHeight: '100%', backgroundColor: material.surface, borderColor: colors.material.strokeStrong }}
         contentStyle={{ maxHeight: '100%', padding: 0, backgroundColor: colors.ui.semantic.surface.base }}
       >
-      <View style={{ height: 4, backgroundColor: colors.primary }} />
-      <DialogScrollableContent contentStyle={{ padding: 16, borderLeftWidth: 3, borderLeftColor: tone.foreground }}>
+      <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: 5, flexDirection: 'row', gap: 5, paddingHorizontal: 14, paddingTop: 2 }}>
+        <View style={{ flex: 1.2, height: 2, borderRadius: 2, backgroundColor: colors.primary }} />
+        <View style={{ flex: 0.46, height: 2, borderRadius: 2, backgroundColor: colors.accent }} />
+        <View style={{ flex: 0.74, height: 2, borderRadius: 2, backgroundColor: tone.foreground }} />
+      </View>
+      <DialogScrollableContent contentStyle={{ padding: 18, borderLeftWidth: 2, borderLeftColor: tone.foreground }}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-            <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 21, lineHeight: 26, fontWeight: '900' }}>{dialog.title}</Text>
+            <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 21, lineHeight: 28, fontWeight: '700' }}>{dialog.title}</Text>
             <DialogCloseButton onPress={() => onClose(false)} compact />
           </View>
           {dialog.message ? (
@@ -572,15 +622,15 @@ function LimeRoadDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
           ) : null}
           {dialog.renderBody ? <View style={{ marginTop: 13 }}>{dialog.renderBody()}</View> : null}
       </DialogScrollableContent>
-      <View style={{ padding: 12, flexDirection: 'row', gap: 9, borderTopWidth: 1, borderTopColor: colors.material.stroke, backgroundColor: material.chrome }}>
+      <View style={{ padding: 14, flexDirection: 'row', gap: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.material.stroke, backgroundColor: material.chrome }}>
         {dialog.kind === 'confirm' ? (
-          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.82, minWidth: 0, borderRadius: 3 }} />
+          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.82, minWidth: 0, borderRadius: 18 }} />
         ) : null}
         <IsleButton
           label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
           tone={dialogActionTone(dialog)}
           onPress={() => onClose(true)}
-          style={{ flex: 1.18, minWidth: 0, borderRadius: 3 }}
+          style={{ flex: 1.18, minWidth: 0, borderRadius: 18 }}
         />
       </View>
       </IslePanel>
@@ -594,43 +644,86 @@ function MarkdownDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
   const material = colors.material.sheet
   return (
     <View
-      testID="dialog-experience-markdown"
+      testID="dialog-experience-material"
       accessibilityRole="alert"
-      style={{ maxHeight: '100%', overflow: 'hidden', borderWidth: 1, borderColor: colors.material.strokeStrong, backgroundColor: colors.ui.semantic.surface.base }}
+      style={{ maxHeight: '100%', overflow: 'hidden', borderRadius: 28, borderWidth: 1, borderColor: colors.material.stroke, backgroundColor: colors.ui.semantic.surface.muted }}
     >
-      <DialogScrollableContent contentStyle={{ paddingHorizontal: 15, paddingTop: 14, paddingBottom: 16 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingBottom: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.material.stroke }}>
-          <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: '900' }}>{dialog.title}</Text>
+      <DialogScrollableContent contentStyle={{ paddingHorizontal: 24, paddingTop: 24, paddingBottom: 20 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+          <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 24, lineHeight: 31, fontWeight: '500' }}>{dialog.title}</Text>
           <DialogCloseButton onPress={() => onClose(false)} compact />
         </View>
         {dialog.message ? (
-          <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20, marginTop: 8 }}>{dialog.message}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 9 }}>{dialog.message}</Text>
         ) : null}
         {dialog.chips?.length ? (
-          <View style={{ marginTop: 14, paddingVertical: 9, gap: 7, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.material.stroke }}>
+          <View style={{ marginTop: 16, paddingVertical: 10, gap: 7, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.material.stroke }}>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
               {dialog.chips.map((chip, index) => <DialogChip key={`${chip.label}-${index}`} chip={chip} />)}
             </View>
           </View>
         ) : null}
         {dialog.metrics?.length ? (
-          <View style={{ gap: 1, marginTop: 13 }}>
+          <View style={{ gap: 8, marginTop: 16 }}>
             {dialog.metrics.map((metric, index) => <DialogMetricRow key={`${metric.label}-${index}`} metric={metric} />)}
           </View>
         ) : null}
-        {dialog.renderBody ? <View style={{ marginTop: 14 }}>{dialog.renderBody()}</View> : null}
+        {dialog.renderBody ? <View style={{ marginTop: 16 }}>{dialog.renderBody()}</View> : null}
       </DialogScrollableContent>
-      <View style={{ paddingHorizontal: 12, paddingVertical: 11, flexDirection: 'row', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.material.stroke, backgroundColor: material.chrome }}>
+      <View style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', gap: 8, backgroundColor: material.chrome }}>
         {dialog.kind === 'confirm' ? (
-          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.85, minWidth: 0, borderRadius: 0 }} />
+          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.85, minWidth: 0, borderRadius: 22 }} />
         ) : null}
         <IsleButton
           label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
           tone={dialogActionTone(dialog)}
           onPress={() => onClose(true)}
-          style={{ flex: 1.15, minWidth: 0, borderRadius: 0 }}
+          style={{ flex: 1.15, minWidth: 0, borderRadius: 22 }}
         />
       </View>
+    </View>
+  )
+}
+
+function LiquidGlassDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const tone = dialogToneToken(colors, dialog.tone === 'default' || !dialog.tone ? 'info' : dialog.tone)
+  return (
+    <View testID="dialog-experience-liquid-glass" accessibilityRole="alert" style={{ maxHeight: '100%' }}>
+      <IslePanel
+        material="chrome"
+        blur
+        elevated
+        radius={28}
+        style={{ maxHeight: '100%', borderColor: colors.ui.semantic.chrome.border }}
+        contentStyle={{ maxHeight: '100%', padding: 0 }}
+      >
+        <DialogScrollableContent contentStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ color: colors.text, fontSize: 21, lineHeight: 28, fontWeight: '700' }}>{dialog.title}</Text>
+              {dialog.message ? <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20, marginTop: 7 }}>{dialog.message}</Text> : null}
+            </View>
+            <DialogCloseButton onPress={() => onClose(false)} />
+          </View>
+          {dialog.chips?.length ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 15 }}>
+              {dialog.chips.map((chip, index) => <DialogChip key={`${chip.label}-${index}`} chip={chip} />)}
+            </View>
+          ) : null}
+          {dialog.renderBody ? <View style={{ marginTop: 15 }}>{dialog.renderBody()}</View> : null}
+          {dialog.metrics?.length ? (
+            <View style={{ gap: 8, marginTop: 15 }}>
+              {dialog.metrics.map((metric, index) => <DialogMetricRow key={`${metric.label}-${index}`} metric={metric} />)}
+            </View>
+          ) : null}
+        </DialogScrollableContent>
+        <View style={{ padding: 12, flexDirection: 'row', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.ui.semantic.chrome.border }}>
+          {dialog.kind === 'confirm' ? <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 1, minWidth: 0, borderRadius: 22 }} /> : null}
+          <IsleButton label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')} tone={dialogActionTone(dialog)} onPress={() => onClose(true)} style={{ flex: 1, minWidth: 0, borderRadius: 22 }} />
+        </View>
+      </IslePanel>
     </View>
   )
 }

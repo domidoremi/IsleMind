@@ -15,7 +15,7 @@ import { ChatScreenFrame } from './chatScreenFrame'
 import { ChatActiveThemeExperience } from './theme-experiences/ChatActiveThemeExperience'
 
 export function ChatActiveWorkspaceView(props: ChatActiveWorkspaceViewProps) {
-  const { themeId } = useAppTheme()
+  const { canonicalThemeId } = useAppTheme()
   const {
     embedded,
     backgroundState,
@@ -34,7 +34,7 @@ export function ChatActiveWorkspaceView(props: ChatActiveWorkspaceViewProps) {
     <ChatScreenFrame embedded={embedded} backgroundState={backgroundState} compactViewport={compactViewport}>
       <View style={{ flex: 1 }}>
         <ChatActiveThemeExperience
-          themeId={themeId}
+          themeId={canonicalThemeId}
           colors={colors}
           compactViewport={compactViewport}
           documentTitle={conversation.title}

@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, View, useWindowDimensions, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
+import { Platform, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
+import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { IslePanel, type IsleMaterial } from './Panel'
 import { IsleButton, IsleInput, IsleSwitch as IsleStyledSwitch } from './IsleKit'
@@ -29,8 +30,35 @@ export function IsleIconButton({
   size?: IsleSize
   style?: StyleProp<ViewStyle>
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
+  const iconButtonExpression = resolveThemeComponentExpression(canonicalThemeId, 'iconButton')
   const dimension = size === 'lg' ? 50 : 44
+  const radius = iconButtonExpression.shape === 'angular'
+    ? 2
+    : iconButtonExpression.shape === 'soft'
+      ? Math.round(dimension * 0.38)
+      : dimension / 2
+  const defaultSurface = iconButtonExpression.surface === 'boundary'
+    ? 'transparent'
+    : iconButtonExpression.surface === 'atmosphere'
+      ? colors.ui.semantic.surface.base
+      : iconButtonExpression.surface === 'tonal'
+        ? colors.ui.semantic.surface.muted
+        : colors.ui.semantic.chrome.background
+  const defaultBorder = iconButtonExpression.surface === 'atmosphere'
+    ? colors.ui.control.focus
+    : iconButtonExpression.surface === 'lens'
+      ? colors.ui.actionBar.itemBorder
+      : colors.ui.semantic.chrome.border
+  const borderWidth = iconButtonExpression.border === 'none'
+    ? 0
+    : iconButtonExpression.border === 'outline' || iconButtonExpression.border === 'edge-highlight'
+      ? 1
+      : StyleSheet.hairlineWidth
+  const elevated = iconButtonExpression.elevation !== 'none'
+  const webLensStyle = tone === 'default' && iconButtonExpression.surface === 'lens' && Platform.OS === 'web'
+    ? ({ backdropFilter: 'blur(12px) saturate(1.08)', WebkitBackdropFilter: 'blur(12px) saturate(1.08)' } as unknown as ViewStyle)
+    : undefined
   return (
     <IsleButton
       type={tone === 'ink' || tone === 'mint' || tone === 'amber' ? 'primary' : 'default'}
@@ -39,16 +67,35 @@ export function IsleIconButton({
       onPress={onPress}
       label={label}
       icon={children}
+      testID={`theme-icon-button-${canonicalThemeId}-${size}`}
       style={[
         {
           width: dimension,
           height: dimension,
-          borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
+          borderRadius: radius,
           minHeight: dimension,
           paddingHorizontal: 0,
           alignItems: 'center',
           justifyContent: 'center',
+          overflow: 'hidden',
+          backgroundColor: tone === 'default'
+            ? disabled
+              ? colors.ui.control.disabledBackground
+              : defaultSurface
+            : undefined,
+          borderWidth: tone === 'default' ? borderWidth : undefined,
+          borderColor: tone === 'default'
+            ? disabled
+              ? colors.ui.control.disabledBorder
+              : defaultBorder
+            : undefined,
+          shadowColor: colors.shadowTint,
+          shadowOpacity: tone === 'default' && elevated ? (iconButtonExpression.elevation === 'layered' ? 0.14 : 0.07) : 0,
+          shadowRadius: iconButtonExpression.elevation === 'layered' ? 12 : elevated ? 7 : 0,
+          shadowOffset: { width: 0, height: elevated ? 3 : 0 },
+          elevation: tone === 'default' && elevated ? (iconButtonExpression.elevation === 'layered' ? 2 : 1) : 0,
         },
+        webLensStyle,
         style,
       ]}
       textStyle={{ display: 'none' }}
@@ -420,22 +467,69 @@ export function IsleSheet({
   contentStyle?: StyleProp<ViewStyle>
 }) {
   const motion = useMotionPreference()
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const sheetMaterial = colors.material.sheet
+  const sheetExpression = resolveThemeComponentExpression(canonicalThemeId, 'bottomSheet')
+  const themeExpression = resolveThemeExpression(canonicalThemeId)
+  const fullMotion = motion === 'full'
+  const enterFrame = sheetExpression.motion === 'organic'
+    ? { opacity: 0, translateY: 18, scale: 0.99 }
+    : sheetExpression.motion === 'material'
+      ? { opacity: 0, translateY: 24, scale: 0.98 }
+      : sheetExpression.motion === 'fluid'
+        ? { opacity: 0, translateY: 18, scale: 0.96 }
+        : { opacity: 0, translateY: 5, scale: 1 }
+  const panelRadius = sheetExpression.shape === 'capsule'
+    ? colors.ui.radius.panel
+    : sheetExpression.shape === 'material'
+      ? Math.min(colors.ui.radius.panel, 28)
+      : sheetExpression.shape === 'soft'
+        ? Math.min(colors.ui.radius.panel, 22)
+        : Math.min(colors.ui.radius.panel, 6)
+  const panelMaterial: IsleMaterial = sheetExpression.surface === 'lens'
+    ? 'glass'
+    : sheetExpression.surface === 'tonal'
+      ? 'raised'
+      : 'chrome'
+  const panelBackground = sheetExpression.surface === 'lens'
+    ? colors.ui.semantic.surface.overlay
+    : sheetExpression.surface === 'tonal'
+      ? colors.ui.semantic.surface.raised
+      : sheetExpression.surface === 'atmosphere'
+        ? colors.ui.semantic.surface.base
+        : colors.ui.semantic.chrome.background
   return (
     <MotiView
-      from={motion === 'full' ? { opacity: 0, translateY: Math.min(motionTokens.distance.sheet, 14) } : { opacity: 0 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.normal : motionTokens.duration.fast }}
+      testID={`theme-bottom-sheet-${canonicalThemeId}`}
+      from={fullMotion ? enterFrame : { opacity: 0, translateY: 0, scale: 1 }}
+      animate={{ opacity: 1, translateY: 0, scale: 1 }}
+      transition={{
+        type: 'timing',
+        duration: fullMotion ? themeExpression.motion.duration.panel : motion === 'reduced' ? 120 : 1,
+      }}
       style={style}
     >
       <IslePanel
-        material="chrome"
+        material={panelMaterial}
+        blur={sheetExpression.surface === 'lens'}
         elevated
-        radius={colors.ui.radius.panel}
-        style={{ backgroundColor: sheetMaterial.surface, borderColor: sheetMaterial.border }}
-        contentStyle={[{ padding: 12, backgroundColor: sheetMaterial.body }, contentStyle]}
+        radius={panelRadius}
+        style={{
+          backgroundColor: panelBackground,
+          borderColor: sheetExpression.border === 'edge-highlight' ? colors.ui.control.focus : sheetMaterial.border,
+          borderTopWidth: sheetExpression.border === 'divider' ? 1 : StyleSheet.hairlineWidth,
+        }}
+        contentStyle={[{ padding: 12, backgroundColor: sheetExpression.surface === 'lens' ? 'transparent' : sheetMaterial.body }, contentStyle]}
       >
+        {sheetExpression.motion === 'precision' ? (
+          <View pointerEvents="none" style={{ height: 1, marginHorizontal: -12, marginTop: -12, marginBottom: 10, backgroundColor: colors.ui.semantic.chrome.border }} />
+        ) : sheetExpression.motion === 'organic' ? (
+          <View pointerEvents="none" style={{ alignSelf: 'center', width: 78, height: 4, marginTop: -7, marginBottom: 10, borderRadius: 4, backgroundColor: colors.ui.control.focus, opacity: 0.24 }} />
+        ) : sheetExpression.motion === 'material' ? (
+          <View pointerEvents="none" style={{ alignSelf: 'center', width: 32, height: 4, marginTop: -4, marginBottom: 10, borderRadius: 4, backgroundColor: colors.textTertiary, opacity: 0.48 }} />
+        ) : (
+          <View pointerEvents="none" style={{ alignSelf: 'center', width: 96, height: 1, marginTop: -8, marginBottom: 10, borderRadius: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.62 }} />
+        )}
         {children}
       </IslePanel>
     </MotiView>

@@ -7,6 +7,7 @@ import type { ConversationTaskActivityRecord } from '@/modules/tasks'
 import { getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import type { Message } from '@/types/chatContracts'
+import type { CanonicalThemeId } from '@/types/settingsContracts'
 
 import { summarizeWorkflowTaskEvidence } from './workflowTaskEvidence'
 import { collectVisibleProcessTraces, getActiveTraceStageLabel, getActiveTraceTitle } from './tracePresentation'
@@ -24,11 +25,38 @@ export function ConversationTaskStatusCard(props: {
   onRepairAgentEvidence?: (message: Message) => void
   onConfirmAction?: (message: Message) => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
+  if (canonicalThemeId !== 'minimal' && props.compact) return <CanonicalTaskStatusCard {...props} family={canonicalThemeId} />
   if (props.compact && colors.ui.family === 'lime-road') return <LimeRoadTaskStatusCard {...props} />
   if (props.compact && colors.ui.family === 'markdown') return <MarkdownTaskStatusCard {...props} />
   if (props.compact) return <MinimalTaskStatusCard {...props} />
-  return <SharedTaskStatusCard {...props} />
+  return <SharedTaskStatusCard {...props} family={canonicalThemeId} />
+}
+
+function CanonicalTaskStatusCard(props: Parameters<typeof ConversationTaskStatusCard>[0] & { family: Exclude<CanonicalThemeId, 'minimal'> }) {
+  const projection = useTaskStatusProjection(props)
+  const { colors, design } = useAppTheme()
+  const { t } = useTranslation()
+  const tone = colors.ui.tone.warning
+  const glass = props.family === 'liquid-glass'
+  return (
+    <View pointerEvents="box-none" style={{ position: 'absolute', top: props.topOffset, left: 14, right: 14, zIndex: 44, elevation: glass ? 8 : 4 }}>
+      <View testID={`chat-task-experience-${props.family}`} style={{ width: '100%', maxWidth: 520, alignSelf: 'center', padding: glass ? 8 : 0 }}>
+        <View accessibilityRole="summary" accessibilityLabel={projection.t('chat.taskCardAccessibilityLabel')} style={{ minHeight: 62, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9, borderRadius: glass || props.family === 'material' ? design.semantic.radius.extraLarge : design.semantic.radius.large, backgroundColor: glass ? colors.ui.semantic.chrome.background : props.family === 'material' ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: tone.border, shadowColor: glass ? design.semantic.elevation.shadowColor : undefined, shadowOpacity: glass ? design.semantic.elevation.shadowOpacity : 0, shadowRadius: glass ? design.semantic.elevation.shadowBlur : 0, shadowOffset: glass ? { width: 0, height: design.semantic.elevation.shadowOffsetY } : undefined, elevation: glass ? design.semantic.elevation.level2 : 0 }}>
+          <View style={{ width: 32, height: 32, borderRadius: props.family === 'material' ? design.semantic.radius.medium : design.semantic.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: tone.background }}><AppIcon name="workflow" color={tone.foreground} size={15} strokeWidth={appIconStroke.strong} /></View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.text, fontSize: design.semantic.typography.label.fontSize, lineHeight: design.semantic.typography.label.lineHeight, fontWeight: '700' }}>{projection.title}</Text>
+              {projection.taskCount > 1 ? <Text style={{ color: tone.foreground, fontSize: 9, fontWeight: '800' }}>{projection.t('chat.taskCardCount', { count: projection.taskCount })}</Text> : null}
+            </View>
+            <Text numberOfLines={1} style={{ marginTop: 2, color: colors.textSecondary, fontSize: design.semantic.typography.caption.fontSize, lineHeight: design.semantic.typography.caption.lineHeight }}>{projection.statusDetail}</Text>
+            {projection.showEvidenceRow ? <TaskEvidenceRow projection={projection} compact onRepairAgentEvidence={props.onRepairAgentEvidence} onConfirmAction={props.onConfirmAction} /> : null}
+          </View>
+          <TaskCancelButton onCancel={props.onCancel} compact cancelling={props.cancelling} />
+        </View>
+      </View>
+    </View>
+  )
 }
 
 function SharedTaskStatusCard({
@@ -41,6 +69,7 @@ function SharedTaskStatusCard({
   onCancel,
   onRepairAgentEvidence,
   onConfirmAction,
+  family = 'minimal',
 }: {
   task: ConversationTaskActivityRecord
   taskCount: number
@@ -51,8 +80,9 @@ function SharedTaskStatusCard({
   onCancel: () => void
   onRepairAgentEvidence?: (message: Message) => void
   onConfirmAction?: (message: Message) => void
+  family?: CanonicalThemeId
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isGlass, design } = useAppTheme()
   const { t } = useTranslation()
   const traces = message ? collectVisibleProcessTraces(message) : []
   const activeTraceTitle = message ? getActiveTraceTitle(traces, message.status) : ''
@@ -80,8 +110,8 @@ function SharedTaskStatusCard({
     || evidenceSummary.artifactReady
     || !!evidenceRepairAction
     || !!pendingWorkflowAction
-  const backgroundColor = isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
-  const borderColor = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const backgroundColor = family === 'liquid-glass' ? colors.ui.semantic.chrome.background : family === 'material' ? colors.ui.semantic.surface.muted : family === 'monet' ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
+  const borderColor = family === 'liquid-glass' ? colors.ui.semantic.chrome.border : colors.ui.semantic.chrome.border
   const tone = colors.ui.tone.warning
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', top: topOffset, left: 14, right: 14, zIndex: 44, elevation: 6 }}>

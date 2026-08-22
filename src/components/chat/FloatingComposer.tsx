@@ -16,12 +16,14 @@ import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets, type EdgeInsets } from 'react-native-safe-area-context'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
+import { ThemeModelSelectorExpression } from '@/components/ui/isle/ThemeModelSelectorExpression'
 import { Composer, type ComposerCommand } from '@/components/chat/Composer'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
+import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { Attachment, Conversation, CommandReference } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { getReasoningControlOptions, getReasoningControlValue, getReasoningDisplayEffort, getReasoningEffortOptions, resolveReasoningControlValue } from '@/utils/modelReasoning'
@@ -139,7 +141,7 @@ export function FloatingComposer({
   onLayoutHeight: (height: number) => void
   motion: MotionIntensity
 }) {
-  const { colors, isGlass, themeId } = useAppTheme()
+  const { colors, isGlass, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const [reasoningPickerOpen, setReasoningPickerOpen] = useState(false)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
@@ -185,8 +187,16 @@ export function FloatingComposer({
     : t('chat.configureProviders')
   const compactComposer = composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT
   const reasoningSelectorIconOnly = compactComposer
-  const modelSelectorMaxWidth = composerWindowWidth < 350 ? 96 : compactComposer ? 132 : 124
   const reasoningSelectorMaxWidth = reasoningSelectorIconOnly ? ISLE_MIN_TOUCH_TARGET : 88
+  const contextRailBudget = composerWindowWidth
+    - composerLayout.horizontalPadding * 2
+    - ISLE_MIN_TOUCH_TARGET
+    - (reasoningAvailable ? reasoningSelectorMaxWidth + 2 : 0)
+    - 18
+  const modelSelectorMaxWidth = Math.max(
+    96,
+    Math.min(compactComposer ? 156 : 176, Math.round(contextRailBudget)),
+  )
 
   function handleInputFocus() {
     onCollapseTools()
@@ -309,6 +319,7 @@ export function FloatingComposer({
         <AppIcon name="add" color={quickPanelOpen ? colors.ui.icon.accentForeground : colors.textSecondary} size={18} strokeWidth={appIconStroke.strong} />
       </ComposerToolButton>
       <ComposerContextSelector
+        testID="chat-model-selector"
         label={modelStatusLabel}
         accessibilityLabel={`${t('chat.model')}: ${modelStatusAccessibilityLabel}`}
         accessibilityHint={t('chat.quickModelAccessibilityHint')}
@@ -352,7 +363,7 @@ export function FloatingComposer({
         onTouchCancel={onInteractEnd}
       >
         <View onLayout={handleLayout} pointerEvents="box-none" style={{ paddingHorizontal: composerLayout.horizontalPadding, paddingTop: composerLayout.innerTopPadding, paddingBottom: composerLayout.innerBottomPadding }}>
-          <ChatComposerThemeSurface themeId={themeId} colors={colors} horizontalPadding={composerLayout.horizontalPadding}>
+          <ChatComposerThemeSurface themeId={canonicalThemeId} colors={colors} horizontalPadding={composerLayout.horizontalPadding}>
           {toolsOpen ? renderComposerToolsPanel() : null}
           {promptOpen ? (
             <View
@@ -453,6 +464,7 @@ export function FloatingComposer({
 }
 
 function ComposerContextSelector({
+  testID,
   label,
   accessibilityLabel,
   accessibilityHint,
@@ -463,6 +475,7 @@ function ComposerContextSelector({
   icon,
   onPress,
 }: {
+  testID?: string
   label: string
   accessibilityLabel: string
   accessibilityHint?: string
@@ -473,29 +486,25 @@ function ComposerContextSelector({
   icon?: ReactNode
   onPress: () => void
 }) {
-  const { colors } = useAppTheme()
-  const selectedBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const { colors, canonicalThemeId } = useAppTheme()
+  const expression = resolveThemeComponentExpression(canonicalThemeId, 'modelSelector')
 
   return (
-    <IslePressable
-      haptic
-      accessibilityRole="button"
+    <ThemeModelSelectorExpression
+      family={canonicalThemeId}
+      colors={colors}
+      expression={expression}
+      testID={testID}
+      label={label}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ selected, expanded: false }}
+      maxWidth={maxWidth}
+      selected={selected}
+      iconOnly={iconOnly}
+      ellipsizeMode={ellipsizeMode}
+      icon={icon}
       onPress={onPress}
-      style={{ width: iconOnly ? ISLE_MIN_TOUCH_TARGET : undefined, minWidth: iconOnly ? ISLE_MIN_TOUCH_TARGET : 72, maxWidth, height: ISLE_MIN_TOUCH_TARGET, flexGrow: 0, flexShrink: iconOnly ? 0 : 1, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: iconOnly ? 0 : 6, flexDirection: 'row', alignItems: 'center', justifyContent: iconOnly ? 'center' : 'flex-start', gap: 5, backgroundColor: selected ? colors.ui.actionBar.itemActiveBackground : 'transparent', borderWidth: selected ? selectedBorderWidth : 0, borderColor: colors.ui.control.primaryBorder }}
-    >
-      {icon ? <View style={{ flexShrink: 0 }}>{icon}</View> : null}
-      {iconOnly ? null : (
-        <>
-          <Text numberOfLines={1} ellipsizeMode={ellipsizeMode} style={{ minWidth: 0, flexShrink: 1, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700', includeFontPadding: false }}>
-            {label}
-          </Text>
-          <AppIcon name="collapse" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.regular} />
-        </>
-      )}
-    </IslePressable>
+    />
   )
 }
 
