@@ -18,6 +18,8 @@ export interface ConversationRagContextPackRequest {
 
 export interface ConversationRagRuntimeOptions {
   signal?: AbortSignal
+  /** Context-plan admission for the concrete retrieval adapter. */
+  mode?: 'baseline' | 'advanced'
 }
 
 export interface ConversationRagRuntime {

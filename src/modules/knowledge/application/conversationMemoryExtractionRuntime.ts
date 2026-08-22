@@ -1,10 +1,6 @@
-export interface ConversationMemoryExtractionProvider {
-  readonly apiKey?: unknown
-}
-
 export interface ConversationMemoryExtractionInput<
   TMessage,
-  TProvider extends ConversationMemoryExtractionProvider,
+  TProvider,
 > {
   readonly conversationId: string
   readonly assistantMessageId: string
@@ -17,7 +13,6 @@ export interface ConversationMemoryExtractionInput<
 
 export type ConversationMemoryExtractionSkipReason =
   | 'memory_disabled'
-  | 'provider_unavailable'
 
 export interface ConversationMemoryExtractionSkippedTransition {
   readonly status: 'skipped'
@@ -80,7 +75,7 @@ export interface ConversationMemoryExtractionRuntimeDependencies<TMessage, TProv
 
 export function createConversationMemoryExtractionRuntime<
   TMessage,
-  TProvider extends ConversationMemoryExtractionProvider,
+  TProvider,
 >(dependencies: ConversationMemoryExtractionRuntimeDependencies<TMessage, TProvider>) {
   function project(
     input: ConversationMemoryExtractionInput<TMessage, TProvider>,
@@ -106,15 +101,6 @@ export function createConversationMemoryExtractionRuntime<
         const transition: ConversationMemoryExtractionSkippedTransition = {
           status: 'skipped',
           reason: 'memory_disabled',
-        }
-        project(input, transition)
-        return transition
-      }
-
-      if (!Boolean(input.provider.apiKey)) {
-        const transition: ConversationMemoryExtractionSkippedTransition = {
-          status: 'skipped',
-          reason: 'provider_unavailable',
         }
         project(input, transition)
         return transition

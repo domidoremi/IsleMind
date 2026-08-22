@@ -224,6 +224,9 @@ export function createAssistantConversationContextAcquisitionRuntime<
     if (mcpOutcome.kind === 'cancelled') {
       return { kind: 'cancelled', stage: 'mcp' }
     }
+    if (isCancelled(input)) {
+      return { kind: 'cancelled', stage: 'mcp' }
+    }
     if (mcpOutcome.kind === 'failed') {
       dependencies.projectTerminalFailure({
         conversationId: input.conversationId,

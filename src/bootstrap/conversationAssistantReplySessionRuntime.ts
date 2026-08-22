@@ -1,5 +1,6 @@
 import { createAssistantConversationReplySessionRuntime } from '@/modules/assistant-runtime'
 import { startConversationTaskActivity } from '@/modules/tasks'
+import { projectConversationAssistantFailure } from '@/bootstrap/conversationAssistantMessageProjection'
 import { stopConversationMessage } from '@/presentation/features/conversations/conversationControlCommand'
 import { setActiveStream } from '@/services/chatStreamLifecycle'
 import { useChatStore } from '@/store/chatStore'
@@ -21,7 +22,14 @@ export const conversationAssistantReplySessionRuntime =
     now: Date.now,
     generateId: createMessageId,
     appendMessage(conversationId, message) {
-      useChatStore.getState().addMessage(conversationId, message)
+      return useChatStore.getState().addMessage(conversationId, message)
+    },
+    projectAppendFailure({ conversationId, assistantMessageId, error }) {
+      projectConversationAssistantFailure({
+        conversationId,
+        assistantMessageId,
+        content: error instanceof Error ? error.message : 'conversation_assistant_persistence_failed',
+      })
     },
     startConversationTaskActivity,
     setStreaming(conversationId, assistantMessageId) {

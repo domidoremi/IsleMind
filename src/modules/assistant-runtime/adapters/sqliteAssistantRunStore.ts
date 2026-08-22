@@ -1,18 +1,42 @@
-import { asAssistantRunId, asContextSnapshotId, type JsonRecord } from '@/core'
+import {
+  asAssistantRunId,
+  asContextSnapshotId,
+  freezeChatRequest,
+  isChatRequest,
+  type ChatRequest,
+  type JsonRecord,
+} from '@/core'
 import {
   applySqliteMigrations,
   type SqliteDatabaseProvider,
   type SqliteExecutor,
 } from '@/platform/storage'
-import type {
-  AssistantRun,
-  AssistantRunFailure,
-  AssistantRunPersistence,
-  AssistantRunStatus,
-  PendingModelOperation,
-  RunJournalEntry,
-  RunJournalEventType,
+import {
+  ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA,
+  ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA,
+  ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA,
+  ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
+  PENDING_MODEL_OPERATION_SCHEMA,
+  cloneAssistantContextPlanReceipt,
+  isAssistantContextPlanReceipt,
+  type AssistantActivityRequestEvidence,
+  type AssistantActivityContinuationIdentity,
+  type AssistantContextPlanReceipt,
+  type AssistantRunCapturedRequestSnapshot,
+  type AssistantRun,
+  type AssistantRunFailure,
+  type AssistantRunPersistence,
+  type AssistantRunStatus,
+  type PendingModelOperation,
+  type RunJournalEntry,
+  type RunJournalEventType,
 } from '../contracts'
+import {
+  buildAssistantCapabilityRevision,
+  buildAssistantRequestHash,
+  isAssistantCapabilityRevision,
+  isAssistantRequestHash,
+} from '../application/requestIdentity'
 import {
   ASSISTANT_CONVERSATION_WORKSPACE_WRITEBACK_HANDOFF_SCHEMA,
   ASSISTANT_CONVERSATION_WORKSPACE_WRITEBACK_POLICY_SCHEMA,
@@ -56,6 +80,19 @@ interface RunJournalRow {
   type: string
   occurredAt: number
   dataJson: string | null
+  schema: string
+}
+
+interface AssistantRunRequestSnapshotRow {
+  runId: string
+  conversationId: string
+  providerId: string
+  model: string
+  capturedAt: number
+  requestJson: string
+  contextReceiptJson: string | null
+  capabilityRevision: string | null
+  requestHash: string | null
   schema: string
 }
 
@@ -158,6 +195,46 @@ export function createSqliteAssistantRunPersistence(
           // Preserve the deployed migration identity without rewriting unsupported run kinds.
         },
       },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 6,
+        name: 'exact-provider-neutral-request',
+        async up(transaction) {
+          await transaction.exec(`
+            CREATE TABLE IF NOT EXISTS assistant_run_request_snapshots (
+              runId TEXT PRIMARY KEY NOT NULL,
+              capturedAt INTEGER NOT NULL,
+              requestJson TEXT NOT NULL,
+              schema TEXT NOT NULL,
+              FOREIGN KEY (runId) REFERENCES assistant_runs(id) ON DELETE CASCADE
+            );
+          `)
+        },
+      },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 7,
+        name: 'context-plan-receipt',
+        async up(transaction) {
+          await transaction.exec(`
+            ALTER TABLE assistant_run_request_snapshots
+            ADD COLUMN contextReceiptJson TEXT;
+          `)
+        },
+      },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 8,
+        name: 'request-identity-evidence',
+        async up(transaction) {
+          await transaction.exec(`
+            ALTER TABLE assistant_run_request_snapshots
+            ADD COLUMN capabilityRevision TEXT;
+            ALTER TABLE assistant_run_request_snapshots
+            ADD COLUMN requestHash TEXT;
+          `)
+        },
+      },
     ])
     await initialized
     return value
@@ -209,14 +286,39 @@ export function createSqliteAssistantRunPersistence(
       return rows.map(parseJournalEntry)
     },
 
-    async appendAndSave(entry, run) {
+    async getRequestSnapshot(runId) {
+      const row = await (await database()).getFirst<AssistantRunRequestSnapshotRow>(
+        `SELECT snapshot.runId, run.conversationId, run.providerId, run.model,
+                snapshot.capturedAt,
+                snapshot.requestJson, snapshot.contextReceiptJson,
+                snapshot.capabilityRevision, snapshot.requestHash, snapshot.schema
+         FROM assistant_run_request_snapshots AS snapshot
+         INNER JOIN assistant_runs AS run ON run.id = snapshot.runId
+         WHERE snapshot.runId = ?`,
+        [runId],
+      )
+      return row ? parseRequestSnapshotRow(row) : undefined
+    },
+
+    async clear() {
+      const value = await database()
+      await value.run('DELETE FROM assistant_runs')
+    },
+
+    async appendAndSave(entry, run, requestSnapshot) {
       if (entry.runId !== run.id || entry.sequence !== run.journalSequence) {
         throw new AssistantRunPersistenceDataError('Assistant run journal state is not contiguous.')
       }
       assertChatRunKind(run)
+      const normalizedRequestSnapshot = requestSnapshot
+        ? parseRequestSnapshotInput(requestSnapshot, entry, run)
+        : undefined
       const value = await database()
       await value.transaction(async (transaction) => {
         await saveRun(transaction, run)
+        if (normalizedRequestSnapshot) {
+          await insertRequestSnapshot(transaction, normalizedRequestSnapshot)
+        }
         const previous = await transaction.getFirst<JournalSequenceRow>(
           'SELECT sequence FROM assistant_run_journal WHERE runId = ? ORDER BY sequence DESC LIMIT 1',
           [entry.runId],
@@ -228,6 +330,30 @@ export function createSqliteAssistantRunPersistence(
       })
     },
   }
+}
+
+async function insertRequestSnapshot(
+  database: SqliteExecutor,
+  snapshot: AssistantRunCapturedRequestSnapshot,
+): Promise<void> {
+  const contextReceipt = snapshot.schema === ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA
+    ? snapshot.contextReceipt
+    : undefined
+  await database.run(
+    `INSERT INTO assistant_run_request_snapshots (
+       runId, capturedAt, requestJson, contextReceiptJson,
+       capabilityRevision, requestHash, schema
+     ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      snapshot.runId,
+      snapshot.capturedAt,
+      JSON.stringify(snapshot.request),
+      contextReceipt ? JSON.stringify(contextReceipt) : null,
+      snapshot.capabilityRevision ?? null,
+      snapshot.requestHash ?? null,
+      snapshot.schema,
+    ],
+  )
 }
 
 async function saveRun(database: SqliteExecutor, run: AssistantRun): Promise<void> {
@@ -380,6 +506,171 @@ function parseJournalEntry(row: RunJournalRow): RunJournalEntry {
   }
 }
 
+function parseRequestSnapshotInput(
+  value: AssistantRunCapturedRequestSnapshot,
+  entry: RunJournalEntry,
+  run: AssistantRun,
+): AssistantRunCapturedRequestSnapshot {
+  if (entry.type !== 'run.created' || entry.sequence !== 1 || value.runId !== entry.runId ||
+    value.capturedAt !== entry.occurredAt || value.request.conversationId !== run.conversationId ||
+    value.request.providerId !== run.providerId || value.request.model !== run.model) {
+    throw new AssistantRunPersistenceDataError('An assistant run request snapshot is invalid.')
+  }
+  if (value.schema === ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA && isChatRequest(value.request)) {
+    const contextReceipt = parseContextReceipt(value.contextReceipt)
+    assertRequestIdentity(value.capabilityRevision, value.requestHash, value.request)
+    return {
+      schema: ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
+      runId: value.runId,
+      capturedAt: value.capturedAt,
+      request: cloneRequest(value.request),
+      ...(value.capabilityRevision ? { capabilityRevision: value.capabilityRevision } : {}),
+      ...(value.requestHash ? { requestHash: value.requestHash } : {}),
+      ...(contextReceipt ? { contextReceipt } : {}),
+    }
+  }
+  if (value.schema === ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA &&
+    isAssistantActivityRequestEvidence(value.request)) {
+    assertRequestIdentity(
+      value.capabilityRevision,
+      value.requestHash,
+      value.request,
+      value.request.payload,
+    )
+    return {
+      schema: ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA,
+      runId: value.runId,
+      capturedAt: value.capturedAt,
+      request: cloneActivityRequestEvidence(value.request),
+      ...(value.capabilityRevision ? { capabilityRevision: value.capabilityRevision } : {}),
+      ...(value.requestHash ? { requestHash: value.requestHash } : {}),
+    }
+  }
+  throw new AssistantRunPersistenceDataError('An assistant run request snapshot is invalid.')
+}
+
+function parseRequestSnapshotRow(
+  row: AssistantRunRequestSnapshotRow,
+): AssistantRunCapturedRequestSnapshot {
+  if (!isNonEmptyString(row.runId) || !isNonEmptyString(row.conversationId) ||
+    !isNonEmptyString(row.providerId) || !isNonEmptyString(row.model) ||
+    !isNonNegativeInteger(row.capturedAt)) {
+    throw new AssistantRunPersistenceDataError('An assistant run request snapshot is invalid.')
+  }
+  const request = parseJson(row.requestJson)
+  const contextReceipt = parseContextReceipt(parseJson(row.contextReceiptJson ?? null))
+  if (row.schema === ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA && isChatRequest(request) &&
+    request.conversationId === row.conversationId && request.providerId === row.providerId &&
+    request.model === row.model) {
+    assertRequestIdentity(row.capabilityRevision ?? undefined, row.requestHash ?? undefined, request)
+    return Object.freeze({
+      schema: ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
+      runId: asAssistantRunId(row.runId),
+      capturedAt: row.capturedAt,
+      request: cloneRequest(request),
+      ...(row.capabilityRevision ? { capabilityRevision: row.capabilityRevision } : {}),
+      ...(row.requestHash ? { requestHash: row.requestHash } : {}),
+      ...(contextReceipt ? { contextReceipt: freezeJson(contextReceipt) } : {}),
+    })
+  }
+  if (row.schema === ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA &&
+    isAssistantActivityRequestEvidence(request) && request.conversationId === row.conversationId &&
+    request.providerId === row.providerId && request.model === row.model) {
+    if (contextReceipt !== undefined) {
+      throw new AssistantRunPersistenceDataError('An assistant run request snapshot is invalid.')
+    }
+    assertRequestIdentity(
+      row.capabilityRevision ?? undefined,
+      row.requestHash ?? undefined,
+      request,
+      request.payload,
+    )
+    return Object.freeze({
+      schema: ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA,
+      runId: asAssistantRunId(row.runId),
+      capturedAt: row.capturedAt,
+      request: freezeJson(request),
+      ...(row.capabilityRevision ? { capabilityRevision: row.capabilityRevision } : {}),
+      ...(row.requestHash ? { requestHash: row.requestHash } : {}),
+    })
+  }
+  throw new AssistantRunPersistenceDataError('An assistant run request snapshot is invalid.')
+}
+
+function isAssistantActivityRequestEvidence(
+  value: unknown,
+): value is AssistantActivityRequestEvidence {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    'schema',
+    'conversationId',
+    'providerId',
+    'model',
+    'payload',
+    'redactedFields',
+  ], ['contextReceipt'])) return false
+  if (value.schema !== ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA ||
+    !isBoundedString(value.conversationId, 320) || !isBoundedString(value.providerId, 320) ||
+    !isBoundedString(value.model, 320) || !isJsonRecord(value.payload) ||
+    !Array.isArray(value.redactedFields) || value.redactedFields.length > 512 ||
+    !value.redactedFields.every((field) => isBoundedString(field, 512)) ||
+    (value.contextReceipt !== undefined && !isAssistantContextPlanReceipt(value.contextReceipt))) {
+    return false
+  }
+  try {
+    return JSON.stringify(value).length <= 4 * 1024 * 1024
+  } catch {
+    return false
+  }
+}
+
+function assertRequestIdentity(
+  capabilityRevision: unknown,
+  requestHash: unknown,
+  request: unknown,
+  capabilityInput = request,
+): void {
+  if (capabilityRevision !== undefined && !isAssistantCapabilityRevision(capabilityRevision)) {
+    throw new AssistantRunPersistenceDataError('An assistant capability revision is invalid.')
+  }
+  if (requestHash !== undefined && !isAssistantRequestHash(requestHash)) {
+    throw new AssistantRunPersistenceDataError('An assistant request hash is invalid.')
+  }
+  if ((capabilityRevision === undefined) !== (requestHash === undefined)) {
+    throw new AssistantRunPersistenceDataError('Assistant request identity evidence is incomplete.')
+  }
+  if (capabilityRevision === undefined || requestHash === undefined) return
+  if (requestHash !== buildAssistantRequestHash(request)) {
+    throw new AssistantRunPersistenceDataError('An assistant request hash does not match its request evidence.')
+  }
+  if (capabilityRevision !== buildAssistantCapabilityRevision(capabilityInput)) {
+    throw new AssistantRunPersistenceDataError('An assistant capability revision does not match its request evidence.')
+  }
+}
+
+function cloneActivityRequestEvidence(
+  value: AssistantActivityRequestEvidence,
+): AssistantActivityRequestEvidence {
+  try {
+    const cloned = JSON.parse(JSON.stringify(value))
+    if (!isAssistantActivityRequestEvidence(cloned)) throw new Error('invalid')
+    return freezeJson(cloned)
+  } catch {
+    throw new AssistantRunPersistenceDataError('An assistant run request snapshot is invalid.')
+  }
+}
+
+function parseContextReceipt(value: unknown): AssistantContextPlanReceipt | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!isAssistantContextPlanReceipt(value)) {
+    throw new AssistantRunPersistenceDataError('An assistant context plan receipt is invalid.')
+  }
+  try {
+    return cloneAssistantContextPlanReceipt(value)
+  } catch {
+    throw new AssistantRunPersistenceDataError('An assistant context plan receipt is invalid.')
+  }
+}
+
 function parseCheckpoint(value: string | null) {
   const parsed = parseJson(value)
   if (parsed === undefined) return undefined
@@ -405,7 +696,46 @@ function parseFailure(value: string | null): AssistantRunFailure | undefined {
     !isFailureCode(parsed.code)) {
     throw new AssistantRunPersistenceDataError('An assistant run failure is invalid.')
   }
-  return { code: parsed.code, message: parsed.message }
+  const continuation = parsed.continuation === undefined
+    ? undefined
+    : parseContinuationIdentity(parsed.continuation)
+  return {
+    code: parsed.code,
+    message: parsed.message,
+    ...(continuation ? { continuation } : {}),
+  }
+}
+
+function parseContinuationIdentity(value: unknown): AssistantActivityContinuationIdentity {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    'schema',
+    'id',
+    'phase',
+    'providerId',
+    'model',
+    'requestHash',
+    'stepIndex',
+    'mode',
+    'resume',
+  ]) || value.schema !== ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA ||
+    value.phase !== 'provider-turn' || value.resume !== 'new-turn-only' ||
+    (value.mode !== 'native' && value.mode !== 'structured') ||
+    !isBoundedString(value.id, 512) || !isBoundedString(value.providerId, 512) ||
+    !isBoundedString(value.model, 512) || !isAssistantRequestHash(value.requestHash) ||
+    !isNonNegativeInteger(value.stepIndex) || value.stepIndex > 1_000_000) {
+    throw new AssistantRunPersistenceDataError('An assistant run continuation identity is invalid.')
+  }
+  return Object.freeze({
+    schema: ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA,
+    id: value.id,
+    phase: 'provider-turn',
+    providerId: value.providerId,
+    model: value.model,
+    requestHash: value.requestHash,
+    stepIndex: value.stepIndex,
+    mode: value.mode,
+    resume: 'new-turn-only',
+  })
 }
 
 function parsePendingModelOperation(
@@ -426,7 +756,24 @@ function parsePendingModelOperation(
     !isJsonRecord(parsed.continuationState) || !isBoundedString(parsed.continuationDigest, 256)) {
     throw new AssistantRunPersistenceDataError('A pending model-operation record is invalid.')
   }
-  return parsed as unknown as PendingModelOperation
+  return {
+    schema: PENDING_MODEL_OPERATION_SCHEMA,
+    runId: asAssistantRunId(parsed.runId),
+    callId: parsed.callId,
+    operationId: parsed.operationId,
+    catalogRevision: parsed.catalogRevision,
+    argumentDigest: parsed.argumentDigest,
+    idempotencyKey: parsed.idempotencyKey,
+    continuationToken: parsed.continuationToken,
+    stepIndex: parsed.stepIndex,
+    maxSteps: parsed.maxSteps,
+    requestedAt: parsed.requestedAt,
+    continuationRequest: cloneRequest(parsed.continuationRequest),
+    continuationMode: parsed.continuationMode,
+    continuationOutputText: parsed.continuationOutputText,
+    continuationState: freezeJson(parsed.continuationState),
+    continuationDigest: parsed.continuationDigest,
+  }
 }
 
 function parseWorkspaceWritebackHandoff(
@@ -598,7 +945,8 @@ function parseRunKind(value: string): AssistantRun['kind'] {
 
 function isRunJournalEventType(value: string): value is RunJournalEventType {
   return value === 'run.created' || value === 'run.started' || value === 'stream.event' ||
-    value === 'provider.route-selected' || value === 'model-operation.selected' ||
+    value === 'provider.route-selected' || value === 'provider-continuation.started' ||
+    value === 'provider-continuation.completed' || value === 'model-operation.selected' ||
     value === 'run.awaiting-confirmation' || value === 'run.confirmation-resolved' ||
     value === 'run.cancellation-requested' || value === 'run.succeeded' || value === 'run.failed' ||
     value === 'run.cancelled'
@@ -649,49 +997,16 @@ function isJsonValue(value: unknown): boolean {
   return isJsonRecord(value)
 }
 
-function isChatRequest(value: unknown): boolean {
-  if (!isRecord(value) || value.schema !== 'islemind.chat-request.v1' ||
-    !isBoundedString(value.conversationId, 320) || !isBoundedString(value.providerId, 320) ||
-    !isBoundedString(value.model, 320) || !Array.isArray(value.messages) || value.messages.length > 512 ||
-    !value.messages.every(isChatMessageInput)) {
-    return false
-  }
-  if (value.systemPrompt !== undefined && (typeof value.systemPrompt !== 'string' || value.systemPrompt.length > 262_144)) {
-    return false
-  }
-  for (const key of ['temperature', 'topP', 'topK', 'maxTokens']) {
-    const candidate = value[key]
-    if (candidate !== undefined && (typeof candidate !== 'number' || !Number.isFinite(candidate))) return false
-  }
-  if (value.requestedCapabilities !== undefined &&
-    (!Array.isArray(value.requestedCapabilities) || value.requestedCapabilities.length > 64 ||
-      !value.requestedCapabilities.every((candidate) => isBoundedString(candidate, 128)))) {
-    return false
-  }
-  return value.toolDefinitions === undefined || (
-    Array.isArray(value.toolDefinitions) && value.toolDefinitions.length <= 64 &&
-    value.toolDefinitions.every(isChatToolDefinition)
-  )
+function freezeJson<Value>(value: Value): Value {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const child of Object.values(value as Record<string, unknown>)) freezeJson(child)
+  return Object.freeze(value)
 }
 
-function isChatMessageInput(value: unknown): boolean {
-  if (!isRecord(value) || !isBoundedString(value.id, 320) || typeof value.text !== 'string' ||
-    value.text.length > 262_144 ||
-    (value.role !== 'system' && value.role !== 'user' && value.role !== 'assistant' && value.role !== 'tool')) {
-    return false
+function cloneRequest(value: ChatRequest): ChatRequest {
+  try {
+    return freezeChatRequest(value)
+  } catch {
+    throw new AssistantRunPersistenceDataError('An assistant run request snapshot is invalid.')
   }
-  if (value.toolCallId !== undefined && !isBoundedString(value.toolCallId, 320)) return false
-  if (value.name !== undefined && !isBoundedString(value.name, 320)) return false
-  return value.toolCalls === undefined || (
-    Array.isArray(value.toolCalls) && value.toolCalls.length <= 64 && value.toolCalls.every((call) =>
-      isRecord(call) && isBoundedString(call.callId, 320) && isBoundedString(call.name, 320) &&
-      isJsonRecord(call.arguments) &&
-      (call.providerMetadata === undefined || isJsonRecord(call.providerMetadata)))
-  )
-}
-
-function isChatToolDefinition(value: unknown): boolean {
-  return isRecord(value) && isBoundedString(value.operationId, 160) && isBoundedString(value.name, 160) &&
-    typeof value.description === 'string' && value.description.length <= 2_048 && isJsonRecord(value.inputSchema) &&
-    (value.permission === 'read-only' || value.permission === 'read-write' || value.permission === 'destructive')
 }

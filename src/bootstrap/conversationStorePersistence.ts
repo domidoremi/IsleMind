@@ -14,6 +14,8 @@ import { conversationPersistence } from './conversationPersistence'
 export const conversationStorePersistence: ConversationStorePersistencePort =
   Object.freeze<ConversationStorePersistencePort>({
     loadRecords: () => conversationPersistence.loadAll(),
+    loadPage: (input) => conversationPersistence.loadPage(input),
+    loadRecord: (conversationId) => conversationPersistence.loadRecord(conversationId),
     saveRecord: (conversation) => conversationPersistence.save(conversation),
     replaceRecords: (conversations) => conversationPersistence.replaceAll(conversations),
     readActiveSelection: () =>

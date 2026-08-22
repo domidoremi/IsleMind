@@ -8,27 +8,75 @@ export type MemoryCandidateRejectionReason =
   | 'none'
 
 export interface MemoryCandidateMessage {
+  id?: string
   role: string
   status?: string
   content: string
+}
+
+export interface StructuredMemoryCandidate {
+  content: string
+  subject?: string
+  key?: string
+  value?: string
+  sourceMessageIds: readonly string[]
 }
 
 /** Extracts deterministic, non-sensitive memory candidates from completed user turns. */
 export function extractDeterministicMemoryCandidates(
   messages: readonly MemoryCandidateMessage[],
 ): string[] {
-  const items: string[] = []
-  const recentUserTexts = messages
+  return extractDeterministicStructuredMemoryCandidates(messages).map((candidate) => candidate.content)
+}
+
+export function extractDeterministicStructuredMemoryCandidates(
+  messages: readonly MemoryCandidateMessage[],
+): StructuredMemoryCandidate[] {
+  const items: StructuredMemoryCandidate[] = []
+  const recentUserMessages = messages
     .filter((message) => message.role === 'user' && message.status === 'done' && message.content.trim())
     .slice(-8)
-    .map((message) => message.content)
 
-  for (const text of recentUserTexts) {
-    items.push(...extractStructuredPreferenceTokens(text))
-    items.push(...extractNaturalLanguagePreferences(text))
+  for (const message of recentUserMessages) {
+    const sourceMessageIds = message.id?.trim() ? [message.id.trim()] : []
+    const candidates = [
+      ...extractStructuredPreferenceTokens(message.content),
+      ...extractNaturalLanguagePreferences(message.content),
+    ]
+    for (const content of candidates) {
+      items.push({
+        content,
+        ...parseMemoryCandidateFact(content),
+        sourceMessageIds,
+      })
+    }
   }
 
-  return dedupeMemoryCandidates(items).slice(0, 5)
+  return dedupeStructuredMemoryCandidates(items).slice(0, 5)
+}
+
+export function parseMemoryCandidateFact(
+  value: string,
+): Pick<StructuredMemoryCandidate, 'subject' | 'key' | 'value'> {
+  const content = normalizeMemoryCandidateText(value)
+  const match = content.match(/^(?:MEMORY(?:_[\p{L}\p{N}_-]+)?\s*[:：]\s*)?用户(事实|偏好)\s*[:：]\s*(.+)$/iu)
+  if (!match) return {}
+
+  const kind = match[1]
+  const body = match[2].trim()
+  const assignment = body.match(/^(.{1,80}?)\s*(?:=|是|为)\s*(.{1,120})$/u)
+  if (assignment) {
+    return {
+      subject: 'user',
+      key: assignment[1].trim(),
+      value: assignment[2].trim(),
+    }
+  }
+  if (kind !== '偏好' || !body) return {}
+  const normalizedKey = normalizeMemoryCandidateKey(body)
+  return normalizedKey
+    ? { subject: 'user', key: `preference:${normalizedKey}`, value: body }
+    : {}
 }
 
 export function normalizeMemoryCandidateText(value: string): string {
@@ -140,4 +188,26 @@ function dedupeMemoryCandidates(items: readonly string[]): string[] {
     result.push(item)
   }
   return result
+}
+
+function dedupeStructuredMemoryCandidates(
+  items: readonly StructuredMemoryCandidate[],
+): StructuredMemoryCandidate[] {
+  const byKey = new Map<string, StructuredMemoryCandidate>()
+  for (const item of items) {
+    const content = normalizeMemoryCandidateText(item.content)
+    if (!isUsefulMemoryCandidate(content)) continue
+    const candidateKey = normalizeMemoryCandidateKey(content)
+    if (!candidateKey) continue
+    const existing = byKey.get(candidateKey)
+    if (!existing) {
+      byKey.set(candidateKey, { ...item, content })
+      continue
+    }
+    byKey.set(candidateKey, {
+      ...existing,
+      sourceMessageIds: Array.from(new Set([...existing.sourceMessageIds, ...item.sourceMessageIds])),
+    })
+  }
+  return Array.from(byKey.values())
 }

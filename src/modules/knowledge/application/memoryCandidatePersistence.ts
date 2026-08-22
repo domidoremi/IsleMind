@@ -4,21 +4,29 @@ import {
   normalizeMemoryCandidateText,
 } from '../domain/memoryCandidatePolicy'
 import type {
+  KnowledgeMemoryScope,
+  KnowledgeMemorySensitivity,
   MemoryCandidateRepository,
   MemoryCandidateSourceKind,
 } from '../contracts'
 
 export interface MemoryCandidatePersistenceInput {
   conversationId: string
+  scope?: KnowledgeMemoryScope
   candidates: readonly MemoryCandidateInput[]
   cancellationSignal?: AbortSignal
 }
 
 export interface MemoryCandidateInput {
   content: string
+  subject?: string
+  key?: string
+  value?: string
   sourceKind: MemoryCandidateSourceKind
   sourceDetail: string
+  sourceMessageIds?: readonly string[]
   confidence: number
+  sensitivity?: KnowledgeMemorySensitivity
 }
 
 export interface MemoryCandidatePersistenceUseCase {
@@ -42,13 +50,20 @@ export function createMemoryCandidatePersistenceUseCase(
           throwIfAborted(input.cancellationSignal)
           const key = normalizeMemoryCandidateKey(candidate.content)
           if (!key || existing.has(key)) continue
-          const memory = await repository.addPending({
+          const pendingCandidate = {
             conversationId: input.conversationId,
             content: candidate.content,
+            ...(candidate.subject === undefined ? {} : { subject: candidate.subject }),
+            ...(candidate.key === undefined ? {} : { key: candidate.key }),
+            ...(candidate.value === undefined ? {} : { value: candidate.value }),
             sourceKind: candidate.sourceKind,
             sourceDetail: candidate.sourceDetail,
             confidence: candidate.confidence,
-          }, { signal: input.cancellationSignal })
+            ...(input.scope === undefined ? {} : { scope: input.scope }),
+            ...(candidate.sourceMessageIds === undefined ? {} : { sourceMessageIds: candidate.sourceMessageIds }),
+            ...(candidate.sensitivity === undefined ? {} : { sensitivity: candidate.sensitivity }),
+          }
+          const memory = await repository.addPending(pendingCandidate, { signal: input.cancellationSignal })
           throwIfAborted(input.cancellationSignal)
           if (!memory) continue
           existing.add(key)
@@ -84,7 +99,19 @@ function mergeCandidates(candidates: readonly MemoryCandidateInput[]): MemoryCan
     if (!key) continue
     const normalized = { ...candidate, content }
     const existing = byKey.get(key)
-    if (!existing || normalized.confidence > existing.confidence) byKey.set(key, normalized)
+    if (!existing) {
+      byKey.set(key, normalized)
+      continue
+    }
+    const stronger = normalized.confidence > existing.confidence ? normalized : existing
+    const mergedSourceMessageIds = Array.from(new Set([
+      ...(existing.sourceMessageIds ?? []),
+      ...(normalized.sourceMessageIds ?? []),
+    ]))
+    byKey.set(key, {
+      ...stronger,
+      ...(mergedSourceMessageIds.length ? { sourceMessageIds: mergedSourceMessageIds } : {}),
+    })
   }
   return Array.from(byKey.values()).slice(0, 5)
 }

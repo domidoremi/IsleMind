@@ -6,12 +6,18 @@ import {
   ok,
   resolveGenerationParameterSources,
   type AssistantRunId,
+  type ChatRequest,
   type Result,
 } from '@/core'
 import type { AssistantRun, ContextSnapshot } from '@/modules/assistant-runtime'
-import { appendProviderContext, type ContextCitation } from '@/modules/knowledge'
+import {
+  appendProviderContext,
+  type AssembledContext,
+  type ContextCitation,
+} from '@/modules/knowledge'
 import type {
   ConversationRunErrorCode,
+  ConversationRunPreparedRequest,
   ConversationRunProjection,
   ConversationRunUseCase,
   ConversationRunUseCaseDependencies,
@@ -99,14 +105,27 @@ async function runConversation(
   }
   let systemPrompt = conversation.systemPrompt
   let contextCitations: readonly ContextCitation[] = []
+  let assembledContext: AssembledContext | undefined
 
   if (dependencies.contextSnapshotAssembler) {
-    const assembled = await dependencies.contextSnapshotAssembler.assemble({
-      conversationId: conversation.id,
-      conversationMessageIds: context.conversationMessageIds,
-      ...(latestUserMessage ? { requestMessageId: latestUserMessage.id, requestText: latestUserMessage.text } : { requestText: '' }),
-      ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
-    })
+    let assembled: Awaited<ReturnType<NonNullable<ConversationRunUseCaseDependencies['contextSnapshotAssembler']>['assemble']>>
+    try {
+      assembled = await dependencies.contextSnapshotAssembler.assemble({
+        conversationId: conversation.id,
+        conversationMessageIds: context.conversationMessageIds,
+        ...(latestUserMessage ? { requestMessageId: latestUserMessage.id, requestText: latestUserMessage.text } : { requestText: '' }),
+        ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
+      })
+    } catch (error) {
+      if (input.cancellationSignal?.aborted || isAbortError(error)) {
+        return err('cancelled', 'Context assembly was cancelled.', { retryable: true })
+      }
+      return err(
+        'context_assembly_failed',
+        error instanceof Error ? error.message : 'The conversation context could not be assembled.',
+        { retryable: true },
+      )
+    }
     if (!assembled.ok) {
       if (assembled.error.code === 'cancelled') {
         return err('cancelled', assembled.error.message, { retryable: assembled.error.retryable })
@@ -114,8 +133,55 @@ async function runConversation(
       return err('context_assembly_failed', assembled.error.message, { retryable: assembled.error.retryable })
     }
     context = assembled.value.snapshot
+    assembledContext = assembled.value
     systemPrompt = appendProviderContext(systemPrompt, assembled.value.providerContext)
     contextCitations = assembled.value.citations
+  }
+
+  let request: ChatRequest = {
+    schema: CHAT_REQUEST_SCHEMA,
+    conversationId: conversation.id,
+    providerId: conversation.providerId,
+    model: conversation.model,
+    messages: conversation.messages,
+    ...(systemPrompt ? { systemPrompt } : {}),
+    ...(conversation.temperature === undefined ? {} : { temperature: conversation.temperature }),
+    ...(conversation.topP === undefined ? {} : { topP: conversation.topP }),
+    ...(conversation.topK === undefined ? {} : { topK: conversation.topK }),
+    ...(conversation.reasoningEffort ? { reasoningEffort: conversation.reasoningEffort } : {}),
+    ...(conversation.maxTokens === undefined ? {} : { maxTokens: conversation.maxTokens }),
+    generationParameterSources: resolveGenerationParameterSources({
+      values: conversation,
+      overrides: conversation.generationParameterOverrides,
+    }),
+  }
+  let contextReceipt: ConversationRunPreparedRequest['contextReceipt']
+
+  if (dependencies.requestPreparation) {
+    try {
+      const prepared = await dependencies.requestPreparation.prepare({
+        conversation,
+        request,
+        context,
+        ...(assembledContext ? { assembledContext } : {}),
+        ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
+      })
+      if (isPreparedRequest(prepared)) {
+        request = prepared.request
+        contextReceipt = prepared.contextReceipt
+      } else {
+        request = prepared
+      }
+    } catch (error) {
+      if (input.cancellationSignal?.aborted || isAbortError(error)) {
+        return err('cancelled', 'Conversation request preparation was cancelled.', { retryable: true })
+      }
+      return err(
+        'context_assembly_failed',
+        error instanceof Error ? error.message : 'The conversation request could not be prepared.',
+        { retryable: true },
+      )
+    }
   }
 
   let modelOperationSession
@@ -131,24 +197,9 @@ async function runConversation(
 
   return dependencies.assistantRuntime.execute({
     runId: input.runId,
-    request: {
-      schema: CHAT_REQUEST_SCHEMA,
-      conversationId: conversation.id,
-      providerId: conversation.providerId,
-      model: conversation.model,
-      messages: conversation.messages,
-      ...(systemPrompt ? { systemPrompt } : {}),
-      ...(conversation.temperature === undefined ? {} : { temperature: conversation.temperature }),
-      ...(conversation.topP === undefined ? {} : { topP: conversation.topP }),
-      ...(conversation.topK === undefined ? {} : { topK: conversation.topK }),
-      ...(conversation.reasoningEffort ? { reasoningEffort: conversation.reasoningEffort } : {}),
-      ...(conversation.maxTokens === undefined ? {} : { maxTokens: conversation.maxTokens }),
-      generationParameterSources: resolveGenerationParameterSources({
-        values: conversation,
-        overrides: conversation.generationParameterOverrides,
-      }),
-    },
+    request,
     context,
+    ...(contextReceipt ? { contextReceipt } : {}),
     ...(input.responseMessageId ? { responseMessageId: input.responseMessageId } : {}),
     ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
     ...(dependencies.providerGatewayOptions ? { providerGatewayOptions: dependencies.providerGatewayOptions } : {}),
@@ -157,6 +208,20 @@ async function runConversation(
       await project(input.projection, { conversationId: conversation.id, run, journalEntry, contextCitations })
     },
   })
+}
+
+function isPreparedRequest(
+  value: ChatRequest | ConversationRunPreparedRequest,
+): value is ConversationRunPreparedRequest {
+  return Boolean(value)
+    && typeof value === 'object'
+    && 'request' in value
+    && Boolean(value.request)
+    && value.request.schema === CHAT_REQUEST_SCHEMA
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
 }
 
 async function project(

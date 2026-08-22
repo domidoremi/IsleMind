@@ -1,4 +1,4 @@
-import type { ProcessTrace } from '@/core'
+import type { ProcessTrace, StreamEvent } from '@/core'
 import {
   createAssistantMcpToolTurnRuntime,
   type AssistantTaggedToolManifestLike,
@@ -16,6 +16,7 @@ import { buildPendingAction, formatPendingActionOutput } from '@/bootstrap/workf
 import { truncateToolBlocks } from '@/bootstrap/mcpExecutionRuntime'
 import { resolveConversationGenerationParameterRequest } from '@/bootstrap/providerConversationGeneration'
 import { conversationProviderGateway } from '@/bootstrap/conversationProviderGateway'
+import { createRichStreamEventReporter } from '@/bootstrap/conversationProviderStreamingRuntime'
 import { resolveWorkflowRunLimitsFromSettings } from '@/modules/tasks'
 import {
   buildMcpToolRevisionMessages,
@@ -46,6 +47,7 @@ type ResolvedTaggedTool = ResolvedMcpTool & {
 export function createConversationMcpToolTurnRuntime(input: {
   conversationId: string
   assistantMessageId: string
+  onStreamEvent?: (event: StreamEvent) => void
 }) {
   return createAssistantMcpToolTurnRuntime<
     AIProvider,
@@ -119,7 +121,7 @@ export function createConversationMcpToolTurnRuntime(input: {
         temperatureCap: parameterInput.temperatureCap,
       })
     },
-    synthesize: synthesizeMcpToolAnswer,
+    synthesize: (request) => synthesizeMcpToolAnswer(request, input.onStreamEvent),
     sanitizeAnswer: sanitizeToolRevisionAnswerText,
     translate: st,
     buildTraceMetadata(metadataInput) {
@@ -211,22 +213,49 @@ function isAdmittedTaggedTool(manifest: AssistantTaggedToolManifestLike): boolea
   return shouldExposeLocalSearchTool(useSettingsStore.getState().settings)
 }
 
-async function synthesizeMcpToolAnswer(request: Record<string, unknown>) {
+async function synthesizeMcpToolAnswer(
+  request: Record<string, unknown>,
+  onStreamEvent?: (event: StreamEvent) => void,
+) {
   let text = ''
   let usage: McpToolUsage
   let failure: Error | null = null
+  const providerRequest = { ...request }
+  delete providerRequest.onStreamEvent
+  const provider = providerRequest.provider
+  const providerId = provider && typeof provider === 'object' && !Array.isArray(provider)
+    ? (provider as { id?: unknown }).id
+    : undefined
+  const model = providerRequest.model
+  const binding = typeof providerId === 'string' && providerId.trim()
+    && typeof model === 'string' && model.trim()
+    ? { providerId: providerId.trim(), model: model.trim() }
+    : undefined
+  const reporter = createRichStreamEventReporter(onStreamEvent, {
+    ...(binding ? { binding } : {}),
+  })
   const handle = await conversationProviderGateway.startRuntimeStream(
-    request as unknown as Parameters<typeof conversationProviderGateway.startRuntimeStream>[0],
+    providerRequest as unknown as Parameters<typeof conversationProviderGateway.startRuntimeStream>[0],
     {
       onChunk(chunk) {
         text += chunk
+        reporter.text(chunk)
       },
       onDone(result) {
+        const streamedText = text
         text = result.text || text
         usage = result.usage
+        if (result.text && !streamedText) reporter.text(result.text)
+        reporter.complete(result)
       },
       onError(error) {
         failure = error
+      },
+      onCitations(citations) {
+        reporter.citations(citations)
+      },
+      onTrace(trace) {
+        reporter.trace(trace)
       },
     },
   )

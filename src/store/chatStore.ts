@@ -3,6 +3,8 @@ import type { Conversation, ConversationGenerationParameterKey, ConversationGene
 import type { ProcessTrace } from '@/core'
 import { getModelConfig } from '@/types/modelCatalog'
 import {
+  loadConversationPage,
+  loadConversationRecord,
   loadConversationRecords,
   readActiveConversationSelection,
   replaceConversationRecords,
@@ -200,8 +202,13 @@ interface ChatState {
   currentId: string | null
   isLoading: boolean
   error: string | null
+  historyCursor: string | null
+  historyHasMore: boolean
+  historyLoadingMore: boolean
 
   load: () => Promise<void>
+  loadMore: () => Promise<boolean>
+  loadAll: () => Promise<void>
   create: (providerId: string, model: string) => string
   createDraft: (providerId: string, model: string) => string
   createLocalSetupConversation: () => string
@@ -212,7 +219,7 @@ interface ChatState {
   switchConversationModel: (id: string, providerId: string, model: string) => boolean
   removeMessage: (convId: string, msgId: string) => void
   trimAfterMessage: (convId: string, msgId: string) => void
-  addMessage: (convId: string, message: Message) => void
+  addMessage: (convId: string, message: Message) => Promise<void>
   updateMessage: (convId: string, msgId: string, updates: Partial<Message>) => void
   upsertMessageTrace: (convId: string, msgId: string, trace: ProcessTrace) => void
   appendContent: (convId: string, msgId: string, content: string) => void
@@ -232,6 +239,7 @@ interface ChatState {
 
 const DEFAULT_CONVERSATION_TEMPERATURE = PROVIDER_PLATFORM_DEFAULT_TEMPERATURE
 const DEFAULT_CONVERSATION_REASONING_EFFORT: Conversation['reasoningEffort'] = 'low'
+const HISTORY_PAGE_SIZE = 40
 const GENERATION_PARAMETER_KEYS = ['temperature', 'topP', 'topK', 'maxTokens'] as const satisfies readonly ConversationGenerationParameterKey[]
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -240,27 +248,80 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentId: null,
   isLoading: false,
   error: null,
+  historyCursor: null,
+  historyHasMore: false,
+  historyLoadingMore: false,
 
   load: async () => {
     set({ isLoading: true })
-    const sqliteData = await loadConversationRecords()
-    if (sqliteData.length) {
-      const conversations = prepareConversationsForStore([...sqliteData])
+    const page = await loadConversationPage({ limit: HISTORY_PAGE_SIZE })
+    if (page.conversations.length) {
+      let conversations = prepareConversationsForStore([...page.conversations])
       const currentId = await readActiveConversationSelection()
+      if (currentId && !conversations.some((conversation) => conversation.id === currentId)) {
+        const activeConversation = await loadConversationRecord(currentId)
+        if (activeConversation) conversations = [
+          ...prepareConversationsForStore([activeConversation]),
+          ...conversations,
+        ]
+      }
       const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
       set({
         conversations,
         draftConversationIds: new Set<string>(),
         currentId: selectedId,
         isLoading: false,
+        historyCursor: page.nextCursor ?? null,
+        historyHasMore: page.hasMore,
+        historyLoadingMore: false,
       })
       void writeActiveConversationSelection(selectedId)
       return
     }
 
     set({ conversations: [], draftConversationIds: new Set<string>(), currentId: null, isLoading: false })
+    set({
+      historyCursor: page.nextCursor ?? null,
+      historyHasMore: page.hasMore,
+      historyLoadingMore: false,
+    })
     await writeActiveConversationSelection(null)
     void hydrateSqliteConversationsInBackground()
+  },
+
+  loadMore: async () => {
+    const state = get()
+    if (!state.historyHasMore || state.historyLoadingMore) return false
+    set({ historyLoadingMore: true })
+    try {
+      const page = await loadConversationPage({
+        ...(state.historyCursor ? { cursor: state.historyCursor } : {}),
+        limit: HISTORY_PAGE_SIZE,
+      })
+      const incoming = prepareConversationsForStore([...page.conversations])
+      set((current) => {
+        const existingIds = new Set(current.conversations.map((conversation) => conversation.id))
+        const appended = incoming.filter((conversation) => !existingIds.has(conversation.id))
+        return {
+          conversations: appended.length ? [...current.conversations, ...appended] : current.conversations,
+          historyCursor: page.nextCursor ?? null,
+          historyHasMore: page.hasMore,
+          historyLoadingMore: false,
+        }
+      })
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : st('error.unknownError')
+      set({ historyLoadingMore: false, historyHasMore: false })
+      set({ error: st('storage.sqliteRestoreFailed', { message }) })
+      return false
+    }
+  },
+
+  loadAll: async () => {
+    while (get().historyHasMore) {
+      if (!(await get().loadMore())) return
+    }
   },
 
   create: (providerId: string, model: string) => {
@@ -500,6 +561,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addMessage: (convId: string, message: Message) => {
+    let durability = Promise.resolve()
     set((state) => {
       const draftConversationIds = new Set(state.draftConversationIds)
       const wasDraft = draftConversationIds.delete(convId)
@@ -513,9 +575,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
-      const persistence = persistConversationRecord(updated, convId)
+      durability = persistConversationRecord(updated, convId)
       if (wasDraft) {
-        void persistence
+        void durability
           .then(() => {
             if (get().currentId !== convId) return
             return writeActiveConversationSelection(convId)
@@ -524,6 +586,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return { conversations: updated, draftConversationIds: wasDraft ? draftConversationIds : state.draftConversationIds }
     })
+    return durability
   },
 
   updateMessage: (convId: string, msgId: string, updates: Partial<Message>) => {
@@ -625,6 +688,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       draftConversationIds: new Set<string>(),
       currentId: null,
       error: null,
+      historyCursor: null,
+      historyHasMore: false,
+      historyLoadingMore: false,
     })
     void writeActiveConversationSelection(null)
     void persistConversations([], new Set<string>())
@@ -640,6 +706,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       draftConversationIds: new Set<string>(),
       currentId,
       error: null,
+      historyCursor: null,
+      historyHasMore: false,
+      historyLoadingMore: false,
     })
     void writeActiveConversationSelection(currentId)
     void persistConversations(cleaned, new Set<string>())
@@ -744,7 +813,7 @@ async function flushStreamingPersist(getState: () => ChatState, convId: string, 
     clearTimeout(timer)
     streamingPersistTimers.delete(key)
   }
-  await persistStreamingConversationQueued(getState().conversations, convId)
+  await persistConversationRecord(getState().conversations, convId)
 }
 
 function persistStreamingConversationQueued(
@@ -791,7 +860,10 @@ function prepareConversationsForStore(conversations: Conversation[]): Conversati
 async function hydrateSqliteConversationsInBackground(): Promise<void> {
   try {
     const sqliteData = await loadConversationRecords()
-    if (!sqliteData.length) return
+    if (!sqliteData.length) {
+      await writeActiveConversationSelection(null)
+      return
+    }
     const conversations = prepareConversationsForStore([...sqliteData])
     const currentId = await readActiveConversationSelection()
     const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
