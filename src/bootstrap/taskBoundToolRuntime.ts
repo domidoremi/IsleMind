@@ -1,4 +1,4 @@
-import { createVNextTaskRuntime } from '@/bootstrap/vnextTaskRuntime'
+import { createTaskRuntime } from '@/bootstrap/taskRuntime'
 import type { AssistantRunId, JsonRecord, TaskId } from '@/core'
 import {
   createLocalToolAdapter,
@@ -1094,10 +1094,10 @@ function withTaskMetadata(
 ): AgentStepObservation {
   const metadata = {
     ...(result.metadata ?? {}),
-    vnextTaskId: task.id,
-    vnextTaskStatus: task.status,
-    vnextTaskPolicy: task.policy.outcome,
-    ...(task.runId ? { vnextAssistantRunId: task.runId } : {}),
+    taskId: task.id,
+    taskStatus: task.status,
+    taskPolicy: task.policy.outcome,
+    ...(task.runId ? { assistantRunId: task.runId } : {}),
   }
   return {
     ...result,
@@ -1118,10 +1118,10 @@ function withExternalTaskMetadata(
 ): ExternalToolExecutionResult {
   const metadata: JsonRecord = {
     ...(result.observation.metadata ?? {}),
-    vnextTaskId: task.id,
-    vnextTaskStatus: task.status,
-    vnextTaskPolicy: task.policy.outcome,
-    ...(task.runId ? { vnextAssistantRunId: task.runId } : {}),
+    taskId: task.id,
+    taskStatus: task.status,
+    taskPolicy: task.policy.outcome,
+    ...(task.runId ? { assistantRunId: task.runId } : {}),
   }
   return {
     ...result,
@@ -1163,10 +1163,10 @@ function externalTaskRuntimeFailure(
         toolId: tool.id,
         source: tool.source,
         errorCode,
-        vnextTaskId: task.id,
-        vnextTaskStatus: task.status,
-        vnextTaskPolicy: task.policy.outcome,
-        ...(task.runId ? { vnextAssistantRunId: task.runId } : {}),
+        taskId: task.id,
+        taskStatus: task.status,
+        taskPolicy: task.policy.outcome,
+        ...(task.runId ? { assistantRunId: task.runId } : {}),
       }
     : { toolId: tool.id, source: tool.source, errorCode }
   const skipped = errorCode === 'cancelled' || errorCode === 'permission_required' || errorCode === 'policy_denied'
@@ -1204,10 +1204,10 @@ function taskRuntimeFailure(
         toolId: tool.id,
         source: tool.source,
         errorCode,
-        vnextTaskId: task.id,
-        vnextTaskStatus: task.status,
-        vnextTaskPolicy: task.policy.outcome,
-        ...(task.runId ? { vnextAssistantRunId: task.runId } : {}),
+        taskId: task.id,
+        taskStatus: task.status,
+        taskPolicy: task.policy.outcome,
+        ...(task.runId ? { assistantRunId: task.runId } : {}),
       }
     : { toolId: tool.id, source: tool.source, errorCode }
   const skipped = errorCode === 'cancelled' || errorCode === 'permission_required' || errorCode === 'policy_denied'
@@ -1396,7 +1396,7 @@ async function loadDefaultDependencies(): Promise<TaskBoundToolRuntimeDependenci
     listAndroidTools: android.listAndroidDeviceToolManifests,
   }
   return {
-    createTaskRuntime: createVNextTaskRuntime,
+    createTaskRuntime: createTaskRuntime,
     listToolManifests: () => listConversationToolCatalog(catalogSources, {
       internalTools: [KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST, WORK_ARTIFACT_TOOL_MANIFEST],
     }),

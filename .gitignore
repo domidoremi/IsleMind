@@ -31,6 +31,8 @@ yarn-error.*
 # local agent/runtime artifacts
 /.agents/
 /.codex/
+/.superpowers/
+/.tmp-*
 artifacts/
 .claude/
 .gitnexus/

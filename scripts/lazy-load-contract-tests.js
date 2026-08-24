@@ -138,10 +138,10 @@ assert.match(
   'Settings defers low-frequency runtime diagnostic projection until its panel opens',
 )
 for (const [label, pattern] of [
-  ['APK update implementation', /import\('@\/services\/appUpdates'\)/],
-  ['plugin manifest catalog', /import\('@\/services\/pluginManifest'\)/],
+  ['APK update implementation', /import\('@\/platform\/native\/androidApkUpdates'\)/],
+  ['plugin manifest catalog', /import\('@\/bootstrap\/pluginManifest'\)/],
   ['Android status notification bridge', /import\('@\/bootstrap\/androidStatusNotification'\)/],
-  ['runtime log implementation', /import\('@\/services\/runtimeLog'\)/],
+  ['runtime log implementation', /import\('@\/platform\/native\/runtimeLog'\)/],
   ['Chat store destructive action', /import\('@\/store\/chatStore'\)/],
   ['clipboard bridge', /import\('expo-clipboard'\)/],
   ['sharing bridge', /import\('expo-sharing'\)/],
@@ -150,7 +150,7 @@ for (const [label, pattern] of [
 }
 assert.doesNotMatch(
   settingsScreenSource,
-  /^import (?!type\b).*from ['"](?:expo-(?:clipboard|sharing)|@\/(?:services\/(?:appUpdates|pluginManifest|runtimeLog)|bootstrap\/androidStatusNotification|store\/chatStore))['"]\s*$/gm,
+  /^import (?!type\b).*from ['"](?:expo-(?:clipboard|sharing)|@\/(?:bootstrap\/pluginManifest|platform\/native\/(?:androidApkUpdates|runtimeLog)|bootstrap\/androidStatusNotification|store\/chatStore))['"]\s*$/gm,
   'Settings does not statically evaluate low-frequency native and diagnostics modules',
 )
 assert.doesNotMatch(

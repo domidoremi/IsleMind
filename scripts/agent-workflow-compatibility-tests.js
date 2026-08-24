@@ -2717,7 +2717,7 @@ function assertWorkflowCheckpointProjectionOwnership() {
   const taskEntrySource = fs.readFileSync(path.join(root, 'src/modules/tasks/index.ts'), 'utf8')
   const checkpointBootstrapSource = fs.readFileSync(checkpointBootstrapPath, 'utf8')
   const bootstrapEntrySource = fs.readFileSync(path.join(root, 'src/bootstrap/index.ts'), 'utf8')
-  const chatWorkflowRuntimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/vnextChatWorkflowRuntime.ts'), 'utf8')
+  const chatWorkflowRuntimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/chatWorkflowRuntime.ts'), 'utf8')
   const orchestratorSource = fs.readFileSync(orchestratorCompositionPath, 'utf8')
 
   assert.equal(fs.existsSync(legacyPath), false, 'the covered checkpoint adapter stays deleted')
@@ -2820,7 +2820,7 @@ function assertWorkflowCheckpointProjectionOwnership() {
     'src/modules/tasks/application/workflowOrchestrator.ts',
     'src/modules/conversations/application/conversationChatWorkflowReplyStart.ts',
     'src/bootstrap/workflowCheckpoints.ts',
-    'src/bootstrap/vnextChatWorkflowRuntime.ts',
+    'src/bootstrap/chatWorkflowRuntime.ts',
   ]) {
     const source = fs.readFileSync(path.join(root, relativePath), 'utf8')
     assert.match(source, /\bWorkflowCheckpointStore\b/, `${relativePath} consumes the generic checkpoint store`)

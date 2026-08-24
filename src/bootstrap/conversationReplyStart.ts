@@ -1,6 +1,6 @@
 import { resolveConversationChatWorkflowAssistantMessage } from '@/bootstrap/conversationChatWorkflowResolutionRuntime'
 import { retrieveConversationKnowledgeContext } from '@/bootstrap/knowledgeContextRuntime'
-import { createVNextChatWorkflowRuntime } from '@/bootstrap/vnextChatWorkflowRuntime'
+import { createChatWorkflowRuntime } from '@/bootstrap/chatWorkflowRuntime'
 import { systemClock } from '@/core'
 import { st } from '@/i18n/service'
 import { createConversationChatWorkflowReplyStarter } from '@/modules/conversations'
@@ -21,8 +21,8 @@ import {
   releaseChatWorkspaceReviewRuntime,
 } from '@/presentation/features/conversations/chatWorkspaceReviewCommand'
 import { startConversationAssistantReplyAfterHistoryProjection } from '@/bootstrap/conversationAssistantReplyStartRuntime'
-import { resumeVNextConversationModelOperation } from '@/bootstrap/vnextConversationRuntime'
-import { createVNextPlainChatProjection } from '@/presentation/features/conversations/vnextPlainChatProjection'
+import { resumeConversationModelOperation } from '@/bootstrap/conversationRuntime'
+import { createPlainChatProjection } from '@/presentation/features/conversations/plainChatProjection'
 import {
   extractWorkflowDefinitionsFromSkillSnapshot,
   listBlockedWorkflowStatesForSkillSnapshot,
@@ -100,7 +100,7 @@ const startConversationChatWorkflowReply = createConversationChatWorkflowReplySt
   readSettings: () => useSettingsStore.getState().settings,
   resolveRunLimits: resolveWorkflowRunLimitsFromSettings,
   retrieveContext: retrieveConversationKnowledgeContext,
-  createChatWorkflowRuntime: createVNextChatWorkflowRuntime,
+  createChatWorkflowRuntime: createChatWorkflowRuntime,
   startChatWorkflowRun({ runtime, controller, ...input }) {
     return runtime.start({
       ...input,
@@ -159,13 +159,13 @@ const conversationMessageRuntime: ConversationMessageRuntime = {
     const provider = settingsState.providers.find((item) => item.id === conversation.providerId)
     if (!provider) return false
     useChatStreamingStore.getState().setStreaming(conversationId, assistantMessageId)
-    return resumeVNextConversationModelOperation({
+    return resumeConversationModelOperation({
       conversation,
       provider,
       settings: settingsState.settings,
       runId,
       approved,
-      projection: createVNextPlainChatProjection({
+      projection: createPlainChatProjection({
         conversation,
         assistantMessageId,
         provider,

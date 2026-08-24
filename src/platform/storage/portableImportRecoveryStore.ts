@@ -4,8 +4,13 @@ import {
 } from '@/core'
 
 export const PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY =
-  '@islemind/vnext/portable-import-recovery/envelope-v1'
+  '@islemind/portable-import-recovery/envelope-v1'
 export const PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX =
+  '@islemind/portable-import-recovery/blob-v1/'
+
+const LEGACY_PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY =
+  '@islemind/vnext/portable-import-recovery/envelope-v1'
+const LEGACY_PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX =
   '@islemind/vnext/portable-import-recovery/blob-v1/'
 
 const PORTABLE_IMPORT_RECOVERY_LOCK_NAME = 'islemind:portable-import-recovery:v1'
@@ -91,9 +96,58 @@ export function createAsyncStoragePortableImportRecoveryStore(
   const digest = options.digest ?? digestPortableImportRecoveryValue
   const webLocks = resolveWebLockManager()
 
+  async function migrateLegacyValue(
+    adapter: PortableImportRecoveryStorageAdapter,
+    canonicalKey: string,
+    legacyKey: string,
+    maxCharacters: number,
+  ): Promise<string | null> {
+    const canonical = await adapter.getItem(canonicalKey)
+    const legacy = await adapter.getItem(legacyKey)
+    if (canonical !== null && typeof canonical !== 'string') {
+      throw new PortableImportRecoveryStoreError('read_failed')
+    }
+    if (canonical !== null && canonical.length > maxCharacters) {
+      throw new PortableImportRecoveryStoreError('oversized')
+    }
+    if (legacy === null) return canonical
+    if (typeof legacy !== 'string') throw new PortableImportRecoveryStoreError('read_failed')
+    if (legacy.length > maxCharacters) throw new PortableImportRecoveryStoreError('oversized')
+    if (canonical !== null && canonical !== legacy) {
+      throw new PortableImportRecoveryStoreError('conflict')
+    }
+
+    if (canonical === null) {
+      try {
+        await adapter.setItem(canonicalKey, legacy)
+      } catch {
+        throw new PortableImportRecoveryStoreError('write_failed')
+      }
+      if (await adapter.getItem(canonicalKey) !== legacy) {
+        throw new PortableImportRecoveryStoreError('verification_failed')
+      }
+    }
+    try {
+      await adapter.removeItem(legacyKey)
+    } catch {
+      throw new PortableImportRecoveryStoreError('delete_failed')
+    }
+    if (await adapter.getItem(legacyKey) !== null) {
+      throw new PortableImportRecoveryStoreError('verification_failed')
+    }
+    return legacy
+  }
+
   async function readStorageKey(key: string): Promise<string | null> {
     try {
-      const value = await storage.getItem(key)
+      const value = key === PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY
+        ? await migrateLegacyValue(
+            storage,
+            key,
+            LEGACY_PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY,
+            MAX_ENVELOPE_CHARACTERS,
+          )
+        : await storage.getItem(key)
       if (value !== null && typeof value !== 'string') {
         throw new PortableImportRecoveryStoreError('read_failed')
       }
@@ -117,8 +171,18 @@ export function createAsyncStoragePortableImportRecoveryStore(
 
   async function readBlobStorageKey(key: string): Promise<string | null> {
     try {
+      if (key.startsWith(PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX)) {
+        const suffix = key.slice(PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX.length)
+        return await migrateLegacyValue(
+          blobStorage,
+          key,
+          `${LEGACY_PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${suffix}`,
+          MAX_BLOB_CHARACTERS,
+        )
+      }
       return await blobStorage.getItem(key)
-    } catch {
+    } catch (error) {
+      if (error instanceof PortableImportRecoveryStoreError) throw error
       throw new PortableImportRecoveryStoreError('read_failed')
     }
   }

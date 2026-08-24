@@ -1,14 +1,14 @@
-# IsleMind vNext Architecture Refactor Plan
+# IsleMind Architecture
 
-**Status:** In progress. Current ownership, compatibility layers, and deletion gates live in [vNext migration status](./vnext-migration-status.md).
+**Status:** Active architectural source of truth.
 
 **Platform:** Expo SDK, React Native, Expo Router, strict TypeScript, and Bun.
 
-**Product runtime:** Chat is the only product and execution entry. Historical Agent, Companion, and Tavern values are accepted only where a current migration reader explicitly requires them. They do not select product navigation, permission, or reply behavior.
+**Product runtime:** Chat is the only product and execution entry. Obsolete product-mode metadata may be decoded only inside an owner-private migration reader and cannot select navigation, permission, or reply behavior. Agent workflows and Tavern workspaces are active domain capabilities inside Chat, not alternate product modes.
 
 ## 1. Objective
 
-The vNext refactor is a targeted application rebuild, not a platform rewrite and not a folder-renaming exercise.
+The architecture keeps product behavior inside explicit ownership boundaries without imposing framework ceremony on local helpers.
 
 > A capability should be added inside one owning module, through an existing public API or one justified boundary contract, without editing unrelated stores, screens, or provider branches.
 
@@ -69,7 +69,7 @@ Internal folders such as `domain/`, `application/`, `ports/`, and `adapters/` ar
 | `settings` | Preferences and configuration use cases | Credential secret implementation |
 | `diagnostics` | Redacted health, timeline, recovery, and performance projections | Secret or raw provider-payload retention |
 
-The exact allowed entry points are listed in [vNext module public API](./vnext-module-public-api.md).
+The exact allowed entry points are listed in [module public API](./module-public-api.md).
 
 ## 5. Dependency Rules
 
@@ -161,15 +161,15 @@ Each durable record has one owning module, one repository port, strict decode va
 
 Secrets never enter portable payloads, ordinary logs, telemetry, or UI state. Export, import, and reset coordinate owners through Data Management and bootstrap; they do not scan storage directly.
 
-Current cutover policy is intentionally strict:
+Current durability policy is intentionally strict:
 
 - product and new `AssistantRun` rows are Chat-only;
 - conversations use current SQLite records and the current active-conversation record;
 - workspaces use current native SQLite or current browser v2 storage;
-- portable recovery has no old AsyncStorage recovery-blob fallback;
+- portable recovery uses the current envelope key and a large-value native blob store where required;
 - unsupported historical writers and removed formats are not restored to make stale tests pass.
 
-`AssistantRun` schema v4 persists the exact captured handoff atomically with `run.created` as strictly validated durable evidence only; it does not grant recovery authority. The canonical ConversationRun additionally stores the final `ChatRequest` snapshot, while Rich Chat stores a separately versioned, redacted activity-request evidence snapshot until request-model parity is complete. New request snapshots also retain a versioned capability revision and stable request hash bound to the stored request evidence; legacy snapshots remain readable without fabricated identity. Rich text, citation, tool-call, usage, and bounded trace-lifecycle markers are journaled as `stream.event` checkpoints before terminal completion; trace content and metadata remain excluded, and the evidence remains diagnostic rather than replay authority. Nested Rich provider turns persist bounded started/completed continuation identities. On restart, an unmatched identity is attached to the interrupted failure with `resume: new-turn-only`; recovery safely terminalizes the run and never replays a provider request or tool effect. Unsupported or incomplete rows are terminal decode-only no-replay inputs. Recovery does not infer effect authority unless an awaited durable final-output/success barrier exists.
+`AssistantRun` schema v4 persists the exact captured handoff atomically with `run.created` as strictly validated durable evidence only; it does not grant recovery authority. Rich and Plain Chat store the same final canonical `ChatRequest` snapshot with a versioned capability revision, stable request hash, and bounded context receipt. The older redacted activity-request shape is decode-only for existing SQLite rows and has no runtime or public writer. Rich text, citation, tool-call, usage, and bounded trace-lifecycle markers are journaled as `stream.event` checkpoints before terminal completion; trace content and metadata remain excluded, and the evidence remains diagnostic rather than replay authority. Nested Rich provider turns persist bounded started/completed continuation identities. On restart, an unmatched identity is attached to the interrupted failure with `resume: new-turn-only`; recovery safely terminalizes the run and never replays a provider request or tool effect. Unsupported or incomplete rows are terminal decode-only no-replay inputs. Recovery does not infer effect authority unless an awaited durable final-output/success barrier exists.
 
 Recovery never infers that an external effect happened. Unknown cleanup or commit state is fenced for explicit retry, repair, or quarantine.
 
@@ -201,18 +201,18 @@ Animation communicates state or spatial continuity, completes quickly, respects 
 
 Debug-client Metro timings and memory are diagnostic evidence only. Release or profile builds on named devices establish production budgets.
 
-## 12. Migration Method
+## 12. Change Method
 
-Migration proceeds in bounded, independently buildable slices:
+Architectural changes proceed in bounded, independently buildable slices:
 
-1. Identify the live authority, owner, public boundary, persistence effect, and compatibility reader.
+1. Identify the live authority, owner, public boundary, persistence effect, and any required compatibility reader.
 2. Add or reuse the smallest target API and focused behavior test.
 3. Compose concrete effects in bootstrap.
 4. Move one caller path and verify cancellation, recovery, permission, and error behavior.
 5. Delete the old path, alias, source assertion, and redundant prose after replacement coverage passes.
-6. Update [vNext migration status](./vnext-migration-status.md) only when live authority or a deletion condition changes.
+6. Keep only durable architectural rules here; implementation history belongs in Git history.
 
-Historical implementation notes belong in Git history. This plan contains durable architecture only. The migration status contains current temporary paths only. The public API document contains allowed entry points only.
+This document contains durable architecture only. The public API document contains allowed entry points only. Temporary compatibility readers stay owner-private and carry their deletion condition next to focused executable evidence.
 
 ## 13. Verification
 
@@ -229,7 +229,7 @@ Source-marker tests are temporary. Remove them when a behavior, type, dependency
 
 ## 14. Completion Criteria
 
-The refactor is complete when:
+The architecture remains healthy when:
 
 1. the source tree and executable dependency gates agree;
 2. domain and application code are free of framework and concrete-adapter imports;

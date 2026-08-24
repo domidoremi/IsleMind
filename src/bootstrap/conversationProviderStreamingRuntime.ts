@@ -17,7 +17,7 @@ import type {
   StreamEvent,
 } from '@/core'
 import { parseToolArguments } from '@/modules/integrations'
-import { conversationProviderGateway } from '@/bootstrap/conversationProviderGateway'
+import { streamProviderChat } from '@/bootstrap/providerRuntime'
 import {
   clearActiveStream,
   getActiveStream,
@@ -71,13 +71,14 @@ const providerStreamingRuntime =
   >({
     createProjection: streamProjectionPolicy.start,
     dispatch(request, onChunk, onDone, onError, onCitations, onTrace) {
-      return conversationProviderGateway.startRuntimeStream(request, {
+      return streamProviderChat(
+        request,
         onChunk,
         onDone,
         onError,
         onCitations,
         onTrace,
-      })
+      )
     },
     getActiveStream,
     setActiveStream,

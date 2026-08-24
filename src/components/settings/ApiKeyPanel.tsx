@@ -32,7 +32,7 @@ import {
 } from '@/bootstrap/providerCapabilityMatrix'
 import { PROVIDER_MODEL_CAPABILITY_KEYS } from '@/modules/providers'
 import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompatibilityBehavior } from '@/modules/providers'
-import type { RuntimeDiagnosticsProviderDetail } from '@/services/runtimeDiagnostics'
+import type { RuntimeDiagnosticsProviderDetail } from '@/bootstrap/runtimeDiagnostics'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 

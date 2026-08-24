@@ -1,4 +1,4 @@
-import type { Dispatch, RefObject, SetStateAction } from 'react'
+import { useMemo, type Dispatch, type RefObject, type SetStateAction } from 'react'
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
 
 import type { useIsleDialog } from '@/components/ui/isle'
@@ -106,13 +106,18 @@ export function ChatActiveMessageVirtualList({
     0,
     viewportHeight - emptyConversationTopPadding - messageListBottomPadding,
   )
+  const messageListRenderExtraData = useMemo(() => ({
+    feed: messageListExtraData,
+    providerId: provider?.id ?? null,
+    modelId: conversation.model,
+  }), [conversation.model, messageListExtraData, provider?.id])
 
   return (
     <FlashList
       ref={listRef}
       style={{ flex: 1 }}
       data={conversation.messages}
-      extraData={messageListExtraData}
+      extraData={messageListRenderExtraData}
       keyExtractor={(item) => item.id}
       accessibilityRole="list"
       accessibilityLabel={messageListAccessibilityLabel}
@@ -150,6 +155,7 @@ export function ChatActiveMessageVirtualList({
           motion={messageListMotion}
           viewportHeight={viewportHeight}
           provider={provider}
+          modelId={conversation.model}
           regenerableAssistantId={regenerableAssistantId}
           actionSheetActive={activeActionMessageId === message.id}
           onActionMessageChange={setActiveActionMessageId}

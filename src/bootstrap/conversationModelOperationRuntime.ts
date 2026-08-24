@@ -89,7 +89,7 @@ export async function createConversationModelOperationSession(
   if (!created.ok) throw new Error(created.message)
   if (created.catalog.snapshot.operations.length === 0) return undefined
 
-  const { snapshot: createdSnapshot, fallbackPrompt } = created.catalog
+  const { snapshot: createdSnapshot, taggedPrompt } = created.catalog
   const snapshot = input.allowConfirmation === false
     ? {
         ...createdSnapshot,
@@ -111,7 +111,7 @@ export async function createConversationModelOperationSession(
   const nativeProtocol = supportsNativeModelOperationProtocol(input.provider, input.conversation.model)
   const prepareRequest = (request: ChatRequest): ChatRequest => ({
     ...request,
-    systemPrompt: [request.systemPrompt, nativeProtocol ? undefined : fallbackPrompt].filter(Boolean).join('\n\n'),
+    systemPrompt: [request.systemPrompt, nativeProtocol ? undefined : taggedPrompt].filter(Boolean).join('\n\n'),
     toolDefinitions: snapshot.operations.map((operation) => ({
       operationId: operation.id,
       name: providerNameByOperationId.get(operation.id) as string,
@@ -263,8 +263,8 @@ export async function createConversationModelOperationSession(
       if (!observation) {
         return { status: 'failed', output: 'The selected operation did not produce a bounded receipt.' }
       }
-      const taskId = readTaskMetadata(observation.metadata, 'vnextTaskId')
-      const taskStatus = readTaskMetadata(observation.metadata, 'vnextTaskStatus')
+      const taskId = readTaskMetadata(observation.metadata, 'taskId', 'vnextTaskId')
+      const taskStatus = readTaskMetadata(observation.metadata, 'taskStatus', 'vnextTaskStatus')
       const output = boundedObservationOutput(observation)
       if (taskStatus === 'awaiting-confirmation' && taskId) {
         return {
@@ -306,8 +306,8 @@ export async function createConversationModelOperationSession(
         providerNameByOperationId,
       )
       if (normalized.kind === 'none') return { kind: 'no-operation' }
-      if (normalized.kind === 'invalid-fallback') {
-        const receipt = invalidFallbackReceipt(turnInput.run.id, snapshot.revision, turnInput.stepIndex, normalized.message)
+      if (normalized.kind === 'invalid-tagged-call') {
+        const receipt = invalidTaggedCallReceipt(turnInput.run.id, snapshot.revision, turnInput.stepIndex, normalized.message)
         return {
           kind: 'continue',
           request: buildContinuationRequest(currentTurn, receipt),
@@ -389,7 +389,7 @@ function normalizeTurnCalls(
   providerNameByOperationId: ReadonlyMap<string, string>,
 ):
   | { kind: 'none' }
-  | { kind: 'invalid-fallback'; message: string }
+  | { kind: 'invalid-tagged-call'; message: string }
   | { kind: 'calls'; calls: readonly RuntimeModelOperationCall[] } {
   if (nativeCalls.length) {
     return {
@@ -407,7 +407,7 @@ function normalizeTurnCalls(
   }
   if (!outputText.includes('<islemind_tool_call')) return { kind: 'none' }
   const parsed = parseModelOperationProposal(outputText)
-  if (!parsed.ok) return { kind: 'invalid-fallback', message: parsed.message }
+  if (!parsed.ok) return { kind: 'invalid-tagged-call', message: parsed.message }
   return {
     kind: 'calls',
     calls: [toRuntimeCall(
@@ -544,7 +544,7 @@ function buildContinuationRequest(
   }
 }
 
-function invalidFallbackReceipt(
+function invalidTaggedCallReceipt(
   runId: string,
   catalogRevision: string,
   stepIndex: number,
@@ -591,8 +591,8 @@ async function expireDeclinedModelOperationTask(
   signal: AbortSignal,
 ): Promise<{ ok: boolean; message?: string }> {
   if (signal.aborted) return { ok: false, message: 'The declined operation was cancelled before its task could be closed.' }
-  const { createVNextTaskRuntime } = await import('@/bootstrap/vnextTaskRuntime')
-  const runtime = createVNextTaskRuntime({
+  const { createTaskRuntime } = await import('@/bootstrap/taskRuntime')
+  const runtime = createTaskRuntime({
     async evaluate() {
       return { outcome: 'denied', reasonCode: 'model_operation_decline_does_not_create_tasks' }
     },
@@ -660,8 +660,9 @@ function isInternalManifest(manifest: ConversationToolCatalogManifest): boolean 
 function readTaskMetadata(
   metadata: Readonly<Record<string, unknown>> | JsonRecord | undefined,
   key: string,
+  legacyKey?: string,
 ): string | undefined {
-  const value = metadata?.[key]
+  const value = metadata?.[key] ?? (legacyKey ? metadata?.[legacyKey] : undefined)
   return typeof value === 'string' && value.trim() ? value : undefined
 }
 

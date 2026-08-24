@@ -261,9 +261,9 @@ async function main() {
           error.name = 'AbortError'
           throw error
         }
-        assert.deepEqual(input, { query: 'IsleMind vNext', limit: 6 })
+        assert.deepEqual(input, { query: 'IsleMind architecture', limit: 6 })
         return [
-          { title: 'Architecture plan', url: 'https://example.test/architecture', snippet: 'vNext migration evidence' },
+          { title: 'Architecture plan', url: 'https://example.test/architecture', snippet: 'architecture evidence' },
           { title: 'Migration status', url: 'https://example.test/status', snippet: 'Current runnable slices' },
         ]
       },
@@ -494,8 +494,8 @@ async function main() {
   })
   assert.equal(confirmed.ok, true)
   assert.equal(executions, 1)
-  assert.equal(confirmed.metadata.vnextTaskStatus, 'succeeded')
-  assert.equal(confirmed.metadata.vnextAssistantRunId, 'run-owner-1')
+  assert.equal(confirmed.metadata.taskStatus, 'succeeded')
+  assert.equal(confirmed.metadata.assistantRunId, 'run-owner-1')
   assert.equal(confirmed.diagnostic.metadata.permission, 'read-write')
   assert.equal(confirmed.diagnostic.metadata.decision, 'allow')
   assert.equal(confirmed.diagnostic.metadata.allowReason, 'user-confirmed')
@@ -543,8 +543,8 @@ async function main() {
     { type: 'image', data: 'fixture-image', mimeType: 'image/png' },
     { type: 'resource', uri: 'file:///fixture.txt', text: 'Fixture resource', name: 'fixture.txt', mimeType: 'text/plain' },
   ], 'MCP text, image, and resource observations remain live without legacy projection')
-  assert.equal(targetMcp.metadata.vnextTaskStatus, 'succeeded')
-  assert.equal(targetMcp.diagnostic.metadata.vnextTaskStatus, 'succeeded')
+  assert.equal(targetMcp.metadata.taskStatus, 'succeeded')
+  assert.equal(targetMcp.diagnostic.metadata.taskStatus, 'succeeded')
   const mcpTask = await persistence.findByIdempotencyKey(taskKey(undefined, 'chat-mcp-read', mcpManifest.id, mcpRequest.arguments))
   assert.equal(mcpTask.status, 'succeeded')
   assert.equal(directMcpTaskIds[0], mcpTask.id, 'MCP execution receives the exact persisted durable task identity')
@@ -563,7 +563,7 @@ async function main() {
   assert.equal(replayedTargetMcp.ok, true, 'idempotent target replay preserves the visible success outcome')
   assert.equal(replayedTargetMcp.output, 'MCP read completed.')
   assert.equal(replayedTargetMcp.metadata.replayed, true)
-  assert.equal(replayedTargetMcp.metadata.vnextTaskStatus, 'succeeded')
+  assert.equal(replayedTargetMcp.metadata.taskStatus, 'succeeded')
   assert.equal(directMcpExecutions, 1, 'successful replay never repeats the external side effect')
 
   const replayedMcp = await adapter.execute({
@@ -583,7 +583,7 @@ async function main() {
   const searchRequest = {
     toolId: searchManifest.id,
     source: 'builtin',
-    arguments: { query: 'IsleMind vNext', limit: 2 },
+    arguments: { query: 'IsleMind architecture', limit: 2 },
   }
   const search = await adapter.execute({
     stepId: 'agent-builtin-search',
@@ -600,7 +600,7 @@ async function main() {
       type: 'resource',
       name: 'Architecture plan',
       uri: 'https://example.test/architecture',
-      text: 'vNext migration evidence',
+      text: 'architecture evidence',
       mimeType: 'text/html',
     },
     {
@@ -611,8 +611,8 @@ async function main() {
       mimeType: 'text/html',
     },
   ], 'the first durable target search execution preserves bounded public source blocks')
-  assert.equal(search.metadata.vnextTaskStatus, 'succeeded')
-  assert.equal(search.metadata.vnextAssistantRunId, 'run-search-1')
+  assert.equal(search.metadata.taskStatus, 'succeeded')
+  assert.equal(search.metadata.assistantRunId, 'run-search-1')
   const searchTask = await persistence.findByIdempotencyKey(taskKey(
     'run-search-1',
     'agent-builtin-search',
@@ -679,7 +679,7 @@ async function main() {
   })
   assert.equal(pendingEdit.ok, false)
   assert.equal(pendingEdit.errorCode, 'permission_required')
-  assert.equal(pendingEdit.metadata.vnextTaskStatus, 'awaiting-confirmation')
+  assert.equal(pendingEdit.metadata.taskStatus, 'awaiting-confirmation')
   assert.equal(builtinEditExecutions, 0, 'a visible plan alone cannot satisfy a manifest-required durable confirmation')
   const pendingEditTask = await persistence.findByIdempotencyKey(taskKey(
     'run-edit-pending',
@@ -740,7 +740,7 @@ async function main() {
   assert.equal(cancelledSearch.status, 'skipped')
   assert.equal(cancelledSearch.errorCode, 'cancelled', 'in-flight built-in search cancellation remains visible as cancellation')
   assert.equal(cancelledSearch.diagnostic.status, 'cancelled')
-  assert.equal(cancelledSearch.metadata.vnextTaskStatus, 'cancelled')
+  assert.equal(cancelledSearch.metadata.taskStatus, 'cancelled')
   const cancelledSearchTask = await persistence.findByIdempotencyKey(taskKey(
     'run-search-cancelled',
     'agent-builtin-search-cancelled',
@@ -757,7 +757,7 @@ async function main() {
   })).observation
   assert.equal(replayedCancelledSearch.errorCode, 'cancelled', 'cancelled built-in search replay preserves cancellation')
   assert.equal(replayedCancelledSearch.diagnostic.status, 'cancelled')
-  assert.equal(replayedCancelledSearch.metadata.vnextTaskStatus, 'cancelled')
+  assert.equal(replayedCancelledSearch.metadata.taskStatus, 'cancelled')
   assert.equal(builtinSearchExecutions, cancelledSearchExecutionCount, 'cancelled built-in search replay never repeats the network-backed executor')
   const legacyCancelledSearch = await adapter.execute({
     stepId: 'agent-builtin-search-cancelled',
@@ -817,7 +817,7 @@ async function main() {
   })
   assert.equal(failedMcp.ok, false)
   assert.equal(failedMcp.errorCode, 'execution_failed')
-  assert.equal(failedMcp.metadata.vnextTaskStatus, 'failed')
+  assert.equal(failedMcp.metadata.taskStatus, 'failed')
   assert.equal(directMcpExecutions, 2, 'MCP source failures execute once and never re-enter a generic executor')
   const failedMcpTask = await persistence.findByIdempotencyKey(taskKey(undefined, 'chat-mcp-failure', mcpManifest.id, failedMcpRequest.arguments))
   assert.equal(failedMcpTask.status, 'failed')
@@ -864,7 +864,7 @@ async function main() {
   assert.equal(malformedResult.diagnostic.title, `External tool ${malformedBuiltinManifest.name}`)
   assert.equal(malformedResult.diagnostic.metadata.toolId, malformedBuiltinManifest.id)
   assert.equal(malformedResult.diagnostic.metadata.source, 'builtin')
-  assert.equal(malformedResult.metadata.vnextTaskStatus, 'failed')
+  assert.equal(malformedResult.metadata.taskStatus, 'failed')
 
   const appActionManifest = {
     id: 'app-action:get_settings',
@@ -891,7 +891,7 @@ async function main() {
     options: { manifests: [appActionManifest], userConfirmed: false },
   })
   assert.equal(appAction.ok, true, 'app actions execute through the target settings command binding')
-  assert.equal(appAction.metadata.vnextTaskStatus, 'succeeded')
+  assert.equal(appAction.metadata.taskStatus, 'succeeded')
 
   const workArtifactManifest = integrationsModule.WORK_ARTIFACT_TOOL_MANIFEST
   const workArtifactRequest = {
@@ -909,7 +909,7 @@ async function main() {
         'Open questions',
         '- None.',
         'Evidence',
-        '- bun run test:vnext-agent-task-adapter',
+        '- bun run test:workflow-task-adapter',
       ].join('\n'),
       sourceMessageId: 'message-work-artifact-1',
       citations: [{ id: 'gate-1', label: 'focused gate' }],
@@ -922,8 +922,8 @@ async function main() {
     options: { manifests: [workArtifactManifest], userConfirmed: false },
   })
   assert.equal(workArtifact.ok, true, 'work artifacts execute through the target durable task path')
-  assert.equal(workArtifact.metadata.vnextTaskStatus, 'succeeded')
-  assert.equal(workArtifact.metadata.vnextAssistantRunId, 'run-work-artifact-1')
+  assert.equal(workArtifact.metadata.taskStatus, 'succeeded')
+  assert.equal(workArtifact.metadata.assistantRunId, 'run-work-artifact-1')
   assert.equal(typeof workArtifact.diagnostic.metadata.qualityAuditOk, 'boolean')
   assert.equal(workArtifact.diagnostic.metadata.source, 'work-artifact')
   assert.equal(workArtifact.diagnostic.metadata.workArtifactOutput.sourceMessageId, 'message-work-artifact-1')
@@ -968,7 +968,7 @@ async function main() {
     options: { manifests: [manifest], intentVisible: true, userConfirmed: true },
   })
   assert.equal(chatConfirmed.ok, true, 'Chat executes the same confirmed durable tool request')
-  assert.equal(chatConfirmed.metadata.vnextTaskStatus, 'succeeded')
+  assert.equal(chatConfirmed.metadata.taskStatus, 'succeeded')
   assert.equal('mode' in chatConfirmed.metadata, false, 'successful task metadata emits no product-mode authority')
   assert.equal('mode' in chatConfirmed.diagnostic.metadata, false, 'successful task diagnostics emit no product-mode authority')
   assert.equal(executions, 3, 'confirmed Chat execution reaches the source adapter exactly once')
@@ -1083,7 +1083,7 @@ async function main() {
     },
   })
   assert.equal(failedCancellation.errorCode, 'execution_failed', 'failed durable cancellation does not claim cancellation')
-  assert.equal(failedCancellation.metadata.vnextTaskStatus, 'queued')
+  assert.equal(failedCancellation.metadata.taskStatus, 'queued')
   assert.equal(postCreateExecutions, 0)
 
   const preAbortedController = new AbortController()
@@ -1121,7 +1121,7 @@ async function main() {
   const cancelled = await cancelledExecution
   assert.equal(cancelled.ok, false)
   assert.equal(cancelled.errorCode, 'cancelled')
-  assert.equal(cancelled.metadata.vnextTaskStatus, 'cancelled')
+  assert.equal(cancelled.metadata.taskStatus, 'cancelled')
   const cancelledTask = await persistence.findByIdempotencyKey(taskKey(undefined, 'agent-step-cancelled', manifest.id, cancelledRequest.arguments))
   assert.deepEqual((await persistence.list(cancelledTask.id)).map((entry) => entry.type), [
     'task.created',
@@ -1136,7 +1136,7 @@ async function main() {
     options: { manifests: [manifest], intentVisible: true, userConfirmed: true },
   })
   assert.equal(replayedCancellation.errorCode, 'cancelled', 'idempotent cancelled task replay preserves cancellation')
-  assert.equal(replayedCancellation.metadata.vnextTaskStatus, 'cancelled')
+  assert.equal(replayedCancellation.metadata.taskStatus, 'cancelled')
   assert.equal(executions, cancelledReplayExecutionCount, 'cancelled replay never repeats the external side effect')
 
   const throwingCancellationController = new AbortController()
@@ -1150,11 +1150,11 @@ async function main() {
   throwingCancellationController.abort()
   const throwingCancelled = await throwingCancelledExecution
   assert.equal(throwingCancelled.errorCode, 'cancelled')
-  assert.equal(throwingCancelled.metadata.vnextTaskStatus, 'cancelled')
+  assert.equal(throwingCancelled.metadata.taskStatus, 'cancelled')
   const throwingCancelledTask = await persistence.findByIdempotencyKey(taskKey(undefined, 'agent-step-throw-cancelled', manifest.id, throwingCancelledRequest.arguments))
   assert.equal(throwingCancelledTask.status, 'cancelled', 'abort exceptions reconcile visible and durable cancellation')
 
-  console.log('vNext agent task-adapter tests passed')
+  console.log('Workflow task-adapter tests passed')
 }
 
 function externalResult(input) {

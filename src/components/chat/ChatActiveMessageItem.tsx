@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { MotiView } from 'moti'
 
 import type { useIsleDialog } from '@/components/ui/isle'
+import { resolveProviderBrand } from '@/components/ui/ProviderBrandIcon'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import {
   regenerateLastConversationAssistant,
@@ -34,6 +35,7 @@ export interface ChatActiveMessageItemProps {
   motion: MotionIntensity
   viewportHeight: number
   provider: AIProvider | undefined
+  modelId: string
   regenerableAssistantId?: string
   actionSheetActive: boolean
   onActionMessageChange: Dispatch<SetStateAction<string | null>>
@@ -61,6 +63,7 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
   motion,
   viewportHeight,
   provider,
+  modelId,
   regenerableAssistantId,
   actionSheetActive,
   onActionMessageChange,
@@ -96,6 +99,7 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
         index={index}
         motion={motion}
         viewportHeight={viewportHeight}
+        providerBrand={resolveProviderBrand(provider, modelId)}
         isLastAssistant={message.id === regenerableAssistantId}
         activeActionMessageId={actionSheetActive ? message.id : null}
         onActionMessageChange={onActionMessageChange}

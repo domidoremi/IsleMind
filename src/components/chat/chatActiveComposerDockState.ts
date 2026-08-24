@@ -43,6 +43,7 @@ type ChatActiveComposerDockBaseProps = Pick<ChatActiveWorkspaceProps,
   | 'modeOutputLocked'
   | 'setPendingStreamingMessage'
   | 'keyboardLift'
+  | 'keyboardMotion'
   | 'composerPanel'
   | 'setComposerPanel'
   | 'collapseQuickTools'

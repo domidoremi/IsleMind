@@ -17,7 +17,7 @@ import {
 import type { ProviderRouteDecision } from '@/modules/providers'
 import type { ProviderTransportSelection as TransportSelection } from '@/modules/providers'
 import { emitRuntimeEvent } from '@/services/runtimeEvents'
-import { appendRuntimeLog } from '@/services/runtimeLog'
+import { appendRuntimeLog } from '@/platform/native/runtimeLog'
 import type { ProcessTrace } from '@/core'
 import type { ProviderCapabilities } from '@/types/providerContracts'
 

@@ -10,9 +10,7 @@ import {
   type StreamEvent,
 } from '@/core'
 import {
-  ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA,
   ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA,
-  ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA,
   ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
   cloneAssistantContextPlanReceipt,
   isAssistantContextPlanReceipt,
@@ -23,7 +21,6 @@ import {
   isAssistantRequestHash,
 } from './application/requestIdentity'
 import type {
-  AssistantActivityRequestEvidence,
   AssistantActivityContinuationIdentity,
   AssistantContextPlanReceipt,
   AssistantRun,
@@ -44,7 +41,6 @@ import type {
 const DEFAULT_MAX_OUTPUT_CHARS = 100_000
 const JOURNAL_TEXT_LIMIT = 4_096
 const JOURNAL_LABEL_LIMIT = 512
-const ACTIVITY_REQUEST_EVIDENCE_MAX_BYTES = 4 * 1024 * 1024
 
 class PersistenceFailure extends Error {
   constructor() {
@@ -207,13 +203,24 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         return err('persistence_failed', 'The assistant run could not be loaded.', { retryable: true })
       }
 
-      let requestEvidence: AssistantActivityRequestEvidence | undefined
+      let capturedRequest: StartAssistantRunInput['request'] | undefined
+      let contextReceipt: AssistantContextPlanReceipt | undefined
       try {
-        requestEvidence = input.requestEvidence
-          ? freezeActivityRequestEvidence(input.requestEvidence, input)
-          : undefined
+        if (input.request) {
+          const request = freezeChatRequest(input.request)
+          if (
+            request.conversationId !== input.conversationId
+            || (input.providerId !== undefined && request.providerId !== input.providerId)
+          ) {
+            throw new Error('The Chat activity request identity is invalid.')
+          }
+          capturedRequest = request
+          contextReceipt = input.contextReceipt
+            ? freezeContextPlanReceipt(input.contextReceipt)
+            : undefined
+        }
       } catch {
-        return err('activity_failed', 'The Chat activity request evidence could not be frozen.', {
+        return err('activity_failed', 'The Chat activity request could not be frozen.', {
           retryable: false,
           details: { runId },
         })
@@ -235,7 +242,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           contextSnapshotId: input.context.id,
           executionKind: input.kind,
           ...(input.responseMessageId ? { responseMessageId: input.responseMessageId } : {}),
-        }, {}, requestEvidence)
+        }, {}, capturedRequest, contextReceipt)
         activeRuns.set(runId, active)
         attachExternalCancellation(active, input.cancellationSignal)
         if (active.cancellationRequested || active.controller.signal.aborted) {
@@ -870,7 +877,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     type: RunJournalEventType,
     data: JsonRecord,
     patch: Partial<AssistantRun> = {},
-    capturedRequest?: StartAssistantRunInput['request'] | AssistantActivityRequestEvidence,
+    capturedRequest?: StartAssistantRunInput['request'],
     contextReceipt?: AssistantContextPlanReceipt,
   ): Promise<AssistantRun> {
     return enqueue(active, async () => {
@@ -1250,25 +1257,11 @@ function truncate(value: string, limit: number): string {
 function createCapturedRequestSnapshot(
   runId: AssistantRunId,
   capturedAt: number,
-  request: StartAssistantRunInput['request'] | AssistantActivityRequestEvidence,
+  request: StartAssistantRunInput['request'],
   contextReceipt?: AssistantContextPlanReceipt,
 ): AssistantRunCapturedRequestSnapshot {
-  const capabilityRevision = buildAssistantCapabilityRevision(
-    request.schema === ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA
-      ? request.payload
-      : request,
-  )
+  const capabilityRevision = buildAssistantCapabilityRevision(request)
   const requestHash = buildAssistantRequestHash(request)
-  if (request.schema === ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA) {
-    return {
-      schema: ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA,
-      runId,
-      capturedAt,
-      request,
-      capabilityRevision,
-      requestHash,
-    }
-  }
   return {
     schema: ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
     runId,
@@ -1284,46 +1277,6 @@ function freezeContextPlanReceipt(
   receipt: AssistantContextPlanReceipt,
 ): AssistantContextPlanReceipt {
   return deepFreeze(cloneAssistantContextPlanReceipt(receipt))
-}
-
-function freezeActivityRequestEvidence(
-  evidence: AssistantActivityRequestEvidence,
-  input: StartAssistantActivityRunInput,
-): AssistantActivityRequestEvidence {
-  const serialized = JSON.stringify(evidence)
-  if (
-    typeof serialized !== 'string'
-    || serialized.length > ACTIVITY_REQUEST_EVIDENCE_MAX_BYTES
-  ) {
-    throw new Error('The activity request evidence is not serializable.')
-  }
-  const frozen = deepFreeze(JSON.parse(serialized)) as unknown
-  if (
-    !isAssistantActivityRequestEvidence(frozen)
-    || frozen.conversationId !== input.conversationId
-    || frozen.providerId !== input.providerId
-    || frozen.model !== input.model
-  ) {
-    throw new Error('The activity request evidence identity is invalid.')
-  }
-  return frozen
-}
-
-function isAssistantActivityRequestEvidence(
-  value: unknown,
-): value is AssistantActivityRequestEvidence {
-  if (!isJsonRecord(value)) return false
-  return value.schema === ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA
-    && isBoundedIdentity(value.conversationId)
-    && isBoundedIdentity(value.providerId)
-    && isBoundedIdentity(value.model)
-    && isJsonRecord(value.payload)
-    && Array.isArray(value.redactedFields)
-    && value.redactedFields.length <= 512
-    && value.redactedFields.every((field) => (
-      typeof field === 'string' && field.length > 0 && field.length <= 512
-    ))
-    && (value.contextReceipt === undefined || isAssistantContextPlanReceipt(value.contextReceipt))
 }
 
 function isBoundedIdentity(value: unknown): value is string {

@@ -1,10 +1,4 @@
 import type { ChatRequest, StreamEvent } from '@/core'
-import type {
-  ProviderRuntimeChatCallbacks,
-  ProviderRuntimeChatRequest,
-  ProviderRuntimeChatStreamRuntime,
-  ProviderRuntimeStreamHandle,
-} from './providerRuntimeContracts'
 
 export const PROVIDER_CAPABILITIES = [
   'chat',
@@ -55,19 +49,8 @@ export interface ProviderDescriptor {
 
 export interface ProviderGateway {
   stream(request: ChatRequest, options: ProviderGatewayOptions): AsyncIterable<StreamEvent>
-  /**
-   * Transitional rich-Chat entry point. It preserves the complete provider
-   * runtime request and terminal receipt while the canonical StreamEvent
-   * protocol is expanded without dropping observable Chat behavior.
-   */
-  startRuntimeStream(
-    request: ProviderRuntimeChatRequest,
-    callbacks: ProviderRuntimeChatCallbacks,
-  ): Promise<ProviderRuntimeStreamHandle>
   describe(providerId: string): ProviderDescriptor | undefined
 }
-
-export type ProviderGatewayRuntimeStream = Pick<ProviderRuntimeChatStreamRuntime, 'start'>
 
 /** Provider-neutral configuration used by the active same-provider fallback policy. */
 export interface ProviderFallbackModelDescriptor {

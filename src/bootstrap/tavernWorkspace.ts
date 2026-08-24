@@ -34,6 +34,8 @@ import { createAsyncStorageTavernWorkspacePort } from '@/platform/workspaces'
 
 const now = () => Date.now()
 const TAVERN_PORTABLE_WORKSPACE_BACKUP_KEY_PREFIX =
+  '@islemind/tavern-workspaces/portable-import/backup-v1/'
+const LEGACY_TAVERN_PORTABLE_WORKSPACE_BACKUP_KEY_PREFIX =
   '@islemind/vnext/tavern-workspaces/portable-import/backup-v1/'
 const PORTABLE_IMPORT_OPERATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const tavernWorkspaceDatabaseProvider = createExpoSqliteDatabaseProvider()
@@ -91,16 +93,17 @@ const tavernWorkspaceApplication = createTavernWorkspaceApplication({
 const tavernPortableWorkspaceBackupStorage = createAsyncStorageTavernWorkspacePort()
 const tavernPortableWorkspaceBackupStore: TavernPortableWorkspaceBackupStore = {
   read(backupId, signal) {
-    return tavernPortableWorkspaceBackupStorage.get(
-      portableWorkspaceBackupStorageKey(backupId),
-      signal,
+    const key = portableWorkspaceBackupStorageKey(backupId)
+    return tavernPortableWorkspaceBackupStorage.runExclusive(
+      key,
+      () => migratePortableWorkspaceBackup(backupId, signal),
     )
   },
   create(backupId, value, signal) {
     const key = portableWorkspaceBackupStorageKey(backupId)
     return tavernPortableWorkspaceBackupStorage.runExclusive(key, async () => {
       throwIfCancelled(signal)
-      const existing = await tavernPortableWorkspaceBackupStorage.get(key, signal)
+      const existing = await migratePortableWorkspaceBackup(backupId, signal)
       if (existing != null) return 'exists' as const
       await tavernPortableWorkspaceBackupStorage.set(key, value, signal)
       const persisted = await tavernPortableWorkspaceBackupStorage.get(key)
@@ -195,7 +198,7 @@ export async function restorePortableTavernWorkspaceBackup(
 export async function cleanupPortableTavernWorkspaceBackup(backupId: string): Promise<void> {
   const key = portableWorkspaceBackupStorageKey(backupId)
   await tavernPortableWorkspaceBackupStorage.runExclusive(key, async () => {
-    if (await tavernPortableWorkspaceBackupStorage.get(key) == null) return
+    if (await migratePortableWorkspaceBackup(backupId) == null) return
     await tavernPortableWorkspaceBackupStorage.remove(key)
     if (await tavernPortableWorkspaceBackupStorage.get(key) != null) {
       throw new Error('The Tavern portable workspace backup could not be removed exactly.')
@@ -274,6 +277,35 @@ async function digestTavernWorkspaceValue(
 
 function portableWorkspaceBackupStorageKey(backupId: string): string {
   return `${TAVERN_PORTABLE_WORKSPACE_BACKUP_KEY_PREFIX}${backupId}`
+}
+
+function legacyPortableWorkspaceBackupStorageKey(backupId: string): string {
+  return `${LEGACY_TAVERN_PORTABLE_WORKSPACE_BACKUP_KEY_PREFIX}${backupId}`
+}
+
+async function migratePortableWorkspaceBackup(
+  backupId: string,
+  signal?: AbortSignal,
+): Promise<string | null | undefined> {
+  const key = portableWorkspaceBackupStorageKey(backupId)
+  const legacyKey = legacyPortableWorkspaceBackupStorageKey(backupId)
+  const canonical = await tavernPortableWorkspaceBackupStorage.get(key, signal)
+  const legacy = await tavernPortableWorkspaceBackupStorage.get(legacyKey, signal)
+  if (legacy == null) return canonical
+  if (canonical != null && canonical !== legacy) {
+    throw new Error('The Tavern portable workspace backup migration found divergent records.')
+  }
+  if (canonical == null) {
+    await tavernPortableWorkspaceBackupStorage.set(key, legacy, signal)
+    if (await tavernPortableWorkspaceBackupStorage.get(key) !== legacy) {
+      throw new Error('The Tavern portable workspace backup migration could not verify the canonical record.')
+    }
+  }
+  await tavernPortableWorkspaceBackupStorage.remove(legacyKey, signal)
+  if (await tavernPortableWorkspaceBackupStorage.get(legacyKey) != null) {
+    throw new Error('The Tavern portable workspace backup migration could not remove the legacy record.')
+  }
+  return legacy
 }
 
 function throwIfCancelled(signal?: AbortSignal): void {

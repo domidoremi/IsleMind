@@ -1,8 +1,7 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,25 +14,31 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets, type EdgeInsets } from 'react-native-safe-area-context'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
+import { ProviderBrandIcon, resolveProviderBrand } from '@/components/ui/ProviderBrandIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
-import { ThemeModelSelectorExpression } from '@/components/ui/isle/ThemeModelSelectorExpression'
-import { Composer, type ComposerCommand } from '@/components/chat/Composer'
+import {
+  Composer,
+  type ComposerCommand,
+  type ComposerPresentationState,
+} from '@/components/chat/Composer'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
-import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { Attachment, Conversation, CommandReference } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
-import { getReasoningControlOptions, getReasoningControlValue, getReasoningDisplayEffort, getReasoningEffortOptions, resolveReasoningControlValue } from '@/utils/modelReasoning'
+import { getReasoningControlOptions, getReasoningControlValue, getReasoningEffortOptions, resolveReasoningControlValue } from '@/utils/modelReasoning'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 import { PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, resolveProductMobileComposerLayout } from '@/presentation/layout/productMobileLayout'
 import type { ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
 import { ComposerToolButton, ReasoningToolIcon } from './FloatingComposerControls'
 import { RuntimeRepairIntentCard, type RuntimeRepairIntent } from './RuntimeRepairIntentCard'
 import { resolveChatModelDisplayName } from './chatIdentityPresentation'
-import { ChatComposerThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
+import { buildModelQuickOptions, type ModelAccessSettings } from './chatModelSelection'
+import { ComposerOverlay, ModelMenu, ModelSelector, type ModelMenuItem } from './FloatingComposerSurfaces'
+import { COMPOSER_INPUT_MIN_HEIGHT } from './floatingComposerGeometry'
+import type { ComposerKeyboardMotion } from './chatWorkspaceKeyboard'
 
 export type ComposerPanel = 'prompt' | 'more' | null
 type ReasoningPickerValue = 'default' | NonNullable<Conversation['reasoningEffort']>
@@ -63,9 +68,13 @@ export function FloatingComposer({
   inputPlaceholder,
   systemPromptPlaceholder,
   keyboardLift,
+  keyboardMotion,
   onReasoningChange,
   onSystemPromptChange,
   onOpenModelPicker,
+  switchableProviders,
+  modelAccessSettings,
+  onSwitchModel,
   onOpenReasoningPicker,
   onOpenKnowledge,
   onOpenWorkspaceReview,
@@ -113,9 +122,13 @@ export function FloatingComposer({
   inputPlaceholder?: string
   systemPromptPlaceholder?: string
   keyboardLift: number
+  keyboardMotion: ComposerKeyboardMotion
   onReasoningChange: (effort: Conversation['reasoningEffort']) => void
   onSystemPromptChange: (systemPrompt: string) => void
   onOpenModelPicker: () => void
+  switchableProviders?: AIProvider[]
+  modelAccessSettings?: ModelAccessSettings
+  onSwitchModel?: (provider: AIProvider, model: string) => void
   onOpenReasoningPicker?: () => void
   onOpenKnowledge: () => void
   onOpenWorkspaceReview?: () => void
@@ -144,9 +157,21 @@ export function FloatingComposer({
   const { colors, isGlass, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const [reasoningPickerOpen, setReasoningPickerOpen] = useState(false)
+  const [composerPresentation, setComposerPresentation] =
+    useState<ComposerPresentationState>({
+      sizeMode: 'compact',
+      activityState: 'idle',
+      messageInputHeight: COMPOSER_INPUT_MIN_HEIGHT,
+    })
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [modelSelectorAnchor, setModelSelectorAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+  const modelSelectorRef = useRef<View>(null)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
   const transientConversation = useChatStore((state) => state.draftConversationIds.has(conversation.id))
-  const { width: composerWindowWidth } = useWindowDimensions()
+  const {
+    width: composerWindowWidth,
+    height: composerWindowHeight,
+  } = useWindowDimensions()
   const draftPersistenceKey = conversation.id === '__setup__' || transientConversation
     ? '__setup__'
     : conversation.id
@@ -162,12 +187,7 @@ export function FloatingComposer({
   }, [conversation.model, provider])
   const reasoningAvailable = showReasoning && reasoningOptions.length > 0
   const reasoningControlOptions = useMemo(() => getReasoningControlOptions(reasoningOptions), [reasoningOptions])
-  const displayedReasoningEffort = getReasoningDisplayEffort(reasoningEffort, reasoningOptions)
-  const reasoningButtonActive = reasoningAvailable && reasoningEffort !== undefined
-  const reasoningStatusLabel = reasoningAvailable ? t(`chat.reasoningEffort.${getReasoningControlValue(reasoningEffort)}`) : t('chat.quickReasoningUnsupported')
   const promptStatusLabel = systemPrompt.trim() ? t('chat.quickPromptActive') : t('chat.quickPromptEmpty')
-  const quickPanelOpen = toolsOpen || promptOpen
-  const toolsStatusLabel = quickPanelOpen ? t('chat.quickToolsOpen') : t('chat.quickToolsReady')
   const outputStatusLabel = requestedOutput === 'work-artifact'
     ? t('chat.quickOutputWorkArtifact')
     : requestedOutput === 'reply'
@@ -186,17 +206,53 @@ export function FloatingComposer({
     ? modelStatusLabel
     : t('chat.configureProviders')
   const compactComposer = composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT
-  const reasoningSelectorIconOnly = compactComposer
-  const reasoningSelectorMaxWidth = reasoningSelectorIconOnly ? ISLE_MIN_TOUCH_TARGET : 88
   const contextRailBudget = composerWindowWidth
     - composerLayout.horizontalPadding * 2
     - ISLE_MIN_TOUCH_TARGET
-    - (reasoningAvailable ? reasoningSelectorMaxWidth + 2 : 0)
     - 18
   const modelSelectorMaxWidth = Math.max(
-    96,
-    Math.min(compactComposer ? 156 : 176, Math.round(contextRailBudget)),
+    108,
+    Math.min(
+      compactComposer ? 156 : 176,
+      Math.round(contextRailBudget),
+      composerPresentation.activityState === 'idle' ? 124 : 112,
+    ),
   )
+
+  const modelMenuItems = useMemo<ModelMenuItem[]>(() => {
+    const options = buildModelQuickOptions(switchableProviders ?? [], modelAccessSettings)
+    return options.map((option) => ({
+      id: option.id,
+      providerId: option.provider.id,
+      providerLabel: option.provider.name || option.provider.id,
+      model: option.model,
+      modelLabel: resolveChatModelDisplayName(option.provider, option.model, modelDisplayAliases),
+      brand: resolveProviderBrand(option.provider, option.model),
+    }))
+  }, [modelAccessSettings, modelDisplayAliases, switchableProviders])
+  const selectedModelMenuId = provider ? `${provider.id}:${conversation.model}` : undefined
+
+  function measureModelSelector(afterMeasure?: () => void) {
+    modelSelectorRef.current?.measureInWindow((x, y, width, height) => {
+      setModelSelectorAnchor((current) => current && current.x === x && current.y === y && current.width === width && current.height === height
+        ? current
+        : { x, y, width, height })
+      afterMeasure?.()
+    })
+  }
+
+  function handleOpenModelMenu() {
+    onCollapseTools()
+    measureModelSelector(() => setModelMenuOpen(true))
+  }
+
+  function handleCloseModelMenu() {
+    setModelMenuOpen(false)
+  }
+
+  useEffect(() => {
+    if (panel) setModelMenuOpen(false)
+  }, [panel])
 
   function handleInputFocus() {
     onCollapseTools()
@@ -209,7 +265,10 @@ export function FloatingComposer({
 
   function handleLayout(event: LayoutChangeEvent) {
     if (panel) return
-    onLayoutHeight(Math.ceil(event.nativeEvent.layout.height))
+    // The parent uses this value for message-list clearance only. Keep it
+    // stable while the keyboard is open so the composer can animate freely.
+    const measuredHeight = Math.ceil(event.nativeEvent.layout.height)
+    onLayoutHeight(measuredHeight)
   }
 
   function openReasoningPicker() {
@@ -302,68 +361,77 @@ export function FloatingComposer({
   )
 
   const renderComposerContextRail = () => (
-    <View style={{ minWidth: 0, flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-      <ComposerToolButton
-        testID="chat-composer-tools-trigger"
-        iconOnly
-        label={t('chat.quickTools')}
-        stateLabel={toolsStatusLabel}
-        accessibilityHint={t('chat.quickToolsAccessibilityHint')}
-        accessibilityState={{ expanded: quickPanelOpen }}
-        active={quickPanelOpen}
-        activeSurface="quiet"
-        onPress={() => {
-          onPanelChange(quickPanelOpen ? null : 'more')
-        }}
-      >
-        <AppIcon name="add" color={quickPanelOpen ? colors.ui.icon.accentForeground : colors.textSecondary} size={18} strokeWidth={appIconStroke.strong} />
-      </ComposerToolButton>
-      <ComposerContextSelector
-        testID="chat-model-selector"
-        label={modelStatusLabel}
-        accessibilityLabel={`${t('chat.model')}: ${modelStatusAccessibilityLabel}`}
-        accessibilityHint={t('chat.quickModelAccessibilityHint')}
-        maxWidth={modelSelectorMaxWidth}
-        ellipsizeMode="middle"
-        onPress={() => {
-          onPanelChange(null)
-          onOpenModelPicker()
-        }}
-      />
-      {showReasoningControl && reasoningAvailable ? (
-        <ComposerContextSelector
-          label={reasoningStatusLabel}
-          accessibilityLabel={`${t('chat.quickReasoning')}: ${reasoningStatusLabel}`}
-          accessibilityHint={t('chat.quickReasoningAccessibilityHint')}
-          maxWidth={reasoningSelectorMaxWidth}
-          selected={reasoningButtonActive}
-          iconOnly={reasoningSelectorIconOnly}
-          icon={<ReasoningToolIcon effort={displayedReasoningEffort} active={reasoningButtonActive} available />}
-          onPress={openReasoningPicker}
+    <View
+      style={{
+        width: composerPresentation.activityState === 'idle' ? 64 : 60,
+        minWidth: composerPresentation.activityState === 'idle' ? 64 : 60,
+        maxWidth: modelSelectorMaxWidth,
+        flexShrink: 0,
+      }}
+    >
+      <View ref={modelSelectorRef} style={{ minWidth: 0, flexShrink: 1 }}>
+        <ModelSelector
+          testID="chat-model-selector"
+          family={canonicalThemeId}
+          colors={colors}
+          label={modelStatusLabel}
+          icon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model)} size={17} />}
+          accessibilityLabel={`${t('chat.model')}: ${modelStatusAccessibilityLabel}`}
+          accessibilityHint={t('chat.quickModelAccessibilityHint')}
+          maxWidth={modelSelectorMaxWidth}
+          expanded={modelMenuOpen}
+          iconOnly
+          ellipsizeMode="middle"
+          onPress={() => {
+            onPanelChange(null)
+            handleOpenModelMenu()
+          }}
         />
-      ) : null}
+      </View>
     </View>
   )
 
-  const renderComposerStopAction = () => (
-    <ComposerToolButton iconOnly label={t('chat.stopGenerating')} accessibilityHint={t('chat.stopGeneratingAccessibilityHint')} accessibilityState={{ busy: true }} active onPress={onStop}>
-      <AppIcon name="stop" color={colors.ui.control.primaryForeground} size={13} strokeWidth={appIconStroke.bold} fill={colors.ui.control.primaryForeground} />
+  const renderComposerToolsTrigger = () => (
+    <ComposerToolButton
+      testID="chat-composer-tools-trigger"
+      iconOnly
+      label={t('chat.quickTools')}
+      stateLabel={toolsOpen || promptOpen ? t('chat.quickToolsOpen') : t('chat.quickToolsReady')}
+      accessibilityHint={t('chat.quickToolsAccessibilityHint')}
+      accessibilityState={{ expanded: toolsOpen || promptOpen }}
+      active={toolsOpen || promptOpen}
+      activeSurface="quiet"
+      onPress={() => {
+        const quickPanelOpen = toolsOpen || promptOpen
+        onPanelChange(quickPanelOpen ? null : 'more')
+      }}
+    >
+      <AppIcon name="add" color={toolsOpen || promptOpen ? colors.ui.icon.accentForeground : colors.textSecondary} size={18} strokeWidth={appIconStroke.strong} />
     </ComposerToolButton>
   )
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: composerLayout.floatingBottomOffset, zIndex: 40 }}>
+    <ComposerOverlay
+      viewportWidth={composerWindowWidth}
+      horizontalPadding={composerLayout.horizontalPadding}
+      keyboardLift={composerLayout.floatingBottomOffset}
+      keyboardMotion={keyboardMotion}
+      sizeMode={composerPresentation.sizeMode}
+      activityState={composerPresentation.activityState}
+      motion={motion}
+      onLayout={handleLayout}
+    >
       <KeyboardAvoidingView
-        enabled={Platform.OS === 'ios'}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        enabled={false}
+        behavior={undefined}
         keyboardVerticalOffset={0}
+        style={{ width: '100%' }}
         onTouchStart={onInteract}
         onTouchMove={onInteract}
         onTouchEnd={onInteractEnd}
         onTouchCancel={onInteractEnd}
       >
-        <View onLayout={handleLayout} pointerEvents="box-none" style={{ paddingHorizontal: composerLayout.horizontalPadding, paddingTop: composerLayout.innerTopPadding, paddingBottom: composerLayout.innerBottomPadding }}>
-          <ChatComposerThemeSurface themeId={canonicalThemeId} colors={colors} horizontalPadding={composerLayout.horizontalPadding}>
+        <View pointerEvents="box-none" style={{ width: '100%', paddingHorizontal: 0, paddingTop: composerLayout.innerTopPadding, paddingBottom: composerLayout.innerBottomPadding }}>
           {toolsOpen ? renderComposerToolsPanel() : null}
           {promptOpen ? (
             <View
@@ -431,9 +499,11 @@ export function FloatingComposer({
             multimodalPolicy={multimodalPolicy}
             utilitiesOpen={toolsOpen}
             showInlineUtilities={false}
+            showInlineVoice={false}
             showCommandAction={false}
             leadingAccessory={renderComposerContextRail()}
-            trailingAccessory={streaming ? renderComposerStopAction() : undefined}
+            trailingAccessory={undefined}
+            onStop={onStop}
             placeholder={inputPlaceholder}
             onClearPending={onClearPending}
             onReferenceSelected={onReferenceSelected}
@@ -441,10 +511,16 @@ export function FloatingComposer({
             onSendWhileStreaming={onSendWhileStreaming}
             onFocus={handleInputFocus}
             onBlur={onInputBlur}
+            viewportHeight={composerWindowHeight}
+            horizontalPadding={composerLayout.horizontalPadding}
+            safeAreaTop={insets.top}
+            safeAreaBottom={insets.bottom}
+            keyboardLift={keyboardLift}
+            motion={motion}
+            onComposerPresentationChange={setComposerPresentation}
             onOpenKnowledge={handleOpenKnowledgeFromComposer}
             onRequestCloseUtilities={() => onPanelChange(null)}
           />
-          </ChatComposerThemeSurface>
         </View>
       </KeyboardAvoidingView>
       <ReasoningPickerPopover
@@ -459,52 +535,24 @@ export function FloatingComposer({
           setReasoningPickerOpen(false)
         }}
       />
-    </View>
-  )
-}
-
-function ComposerContextSelector({
-  testID,
-  label,
-  accessibilityLabel,
-  accessibilityHint,
-  maxWidth,
-  selected = false,
-  iconOnly = false,
-  ellipsizeMode = 'tail',
-  icon,
-  onPress,
-}: {
-  testID?: string
-  label: string
-  accessibilityLabel: string
-  accessibilityHint?: string
-  maxWidth: number
-  selected?: boolean
-  iconOnly?: boolean
-  ellipsizeMode?: 'head' | 'middle' | 'tail' | 'clip'
-  icon?: ReactNode
-  onPress: () => void
-}) {
-  const { colors, canonicalThemeId } = useAppTheme()
-  const expression = resolveThemeComponentExpression(canonicalThemeId, 'modelSelector')
-
-  return (
-    <ThemeModelSelectorExpression
-      family={canonicalThemeId}
-      colors={colors}
-      expression={expression}
-      testID={testID}
-      label={label}
-      accessibilityLabel={accessibilityLabel}
-      accessibilityHint={accessibilityHint}
-      maxWidth={maxWidth}
-      selected={selected}
-      iconOnly={iconOnly}
-      ellipsizeMode={ellipsizeMode}
-      icon={icon}
-      onPress={onPress}
-    />
+      <ModelMenu
+        visible={modelMenuOpen}
+        anchor={modelSelectorAnchor}
+        items={modelMenuItems}
+        selectedId={selectedModelMenuId}
+        colors={colors}
+        motion={motion}
+        onSelect={(item) => {
+          const selectedProvider = switchableProviders?.find((candidate) => candidate.id === item.providerId)
+          if (selectedProvider && onSwitchModel) onSwitchModel(selectedProvider, item.model)
+        }}
+        onOpenConfiguration={() => {
+          setModelMenuOpen(false)
+          onOpenModelPicker()
+        }}
+        onClose={handleCloseModelMenu}
+      />
+    </ComposerOverlay>
   )
 }
 

@@ -3,7 +3,7 @@ import {
   readApplicationDataRecord,
   writeApplicationDataRecord,
 } from '@/bootstrap/applicationDataRecords'
-import { createVNextTaskRuntime } from '@/bootstrap/vnextTaskRuntime'
+import { createTaskRuntime } from '@/bootstrap/taskRuntime'
 import {
   createBuiltInCapabilityRuntimeBinding,
   createBuiltInCapabilityTaskAdmissionPort,
@@ -35,7 +35,7 @@ import { st } from '@/i18n/service'
 /** Shared MCP client binding keeps catalog reconciliation and tool execution on the same sessions. */
 export const mcpClient = createMcpClientAdapter()
 
-const builtInTaskLookupRuntime = createVNextTaskRuntime({
+const builtInTaskLookupRuntime = createTaskRuntime({
   async evaluate() {
     return { outcome: 'denied', reasonCode: 'lookup_only' }
   },

@@ -1,4 +1,4 @@
-import type { RuntimeLogEvent } from '@/services/runtimeLog'
+import type { RuntimeLogEvent } from '@/platform/native/runtimeLog'
 export const RUNTIME_EVENT_SCHEMA = 'islemind.runtime-event.v1'
 export const RUNTIME_EVENT_SKIPPED_LOG_EVENTS: readonly RuntimeControlPlaneEvent[] = Object.freeze(['token_usage.updated'])
 export const RUNTIME_EVENT_SKIPPED_SUBSCRIBER_EVENTS: readonly RuntimeControlPlaneEvent[] = Object.freeze(['token_usage.updated'])

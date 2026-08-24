@@ -1,6 +1,6 @@
-import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/services/runtimeLog'
+import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/platform/native/runtimeLog'
 import type { McpServerConfig, McpToolManifest } from '@/types/mcpContracts'
-import type { RuntimeLogOptions } from '@/services/runtimeLog'
+import type { RuntimeLogOptions } from '@/platform/native/runtimeLog'
 export interface RuntimeHealthErrorFields {
   errorName?: string
   errorText?: string

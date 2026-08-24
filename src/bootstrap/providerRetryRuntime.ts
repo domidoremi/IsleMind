@@ -12,7 +12,7 @@ import {
   resolveProviderRequestTimeoutMs,
   throwIfProviderRetryAborted,
 } from '@/modules/providers'
-import { appendRuntimeLog } from '@/services/runtimeLog'
+import { appendRuntimeLog } from '@/platform/native/runtimeLog'
 import {
   runtimeLogOptions,
   type ProviderRuntimeLogRequestLike,

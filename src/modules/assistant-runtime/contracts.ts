@@ -448,7 +448,10 @@ export interface StartAssistantActivityRunInput {
    */
   providerId?: string
   model?: string
-  requestEvidence?: AssistantActivityRequestEvidence
+  /** Exact provider-neutral request captured for new Chat activity writes. */
+  request?: ChatRequest
+  /** Diagnostic-only receipt for the exact context plan used to prepare request. */
+  contextReceipt?: AssistantContextPlanReceipt
   context: ContextSnapshot
   responseMessageId?: string
   workspaceWritebackHandoff?: AssistantConversationWorkspaceWritebackHandoff

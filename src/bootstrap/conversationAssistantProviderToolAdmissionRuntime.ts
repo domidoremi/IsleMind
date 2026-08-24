@@ -16,7 +16,7 @@ import {
   type ProviderNativeToolSupportDecision,
 } from '@/services/chatProviderNativeToolUtils'
 import { completeTrace, sanitizeTrace } from '@/services/chatTraceUtils'
-import { appendRuntimeLog } from '@/services/runtimeLog'
+import { appendRuntimeLog } from '@/platform/native/runtimeLog'
 import {
   buildToolCallingGatewayTrace,
   emitToolCallingGatewayOutcome,

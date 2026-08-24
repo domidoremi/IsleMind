@@ -291,7 +291,7 @@ export function createAssistantMcpToolTurnRuntime<
             status: 'error',
             errorCode: 'execution_failed',
           }),
-          taskAdapter: 'vnext',
+          taskAdapter: 'task-runtime',
         },
       }))
       return { text: dependencies.translate('mcpRuntime.callFailed') }

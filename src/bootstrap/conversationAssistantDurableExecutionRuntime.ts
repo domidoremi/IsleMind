@@ -1,10 +1,10 @@
 import {
   createAssistantRunId,
+  freezeChatRequest,
   systemClock,
   type AssistantRunId,
   type IdGenerator,
   type JsonRecord,
-  type JsonValue,
   type ChatReasoningReplayPart,
   type ChatToolCallProviderMetadata,
   type ChatRequest,
@@ -13,10 +13,8 @@ import {
   type StreamEvent,
 } from '@/core'
 import {
-  ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA,
   createAssistantConversationDurableExecutionRuntime,
   createSqliteAssistantRunPersistence,
-  type AssistantActivityRequestEvidence,
   type AssistantContextPlanReceipt,
   type AssistantConversationWorkspaceWritebackHandoff,
   type AssistantRun,
@@ -27,6 +25,7 @@ import {
 import type { ProviderRuntimeCompletionResult } from '@/modules/providers'
 import {
   createProviderRuntimeAdapter,
+  streamProviderChat,
   toRuntimeChatRequest,
 } from '@/bootstrap/providerRuntime'
 import {
@@ -38,12 +37,12 @@ import {
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
 import { projectConversationAssistantFailure } from '@/bootstrap/conversationAssistantMessageProjection'
 import { conversationAssistantProviderDispatchRuntime } from '@/bootstrap/conversationAssistantProviderDispatchRuntime'
-import { conversationProviderGateway } from '@/bootstrap/conversationProviderGateway'
 import { createAppContainer } from '@/bootstrap/createAppContainer'
 import { st } from '@/i18n/service'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import type { Attachment, Message } from '@/types/chatContracts'
 import type { RetrievalSource } from '@/types/contextContracts'
+import { preserveMessageIdentity } from '@/bootstrap/plainChatMessageIdentity'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
 const contextSnapshots = createSqliteContextSnapshotRepository(databaseProvider)
@@ -61,7 +60,6 @@ const assistantRuntime = createAppContainer({
   clock: systemClock,
   ids,
   providerAdapters: [],
-  providerGateway: conversationProviderGateway,
   runPersistence,
 }).assistantRuntime
 
@@ -144,7 +142,7 @@ export function createConversationAssistantDurableExecutionRuntime(
     input: ConversationAssistantDurableDispatchInput,
   ): Promise<ConversationAssistantDurableDispatchOutcome> {
     let preparedDispatch: ProviderPreparedDispatch
-    let requestEvidence: AssistantActivityRequestEvidence
+    let canonicalRequest: ChatRequest
     try {
       // Request preparation does not invoke the lifecycle callback. Keep the
       // caller's exact input object while viewing the richer completion return
@@ -152,14 +150,16 @@ export function createConversationAssistantDurableExecutionRuntime(
       preparedDispatch = dependencies.providerDispatchRuntime.prepare(
         input as unknown as ProviderDispatchInput,
       )
+      canonicalRequest = createCanonicalRichRequest(input, preparedDispatch.request)
+      canonicalRequest = freezeChatRequest(
+        input.modelOperationSession
+          ? input.modelOperationSession.prepareRequest(canonicalRequest)
+          : canonicalRequest,
+      )
       preparedDispatch = bindCanonicalRichToolDeclarations(
         input,
         preparedDispatch,
-      )
-      requestEvidence = createRichChatRequestEvidence(
-        preparedDispatch.request,
-        input.upstreamModel,
-        input.contextReceipt,
+        canonicalRequest,
       )
     } catch (error) {
       dependencies.projectStartFailure(input)
@@ -184,7 +184,8 @@ export function createConversationAssistantDurableExecutionRuntime(
       responseMessageId: input.assistantMessageId,
       providerId: input.provider.id,
       model: input.upstreamModel,
-      requestEvidence,
+      request: canonicalRequest,
+      contextReceipt: input.contextReceipt,
       context: contextOutcome.value.snapshot,
       workspaceWritebackHandoff: input.workspaceWritebackHandoff,
       cancellationSignal: input.requestController.signal,
@@ -295,9 +296,6 @@ export function createConversationAssistantDurableExecutionRuntime(
                         && continueProviderTurns
                       ) {
                         const continuationResults: ProviderRuntimeCompletionResult[] = []
-                        const canonicalRequest = input.modelOperationSession.prepareRequest(
-                          createCanonicalRichRequest(preparedDispatch.request),
-                        )
                         const continuationResult = await continueProviderTurns({
                           request: canonicalRequest,
                           session: input.modelOperationSession,
@@ -524,18 +522,37 @@ function readFinalizationOutput(
 }
 
 function createCanonicalRichRequest(
+  input: ConversationAssistantDurableDispatchInput,
   request: ProviderPreparedDispatch['request'],
 ): ChatRequest {
+  const messages = preserveMessageIdentity(
+    request.messages
+      .flatMap((message) => (
+        message.role === 'user' || message.role === 'assistant'
+          ? [{
+              role: message.role,
+              content: typeof message.content === 'string' ? message.content : '',
+            }]
+          : []
+      )),
+    input.sourceMessages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      text: message.content,
+    })),
+  )
+  const requestedCapabilities = [
+    ...(request.attachments.length ? ['attachments'] : []),
+    ...(request.providerToolDeclarations?.length ? ['provider-tools'] : []),
+    ...(request.webSearchMode !== 'off' ? ['web-search'] : []),
+    ...(request.remoteCompactEligible ? ['remote-compact'] : []),
+  ]
   return {
     schema: 'islemind.chat-request.v1',
     conversationId: request.conversationId,
     providerId: request.provider.id,
     model: request.model,
-    messages: request.messages.map((message, index) => ({
-      id: `rich:${request.conversationId}:${index}`,
-      role: message.role,
-      text: typeof message.content === 'string' ? message.content : '',
-    })),
+    messages,
     ...(request.systemPrompt || request.contextPrompt
       ? { systemPrompt: [request.systemPrompt, request.contextPrompt].filter(Boolean).join('\n\n') }
       : {}),
@@ -545,21 +562,21 @@ function createCanonicalRichRequest(
     reasoningEffort: request.reasoningEffort,
     maxTokens: request.maxTokens,
     generationParameterSources: request.generationParameterSources,
-    requestedCapabilities: request.providerToolDeclarations?.length ? ['tools'] : undefined,
+    requestedCapabilities: requestedCapabilities.length
+      ? Object.freeze(requestedCapabilities)
+      : undefined,
   }
 }
 
 function bindCanonicalRichToolDeclarations(
   input: ConversationAssistantDurableDispatchInput,
   prepared: ProviderPreparedDispatch,
+  canonicalRequest: ChatRequest,
 ): ProviderPreparedDispatch {
   const declarations = input.modelOperationSession
-    && prepared.request.providerToolDeclarations?.length
     ? toRuntimeChatRequest(
         { provider: input.provider, settings: input.settings },
-        input.modelOperationSession.prepareRequest(
-          createCanonicalRichRequest(prepared.request),
-        ),
+        canonicalRequest,
       ).providerToolDeclarations
     : prepared.request.providerToolDeclarations
   return Object.freeze({
@@ -593,7 +610,7 @@ function createRichContinuationStream(
     onError: Parameters<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>[3],
     onCitations?: Parameters<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>[4],
     onTrace?: Parameters<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>[5],
-  ) => conversationProviderGateway.startRuntimeStream({
+  ) => streamProviderChat({
     ...request,
     attachments: input.attachments,
     contextPrompt: input.contextPrompt,
@@ -603,16 +620,10 @@ function createRichContinuationStream(
     remoteCompactEligible: false,
     remoteCompactFallback: undefined,
     previousResponseId: undefined,
-  }, {
-    onChunk,
-    onDone(result) {
+  }, onChunk, (result) => {
       results.push(result)
       onDone(result)
-    },
-    onError,
-    ...(onCitations ? { onCitations } : {}),
-    ...(onTrace ? { onTrace } : {}),
-  }).then((handle) => {
+    }, onError, onCitations, onTrace).then((handle) => {
     void handle.done.catch(() => undefined)
     return handle
   })
@@ -705,143 +716,4 @@ function projectDurableStartFailure(
     errorCode: 'unknown',
     providerId: input.provider.id,
   })
-}
-
-function createRichChatRequestEvidence(
-  request: ProviderPreparedDispatch['request'],
-  runModel: string,
-  contextReceipt?: AssistantContextPlanReceipt,
-): AssistantActivityRequestEvidence {
-  if (!request.conversationId?.trim() || !request.provider.id.trim() || !runModel.trim()) {
-    throw new Error('The rich Chat request is missing its durable identity.')
-  }
-  const redactedFields: string[] = []
-  const payload = redactRequestValue(
-    request,
-    '$',
-    redactedFields,
-    new WeakSet<object>(),
-    0,
-  )
-  if (!isJsonRecord(payload)) {
-    throw new Error('The rich Chat request evidence is not a JSON object.')
-  }
-  return {
-    schema: ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA,
-    conversationId: request.conversationId,
-    providerId: request.provider.id,
-    model: runModel,
-    payload,
-    redactedFields: Array.from(new Set(redactedFields)).sort(),
-    ...(contextReceipt ? { contextReceipt } : {}),
-  }
-}
-
-function redactRequestValue(
-  value: unknown,
-  path: string,
-  redactedFields: string[],
-  ancestors: WeakSet<object>,
-  depth: number,
-): JsonValue | undefined {
-  if (depth > 64) throw new Error('The rich Chat request evidence is nested too deeply.')
-  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
-    return undefined
-  }
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
-    return value
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error('The rich Chat request evidence contains a non-finite number.')
-    return value
-  }
-  if (typeof value !== 'object') {
-    throw new Error('The rich Chat request evidence contains an unsupported value.')
-  }
-  if (ancestors.has(value)) throw new Error('The rich Chat request evidence contains a cycle.')
-  ancestors.add(value)
-  try {
-    if (Array.isArray(value)) {
-      return value.map((item, index) => (
-        redactRequestValue(item, `${path}[${index}]`, redactedFields, ancestors, depth + 1) ?? null
-      ))
-    }
-    const result: Record<string, JsonValue> = {}
-    for (const [key, child] of Object.entries(value)) {
-      const childPath = `${path}.${key}`
-      const normalizedKey = key.replace(/[-_]/g, '').toLowerCase()
-      if (normalizedKey === 'signal') {
-        redactedFields.push(childPath)
-        continue
-      }
-      if (isSensitiveRequestField(normalizedKey)) {
-        result[key] = '[redacted]'
-        redactedFields.push(childPath)
-        continue
-      }
-      if (normalizedKey === 'base64' || normalizedKey === 'dataurl' ||
-        (typeof child === 'string' && child.trim().toLowerCase().startsWith('data:'))) {
-        result[key] = typeof child === 'string'
-          ? `[omitted:${child.length} characters]`
-          : '[omitted]'
-        redactedFields.push(childPath)
-        continue
-      }
-      if (typeof child === 'string' && /(?:url|uri)$/i.test(key)) {
-        const sanitized = normalizedKey === 'baseurl' || normalizedKey === 'proxybaseurl'
-          ? sanitizeNetworkEndpoint(child)
-          : sanitizeRequestLocator(child)
-        result[key] = sanitized
-        if (sanitized !== child) redactedFields.push(childPath)
-        continue
-      }
-      const redacted = redactRequestValue(
-        child,
-        childPath,
-        redactedFields,
-        ancestors,
-        depth + 1,
-      )
-      if (redacted !== undefined) result[key] = redacted
-    }
-    return result
-  } finally {
-    ancestors.delete(value)
-  }
-}
-
-function isSensitiveRequestField(normalizedKey: string): boolean {
-  return normalizedKey === 'authorization'
-    || normalizedKey === 'credential'
-    || normalizedKey === 'credentials'
-    || normalizedKey === 'password'
-    || normalizedKey === 'secret'
-    || normalizedKey === 'token'
-    || normalizedKey.endsWith('apikey')
-    || normalizedKey.endsWith('accesstoken')
-    || normalizedKey.endsWith('refreshtoken')
-    || normalizedKey.endsWith('sessiontoken')
-    || normalizedKey.endsWith('secretkey')
-    || normalizedKey.endsWith('privatekey')
-    || normalizedKey.endsWith('clientsecret')
-    || normalizedKey.endsWith('credential')
-    || normalizedKey.endsWith('credentials')
-}
-
-function sanitizeNetworkEndpoint(value: string): string {
-  const match = /^([a-z][a-z0-9+.-]*:\/\/)(?:[^/@\s]+@)?([^/?#\s]+)([^?#\s]*)/i.exec(value)
-  return match ? `${match[1]}${match[2]}${match[3]}` : '[configured-endpoint]'
-}
-
-function sanitizeRequestLocator(value: string): string {
-  const withoutFragment = value.split('#', 1)[0] ?? value
-  const withoutQuery = withoutFragment.split('?', 1)[0] ?? withoutFragment
-  return withoutQuery.replace(
-    /^([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/i,
-    '$1',
-  )
-}
-
-function isJsonRecord(value: JsonValue | undefined): value is JsonRecord {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }

@@ -200,7 +200,7 @@ function run() {
     'restore-retains-runtime-artifacts',
   ])
 
-  const runtimeLogSource = readSource('src/services/runtimeLog.ts')
+  const runtimeLogSource = readSource('src/platform/native/runtimeLog.ts')
   assertSourceIncludes(runtimeLogSource, 'const DEFAULT_MAX_BYTES = 1048576', 'runtime log defines a finite default byte cap')
   assertSourceIncludes(runtimeLogSource, 'if (!options.enabled) return', 'runtime logging defaults to opt-in behavior')
   assertSourceIncludes(runtimeLogSource, 'trimToMaxBytes', 'runtime log trims content to max bytes')

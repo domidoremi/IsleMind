@@ -77,23 +77,23 @@ export function useBootstrap() {
     async function recoverDeferredRuntimeState(): Promise<void> {
       try {
         const [
-          { recoverVNextChatRuns },
-          { createVNextConversationRuntime },
+          { recoverChatRuns },
+          { createConversationRuntime },
           { recoverConversationWorkspaceWritebackReceipts },
-          { recoverVNextInterruptedTasks },
-          { recoverVNextWorkflowCheckpoints },
+          { recoverInterruptedTasks },
+          { recoverWorkflowCheckpoints },
         ] = await Promise.all([
-          import('@/presentation/features/conversations/vnextPlainChatCommand'),
-          import('@/bootstrap/vnextConversationRuntime'),
+          import('@/presentation/features/conversations/plainChatCommand'),
+          import('@/bootstrap/conversationRuntime'),
           import('@/bootstrap/conversationWorkspaceWritebackRecoveryRuntime'),
-          import('@/bootstrap/vnextTaskRuntime'),
+          import('@/bootstrap/taskRuntime'),
           import('@/bootstrap/workflowCheckpointRecovery'),
         ])
         if (!mounted || recoveryController.signal.aborted) return
 
         let deferredErrors = 0
-        const recoveredRuns = await recoverVNextChatRuns(createVNextConversationRuntime())
-        const workflowCheckpointRecovery = await recoverVNextWorkflowCheckpoints(
+        const recoveredRuns = await recoverChatRuns(createConversationRuntime())
+        const workflowCheckpointRecovery = await recoverWorkflowCheckpoints(
           recoveredRuns.map((run) => run.id),
           { signal: recoveryController.signal },
         )
@@ -110,7 +110,7 @@ export function useBootstrap() {
         ) {
           deferredErrors += 1
         }
-        const taskRecovery = await recoverVNextInterruptedTasks()
+        const taskRecovery = await recoverInterruptedTasks()
         if (!taskRecovery.ok) deferredErrors += 1
         if (deferredErrors > 0 && mounted && !recoveryController.signal.aborted) {
           setState((current) => ({ ...current, errorCount: current.errorCount + deferredErrors }))
@@ -167,7 +167,7 @@ export function useBootstrap() {
             checkLatestApkReleaseSilently,
             shouldAutoCheckApkUpdate,
             shouldRecordApkUpdateCheck,
-          } = await import('@/services/appUpdates')
+          } = await import('@/platform/native/androidApkUpdates')
           const settings = useSettingsStore.getState().settings
           if (!(settings.autoUpdateCheckEnabled ?? true)) return
           if (!shouldAutoCheckApkUpdate(settings.lastApkUpdateCheckAt)) return

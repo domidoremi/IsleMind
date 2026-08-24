@@ -85,7 +85,7 @@ function assertBasicEnvelope(item) {
 }
 
 function assertProductionObservabilityBoundary() {
-  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/bootstrap/runtimeDiagnostics.ts'), 'utf8')
   const diagnosticsIndexSource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/index.ts'), 'utf8')
   const productionSinkSource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/application/observabilitySink.ts'), 'utf8')
   const targetEvaluatorPath = path.join(root, 'src/modules/diagnostics/testing/observabilityCompatibilityEvaluation.ts')

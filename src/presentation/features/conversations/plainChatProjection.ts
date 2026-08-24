@@ -10,12 +10,12 @@ import type { MessageCitation } from '@/types/contextContracts'
 import type { ChatErrorCode } from '@/types/providerContracts'
 import { st } from '@/i18n/service'
 import {
-  resolveVNextChatRecoveryMessageId,
-  type VNextPlainChatProjectionInput,
-} from './vnextPlainChatController'
+  resolveChatRecoveryMessageId,
+  type PlainChatProjectionInput,
+} from './plainChatController'
 
-export function createVNextPlainChatProjection(
-  input: VNextPlainChatProjectionInput,
+export function createPlainChatProjection(
+  input: PlainChatProjectionInput,
   onTerminalPersisted: () => void,
 ): ConversationRunProjection {
   const state: ProjectionState = {
@@ -102,8 +102,8 @@ function removePendingModelOperationTrace(state: ProjectionState): void {
   })
 }
 
-export async function finishVNextPlainChatProjectionFailure(
-  input: VNextPlainChatProjectionInput,
+export async function finishPlainChatProjectionFailure(
+  input: PlainChatProjectionInput,
   message: string,
 ): Promise<void> {
   const current = getMessage(input.conversation.id, input.assistantMessageId)
@@ -122,10 +122,10 @@ export async function finishVNextPlainChatProjectionFailure(
   useChatStore.getState().setError(message)
 }
 
-export async function recoverVNextChatProjection(run: AssistantRun): Promise<void> {
+export async function recoverChatProjection(run: AssistantRun): Promise<void> {
   // Historical Agent records are terminally reconciled through the same Chat
   // projection; the persisted discriminator remains read compatibility only.
-  const messageId = resolveVNextChatRecoveryMessageId(run)
+  const messageId = resolveChatRecoveryMessageId(run)
   if (!messageId) return
   await finalizeProjection({
     conversationId: run.conversationId,
@@ -135,7 +135,7 @@ export async function recoverVNextChatProjection(run: AssistantRun): Promise<voi
   }, run)
 }
 
-export function isVNextPlainChatMessageCancelled(conversationId: string, messageId: string): boolean {
+export function isPlainChatMessageCancelled(conversationId: string, messageId: string): boolean {
   return currentMessageStatus(conversationId, messageId) === 'cancelled'
 }
 

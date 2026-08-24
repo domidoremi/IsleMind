@@ -1,4 +1,4 @@
-import { appendRuntimeLog, redactRuntimeLogValue, type RuntimeLogEvent, type RuntimeLogOptions } from '@/services/runtimeLog'
+import { appendRuntimeLog, redactRuntimeLogValue, type RuntimeLogEvent, type RuntimeLogOptions } from '@/platform/native/runtimeLog'
 import {
   RUNTIME_EVENT_SCHEMA,
   shouldNotifyRuntimeEventSubscribers,
