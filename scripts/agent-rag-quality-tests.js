@@ -211,17 +211,17 @@ async function runConversationRagRuntimeAdapterChecks() {
 
 async function run() {
   const conversationChatWorkflowRuntimeSource = fs.readFileSync(path.join(root, 'src/modules/tasks/application/conversationChatWorkflowRuntimePolicy.ts'), 'utf8')
-  const providerToolRuntimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/conversationProviderToolTurnRuntime.ts'), 'utf8')
+  const modelOperationRuntimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/conversationModelOperationRuntime.ts'), 'utf8')
   assert.ok(
     conversationChatWorkflowRuntimeSource.includes('retrieveContext(contextConversation, draftMessage, options?.signal)'),
     'Agent context retrieval propagates the exact task cancellation signal to the underlying knowledge operation'
   )
   assert.ok(
-    providerToolRuntimeSource.includes('searchAgentKnowledge(') &&
-      providerToolRuntimeSource.includes('options?.signal,') &&
-      providerToolRuntimeSource.includes('searchAgenticKnowledgeWithScope({') &&
-      providerToolRuntimeSource.includes('signal: options?.signal,'),
-    'provider-native Chat RAG propagates the exact signal through both Knowledge retrieval paths'
+    modelOperationRuntimeSource.includes('createKnowledgeConversationRagRuntime({') &&
+      modelOperationRuntimeSource.includes('searchKnowledgeWithFallback({') &&
+      modelOperationRuntimeSource.includes('searchAgenticKnowledgeWithScope({') &&
+      modelOperationRuntimeSource.includes('signal: options?.signal,'),
+    'provider-native model-operation RAG propagates the exact signal through both Knowledge retrieval paths'
   )
   assert.ok(requiredRagCases.includes('rag:context_pack'), 'agent RAG contract covers context pack traces')
   assert.ok(requiredRagCases.includes('evidence_insufficient'), 'agent RAG contract covers evidence repair gating')

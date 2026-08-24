@@ -66,7 +66,7 @@ import { deriveSessionAffinityKey, invalidateSessionAffinityBinding, readSession
 import { acquireProviderSessionLease } from '@/bootstrap/providerSessionLeasePool'
 import type { ResponsesWebSocketTransport } from '@/modules/providers'
 import { emitRuntimeEvent } from '@/services/runtimeEvents'
-import { appendRuntimeLog } from '@/services/runtimeLog'
+import { appendRuntimeLog } from '@/platform/native/runtimeLog'
 import { recordProviderUsageAttempt } from '@/bootstrap/usageStatisticsRuntime'
 
 export type { ProviderRuntimeFallbackEffects } from '@/bootstrap/providerRuntimeFallbackEffects'

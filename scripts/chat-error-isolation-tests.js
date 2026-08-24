@@ -34,8 +34,8 @@ function run() {
   const conversationControlCommandSource = read('src/presentation/features/conversations/conversationControlCommand.ts')
   const conversationMessageSource = read('src/presentation/features/conversations/conversationMessageController.ts')
   const conversationReplyDispatchSource = read('src/presentation/features/conversations/conversationReplyDispatchController.ts')
-  const plainProjectionSource = read('src/presentation/features/conversations/vnextPlainChatProjection.ts')
-  const plainControllerSource = read('src/presentation/features/conversations/vnextPlainChatController.ts')
+  const plainProjectionSource = read('src/presentation/features/conversations/plainChatProjection.ts')
+  const plainControllerSource = read('src/presentation/features/conversations/plainChatController.ts')
 
   assert.equal(/\bproductMode\b/.test(conversationMessageSource), false, 'new user turns no longer carry retired product-mode state')
   assert.ok(conversationMessageSource.includes('dependencies.store.setError(null)'), 'message entry clears the single Chat error before dispatch')
@@ -59,7 +59,7 @@ function run() {
     'bootstrap applies the terminal projection to the single Chat error channel',
   )
   assert.ok(plainProjectionSource.includes('useChatStore.getState().setError(message)'), 'plain-Chat failure projection writes the single Chat error')
-  assert.equal(plainControllerSource.includes('resolveVNextPlainChatProjectionErrorMode'), false, 'the redundant fixed-mode resolver stays deleted')
+  assert.equal(plainControllerSource.includes('resolvePlainChatProjectionErrorMode'), false, 'the redundant fixed-mode resolver stays deleted')
 
   const chatStatusLayerSource = read('src/components/chat/ChatActiveStatusLayer.tsx')
   const programErrorBannerSource = read('src/components/chat/ProgramErrorBanner.tsx')

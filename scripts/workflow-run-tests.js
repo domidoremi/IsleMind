@@ -56,7 +56,7 @@ async function main() {
     taskModule,
   })
 
-  console.log('vNext agent-run integration tests passed')
+  console.log('Workflow-run integration tests passed')
 }
 
 function testUnifiedRecoveryContractHasNoKindSelector() {

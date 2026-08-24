@@ -49,7 +49,7 @@ import {
   resolvePortableTavernWorkspaceBackupId,
   restorePortableTavernWorkspaceBackup,
 } from './tavernWorkspace'
-import { clearRuntimeLog } from '@/services/runtimeLog'
+import { clearRuntimeLog } from '@/platform/native/runtimeLog'
 
 const PARTICIPANT_IDS = Object.freeze([
   'workspaces',

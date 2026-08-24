@@ -7,7 +7,7 @@ Isle UI is IsleMind's canonical React Native component system. It recreates the 
 - The local upstream fork lives outside this Expo app at `G:\Project\forks\animal-island-ui-islemind`.
 - Treat it as a design/API reference only; React DOM components, Less modules, web fonts, and upstream images are not imported into IsleMind.
 - Port only the interaction contract and token intent into React Native `Isle*` primitives, then verify mobile accessibility, reduced motion, Android Back/safe-area behavior, and bundle impact.
-- Architecture and design-system boundaries: `docs/architecture/islemind-vnext-architecture-refactor-plan.md`.
+- Architecture and design-system boundaries: `docs/architecture/architecture.md`.
 
 ## Upstream Sync Status
 

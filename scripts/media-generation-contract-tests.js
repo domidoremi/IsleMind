@@ -355,7 +355,7 @@ function assertSourceIntegration() {
   assert.ok(multimodalSource.includes('artifactManifestContract') && multimodalSource.includes('MEDIA_GENERATION_ARTIFACT_MANIFEST_SCHEMA'), 'multimodal compatibility gate points at the source-owned artifact manifest schema')
   assert.ok(multimodalSource.includes('native-proof-missing'), 'multimodal compatibility gate still blocks default generation without native proof')
 
-  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/bootstrap/runtimeDiagnostics.ts'), 'utf8')
   assert.ok(runtimeDiagnosticsSource.includes('summarizeMediaGenerationDiagnostics'), 'runtime diagnostics summarizes future media generation evidence')
   assert.ok(runtimeDiagnosticsSource.includes('resolveMediaGenerationProviderCapabilityEvidence'), 'runtime diagnostics reads source-backed generation capability evidence')
   assert.ok(runtimeDiagnosticsSource.includes('summarizeMediaGenerationAdapterProofWorklist'), 'runtime diagnostics wires adapter proof worklist counts into media generation diagnostics')

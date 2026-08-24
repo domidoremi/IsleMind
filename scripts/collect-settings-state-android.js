@@ -410,12 +410,12 @@ function runSelfTest() {
     throw new Error('Portable round-trip self-test accepted an invalid fixture.')
   }
 
-  const historicalModeIssues = validatePortableRoundTripFixture({
+  const unsupportedMetadataIssues = validatePortableRoundTripFixture({
     ...positiveFixture,
-    conversations: [{ ...positiveFixture.conversations[0], productMode: 'companion' }],
+    conversations: [{ ...positiveFixture.conversations[0], unexpectedMetadata: 'opaque' }],
   })
-  if (!historicalModeIssues.some((issue) => issue.includes('productMode'))) {
-    throw new Error('Portable round-trip self-test accepted retired product-mode metadata.')
+  if (!unsupportedMetadataIssues.some((issue) => issue.includes('unsupported metadata'))) {
+    throw new Error('Portable round-trip self-test accepted unsupported conversation metadata.')
   }
 
   const positiveResult = {
@@ -1186,11 +1186,9 @@ function validatePortableRoundTripFixture(payload) {
   const conversation = payload.conversations?.[0]
   if (!conversation?.id || !conversation?.title) issues.push('Portable fixture must contain one current Chat conversation with stable id/title.')
   if (!Array.isArray(conversation?.messages) || conversation.messages.length < 2) issues.push('Portable fixture conversation must contain a user and assistant marker.')
-  if (
-    Object.hasOwn(conversation ?? {}, 'productMode')
-    || conversation?.messages?.some((message) => Object.hasOwn(message ?? {}, 'productMode'))
-  ) {
-    issues.push('Portable fixture must use the current Chat schema without productMode.')
+  const portableConversationKeys = new Set(['id', 'title', 'providerId', 'model', 'systemPrompt', 'messages', 'createdAt', 'updatedAt'])
+  if (Object.keys(conversation ?? {}).some((key) => !portableConversationKeys.has(key))) {
+    issues.push('Portable fixture conversation contains unsupported metadata.')
   }
   if (!Array.isArray(payload.providers) || payload.providers.length !== 1) issues.push('Portable fixture must contain exactly one provider.')
   const provider = payload.providers?.[0]
@@ -1344,17 +1342,30 @@ function importPortableJsonFromDownloads(device, fileName, capturePrefix) {
 }
 
 function openImportExportSettings(device, capturePrefix, initialCapture = null) {
-  const settingsRoot = initialCapture ?? openSettingsRoot(device, `${capturePrefix}-settings-root`)
+  let settingsRoot = initialCapture ?? openSettingsRoot(device, `${capturePrefix}-settings-root`)
   const expandedMarkers = ['Export JSON', 'Export Data', 'Import JSON', 'Import Data', '导出 JSON', '导入 JSON', 'JSON エクスポート', 'JSON インポート']
   if (hasAnyText(settingsRoot.uiaText, expandedMarkers) && !hasErrorBoundary(settingsRoot.uiaText)) return settingsRoot
-  ensureDisclosureOpenForward(
-    device,
-    ['Advanced interface settings', 'Advanced', '高级接口设置', '高级界面设置', '高度なインターフェイス設定'],
-    ['Import / Export', 'Import JSON', 'Export JSON', '导入 / 导出', '导入 JSON', '导出 JSON', 'インポート / エクスポート', 'JSON インポート', 'JSON エクスポート'],
-    `${capturePrefix}-advanced`,
-    8,
-    settingsRoot,
-  )
+
+  // The current Settings root uses stable resource ids for the System tab and
+  // Import/Export disclosure. Prefer those ids over translated child labels;
+  // labels are intentionally non-clickable text nodes in React Native UIA.
+  if (!hasAnyText(settingsRoot.uiaText, ['settings-data-toggle']) && !hasAnyText(settingsRoot.uiaText, ['Import / Export', '导入 / 导出', 'インポート / エクスポート'])) {
+    const switched = tapResourceId(device, settingsRoot.uiaText, 'settings-control-tab-system')
+      || findAndTapResourceId(device, 'settings-control-tab-system', `${capturePrefix}-system-tab`, 8)
+    if (switched) {
+      sleep(850)
+      settingsRoot = waitForSettingsAppearanceEntry(device, `${capturePrefix}-system`, 8)
+    }
+  }
+  if (hasAnyText(settingsRoot.uiaText, expandedMarkers) && !hasErrorBoundary(settingsRoot.uiaText)) return settingsRoot
+
+  const openedById = tapResourceId(device, settingsRoot.uiaText, 'settings-data-toggle')
+    || findAndTapResourceId(device, 'settings-data-toggle', `${capturePrefix}-data`, 8)
+  if (openedById) {
+    const expanded = waitForText(device, expandedMarkers, `${capturePrefix}-import-export-open`, 8)
+    if (hasAnyText(expanded.uiaText, expandedMarkers) && !hasErrorBoundary(expanded.uiaText)) return expanded
+  }
+
   const opened = findAndTapTextForward(
     device,
     ['Import / Export', 'Import/Export', '导入 / 导出', '导入/导出', 'インポート / エクスポート'],
@@ -1414,12 +1425,13 @@ function exportPortableJsonToDownload(device, result, fixture, capturePrefix = '
 function verifyPortableRoundTripMarkers(device, fixture, capturePrefix) {
   const conversation = fixture.conversations[0]
   const provider = fixture.providers[0]
+  const providerMarkers = [provider.name, new URL(provider.baseUrl).hostname]
   const chatCapture = openUrlAndWaitForText(device, `islemind://chat/${conversation.id}`, `${capturePrefix}-chat`, [conversation.title, 'QA portable round-trip assistant marker.'], 8, 900)
   const providerCapture = openSettingsSubpage(
     device,
     'islemind://settings/providers',
-    ['Providers', '供应商', 'プロバイダー'],
-    [provider.name],
+    ['Providers', 'Provider & model', 'Provider and model', '供应商', '服务商与模型', 'プロバイダー', 'プロバイダーとモデル'],
+    providerMarkers,
     `${capturePrefix}-provider`,
   )
   let preferenceCapture = openSettingsSubpage(
@@ -1440,7 +1452,7 @@ function verifyPortableRoundTripMarkers(device, fixture, capturePrefix) {
   preferenceCapture = waitForText(device, hapticLabels, `${capturePrefix}-preferences-haptics`, 6)
   const hapticsNode = findToggleNode(preferenceCapture.uiaText, hapticLabels)
   const chatOk = hasAnyText(chatCapture.uiaText, [conversation.title, 'QA portable round-trip assistant marker.']) && !hasErrorBoundary(chatCapture.uiaText)
-  const providerOk = hasAnyText(providerCapture.uiaText, [provider.name]) && !hasErrorBoundary(providerCapture.uiaText)
+  const providerOk = hasAnyText(providerCapture.uiaText, providerMarkers) && !hasErrorBoundary(providerCapture.uiaText)
   return {
     ok: chatOk && providerOk && hapticsNode?.checked === fixture.settings.hapticsEnabled,
     conversations: chatOk ? 1 : 0,
@@ -1482,6 +1494,12 @@ function mergePortableWorkspaceEvidence(observed, exported, fixture) {
 
 function clearAllDataFromSettingsUi(device) {
   let capture = openSettingsRoot(device, 'portable-data-roundtrip-clear-settings-root')
+  const systemTab = findSettingsSystemTabNode(capture.uiaText)
+  if (!systemTab || !tapBoundsCenter(device, systemTab.bounds)) {
+    throw new Error('Could not switch Settings to the System tab before clearing portable data.')
+  }
+  sleep(850)
+  capture = waitForSettingsAppearanceEntry(device, 'portable-data-roundtrip-clear-system', 8)
   capture = ensureDisclosureOpenForward(
     device,
     ['Advanced interface settings', '高级接口设置', '高级界面设置', '高度なインターフェイス設定'],
@@ -1505,18 +1523,36 @@ function clearAllDataFromSettingsUi(device) {
   }
   swipeUp(device)
   sleep(450)
-  let tappedClearData = findAndTapTextForward(device, ['Clear All Data', 'Clear Data', '清除所有数据', '清除数据', 'すべてのデータを消去'], 'portable-data-roundtrip-clear-tap', 4, dangerCapture ?? capture)
+  const clearLabels = ['Clear All Data', 'Clear Data', '清除所有数据', '清除数据', 'すべてのデータを消去']
+  const confirmMarkers = [
+    'This will permanently delete all conversations and settings. Continue?',
+    '此操作将删除所有对话和设置，不可恢复。确定继续？',
+    'すべての会話と設定が完全に削除されます。続行しますか？',
+  ]
+  let actionCapture = captureStep(device, 'portable-data-roundtrip-clear-action')
+  let tappedClearData = tapText(device, actionCapture.uiaText, clearLabels)
+    || findAndTapTextForward(device, clearLabels, 'portable-data-roundtrip-clear-tap', 4, actionCapture)
   if (!tappedClearData) {
     swipeLeft(device)
     sleep(500)
-    tappedClearData = findAndTapText(device, ['Clear All Data', 'Clear Data', '清除所有数据', '清除数据', 'すべてのデータを消去'], 'portable-data-roundtrip-clear-tap-after-horizontal', 2)
+    tappedClearData = findAndTapText(device, clearLabels, 'portable-data-roundtrip-clear-tap-after-horizontal', 2)
   }
   if (!tappedClearData) {
     throw new Error('Could not tap Clear All Data.')
   }
   sleep(900)
-  let confirmCapture = captureStep(device, 'portable-data-roundtrip-clear-confirm')
-  const confirmed = tapText(device, confirmCapture.uiaText, ['Clear All Data', 'Clear Data', 'Clear', '清除所有数据', '清除数据', '清除', 'すべてのデータを消去'])
+  let confirmCapture = waitForText(device, confirmMarkers, 'portable-data-roundtrip-clear-confirm', 6, 500)
+  if (!hasAnyText(confirmCapture.uiaText, confirmMarkers)) {
+    actionCapture = captureStep(device, 'portable-data-roundtrip-clear-action-retry')
+    if (tapText(device, actionCapture.uiaText, clearLabels)) {
+      sleep(900)
+      confirmCapture = waitForText(device, confirmMarkers, 'portable-data-roundtrip-clear-confirm-retry', 6, 500)
+    }
+  }
+  if (!hasAnyText(confirmCapture.uiaText, confirmMarkers)) {
+    throw new Error('Clear All Data confirmation dialog did not appear.')
+  }
+  const confirmed = tapText(device, confirmCapture.uiaText, [...clearLabels, 'Clear', '清除'])
   if (!confirmed) throw new Error('Could not confirm Clear All Data.')
   sleep(1400)
   forceStop(device)
@@ -1585,23 +1621,36 @@ function restoreAppearance(device) {
 function openAppearanceSettings(device, capturePrefix) {
   const appearanceLabels = ['外观与语言', 'Appearance & language', '外観と言語']
   const expandedMarkers = ['主题系统', 'Theme System', 'テーマシステム']
-  const rootCapture = openSettingsRoot(device, capturePrefix)
-  let appearanceCapture = rootCapture
-  if (!hasSettingsAppearanceEntry(rootCapture.uiaText)) {
-    const systemTab = findSettingsSystemTabNode(rootCapture.uiaText)
-    if (!systemTab || !tapBoundsCenter(device, systemTab.bounds)) {
+  let appearanceCapture = openSettingsRoot(device, capturePrefix)
+
+  if (!hasSettingsAppearanceEntry(appearanceCapture.uiaText)) {
+    const systemTab = findSettingsSystemTabNode(appearanceCapture.uiaText)
+    const switchedToSystem = systemTab
+      ? tapBoundsCenter(device, systemTab.bounds)
+      : findAndTapResourceId(device, 'settings-control-tab-system', `${capturePrefix}-system-tab`, 8)
+    if (!switchedToSystem) {
       throw new Error('Could not switch Settings to the System tab before opening Appearance & language.')
     }
     sleep(850)
     appearanceCapture = waitForSettingsAppearanceEntry(device, `${capturePrefix}-system`, 8)
-    if (!hasSettingsAppearanceEntry(appearanceCapture.uiaText)) {
-      throw new Error('Settings System tab did not expose Appearance & language.')
+  }
+
+  if (!hasSettingsAppearanceEntry(appearanceCapture.uiaText)) {
+    // The pager can return a retained AI-tab snapshot immediately after the
+    // deep link. Re-open once and target the stable System tab resource id.
+    appearanceCapture = openSettingsRoot(device, `${capturePrefix}-fresh`)
+    const freshSystemTab = findSettingsSystemTabNode(appearanceCapture.uiaText)
+    if (freshSystemTab && tapBoundsCenter(device, freshSystemTab.bounds)) {
+      sleep(850)
+      appearanceCapture = waitForSettingsAppearanceEntry(device, `${capturePrefix}-fresh-system`, 8)
     }
+  }
+
+  if (!hasSettingsAppearanceEntry(appearanceCapture.uiaText)) {
+    throw new Error('Settings System tab did not expose Appearance & language.')
   }
   if (hasAnyText(appearanceCapture.uiaText, expandedMarkers)) return
 
-  // The settings card exposes a stable resource id on native UI; prefer it
-  // because the visible label is a non-clickable child in this hierarchy.
   const resourceOpened = tapResourceId(device, appearanceCapture.uiaText, 'settings-appearance-toggle')
     || findAndTapResourceId(device, 'settings-appearance-toggle', `${capturePrefix}-appearance-resource`, 8)
   if (resourceOpened) {
@@ -1686,7 +1735,8 @@ function waitForStableSettingsRoot(device, captureName, maxAttempts = 10) {
 }
 
 function openSettingsRootFromHomeIfPresent(device, capture, captureName) {
-  if (!isHomeRoute(capture.uiaText)) return capture
+  const hasSettingsEntry = hasAnyText(capture.uiaText, ['设置', 'Settings', '設定'])
+  if (!isHomeRoute(capture.uiaText) && !hasSettingsEntry) return capture
   const tapped = tapText(device, capture.uiaText, ['Settings', '设置', '設定'])
   if (!tapped) return capture
   sleep(900)
@@ -1767,6 +1817,12 @@ function waitForStableText(device, labels, captureName, maxAttempts = 10) {
 }
 
 function isSettingsRoot(uiaText) {
+  const nodes = parseNodes(uiaText)
+  const stableRoot = nodes.some((node) => node.resourceId === 'settings-control-tab-ai')
+    && nodes.some((node) => node.resourceId === 'settings-control-tab-system')
+    && nodes.some((node) => node.resourceId.startsWith('settings-control-catalog-'))
+  if (stableRoot) return !hasErrorBoundary(uiaText)
+
   const visibleText = extractVisibleText(uiaText).join('\n')
   const rootMarker = hasAnyText(visibleText, [
     'Common',

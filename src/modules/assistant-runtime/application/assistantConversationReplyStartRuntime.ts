@@ -14,8 +14,8 @@ export interface AssistantConversationReplyStartMessageLike<
   TAttachmentInput,
 > {
   readonly id: string
-  readonly role: string
-  readonly content?: string
+  readonly role: 'user' | 'assistant'
+  readonly content?: string | null
   readonly attachments?: TAttachmentInput
 }
 
@@ -405,6 +405,27 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       TModelConfig
     >>
   }
+  /**
+   * Conversations-owned barrier for the admitted turn. It persists the
+   * placeholder and provider-normalized conversation in one existing owner
+   * transaction before any provider/context work is admitted.
+   */
+  readonly persistAdmissionConversation: (input: {
+    readonly conversationId: string
+    readonly assistantMessageId: string
+    readonly conversation: TRuntimeConversation | TConversation
+  }) => Promise<void>
+  /**
+   * Terminalizes the local placeholder when the Conversations-owned admission
+   * snapshot cannot be persisted. The caller still receives the original
+   * persistence error so retry/queue recovery remains observable.
+   */
+  readonly projectAdmissionPersistenceFailure?: (input: {
+    readonly conversationId: string
+    readonly assistantMessageId: string
+    readonly providerId?: string
+    readonly error: unknown
+  }) => void
   readonly plainChatHandoffRuntime: {
     handoff(input: {
       readonly conversationId: string
@@ -659,6 +680,25 @@ export function createAssistantConversationReplyStartRuntime<
       signal: requestController.signal,
     })
     if (admission.kind !== 'ready') {
+      if (admission.kind === 'cancelled') {
+        try {
+          // Cancellation has no normalized provider result. Persist the
+          // placeholder once so recovery can observe the terminal turn.
+          await persistAdmissionConversation({
+            conversationId: input.conversationId,
+            assistantMessageId: assistantMessage.id,
+            conversation,
+          })
+        } catch (error) {
+          requestController.abort(error)
+          dependencies.projectAdmissionPersistenceFailure?.({
+            conversationId: input.conversationId,
+            assistantMessageId: assistantMessage.id,
+            error,
+          })
+          throw error
+        }
+      }
       return { kind: 'terminal', stage: 'provider_admission', outcome: admission }
     }
 
@@ -668,6 +708,29 @@ export function createAssistantConversationReplyStartRuntime<
       upstreamModel,
       modelConfig,
     } = admission
+    try {
+      await persistAdmissionConversation({
+        conversationId: input.conversationId,
+        assistantMessageId: assistantMessage.id,
+        conversation: runtimeConversation,
+      })
+    } catch (error) {
+      requestController.abort(error)
+      dependencies.projectAdmissionPersistenceFailure?.({
+        conversationId: input.conversationId,
+        assistantMessageId: assistantMessage.id,
+        providerId: provider.id,
+        error,
+      })
+      throw error
+    }
+    if (requestController.signal.aborted) {
+      return {
+        kind: 'terminal',
+        stage: 'provider_admission',
+        outcome: { kind: 'cancelled' },
+      }
+    }
     const latestConversation = dependencies.getLatestConversation(
       input.conversationId,
     )
@@ -1001,6 +1064,14 @@ export function createAssistantConversationReplyStartRuntime<
       outcome: providerStreamingOutcome,
       providerDispatchOutcome,
     }
+  }
+
+  async function persistAdmissionConversation(input: {
+    readonly conversationId: string
+    readonly assistantMessageId: string
+    readonly conversation: TRuntimeConversation | TConversation
+  }): Promise<void> {
+    await dependencies.persistAdmissionConversation(input)
   }
 
   function findLastUserMessage(

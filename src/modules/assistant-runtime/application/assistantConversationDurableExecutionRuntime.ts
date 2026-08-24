@@ -1,5 +1,6 @@
 import {
   createAssistantRunId,
+  type ChatRequest,
   type AssistantRunId,
   type IdGenerator,
   type Result,
@@ -7,9 +8,9 @@ import {
 } from '@/core'
 
 import type {
-  AssistantActivityRequestEvidence,
   AssistantActivityExecutionResult,
   AssistantActivityExecutionInput,
+  AssistantContextPlanReceipt,
   AssistantRun,
   AssistantRunProjection,
   AssistantRuntimeErrorCode,
@@ -45,7 +46,8 @@ export interface AssistantConversationDurableExecutionInput<TStarted> {
   readonly responseMessageId: string
   readonly providerId: string
   readonly model: string
-  readonly requestEvidence?: AssistantActivityRequestEvidence
+  readonly request?: ChatRequest
+  readonly contextReceipt?: AssistantContextPlanReceipt
   readonly context: ContextSnapshot
   readonly workspaceWritebackHandoff?: AssistantConversationWorkspaceWritebackHandoff
   readonly cancellationSignal?: AbortSignal
@@ -116,7 +118,8 @@ export function createAssistantConversationDurableExecutionRuntime(
       responseMessageId: input.responseMessageId,
       providerId: input.providerId,
       model: input.model,
-      requestEvidence: input.requestEvidence,
+      request: input.request,
+      contextReceipt: input.contextReceipt,
       context: input.context,
       ...(input.workspaceWritebackHandoff
         ? { workspaceWritebackHandoff: input.workspaceWritebackHandoff }

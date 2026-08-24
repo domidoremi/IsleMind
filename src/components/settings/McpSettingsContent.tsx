@@ -11,7 +11,7 @@ import {
   normalizeMcpServerUrl,
   type McpRemotePreset,
 } from '@/modules/integrations'
-import { createPluginManifestFromMcpServer, validatePluginManifest } from '@/services/pluginManifest'
+import { createPluginManifestFromMcpServer, validatePluginManifest } from '@/bootstrap/pluginManifest'
 import type { McpPromptManifest, McpResourceManifest, McpServerConfig, McpToolManifest } from '@/types/mcpContracts'
 import {
   LiquidGlassMcpSettingsExperience,

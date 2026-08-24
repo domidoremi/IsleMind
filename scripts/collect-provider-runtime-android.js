@@ -89,7 +89,7 @@ async function main() {
     result.scenarios.push(runProviderSettingsRoute(device))
     result.scenarios.push(runProviderImportKeyboard(device))
     result.scenarios.push(runChatModelSwitch(device))
-    result.scenarios.push(runBlockedModelRecovery(device))
+    result.scenarios.push(runBlockedModelRecovery(device, providerFailureServer))
     result.scenarios.push(runRuntimeFallbackTrace(device, providerFailureServer))
     result.scenarios.push(runProviderHealthState(device))
     result.scenarios.push(runAndroidBack(device))
@@ -166,7 +166,7 @@ function runProviderActivation(device, providerFailureServer) {
   runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
   sleep(600)
   fs.writeFileSync(providerFailureRequestEvidence, '', 'utf8')
-  writeFixture(device, providerFailureServer.baseUrl, 'qa-placeholder-key')
+  writeFixture(device, providerFailureServer.baseUrl, 'qa-placeholder-key', { activationCompanion: true })
   importRuntimeFixture(device, record)
 
   let capture = openUrlAndWaitForText(device, record, 'islemind://settings/providers', 'provider-activation-start', [providerName], 8, 850)
@@ -196,7 +196,7 @@ function runProviderActivation(device, providerFailureServer) {
   const requestReceived = readProviderFailureRequestEvidence().some((entry) => entry.method === 'GET' && entry.url === '/v1/models' && entry.status === 200)
   const ok = resultVisible && requestReceived && !hasErrorBoundary(resultCapture.uiaText)
   const actualState = ok
-    ? 'Provider activation showed app-owned progress and completed 1/1 ready after a successful local model sync.'
+    ? 'Provider activation showed app-owned progress and completed 2/2 ready after successful local model syncs.'
     : `Provider activation result semantics=${resultVisible}; successful model request=${requestReceived}; result probe=${hasProviderActivationResultEvidence(resultProbeText)}.`
   return completeScenario(record, ok, resultCapture, actualState)
 }
@@ -220,18 +220,25 @@ function runChatModelSwitch(device) {
     capture = waitForText(device, record, 'provider-runtime-model-switch', ['搜索供应商或模型', 'Search providers or models', '供应商', 'Providers', '模型', 'Model'], 6, 650)
   }
   const ok = opened
-    && hasAnyText(capture.uiaText, ['搜索或切换', 'Search or switch', '供应商', 'Providers', '模型', 'Model'])
+    && hasAnyText(capture.uiaText, ['搜索或切换', 'Search or switch', '供应商', 'Providers', '模型', 'Model', 'MODEL'])
+    && hasAnyText(capture.uiaText, [providerName, modelId, 'AI 配置', 'AI configuration'])
     && !hasErrorBoundary(capture.uiaText)
   return completeScenario(record, ok, capture, ok ? 'Model switch surface opened.' : 'Model switch surface was not proven.')
 }
 
-function runBlockedModelRecovery(device) {
+function runBlockedModelRecovery(device, providerFailureServer) {
   const record = scenarioRecord('blocked-model-recovery', {
     expectedState: 'Blocked or unavailable model state shows recoverable configuration or switch action without sending.',
     fixEntry: 'src/components/chat/ChatWorkspace.tsx',
   })
-  openUrl(device, 'islemind://')
-  sleep(1800)
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
+  writeFixture(device, providerFailureServer.baseUrl, 'qa-placeholder-key', {
+    conversationModelId: 'qa-provider-runtime-unavailable-model',
+  })
+  importRuntimeFixture(device, record)
+  openUrl(device, `islemind://chat/${recoveryConversationId}`)
+  sleep(2200)
   let capture = captureStep(device, record, 'provider-runtime-blocked-model')
   capture = ensureChatTopBarVisible(device, record, capture, 'provider-runtime-blocked-model-topbar')
   const ok = hasAnyText(capture.uiaText, [
@@ -655,9 +662,43 @@ function writeRestartRecoveryDurableEvidence(durableState) {
   sanitizePersistedTextEvidence(restartRecoveryEvidence)
 }
 
-function writeFixture(device, providerBaseUrl, apiKey = '') {
+function writeFixture(device, providerBaseUrl, apiKey = '', options = {}) {
   const fixturePath = path.join(smokeDir, fixtureFileName)
   const now = 1772100000000
+  const conversationModelId = options.conversationModelId ?? modelId
+  const createFixtureProvider = ({ id, name }) => ({
+    id,
+    type: 'openai-compatible',
+    presetId: 'custom-endpoint',
+    detectedPresetId: 'custom-endpoint',
+    wireProtocol: 'openai-compatible',
+    detectionStatus: 'manual',
+    name,
+    apiKey,
+    baseUrl: providerBaseUrl,
+    models: [modelId],
+    manualModels: [modelId],
+    modelAliases: [],
+    modelConfigs: [
+      {
+        id: modelId,
+        name: modelId,
+        provider: 'openai-compatible',
+        contextWindow: 32768,
+        maxTokens: 32768,
+        maxOutputTokens: 4096,
+        defaultMaxTokens: 4096,
+        supportsVision: false,
+        supportsFiles: false,
+      },
+    ],
+    credentialGroups: apiKey
+      ? [{ id: `qa-placeholder-group-${id}`, label: 'QA placeholder', apiKey, enabled: true, availableModels: [modelId] }]
+      : [],
+    enabled: true,
+    lastTestStatus: 'idle',
+    lastModelSyncStatus: 'idle',
+  })
   const fixture = {
     app: 'islemind',
     version: 1,
@@ -683,7 +724,7 @@ function writeFixture(device, providerBaseUrl, apiKey = '') {
         id: recoveryConversationId,
         title: 'QA Provider Runtime Recovery',
         providerId,
-        model: modelId,
+        model: conversationModelId,
         providerModelMode: 'manual',
         systemPrompt: '',
         temperature: 0.7,
@@ -696,39 +737,13 @@ function writeFixture(device, providerBaseUrl, apiKey = '') {
       },
     ],
     providers: [
-      {
-        id: providerId,
-        type: 'openai-compatible',
-        presetId: 'custom-endpoint',
-        detectedPresetId: 'custom-endpoint',
-        wireProtocol: 'openai-compatible',
-        detectionStatus: 'manual',
-        name: providerName,
-        apiKey,
-        baseUrl: providerBaseUrl,
-        models: [modelId],
-        manualModels: [modelId],
-        modelAliases: [],
-        modelConfigs: [
-          {
-            id: modelId,
-            name: modelId,
-            provider: 'openai-compatible',
-            contextWindow: 32768,
-            maxTokens: 32768,
-            maxOutputTokens: 4096,
-            defaultMaxTokens: 4096,
-            supportsVision: false,
-            supportsFiles: false,
-          },
-        ],
-        credentialGroups: apiKey
-          ? [{ id: 'qa-placeholder-group', label: 'QA placeholder', apiKey, enabled: true, availableModels: [modelId] }]
-          : [],
-        enabled: true,
-        lastTestStatus: 'idle',
-        lastModelSyncStatus: 'idle',
-      },
+      createFixtureProvider({ id: providerId, name: providerName }),
+      ...(options.activationCompanion
+        ? [createFixtureProvider({
+            id: 'qa-provider-runtime-companion',
+            name: 'QA Provider Runtime Companion',
+          })]
+        : []),
     ],
     skills: [],
     mcpServers: [],
@@ -748,6 +763,54 @@ function importRuntimeFixture(device, record) {
   const importDialog = hasAnyText(pickerStart.uiaText, ['导入完成', 'Import complete'])
     ? pickerStart
     : selectFixtureFileAndCaptureImportDialog(device, record)
+  if (hasAnyText(importDialog.uiaText, ['导入完成', 'Import complete', 'インポート完了'])) {
+    tapText(device, importDialog.uiaText, ['知道了', '我知道了', 'OK', 'Close'])
+    sleep(900)
+    return
+  }
+  if (!isDocumentsUi(importDialog.uiaText)) {
+    const importSubmitted = tapExactContentDesc(device, importDialog.uiaText, ['导入', 'Import'])
+      || tapText(device, importDialog.uiaText, ['导入', 'Import'])
+    if (!importSubmitted) {
+      throw new Error('Provider Runtime fixture import dialog did not expose an enabled import action.')
+    }
+    // The import acknowledgement is app-owned and can be mounted after the
+    // first import action resolves. Poll for both the completion banner and
+    // the optional "enable imported items" confirmation instead of treating
+    // the first post-submit UI dump as terminal evidence.
+    let completed = captureStep(device, record, 'provider-runtime-import-completed')
+    let activationTapped = false
+    for (let attempt = 1; attempt <= 16; attempt += 1) {
+      if (hasAnyText(completed.uiaText, ['导入完成', '批量导入完成', 'Import complete', 'Batch import complete'])) {
+        tapText(device, completed.uiaText, ['知道了', '我知道了', 'OK', 'Close'])
+        sleep(900)
+        return
+      }
+      const activationLabels = ['启用导入项', 'Enable imported', '启用导入']
+      if (!activationTapped && hasEnabledClickableExactLabel(completed.uiaText, activationLabels)) {
+        activationTapped = tapExactContentDesc(device, completed.uiaText, activationLabels)
+          || tapText(device, completed.uiaText, activationLabels)
+        if (activationTapped) {
+          sleep(700)
+          completed = captureStep(device, record, 'provider-runtime-import-enabled')
+          continue
+        }
+      }
+      // A successful enable flow can settle directly into the provider editor
+      // or Settings route without showing a separate completion banner. Once
+      // the app-owned provider state is visible and the confirmation dialog is
+      // gone, it is sufficient import evidence and avoids reopening a cold
+      // activity that can lose the hydrated provider list.
+      if (activationTapped && hasImportedProviderState(completed.uiaText)) return
+      sleep(500)
+      completed = captureStep(device, record, `provider-runtime-import-completed-wait-${attempt}`)
+    }
+    if (hasAnyText(completed.uiaText, ['导入完成', '批量导入完成', 'Import complete', 'Batch import complete'])) {
+      tapText(device, completed.uiaText, ['知道了', '我知道了', 'OK', 'Close'])
+      sleep(900)
+      return
+    }
+  }
   if (hasAnyText(importDialog.uiaText, ['导入完成', 'Import complete'])) {
     tapText(device, importDialog.uiaText, ['知道了', '我知道了', 'OK', 'Close'])
     sleep(900)
@@ -765,23 +828,68 @@ function importRuntimeFixture(device, record) {
 
 function ensureSettingsVisible(device, record) {
   let capture = captureStep(device, record, 'provider-runtime-import-settings-start')
-  if (hasAnyText(capture.uiaText, ['导入 JSON', 'AI 工作区就绪度', '导入 / 导出', 'Import JSON'])) return capture
+  const settingsRootVisible = hasAnyText(capture.uiaText, ['设置', 'Settings', '設定'])
+    && hasAnyText(capture.uiaText, ['系统', 'System', 'システム'])
+  if (hasAnyText(capture.uiaText, ['导入 JSON', 'Import JSON', 'JSON インポート']) || settingsRootVisible) return capture
+  // Release deep links can land on the Chat shell when the activity is being
+  // resumed. Use the existing visible Settings control as a bounded fallback
+  // so fixture import evidence still follows the same user navigation path.
+  if (tapExactContentDesc(device, capture.uiaText, ['设置', 'Settings'])) {
+    sleep(2200)
+    capture = captureStep(device, record, 'provider-runtime-import-settings-fallback')
+  }
+  if (!hasAnyText(capture.uiaText, ['设置', 'Settings', '設定'])
+    && tapExactContentDesc(device, capture.uiaText, ['返回', 'Back', '关闭', 'Close'])) {
+    sleep(1200)
+    capture = captureStep(device, record, 'provider-runtime-import-settings-root')
+  }
   return capture
 }
 
 function tapSettingsImportJson(device, record) {
+  const systemLabels = ['系统', 'System', 'システム']
+  const portableDataLabels = ['导入 / 导出', 'Import / Export', 'インポート / エクスポート']
+  const importJsonLabels = ['导入 JSON', 'Import JSON', 'JSON インポート']
   for (let index = 0; index < 8; index += 1) {
     let capture = captureStep(device, record, `provider-runtime-import-search-${index}`)
-    let importTapped = tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON', 'JSON インポート'])
-    if (!importTapped && tapText(device, capture.uiaText, ['导入 / 导出', 'Import / Export', 'インポート / エクスポート'])) {
+    let importTapped = tapText(device, capture.uiaText, importJsonLabels)
+    if (!importTapped && !hasAnyText(capture.uiaText, portableDataLabels)
+      && (tapExactContentDesc(device, capture.uiaText, systemLabels)
+        || tapText(device, capture.uiaText, systemLabels))) {
+      sleep(1100)
+      capture = captureStep(device, record, `provider-runtime-import-system-${index}`)
+    }
+    if (!importTapped && tapText(device, capture.uiaText, portableDataLabels)) {
       sleep(900)
-      capture = captureStep(device, record, `provider-runtime-import-expanded-${index}`)
-      importTapped = tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON', 'JSON インポート'])
+      capture = captureStep(device, record, `provider-runtime-import-portable-data-${index}`)
+      importTapped = tapText(device, capture.uiaText, importJsonLabels)
     }
     if (importTapped) {
-      sleep(1700)
-      const afterTap = captureStep(device, record, `provider-runtime-import-after-tap-${index}`)
+      // Provider settings can finish a deferred hydration pass after the
+      // button tap. Poll the app-owned sheet before attempting the native
+      // picker so a slow release device does not fall through to a swipe.
+      let afterTap = captureStep(device, record, `provider-runtime-import-after-tap-${index}`)
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        if (isDocumentsUi(afterTap.uiaText)
+          || hasAnyText(afterTap.uiaText, ['导入完成', 'Import complete', '批量导入', 'Batch Import', '导入来源'])) break
+        sleep(650)
+        afterTap = captureStep(device, record, `provider-runtime-import-after-tap-${index}-wait-${attempt}`)
+      }
       if (isDocumentsUi(afterTap.uiaText) || hasAnyText(afterTap.uiaText, ['导入完成', 'Import complete'])) return afterTap
+      const chooseFileTapped = isImportSheet(afterTap.uiaText)
+        && (tapExactContentDesc(device, afterTap.uiaText, ['选择导入文件', 'Choose File', 'ファイル選択'])
+          || tapText(device, afterTap.uiaText, ['选择导入文件', 'Choose File', 'ファイル選択']))
+      if (chooseFileTapped) {
+        let afterFileTap = captureStep(device, record, `provider-runtime-import-file-picker-${index}`)
+        for (let attempt = 1; attempt <= 8; attempt += 1) {
+          if (isDocumentsUi(afterFileTap.uiaText)
+            || hasAnyText(afterFileTap.uiaText, ['导入完成', 'Import complete'])) break
+          sleep(650)
+          afterFileTap = captureStep(device, record, `provider-runtime-import-file-picker-${index}-wait-${attempt}`)
+        }
+        if (isDocumentsUi(afterFileTap.uiaText) || hasAnyText(afterFileTap.uiaText, ['导入完成', 'Import complete'])) return afterFileTap
+      }
+      if (isImportSheet(afterTap.uiaText)) return afterTap
     }
     swipeUp(device)
     sleep(350)
@@ -794,13 +902,34 @@ function selectFixtureFileAndCaptureImportDialog(device, record) {
   for (let index = 0; index < 8; index += 1) {
     const capture = captureStep(device, record, `provider-runtime-file-picker-search-${index}`)
     if (hasAnyText(capture.uiaText, ['导入完成', 'Import complete'])) return capture
+    if (isImportSheet(capture.uiaText)) {
+      if (tapExactContentDesc(device, capture.uiaText, ['选择导入文件', 'Choose File', 'ファイル選択'])
+        || tapText(device, capture.uiaText, ['选择导入文件', 'Choose File', 'ファイル選択'])) {
+        sleep(900)
+        const picker = waitForDocumentsUi(device, record, `provider-runtime-import-file-picker-${index}`)
+        if (picker) return picker
+      }
+    }
     if (!isDocumentsUi(capture.uiaText) && tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON'])) {
       sleep(1700)
       continue
     }
     if (tapFileTitle(device, capture.uiaText, fixtureFileName)) {
-      sleep(2200)
-      return captureStep(device, record, 'provider-runtime-import-confirm')
+      sleep(650)
+      let selected = captureStep(device, record, 'provider-runtime-import-confirm')
+      for (let attempt = 1; attempt <= 8; attempt += 1) {
+        if (hasAnyText(selected.uiaText, [
+          '导入完成',
+          'Import complete',
+          'インポート完了',
+          '导入已跳过',
+          'Import skipped',
+          'インポートをスキップ',
+        ]) || hasEnabledClickableExactLabel(selected.uiaText, ['导入', 'Import'])) return selected
+        sleep(650)
+        selected = captureStep(device, record, `provider-runtime-import-confirm-wait-${attempt}`)
+      }
+      return selected
     }
     if (!searched && isDocumentsUi(capture.uiaText)) {
       searched = true
@@ -826,6 +955,16 @@ function searchDocumentsUiFile(device, record, fileName) {
   if (!tapFileTitle(device, capture.uiaText, fileName)) return null
   sleep(2200)
   return captureStep(device, record, 'provider-runtime-import-confirm')
+}
+
+function waitForDocumentsUi(device, record, name, maxAttempts = 8) {
+  let capture = captureStep(device, record, name)
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (isDocumentsUi(capture.uiaText) || hasAnyText(capture.uiaText, ['导入完成', 'Import complete'])) return capture
+    sleep(650)
+    capture = captureStep(device, record, `${name}-wait-${attempt}`)
+  }
+  return isDocumentsUi(capture.uiaText) ? capture : null
 }
 
 function openUrl(device, url) {
@@ -934,30 +1073,38 @@ function findByScrolling(device, record, initialCapture, labels, maxScrolls) {
 }
 
 function openRuntimeDiagnostics(device, record, initialCapture, capturePrefix, maxScrolls = 12) {
-  const advanced = openDisclosureByScrolling(
-    device,
-    record,
-    initialCapture,
-    ['高级接口设置', 'Advanced interface settings', '詳細インターフェース設定'],
-    `${capturePrefix}-advanced`,
-    maxScrolls
-  )
-  if (!advanced.opened) return advanced
+  let capture = initialCapture
+  const systemLabels = ['系统', 'System', 'システム']
+  if (tapExactContentDesc(device, capture.uiaText, systemLabels)
+    || tapText(device, capture.uiaText, systemLabels)) {
+    sleep(900)
+    capture = captureStep(device, record, `${capturePrefix}-system`)
+  }
 
-  const diagnostics = openDisclosureByScrolling(
-    device,
-    record,
-    advanced.capture,
-    ['运行时诊断', 'Runtime diagnostics', '実行診断'],
-    `${capturePrefix}-runtime-diagnostics`,
-    maxScrolls
-  )
-  if (!diagnostics.opened) return diagnostics
+  const diagnosticsLabels = ['运行时诊断', 'Runtime diagnostics', '実行診断']
+  const runLabels = ['运行诊断', 'Run diagnostics', '診断を実行']
+  if (!hasAnyText(capture.uiaText, runLabels)) {
+    const diagnostics = findByScrolling(device, record, capture, diagnosticsLabels, maxScrolls)
+    capture = diagnostics.capture
+    if (!diagnostics.matched || !tapText(device, capture.uiaText, diagnosticsLabels)) {
+      return { opened: false, capture }
+    }
+    sleep(900)
+    capture = captureStep(device, record, `${capturePrefix}-runtime-diagnostics-opened`)
+  }
+
+  if (hasAnyText(capture.uiaText, runLabels)) {
+    if (!tapExactContentDesc(device, capture.uiaText, runLabels)
+      && !tapText(device, capture.uiaText, runLabels)) {
+      return { opened: false, capture }
+    }
+    capture = waitForText(device, record, `${capturePrefix}-runtime-diagnostics-ready`, ['诊断明细', 'Diagnostic details', '診断詳細'], 10, 500)
+  }
 
   return openDisclosureByScrolling(
     device,
     record,
-    diagnostics.capture,
+    capture,
     ['诊断明细', 'Diagnostic details', '診断詳細'],
     `${capturePrefix}-details`,
     maxScrolls
@@ -1152,6 +1299,12 @@ function tapBoundsAt(device, bounds, xRatio, yRatio) {
 
 function tapFileTitle(device, uiaText, fileName) {
   const nodes = parseNodes(uiaText)
+  // DocumentsUI exposes a clickable preview icon and a clickable item_root
+  // for the same file. The preview icon opens a read-only preview and leaves
+  // the picker active; selecting the item_root is the action that returns the
+  // content URI to the app. Resolve the title's smallest clickable ancestor
+  // first and only use the preview node for older picker layouts without an
+  // accessible title/card relationship.
   const titleNodes = nodes
     .filter((item) => item.enabled && item.text === fileName)
     .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
@@ -1161,7 +1314,10 @@ function tapFileTitle(device, uiaText, fileName) {
     const card = nodes
       .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
       .filter(({ item, bounds }) => item.enabled && item.clickable && bounds && boundsContains(bounds, titleBounds))
-      .sort((a, b) => boundsArea(a.bounds) - boundsArea(b.bounds))[0]
+      // The preview icon is also an ancestor of the title card in grid mode,
+      // but it opens a preview instead of selecting the document. Prefer the
+      // card/item_root (largest containing clickable) for the picker result.
+      .sort((a, b) => boundsArea(b.bounds) - boundsArea(a.bounds))[0]
     if (card?.bounds) {
       const x = Math.round(card.bounds.left + (card.bounds.right - card.bounds.left) * 0.35)
       const y = Math.round(card.bounds.top + (card.bounds.bottom - card.bounds.top) * 0.55)
@@ -1173,17 +1329,30 @@ function tapFileTitle(device, uiaText, fileName) {
   }
   const previewNode = nodes.find((item) => item.enabled && item.clickable && item.contentDesc.includes(fileName))
   const previewBounds = parseBounds(previewNode?.bounds)
-  if (!previewBounds) return false
-  runCommand('adb', [
-    '-s',
-    device,
-    'shell',
-    'input',
-    'tap',
-    String(Math.max(1, previewBounds.left - 80)),
-    String(Math.round((previewBounds.top + previewBounds.bottom) / 2)),
-  ])
-  return true
+  if (previewBounds) {
+    tapBoundsCenter(device, previewBounds)
+    return true
+  }
+  // Some DocumentsUI grid snapshots expose the title in a non-standard
+  // accessibility node that the lightweight parser cannot decode. Recover by
+  // deriving its bounds from the raw node tag and selecting the containing
+  // clickable card.
+  const escapedName = String(fileName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const rawTitle = String(uiaText ?? '').match(new RegExp(`<node\\b[^>]*text="${escapedName}"[^>]*bounds="(\\[[^>]+)"`))
+  const titleBounds = parseBounds(rawTitle?.[1])
+  if (titleBounds) {
+    const card = nodes
+      .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
+      .filter(({ item, bounds }) => item.enabled && item.clickable && bounds && boundsContains(bounds, titleBounds))
+      .sort((a, b) => boundsArea(b.bounds) - boundsArea(a.bounds))[0]
+    if (card?.bounds) {
+      tapBoundsCenter(device, card.item.bounds)
+      return true
+    }
+    runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(Math.round((titleBounds.left + titleBounds.right) / 2)), String(Math.round((titleBounds.top + titleBounds.bottom) / 2))])
+    return true
+  }
+  return false
 }
 
 function inputText(device, value) {
@@ -1237,19 +1406,22 @@ function hasProviderHealthDiagnosticsEvidence(uiaText) {
 function hasProviderActivationProgressEvidence(uiaText) {
   return hasAppOwnedAnyText(uiaText, ['正在启用供应商', 'Enabling providers', 'プロバイダーを有効化中'])
     && hasAppOwnedAnyText(uiaText, [providerName])
-    && hasAppOwnedAnyText(uiaText, ['0/1'])
+    && hasAppOwnedAnyText(uiaText, ['0/1', '0/2'])
     && !hasErrorBoundary(uiaText)
 }
 
 function hasProviderActivationResultEvidence(uiaText) {
   const completionBanner = hasAppOwnedAnyText(uiaText, ['服务商启用完成', 'Provider enable complete', 'プロバイダー有効化完了'])
     && hasAppOwnedAnyText(uiaText, [`${providerName} 已可用`, `${providerName} is ready`, `${providerName} は利用可能です`, '服务商已启用', 'Provider enabled', 'プロバイダーが有効になりました'])
-    && hasAppOwnedAnyText(uiaText, ['1/1'])
+    && hasAppOwnedAnyText(uiaText, ['1/1', '2/2'])
   const readyProviderCard = hasAppOwnedAnyText(uiaText, [providerName])
     && hasAppOwnedAnyText(uiaText, ['已同步可用', 'Synced and ready', '同期済み・利用可能'])
     && hasAppOwnedAnyText(uiaText, ['1 个模型', '1 model', '1 モデル'])
     && hasAppOwnedAnyText(uiaText, ['1 组令牌', '1 credential group', '1 認証グループ'])
-  return (completionBanner || readyProviderCard) && !hasErrorBoundary(uiaText)
+  const stableProviderGroup = hasAppOwnedAnyText(uiaText, ['服务商', 'Providers', 'プロバイダー'])
+    && hasAppOwnedAnyText(uiaText, ['已启用 2/2', 'Enabled 2/2', '有効 2/2'])
+    && !hasAppOwnedAnyText(uiaText, ['正在启用供应商', 'Enabling providers', 'プロバイダーを有効化中'])
+  return (completionBanner || readyProviderCard || stableProviderGroup) && !hasErrorBoundary(uiaText)
 }
 
 function hasAppOwnedAnyText(uiaText, labels) {
@@ -1260,15 +1432,32 @@ function hasAppOwnedAnyText(uiaText, labels) {
 }
 
 function isDocumentsUi(uiaText) {
-  return hasAnyText(uiaText, [
-    'com.google.android.documentsui',
-    'com.android.documentsui',
-    'Recent',
-    '最近',
-    'Search',
-    '搜索',
-    '検索',
-  ])
+  const nodes = parseNodes(uiaText)
+  if (nodes.some((node) => node.packageName === 'com.google.android.documentsui' || node.packageName === 'com.android.documentsui')) {
+    return true
+  }
+  // Some OEM pickers omit their package from the dump. Only accept a
+  // picker-specific label when it is a visible node outside the app package;
+  // searching the raw XML would misclassify imported JSON containing words
+  // such as "Search" as DocumentsUI.
+  return nodes.some((node) => (
+    node.packageName !== appPackageName
+      && ['Recent', '最近', 'Search', '搜索', '検索'].some((label) => node.text === label || node.contentDesc === label)
+  ))
+}
+
+function isImportSheet(uiaText) {
+  return hasAnyText(uiaText, ['批量导入', '导入来源', '选择导入文件', 'Choose File', 'Import providers'])
+}
+
+function hasImportedProviderState(uiaText) {
+  if (hasAnyText(uiaText, ['启用导入项', '暂不启用', 'Enable imported'])) return false
+  const namedProviderVisible = hasAnyText(uiaText, [providerName])
+    && hasAnyText(uiaText, ['连接', 'Connection', '模型', 'Models', '已启用', 'Enabled', 'Provider settings', 'Providers'])
+  const importedProviderGroupVisible = hasAnyText(uiaText, ['服务商', 'Providers', 'プロバイダー'])
+    && hasAnyText(uiaText, ['已启用 1/1', 'Enabled 1/1', '有効 1/1'])
+    && hasAnyText(uiaText, ['供应商 1', '1 providers', 'プロバイダー 1'])
+  return namedProviderVisible || importedProviderGroupVisible
 }
 
 function collectRuntimeLogText(device, runtimeLogReadable = true) {
@@ -1435,6 +1624,17 @@ async function runSelfTest() {
       throw new Error('Provider Runtime Android self-test accepted a non-action or non-exact Import label.')
     }
   }
+  const namedImportedProviderUia = `<node package="${appPackageName}" text="${providerName}" bounds="[0,0][100,20]" /><node package="${appPackageName}" text="Connection" bounds="[0,20][100,40]" /><node package="${appPackageName}" text="Models" bounds="[0,40][100,60]" />`
+  if (!hasImportedProviderState(namedImportedProviderUia)) {
+    throw new Error('Provider Runtime Android self-test rejected the imported provider English detail state.')
+  }
+  const groupedImportedProviderUia = `<node package="${appPackageName}" text="Providers" bounds="[0,0][100,20]" /><node package="${appPackageName}" text="Enabled 1/1" bounds="[0,20][100,40]" /><node package="${appPackageName}" text="1 providers" bounds="[0,40][100,60]" />`
+  if (!hasImportedProviderState(groupedImportedProviderUia)) {
+    throw new Error('Provider Runtime Android self-test rejected the collapsed imported provider group state.')
+  }
+  if (hasImportedProviderState(`${groupedImportedProviderUia}<node package="${appPackageName}" text="Enable imported" bounds="[0,60][100,80]" />`)) {
+    throw new Error('Provider Runtime Android self-test accepted a pending imported provider state.')
+  }
   await assertProviderFailureServerSelfTest()
   const activationProgressUia = `<node package="${appPackageName}" text="正在启用供应商" bounds="[0,0][100,20]" /><node package="${appPackageName}" text="${providerName}" bounds="[0,20][100,40]" /><node package="${appPackageName}" text="0/1" bounds="[0,40][100,60]" />`
   if (!hasProviderActivationProgressEvidence(activationProgressUia)) {
@@ -1453,6 +1653,13 @@ async function runSelfTest() {
   }
   if (hasProviderActivationResultEvidence(activationReadyCardUia.replaceAll(appPackageName, 'com.android.systemui'))) {
     throw new Error('Provider Runtime Android self-test accepted an external ready provider card.')
+  }
+  const activationStableGroupUia = `<node package="${appPackageName}" text="Providers" bounds="[0,0][100,20]" /><node package="${appPackageName}" text="Enabled 2/2" bounds="[0,20][100,40]" /><node package="${appPackageName}" text="127.0.0.1" bounds="[0,40][100,60]" />`
+  if (!hasProviderActivationResultEvidence(activationStableGroupUia)) {
+    throw new Error('Provider Runtime Android self-test rejected the app-owned stable activation group.')
+  }
+  if (hasProviderActivationResultEvidence(`${activationStableGroupUia}<node package="${appPackageName}" text="Enabling providers" bounds="[0,60][100,80]" />`)) {
+    throw new Error('Provider Runtime Android self-test accepted an activation group that was still running.')
   }
   if (!hasRuntimeFallbackEventEvidence('{"event":"provider.fallback.decided"}')) {
     throw new Error('Provider Runtime Android self-test did not accept the typed fallback event.')

@@ -43,6 +43,7 @@ import { createProviderRuntimeAdapter } from './providerRuntime'
 import { createConversationModelOperationSession } from './conversationModelOperationRuntime'
 import { preserveMessageIdentity } from './plainChatMessageIdentity'
 import { buildSystemPrompt } from '@/services/promptEngineering'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
 const runPersistence = createSqliteAssistantRunPersistence(databaseProvider)
@@ -57,7 +58,7 @@ const ids: IdGenerator = {
   },
 }
 
-export interface VNextConversationRuntimeOptions {
+export interface ConversationRuntimeOptions {
   provider?: AIProvider
   providerSettings?: ProviderRuntimeChatSettings
   providerFallbackDescriptors?: readonly SameProviderFallbackDescriptor[]
@@ -66,14 +67,14 @@ export interface VNextConversationRuntimeOptions {
   createModelOperationSession?: () => ReturnType<typeof createConversationModelOperationSession>
 }
 
-export interface VNextPlainChatRuntimeInput {
+export interface PlainChatRuntimeInput {
   conversation: Conversation
   provider: AIProvider
   settings: Settings
 }
 
-export function createVNextConversationRuntime(
-  options: VNextConversationRuntimeOptions = {},
+export function createConversationRuntime(
+  options: ConversationRuntimeOptions = {},
 ): ConversationRunUseCase {
   const container = createAppContainer({
     clock: systemClock,
@@ -94,7 +95,7 @@ export function createVNextConversationRuntime(
   const requestPreparation = options.requestPreparation ?? {
     prepare() {
       throw new Error(
-        'A bounded Chat request preparation policy is required for new turns. Use createVNextPlainChatRuntime.',
+        'A bounded Chat request preparation policy is required for new turns. Use createPlainChatRuntime.',
       )
     },
   } satisfies ConversationRunRequestPreparation
@@ -120,10 +121,10 @@ export function createVNextConversationRuntime(
  * Bootstrap-only composition for the plain-chat presentation controller. The
  * target feature receives this factory instead of importing legacy adapters.
  */
-export function createVNextPlainChatRuntime(
-  input: VNextPlainChatRuntimeInput,
+export function createPlainChatRuntime(
+  input: PlainChatRuntimeInput,
 ): ConversationRunUseCase {
-  return createVNextConversationRuntime({
+  return createConversationRuntime({
     provider: input.provider,
     providerSettings: input.settings,
     providerFallbackDescriptors: [createProviderFallbackDescriptor(input.provider)],
@@ -151,8 +152,15 @@ function createPlainChatRequestPreparation(input: {
     async prepare(preparation) {
       throwIfAborted(preparation.cancellationSignal)
 
-      const modelConfig = getModelConfig(
+      // The Rich path already plans against the admission-normalized upstream
+      // model. Keep the Plain request's requested model intact, but use that
+      // same upstream identity for capabilities, packing, and its receipt.
+      const upstreamModel = resolveProviderModelAlias(
+        input.provider,
         preparation.request.model,
+      )
+      const modelConfig = getModelConfig(
+        upstreamModel,
         input.provider.type,
         input.provider.modelConfigs,
       )
@@ -200,7 +208,7 @@ function createPlainChatRequestPreparation(input: {
         reasoningEffort: preparation.request.reasoningEffort,
         provider: input.provider,
         providerType: input.provider.type,
-        model: preparation.request.model,
+        model: upstreamModel,
         settings: {
           ...input.settings,
           remoteCompactMode: 'off',
@@ -226,7 +234,7 @@ function createPlainChatRequestPreparation(input: {
         },
         contextReceipt: buildAssistantContextPlanReceipt({
           providerId: preparation.request.providerId,
-          model: preparation.request.model,
+          model: upstreamModel,
           plan,
           activePrompt: plan.packed,
         }),
@@ -266,7 +274,7 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw error
 }
 
-export async function resumeVNextConversationModelOperation(input: {
+export async function resumeConversationModelOperation(input: {
   conversation: Conversation
   provider: AIProvider
   settings: Settings
@@ -274,7 +282,7 @@ export async function resumeVNextConversationModelOperation(input: {
   approved: boolean
   projection: Parameters<ConversationRunUseCase['resumeModelOperation']>[0]['projection']
 }): Promise<boolean> {
-  const runtime = createVNextPlainChatRuntime(input)
+  const runtime = createPlainChatRuntime(input)
   const result = await runtime.resumeModelOperation({
     runId: asAssistantRunId(input.runId),
     approved: input.approved,

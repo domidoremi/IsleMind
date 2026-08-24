@@ -9,7 +9,7 @@ import {
   type ExternalToolObservationStatus,
 } from '@/modules/integrations'
 import { clampTraceText, redactSensitiveText } from '@/core'
-import { appendRuntimeLog, type RuntimeLogOptions } from '@/services/runtimeLog'
+import { appendRuntimeLog, type RuntimeLogOptions } from '@/platform/native/runtimeLog'
 import { isAllowedAndroidApkUri } from '@/platform/native/androidUriPolicy'
 import type {
   AndroidStatusNotificationSettingsResult,

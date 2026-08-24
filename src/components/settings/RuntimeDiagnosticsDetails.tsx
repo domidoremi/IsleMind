@@ -7,8 +7,8 @@ import { AppIcon } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
-import type { RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
-import type { PluginManifestCatalogSnapshot } from '@/services/pluginManifest'
+import type { RuntimeDiagnosticsSummary } from '@/bootstrap/runtimeDiagnostics'
+import type { PluginManifestCatalogSnapshot } from '@/bootstrap/pluginManifest'
 import { motionTokens } from '@/theme/animation'
 
 interface RuntimeDiagnosticsDetailsProps {

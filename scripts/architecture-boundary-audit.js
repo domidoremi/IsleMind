@@ -129,7 +129,7 @@ const requiredContracts = [
       'src/bootstrap/providerRemoteCompactLifecycle.ts',
       'src/bootstrap/providerCompactStateRepository.ts',
       'src/bootstrap/providerPolicies.ts',
-      'src/bootstrap/vnextConversationRuntime.ts',
+      'src/bootstrap/conversationRuntime.ts',
       'src/types/index.ts',
       'src/utils/providerModels.ts',
     ],
@@ -420,9 +420,9 @@ const requiredContracts = [
       ['src/bootstrap/providerResponsePolicies.ts', /createProviderOperationResultPolicy\(\{/],
       ['src/bootstrap/providerPolicies.ts', /createProviderJsonPolicy\(\{/],
       ['src/bootstrap/providerPolicies.ts', /createProviderHostedBoundaryPolicy\(\{/],
-      ['src/bootstrap/vnextConversationRuntime.ts', /providerFallbackDescriptors\?: readonly SameProviderFallbackDescriptor\[\]/],
-      ['src/bootstrap/vnextConversationRuntime.ts', /createSameProviderFallbackResolver\(options\.providerFallbackDescriptors\)/],
-      ['src/bootstrap/vnextConversationRuntime.ts', /providerFallbackDescriptors: \[createProviderFallbackDescriptor\(input\.provider\)\]/],
+      ['src/bootstrap/conversationRuntime.ts', /providerFallbackDescriptors\?: readonly SameProviderFallbackDescriptor\[\]/],
+      ['src/bootstrap/conversationRuntime.ts', /createSameProviderFallbackResolver\(options\.providerFallbackDescriptors\)/],
+      ['src/bootstrap/conversationRuntime.ts', /providerFallbackDescriptors: \[createProviderFallbackDescriptor\(input\.provider\)\]/],
     ],
     forbiddenMarkers: [
       ['src/modules/providers/providerRequestParameterPolicy.ts', /request\[parameter\]\s*===\s*undefined\s*\?\s*['"]internal-policy['"]\s*:\s*['"]explicit['"]/],
@@ -530,16 +530,16 @@ const requiredContracts = [
       'src/bootstrap/tavernWorkspace.ts',
       'src/bootstrap/tavernWorkspacePersistence.ts',
       'src/bootstrap/conversationReplyStart.ts',
-      'src/presentation/features/conversations/vnextPlainChatController.ts',
-      'src/presentation/features/conversations/vnextPlainChatCommand.ts',
+      'src/presentation/features/conversations/plainChatController.ts',
+      'src/presentation/features/conversations/plainChatCommand.ts',
       'src/hooks/useBootstrap.ts',
-      'scripts/vnext-architecture-contract-tests.js',
-      'scripts/vnext-presentation-controller-tests.js',
+      'scripts/architecture-contract-tests.js',
+      'scripts/presentation-controller-tests.js',
       'scripts/provider-intelligence-tests.js',
       'src/types/contextContracts.ts',
       'src/modules/providers/providerCompactUsageStore.ts',
       'src/bootstrap/providerCompactUsage.ts',
-      'src/services/runtimeDiagnostics.ts',
+      'src/bootstrap/runtimeDiagnostics.ts',
       'scripts/context-compression-v2-tests.js',
       'package.json',
     ],
@@ -690,10 +690,10 @@ const requiredContracts = [
       ['src/bootstrap/conversationAssistantReplySessionRuntime.ts', /createAssistantConversationReplySessionRuntime<[\s\S]*?stopConversationMessage,[\s\S]*?projectAppendFailure[\s\S]*?projectConversationAssistantFailure[\s\S]*?startConversationTaskActivity,[\s\S]*?setStreaming\([\s\S]*?setActiveStream/],
       ['src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts', /dependencies\.replySessionRuntime\.start\(input\)[\s\S]*?session\.kind === 'missing'[\s\S]*?dependencies\.providerAdmissionRuntime\.admit/],
       ['src/modules/assistant-runtime/application/assistantConversationPlainChatHandoffRuntime.ts', /export function createAssistantConversationPlainChatHandoffRuntime/],
-      ['src/modules/assistant-runtime/application/assistantConversationPlainChatHandoffRuntime.ts', /dependencies\.isEligible\(\{[^]*?dependencies\.getPersistedConversation\([^]*?if \(isCancelled\(input\)\)[^]*?dependencies\.saveConversation\(targetConversation\)[^]*?dependencies\.startPlainChatRun\(\{[^]*?dependencies\.setActiveStream\(input\.conversationId,[^]*?void handle\.done\.then\(settle, settle\)/],
-      ['src/presentation/features/conversations/vnextPlainChatController.ts', /export function isVNextPlainChatEligible\([^]*?return !input\.hasAttachments/],
+      ['src/modules/assistant-runtime/application/assistantConversationPlainChatHandoffRuntime.ts', /dependencies\.isEligible\(\{[^]*?dependencies\.getPersistedConversation\([^]*?if \(isCancelled\(input\)\) return \{ kind: 'cancelled' \}[^]*?const targetConversation = input\.runtimeConversation[^]*?dependencies\.startPlainChatRun\(\{[^]*?dependencies\.setActiveStream\(input\.conversationId,[^]*?void handle\.done\.then\(settle, settle\)/],
+      ['src/presentation/features/conversations/plainChatController.ts', /export function isPlainChatEligible\([^]*?return !input\.hasAttachments/],
       ['src/modules/assistant-runtime/index.ts', /export \* from ['"]\.\/application\/assistantConversationPlainChatHandoffRuntime['"]/],
-      ['src/bootstrap/conversationAssistantPlainChatHandoffRuntime.ts', /createAssistantConversationPlainChatHandoffRuntime<[^]*?saveConversation:\s*saveConversationRecord,[^]*?tryStartVNextPlainChatRun\(\{[^]*?createRuntime: createVNextPlainChatRuntime[^]*?setActiveStream,[^]*?getActiveStream,[^]*?clearActiveStream,[^]*?projectFailure: projectConversationAssistantFailure/],
+      ['src/bootstrap/conversationAssistantPlainChatHandoffRuntime.ts', /createAssistantConversationPlainChatHandoffRuntime<[^]*?isEligible: isPlainChatEligible,[^]*?getPersistedConversation\(conversationId\)[^]*?tryStartPlainChatRun\(\{[^]*?createRuntime: createPlainChatRuntime[^]*?setActiveStream,[^]*?getActiveStream,[^]*?clearActiveStream,[^]*?projectFailure: projectConversationAssistantFailure/],
       ['src/bootstrap/conversationAssistantPlainChatHandoffRuntime.ts', /assistantMessage\?\.status !== ['"]done['"][^]*?conversationAssistantDetachedWorkRegistry\.acquire\([^]*?runConversationMemoryExtraction\(\{[^]*?provider: input\.provider,[^]*?signal: detachedWork\.signal[^]*?detachedWork\.release/],
       ['src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts', /dependencies\.plainChatHandoffRuntime\.handoff\(\{[^]*?plainChatHandoff\.kind !== 'continue'/],
       ['src/modules/assistant-runtime/application/assistantConversationStreamFailureRuntime.ts', /export function createAssistantConversationStreamFailureRuntime/],
@@ -765,7 +765,7 @@ const requiredContracts = [
       ['src/bootstrap/tavernWorkspace.ts', /const tavernChatWorkspaceReviewScopePort = isReactNativeRuntime\(\)[^]*?createSqliteChatWorkspaceReviewScopePort\(\{[^]*?runtime: 'native'[^]*?databaseProvider: tavernWorkspaceDatabaseProvider[^]*?: tavernWorkspaceRuntime\.keyValueReviewScopePort[^]*?const tavernChatWorkspaceReviewRuntime = tavernChatWorkspaceReviewScopePort[^]*?\? createChatWorkspaceReviewRuntime\(\{[^]*?scopePort: tavernChatWorkspaceReviewScopePort[^]*?: undefined[^]*?export function resolveChatWorkspaceReviewRuntime\(\): ChatWorkspaceReviewRuntime \| undefined \{\s*return tavernChatWorkspaceReviewRuntime/],
       ['src/bootstrap/tavernWorkspace.ts', /if \(!isReactNativeRuntime\(\) && !tavernWorkspaceRuntime\.keyValueWritebackStore\)[^]*?const store = isReactNativeRuntime\(\)[^]*?createSqliteTavernChatWorkspaceWritebackStore<TavernSnapshot>\([^]*?: tavernWorkspaceRuntime\.keyValueWritebackStore[^]*?createTavernChatWorkspaceWritebackAdapter\([^]*?createTavernChatWorkspaceWritebackReceiptLookup\(\)[^]*?: tavernWorkspaceRuntime\.keyValueWritebackReceiptLookup/],
       ['src/bootstrap/conversationReplyStart.ts', /const chatWorkspaceReviewRuntimeResolver = resolveChatWorkspaceReviewRuntime[^]*?bindChatWorkspaceReviewRuntime\(chatWorkspaceReviewRuntimeResolver\)[^]*?releaseChatWorkspaceReviewRuntime\(chatWorkspaceReviewRuntimeResolver\)/],
-      ['scripts/vnext-architecture-contract-tests.js', /testChatWorkspaceReviewRuntimeAndSqlitePort[^]*?characterId = 'chat-review-character'[^]*?confirmation_required[^]*?existingPrivateRelationshipMemoryCount[^]*?committed Chat review CAS remains authoritative after post-effect cancellation/],
+      ['scripts/architecture-contract-tests.js', /testChatWorkspaceReviewRuntimeAndSqlitePort[^]*?characterId = 'chat-review-character'[^]*?confirmation_required[^]*?existingPrivateRelationshipMemoryCount[^]*?committed Chat review CAS remains authoritative after post-effect cancellation/],
       ['src/modules/workspaces/application/tavernChatWorkspaceWritebackResolver.ts', /export function createTavernChatWorkspaceWritebackChangeSetResolver/],
       ['src/modules/workspaces/application/tavernChatWorkspaceWritebackResolver.ts', /isMatchingIntent\(intent, handoff\)[^]*?canonicalizeTavernChatWorkspaceWritebackChangeSet\([^]*?digestCanonicalPayload\(/],
       ['src/modules/workspaces/index.ts', /export \* from ['"]\.\/application\/tavernChatWorkspaceWritebackResolver['"]/],
@@ -791,15 +791,15 @@ const requiredContracts = [
       ['src/modules/workspaces/adapters/sqliteTavernWorkspaceRepository.ts', /export function createSqliteTavernChatWorkspaceWritebackReceiptLookup\([^]*?value\.getAll<WritebackReceiptRow>\([^]*?WHERE assistantRunId = \? AND conversationId = \? AND assistantMessageId = \?[^]*?LIMIT 2[^]*?decodeWritebackReceipt\(row\)[^]*?receipts\.length !== 1[^]*?status: 'committed'/],
       ['src/bootstrap/tavernWorkspace.ts', /export function createTavernChatWorkspaceWritebackReceiptLookup\(\)[^]*?createSqliteTavernChatWorkspaceWritebackReceiptLookup\(\{[^]*?databaseProvider: tavernWorkspaceDatabaseProvider/],
       ['src/bootstrap/conversationWorkspaceWritebackRecoveryRuntime.ts', /createAssistantConversationWorkspaceWritebackRecoveryRuntime\(\{[^]*?receiptLookup\.lookup\(input, options\)[^]*?projectConversationWorkspaceWritebackOutcome\(projection\)[^]*?runtime\.reconcile\(recoveredRuns, options\)/],
-      ['src/presentation/features/conversations/vnextPlainChatController.ts', /return recovery\.value/],
-      ['src/presentation/features/conversations/vnextPlainChatCommand.ts', /return controller\.recover\(runtime\)/],
-      ['src/hooks/useBootstrap.ts', /const recoveredRuns = await recoverVNextChatRuns\([^]*?await recoverVNextWorkflowCheckpoints\([^]*?await recoverConversationWorkspaceWritebackReceipts\([^]*?await recoverVNextInterruptedTasks\(\)/],
+      ['src/presentation/features/conversations/plainChatController.ts', /return recovery\.value/],
+      ['src/presentation/features/conversations/plainChatCommand.ts', /return controller\.recover\(runtime\)/],
+      ['src/hooks/useBootstrap.ts', /const recoveredRuns = await recoverChatRuns\([^]*?await recoverWorkflowCheckpoints\([^]*?await recoverConversationWorkspaceWritebackReceipts\([^]*?await recoverInterruptedTasks\(\)/],
       ['src/bootstrap/conversationAssistantFinalizationRuntime.ts', /const startedAt = projection\.occurredAt \?\? Date\.now\(\)[^]*?projection\.origin === 'recovered' \? \{ completedAt: startedAt \} : \{\}/],
-      ['scripts/vnext-architecture-contract-tests.js', /testAssistantConversationWorkspaceWritebackRecovery[^]*?createSqliteTavernChatWorkspaceWritebackReceiptLookup[^]*?missing receipt table fails closed/],
-      ['scripts/vnext-presentation-controller-tests.js', /returnedRuns, recoveredRuns[^]*?exact recovered run array/],
+      ['scripts/architecture-contract-tests.js', /testAssistantConversationWorkspaceWritebackRecovery[^]*?createSqliteTavernChatWorkspaceWritebackReceiptLookup[^]*?missing receipt table fails closed/],
+      ['scripts/presentation-controller-tests.js', /returnedRuns, recoveredRuns[^]*?exact recovered run array/],
       ['scripts/provider-intelligence-tests.js', /workspace writeback trace identity is deterministic and run-linked/],
-      ['src/bootstrap/conversationProviderGateway.ts', /conversationProviderGateway\s*=\s*createProviderGateway\(\[\],[^]*?streamProviderChat\(/],
-      ['src/bootstrap/conversationProviderStreamingRuntime.ts', /createAssistantConversationProviderStreamingRuntime<[^]*?conversationProviderGateway\.startRuntimeStream\(request[^]*?citations\(citations\)[^]*?updateMessage/],
+      ['src/bootstrap/providerRuntime.ts', /createProviderRuntimeAdapter\([^]*?streamProviderRuntimeEvents\([^]*?class ProviderRuntimeEventQueue/],
+      ['src/bootstrap/conversationProviderStreamingRuntime.ts', /createAssistantConversationProviderStreamingRuntime<[^]*?streamProviderChat\(\s*request[^]*?citations\(citations\)[^]*?updateMessage/],
       ['src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts', /dependencies\.durableDispatchRuntime\.dispatch\(\{[^]*?requestController,[^]*?runtimeConversation,[^]*?systemPrompt,[^]*?attachments: sendableAttachments,[^]*?messages: activePrompt\.messages,[^]*?contextPrompt: activePrompt\.contextPrompt,[^]*?retrievalSources,[^]*?remoteCompactFallback: contextPlan\.remoteCompactFallback,[^]*?providerToolDeclarations: providerToolContext\?\.adapter\.tools,[^]*?sourceMessages,[^]*?requestMessageId: lastUserMessage\?\.id,[^]*?requestText: lastUserMessage\?\.content \?\? ''[^]*?buildStreamLifecycle\(\{ modelTraceId \}\)[^]*?durableDispatchOutcome\.providerDispatchOutcome[^]*?const providerStreamingOutcome = providerDispatchOutcome\.streamingOutcome[^]*?providerStreamingOutcome\.kind === 'cancelled'[^]*?providerStreamingOutcome\.kind === 'failed'/],
       ['src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts', /dependencies\.streamLifecycleRuntime\.build\(\{[^]*?modelTraceId,[^]*?remoteCompactInputTokens:[^]*?contextFragments: contextPlan\.fragments/],
       ['src/modules/assistant-runtime/index.ts', /export \* from ['"]\.\/application\/assistantConversationReplyStartRuntime['"]/],
@@ -820,8 +820,8 @@ const requiredContracts = [
       ['src/modules/providers/providerCompactUsageStore.ts', /localCompressionSchemaVersion/],
       ['src/modules/providers/providerCompactUsageStore.ts', /localCompressionStrategy/],
       ['src/bootstrap/providerCompactUsage.ts', /export const providerCompactUsageStore = createProviderCompactUsageStore\(\)/],
-      ['src/services/runtimeDiagnostics.ts', /localCompressionCount/],
-      ['src/services/runtimeDiagnostics.ts', /localAverageCompressionRatio/],
+      ['src/bootstrap/runtimeDiagnostics.ts', /localCompressionCount/],
+      ['src/bootstrap/runtimeDiagnostics.ts', /localAverageCompressionRatio/],
       ['scripts/context-compression-v2-tests.js', /local compression exposes metadata schema v2/],
       ['scripts/context-compression-v2-tests.js', /remote compact probe keeps untrimmed history/],
       ['package.json', /"test:context-compression-v2":\s*"bun scripts\/context-compression-v2-tests\.js"/],
@@ -846,8 +846,11 @@ const requiredContracts = [
       ['src/services/chatRunner.ts', /\bstreamProjection\.(?:pushText|pushTrace)\s*\(|\blet handle\s*:\s*ProviderRuntimeStreamHandle/],
       ['src/services/chatRunner.ts', /\b(?:conversationRagFinalizationRuntime|createConversationMcpToolTurnRuntime|runConversationMemoryExtraction|settleRunningTraces|updateProviderCredentialGroupHealth)\b|function finalizeAssistantResult\b/],
       ['src/services/chatRunner.ts', /const assistantMessage:\s*Message\s*=\s*\{|\bresolveConversationProductMode\b|\bstartProductModeTask\b|useChatStreamingStore\.getState\(\)\.setStreaming\(conversationId, assistantMessage\.id\)/],
-      ['src/services/chatRunner.ts', /\b(?:conversationPersistence|createVNextPlainChatRuntime|isVNextPlainChatEligible|tryStartVNextPlainChatRun|setActiveStream|getActiveStream|clearActiveStream|isReplyCancelled)\b/],
+      ['src/services/chatRunner.ts', /\b(?:conversationPersistence|createPlainChatRuntime|isPlainChatEligible|tryStartPlainChatRun|setActiveStream|getActiveStream|clearActiveStream|isReplyCancelled)\b/],
       ['src/services/chatRunner.ts', /\b(?:finishFinalizeError|resolveChatErrorCode|classifyChatError|toUserFacingError|completeTrace)\b/],
+      ['src/modules/providers/index.ts', /callbackProviderAdapter|createCallbackProviderAdapter/],
+      ['src/modules/providers/contracts.ts', /startRuntimeStream|ProviderGatewayRuntimeStream/],
+      ['src/modules/providers/providerGateway.ts', /startRuntimeStream|ProviderRuntimeStreamUnavailableError/],
       ['src/services/chatRunner.ts', /\b(?:conversationKnowledgeContextRuntime|conversationWebContextRuntime|tavernConversationTurnProjectionRuntime|resolveConversationMcpContext|resolveSearchProvider|MCP_TOOL_CALL_TAG)\b/],
       ['src/services/chatRunner.ts', /from ['"]@\/bootstrap\/conversationProviderStreamingRuntime['"]|\bconversationProviderStreamingRuntime\.start\s*\(|function (?:generateId|traceId|upsertTrace)\b|\b(?:hasLiveStreamingState|useChatStreamingStore|sanitizeTrace|ProcessTrace)\b/],
       ['src/services/chatRunner.ts', /\b(?:conversationAssistantFinalizationRuntime|conversationAssistantStreamFailureRuntime|ProviderRuntimeError)\b/],
@@ -966,7 +969,7 @@ const requiredContracts = [
       'src/modules/workspaces/index.ts',
       'src/bootstrap/tavernWorkspace.ts',
       'src/bootstrap/tavernWorkspacePersistence.ts',
-      'scripts/vnext-architecture-contract-tests.js',
+      'scripts/architecture-contract-tests.js',
       'src/modules/knowledge/contracts.ts',
       'src/modules/knowledge/index.ts',
       'src/modules/knowledge/application/portableKnowledgeSnapshot.ts',
@@ -1079,9 +1082,9 @@ const requiredContracts = [
       ['src/bootstrap/tavernWorkspace.ts', /export async function restorePortableTavernWorkspaceBackup\([\s\S]*?throwIfCancelled\(options\.signal\)[\s\S]*?tavernPortableWorkspaceImportRuntime\.restore\(/],
       ['src/bootstrap/tavernWorkspace.ts', /export async function cleanupPortableTavernWorkspaceBackup\([\s\S]*?runExclusive\(key[\s\S]*?remove\(key\)[\s\S]*?get\(key\) != null/],
       ['src/bootstrap/portableImportRecovery.ts', /const result = await importPortableTavernWorkspaceState\(\{/],
-      ['scripts/vnext-architecture-contract-tests.js', /testPortableTavernWorkspaceImportWithConcreteRepositories[\s\S]*?same-operation retry reconciles the verified target[\s\S]*?post-commit cancellation preserves a verified committed result[\s\S]*?restore refuses to overwrite post-import repository drift/],
-      ['scripts/vnext-architecture-contract-tests.js', /testPortableImportRecoveryContract[\s\S]*?whole-import recovery runs before reply initialization and store hydration/],
-      ['scripts/vnext-architecture-contract-tests.js', /testPortableDataApplication[\s\S]*?pre-cancelled portable import performs no transfer, payload, or projection work[\s\S]*?Settings presentation cannot return to direct portable storage services[\s\S]*?the platform native adapter cleans every selected temporary copy/],
+      ['scripts/architecture-contract-tests.js', /testPortableTavernWorkspaceImportWithConcreteRepositories[\s\S]*?same-operation retry reconciles the verified target[\s\S]*?post-commit cancellation preserves a verified committed result[\s\S]*?restore refuses to overwrite post-import repository drift/],
+      ['scripts/architecture-contract-tests.js', /testPortableImportRecoveryContract[\s\S]*?whole-import recovery runs before reply initialization and store hydration/],
+      ['scripts/architecture-contract-tests.js', /testPortableDataApplication[\s\S]*?pre-cancelled portable import performs no transfer, payload, or projection work[\s\S]*?Settings presentation cannot return to direct portable storage services[\s\S]*?the platform native adapter cleans every selected temporary copy/],
       ['scripts/provider-intelligence-tests.js', /assertWholeImportCoordinatorRecoveryMatrix[\s\S]*?whole-import rollback runs in reverse participant order[\s\S]*?missing recovery evidence never overwrites an uncertain target[\s\S]*?committed restart repeats the idempotent post-commit invalidation once/],
       ['src/modules/knowledge/contracts.ts', /export interface KnowledgeRepository[\s\S]*?loadSnapshot\([\s\S]*?prepareReplacementSnapshot\(snapshot: KnowledgeRepositorySnapshot\)/],
       ['src/modules/knowledge/index.ts', /export \* from ['"]\.\/application\/portableKnowledgeSnapshot['"][\s\S]*?export \* from ['"]\.\/adapters\/sqliteKnowledgeRepository['"]/],
@@ -1299,7 +1302,7 @@ const requiredContracts = [
       'scripts/agent-tool-policy-tests.js',
       'scripts/chat-task-runtime-tests.js',
       'scripts/mcp-compatibility-tests.js',
-      'scripts/vnext-architecture-contract-tests.js',
+      'scripts/architecture-contract-tests.js',
     ],
     forbiddenFiles: [
       'app/agent.tsx',
@@ -1455,12 +1458,12 @@ const requiredContracts = [
       ['src/bootstrap/workflowCheckpoints.ts', /export function createWorkflowCheckpointRuntime/],
       ['src/bootstrap/workflowCheckpoints.ts', /createWorkflowCheckpointStore\(repository\)/],
       ['src/bootstrap/workflowCheckpoints.ts', /WorkflowCheckpointStore/],
-      ['src/bootstrap/workflowCheckpointRecovery.ts', /createWorkflowCheckpointRecoveryCoordinator\([^]*?createWorkflowCheckpointRuntime\(createExpoSqliteDatabaseProvider\(\)\)[^]*?export function recoverVNextWorkflowCheckpoints/],
-      ['src/bootstrap/vnextChatWorkflowRuntime.ts', /from ['"]\.\/workflowCheckpoints['"]/],
-      ['src/bootstrap/vnextChatWorkflowRuntime.ts', /createWorkflowCheckpointRuntime\(databaseProvider\)/],
+      ['src/bootstrap/workflowCheckpointRecovery.ts', /createWorkflowCheckpointRecoveryCoordinator\([^]*?createWorkflowCheckpointRuntime\(createExpoSqliteDatabaseProvider\(\)\)[^]*?export function recoverWorkflowCheckpoints/],
+      ['src/bootstrap/chatWorkflowRuntime.ts', /from ['"]\.\/workflowCheckpoints['"]/],
+      ['src/bootstrap/chatWorkflowRuntime.ts', /createWorkflowCheckpointRuntime\(databaseProvider\)/],
       ['src/bootstrap/index.ts', /export \* from ['"]\.\/workflowCheckpoints['"]/],
       ['src/bootstrap/index.ts', /export \* from ['"]\.\/workflowCheckpointRecovery['"]/],
-      ['src/bootstrap/vnextChatWorkflowRuntime.ts', /workflowCheckpoints: WorkflowCheckpointStore/],
+      ['src/bootstrap/chatWorkflowRuntime.ts', /workflowCheckpoints: WorkflowCheckpointStore/],
       ['src/modules/conversations/application/conversationChatWorkflowReplyStart.ts', /workflowCheckpoints: WorkflowCheckpointStore/],
       ['src/modules/tasks/application/workflowCheckpointRecorder.ts', /export interface WorkflowCheckpointRecorderDependencies/],
       ['src/modules/tasks/application/workflowCheckpointRecorder.ts', /export interface WorkflowCheckpointProgress/],
@@ -1890,7 +1893,7 @@ const requiredContracts = [
       ['scripts/chat-task-runtime-tests.js', /listConversationTaskActivities\(\)/],
       ['scripts/mcp-compatibility-tests.js', /function runBuiltInCapabilityBoundaryTests/],
       ['scripts/mcp-compatibility-tests.js', /unexpected file edit receipts fail closed/],
-      ['scripts/vnext-agent-task-adapter-tests.js', /target built-in adapter rereads the exact running durable task identity/],
+      ['scripts/workflow-task-adapter-tests.js', /target built-in adapter rereads the exact running durable task identity/],
       ['scripts/provider-intelligence-tests.js', /async function assertBuiltInSearchRuntimeBehavior/],
       ['scripts/provider-intelligence-tests.js', /async function assertBuiltInRemoteCrawlRuntimeBehavior/],
       ['scripts/mcp-compatibility-tests.js', /function runKnowledgeWorkspaceFileReadPortTests/],
@@ -1998,9 +2001,9 @@ const requiredContracts = [
       ['src/modules/conversations/application/conversationChatWorkflowReplyStart.ts', /kind: 'chat-workflow'/],
       ['src/presentation/features/conversations/conversationReplyDispatchController.ts', /startAssistantReply\(conversation\.id\)[^]*?resolveDecisionContext\(\s*conversation,\s*settings,?\s*\)[^]*?startWorkflowReply\(conversation, normalizedContent, \{[^]*?requestedOutput,[^]*?limits,/],
       ['src/presentation/features/conversations/conversationMessageController.ts', /const userMessage(?::[^=]+)?\s*=\s*\{[^]*?role: 'user'[^]*?setError\(null\)[^]*?dispatchLegacyMessage\(\{[^]*?conversation: projectedConversation,[^]*?content,[^]*?attachments,[^]*?input\.requestedOutput/],
-      ['src/bootstrap/conversationReplyStart.ts', /createChatWorkflowRuntime: createVNextChatWorkflowRuntime/],
+      ['src/bootstrap/conversationReplyStart.ts', /createChatWorkflowRuntime: createChatWorkflowRuntime/],
       ['src/bootstrap/conversationReplyStart.ts', /return runtime\.start\(\{[^]*?cancellationSignal: controller\.signal/],
-      ['src/bootstrap/conversationReplyStart.ts', /listConversationToolManifests\(\)[^]*?createVNextPlainChatProjection\(\{[^]*?conversation,[^]*?assistantMessageId,[^]*?provider,/],
+      ['src/bootstrap/conversationReplyStart.ts', /listConversationToolManifests\(\)[^]*?createPlainChatProjection\(\{[^]*?conversation,[^]*?assistantMessageId,[^]*?provider,/],
       ['src/presentation/features/conversations/conversationMessageRuntimeBinding.ts', /export interface ConversationConfirmedWorkflowReplyStartOptions \{[^]*?explicitToolRequest:\s*ConversationToolRequest[^]*?limits:\s*Partial<WorkflowRunLimits>[^]*?userConfirmed:\s*true[^]*?\}/],
       ['src/presentation/features/conversations/conversationMessageRuntimeBinding.ts', /export type ConversationReplyRuntimeStart = \(conversationId: string\) => Promise<void>/],
       ['src/presentation/features/conversations/conversationMessageRuntimeBinding.ts', /startConfirmedWorkflowReply: ConversationConfirmedWorkflowReplyRuntimeStart/],
@@ -2040,13 +2043,13 @@ const requiredContracts = [
       ['src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts', /function parseRunKind\(value: string\): AssistantRun\['kind'\] \{[^]*?value === 'chat'[^]*?return 'chat'[^]*?throw new AssistantRunPersistenceDataError/],
       ['src/modules/assistant-runtime/testing/inMemoryRunStore.ts', /async appendAndSave\(entry, run, requestSnapshot\)[^]*?const storedRun = cloneRun\(run\)[^]*?cloneRequestSnapshot\(requestSnapshot\)[^]*?appendEntry\(entriesByRun, entry\)[^]*?runs\.set\(storedRun\.id, storedRun\)/],
       ['src/modules/assistant-runtime/testing/inMemoryRunStore.ts', /function cloneRun\(run: AssistantRun\): AssistantRun \{[^]*?run\.kind !== 'chat'[^]*?throw new Error/],
-      ['src/bootstrap/vnextChatWorkflowRuntime.ts', /export function createVNextChatWorkflowRuntime/],
-      ['src/bootstrap/vnextChatWorkflowRuntime.ts', /createAssistantChatWorkflowRunRuntime\(\{/],
+      ['src/bootstrap/chatWorkflowRuntime.ts', /export function createChatWorkflowRuntime/],
+      ['src/bootstrap/chatWorkflowRuntime.ts', /createAssistantChatWorkflowRunRuntime\(\{/],
       ['src/modules/conversations/application/conversationRunUseCase.ts', /assistantRuntime\.recoverInterruptedRuns\(\)/],
-      ['src/presentation/features/conversations/vnextPlainChatProjection.ts', /export async function recoverVNextChatProjection/],
-      ['src/presentation/features/conversations/vnextPlainChatProjection.ts', /setError\(message\)/],
-      ['src/presentation/features/conversations/vnextPlainChatController.ts', /run: Pick<AssistantRun, 'responseMessageId'>[^]*?return run\.responseMessageId/],
-      ['src/hooks/useBootstrap.ts', /const recoveredRuns = await recoverVNextChatRuns\([^]*?await recoverVNextWorkflowCheckpoints\([^]*?recoveredRuns\.map\(\(run\) => run\.id\)[^]*?await recoverConversationWorkspaceWritebackReceipts\([^]*?await recoverVNextInterruptedTasks\(\)/],
+      ['src/presentation/features/conversations/plainChatProjection.ts', /export async function recoverChatProjection/],
+      ['src/presentation/features/conversations/plainChatProjection.ts', /setError\(message\)/],
+      ['src/presentation/features/conversations/plainChatController.ts', /run: Pick<AssistantRun, 'responseMessageId'>[^]*?return run\.responseMessageId/],
+      ['src/hooks/useBootstrap.ts', /const recoveredRuns = await recoverChatRuns\([^]*?await recoverWorkflowCheckpoints\([^]*?recoveredRuns\.map\(\(run\) => run\.id\)[^]*?await recoverConversationWorkspaceWritebackReceipts\([^]*?await recoverInterruptedTasks\(\)/],
       ['src/services/chatProviderNativeToolUtils.ts', /export function resolveProviderNativeToolSupport/],
       ['src/modules/providers/providerToolCapabilityPolicy.ts', /function resolveProviderNativeToolSupport/],
       ['src/services/chatProviderNativeToolUtils.ts', /PROVIDER_TOOL_CAPABILITY_POLICY\.resolveProviderNativeToolSupport/],
@@ -2400,9 +2403,9 @@ const requiredContracts = [
       ['scripts/agent-tool-policy-tests.js', /boundedWorkflowRunLimits/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(boundedWorkflowRunLimits\.maxSteps,\s*8\)/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(boundedWorkflowRunLimits\.maxToolCallsPerStep,\s*1\)/],
-      ['scripts/vnext-agent-task-adapter-tests.js', /const overLimit = await adapter\.execute/],
-      ['scripts/vnext-agent-task-adapter-tests.js', /assert\.equal\(overLimit\.errorCode,\s*'step_limit_reached'\)/],
-      ['scripts/vnext-agent-task-adapter-tests.js', /assert\.equal\(overLimit\.diagnostic\.metadata\?\.maxToolCallsPerStep,\s*1\)/],
+      ['scripts/workflow-task-adapter-tests.js', /const overLimit = await adapter\.execute/],
+      ['scripts/workflow-task-adapter-tests.js', /assert\.equal\(overLimit\.errorCode,\s*'step_limit_reached'\)/],
+      ['scripts/workflow-task-adapter-tests.js', /assert\.equal\(overLimit\.diagnostic\.metadata\?\.maxToolCallsPerStep,\s*1\)/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(boundedWorkflowRunLimits\.outputCharLimit,\s*512\)/],
       ['scripts/agent-tool-policy-tests.js', /importedUnsafeWorkflowRunLimits/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(importedUnsafeWorkflowRunLimits\.allowReadWriteTools,\s*'visible'\)/],
@@ -2412,13 +2415,13 @@ const requiredContracts = [
       ['scripts/agent-tool-policy-tests.js', /directUnsafeWorkflowRunLimits/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(directUnsafeWorkflowRunLimits\.allowBackgroundContinuation,\s*false\)/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(directUnsafeWorkflowRunLimits\.requireTrace,\s*true\)/],
-      ['scripts/vnext-agent-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.stepIndex/],
-      ['scripts/vnext-agent-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.toolCallIndex/],
-      ['scripts/vnext-agent-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.maxToolCallsPerStep/],
-      ['scripts/vnext-agent-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.maxStepCount/],
-      ['scripts/vnext-architecture-contract-tests.js', /testBootstrapInternalModelOperationChatAdmission/],
-      ['scripts/vnext-architecture-contract-tests.js', /pending model-operation admission retains the exact Chat AssistantRun/],
-      ['scripts/vnext-architecture-contract-tests.js', /approved confirmation replay retains exact Chat run attribution/],
+      ['scripts/workflow-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.stepIndex/],
+      ['scripts/workflow-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.toolCallIndex/],
+      ['scripts/workflow-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.maxToolCallsPerStep/],
+      ['scripts/workflow-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.maxStepCount/],
+      ['scripts/architecture-contract-tests.js', /testBootstrapInternalModelOperationChatAdmission/],
+      ['scripts/architecture-contract-tests.js', /pending model-operation admission retains the exact Chat AssistantRun/],
+      ['scripts/architecture-contract-tests.js', /approved confirmation replay retains exact Chat run attribution/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(destructiveConfirmedTrace\.metadata\?\.allowReason,\s*'user-confirmed'\)/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(destructiveConfirmedTrace\.metadata\?\.userConfirmed,\s*true\)/],
       ['scripts/agent-tool-policy-tests.js', /Android undo button must require workflow follow-up trace metadata/],
@@ -2443,14 +2446,14 @@ const requiredContracts = [
       ['src/modules/assistant-runtime/runtime.ts', /requestedKinds|options\.kinds|recoverInterruptedRuns\(options/],
       ['src/modules/assistant-runtime/runtime.ts', /function createQueuedActivityRun\([^]*?kind:\s*input\.kind|function createQueuedActivityRun\([^]*?model:\s*input\.model\s*\?\?\s*input\.kind/],
       ['src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts', /UPDATE assistant_runs\s+SET kind = 'chat'\s+WHERE kind = 'agent'|value === 'agent'/],
-      ['src/presentation/features/conversations/vnextPlainChatController.ts', /Pick<AssistantRun,\s*'kind'\s*\|\s*'responseMessageId'>|run\.kind|\.reverse\(\)[^]*?message\.role === 'assistant'/],
-      ['src/presentation/features/conversations/vnextPlainChatController.ts', /VNextPlainChatProjectionInput[^}]*productMode/],
-      ['src/presentation/features/conversations/vnextPlainChatProjection.ts', /resolveProductMode|productMode:\s*(?:input\.productMode|resolveProductMode)|setErrorForMode/],
+      ['src/presentation/features/conversations/plainChatController.ts', /Pick<AssistantRun,\s*'kind'\s*\|\s*'responseMessageId'>|run\.kind|\.reverse\(\)[^]*?message\.role === 'assistant'/],
+      ['src/presentation/features/conversations/plainChatController.ts', /PlainChatProjectionInput[^}]*productMode/],
+      ['src/presentation/features/conversations/plainChatProjection.ts', /resolveProductMode|productMode:\s*(?:input\.productMode|resolveProductMode)|setErrorForMode/],
       ['src/store/chatStore.ts', /\b(?:modeErrors|setErrorForMode|getErrorForMode|ModeErrors)\b/],
       ['src/store/chatStore.ts', /@\/services\/(?:storage|localDataStore)|\b(?:loadData|saveData|localDataStore)\b/],
       ['src/modules/assistant-runtime/application/assistantConversationContextAcquisitionRuntime.ts', /\bproductMode\b/],
       ['src/modules/conversations/application/conversationAssistantMessageProjection.ts', /\b(?:modeError|reportModeError)\b/],
-      ['src/presentation/features/conversations/vnextPlainChatController.ts', /\bresolveVNextPlainChatProjectionErrorMode\b/],
+      ['src/presentation/features/conversations/plainChatController.ts', /\bresolvePlainChatProjectionErrorMode\b/],
       ['src/components/chat/ChatActiveStatusLayer.tsx', /\b(?:ModeErrorBanner|modeErrorTitle|setErrorForMode|modeErrors)\b/],
       ['src/modules/tasks/application/conversationTaskActivityRuntime.ts', /\b(?:ProductInteractionMode|ProductModeTask|getProductModeRuntimePolicy|lowDisruption|taskQueue|getProductModeTaskSnapshot|updateProductModeTask)\b|\bmode\s*===\s*['"](?:agent|companion)['"]/],
       ['src/modules/workspaces/policy.ts', /\b(?:ProductInteractionMode|ProductModeRuntimeKind|ProductModeMemoryScope|ProductModeRuntimePolicy|TavernCapability|PRODUCT_MODE_RUNTIME_POLICIES|getProductModeRuntimePolicy|ProductModeTaskQueue)\b|\btaskQueue\s*:|runtimeKind:\s*['"](?:tavern|execution)['"]|memoryScope:\s*['"](?:tavern-isolated|execution-isolated)['"]/],
@@ -2481,7 +2484,7 @@ const requiredContracts = [
       ['src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts', /\bconst productMode\b|projectWorkspaceWritebackHandoffTerminal[^]*?\bproductMode\s*:|plainChatHandoffRuntime[^]*?\bproductMode\s*:|durableDispatchRuntime[^]*?\bproductMode\s*:/],
       ['src/modules/assistant-runtime/application/assistantConversationPlainChatHandoffRuntime.ts', /\b(?:TProductMode|productMode)\b/],
       ['src/bootstrap/conversationAssistantPlainChatHandoffRuntime.ts', /ProductInteractionMode|@\/modules\/workspaces|\bproductMode\b/],
-      ['src/presentation/features/conversations/vnextPlainChatController.ts', /ProductInteractionMode|@\/modules\/workspaces|\bproductMode\b/],
+      ['src/presentation/features/conversations/plainChatController.ts', /ProductInteractionMode|@\/modules\/workspaces|\bproductMode\b/],
       ['src/bootstrap/conversationAssistantDurableExecutionRuntime.ts', /ProductInteractionMode|@\/modules\/workspaces|\bproductMode\b/],
       ['src/modules/assistant-runtime/application/assistantMcpToolTurnRuntime.ts', /\bTMode\b|AssistantMcpConversationLike<|interface AssistantMcpConversationLike[^}]*\bproductMode\b/],
       ['src/bootstrap/conversationMcpToolTurnRuntime.ts', /ProductInteractionMode|@\/modules\/workspaces/],
@@ -2553,7 +2556,7 @@ const requiredContracts = [
       ['src/modules/conversations/application/conversationChatWorkflowReplyStart.ts', /kind:\s*'agent-run'/],
       ['src/presentation/features/conversations/workflowSkillSuggestionSelector.ts', /\bcreate(?:Agent)?WorkflowSkillPolicy\b|\blistSkills\s*:|\bupsertSkill\s*:|\bresolveUniqueManifest\s*:/],
       ['src/presentation/features/conversations/workflowSkillSuggestionSelector.ts', /\bAgentWorkflowDefinition\w*\b|createAgentWorkflowDefinitionPolicy|agentWorkflowDefinitionPolicy|islemind\.agent\.workflow\.v1|islemind\.workflow\.v2/],
-      ['src/services/pluginManifest.ts', /\bAgentWorkflowDefinition\w*\b|agentWorkflowDefinitionPolicy|islemind\.agent\.workflow\.v1/],
+      ['src/bootstrap/pluginManifest.ts', /\bAgentWorkflowDefinition\w*\b|agentWorkflowDefinitionPolicy|islemind\.agent\.workflow\.v1/],
       ['src/modules/tasks/application/workflowDefinitionPolicy.ts', /\bAgentWorkflowDefinition\w*\b|createAgentWorkflowDefinitionPolicy|AGENT_WORKFLOW_DEFINITION_SCHEMA/],
       ['src/modules/tasks/application/workflowSkillPolicy.ts', /\bAgentWorkflowDefinition\w*\b|agentWorkflowDefinitionPolicy|agentWorkflowDefinitionPolicy\.ts/],
       ['src/bootstrap/workflowDefinitions.ts', /\bAgentWorkflowDefinition\w*\b|createAgentWorkflowDefinitionPolicy|agentWorkflowDefinitionPolicy/],
@@ -2645,7 +2648,7 @@ const requiredContracts = [
       ['src/presentation/features/conversations/conversationMessageActionCommand.ts', /\b(?:AgentRunLimits|resolveSettingsAgentRunLimits)\b|agentRunLimitPolicy/],
       ['scripts/agent-tool-policy-tests.js', /\b(?:AgentRunLimits|DEFAULT_AGENT_RUN_LIMITS|resolveAgentRunLimits|resolveSettingsAgentRunLimits)\b|agentRunLimitPolicy/],
       ['scripts/agent-workflow-compatibility-tests.js', /\bresolveAgentRunLimits\b|agentRunLimitPolicy/],
-      ['scripts/vnext-conversation-message-command-tests.js', /\b(?:AgentRunLimits|resolveAgentRunLimits|resolveSettingsAgentRunLimits)\b|agentRunLimitPolicy/],
+      ['scripts/conversation-message-command-tests.js', /\b(?:AgentRunLimits|resolveAgentRunLimits|resolveSettingsAgentRunLimits)\b|agentRunLimitPolicy/],
       ['scripts/mcp-compatibility-tests.js', /\bresolveSettingsAgentRunLimits\b|agentRunLimitPolicy/],
       ['src/modules/tasks/application/androidWorkflowRuntimeStatePolicy.ts', /agentAndroidWorkflowRuntimeStatePolicy|\bAgentAndroidWorkflowRuntime\w*\b|\b(?:bind|extract|merge)AgentAndroidWorkflowRuntimeState\b/],
       ['src/modules/tasks/application/workflowOrchestrator.ts', /agentAndroidWorkflowRuntimeStatePolicy|\bAgentAndroidWorkflowRuntime\w*\b|\b(?:bind|extract|merge)AgentAndroidWorkflowRuntimeState\b/],
@@ -2697,7 +2700,7 @@ const requiredContracts = [
       ['src/modules/tasks/application/workflowCheckpoint.ts', /\bAgentWorkflowCheckpoint\w*\b|\bAGENT_WORKFLOW_CHECKPOINT\w*\b|\b(?:createAgentWorkflowCheckpointStore|(?:parse|validate)AgentWorkflowCheckpoint\w*)\b|agentWorkflowCheckpoint/],
       ['src/modules/tasks/adapters/sqliteWorkflowCheckpointRepository.ts', /\bAgentWorkflowCheckpoint\w*\b|\bAGENT_WORKFLOW_CHECKPOINT\w*\b|\b(?:parse|validate)AgentWorkflowCheckpoint\w*\b|from ['"][^'"]*agentWorkflowCheckpoint['"]/],
       ['src/modules/tasks/application/workflowCheckpointRecoveryCoordinator.ts', /\b(?:createTaskRuntime|recoverInterruptedTasks|TaskExecutor|ProviderGateway|AssistantRuntime|executeActivity|createWorkflowCheckpointRecorder)\b|store\.(?:get|persist)\(/],
-      ['src/bootstrap/workflowCheckpointRecovery.ts', /\b(?:createVNextTaskRuntime|recoverVNextInterruptedTasks|runWorkflow|runAgenticWorkflow|createAssistantRuntime|ProviderGateway)\b/],
+      ['src/bootstrap/workflowCheckpointRecovery.ts', /\b(?:createTaskRuntime|recoverInterruptedTasks|runWorkflow|runAgenticWorkflow|createAssistantRuntime|ProviderGateway)\b/],
       ['src/modules/tasks/application/workflowCheckpointRecorder.ts', /\b(?:AgentWorkflowCheckpointStore|createAgentWorkflowCheckpointStore)\b/],
       ['src/modules/tasks/application/workflowCheckpointProjectionSession.ts', /\b(?:AgentWorkflowCheckpointStore|createAgentWorkflowCheckpointStore)\b/],
       ['src/modules/tasks/application/conversationChatWorkflowRuntimePolicy.ts', /\b(?:AgentWorkflowCheckpointStore|createAgentWorkflowCheckpointStore)\b/],
@@ -2706,7 +2709,7 @@ const requiredContracts = [
       ['src/modules/tasks/index.ts', /\b(?:AgentWorkflowCheckpointStore|createAgentWorkflowCheckpointStore)\b/],
       ['src/modules/conversations/application/conversationChatWorkflowReplyStart.ts', /\b(?:AgentWorkflowCheckpointStore|createAgentWorkflowCheckpointStore)\b/],
       ['src/bootstrap/workflowCheckpoints.ts', /\b(?:AgentWorkflowCheckpointStore|createAgentWorkflowCheckpointStore)\b/],
-      ['src/bootstrap/vnextChatWorkflowRuntime.ts', /\b(?:AgentWorkflowCheckpointStore|createAgentWorkflowCheckpointStore)\b/],
+      ['src/bootstrap/chatWorkflowRuntime.ts', /\b(?:AgentWorkflowCheckpointStore|createAgentWorkflowCheckpointStore)\b/],
       ['src/modules/tasks/application/workflowCheckpointRecorder.ts', /\bAgentWorkflowCheckpoint\w*\b|\bAGENT_WORKFLOW_CHECKPOINT\w*\b|\b(?:parse|validate)AgentWorkflowCheckpoint\w*\b|agentWorkflowCheckpoint/],
       ['src/modules/tasks/application/workflowCheckpointProjectionSession.ts', /\bAgentWorkflowCheckpoint\w*\b|\bAGENT_WORKFLOW_CHECKPOINT\w*\b|\b(?:parse|validate)AgentWorkflowCheckpoint\w*\b|agentWorkflowCheckpoint/],
       ['src/modules/tasks/application/workflowCheckpointRecoveryCoordinator.ts', /\bAgentWorkflowCheckpoint\w*\b|\bAGENT_WORKFLOW_CHECKPOINT\w*\b|\b(?:parse|validate)AgentWorkflowCheckpoint\w*\b|agentWorkflowCheckpoint/],
@@ -2721,7 +2724,7 @@ const requiredContracts = [
       ['src/modules/tasks/index.ts', /sqliteAgentWorkflowCheckpointRepository|\b(?:AgentWorkflowCheckpointDatabaseValue|AgentWorkflowCheckpointDatabaseRunResult|AgentWorkflowCheckpointDatabaseExecutor|AgentWorkflowCheckpointDatabase|AgentWorkflowCheckpointDatabaseProvider|createSqliteAgentWorkflowCheckpointRepository)\b/],
       ['src/bootstrap/workflowCheckpoints.ts', /sqliteAgentWorkflowCheckpointRepository|\b(?:AgentWorkflowCheckpointDatabaseValue|AgentWorkflowCheckpointDatabaseRunResult|AgentWorkflowCheckpointDatabaseExecutor|AgentWorkflowCheckpointDatabase|AgentWorkflowCheckpointDatabaseProvider|createSqliteAgentWorkflowCheckpointRepository)\b/],
       ['src/bootstrap/workflowCheckpoints.ts', /agentWorkflowCheckpoints|\bcreateAgentWorkflowCheckpointRuntime\b/],
-      ['src/bootstrap/vnextChatWorkflowRuntime.ts', /agentWorkflowCheckpoints|\bcreateAgentWorkflowCheckpointRuntime\b/],
+      ['src/bootstrap/chatWorkflowRuntime.ts', /agentWorkflowCheckpoints|\bcreateAgentWorkflowCheckpointRuntime\b/],
       ['src/bootstrap/index.ts', /agentWorkflowCheckpoints|\bcreateAgentWorkflowCheckpointRuntime\b/],
       ['src/modules/tasks/application/workflowCheckpointProjectionSession.ts', /agentWorkflowCheckpointSession|\bAgentWorkflowCheckpointProjection\w*\b|\b(?:AgentWorkflowProjectionStatus|AgentWorkflowProjectionStepStatus|createAgentWorkflowCheckpointProjectionSession|mapAgentWorkflowProjectionStatus)\b/],
       ['src/modules/tasks/application/workflowCheckpointProjectionSession.ts', /agent-goal-/],
@@ -2811,8 +2814,8 @@ const requiredContracts = [
       'scripts/qa-coverage-audit.js',
       'scripts/collect-work-artifact-smoke.js',
       'src/services/runtimeTimeline.ts',
-      'src/services/runtimeDiagnostics.ts',
-      'src/services/pluginManifest.ts',
+      'src/bootstrap/runtimeDiagnostics.ts',
+      'src/bootstrap/pluginManifest.ts',
       'src/components/main/SettingsScreenContent.tsx',
       'src/components/settings/RuntimeDiagnosticsDetails.tsx',
       'src/components/chat/runtimeRepairReplayEvents.ts',
@@ -2860,15 +2863,15 @@ const requiredContracts = [
       ['scripts/provider-intelligence-tests.js', /runtimeDiagnosticPerformance/],
       ['scripts/provider-intelligence-tests.js', /PLUGIN_MANIFEST_CATALOG_SCHEMA/],
       ['scripts/provider-intelligence-tests.js', /buildPluginManifestCatalogSnapshot/],
-      ['src/services/pluginManifest.ts', /export const PLUGIN_MANIFEST_SCHEMA/],
-      ['src/services/pluginManifest.ts', /export const PLUGIN_MANIFEST_CATALOG_SCHEMA/],
-      ['src/services/pluginManifest.ts', /export function buildPluginManifestCatalogSnapshot/],
-      ['src/services/pluginManifest.ts', /export async function loadPluginManifestCatalogSnapshot/],
-      ['src/services/pluginManifest.ts', /buildPluginManifestCatalogRuntimeEventData/],
-      ['src/services/pluginManifest.ts', /emitPluginManifestCatalogSnapshotEvent/],
-      ['src/services/pluginManifest.ts', /decodeWorkflowDefinition\(input, \{ redactSensitiveText \}\)/],
-      ['src/services/pluginManifest.ts', /decodeWorkflowDefinition\(rawEntry\?\.workflow, \{ redactSensitiveText \}\)/],
-      ['src/services/pluginManifest.ts', /execution: 'noop'/],
+      ['src/bootstrap/pluginManifest.ts', /export const PLUGIN_MANIFEST_SCHEMA/],
+      ['src/bootstrap/pluginManifest.ts', /export const PLUGIN_MANIFEST_CATALOG_SCHEMA/],
+      ['src/bootstrap/pluginManifest.ts', /export function buildPluginManifestCatalogSnapshot/],
+      ['src/bootstrap/pluginManifest.ts', /export async function loadPluginManifestCatalogSnapshot/],
+      ['src/bootstrap/pluginManifest.ts', /buildPluginManifestCatalogRuntimeEventData/],
+      ['src/bootstrap/pluginManifest.ts', /emitPluginManifestCatalogSnapshotEvent/],
+      ['src/bootstrap/pluginManifest.ts', /decodeWorkflowDefinition\(input, \{ redactSensitiveText \}\)/],
+      ['src/bootstrap/pluginManifest.ts', /decodeWorkflowDefinition\(rawEntry\?\.workflow, \{ redactSensitiveText \}\)/],
+      ['src/bootstrap/pluginManifest.ts', /execution: 'noop'/],
       ['src/components/main/SettingsScreenContent.tsx', /loadPluginManifestCatalogSnapshot/],
       ['src/components/main/SettingsScreenContent.tsx', /emitPluginManifestCatalogSnapshotEvent/],
       ['src/components/settings/RuntimeDiagnosticsDetails.tsx', /runtimeDiagnosticPluginCatalog/],
@@ -2919,10 +2922,10 @@ const requiredContracts = [
       ['src/services/runtimeEventContract.ts', /tool\.mcp\.compatibility\.checked/],
       ['src/modules/integrations/testing/mcpCompatibilityEvaluation.ts', /MCP_COMPATIBILITY_RUNTIME_SUMMARY_SCHEMA/],
       ['src/modules/integrations/testing/mcpCompatibilityEvaluation.ts', /emitMcpCompatibilityRuntimeSummaryEvent/],
-      ['src/services/runtimeDiagnostics.ts', /RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT/],
-      ['src/services/runtimeDiagnostics.ts', /RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT/],
-      ['src/services/runtimeDiagnostics.ts', /RuntimeDiagnosticsPerformanceSummary/],
-      ['src/services/runtimeDiagnostics.ts', /buildRuntimeTimelineSnapshot/],
+      ['src/bootstrap/runtimeDiagnostics.ts', /RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT/],
+      ['src/bootstrap/runtimeDiagnostics.ts', /RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT/],
+      ['src/bootstrap/runtimeDiagnostics.ts', /RuntimeDiagnosticsPerformanceSummary/],
+      ['src/bootstrap/runtimeDiagnostics.ts', /buildRuntimeTimelineSnapshot/],
       ['scripts/agent-work-artifact-workflow-tests.js', /WORK_ARTIFACT_WORKFLOW_CONTRACT/],
       ['scripts/agent-work-artifact-workflow-tests.js', /validateWorkArtifactWorkflowOutput/],
       ['scripts/agent-work-artifact-workflow-tests.js', /sourceEvidence/],
@@ -2997,7 +3000,7 @@ const requiredContracts = [
       ['package.json', /"type-check":\s*"node node_modules\/typescript\/bin\/tsc --noEmit"/],
       ['package.json', /"test:provider-intelligence":\s*"node scripts\/provider-intelligence-tests\.js"/],
       ['package.json', /"test:agent-workflow":\s*"node scripts\/agentic-workflow-tests\.js && node scripts\/agent-rag-quality-tests\.js && node scripts\/agent-trace-contract-tests\.js && node scripts\/agent-work-artifact-workflow-tests\.js && node scripts\/agent-tool-policy-tests\.js"/],
-      ['package.json', /"test:architecture-boundary":\s*"node scripts\/architecture-boundary-audit\.js && node scripts\/vnext-architecture-boundary-tests\.js"/],
+      ['package.json', /"test:architecture-boundary":\s*"node scripts\/architecture-boundary-audit\.js && node scripts\/module-architecture-boundary-tests\.js"/],
       ['package.json', /"test:work-artifact-smoke":\s*"node scripts\/collect-work-artifact-smoke\.js"/],
       ['package.json', /"test:work-artifact-smoke:self":\s*"node scripts\/collect-work-artifact-smoke\.js --self-test"/],
       ['package.json', /"test:android-capability-boundary":\s*"node scripts\/android-capability-boundary-audit\.js"/],
@@ -3336,7 +3339,7 @@ const requiredContracts = [
       ['src/presentation/features/conversations/conversationReplyDispatchController.ts', /export function createConversationReplyDispatchController/],
       ['src/modules/conversations/application/conversationChatWorkflowReplyStart.ts', /export function createConversationChatWorkflowReplyStarter/],
       ['src/bootstrap/conversationReplyStart.ts', /const startConversationChatWorkflowReply = createConversationChatWorkflowReplyStarter\(\{/],
-      ['src/bootstrap/conversationReplyStart.ts', /createChatWorkflowRuntime: createVNextChatWorkflowRuntime/],
+      ['src/bootstrap/conversationReplyStart.ts', /createChatWorkflowRuntime: createChatWorkflowRuntime/],
       ['src/bootstrap/conversationReplyStart.ts', /cancellationSignal: controller\.signal/],
       ['src/bootstrap/conversationReplyStart.ts', /dispatchAfterUserProjection: conversationReplyDispatchController\.dispatch/],
       ['src/bootstrap/conversationReplyStart.ts', /const conversationMessageRuntime: ConversationMessageRuntime = \{[^]*?startAfterHistoryProjection: startConversationAssistantReplyAfterHistoryProjection[^]*?export function initializeConversationReplyStart\(\): void \{[^]*?registerStreamAborter\(stopConversationMessage\)[^]*?bindConversationMessageRuntime\(conversationMessageRuntime\)/],
@@ -3357,12 +3360,7 @@ const requiredContracts = [
       ['src/presentation/features/conversations/conversationMessageActionCommand.ts', /confirmConversationAgentAction|startAgentReply/],
       ['src/components/chat/ChatActiveStatusLayer.tsx', /confirmAgentActionFromMessage|onConfirmAgentAction/],
       ['src/components/chat/ConversationTaskStatusCard.tsx', /onConfirmAgentAction/],
-      ['src/bootstrap/vnextAgentRuntime.ts', /[\s\S]+/],
-      ['src/presentation/features/conversations/vnextAgentRunController.ts', /[\s\S]+/],
-      ['src/presentation/features/conversations/vnextAgentRunCommand.ts', /[\s\S]+/],
-      ['src/presentation/features/conversations/vnextAgentRunProjection.ts', /[\s\S]+/],
       ['src/modules/conversations/application/conversationRunUseCase.ts', /recoverInterruptedRuns\(\{[^]*?kinds:\s*\['(?:agent|chat)'\]/],
-      ['src/hooks/useBootstrap.ts', /recoverVNextAgentRuns|recoverVNextAgentRuntimeRuns|recoverVNextPlainChatRuns/],
       ['src/modules/tasks/application/agentRunUseCase.ts', /[\s\S]+/],
       ['src/modules/tasks/index.ts', /agentRunUseCase/],
       ['src/services/chatRunner.ts', /from ['"]expo-clipboard['"]|export\s+(?:async\s+)?function\s+copyMessage(?:Final)?Text\s*\(|export\s+(?:async\s+)?function\s+saveAgentWorkflowSkillFromMessage\s*\(|export\s+interface\s+SaveAgentWorkflowSkillFromMessageResult\b|export\s+(?:async\s+)?function\s+confirmAgentAction\s*\(|export\s+function\s+isConversationStreaming\b|export\s+(?:async\s+)?function\s+sendMessageAfterUserProjection\b|export\s+(?:async\s+)?function\s+createAgentRuntimeReply\b|function\s+updateAgentRuntimeReply\b/],
@@ -3398,7 +3396,7 @@ const allowedNetworkAdapterFiles = new Set([
   'src/bootstrap/providerTransport.ts',
   'src/bootstrap/androidTrustedWebFetch.ts',
   'src/modules/providers/providerRegistry.ts',
-  'src/services/appUpdates.ts',
+  'src/platform/native/androidApkUpdates.ts',
   'src/bootstrap/mcpExecutionRuntime.ts',
   'src/bootstrap/webSearchProviderRuntime.ts',
   'src/platform/native/contentUriReader.ts',
@@ -5137,7 +5135,8 @@ function checkTypesBarrelContainment(projectRoot, sourceFiles) {
 function checkProviderPresentationCoupling(projectRoot, sourceFiles) {
   const presentationFiles = sourceFiles.filter((file) => {
     const relativeFile = relative(projectRoot, file)
-    return /^src\/components\//.test(relativeFile) || /^app\//.test(relativeFile)
+    // The brand icon is a closed presentation mapping, not provider transport logic.
+    return (/^src\/components\//.test(relativeFile) || /^app\//.test(relativeFile)) && relativeFile !== 'src/components/ui/ProviderBrandIcon.tsx'
   })
   const hits = collectPatternHits(projectRoot, presentationFiles, providerIdentityPattern)
   const summaries = summarizeHitsByFile(hits)
@@ -5407,7 +5406,7 @@ function runArchitectureBoundaryAuditSelfTest() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-architecture-boundary-audit-'))
   try {
     writeArchitectureBoundarySelfTestFixture(tempRoot)
-    const recoveryControllerPath = path.join(tempRoot, 'src', 'presentation', 'features', 'conversations', 'vnextPlainChatController.ts')
+    const recoveryControllerPath = path.join(tempRoot, 'src', 'presentation', 'features', 'conversations', 'plainChatController.ts')
     const recoveryControllerFixture = fs.readFileSync(recoveryControllerPath, 'utf8')
     assert.match(
       recoveryControllerFixture,
@@ -5650,7 +5649,7 @@ function runArchitectureBoundaryAuditSelfTest() {
       restoredKindSpecificRecoveryAssociationResult.blockingIssues.some((item) =>
         item.checkId === 'agentic-workflow-engine-boundary'
         && /Forbidden compatibility marker/.test(item.issue)
-        && item.issue.includes('src/presentation/features/conversations/vnextPlainChatController.ts')
+        && item.issue.includes('src/presentation/features/conversations/plainChatController.ts')
       ),
       'architecture audit self-test blocks restoration of kind-specific recovery message association',
     )
@@ -6166,7 +6165,7 @@ function runArchitectureBoundaryAuditSelfTest() {
         message: 'architecture audit self-test blocks plain-Chat handoff bootstrap restoration of Workspaces mode coupling',
       },
       {
-        relativePath: 'src/presentation/features/conversations/vnextPlainChatController.ts',
+        relativePath: 'src/presentation/features/conversations/plainChatController.ts',
         mutate: (source) => `${source}\ninterface RestoredPlainEligibility { productMode: 'chat' | 'agent' | 'companion' }\n`,
         message: 'architecture audit self-test blocks plain-Chat eligibility restoration of historical mode authority',
       },
@@ -6402,9 +6401,9 @@ function runArchitectureBoundaryAuditSelfTest() {
         message: 'architecture audit self-test blocks retry restoration of a caller-selected mode argument',
       },
       {
-        relativePath: 'src/presentation/features/conversations/vnextPlainChatController.ts',
-        mutate: (source) => `${source}\nexport function resolveVNextPlainChatProjectionErrorMode() { return 'companion' }\n`,
-        message: 'architecture audit self-test blocks vNext projection failures from restoring historical-mode attribution',
+        relativePath: 'src/presentation/features/conversations/plainChatController.ts',
+        mutate: (source) => `${source}\nexport function resolvePlainChatProjectionErrorMode() { return 'companion' }\n`,
+        message: 'architecture audit self-test blocks Plain Chat projection failures from restoring historical-mode attribution',
       },
       {
         relativePath: 'app/chat/[id].tsx',
@@ -7514,7 +7513,7 @@ function runArchitectureBoundaryAuditSelfTest() {
     fs.writeFileSync(
       sqliteConversationRepositoryPath,
       originalSqliteConversationRepository.replace(
-        'initialization ??= ensureConversationRecords(value).catch',
+        'initialization ??= ensureConversationRecords(value).then((requiresLegacyPayloadOnInsert) => {',
         'await ensureConversationRecords(value)\n    initialization ??= Promise.resolve().catch',
       ),
       'utf8',
@@ -8450,7 +8449,7 @@ function runArchitectureBoundaryAuditSelfTest() {
     )
     assert.ok(
       originalPlainChatHandoffBootstrap.includes('signal: detachedWork.signal'),
-      'architecture audit self-test fixture contains registry-owned vNext plain-Chat memory extraction'
+      'architecture audit self-test fixture contains registry-owned Plain Chat memory extraction'
     )
     fs.writeFileSync(
       plainChatHandoffBootstrapPath,
@@ -8467,7 +8466,7 @@ function runArchitectureBoundaryAuditSelfTest() {
         && /Missing required marker/.test(item.issue)
         && /conversationAssistantPlainChatHandoffRuntime/.test(item.issue)
       ),
-      'architecture audit self-test blocks vNext plain-Chat memory extraction from recoupling to request cancellation'
+      'architecture audit self-test blocks Plain Chat memory extraction from recoupling to request cancellation'
     )
     fs.writeFileSync(
       plainChatHandoffBootstrapPath,
@@ -9292,8 +9291,8 @@ function runArchitectureBoundaryAuditSelfTest() {
     fs.writeFileSync(useBootstrapPath, originalUseBootstrap, 'utf8')
 
     const reorderedCheckpointRecovery = originalUseBootstrap.replace(
-      'await recoverVNextWorkflowCheckpoints(\nrecoveredRuns.map((run) => run.id)\nawait recoverConversationWorkspaceWritebackReceipts(',
-      'await recoverConversationWorkspaceWritebackReceipts(\nrecoveredRuns.map((run) => run.id)\nawait recoverVNextWorkflowCheckpoints('
+      'await recoverWorkflowCheckpoints(\nrecoveredRuns.map((run) => run.id)\nawait recoverConversationWorkspaceWritebackReceipts(',
+      'await recoverConversationWorkspaceWritebackReceipts(\nrecoveredRuns.map((run) => run.id)\nawait recoverWorkflowCheckpoints('
     )
     assert.notStrictEqual(
       reorderedCheckpointRecovery,
@@ -9314,8 +9313,8 @@ function runArchitectureBoundaryAuditSelfTest() {
     fs.writeFileSync(useBootstrapPath, originalUseBootstrap, 'utf8')
 
     const reorderedWorkspaceRecovery = originalUseBootstrap.replace(
-      'await recoverConversationWorkspaceWritebackReceipts(\nawait recoverVNextInterruptedTasks()',
-      'await recoverVNextInterruptedTasks()\nawait recoverConversationWorkspaceWritebackReceipts('
+      'await recoverConversationWorkspaceWritebackReceipts(\nawait recoverInterruptedTasks()',
+      'await recoverInterruptedTasks()\nawait recoverConversationWorkspaceWritebackReceipts('
     )
     assert.notStrictEqual(
       reorderedWorkspaceRecovery,
@@ -10236,7 +10235,7 @@ function runArchitectureBoundaryAuditSelfTest() {
       'architecture audit self-test blocks fetch outside adapter files'
     )
     assert.ok(
-      !result.blockingIssues.some((item) => /src\/services\/appUpdates\.ts/.test(item.issue)),
+      !result.blockingIssues.some((item) => /src\/platform\/native\/androidApkUpdates\.ts/.test(item.issue)),
       'architecture audit self-test keeps app update fetch inside the approved adapter boundary'
     )
 
@@ -12115,7 +12114,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ['src/components/BadNetwork.tsx', "export async function BadNetwork() { return fetch('/bad') }"],
     ['src/components/BadTypesBarrel.tsx', "import type { Conversation } from '@/types'\nexport type BadTypesBarrel = Conversation"],
     ['src/components/BadLegacyReasoningType.tsx', "import type { ReasoningEffort } from '@/types/providerContracts'\nexport type BadLegacyReasoningType = ReasoningEffort"],
-    ['src/services/appUpdates.ts', "export async function checkUpdates() { return fetch('https://updates.example') }"],
+    ['src/platform/native/androidApkUpdates.ts', "export async function checkUpdates() { return fetch('https://updates.example') }"],
     ['src/types/providerContracts.ts', "import type { ReasoningEffort } from '@/core'\nexport interface AIModel { reasoningEfforts?: ReasoningEffort[] }"],
     [
       'src/bootstrap/providerRequestBinding.ts',
@@ -12380,7 +12379,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ['src/modules/providers/providerCompactStateRepository.ts', 'export function createProviderCompactStateRepository() {}\nWHERE conversationId = ? AND providerId = ? AND model = ?'],
     ['src/bootstrap/providerCompactStateRepository.ts', 'export const providerCompactStateRepository = createProviderCompactStateRepository({})\nSQLite.openDatabaseAsync(databaseName, { useNewConnection: true, finalizeUnusedStatementsBeforeClosing: false, })'],
     [
-      'src/bootstrap/vnextConversationRuntime.ts',
+      'src/bootstrap/conversationRuntime.ts',
       'providerFallbackDescriptors?: readonly SameProviderFallbackDescriptor[]\ncreateSameProviderFallbackResolver(options.providerFallbackDescriptors)\nproviderFallbackDescriptors: [createProviderFallbackDescriptor(input.provider)]',
     ],
     [
@@ -12549,18 +12548,10 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'src/bootstrap/conversationProviderGateway.ts',
-      [
-        'const conversationProviderGateway = createProviderGateway([], {',
-        'start(request, callbacks) { return streamProviderChat(request, callbacks.onChunk, callbacks.onDone, callbacks.onError) }',
-        '})',
-      ].join('\n'),
-    ],
-    [
       'src/bootstrap/conversationProviderStreamingRuntime.ts',
       [
         'createAssistantConversationProviderStreamingRuntime<Fixture>({',
-        'dispatch(request) { return conversationProviderGateway.startRuntimeStream(request, callbacks) }',
+        'dispatch(request) { return streamProviderChat(request, callbacks.onChunk, callbacks.onDone, callbacks.onError) }',
         'citations(citations) { useChatStore.getState().updateMessage(conversationId, assistantMessageId, { citations }) }',
       ].join('\n'),
     ],
@@ -12593,8 +12584,8 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         'export function createAssistantConversationPlainChatHandoffRuntime() {',
         'dependencies.isEligible({})',
         'dependencies.getPersistedConversation(input.conversationId)',
-        'if (isCancelled(input)) return',
-        'dependencies.saveConversation(targetConversation)',
+        "if (isCancelled(input)) return { kind: 'cancelled' }",
+        'const targetConversation = input.runtimeConversation',
         'dependencies.startPlainChatRun({})',
         'dependencies.setActiveStream(input.conversationId, {})',
         'void handle.done.then(settle, settle)',
@@ -12815,9 +12806,10 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       'src/bootstrap/conversationAssistantPlainChatHandoffRuntime.ts',
       [
         'createAssistantConversationPlainChatHandoffRuntime<Fixture>({',
-        'saveConversation: saveConversationRecord,',
-        'startPlainChatRun(input) { const handle = tryStartVNextPlainChatRun({',
-        'createRuntime: createVNextPlainChatRuntime,',
+        'isEligible: isPlainChatEligible,',
+        'getPersistedConversation(conversationId) {',
+        'startPlainChatRun(input) { const handle = tryStartPlainChatRun({',
+        'createRuntime: createPlainChatRuntime,',
         '}); if (assistantMessage?.status !== \'done\') return;',
         'const detachedWork = conversationAssistantDetachedWorkRegistry.acquire({})',
         'runConversationMemoryExtraction({ provider: input.provider, signal: detachedWork.signal })',
@@ -13011,11 +13003,11 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         'initializeConversationReplyStart()',
         "await safeBootstrap(st('bootstrap.chatData'), loadChats)",
         "await safeBootstrap(st('bootstrap.settings'), loadSettings)",
-        'const recoveredRuns = await recoverVNextChatRuns(createVNextConversationRuntime())',
-        'await recoverVNextWorkflowCheckpoints(',
+        'const recoveredRuns = await recoverChatRuns(createConversationRuntime())',
+        'await recoverWorkflowCheckpoints(',
         'recoveredRuns.map((run) => run.id)',
         'await recoverConversationWorkspaceWritebackReceipts(',
-        'await recoverVNextInterruptedTasks()',
+        'await recoverInterruptedTasks()',
         'return () => {',
         'mounted = false',
         'cancelAllConversationAssistantDetachedWork()',
@@ -13023,9 +13015,9 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'src/presentation/features/conversations/vnextPlainChatCommand.ts',
+      'src/presentation/features/conversations/plainChatCommand.ts',
       [
-        'recoverVNextChatRuns(runtime: ConversationRunUseCase): Promise<readonly AssistantRun[]>',
+        'recoverChatRuns(runtime: ConversationRunUseCase): Promise<readonly AssistantRun[]>',
         'return controller.recover(runtime)',
       ].join('\n'),
     ],
@@ -13042,7 +13034,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       'src/bootstrap/knowledgeRepository.ts',
       'export const knowledgeRepository = createSqliteKnowledgeRepository()\nexport const knowledgeHybridIndex = createSqliteKnowledgeHybridIndex()\nexport function createKnowledgeDocumentIndex() { knowledgeHybridIndex.synchronize() }\nPortable knowledge snapshot replacement and derived-index recovery both failed',
     ],
-    ['src/bootstrap/providerRuntime.ts', 'export async function streamProviderChat() {}\nexport async function generateProviderText() {}\nexport async function testProviderModelRuntime() {}\nexport async function discoverProviderModels() {}\nexport async function embedProviderText() {}\nexport async function transcribeProviderAudio() {}\nexport async function synthesizeProviderSpeech() {}\nexport async function synchronizeProviderCredentials() {}\nexport async function listProviderModelConfigsDetailed() {}\nfallbackEffects: providerRuntimeFallbackEffects\nconst responsesWebSocketTransport = createResponsesWebSocketTransport({})\narguments: parseToolArguments(call.arguments)\nconst probe = createProviderProbe({})\nfetchFailure: providerFetchFailure,\nprobe,\nusesResponsesApiForModel: () => true'],
+    ['src/bootstrap/providerRuntime.ts', 'export function createProviderRuntimeAdapter() { return streamProviderRuntimeEvents() }\nasync function* streamProviderRuntimeEvents() {}\nclass ProviderRuntimeEventQueue {}\nexport async function streamProviderChat() {}\nexport async function generateProviderText() {}\nexport async function testProviderModelRuntime() {}\nexport async function discoverProviderModels() {}\nexport async function embedProviderText() {}\nexport async function transcribeProviderAudio() {}\nexport async function synthesizeProviderSpeech() {}\nexport async function synchronizeProviderCredentials() {}\nexport async function listProviderModelConfigsDetailed() {}\nfallbackEffects: providerRuntimeFallbackEffects\nconst responsesWebSocketTransport = createResponsesWebSocketTransport({})\narguments: parseToolArguments(call.arguments)\nconst probe = createProviderProbe({})\nfetchFailure: providerFetchFailure,\nprobe,\nusesResponsesApiForModel: () => true'],
     ['src/bootstrap/providerRuntimeGateway.ts', "export const PROVIDER_RUNTIME_GATEWAY_OUTCOME_SCHEMA = 'islemind.provider-runtime-gateway-outcome.v1'"],
     ['src/bootstrap/providerRuntimePipeline.ts', "export const PROVIDER_ROUTE_DECISION_SNAPSHOT_SCHEMA = 'islemind.provider-route-decision-snapshot.v1'"],
     ['src/bootstrap/providerRuntimeDiagnostics.ts', "event: 'provider.route.decided'\nevent: 'provider.proxy.decided'"],
@@ -13398,7 +13390,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'src/services/runtimeDiagnostics.ts',
+      'src/bootstrap/runtimeDiagnostics.ts',
       [
         'const compact = { localCompressionCount: 1, localAverageCompressionRatio: 0.5 }',
         'export const RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT = 120',
@@ -13926,7 +13918,9 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     [
       'src/modules/conversations/adapters/sqliteConversationRepository.ts',
       [
-        '    initialization ??= ensureConversationRecords(value).catch((error) => {',
+        '    initialization ??= ensureConversationRecords(value).then((requiresLegacyPayloadOnInsert) => {',
+        '      legacyPayloadRequiredOnInsert = requiresLegacyPayloadOnInsert',
+        '    }).catch((error) => {',
         '      initialization = undefined',
         '      throw error',
         '    })',
@@ -14421,7 +14415,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       [
         'createWorkflowCheckpointRecoveryCoordinator(',
         'createWorkflowCheckpointRuntime(createExpoSqliteDatabaseProvider())',
-        'export function recoverVNextWorkflowCheckpoints() {}',
+        'export function recoverWorkflowCheckpoints() {}',
       ].join('\n'),
     ],
     [
@@ -14987,10 +14981,10 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'src/bootstrap/vnextChatWorkflowRuntime.ts',
+      'src/bootstrap/chatWorkflowRuntime.ts',
       [
         "import { createWorkflowCheckpointRuntime } from './workflowCheckpoints'",
-        'export function createVNextChatWorkflowRuntime() {}',
+        'export function createChatWorkflowRuntime() {}',
         'createAssistantChatWorkflowRunRuntime({',
         'createWorkflowCheckpointRuntime(databaseProvider)',
         'workflowCheckpoints: WorkflowCheckpointStore',
@@ -15001,19 +14995,19 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       'assistantRuntime.recoverInterruptedRuns()',
     ],
     [
-      'src/presentation/features/conversations/vnextPlainChatProjection.ts',
+      'src/presentation/features/conversations/plainChatProjection.ts',
       [
-        'export async function finishVNextPlainChatProjectionFailure() {',
+        'export async function finishPlainChatProjectionFailure() {',
         'setError(message)',
         '}',
-        'export async function recoverVNextChatProjection() {}',
+        'export async function recoverChatProjection() {}',
       ].join('\n'),
     ],
     [
-      'src/presentation/features/conversations/vnextPlainChatController.ts',
+      'src/presentation/features/conversations/plainChatController.ts',
       [
-        'export interface VNextPlainChatEligibilityInput { hasAttachments: boolean }',
-        'export function isVNextPlainChatEligible(input) { return !input.hasAttachments }',
+        'export interface PlainChatEligibilityInput { hasAttachments: boolean }',
+        'export function isPlainChatEligible(input) { return !input.hasAttachments }',
         'recover(runtime: ConversationRunUseCase): Promise<readonly AssistantRun[]>',
         'return recovery.value',
         "run: Pick<AssistantRun, 'responseMessageId'>",
@@ -15545,13 +15539,13 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       [
         'const startConversationChatWorkflowReply = createConversationChatWorkflowReplyStarter({',
         'resolveWorkflowRunLimits: resolveWorkflowRunLimitsFromSettings',
-        'createChatWorkflowRuntime: createVNextChatWorkflowRuntime,',
+        'createChatWorkflowRuntime: createChatWorkflowRuntime,',
         'bindConversationTaskActivityCancellation',
         'return runtime.start({',
         'cancellationSignal: controller.signal',
         'startOrdinaryReply: startConversationAssistantReplyAfterHistoryProjection',
         'listConversationToolManifests()',
-        'createVNextPlainChatProjection({ conversation, assistantMessageId, provider, })',
+        'createPlainChatProjection({ conversation, assistantMessageId, provider, })',
         'const chatWorkspaceReviewRuntimeResolver = resolveChatWorkspaceReviewRuntime',
         'const conversationMessageRuntime: ConversationMessageRuntime = {',
         'dispatchAfterUserProjection: conversationReplyDispatchController.dispatch,',
@@ -15759,7 +15753,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'src/services/pluginManifest.ts',
+      'src/bootstrap/pluginManifest.ts',
       [
         "export const PLUGIN_MANIFEST_SCHEMA = 'islemind.plugin.v1'",
         "export const PLUGIN_MANIFEST_CATALOG_SCHEMA = 'islemind.plugin-catalog.v1'",
@@ -16039,7 +16033,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'scripts/vnext-agent-task-adapter-tests.js',
+      'scripts/workflow-task-adapter-tests.js',
       [
         'const overLimit = await adapter.execute({})',
         "assert.equal(overLimit.errorCode, 'step_limit_reached')",
@@ -16105,7 +16099,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'scripts/vnext-architecture-contract-tests.js',
+      'scripts/architecture-contract-tests.js',
       [
         'testAssistantConversationWorkspaceWritebackRecovery',
         'createSqliteTavernChatWorkspaceWritebackReceiptLookup',
@@ -16141,7 +16135,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'scripts/vnext-presentation-controller-tests.js',
+      'scripts/presentation-controller-tests.js',
       'assert.equal(returnedRuns, recoveredRuns, "the exact recovered run array")',
     ],
     [
@@ -16193,7 +16187,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ],
     ['scripts/qa-coverage-audit.js', 'runArchitectureBoundaryAuditSelfTest()\nrunArchitectureBoundaryEvidenceGateSelfTest()\nagentWorkflowMatrixRequiredSnippets\ncollectAgentWorkflowMatrixGateIssues()\nrunAgentWorkflowMatrixGateSelfTest()'],
     ['scripts/collect-work-artifact-smoke.js', 'function runSelfTest() {}\ndocumentsFileTitleVisible\ndocumentsSearchFieldFocused\nfile-picker-search-${index}-keyboard-dismissed\nWork artifact smoke self-test passed'],
-    ['package.json', '{"packageManager":"bun@1.3.14","scripts":{"type-check":"node node_modules/typescript/bin/tsc --noEmit","test:provider-intelligence":"node scripts/provider-intelligence-tests.js","test:agent-workflow":"node scripts/agentic-workflow-tests.js && node scripts/agent-rag-quality-tests.js && node scripts/agent-trace-contract-tests.js && node scripts/agent-work-artifact-workflow-tests.js && node scripts/agent-tool-policy-tests.js","test:architecture-boundary":"node scripts/architecture-boundary-audit.js && node scripts/vnext-architecture-boundary-tests.js","test:context-compression-v2":"bun scripts/context-compression-v2-tests.js","test:work-artifact-smoke":"node scripts/collect-work-artifact-smoke.js","test:work-artifact-smoke:self":"node scripts/collect-work-artifact-smoke.js --self-test","test:android-capability-boundary":"node scripts/android-capability-boundary-audit.js","test:android-device-tools":"node scripts/android-device-tool-policy-tests.js","test:toolchain-runtime-compatibility":"node scripts/toolchain-runtime-compatibility-tests.js"}}'],
+    ['package.json', '{"packageManager":"bun@1.3.14","scripts":{"type-check":"node node_modules/typescript/bin/tsc --noEmit","test:provider-intelligence":"node scripts/provider-intelligence-tests.js","test:agent-workflow":"node scripts/agentic-workflow-tests.js && node scripts/agent-rag-quality-tests.js && node scripts/agent-trace-contract-tests.js && node scripts/agent-work-artifact-workflow-tests.js && node scripts/agent-tool-policy-tests.js","test:architecture-boundary":"node scripts/architecture-boundary-audit.js && node scripts/module-architecture-boundary-tests.js","test:context-compression-v2":"bun scripts/context-compression-v2-tests.js","test:work-artifact-smoke":"node scripts/collect-work-artifact-smoke.js","test:work-artifact-smoke:self":"node scripts/collect-work-artifact-smoke.js --self-test","test:android-capability-boundary":"node scripts/android-capability-boundary-audit.js","test:android-device-tools":"node scripts/android-device-tool-policy-tests.js","test:toolchain-runtime-compatibility":"node scripts/toolchain-runtime-compatibility-tests.js"}}'],
     ['src/modules/integrations/toolchainContracts.ts', 'export const TOOLCHAIN_MANIFEST_SCHEMA = "islemind.toolchain-manifest.v0"'],
     ['src/modules/integrations/toolchainRuntimeContracts.ts', 'export interface ToolchainToolManifest {}'],
     ['src/modules/integrations/officialToolchainCatalogPolicy.ts', 'export function createOfficialToolchainCatalogPolicy() {}'],

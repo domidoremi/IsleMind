@@ -508,7 +508,7 @@ async function run() {
   assertSourceIncludes(proxyPolicyBindingSource, 'createProviderProxyPolicy({ safeHttpUrl })', 'bootstrap binds the concrete URL safety helper to the target proxy policy')
   assertSourceIncludes(urlSafetySource, 'parsed.username || parsed.password', 'URL safety helper rejects userinfo credentials')
 
-  const runtimeLogSource = readSource('src/services/runtimeLog.ts')
+  const runtimeLogSource = readSource('src/platform/native/runtimeLog.ts')
   assertSourceMatches(runtimeLogSource, /authorization\|api\[-_\]\?key\|token\|secret\|password\|credential\|bearer/, 'runtime log treats credential field names as sensitive')
   assertSourceIncludes(runtimeLogSource, 'redactSensitiveQueryParams', 'runtime log redacts sensitive query parameters')
   assertSourceIncludes(runtimeLogSource, 'redactUrlUserInfo', 'runtime log redacts URL userinfo credentials')

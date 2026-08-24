@@ -1,6 +1,6 @@
 import {
   createModelOperationCatalogSnapshot,
-  formatModelOperationFallbackPrompt,
+  formatTaggedModelOperationPrompt,
   type ConversationToolCatalogManifest,
   type ModelOperationCatalogCreationFailureCode,
   type ModelOperationCatalogSnapshot,
@@ -14,14 +14,14 @@ import type { Settings } from '@/types/settingsContracts'
 export interface ConversationModelOperationCatalog {
   readonly snapshot: ModelOperationCatalogSnapshot
   readonly manifests: readonly ConversationToolCatalogManifest[]
-  readonly fallbackPrompt: string
+  readonly taggedPrompt: string
 }
 
 export type ConversationModelOperationCatalogResult =
   | Readonly<{ ok: true; catalog: ConversationModelOperationCatalog }>
   | Readonly<{
     ok: false
-    code: ModelOperationCatalogCreationFailureCode | 'fallback_prompt_unavailable'
+    code: ModelOperationCatalogCreationFailureCode | 'tagged_prompt_unavailable'
     message: string
   }>
 
@@ -46,12 +46,12 @@ export async function createConversationModelOperationCatalog(
   if (!created.ok) {
     return Object.freeze({ ok: false, code: created.code, message: created.message })
   }
-  const fallback = formatModelOperationFallbackPrompt(created.snapshot)
-  if (!fallback.ok) {
+  const tagged = formatTaggedModelOperationPrompt(created.snapshot)
+  if (!tagged.ok) {
     return Object.freeze({
       ok: false,
-      code: 'fallback_prompt_unavailable',
-      message: fallback.message,
+      code: 'tagged_prompt_unavailable',
+      message: tagged.message,
     })
   }
   const manifests = Object.freeze(admitted
@@ -66,7 +66,7 @@ export async function createConversationModelOperationCatalog(
     catalog: Object.freeze({
       snapshot: created.snapshot,
       manifests,
-      fallbackPrompt: fallback.prompt,
+      taggedPrompt: tagged.prompt,
     }),
   })
 }

@@ -51,7 +51,7 @@ async function main() {
     database.close()
   }
 
-  console.log('vNext task-runtime integration tests passed')
+  console.log('Task-runtime integration tests passed')
 }
 
 function testModelOperationProtocol(integrationsModule) {
@@ -151,10 +151,10 @@ function testModelOperationProtocol(integrationsModule) {
   assert.equal(unavailable.ok, false)
   assert.equal(unavailable.code, 'operation_unavailable')
 
-  const fallback = integrationsModule.formatModelOperationFallbackPrompt(created.snapshot)
-  assert.equal(fallback.ok, true)
-  assert.equal(fallback.prompt.includes(created.snapshot.revision), true)
-  assert.equal(fallback.prompt.includes('the entire model output must be exactly one tool-call envelope'), true)
+  const tagged = integrationsModule.formatTaggedModelOperationPrompt(created.snapshot)
+  assert.equal(tagged.ok, true)
+  assert.equal(tagged.prompt.includes(created.snapshot.revision), true)
+  assert.equal(tagged.prompt.includes('the entire model output must be exactly one tool-call envelope'), true)
 }
 
 function testToolInputSchemaPolicy(integrationsModule) {

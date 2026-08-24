@@ -53,7 +53,6 @@ export interface AssistantConversationPlainChatHandoffRuntimeDependencies<
     readonly assistantMessageId: string
     readonly controller: AbortController
   }): boolean
-  saveConversation(conversation: TConversation): Promise<void>
   startPlainChatRun(input: {
     readonly conversation: TConversation
     readonly assistantMessageId: string
@@ -145,27 +144,21 @@ export function createAssistantConversationPlainChatHandoffRuntime<
       return { kind: 'continue', reason: 'ineligible' }
     }
 
-    const persistedConversation = dependencies.getPersistedConversation(
-      input.conversationId,
-    )
-    if (!persistedConversation) {
+    if (!dependencies.getPersistedConversation(input.conversationId)) {
       return { kind: 'continue', reason: 'conversation_not_found' }
     }
+
     if (isCancelled(input)) return { kind: 'cancelled' }
 
-    const targetConversation: TConversation = {
-      ...persistedConversation,
-      providerId: input.runtimeConversation.providerId,
-      model: input.runtimeConversation.model,
-      systemPrompt: input.runtimeConversation.systemPrompt,
-      temperature: input.runtimeConversation.temperature,
-      topP: input.runtimeConversation.topP,
-      topK: input.runtimeConversation.topK,
-      maxTokens: input.runtimeConversation.maxTokens,
-    }
+    // Provider admission and the reply-start persistence barrier already
+    // produced the exact normalized conversation, including the assistant
+    // placeholder. Handoff only starts the native Plain capability now.
+    const targetConversation = input.runtimeConversation
+    // Keep a final fencing check immediately before the effectful provider
+    // start; admission persistence may have yielded to the mutation queue.
+    if (isCancelled(input)) return { kind: 'cancelled' }
 
     try {
-      await dependencies.saveConversation(targetConversation)
       const handle = await dependencies.startPlainChatRun({
         conversation: targetConversation,
         assistantMessageId: input.assistantMessageId,

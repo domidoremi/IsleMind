@@ -280,7 +280,7 @@ function registerTypeScriptSupport() {
     if (request === 'react-native') return { NativeModules: {}, Platform: { OS: 'android' } }
     if (request === 'expo-file-system/legacy') return { cacheDirectory: 'file:///cache/' }
     if (request === 'expo-intent-launcher') return { ActivityAction: {}, startActivityAsync: async () => undefined }
-    if (request === '@/services/runtimeLog') {
+    if (request === '@/platform/native/runtimeLog') {
       return {
         appendRuntimeLog(event, data, options) {
           runtimeAuditEntries.push({ event, data, options })

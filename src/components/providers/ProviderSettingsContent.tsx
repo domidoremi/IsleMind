@@ -46,7 +46,7 @@ import {
   MinimalProviderSettingsExperience,
   MonetProviderSettingsExperience,
 } from '@/components/providers/theme-experiences/ProviderSettingsExperiences'
-import type { RuntimeDiagnosticsProviderDetail, RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
+import type { RuntimeDiagnosticsProviderDetail, RuntimeDiagnosticsSummary } from '@/bootstrap/runtimeDiagnostics'
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
 import { resolveProviderDisplayName, resolveProviderSupplierDisclosure } from '@/presentation/features/settings/providerPresentation'
 import { invalidateProviderUsage } from '@/bootstrap/providerUsageRuntime'
@@ -316,7 +316,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const { buildRuntimeDiagnosticsSummary } = await import('@/services/runtimeDiagnostics')
+          const { buildRuntimeDiagnosticsSummary } = await import('@/bootstrap/runtimeDiagnostics')
           if (cancelled || runtimeDiagnosticsRunRef.current !== runId) return
           const summary = await buildRuntimeDiagnosticsSummary({ providers, settings })
           if (!cancelled && runtimeDiagnosticsRunRef.current === runId) setRuntimeDiagnostics(summary)

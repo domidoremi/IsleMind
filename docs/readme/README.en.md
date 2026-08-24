@@ -12,53 +12,50 @@
   <a href="../../README.md">简体中文</a> · English · <a href="README.ja.md">日本語</a>
 </p>
 
-<p align="center">
-  <strong>1.0.16 · Android 116</strong><br>
-  <a href="https://github.com/domidoremi/IsleMind/releases">Version history</a>
-</p>
+## What is IsleMind?
 
-## Product
+IsleMind brings model providers, conversations, knowledge and memory, agent tasks, and tool integrations into one mobile workspace. Android is the primary platform. The product emphasizes local data ownership, explicit network boundaries, and recoverable AI execution.
 
-IsleMind manages model providers, conversations, knowledge, personal context, and task workflows.
+## Core capabilities
 
-Primary platform: Android.
+- **Model provider management**: Configure API keys, base URLs, protocols, models, and capability switches, with model discovery, bulk import, availability checks, usage queries, and runtime diagnostics.
+- **Broad protocol compatibility**: Use OpenAI, Anthropic, Gemini, xAI, DeepSeek, Qwen, GLM, and OpenAI-compatible or Anthropic-compatible relay endpoints.
+- **Conversation workspace**: Manage multiple conversations, streaming replies, reasoning state, source citations, attachments, drafts, message actions, and generation status.
+- **Knowledge and personal context**: Import knowledge documents, maintain personal memory and conversation context, and use local indexes and embedding models for retrieval augmentation.
+- **Agents and task execution**: Track step state, cancellation and recovery, tool authorization, and execution evidence; structured work artifacts include Quality gates, copyable handoffs, and continuation prompts.
+- **Tools and integrations**: Connect MCP servers, Skills, built-in workspace tools, web retrieval, speech, and Android device capabilities. Network features are configured or explicitly enabled by the user.
+- **Themes and languages**: Choose Minimal, Monet, Material 3, or Liquid Glass themes with light, dark, system, and custom-accent modes. The interface supports Simplified Chinese, English, and Japanese.
+- **Android experience**: Includes safe-area and keyboard handling, background status notifications, in-app update checks, runtime diagnostics, and recovery entry points.
 
-## Features
+## Data and network boundaries
 
-- **Provider management**: API keys, base URLs, protocols, models, capability switches, and model discovery.
-- **Model compatibility**: OpenAI, Anthropic, Gemini, xAI, DeepSeek, Qwen, GLM, and OpenAI/Anthropic-compatible endpoints.
-- **Conversation workspace**: Multiple conversations, streaming replies, reasoning state, citations, attachments, and copyable content.
-- **Knowledge and context**: Knowledge documents, personal memory, conversation context, retrieval indexes, and local models.
-- **Tasks and workflows**: Step state, cancellation, recovery, tool authorization, and execution evidence.
-- **structured work artifacts**: Quality gates, executable actions, copyable handoffs, and continuation prompts.
-- **Operation feedback**: Toast, Banner, status layers, Android notifications, and in-progress/success/failure states.
-- **Appearance**: Light mode, dark mode, custom colors, 简体中文, English, and 日本語.
+Conversations, settings, knowledge indexes, personal context, and provider configuration are stored locally by default. Provider credentials use system secure storage, and portable JSON exports do not include API keys.
 
-## Data and Network
+The following operations access the network:
 
-Conversations, settings, knowledge indexes, personal context, and provider configuration default to local storage.
+- AI inference, model discovery, embeddings, transcription, and speech services;
+- local-model resource downloads;
+- GitHub version checks;
+- user-enabled network tools, MCP servers, and third-party integrations.
 
-Network features:
+## Current release
 
-- AI inference, model discovery, embeddings, transcription, and speech.
-- Local-model resource retrieval.
-- GitHub version checks.
-- User-enabled network tools and integrations.
+- Stable release: `v1.0.19`
+- Android: `versionCode 119`
+- [View Releases and the Chinese/English version history](https://github.com/domidoremi/IsleMind/releases)
 
-Provider credentials use secure storage. Portable JSON exports do not contain API keys.
+## Development environment
 
-## Development Environment
-
-- [Bun 1.3.14](https://bun.sh/)
-- Node.js
+- [Bun 1.3.14](https://bun.sh/) for dependency installation and scripts
+- Node.js for selected project scripts
 - JDK 17
 - Android SDK
 - Android Platform Tools / ADB
-- Android emulator or USB-debuggable device
+- Android emulator or a USB-debuggable device
 
-`bun.lock` is the dependency lockfile.
+`bun.lock` is the authoritative dependency lockfile. Do not use another package manager to update dependencies.
 
-## Install
+## Get the source
 
 ```powershell
 git clone https://github.com/domidoremi/IsleMind.git
@@ -67,7 +64,7 @@ bun install
 bun run doctor
 ```
 
-## Run Android
+## Run on Android
 
 Start Metro:
 
@@ -75,7 +72,7 @@ Start Metro:
 bun run start --localhost
 ```
 
-Connect a device:
+Connect an Android device and start the app:
 
 ```powershell
 adb devices
@@ -83,17 +80,38 @@ adb reverse tcp:8081 tcp:8081
 bun run android --device <device-name> --no-bundler
 ```
 
-## Common Checks
+## Repository structure
+
+```text
+app/              Expo Router pages and route entry points
+src/core/         Shared pure types, protocols, and base contracts
+src/modules/      Business modules and their public APIs
+src/platform/     Storage, network, and native platform adapters
+src/bootstrap/    Dependency wiring and runtime composition root
+src/presentation/ Presentation controllers and use-case bridges
+src/components/   React Native interface components
+scripts/          Tests, audits, diagnostics, and local release scripts
+plugins/          In-repository Expo and Android native plugins
+docs/             Architecture, migration status, and localized docs
+```
+
+The [IsleMind architecture](../architecture/architecture.md) and [module public API](../architecture/module-public-api.md) define the architecture boundaries.
+
+## Common validation
 
 ```powershell
 bun run type-check
+bun run test:architecture-boundary
+bun run test:architecture-contract
+bun run test:walking-skeleton
+bun run test:task-runtime
 bun run test:provider-intelligence
 bun run test:product-mobile-layout
 ```
 
-## Assets and Attribution
+## Assets and attribution
 
-- Isle UI is a React Native adaptation of [animal-island-ui](https://github.com/guokaigdg/animal-island-ui). Upstream license: CC BY-NC 4.0.
+- Isle UI is a React Native adaptation of [animal-island-ui](https://github.com/guokaigdg/animal-island-ui); the upstream license is CC BY-NC 4.0.
 - Local model catalog: [assets/models/catalog.json](../../assets/models/catalog.json)
 - Model sources and attribution: [assets/models/NOTICE.md](../../assets/models/NOTICE.md)
 - Brand sources: `assets/brand/source/`

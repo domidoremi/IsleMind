@@ -6,6 +6,11 @@ const path = require('node:path')
 const ts = require('typescript')
 
 const root = path.resolve(__dirname, '..')
+const LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY = '@islemind/vnext/tavern-workspaces'
+const TAVERN_PORTABLE_WORKSPACE_BACKUP_KEY_PREFIX =
+  '@islemind/tavern-workspaces/portable-import/backup-v1/'
+const LEGACY_TAVERN_PORTABLE_WORKSPACE_BACKUP_KEY_PREFIX =
+  '@islemind/vnext/tavern-workspaces/portable-import/backup-v1/'
 const tavernRuntimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/tavernWorkspace.ts'), 'utf8')
 const tavernExportPolicySource = fs.readFileSync(path.join(root, 'src/modules/workspaces/domain/tavernExportPolicy.ts'), 'utf8')
 const tavernWritebackPolicySource = fs.readFileSync(path.join(root, 'src/modules/workspaces/domain/tavernWritebackPolicy.ts'), 'utf8')
@@ -17,6 +22,7 @@ const tavernReviewPolicySource = fs.readFileSync(path.join(root, 'src/modules/wo
 const originalResolve = Module._resolveFilename
 const originalLoad = Module._load
 const memoryStorage = new Map()
+let tavernAsyncStorageNextFault
 
 registerTypeScriptSupport()
 
@@ -128,18 +134,28 @@ const {
   summarizeTavernShapingReviewUnits,
 } = tavernWorkspaceModule
 const { createAsyncStorageTavernWorkspacePort } = require('../src/platform/workspaces/asyncStorageTavernWorkspace.ts')
+const { createTavernWorkspaceRuntime } = require('../src/bootstrap/tavernWorkspacePersistence.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isTavernCoreHook) return
 
   Module._load = function loadWithRuntimeStubs(request, parent, isMain) {
+    if (request === 'expo-crypto') {
+      return {
+        CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+        CryptoEncoding: { HEX: 'hex' },
+        digestStringAsync: async (_algorithm, value) => createHash('sha256').update(value, 'utf8').digest('hex'),
+      }
+    }
     if (request === '@react-native-async-storage/async-storage') {
       return {
         getItem: async (key) => memoryStorage.get(key) ?? null,
         setItem: async (key, value) => {
+          if (consumeTavernAsyncStorageFault('set', key)) return
           memoryStorage.set(key, String(value))
         },
         removeItem: async (key) => {
+          if (consumeTavernAsyncStorageFault('remove', key)) return
           memoryStorage.delete(key)
         },
         getAllKeys: async () => [...memoryStorage.keys()],
@@ -174,6 +190,14 @@ function registerTypeScriptSupport() {
   require.extensions['.tsx'] = hook
 }
 
+function consumeTavernAsyncStorageFault(operation, key) {
+  const fault = tavernAsyncStorageNextFault
+  if (!fault || fault.operation !== operation || fault.key !== key) return false
+  tavernAsyncStorageNextFault = undefined
+  if (fault.mode === 'throw') throw new Error(`injected Tavern AsyncStorage ${operation} failure`)
+  return fault.mode === 'skip'
+}
+
 function createMapStoragePort(storage) {
   return {
     get: async (key) => storage.get(key) ?? null,
@@ -186,7 +210,127 @@ function createMapStoragePort(storage) {
   }
 }
 
+async function assertTavernStorageKeyMigrationBehavior() {
+  const previousStorage = new Map(memoryStorage)
+  const canonicalWorkspaceKey = TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY
+  const emptyWorkspaceEnvelope = JSON.stringify({
+    schema: TAVERN_WORKSPACE_KEY_VALUE_ENVELOPE_SCHEMA,
+    snapshotSchema: TAVERN_SNAPSHOT_SCHEMA,
+    revision: 0,
+    scopes: [],
+    activeScopeLinks: {},
+    writebackReceipts: [],
+    updatedAt: 0,
+  })
+  const createRuntime = () => createTavernWorkspaceRuntime({
+    codec: tavernSnapshotCodec,
+    createEmptySnapshot: createEmptyTavernSnapshot,
+    cloneSnapshot: cloneCanonicalTavernSnapshot,
+    now: () => 100,
+  })
+  const resetStorage = (entries) => {
+    memoryStorage.clear()
+    for (const [key, value] of entries) memoryStorage.set(key, value)
+    tavernAsyncStorageNextFault = undefined
+  }
+
+  try {
+    resetStorage([[LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY, emptyWorkspaceEnvelope]])
+    assert.equal((await createRuntime().repository.load()).ok, true, 'a lone legacy browser workspace migrates before repository load')
+    assert.equal(memoryStorage.get(canonicalWorkspaceKey), emptyWorkspaceEnvelope, 'browser workspace migration copies exact canonical bytes')
+    assert.equal(memoryStorage.has(LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY), false, 'browser workspace migration deletes the legacy key after exact reread')
+
+    resetStorage([
+      [canonicalWorkspaceKey, emptyWorkspaceEnvelope],
+      [LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY, emptyWorkspaceEnvelope],
+    ])
+    assert.equal((await createRuntime().repository.load()).ok, true, 'identical browser workspace keys retain canonical authority')
+    assert.equal(memoryStorage.has(LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY), false, 'identical browser workspace keys converge to one canonical record')
+
+    resetStorage([
+      [canonicalWorkspaceKey, emptyWorkspaceEnvelope],
+      [LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY, `${emptyWorkspaceEnvelope} `],
+    ])
+    const divergentWorkspace = await createRuntime().repository.load()
+    assert.equal(divergentWorkspace.ok, false, 'divergent browser workspace keys fail closed')
+    assert.equal(memoryStorage.get(canonicalWorkspaceKey), emptyWorkspaceEnvelope, 'browser workspace conflict preserves canonical evidence')
+    assert.equal(memoryStorage.get(LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY), `${emptyWorkspaceEnvelope} `, 'browser workspace conflict preserves legacy evidence')
+
+    for (const fault of [
+      { label: 'write failure', operation: 'set', key: canonicalWorkspaceKey, mode: 'throw' },
+      { label: 'write verification failure', operation: 'set', key: canonicalWorkspaceKey, mode: 'skip' },
+      { label: 'delete failure', operation: 'remove', key: LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY, mode: 'throw' },
+      { label: 'delete verification failure', operation: 'remove', key: LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY, mode: 'skip' },
+    ]) {
+      resetStorage([[LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY, emptyWorkspaceEnvelope]])
+      const runtime = createRuntime()
+      tavernAsyncStorageNextFault = fault
+      const failed = await runtime.repository.load()
+      assert.equal(failed.ok, false, `browser workspace ${fault.label} is reported as retryable persistence failure`)
+      assert.equal(memoryStorage.get(LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY), emptyWorkspaceEnvelope, `browser workspace ${fault.label} retains the legacy source`)
+      assert.equal((await runtime.repository.load()).ok, true, `browser workspace ${fault.label} retries on the same runtime`)
+      assert.equal(memoryStorage.get(canonicalWorkspaceKey), emptyWorkspaceEnvelope, `browser workspace ${fault.label} retry preserves exact canonical bytes`)
+      assert.equal(memoryStorage.has(LEGACY_TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY), false, `browser workspace ${fault.label} retry removes only the redundant legacy key`)
+    }
+
+    const runBackupMigration = (backupId) => tavernServiceModule.restorePortableTavernWorkspaceBackup(backupId)
+    const backupKeys = (backupId) => ({
+      canonical: `${TAVERN_PORTABLE_WORKSPACE_BACKUP_KEY_PREFIX}${backupId}`,
+      legacy: `${LEGACY_TAVERN_PORTABLE_WORKSPACE_BACKUP_KEY_PREFIX}${backupId}`,
+    })
+
+    {
+      const keys = backupKeys('legacy-portable-backup')
+      resetStorage([[keys.legacy, '{']])
+      assert.equal((await runBackupMigration('legacy-portable-backup')).ok, false, 'legacy portable backup bytes migrate before strict backup decoding')
+      assert.equal(memoryStorage.get(keys.canonical), '{', 'portable backup migration copies exact canonical bytes')
+      assert.equal(memoryStorage.has(keys.legacy), false, 'portable backup migration deletes the verified legacy key')
+    }
+
+    {
+      const keys = backupKeys('identical-portable-backup')
+      resetStorage([[keys.canonical, '{'], [keys.legacy, '{']])
+      await runBackupMigration('identical-portable-backup')
+      assert.equal(memoryStorage.get(keys.canonical), '{', 'identical portable backup keys retain the canonical record')
+      assert.equal(memoryStorage.has(keys.legacy), false, 'identical portable backup keys converge to one record')
+    }
+
+    {
+      const keys = backupKeys('divergent-portable-backup')
+      resetStorage([[keys.canonical, '{'], [keys.legacy, '[']])
+      assert.equal((await runBackupMigration('divergent-portable-backup')).ok, false, 'divergent portable backup keys fail closed')
+      assert.equal(memoryStorage.get(keys.canonical), '{', 'portable backup conflict preserves canonical evidence')
+      assert.equal(memoryStorage.get(keys.legacy), '[', 'portable backup conflict preserves legacy evidence')
+    }
+
+    for (const fault of [
+      { label: 'write failure', operation: 'set', mode: 'throw' },
+      { label: 'write verification failure', operation: 'set', mode: 'skip' },
+      { label: 'delete failure', operation: 'remove', mode: 'throw' },
+      { label: 'delete verification failure', operation: 'remove', mode: 'skip' },
+    ]) {
+      const backupId = `retry-${fault.label.replaceAll(' ', '-')}`
+      const keys = backupKeys(backupId)
+      resetStorage([[keys.legacy, '{']])
+      tavernAsyncStorageNextFault = {
+        ...fault,
+        key: fault.operation === 'set' ? keys.canonical : keys.legacy,
+      }
+      assert.equal((await runBackupMigration(backupId)).ok, false, `portable backup ${fault.label} fails without discarding the source`)
+      assert.equal(memoryStorage.get(keys.legacy), '{', `portable backup ${fault.label} retains legacy bytes for retry`)
+      await runBackupMigration(backupId)
+      assert.equal(memoryStorage.get(keys.canonical), '{', `portable backup ${fault.label} retry preserves exact canonical bytes`)
+      assert.equal(memoryStorage.has(keys.legacy), false, `portable backup ${fault.label} retry removes only the redundant legacy key`)
+    }
+  } finally {
+    tavernAsyncStorageNextFault = undefined
+    memoryStorage.clear()
+    for (const [key, value] of previousStorage) memoryStorage.set(key, value)
+  }
+}
+
 async function run() {
+  await assertTavernStorageKeyMigrationBehavior()
   assert.match(tavernRuntimeSource, /tavernSnapshotCodec/, 'Tavern persistence consumes the workspaces-owned canonical codec')
   assert.doesNotMatch(tavernRuntimeSource, /function parseCanonicalTavernSnapshot/, 'Tavern service does not retain a duplicate canonical codec')
   assert.doesNotMatch(tavernRuntimeSource, /export function normalizeTavernSnapshot/, 'Tavern service does not retain a duplicate snapshot normalizer')

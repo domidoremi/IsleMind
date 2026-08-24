@@ -1,14 +1,16 @@
-import { ScrollView, View, useWindowDimensions } from 'react-native'
+import { Keyboard, ScrollView, View, useWindowDimensions } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import type { Dispatch, SetStateAction } from 'react'
 import type { EdgeInsets } from 'react-native-safe-area-context'
 
 import type { IsleBackgroundState } from '@/components/ui/isle'
+import { ProviderBrandIcon, resolveProviderBrand } from '@/components/ui/ProviderBrandIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import { resolveProductMobileChatSetupLayout } from '@/presentation/layout/productMobileLayout'
 import type { Attachment, CommandReference } from '@/types/chatContracts'
+import { getProviderDisplayModel } from '@/utils/providerModels'
 import { CHAT_PRESENTATION_CATALOG, type ChatStarterDefinition } from '@/presentation/features/chat/chatPresentationCatalog'
 
 import type { ComposerCommand } from './Composer'
@@ -21,9 +23,10 @@ import type { ModelAccessSettings } from './chatModelSelection'
 import type { ChatSetupWorkspaceState } from './chatSetupWorkspaceState'
 import { ChatSetupEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyState'
 import type { CompressionSummary } from './compressionSummary'
+import type { ComposerKeyboardMotion } from './chatWorkspaceKeyboard'
 import { ChatSetupThemeExperience } from './theme-experiences/ChatSetupThemeExperience'
 
-const CHAT_SETUP_HEADER_HEIGHT = 48
+const CHAT_SETUP_HEADER_HEIGHT = 58
 
 interface ChatSetupWorkspaceProps {
   backgroundState: IsleBackgroundState
@@ -47,6 +50,7 @@ interface ChatSetupWorkspaceProps {
   goSettings: () => void
   insets: EdgeInsets
   keyboardLift: number
+  keyboardMotion: ComposerKeyboardMotion
   keyboardVisible: boolean
   latestCompression: CompressionSummary | null
   markChromeActive: () => void
@@ -94,6 +98,7 @@ export function ChatSetupWorkspace({
   goSettings,
   insets,
   keyboardLift,
+  keyboardMotion,
   keyboardVisible,
   latestCompression,
   markChromeActive,
@@ -129,6 +134,7 @@ export function ChatSetupWorkspace({
     ? setupHeaderBottom + setupLayout.contentHeaderGap
     : Math.max(setupHeaderBottom, compactViewport ? 68 : 80)
   const chatSystemPromptPlaceholder = t(CHAT_PRESENTATION_CATALOG.systemPromptPlaceholderKey)
+  const setupModelTitle = getProviderDisplayModel(setupState.homeProvider, setupState.setupConversation.model)
   const openAiConfiguration = () => {
     collapseQuickTools()
     setupState.openSetupAiConfiguration()
@@ -163,11 +169,17 @@ export function ChatSetupWorkspace({
       <ChatPersistentHeader
         themeId={canonicalThemeId}
         colors={colors}
-        title={t('chat.startChat')}
+        title={setupModelTitle}
+        subtitle={t('chat.newConversation')}
+        modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(setupState.homeProvider, setupState.setupConversation.model)} size={18} color={colors.text} />}
+        modelStatusColor={setupState.hasAvailableModel ? colors.ui.tone.success.foreground : colors.ui.tone.warning.foreground}
+        modelMenuOpen={showOptions}
         leadingGlyph="conversation"
         leadingLabel={t('conversation.title')}
         onLeadingPress={goHistory}
         onModelPress={openAiConfiguration}
+        modelAccessibilityLabel={`${t('chat.model')}: ${setupModelTitle}`}
+        modelAccessibilityHint={t('chat.quickModelAccessibilityHint')}
         onNewConversation={onNewConversation}
         onSettings={goSettings}
         settingsTransitionActive={settingsTransitionActive}
@@ -179,6 +191,7 @@ export function ChatSetupWorkspace({
           <ScrollView
             style={{ flex: 1 }}
             keyboardShouldPersistTaps="handled"
+            onTouchStart={Keyboard.dismiss}
             contentContainerStyle={{
               flexGrow: 1,
               alignItems: 'center',
@@ -233,6 +246,9 @@ export function ChatSetupWorkspace({
           inputPlaceholder={chatComposerPlaceholder}
           systemPromptPlaceholder={chatSystemPromptPlaceholder}
           onOpenModelPicker={openAiConfiguration}
+          switchableProviders={setupState.quickModelProviders}
+          modelAccessSettings={modelAccessSettings}
+          onSwitchModel={setupState.switchSetupProviderModel}
           onOpenKnowledge={goKnowledge}
           onToggleRequestedOutput={onToggleComposerOutputMode}
           outputModeLocked={CHAT_PRESENTATION_CATALOG.outputModeLocked}
@@ -262,6 +278,7 @@ export function ChatSetupWorkspace({
           }}
           onInputBlur={() => setComposerFocused(false)}
           keyboardLift={keyboardLift}
+          keyboardMotion={keyboardMotion}
           panel={composerPanel}
           onPanelChange={setComposerPanel}
           onCollapseTools={collapseQuickTools}

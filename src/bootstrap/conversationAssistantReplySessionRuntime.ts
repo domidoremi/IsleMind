@@ -21,8 +21,9 @@ export const conversationAssistantReplySessionRuntime =
     },
     now: Date.now,
     generateId: createMessageId,
-    appendMessage(conversationId, message) {
-      return useChatStore.getState().addMessage(conversationId, message)
+    deferPersistenceUntilAdmission: true,
+    appendMessage(conversationId, message, options) {
+      return useChatStore.getState().addMessage(conversationId, message, options)
     },
     projectAppendFailure({ conversationId, assistantMessageId, error }) {
       projectConversationAssistantFailure({

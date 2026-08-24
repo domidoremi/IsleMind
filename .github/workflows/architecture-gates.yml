@@ -2,7 +2,7 @@ name: Architecture Gates
 
 on:
   pull_request:
-  push:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,34 +34,31 @@ jobs:
         run: bun run test:architecture-boundary
 
       - name: Runtime contract gate
-        run: bun run test:vnext-architecture-contract
+        run: bun run test:architecture-contract
 
       - name: Walking-skeleton integration gate
-        run: bun run test:vnext-walking-skeleton
+        run: bun run test:walking-skeleton
 
       - name: Presentation-controller integration gate
-        run: bun run test:vnext-presentation-controller
+        run: bun run test:presentation-controller
 
       - name: Conversation message-command integration gate
-        run: bun run test:vnext-conversation-message-command
+        run: bun run test:conversation-message-command
 
       - name: Settings action integration gate
-        run: bun run test:vnext-settings-actions
-
-      - name: Settings local-command integration gate
-        run: bun run test:vnext-settings-local-command
+        run: bun run test:settings-actions
 
       - name: MCP transport compatibility gate
         run: bun run test:mcp-compatibility
 
       - name: Task-runtime integration gate
-        run: bun run test:vnext-task-runtime
+        run: bun run test:task-runtime
 
       - name: Agent parent-run integration gate
-        run: bun run test:vnext-agent-run
+        run: bun run test:workflow-run
 
       - name: Agent task-adapter gate
-        run: bun run test:vnext-agent-task-adapter
+        run: bun run test:workflow-task-adapter
 
       - name: Provider activation cancellation gate
         run: bun run test:provider-activation

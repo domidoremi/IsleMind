@@ -249,6 +249,7 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
     composerBottomInset,
     composerLayout,
     keyboardLift,
+    keyboardMotion,
     keyboardVisible,
     setComposerFocused,
     setComposerHeight,
@@ -400,6 +401,7 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
         goSettings={goSettings}
         insets={insets}
         keyboardLift={keyboardLift}
+        keyboardMotion={keyboardMotion}
         keyboardVisible={keyboardVisible}
         latestCompression={latestCompression}
         markChromeActive={markChromeActive}
@@ -504,6 +506,7 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
       lastScrollOffset={lastScrollOffset}
       autoStickToBottom={autoStickToBottom}
       keyboardLift={keyboardLift}
+      keyboardMotion={keyboardMotion}
       keyboardVisible={keyboardVisible}
       workspaceOverlayLocked={workspaceOverlayLocked}
       settings={settings}

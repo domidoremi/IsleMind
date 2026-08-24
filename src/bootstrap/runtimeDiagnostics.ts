@@ -1,6 +1,6 @@
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
-import { getRuntimeLogInfo, readRuntimeLogText, type RuntimeLogEntry, type RuntimeLogInfo } from '@/services/runtimeLog'
+import { getRuntimeLogInfo, readRuntimeLogText, type RuntimeLogEntry, type RuntimeLogInfo } from '@/platform/native/runtimeLog'
 import {
   RUNTIME_EVENT_HISTORY_LIMIT,
   RUNTIME_EVENT_SCHEMA,

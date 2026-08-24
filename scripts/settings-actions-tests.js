@@ -18,7 +18,7 @@ async function main() {
   await testValidationAndCancellation(fixture)
   await testPortFailure(fixture, settingsModule)
 
-  console.log('vNext settings action tests passed')
+  console.log('Settings action tests passed')
 }
 
 function testIdentityNormalization(settingsModule) {

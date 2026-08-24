@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react'
-import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native'
+import { Keyboard, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import type { FlashListRef, ViewToken } from '@shopify/flash-list'
 
 import type { Message } from '@/types/chatContracts'
@@ -56,10 +56,13 @@ export function useChatMessageListScrollController({
 }) {
   const [messageScrollViewport, setMessageScrollViewport] = useState<MessageScrollViewport>(() => createEmptyMessageScrollViewport())
   const messageScrollViewportRef = useRef<MessageScrollViewport>(messageScrollViewport)
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0)
+  const observedMessageIdsRef = useRef<Set<string>>(new Set(messages.map((message) => message.id)))
   const userScrollInteractionActive = useRef(false)
   const assistantNavigationItems = useMemo(() => buildAssistantNavigationItems(messages), [messages])
   const assistantNavigationVisible = assistantNavigationItems.length > 1
   const assistantNavigationSignature = assistantNavigationItems.map((item) => item.messageId).join('|')
+  const messageIdentitySignature = messages.map((message) => message.id).join('|')
   const latestAssistantNavigationId = assistantNavigationItems.at(-1)?.messageId ?? null
   const [activeAssistantNavigationId, setActiveAssistantNavigationId] = useState<string | null>(latestAssistantNavigationId)
   const [assistantNavigationFloatingVisible, setAssistantNavigationFloatingVisible] = useState(false)
@@ -124,6 +127,18 @@ export function useChatMessageListScrollController({
     messageScrollViewportRef.current = messageScrollViewport
   }, [messageScrollViewport])
 
+  useEffect(() => {
+    const observed = observedMessageIdsRef.current
+    const nextObserved = new Set(messages.map((message) => message.id))
+    const appendedCount = messages.reduce((count, message) => count + (observed.has(message.id) ? 0 : 1), 0)
+    observedMessageIdsRef.current = nextObserved
+    if (!messageScrollViewportRef.current.awayFromBottom) {
+      setUnreadMessageCount(0)
+      return
+    }
+    if (appendedCount > 0) setUnreadMessageCount((current) => current + appendedCount)
+  }, [conversationId, messageIdentitySignature])
+
   useEffect(() => () => clearAssistantNavigationHideTimer(), [clearAssistantNavigationHideTimer])
 
   useEffect(() => {
@@ -186,6 +201,8 @@ export function useChatMessageListScrollController({
     const emptyViewport = createEmptyMessageScrollViewport()
     messageScrollViewportRef.current = emptyViewport
     setMessageScrollViewport(emptyViewport)
+    setUnreadMessageCount(0)
+    observedMessageIdsRef.current = new Set(messages.map((message) => message.id))
     userScrollInteractionActive.current = false
     userDragMomentumEligible.current = false
     if (userDragMomentumEligibilityTimer.current) {
@@ -256,6 +273,12 @@ export function useChatMessageListScrollController({
     latestMessageScrollTimers.current.add(timer)
   }, [autoStickToBottom, clearLatestMessageScrollTimers, clearLayoutScrollTimer, listRef, shouldAutoFollowLatestMessage])
 
+  const scrollToMessageListBottom = useCallback(() => {
+    setUnreadMessageCount(0)
+    onCloseOverlays()
+    scrollToLatestMessage(true, 0, { force: true, replacePending: true })
+  }, [onCloseOverlays, scrollToLatestMessage])
+
   const handleListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     if (activeActionMessageId) setActiveActionMessageId(null)
     const y = event.nativeEvent.contentOffset.y
@@ -266,6 +289,7 @@ export function useChatMessageListScrollController({
     commitMessageScrollViewport(nextViewport)
     if (!nextViewport.awayFromBottom) {
       autoStickToBottom.current = true
+      setUnreadMessageCount(0)
       if (
         assistantNavigationVisible &&
         latestAssistantNavigationId &&
@@ -286,6 +310,7 @@ export function useChatMessageListScrollController({
   }, [activeActionMessageId, assistantNavigationVisible, autoStickToBottom, chromeCollapsed, collapseChrome, commitMessageScrollViewport, lastScrollOffset, latestAssistantNavigationId, revealAssistantNavigation, setActiveActionMessageId])
 
   const handleListTouchStart = useCallback(() => {
+    Keyboard.dismiss()
     lockPagerGestureForMessageScroll()
   }, [lockPagerGestureForMessageScroll])
 
@@ -431,10 +456,13 @@ export function useChatMessageListScrollController({
     handleListTouchEnd,
     handleListTouchStart,
     handleMessageViewableItemsChanged,
+    messageListAwayFromBottom: messageScrollViewport.awayFromBottom,
     messageListMaintainVisibleContentPosition,
     messageListViewabilityConfig,
     requestMessageLayoutScroll,
     scrollToAssistantNavigationItem,
+    scrollToMessageListBottom,
     scrollToLatestMessage,
+    unreadMessageCount,
   }
 }

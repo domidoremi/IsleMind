@@ -10,7 +10,7 @@ const workflowCheckpointRecoveryCoordinator = createWorkflowCheckpointRecoveryCo
   createWorkflowCheckpointRuntime(createExpoSqliteDatabaseProvider()),
 )
 
-export function recoverVNextWorkflowCheckpoints(
+export function recoverWorkflowCheckpoints(
   recoveredRunIds: readonly AssistantRunId[],
   options: { readonly signal: AbortSignal },
 ): Promise<WorkflowCheckpointRecoveryReport> {

@@ -276,7 +276,9 @@ function checkpointTask(
   redactText: (value: string) => string,
 ): WorkflowCheckpointTask | undefined {
   const taskId = taskIdFromStep(step, redactText)
-  const status = terminalTaskStatus(step.observation?.metadata?.vnextTaskStatus)
+  const status = terminalTaskStatus(
+    step.observation?.metadata?.taskStatus ?? step.observation?.metadata?.vnextTaskStatus,
+  )
   if (!taskId || !status) return undefined
   return {
     taskId,
@@ -292,7 +294,7 @@ function taskIdFromStep(
   step: WorkflowCheckpointProjectionStep | undefined,
   redactText: (value: string) => string,
 ): string | undefined {
-  const value = step?.observation?.metadata?.vnextTaskId
+  const value = step?.observation?.metadata?.taskId ?? step?.observation?.metadata?.vnextTaskId
   return typeof value === 'string' && value.trim()
     ? boundedText(value, 256, '', redactText) || undefined
     : undefined

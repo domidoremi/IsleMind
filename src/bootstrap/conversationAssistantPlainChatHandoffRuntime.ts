@@ -3,14 +3,13 @@ import {
 } from '@/modules/assistant-runtime'
 import type { ProcessTrace } from '@/core'
 import { conversationAssistantDetachedWorkRegistry } from '@/bootstrap/conversationAssistantDetachedWorkRegistry'
-import { createVNextPlainChatRuntime } from '@/bootstrap/vnextConversationRuntime'
-import { saveConversationRecord } from '@/presentation/features/conversations/conversationStorePersistenceCommand'
+import { createPlainChatRuntime } from '@/bootstrap/conversationRuntime'
 import { projectConversationAssistantFailure } from '@/bootstrap/conversationAssistantMessageProjection'
 import { runConversationMemoryExtraction } from '@/bootstrap/conversationMemoryExtractionRuntime'
 import {
-  isVNextPlainChatEligible,
-  tryStartVNextPlainChatRun,
-} from '@/presentation/features/conversations/vnextPlainChatCommand'
+  isPlainChatEligible,
+  tryStartPlainChatRun,
+} from '@/presentation/features/conversations/plainChatCommand'
 import {
   clearActiveStream,
   getActiveStream,
@@ -31,7 +30,7 @@ export const conversationAssistantPlainChatHandoffRuntime =
     Settings,
     ChatErrorCode
   >({
-    isEligible: isVNextPlainChatEligible,
+    isEligible: isPlainChatEligible,
     getPersistedConversation(conversationId) {
       return useChatStore
         .getState()
@@ -46,11 +45,10 @@ export const conversationAssistantPlainChatHandoffRuntime =
         (message) => message.id === assistantMessageId,
       )?.status === 'cancelled'
     },
-    saveConversation: saveConversationRecord,
     async startPlainChatRun(input) {
-      const handle = await tryStartVNextPlainChatRun({
+      const handle = await tryStartPlainChatRun({
         ...input,
-        createRuntime: createVNextPlainChatRuntime,
+        createRuntime: createPlainChatRuntime,
       })
       if (!handle) return undefined
       return {

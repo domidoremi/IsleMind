@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 
 async function main() {
-  const controllerModule = await import('../src/presentation/features/conversations/vnextPlainChatController.ts')
+  const controllerModule = await import('../src/presentation/features/conversations/plainChatController.ts')
 
   testEligibility(controllerModule)
   testRecoveryMessageIdentity(controllerModule)
@@ -9,24 +9,24 @@ async function main() {
   await testFailureProjection(controllerModule)
   await testRecoveryProjection(controllerModule)
 
-  console.log('vNext presentation-controller tests passed')
+  console.log('Presentation-controller tests passed')
 }
 
 function testRecoveryMessageIdentity(controllerModule) {
   assert.equal(
-    controllerModule.resolveVNextChatRecoveryMessageId(
+    controllerModule.resolveChatRecoveryMessageId(
       { responseMessageId: 'older-persisted-message' },
     ),
     'older-persisted-message',
     'recovery preserves an exact persisted response-message identity without a run-kind selector',
   )
   assert.equal(
-    controllerModule.resolveVNextChatRecoveryMessageId({}),
+    controllerModule.resolveChatRecoveryMessageId({}),
     undefined,
     'a run without response identity cannot mutate a pending message',
   )
   assert.equal(
-    controllerModule.resolveVNextChatRecoveryMessageId({
+    controllerModule.resolveChatRecoveryMessageId({
       kind: 'chat',
       responseMessageId: 'dangling-response-message',
     }),
@@ -169,7 +169,7 @@ async function testRecoveryProjection(controllerModule) {
 }
 
 function createController(controllerModule, overrides = {}) {
-  return controllerModule.createVNextPlainChatController({
+  return controllerModule.createPlainChatController({
     createProjection() {
       return async () => {}
     },

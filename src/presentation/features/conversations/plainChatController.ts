@@ -4,64 +4,64 @@ import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
 
-export interface VNextPlainChatEligibilityInput {
+export interface PlainChatEligibilityInput {
   conversation: Conversation
   hasAttachments: boolean
   settings: Settings
 }
 
-export interface VNextPlainChatProjectionInput {
+export interface PlainChatProjectionInput {
   conversation: Conversation
   assistantMessageId: string
   provider: AIProvider
 }
 
-export interface VNextPlainChatRuntimeInput {
+export interface PlainChatRuntimeInput {
   conversation: Conversation
   provider: AIProvider
   settings: Settings
 }
 
-export type VNextPlainChatRuntimeFactory = (
-  input: VNextPlainChatRuntimeInput,
+export type PlainChatRuntimeFactory = (
+  input: PlainChatRuntimeInput,
 ) => ConversationRunUseCase
 
-export interface StartVNextPlainChatRunInput extends VNextPlainChatEligibilityInput, VNextPlainChatProjectionInput {
+export interface StartPlainChatRunInput extends PlainChatEligibilityInput, PlainChatProjectionInput {
   controller: AbortController
-  createRuntime: VNextPlainChatRuntimeFactory
+  createRuntime: PlainChatRuntimeFactory
 }
 
-export interface VNextPlainChatRunHandle {
+export interface PlainChatRunHandle {
   done: Promise<void>
 }
 
-export interface VNextPlainChatControllerDependencies {
+export interface PlainChatControllerDependencies {
   createProjection: (
-    input: VNextPlainChatProjectionInput,
+    input: PlainChatProjectionInput,
     onTerminalPersisted: () => void,
   ) => ConversationRunProjection
   finishProjectionFailure: (
-    input: VNextPlainChatProjectionInput,
+    input: PlainChatProjectionInput,
     message: string,
   ) => Promise<void>
   isMessageCancelled: (conversationId: string, messageId: string) => boolean
   recoverProjection: (run: AssistantRun) => Promise<void>
 }
 
-export interface VNextPlainChatController {
-  isEligible(input: VNextPlainChatEligibilityInput): boolean
-  start(input: StartVNextPlainChatRunInput): Promise<VNextPlainChatRunHandle | undefined>
+export interface PlainChatController {
+  isEligible(input: PlainChatEligibilityInput): boolean
+  start(input: StartPlainChatRunInput): Promise<PlainChatRunHandle | undefined>
   recover(runtime: ConversationRunUseCase): Promise<readonly AssistantRun[]>
 }
 
-export function createVNextPlainChatController(
-  dependencies: VNextPlainChatControllerDependencies,
-): VNextPlainChatController {
+export function createPlainChatController(
+  dependencies: PlainChatControllerDependencies,
+): PlainChatController {
   return {
-    isEligible: isVNextPlainChatEligible,
+    isEligible: isPlainChatEligible,
 
     async start(input) {
-      if (!isVNextPlainChatEligible(input) ||
+      if (!isPlainChatEligible(input) ||
         input.controller.signal.aborted ||
         dependencies.isMessageCancelled(input.conversation.id, input.assistantMessageId)) {
         return undefined
@@ -111,7 +111,7 @@ export function createVNextPlainChatController(
   }
 }
 
-export function isVNextPlainChatEligible(input: VNextPlainChatEligibilityInput): boolean {
+export function isPlainChatEligible(input: PlainChatEligibilityInput): boolean {
   return !input.hasAttachments &&
     !input.settings.webSearchEnabled &&
     !input.conversation.skillIds?.length &&
@@ -119,7 +119,7 @@ export function isVNextPlainChatEligible(input: VNextPlainChatEligibilityInput):
     !input.conversation.enabledTools?.length
 }
 
-export function resolveVNextChatRecoveryMessageId(
+export function resolveChatRecoveryMessageId(
   run: Pick<AssistantRun, 'responseMessageId'>,
 ): string | undefined {
   return run.responseMessageId

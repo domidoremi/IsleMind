@@ -127,23 +127,20 @@ async function main() {
     let capturedRequestSnapshotAtRunCreated
     let now = 50_000
     const ids = { next: (prefix) => `${prefix}-${++now}` }
-    const adapter = providersModule.createCallbackProviderAdapter({
+    const adapter = {
       providerId: 'walking-provider',
-      transport: {
-        async start(request, callbacks) {
-          assert.ok(
-            capturedRequestSnapshotAtRunCreated,
-            'the exact provider-neutral request is durable before provider dispatch starts',
-          )
-          capturedProviderRequest = request
-          callbacks.onEvent({ type: 'text-delta', text: 'Persisted ' })
-          callbacks.onEvent({ type: 'citation', citationId: 'source-1', title: 'Source' })
-          callbacks.onEvent({ type: 'text-delta', text: 'answer.' })
-          callbacks.onEvent({ type: 'usage', inputTokens: 2, outputTokens: 2 })
-          callbacks.onComplete()
-        },
+      async *stream(request) {
+        assert.ok(
+          capturedRequestSnapshotAtRunCreated,
+          'the exact provider-neutral request is durable before provider dispatch starts',
+        )
+        capturedProviderRequest = request
+        yield { type: 'text-delta', text: 'Persisted ' }
+        yield { type: 'citation', citationId: 'source-1', title: 'Source' }
+        yield { type: 'text-delta', text: 'answer.' }
+        yield { type: 'usage', inputTokens: 2, outputTokens: 2 }
       },
-    })
+    }
     let capturedProviderRequest
     let capturedPreparation
     const assistantRuntime = runtimeModule.createAssistantRuntime({
@@ -298,7 +295,7 @@ async function main() {
     database.close()
   }
 
-  console.log('vNext walking-skeleton integration tests passed')
+  console.log('Walking-skeleton integration tests passed')
 }
 
 function assertStrictChatRequestValidation(core) {
@@ -353,18 +350,38 @@ function assertStrictChatRequestValidation(core) {
 
 function assertGenericRuntimePreparationBoundary() {
   const source = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'bootstrap', 'vnextConversationRuntime.ts'),
+    path.join(__dirname, '..', 'src', 'bootstrap', 'conversationRuntime.ts'),
     'utf8',
   )
   assert.match(
     source,
     /A bounded Chat request preparation policy is required for new turns\./,
-    'generic vNext runtime fails closed instead of dispatching an unplanned full history',
+    'generic conversation runtime fails closed instead of dispatching an unplanned full history',
   )
   assert.match(
     source,
     /requestPreparation: createPlainChatRequestPreparation\(/,
     'plain Chat runtime explicitly supplies the bounded preparation policy',
+  )
+  assert.match(
+    source,
+    /const upstreamModel = resolveProviderModelAlias\(\s*input\.provider,\s*preparation\.request\.model,\s*\)/,
+    'Plain planning resolves the provider-admission upstream model before capability lookup',
+  )
+  assert.match(
+    source,
+    /const modelConfig = getModelConfig\(\s*\n?\s*upstreamModel,\s*input\.provider\.type,/,
+    'Plain planning uses the upstream model for model capabilities and context-window budgeting',
+  )
+  assert.match(
+    source,
+    /const plan = planChatContext\([\s\S]*?model: upstreamModel,[\s\S]*?remoteCompactMode: 'off'/,
+    'Plain planning shares the frozen context planner while retaining its native remote-compact limitation',
+  )
+  assert.match(
+    source,
+    /contextReceipt: buildAssistantContextPlanReceipt\(\{[\s\S]*?model: upstreamModel,/,
+    'Plain context receipts use the same upstream source identity as planning',
   )
 }
 
@@ -531,18 +548,15 @@ async function assertPreparedModelOperationRequestSnapshot(
   let now = 80_000
   let dispatchedRequest
   const providerId = 'prepared-request-provider'
-  const adapter = providersModule.createCallbackProviderAdapter({
+  const adapter = {
     providerId,
     capabilities: ['chat', 'tools'],
-    transport: {
-      async start(request, callbacks) {
-        events.push('dispatch')
-        dispatchedRequest = request
-        callbacks.onEvent({ type: 'text-delta', text: 'Prepared request.' })
-        callbacks.onComplete()
-      },
+    async *stream(request) {
+      events.push('dispatch')
+      dispatchedRequest = request
+      yield { type: 'text-delta', text: 'Prepared request.' }
     },
-  })
+  }
   const assistantRuntime = runtimeModule.createAssistantRuntime({
     clock: { now: () => ++now },
     ids,
@@ -1277,17 +1291,25 @@ async function assertChatActivityPersistence(core, runtimeModule, assistantRunti
     sourceManifest: [],
     failureCodes: [],
   }
-  const requestEvidence = Object.freeze({
-    schema: 'islemind.assistant-activity-request-evidence.v1',
+  const canonicalRequest = Object.freeze({
+    schema: core.CHAT_REQUEST_SCHEMA,
     conversationId: 'conversation-walking-skeleton',
     providerId: 'activity-provider',
     model: 'activity-model',
-    payload: Object.freeze({
-      provider: Object.freeze({ id: 'activity-provider', apiKey: '[redacted]' }),
-      messages: Object.freeze([Object.freeze({ role: 'user', content: 'Durable activity.' })]),
-    }),
-    redactedFields: Object.freeze(['$.provider.apiKey', '$.signal']),
-    contextReceipt: activityContextReceipt,
+    messages: Object.freeze([Object.freeze({
+      id: 'message-activity',
+      role: 'user',
+      text: 'Durable activity.',
+    })]),
+    generationParameterSources: Object.freeze({ temperature: 'explicit' }),
+    requestedCapabilities: Object.freeze(['attachments', 'provider-tools', 'remote-compact']),
+    toolDefinitions: Object.freeze([Object.freeze({
+      operationId: 'builtin:read_workspace',
+      name: 'islemind_builtin_read_workspace',
+      description: 'Read the current workspace.',
+      inputSchema: Object.freeze({ type: 'object', properties: Object.freeze({}) }),
+      permission: 'read-only',
+    })]),
   })
   const workspaceWritebackHandoff = createWorkspaceWritebackHandoff({
     runId,
@@ -1306,7 +1328,8 @@ async function assertChatActivityPersistence(core, runtimeModule, assistantRunti
     responseMessageId: 'assistant-chat-message-1',
     providerId: 'activity-provider',
     model: 'activity-model',
-    requestEvidence,
+    request: canonicalRequest,
+    contextReceipt: activityContextReceipt,
     workspaceWritebackHandoff,
     context: {
       schema: 'islemind.context-snapshot.v1',
@@ -1386,32 +1409,32 @@ async function assertChatActivityPersistence(core, runtimeModule, assistantRunti
   )
   assert.equal(
     runCreatedRequestSnapshot?.schema,
-    'islemind.assistant-run-activity-request-snapshot.v1',
-    'run.created projects rich Chat request evidence only after atomic persistence',
+    'islemind.assistant-run-request-snapshot.v1',
+    'run.created projects the canonical Rich request only after atomic persistence',
   )
   assert.deepEqual(
     runCreatedRequestSnapshot?.request,
-    requestEvidence,
-    'the activity snapshot retains the complete redacted provider-neutral request evidence',
+    canonicalRequest,
+    'the Rich activity snapshot retains the exact provider-neutral request used by Plain runs',
   )
   assert.deepEqual(
-    runCreatedRequestSnapshot?.request.contextReceipt,
+    runCreatedRequestSnapshot?.contextReceipt,
     activityContextReceipt,
-    'rich Chat activity evidence retains the bounded context receipt without raw context text',
+    'Rich and Plain snapshots project the bounded context receipt in the same field',
   )
   assert.equal(
     runCreatedRequestSnapshot?.requestHash,
-    runtimeModule.buildAssistantRequestHash(requestEvidence),
-    'rich activity evidence retains a stable hash of its complete redacted envelope',
+    runtimeModule.buildAssistantRequestHash(canonicalRequest),
+    'Rich and Plain snapshots hash the exact canonical request identically',
   )
   assert.equal(
     runCreatedRequestSnapshot?.capabilityRevision,
-    runtimeModule.buildAssistantCapabilityRevision(requestEvidence.payload),
-    'rich activity evidence retains the capability revision derived from admitted request features',
+    runtimeModule.buildAssistantCapabilityRevision(canonicalRequest),
+    'Rich and Plain snapshots derive capability revision from the same canonical request projection',
   )
   assert.equal(Object.isFrozen(runCreatedRequestSnapshot), true)
   assert.equal(Object.isFrozen(runCreatedRequestSnapshot?.request), true)
-  assert.equal(Object.isFrozen(runCreatedRequestSnapshot?.request.payload), true)
+  assert.equal(Object.isFrozen(runCreatedRequestSnapshot?.request.toolDefinitions), true)
   await database.run(
     'UPDATE assistant_run_request_snapshots SET requestHash = ? WHERE runId = ?',
     ['stable-v1:0000000000000000', runId],
@@ -1419,7 +1442,7 @@ async function assertChatActivityPersistence(core, runtimeModule, assistantRunti
   await assert.rejects(
     () => persistence.getRequestSnapshot(runId),
     /assistant request hash does not match/i,
-    'durable request identity evidence is bound to the stored redacted request on read',
+    'durable request identity evidence is bound to the stored canonical request on read',
   )
   const activityJournal = await persistence.list(runId)
   assert.deepEqual(activityJournal.map((entry) => entry.type), [
@@ -1484,21 +1507,22 @@ async function assertChatActivityPersistence(core, runtimeModule, assistantRunti
   assert.deepEqual(stored?.workspaceWritebackHandoff, workspaceWritebackHandoff)
   assert.equal(Object.isFrozen(stored?.workspaceWritebackHandoff), true, 'decoded workspace handoff evidence is immutable')
 
-  let invalidEvidenceExecutorCalls = 0
-  const invalidEvidenceRunId = core.asAssistantRunId('run-chat-activity-invalid-evidence')
-  const invalidEvidenceResult = await assistantRuntime.executeActivity({
-    runId: invalidEvidenceRunId,
+  let invalidRequestExecutorCalls = 0
+  const invalidRequestRunId = core.asAssistantRunId('run-chat-activity-invalid-request')
+  const invalidRequestResult = await assistantRuntime.executeActivity({
+    runId: invalidRequestRunId,
     kind: 'chat',
     conversationId: 'conversation-walking-skeleton',
     providerId: 'activity-provider',
     model: 'activity-model',
-    requestEvidence: {
-      ...requestEvidence,
+    request: {
+      ...canonicalRequest,
       conversationId: 'different-conversation',
     },
+    contextReceipt: activityContextReceipt,
     context: {
       schema: 'islemind.context-snapshot.v1',
-      id: core.asContextSnapshotId('context-chat-activity-invalid-evidence'),
+      id: core.asContextSnapshotId('context-chat-activity-invalid-request'),
       createdAt: 3,
       conversationMessageIds: [],
       memoryIds: [],
@@ -1508,17 +1532,17 @@ async function assertChatActivityPersistence(core, runtimeModule, assistantRunti
     },
     executor: {
       async execute() {
-        invalidEvidenceExecutorCalls += 1
+        invalidRequestExecutorCalls += 1
         return { outputText: 'must not execute' }
       },
     },
   })
-  assert.equal(invalidEvidenceResult.ok, false, 'identity-mismatched activity evidence fails closed')
-  if (invalidEvidenceResult.ok) throw new Error('Expected invalid activity evidence to fail.')
-  assert.equal(invalidEvidenceResult.error.code, 'activity_failed')
-  assert.equal(invalidEvidenceExecutorCalls, 0)
-  assert.equal(await persistence.get(invalidEvidenceRunId), undefined)
-  assert.equal(await persistence.getRequestSnapshot(invalidEvidenceRunId), undefined)
+  assert.equal(invalidRequestResult.ok, false, 'identity-mismatched canonical activity requests fail closed')
+  if (invalidRequestResult.ok) throw new Error('Expected invalid canonical activity request to fail.')
+  assert.equal(invalidRequestResult.error.code, 'activity_failed')
+  assert.equal(invalidRequestExecutorCalls, 0)
+  assert.equal(await persistence.get(invalidRequestRunId), undefined)
+  assert.equal(await persistence.getRequestSnapshot(invalidRequestRunId), undefined)
 
   const validJson = row.workspaceWritebackHandoffJson
   const invalidHandoffs = [

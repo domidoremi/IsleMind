@@ -16,12 +16,11 @@ import type {
 import type { MessageCitation } from '@/types/contextContracts'
 import type {
   ChatReasoningReplayPart,
-  ChatRequest as VNextChatRequest,
+  ChatRequest as CanonicalChatRequest,
   ChatToolCallProviderMetadata,
   StreamEvent,
 } from '@/core'
 import {
-  createCallbackProviderAdapter,
   createProviderCredentialSynchronization,
   createProviderEmbeddingAdapter,
   createProviderMediaAdapter,
@@ -78,103 +77,168 @@ export type ProviderStreamChat = (
 ) => Promise<ProviderRuntimeStreamHandle>
 
 export function createProviderRuntimeAdapter(options: ProviderRuntimeAdapterOptions): ProviderAdapter {
-  return createCallbackProviderAdapter({
+  return {
     providerId: options.provider.id,
     capabilities: providerAdapterCapabilities(options.provider),
-    transport: {
-      async start(request, callbacks, gatewayOptions) {
-        let handle: ProviderRuntimeStreamHandle | undefined
-        let emittedText = ''
-        const seenCitations = new Set<string>()
-        const streamChat = options.streamChat ?? streamProviderChat
-        const runtimeRequest = toRuntimeChatRequest(options, request)
-        const upstreamRequestController = new AbortController()
-        runtimeRequest.signal = upstreamRequestController.signal
-        const abort = () => {
-          upstreamRequestController.abort(gatewayOptions.signal.reason)
-          handle?.controller.abort(gatewayOptions.signal.reason)
-        }
-        gatewayOptions.signal.addEventListener('abort', abort, { once: true })
-        if (gatewayOptions.signal.aborted) abort()
-
-        try {
-          if (gatewayOptions.signal.aborted) return
-          handle = await streamChat(
-            runtimeRequest,
-            (text) => {
-              if (!text || gatewayOptions.signal.aborted) return
-              emittedText += text
-              callbacks.onEvent({ type: 'text-delta', text })
-            },
-            (result) => {
-              if (gatewayOptions.signal.aborted) return
-              emitMissingFinalText(result, emittedText, callbacks.onEvent)
-              const toolCallEvents = (result.providerToolCalls ?? []).map((call, index): StreamEvent => {
-                const providerMetadata = modelOperationProviderMetadata(call)
-                return {
-                  type: 'tool-call',
-                  toolCallId: call.callId || call.id || `tool-call-${index}`,
-                  toolName: call.name,
-                  arguments: parseToolArguments(call.arguments),
-                  ...(providerMetadata ? { providerMetadata } : {}),
-                }
-              })
-              const reasoningReplay = toChatReasoningReplay(result)
-              if (reasoningReplay.length || toolCallEvents.length) {
-                callbacks.onEvent({
-                  type: 'provider-continuation-state',
-                  binding: {
-                    providerId: options.provider.id,
-                    model: request.model,
-                  },
-                  reasoningReplay,
-                })
-              }
-              for (const event of toolCallEvents) callbacks.onEvent(event)
-              if (result.usage) {
-                callbacks.onEvent({
-                  type: 'usage',
-                  ...(typeof result.usage.inputTokens === 'number' ? { inputTokens: result.usage.inputTokens } : {}),
-                  ...(typeof result.usage.outputTokens === 'number' ? { outputTokens: result.usage.outputTokens } : {}),
-                  ...(typeof result.usage.totalTokens === 'number' ? { totalTokens: result.usage.totalTokens } : {}),
-                  ...(typeof result.usage.cacheCreationInputTokens === 'number' ? { cacheCreationInputTokens: result.usage.cacheCreationInputTokens } : {}),
-                  ...(typeof result.usage.cacheReadInputTokens === 'number' ? { cacheReadInputTokens: result.usage.cacheReadInputTokens } : {}),
-                  ...(typeof result.usage.cachedInputTokens === 'number' ? { cachedInputTokens: result.usage.cachedInputTokens } : {}),
-                  ...(typeof result.usage.reasoningTokens === 'number' ? { reasoningTokens: result.usage.reasoningTokens } : {}),
-                })
-              }
-              for (const citation of result.citations ?? []) {
-                emitCitation(citation, seenCitations, callbacks.onEvent)
-              }
-            },
-            (error) => callbacks.onError(error),
-            (citations) => {
-              if (gatewayOptions.signal.aborted) return
-              for (const citation of citations) {
-                emitCitation(citation, seenCitations, callbacks.onEvent)
-              }
-            },
-            (trace) => {
-              if (gatewayOptions.signal.aborted) return
-              callbacks.onEvent({
-                type: 'trace',
-                traceId: trace.id,
-                traceType: trace.type,
-                traceStatus: trace.status,
-                ...(trace.title ? { title: trace.title } : {}),
-              })
-            },
-          )
-          if (gatewayOptions.signal.aborted) abort()
-          await handle.done
-        } catch (error) {
-          callbacks.onError(error)
-        } finally {
-          gatewayOptions.signal.removeEventListener('abort', abort)
-        }
-      },
+    stream(request, gatewayOptions) {
+      return streamProviderRuntimeEvents(options, request, gatewayOptions)
     },
-  })
+  }
+}
+
+async function* streamProviderRuntimeEvents(
+  options: ProviderRuntimeAdapterOptions,
+  request: CanonicalChatRequest,
+  gatewayOptions: Parameters<ProviderAdapter['stream']>[1],
+): AsyncIterable<StreamEvent> {
+  if (gatewayOptions.signal.aborted) return
+  const queue = new ProviderRuntimeEventQueue<StreamEvent>()
+  let handle: ProviderRuntimeStreamHandle | undefined
+  let producerSettled = false
+  let emittedText = ''
+  const seenCitations = new Set<string>()
+  const streamChat = options.streamChat ?? streamProviderChat
+  const runtimeRequest = toRuntimeChatRequest(options, request)
+  const upstreamRequestController = new AbortController()
+  runtimeRequest.signal = upstreamRequestController.signal
+  const abort = () => {
+    upstreamRequestController.abort(gatewayOptions.signal.reason)
+    handle?.controller.abort(gatewayOptions.signal.reason)
+    queue.complete()
+  }
+  gatewayOptions.signal.addEventListener('abort', abort, { once: true })
+  if (gatewayOptions.signal.aborted) abort()
+
+  const producer = (async () => {
+    try {
+      if (gatewayOptions.signal.aborted) return
+      handle = await streamChat(
+        runtimeRequest,
+        (text) => {
+          if (!text || gatewayOptions.signal.aborted) return
+          emittedText += text
+          queue.push({ type: 'text-delta', text })
+        },
+        (result) => {
+          if (gatewayOptions.signal.aborted) return
+          emitMissingFinalText(result, emittedText, (event) => queue.push(event))
+          const toolCallEvents = (result.providerToolCalls ?? []).map((call, index): StreamEvent => {
+            const providerMetadata = modelOperationProviderMetadata(call)
+            return {
+              type: 'tool-call',
+              toolCallId: call.callId || call.id || `tool-call-${index}`,
+              toolName: call.name,
+              arguments: parseToolArguments(call.arguments),
+              ...(providerMetadata ? { providerMetadata } : {}),
+            }
+          })
+          const reasoningReplay = toChatReasoningReplay(result)
+          if (reasoningReplay.length || toolCallEvents.length) {
+            queue.push({
+              type: 'provider-continuation-state',
+              binding: { providerId: options.provider.id, model: request.model },
+              reasoningReplay,
+            })
+          }
+          for (const event of toolCallEvents) queue.push(event)
+          if (result.usage) {
+            queue.push({
+              type: 'usage',
+              ...(typeof result.usage.inputTokens === 'number' ? { inputTokens: result.usage.inputTokens } : {}),
+              ...(typeof result.usage.outputTokens === 'number' ? { outputTokens: result.usage.outputTokens } : {}),
+              ...(typeof result.usage.totalTokens === 'number' ? { totalTokens: result.usage.totalTokens } : {}),
+              ...(typeof result.usage.cacheCreationInputTokens === 'number' ? { cacheCreationInputTokens: result.usage.cacheCreationInputTokens } : {}),
+              ...(typeof result.usage.cacheReadInputTokens === 'number' ? { cacheReadInputTokens: result.usage.cacheReadInputTokens } : {}),
+              ...(typeof result.usage.cachedInputTokens === 'number' ? { cachedInputTokens: result.usage.cachedInputTokens } : {}),
+              ...(typeof result.usage.reasoningTokens === 'number' ? { reasoningTokens: result.usage.reasoningTokens } : {}),
+            })
+          }
+          for (const citation of result.citations ?? []) {
+            emitCitation(citation, seenCitations, (event) => queue.push(event))
+          }
+        },
+        (error) => queue.fail(error),
+        (citations) => {
+          if (gatewayOptions.signal.aborted) return
+          for (const citation of citations) {
+            emitCitation(citation, seenCitations, (event) => queue.push(event))
+          }
+        },
+        (trace) => {
+          if (gatewayOptions.signal.aborted) return
+          queue.push({
+            type: 'trace',
+            traceId: trace.id,
+            traceType: trace.type,
+            traceStatus: trace.status,
+            ...(trace.title ? { title: trace.title } : {}),
+          })
+        },
+      )
+      if (upstreamRequestController.signal.aborted) {
+        handle.controller.abort(upstreamRequestController.signal.reason)
+      }
+      await handle.done
+      producerSettled = true
+      queue.complete()
+    } catch (error) {
+      producerSettled = true
+      queue.fail(error)
+    }
+  })()
+  void producer.catch(() => undefined)
+
+  try {
+    for await (const event of queue) yield event
+  } finally {
+    gatewayOptions.signal.removeEventListener('abort', abort)
+    if (!gatewayOptions.signal.aborted && !producerSettled) {
+      upstreamRequestController.abort(new DOMException('Provider stream consumer stopped.', 'AbortError'))
+      handle?.controller.abort(new DOMException('Provider stream consumer stopped.', 'AbortError'))
+    }
+  }
+}
+
+class ProviderRuntimeEventQueue<Value> implements AsyncIterable<Value> {
+  private readonly values: Value[] = []
+  private completion: { error?: unknown } | undefined
+  private wake?: () => void
+
+  push(value: Value): void {
+    if (this.completion) return
+    this.values.push(value)
+    this.wake?.()
+    this.wake = undefined
+  }
+
+  complete(): void {
+    if (this.completion) return
+    this.completion = {}
+    this.wake?.()
+    this.wake = undefined
+  }
+
+  fail(error: unknown): void {
+    if (this.completion) return
+    this.completion = { error }
+    this.wake?.()
+    this.wake = undefined
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<Value> {
+    while (true) {
+      const value = this.values.shift()
+      if (value !== undefined) {
+        yield value
+        continue
+      }
+      if (this.completion) {
+        if (this.completion.error) throw this.completion.error
+        return
+      }
+      await new Promise<void>((resolve) => { this.wake = resolve })
+    }
+  }
 }
 
 function providerAdapterCapabilities(provider: AIProvider): ProviderAdapter['capabilities'] {
@@ -783,7 +847,7 @@ function resolveProviderStreamRuntime() {
 
 export function toRuntimeChatRequest(
   options: ProviderRuntimeAdapterOptions,
-  request: VNextChatRequest,
+  request: CanonicalChatRequest,
 ): ProviderRuntimeChatRequest {
   const providerToolDeclarations = buildModelOperationDeclarations(options.provider, request)
   return {
@@ -808,7 +872,7 @@ export function toRuntimeChatRequest(
 
 function toProviderRuntimeMessages(
   provider: AIProvider,
-  messages: VNextChatRequest['messages'],
+  messages: CanonicalChatRequest['messages'],
 ): ProviderRuntimeChatMessage[] {
   return messages.flatMap<ProviderRuntimeChatMessage>((message): ProviderRuntimeChatMessage[] => {
     if (message.role === 'system') return []
@@ -895,13 +959,13 @@ function usesAnthropicModelOperationMessages(provider: AIProvider): boolean {
   return provider.type === 'anthropic' || provider.wireProtocol === 'anthropic-compatible'
 }
 
-function providerCallId(call: NonNullable<VNextChatRequest['messages'][number]['toolCalls']>[number]): string {
+function providerCallId(call: NonNullable<CanonicalChatRequest['messages'][number]['toolCalls']>[number]): string {
   const value = call.providerMetadata?.providerCallId
   return typeof value === 'string' && value.trim() ? value : call.callId
 }
 
 function providerThoughtSignature(
-  call: NonNullable<VNextChatRequest['messages'][number]['toolCalls']>[number],
+  call: NonNullable<CanonicalChatRequest['messages'][number]['toolCalls']>[number],
 ): string | undefined {
   const value = call.providerMetadata?.thoughtSignature
   return typeof value === 'string' && value.trim() ? value : undefined
@@ -999,7 +1063,7 @@ function toChatReasoningReplay(
 
 function buildModelOperationDeclarations(
   provider: AIProvider,
-  request: VNextChatRequest,
+  request: CanonicalChatRequest,
 ): readonly unknown[] {
   if (!request.toolDefinitions?.length || provider.capabilities?.nativeTools !== true) return []
   const model = getModelConfig(request.model, provider.type, provider.modelConfigs)

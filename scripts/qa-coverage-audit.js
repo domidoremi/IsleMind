@@ -370,7 +370,7 @@ const contextCompressionV2MatrixRequiredSnippets = [
   'src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts',
   'src/modules/providers/providerCompactUsageStore.ts',
   'src/bootstrap/providerCompactUsage.ts',
-  'src/services/runtimeDiagnostics.ts',
+  'src/bootstrap/runtimeDiagnostics.ts',
   'scripts/context-compression-v2-tests.js',
   'bun run test:context-compression-v2',
   'structured local compression metadata schema version 2',
@@ -4830,7 +4830,7 @@ function runMilestoneFResultValidatorSelfTest() {
   uncheckedAppearance[0].selectionEvidence.family.checked = false
   assertInvalid('Appearance checked selection', collectThemeLocaleIssues(uncheckedAppearance, validatePath), /checked family evidence/)
   const wrongCustomAccent = clone(themeRows)
-  const customRow = wrongCustomAccent.find((row) => row.Step === 'appearance-markdown-dark-custom-indigo')
+  const customRow = wrongCustomAccent.find((row) => row.Step === 'appearance-liquid-glass-dark-custom-indigo')
   customRow.customAccentInputValue = '#4455B8'
   assertInvalid('Appearance custom accent', collectThemeLocaleIssues(wrongCustomAccent, validatePath), /#4455B7/)
   const visibleErrorBoundary = clone(themeRows)

@@ -281,7 +281,7 @@ export interface AssistantConversationRequestPlanningInput<
   readonly runtimeConversation: TConversation
   readonly settings: TSettings
   readonly sourceMessages: readonly TSourceMessage[]
-  readonly lastUserMessage?: { readonly content?: string }
+  readonly lastUserMessage?: { readonly content?: string | null }
   readonly providerToolCount: number
   readonly upstreamModel: string
   /** The reply-owned signal must reach any model-backed planning effect. */
@@ -647,7 +647,7 @@ export function createAssistantConversationRequestPlanningRuntime<
       messages: input.sourceMessages,
       contextSources: contextRuntime.contextSources,
       draft: {
-        text: input.lastUserMessage?.content,
+        text: input.lastUserMessage?.content ?? undefined,
         requestedOutput: input.runtimeConversation.skillSnapshot?.expectedReplyFormat,
       },
       modelContextWindow: input.modelConfig.contextWindow,
