@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Platform, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import * as Clipboard from 'expo-clipboard'
 import { useTranslation } from 'react-i18next'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import type { Attachment, CommandReference } from '@/types/chatContracts'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { ISLE_MIN_TOUCH_TARGET, IslePanel, IslePressable, useIsleDialog } from '@/components/ui/isle'
+import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import { ISLE_MIN_TOUCH_TARGET, IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { normalizeSearchText } from '@/utils/text'
 import { type ChatMultimodalEntry, type ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
@@ -21,12 +23,26 @@ import {
 import { appendComposerVoiceTranscript, composerVoiceIsBusy, formatComposerVoiceDuration, type ComposerVoiceState } from './composerVoiceState'
 import { useComposerVoiceInput } from './useComposerVoiceInput'
 import { useComposerDraftPersistence } from './useComposerDraftPersistence'
+import { MessageInput, SendButton } from './FloatingComposerSurfaces'
+import { useComposerLongDraftEditor } from './useComposerLongDraftEditor'
+import type { ComposerSizeMode } from './composerLongDraftState'
+import {
+  COMPOSER_INPUT_MIN_HEIGHT,
+  resolveFloatingComposerGeometry,
+  type ComposerActivityState,
+} from './floatingComposerGeometry'
 export interface ComposerCommand {
   id: string
   label: string
   description?: string
   insertText?: string
   run?: () => void
+}
+
+export interface ComposerPresentationState {
+  sizeMode: ComposerSizeMode
+  activityState: ComposerActivityState
+  messageInputHeight: number
 }
 
 interface ComposerProps {
@@ -44,10 +60,12 @@ interface ComposerProps {
   multimodalPolicy?: ChatMultimodalPolicy
   utilitiesOpen?: boolean
   showInlineUtilities?: boolean
+  showInlineVoice?: boolean
   showCommandAction?: boolean
   placeholder?: string
   leadingAccessory?: ReactNode
   trailingAccessory?: ReactNode
+  floatingAccessory?: ReactNode
   bottomAccessory?: ReactNode
   onClearPending?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
@@ -55,16 +73,22 @@ interface ComposerProps {
   onBlur?: () => void
   onOpenKnowledge?: () => void
   onRequestCloseUtilities?: () => void
+  viewportHeight: number
+  horizontalPadding: number
+  safeAreaTop: number
+  safeAreaBottom: number
+  keyboardLift: number
+  motion: MotionIntensity
+  onComposerPresentationChange?: (state: ComposerPresentationState) => void
+  onStop?: () => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming?: (content: string, attachments: Attachment[]) => Promise<void> | void
 }
 
 const COMPOSER_CONTROL_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
-const COMPOSER_MAX_LENGTH = 12000
-const COMPOSER_INPUT_MIN_HEIGHT = 48
+const COMPOSER_MAX_LENGTH = 50000
 const COMPOSER_INPUT_LINE_HEIGHT = 22
 const COMPOSER_INPUT_VERTICAL_PADDING = 8
-const COMPOSER_INPUT_MAX_LINES = 6
 const COMPOSER_DOCK_CONTROL_SIZE = ISLE_MIN_TOUCH_TARGET
 const COMPOSER_INPUT_WEB_SCROLLBAR_PROPS = Platform.OS === 'web'
   ? ({ className: 'composer-input-no-scrollbar' } as Record<string, unknown>)
@@ -85,10 +109,12 @@ export function Composer({
   multimodalPolicy,
   utilitiesOpen = false,
   showInlineUtilities = true,
+  showInlineVoice = true,
   showCommandAction = true,
   placeholder,
   leadingAccessory,
   trailingAccessory,
+  floatingAccessory,
   bottomAccessory,
   onClearPending,
   onReferenceSelected,
@@ -96,19 +122,31 @@ export function Composer({
   onBlur,
   onOpenKnowledge,
   onRequestCloseUtilities,
+  viewportHeight,
+  horizontalPadding,
+  safeAreaTop,
+  safeAreaBottom,
+  keyboardLift,
+  motion,
+  onComposerPresentationChange,
+  onStop,
   onSend,
   onSendWhileStreaming,
 }: ComposerProps) {
-  const { colors, isGlass, canonicalThemeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
-  const { width: composerWindowWidth } = useWindowDimensions()
+  const {
+    width: composerWindowWidth,
+    fontScale: composerFontScale,
+  } = useWindowDimensions()
+  const effectiveInputLineHeight =
+    COMPOSER_INPUT_LINE_HEIGHT * Math.max(0.85, composerFontScale)
   const [content, setContent] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
   const [focused, setFocused] = useState(false)
   const [sending, setSending] = useState(false)
-  const [inputContentHeight, setInputContentHeight] = useState(COMPOSER_INPUT_MIN_HEIGHT)
   const [consumedDraftKey, setConsumedDraftKey] = useState<string | number | undefined>(undefined)
   const [appliedInitialDraftKey, setAppliedInitialDraftKey] = useState<string | number | undefined>(undefined)
   const consumedExternalSubmitKey = useRef<string | number | undefined>(undefined)
@@ -124,6 +162,13 @@ export function Composer({
     skipHydration: !!initialDraft?.trim() || (initialAttachments?.length ?? 0) > 0,
     setContent,
     setAttachments,
+  })
+  const editor = useComposerLongDraftEditor({
+    value: content,
+    onValueChange: setContent,
+    markDraftChanged,
+    lineHeight: effectiveInputLineHeight,
+    verticalPadding: COMPOSER_INPUT_VERTICAL_PADDING * 2,
   })
   const appendVoiceTranscript = useCallback((transcript: string) => {
     markDraftChanged()
@@ -176,7 +221,9 @@ export function Composer({
   const draftAccessibilityValue = draftStatusVisible
     ? { text: draftWarningLabel ? `${draftStatusLabel}. ${draftWarningLabel}` : draftStatusLabel }
     : undefined
-  const sendButtonAccessibilityHint = sending
+  const sendButtonAccessibilityHint = streaming && !hasSendableDraft
+    ? t('chat.stopGeneratingAccessibilityHint')
+    : sending
     ? t('chat.sendingAccessibilityHint')
     : disabled
       ? t('chat.sendMessageUnavailableAccessibilityHint')
@@ -194,12 +241,42 @@ export function Composer({
     trigger.query.length === 0 ||
     trigger.type === 'command'
   )
-  const isMultilineDraft = content.includes('\n') || content.length > 70
-  const multilineInput = isMultilineDraft
-  const inputMaxHeight = COMPOSER_INPUT_LINE_HEIGHT * COMPOSER_INPUT_MAX_LINES + COMPOSER_INPUT_VERTICAL_PADDING * 2
-  const inputHeight = Math.max(COMPOSER_INPUT_MIN_HEIGHT, Math.min(inputMaxHeight, Math.ceil(inputContentHeight)))
-  const inputPaddingVertical = isMultilineDraft ? COMPOSER_INPUT_VERTICAL_PADDING : (COMPOSER_INPUT_MIN_HEIGHT - COMPOSER_INPUT_LINE_HEIGHT) / 2
-  const panelRadius = colors.ui.radius.panel
+  const activityState: ComposerActivityState =
+    sending || (streaming && !hasSendableDraft)
+      ? 'sending'
+      : focused
+        ? hasSendableDraft
+          ? 'typing'
+          : 'focused'
+        : 'idle'
+  const multilineLayout =
+    editor.visualLineCount > 1 ||
+    content.includes('\n') ||
+    editor.sizeMode !== 'compact'
+  const multilineInput = true
+  const inputPaddingVertical =
+    multilineLayout
+      ? COMPOSER_INPUT_VERTICAL_PADDING
+      : Math.max(
+        4,
+        (COMPOSER_INPUT_MIN_HEIGHT - effectiveInputLineHeight) / 2,
+      )
+  const composerGeometry = resolveFloatingComposerGeometry({
+    viewportWidth: composerWindowWidth,
+    viewportHeight,
+    horizontalPadding,
+    safeAreaTop,
+    safeAreaBottom,
+    keyboardLift,
+    measuredContentHeight:
+      editor.sizeState.lastValidContentHeight || COMPOSER_INPUT_MIN_HEIGHT,
+    lineHeight: effectiveInputLineHeight,
+    verticalPadding: COMPOSER_INPUT_VERTICAL_PADDING * 2,
+    visualLineCount: editor.visualLineCount,
+    minimumMessageAreaHeight: 180,
+    sizeMode: editor.sizeMode,
+    activityState,
+  })
   const fieldRadius = colors.ui.radius.field
   const chipRadius = colors.ui.radius.controlLarge
   const compactControlRadius = colors.ui.radius.controlMiddle
@@ -210,21 +287,33 @@ export function Composer({
   const chipBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
   const attachmentExpression = resolveThemeComponentExpression(canonicalThemeId, 'attachment')
   const attachmentGrammar = attachmentExpression.motion
-  const shellBorder = colors.ui.limeRoad
-    ? colors.material.stroke
-    : colors.ui.glass
-      ? colors.ui.actionBar.border
-      : colors.ui.semantic.chrome.border
   const compactComposer = composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT
   const attachmentLabelMaxWidth = Math.max(108, Math.min(compactComposer ? 132 : 180, composerWindowWidth * 0.42))
   const utilityControlWidth = COMPOSER_DOCK_CONTROL_SIZE
-  const sendButtonSize = COMPOSER_DOCK_CONTROL_SIZE
-  const showSendAction = streaming || hasSendableDraft || sending
+  // Keep the send surface mounted in every state so the disabled state remains
+  // discoverable and can animate continuously into Send/Sending/Stop.
+  const showSendAction = true
   const toolsLayout = resolveProductMobileComposerToolsLayout(composerWindowWidth, {
     entryCount: 5 + (onOpenKnowledge ? 1 : 0),
     unavailableEntryCount: (multimodalPolicy?.unavailableCount ?? 0) + (multimodalPolicy?.generationUnavailableCount ?? 0),
   })
-  const composerShadowOpacity = 0
+
+  useEffect(() => {
+    onComposerPresentationChange?.({
+      sizeMode: editor.sizeMode,
+      activityState,
+      messageInputHeight: composerGeometry.messageInputHeight,
+    })
+  }, [
+    activityState,
+    composerGeometry.messageInputHeight,
+    editor.sizeMode,
+    onComposerPresentationChange,
+  ])
+
+  useEffect(() => {
+    if (keyboardLift <= 0) editor.notifyKeyboardHide()
+  }, [keyboardLift])
 
   useEffect(() => {
     const decision = resolveComposerInitialDraft({
@@ -315,10 +404,11 @@ export function Composer({
     if (!canSend) return
     const text = content
     const files = attachments
+    const recovery = editor.captureSendRecovery()
     const persistenceKeyAtSubmit = draftPersistenceKey
     void flushDraft(text, files)
     setSending(true)
-    setContent('')
+    editor.beginOptimisticSend()
     setAttachments([])
     try {
       if (streaming && onSendWhileStreaming) {
@@ -326,17 +416,65 @@ export function Composer({
       } else {
         await onSend(text, files)
       }
-      const nextAppliedInitialDraftKey = resolveAppliedInitialDraftKeyAfterSuccessfulSend(appliedInitialDraftKey, initialDraftKey)
+      editor.completeSuccessfulSend()
+      const nextAppliedInitialDraftKey =
+        resolveAppliedInitialDraftKeyAfterSuccessfulSend(
+          appliedInitialDraftKey,
+          initialDraftKey,
+        )
       if (nextAppliedInitialDraftKey !== appliedInitialDraftKey) {
         setAppliedInitialDraftKey(nextAppliedInitialDraftKey)
       }
       void clearDraft(persistenceKeyAtSubmit)
     } catch {
-      markDraftChanged()
-      setContent((current) => restoreRejectedComposerText(current, text))
-      setAttachments((current) => restoreRejectedComposerAttachments(current, files))
+      const restoredText = restoreRejectedComposerText(
+        editor.currentText(),
+        text,
+      )
+      editor.restoreRejectedSend(recovery, restoredText)
+      setAttachments((current) =>
+        restoreRejectedComposerAttachments(current, files)
+      )
     } finally {
       setSending(false)
+    }
+  }
+
+  async function copyEntireDraft() {
+    try {
+      await Clipboard.setStringAsync(editor.currentText())
+      dialog.toast({
+        title: t('common.copied'),
+        tone: 'mint',
+        position: 'bottom',
+        durationMs: 1600,
+        dedupeKey: 'composer-draft-copied',
+      })
+    } catch {
+      dialog.toast({
+        title: t('common.copyFailed'),
+        tone: 'danger',
+        position: 'bottom',
+        durationMs: 2200,
+        dedupeKey: 'composer-draft-copy-failed',
+      })
+    } finally {
+      editor.refocus()
+    }
+  }
+
+  async function confirmClearDraftText() {
+    const confirmed = await dialog.confirm({
+      title: t('chat.composerClearTextTitle'),
+      message: t('chat.composerClearTextMessage'),
+      tone: 'danger',
+      confirmLabel: t('chat.composerClearText'),
+      cancelLabel: t('common.cancel'),
+    })
+    if (confirmed) {
+      editor.clearText()
+    } else {
+      editor.refocus()
     }
   }
 
@@ -364,17 +502,7 @@ export function Composer({
   }
 
   return (
-    <View
-      style={{
-        shadowColor: colors.shadowTint,
-        shadowRadius: focused ? 12 : 6,
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: composerShadowOpacity,
-        elevation: colors.ui.limeRoad && composerShadowOpacity > 0.02 ? 1 : 0,
-        backgroundColor: 'transparent',
-      }}
-    >
-      <IslePanel material="chrome" intensity={isGlass ? 48 : 34} elevated={false} radius={panelRadius} style={{ borderColor: shellBorder, backgroundColor: focused ? colors.ui.composer.shellFocusedBackground : colors.ui.composer.shellBackground }}>
+    <View style={{ width: '100%', position: 'relative', backgroundColor: 'transparent' }}>
       {attachments.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}>
           {attachments.map((item) => (
@@ -524,62 +652,92 @@ export function Composer({
           </View>
         </View>
       ) : null}
-      <View style={{ paddingHorizontal: 12, paddingTop: 6, paddingBottom: 0 }}>
-        <View style={{ minHeight: COMPOSER_INPUT_MIN_HEIGHT, justifyContent: 'center' }}>
-          <TextInput
+      <View style={{ minHeight: COMPOSER_INPUT_MIN_HEIGHT + 6, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 0, paddingTop: 0, paddingBottom: bottomAccessory ? 4 : 2, gap: activityState === 'idle' ? 8 : 6 }}>
+        {leadingAccessory ? <View style={{ flexShrink: 0, minWidth: 0, alignSelf: 'center' }}>{leadingAccessory}</View> : null}
+        <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+          <MessageInput
             value={content}
-            onChangeText={(value) => {
-              markDraftChanged()
-              setContent(value)
-            }}
-            multiline={multilineInput}
-            scrollEnabled={multilineInput}
-            {...COMPOSER_INPUT_WEB_SCROLLBAR_PROPS}
-            editable={!disabled}
+            onChangeText={editor.changeText}
+            surfaceHeight={composerGeometry.messageInputHeight}
+            bodyHeight={composerGeometry.bodyViewportHeight}
+            paddingVertical={inputPaddingVertical}
+            toolbarBottomPadding={composerGeometry.toolbarBottomPadding}
+            sizeMode={editor.sizeMode}
+            motion={motion}
+            focused={focused}
+            colors={colors}
+            placeholder={streaming ? t('chat.keepTyping') : placeholder ?? t('chat.askAnything')}
             accessibilityLabel={t('chat.inputAccessibility')}
             accessibilityHint={streaming ? t('chat.keepTypingInputAccessibilityHint') : t('chat.inputAccessibilityHint')}
             accessibilityState={{ disabled }}
             accessibilityValue={draftAccessibilityValue}
-            returnKeyType="send"
-            submitBehavior={Platform.OS === 'ios' && multilineInput ? 'newline' : 'submit'}
+            editable={!disabled}
+            multiline={multilineInput}
+            scrollEnabled={composerGeometry.bodyScrollEnabled}
+            submitBehavior={multilineInput ? 'newline' : 'submit'}
+            selection={editor.selection}
+            inputRef={editor.inputRef}
+            onSelectionChange={editor.changeSelection}
             onSubmitEditing={() => {
-              if (Platform.OS === 'ios' && multilineInput) return
+              if (multilineInput) return
               void submit()
             }}
-            placeholder={streaming ? t('chat.keepTyping') : placeholder ?? t('chat.askAnything')}
-            placeholderTextColor={colors.ui.input.placeholderForeground}
-            onContentSizeChange={(event) => {
-              setInputContentHeight(event.nativeEvent.contentSize.height)
-            }}
+            onContentSizeChange={(event) =>
+              editor.measureContentHeight(event.nativeEvent.contentSize.height)
+            }
             onFocus={() => {
               setFocused(true)
               onFocus?.()
             }}
             onBlur={() => {
+              editor.notifyBlur()
               setFocused(false)
               onBlur?.()
             }}
-            style={{
-              flexGrow: 0,
-              flexShrink: 0,
-              width: '100%',
-              height: inputHeight,
-              minHeight: COMPOSER_INPUT_MIN_HEIGHT,
-              maxHeight: inputMaxHeight,
-              color: colors.text,
-              fontSize: 15,
-              lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-              includeFontPadding: false,
-              paddingTop: inputPaddingVertical,
-              paddingBottom: inputPaddingVertical,
-              paddingHorizontal: 2,
-              textAlignVertical: multilineInput ? 'top' : 'center',
+            reviewExpandVisible={composerGeometry.reviewExpandVisible}
+            tools={{
+              labels: {
+                characterCount: t('chat.composerCharacterCount', {
+                  count: draftCharacterCount,
+                }),
+                undo: t('chat.composerUndo'),
+                undoHint: t('chat.composerUndoHint'),
+                redo: t('chat.composerRedo'),
+                redoHint: t('chat.composerRedoHint'),
+                unorderedList: t('chat.composerUnorderedList'),
+                unorderedListHint: t('chat.composerUnorderedListHint'),
+                orderedList: t('chat.composerOrderedList'),
+                orderedListHint: t('chat.composerOrderedListHint'),
+                quote: t('chat.composerQuote'),
+                quoteHint: t('chat.composerQuoteHint'),
+                codeBlock: t('chat.composerCodeBlock'),
+                codeBlockHint: t('chat.composerCodeBlockHint'),
+                collapse: t('chat.composerCollapseDraft'),
+                collapseHint: t('chat.composerCollapseDraftHint'),
+                expand: t('chat.composerExpandDraft'),
+                expandHint: t('chat.composerExpandDraftHint'),
+                more: t('chat.composerMoreTools'),
+                moreHint: t('chat.composerMoreToolsHint'),
+                back: t('chat.composerBackToFormatting'),
+                backHint: t('chat.composerBackToFormattingHint'),
+                copyAll: t('chat.composerCopyAll'),
+                copyAllHint: t('chat.composerCopyAllHint'),
+                clearText: t('chat.composerClearText'),
+                clearTextHint: t('chat.composerClearTextHint'),
+              },
+              canUndo: editor.canUndo,
+              canRedo: editor.canRedo,
+              onUndo: editor.undo,
+              onRedo: editor.redo,
+              onMarkdown: editor.applyMarkdown,
+              onCopyAll: () => void copyEntireDraft(),
+              onClearText: () => void confirmClearDraftText(),
+              onExpand: editor.expandLarge,
+              onCollapse: editor.collapseLarge,
             }}
+            inputProps={COMPOSER_INPUT_WEB_SCROLLBAR_PROPS}
           />
         </View>
-      </View>
-      <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingTop: 0, paddingBottom: bottomAccessory ? 4 : 6, gap: 2 }}>
-        {leadingAccessory ? <View style={{ flexShrink: 1, minWidth: 0 }}>{leadingAccessory}</View> : null}
         {showInlineUtilities ? (
           <IslePressable
             haptic
@@ -625,8 +783,8 @@ export function Composer({
             <AppIcon name="slash-command" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
           </IslePressable>
         ) : null}
-        <View style={{ flex: 1, minWidth: 0 }} />
-        <IslePressable
+        {showInlineUtilities || showCommandAction ? <View style={{ flex: 1, minWidth: 0 }} /> : null}
+        {showInlineVoice ? <IslePressable
           haptic
           onPress={() => void (recording ? voiceInput.stop() : voiceInput.begin())}
           disabled={voiceControlDisabled || (!recording && !isMultimodalEntryAvailable('voice'))}
@@ -648,42 +806,28 @@ export function Composer({
           }}
           >
             <AppIcon name="microphone" color={recording ? colors.ui.tone.danger.foreground : isMultimodalEntryAvailable('voice') ? colors.textSecondary : colors.ui.control.disabledForeground} size={16} />
-          </IslePressable>
+          </IslePressable> : null}
         {trailingAccessory ? <View style={{ flexShrink: 0 }}>{trailingAccessory}</View> : null}
-        {showSendAction ? (
-          <IslePressable
-            haptic
-            disabled={!canSend}
-            onPress={submit}
-            accessibilityRole="button"
-            accessibilityLabel={streaming ? t('chat.keepTypingAction') : t('chat.sendMessage')}
-            accessibilityHint={sendButtonAccessibilityHint}
-            accessibilityState={{ disabled: !canSend, busy: sending }}
-            hitSlop={{ top: 12, right: 10, bottom: 12, left: 10 }}
-            style={{
-              width: sendButtonSize,
-              minWidth: sendButtonSize,
-              height: sendButtonSize,
-              borderRadius: colors.ui.radius.controlLarge,
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexDirection: 'row',
-              gap: 7,
-              paddingHorizontal: 0,
-              backgroundColor: canSend ? colors.ui.control.primaryBackground : colors.ui.control.disabledBackground,
-              borderWidth: canSend ? 0 : subtleBorderWidth,
-              borderColor: canSend ? 'transparent' : colors.ui.control.disabledBorder,
-              opacity: 1,
-            }}
-          >
-            {sending ? (
-              <HighFrameSpinner color={colors.ui.control.primaryForeground} size={16} />
-            ) : (
-              <AppIcon name="send" color={canSend ? colors.ui.control.primaryForeground : colors.ui.control.disabledForeground} size={18} strokeWidth={appIconStroke.bold} />
-            )}
-          </IslePressable>
-        ) : null}
+        <SendButton
+          visible={showSendAction}
+          canSend={canSend}
+          sending={sending}
+          streaming={streaming}
+          hasSendableDraft={hasSendableDraft}
+          activityState={activityState}
+          motion={motion}
+          onSend={() => void submit()}
+          onStop={onStop}
+          colors={colors}
+          accessibilityLabel={streaming && !hasSendableDraft ? t('chat.stopGenerating') : t('chat.sendMessage')}
+          accessibilityHint={sendButtonAccessibilityHint}
+        />
       </View>
+      {floatingAccessory ? (
+        <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, minHeight: ISLE_MIN_TOUCH_TARGET, zIndex: 2 }}>
+          {floatingAccessory}
+        </View>
+      ) : null}
       {bottomAccessory ? (
         <View style={{ paddingHorizontal: 7, paddingTop: 0, paddingBottom: 7 }}>
           {bottomAccessory}
@@ -704,7 +848,6 @@ export function Composer({
           ) : null}
         </View>
       ) : null}
-      </IslePanel>
     </View>
   )
 }

@@ -62,7 +62,6 @@ async function main() {
   await testExternalCancellation(core, runtimeModule, storeModule, providerModule)
   await testRestartRecovery(core, runtimeModule, storeModule, providerModule)
   await testRichContinuationRecoveryIdentity(core, runtimeModule, storeModule, providerModule, bootstrapModule)
-  await testCallbackProviderAdapter(core, providerModule)
   await testProviderFallback(core, providerModule)
   await testRuntimeProviderFallbackRoute(core, runtimeModule, storeModule, providerModule)
   await testMalformedProviderContinuationEvent(core, runtimeModule, storeModule, providerModule)
@@ -120,7 +119,7 @@ async function main() {
   testWorkspacePolicy(workspaceModule)
   testTavernSnapshotPolicy(workspaceModule)
 
-  console.log('vNext architecture contract tests passed')
+  console.log('Architecture contract tests passed')
 }
 
 async function testConversationStorePersistencePort(commandModule) {
@@ -2566,7 +2565,7 @@ async function testSqliteKnowledgeAgenticIndex(knowledgeModule) {
       content: `IsleMind architecture migration section ${ordinal} preserves knowledge retrieval behavior.`,
       ordinal,
       chunkIndex: ordinal,
-      headingPath: ['vNext', `Section ${ordinal}`],
+      headingPath: ['Architecture', `Section ${ordinal}`],
       entities: ['IsleMind', 'Knowledge'],
       relations: ['IsleMind->Knowledge:owns'],
       qualityScore: 0.8,
@@ -3483,9 +3482,9 @@ async function testBootstrapModelOperationParity(
   const catalogResult = integrationsModule.createModelOperationCatalogSnapshot([descriptor])
   assert.equal(catalogResult.ok, true, 'the parity fixture uses the canonical model-operation catalog')
   if (!catalogResult.ok) throw new Error(catalogResult.message)
-  const fallbackResult = integrationsModule.formatModelOperationFallbackPrompt(catalogResult.snapshot)
-  assert.equal(fallbackResult.ok, true, 'the parity fixture uses the canonical structured fallback prompt')
-  if (!fallbackResult.ok) throw new Error(fallbackResult.message)
+  const taggedResult = integrationsModule.formatTaggedModelOperationPrompt(catalogResult.snapshot)
+  assert.equal(taggedResult.ok, true, 'the parity fixture uses the canonical tagged-operation prompt')
+  if (!taggedResult.ok) throw new Error(taggedResult.message)
   const manifest = {
     id: descriptor.id,
     source: 'mcp',
@@ -3506,7 +3505,7 @@ async function testBootstrapModelOperationParity(
     tasksModule,
     taskStoreModule,
     modelOperationBootstrap,
-    catalog: { snapshot: catalogResult.snapshot, fallbackPrompt: fallbackResult.prompt, manifests: [manifest] },
+    catalog: { snapshot: catalogResult.snapshot, taggedPrompt: taggedResult.prompt, manifests: [manifest] },
   })
   const structured = await runBootstrapModelOperationCase({
     mode: 'structured',
@@ -3517,7 +3516,7 @@ async function testBootstrapModelOperationParity(
     tasksModule,
     taskStoreModule,
     modelOperationBootstrap,
-    catalog: { snapshot: catalogResult.snapshot, fallbackPrompt: fallbackResult.prompt, manifests: [manifest] },
+    catalog: { snapshot: catalogResult.snapshot, taggedPrompt: taggedResult.prompt, manifests: [manifest] },
   })
 
   assert.deepEqual(native.receipt, structured.receipt, 'native and structured calls return the same bounded semantic receipt')
@@ -3535,8 +3534,8 @@ async function testBootstrapModelOperationParity(
   assert.equal(native.continuation.messages.at(-2).toolCalls[0].providerMetadata.thoughtSignature, 'fixture-signature')
   assert.equal(native.continuation.messages.at(-1).role, 'tool')
   assert.equal(structured.continuation.messages.at(-2).text.startsWith('<islemind_tool_call>'), true)
-  assert.equal(structured.initial.systemPrompt.includes('MODEL_OPERATION_CATALOG_JSON='), true, 'fallback-only providers receive the strict envelope prompt')
-  assert.equal(native.initial.systemPrompt?.includes('MODEL_OPERATION_CATALOG_JSON=') ?? false, false, 'native providers receive declarations without the fallback envelope prompt')
+  assert.equal(structured.initial.systemPrompt.includes('MODEL_OPERATION_CATALOG_JSON='), true, 'tagged-operation providers receive the strict envelope prompt')
+  assert.equal(native.initial.systemPrompt?.includes('MODEL_OPERATION_CATALOG_JSON=') ?? false, false, 'native providers receive declarations without the tagged envelope prompt')
 }
 
 async function runBootstrapModelOperationCase(input) {
@@ -3607,7 +3606,7 @@ async function runBootstrapModelOperationCase(input) {
         output,
         blocks: [{ type: 'text', text: output }],
         diagnostic: { id: `diagnostic-${input.mode}`, type: 'tool', title: 'Fixture', status: task.status === 'succeeded' ? 'done' : 'error' },
-        metadata: { vnextTaskId: task.id, vnextTaskStatus: task.status },
+        metadata: { taskId: task.id, taskStatus: task.status },
       },
     }
   }
@@ -3793,9 +3792,9 @@ async function testBootstrapInternalModelOperationChatAdmission(
   const created = integrationsModule.createModelOperationCatalogSnapshot([descriptor])
   assert.equal(created.ok, true)
   if (!created.ok) throw new Error(created.message)
-  const fallback = integrationsModule.formatModelOperationFallbackPrompt(created.snapshot)
-  assert.equal(fallback.ok, true)
-  if (!fallback.ok) throw new Error(fallback.message)
+  const tagged = integrationsModule.formatTaggedModelOperationPrompt(created.snapshot)
+  assert.equal(tagged.ok, true)
+  if (!tagged.ok) throw new Error(tagged.message)
   const manifest = {
     id: operationId,
     source: 'rag',
@@ -3830,7 +3829,7 @@ async function testBootstrapInternalModelOperationChatAdmission(
     async createCatalog() {
       return {
         ok: true,
-        catalog: { snapshot: created.snapshot, fallbackPrompt: fallback.prompt, manifests: [manifest] },
+        catalog: { snapshot: created.snapshot, taggedPrompt: tagged.prompt, manifests: [manifest] },
       }
     },
     async executeInternal(taskInput) {
@@ -3843,7 +3842,7 @@ async function testBootstrapInternalModelOperationChatAdmission(
         output: 'Internal Chat fixture result.',
         blocks: [{ type: 'text', text: 'Internal Chat fixture result.' }],
         diagnostic: { id: 'internal-chat-fixture', type: 'tool', title: 'Internal Chat fixture', status: 'done' },
-        metadata: { vnextTaskId: 'task-internal-chat-fixture', vnextTaskStatus: 'succeeded' },
+        metadata: { taskId: 'task-internal-chat-fixture', taskStatus: 'succeeded' },
       }
     },
     async executeExternal() {
@@ -3919,12 +3918,12 @@ async function testBootstrapModelOperationConfirmation(
     const created = integrationsModule.createModelOperationCatalogSnapshot([descriptor])
     assert.equal(created.ok, true)
     if (!created.ok) throw new Error(created.message)
-    const fallback = integrationsModule.formatModelOperationFallbackPrompt(created.snapshot)
-    assert.equal(fallback.ok, true)
-    if (!fallback.ok) throw new Error(fallback.message)
+    const tagged = integrationsModule.formatTaggedModelOperationPrompt(created.snapshot)
+    assert.equal(tagged.ok, true)
+    if (!tagged.ok) throw new Error(tagged.message)
     const catalog = {
       snapshot: created.snapshot,
-      fallbackPrompt: fallback.prompt,
+      taggedPrompt: tagged.prompt,
       manifests: [{
         id: operationId,
         source: 'builtin',
@@ -4012,7 +4011,7 @@ async function testBootstrapModelOperationConfirmation(
           blocks: [{ type: 'text', text: output }],
           diagnostic: { id: `confirmation-diagnostic-${suffix}`, type: 'tool', title: 'Confirmation', status: task.status === 'succeeded' ? 'done' : 'error' },
           ...(waiting ? { errorCode: 'permission_required' } : {}),
-          metadata: { vnextTaskId: task.id, vnextTaskStatus: task.status },
+          metadata: { taskId: task.id, taskStatus: task.status },
         },
       }
     }
@@ -5008,41 +5007,6 @@ async function testRichContinuationRecoveryIdentity(core, runtimeModule, storeMo
   assert.equal(completedRecovery.value[0].failure.continuation, undefined)
 }
 
-async function testCallbackProviderAdapter(core, providerModule) {
-  let transportStarts = 0
-  const adapter = providerModule.createCallbackProviderAdapter({
-    providerId: 'callback-provider',
-    transport: {
-      async start(_request, callbacks) {
-        transportStarts += 1
-        callbacks.onEvent({ type: 'text-delta', text: 'Callback ' })
-        callbacks.onEvent({ type: 'text-delta', text: 'normalized.' })
-        callbacks.onComplete()
-      },
-    },
-  })
-  const controller = new AbortController()
-  const events = []
-  for await (const event of adapter.stream(request(core, adapter.providerId), { signal: controller.signal })) {
-    events.push(event)
-  }
-  assert.deepEqual(events, [
-    { type: 'text-delta', text: 'Callback ' },
-    { type: 'text-delta', text: 'normalized.' },
-  ])
-  assert.equal(transportStarts, 1)
-
-  const preAborted = new AbortController()
-  const preAbortReason = { code: 'callback-provider-pre-aborted' }
-  preAborted.abort(preAbortReason)
-  const preAbortedEvents = []
-  for await (const event of adapter.stream(request(core, adapter.providerId), { signal: preAborted.signal })) {
-    preAbortedEvents.push(event)
-  }
-  assert.deepEqual(preAbortedEvents, [], 'pre-aborted callback providers emit no events')
-  assert.equal(transportStarts, 1, 'pre-aborted callback providers do not start transport work')
-}
-
 async function testProviderFallback(core, providerModule) {
   let fallbackCalls = 0
   const fallbackModels = []
@@ -5242,7 +5206,8 @@ async function testRuntimeProviderFallbackRoute(core, runtimeModule, storeModule
 
 async function testProviderRuntimeAdapter(core, bootstrapModule) {
   let capturedRequest
-  const providerToolArguments = { query: 'IsleMind', filters: { limit: 3, exact: true }, tags: ['vnext'] }
+  let completedController
+  const providerToolArguments = { query: 'IsleMind', filters: { limit: 3, exact: true }, tags: ['architecture'] }
   const provider = { id: 'runtime-provider', type: 'openai', enabled: true, apiKey: '', name: 'Runtime' }
   const adapter = bootstrapModule.createProviderRuntimeAdapter({
     provider,
@@ -5250,6 +5215,7 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
     streamChat: async (request, onChunk, onDone, _onError, onCitations) => {
       capturedRequest = request
       const controller = new AbortController()
+      completedController = controller
       onChunk('Runtime ')
       onCitations?.([{ id: 'citation-1', type: 'web', title: 'Source', url: 'https://example.test/source' }])
       onDone({
@@ -5283,6 +5249,7 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
   ])
   assert.notEqual(events[4].arguments, providerToolArguments, 'provider tool arguments are copied at the JSON boundary')
   assert.notEqual(events[4].arguments.filters, providerToolArguments.filters, 'nested provider tool arguments are copied')
+  assert.equal(completedController.signal.aborted, false, 'normal provider completion is not misreported as consumer cancellation')
 
   const continuationRequest = {
     ...request(core, 'continuation-provider'),
@@ -5502,6 +5469,102 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
   }
   assert.deepEqual(preAbortedRuntimeEvents, [], 'pre-aborted provider runtime adapters emit no events')
   assert.equal(preAbortedRuntimeStarts, 0, 'pre-aborted provider runtime adapters do not start stream preparation')
+
+  let releaseEarlyHandle
+  const earlyHandleRelease = new Promise((resolve) => { releaseEarlyHandle = resolve })
+  let resolveEarlyHandleAssigned
+  const earlyHandleAssigned = new Promise((resolve) => { resolveEarlyHandleAssigned = resolve })
+  let earlyHandleController
+  const earlyReturnAdapter = bootstrapModule.createProviderRuntimeAdapter({
+    provider,
+    streamChat: async (_runtimeRequest, onChunk) => {
+      onChunk('first event')
+      await earlyHandleRelease
+      earlyHandleController = new AbortController()
+      resolveEarlyHandleAssigned()
+      return { controller: earlyHandleController, done: Promise.resolve() }
+    },
+  })
+  const earlyEvents = []
+  for await (const event of earlyReturnAdapter.stream(request(core, provider.id), { signal: new AbortController().signal })) {
+    earlyEvents.push(event)
+    break
+  }
+  releaseEarlyHandle()
+  await earlyHandleAssigned
+  await Promise.resolve()
+  assert.deepEqual(earlyEvents, [{ type: 'text-delta', text: 'first event' }])
+  assert.equal(earlyHandleController.signal.aborted, true, 'consumer early return aborts a handle that arrives after request cancellation')
+  assert.equal(earlyHandleController.signal.reason?.name, 'AbortError')
+
+  const callbackFailure = new Error('provider callback failed')
+  let resolveFailureHandleAssigned
+  const failureHandleAssigned = new Promise((resolve) => { resolveFailureHandleAssigned = resolve })
+  let failureHandleController
+  const callbackFailureAdapter = bootstrapModule.createProviderRuntimeAdapter({
+    provider,
+    streamChat: async (_runtimeRequest, _onChunk, _onDone, onError) => {
+      failureHandleController = new AbortController()
+      let resolveDone
+      const done = new Promise((resolve) => { resolveDone = resolve })
+      failureHandleController.signal.addEventListener('abort', resolveDone, { once: true })
+      onError(callbackFailure)
+      resolveFailureHandleAssigned()
+      return { controller: failureHandleController, done }
+    },
+  })
+  await assert.rejects(async () => {
+    for await (const _event of callbackFailureAdapter.stream(request(core, provider.id), { signal: new AbortController().signal })) {
+      // A callback failure must terminate before yielding another event.
+    }
+  }, (error) => error === callbackFailure, 'provider callback failures preserve exact error identity')
+  await failureHandleAssigned
+  assert.equal(failureHandleController.signal.aborted, true, 'provider callback failure aborts an unfinished handle')
+
+  const recoveredAdapter = bootstrapModule.createProviderRuntimeAdapter({
+    provider,
+    streamChat: async (_runtimeRequest, onChunk, onDone) => {
+      onChunk('recovered')
+      onDone({ text: 'recovered' })
+      return { controller: new AbortController(), done: Promise.resolve() }
+    },
+  })
+  const recoveredEvents = []
+  for await (const event of recoveredAdapter.stream(request(core, provider.id), { signal: new AbortController().signal })) {
+    recoveredEvents.push(event)
+  }
+  assert.deepEqual(recoveredEvents, [{ type: 'text-delta', text: 'recovered' }], 'a failed provider queue cannot poison the next stream')
+
+  let activeRuntimeSignal
+  let activeHandleController
+  let resolveActiveHandleStarted
+  const activeHandleStarted = new Promise((resolve) => { resolveActiveHandleStarted = resolve })
+  const activeCancellationAdapter = bootstrapModule.createProviderRuntimeAdapter({
+    provider,
+    streamChat: async (runtimeRequest) => {
+      activeRuntimeSignal = runtimeRequest.signal
+      activeHandleController = new AbortController()
+      let resolveDone
+      const done = new Promise((resolve) => { resolveDone = resolve })
+      activeHandleController.signal.addEventListener('abort', resolveDone, { once: true })
+      resolveActiveHandleStarted()
+      return { controller: activeHandleController, done }
+    },
+  })
+  const activeCancellationController = new AbortController()
+  const activeCancellationReason = { code: 'provider-adapter-active-cancelled' }
+  const activeCancelledEvents = (async () => {
+    const values = []
+    for await (const event of activeCancellationAdapter.stream(request(core, provider.id), { signal: activeCancellationController.signal })) {
+      values.push(event)
+    }
+    return values
+  })()
+  await activeHandleStarted
+  activeCancellationController.abort(activeCancellationReason)
+  assert.deepEqual(await activeCancelledEvents, [], 'active provider cancellation terminates the consumer queue without events')
+  assert.equal(activeRuntimeSignal.reason, activeCancellationReason, 'active cancellation preserves request-signal reason identity')
+  assert.equal(activeHandleController.signal.reason, activeCancellationReason, 'active cancellation preserves handle reason identity')
 }
 
 function testSameProviderFallbackResolver(core, providerModule) {

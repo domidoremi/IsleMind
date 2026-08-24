@@ -8,7 +8,7 @@ import {
   removeRawApplicationDataRecords,
 } from '@/bootstrap/applicationDataRecords'
 import { logStorageOperationFailure } from '@/services/runtimeHealthLog'
-import { clearRuntimeLog } from '@/services/runtimeLog'
+import { clearRuntimeLog } from '@/platform/native/runtimeLog'
 import { clearStagedApkDownloads } from '@/services/apkInstallCache'
 import { clearLanguagePreferenceSource } from '@/i18n/languagePreference'
 import { conversationPersistence } from './conversationPersistence'

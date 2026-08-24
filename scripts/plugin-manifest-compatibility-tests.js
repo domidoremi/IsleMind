@@ -20,7 +20,7 @@ const {
   createPluginManifestFromWorkflowSkill,
   emitPluginManifestCatalogSnapshotEvent,
   validatePluginManifest,
-} = require('../src/services/pluginManifest.ts')
+} = require('../src/bootstrap/pluginManifest.ts')
 const { workflowDefinitionPolicy } = require('../src/bootstrap/workflowDefinitions.ts')
 
 function registerTypeScriptSupport() {
@@ -404,7 +404,7 @@ async function run() {
   assert.equal(emitted.event, 'plugin.catalog.snapshot.created', 'plugin catalog emits a typed runtime event')
   assert.equal(emitted.data.catalogSchema, PLUGIN_MANIFEST_CATALOG_SCHEMA, 'plugin catalog runtime event carries catalog schema')
 
-  const pluginManifestSource = readSource('src/services/pluginManifest.ts')
+  const pluginManifestSource = readSource('src/bootstrap/pluginManifest.ts')
   assertSourceIncludes(pluginManifestSource, 'CATALOG_ENTRY_LIMIT = 80', 'plugin catalog has an entry limit')
   assertSourceIncludes(pluginManifestSource, 'CATALOG_RUNTIME_CAPABILITY_LIMIT = 12', 'plugin catalog has a runtime capability limit')
   assertSourceIncludes(pluginManifestSource, 'PLUGIN_COMMAND_SCHEMA_PROPERTY_LIMIT = 32', 'plugin command schemas have a property-count limit')

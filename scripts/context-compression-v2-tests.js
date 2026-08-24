@@ -12,7 +12,7 @@ function run() {
     { role: 'assistant', content: `已确认决策: 采用 structured-v2。${'decision detail '.repeat(60)}` },
     { role: 'user', content: `失败与风险: 验证可能 timeout。${'risk detail '.repeat(60)}` },
     { role: 'assistant', content: `待办与下一步: 运行测试并检查 src/services/contextPacker.ts。${'action detail '.repeat(60)}` },
-    { role: 'user', content: `重要引用: docs/architecture/vnext-migration-status.md scripts/context-compression-v2-tests.js。${'reference detail '.repeat(50)}` },
+    { role: 'user', content: `重要引用: docs/architecture/architecture.md scripts/context-compression-v2-tests.js。${'reference detail '.repeat(50)}` },
     ...Array.from({ length: 9 }, (_, index) => ({
       role: index % 2 ? 'assistant' : 'user',
       content: `recent retained message ${index} ${'recent detail '.repeat(70)}`,

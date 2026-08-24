@@ -6,6 +6,8 @@ import type { useMotionPreference } from '@/hooks/useMotionPreference'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { ConversationMetrics } from '@/modules/conversations'
+import { ProviderBrandIcon, resolveProviderBrand } from '@/components/ui/ProviderBrandIcon'
+import { getProviderDisplayModel } from '@/utils/providerModels'
 
 import type { ModelAccessSettings } from './chatModelSelection'
 import { getProviderHeaderState } from './conversationHeaderState'
@@ -80,6 +82,7 @@ export function FloatingChrome({
   const { canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const header = getProviderHeaderState(conversation, t)
+  const modelTitle = getProviderDisplayModel(provider, conversation.model)
   const chromeTopPadding = visualTopInset + topChromeInset + FLOATING_CHROME_SAFE_AREA_GAP
   const providerHealthTone = providerHealth?.inheritedExpired || providerHealth?.code === 'provider_missing'
     ? colors.ui.tone.danger
@@ -104,11 +107,18 @@ export function FloatingChrome({
         <ChatPersistentHeader
           themeId={canonicalThemeId}
           colors={colors}
-          title={header.title}
+          title={modelTitle}
+          subtitle={providerHealth?.code ? providerHealth.title : header.title}
+          subtitleColor={providerHealth?.code ? providerHealthTone.foreground : undefined}
+          modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model)} size={18} color={colors.text} />}
+          modelStatusColor={providerHealth?.code ? providerHealthTone.foreground : colors.ui.tone.success.foreground}
+          modelMenuOpen={showOptions}
           leadingGlyph={leadingChromeIsBack ? 'back' : 'conversation'}
           leadingLabel={leadingChromeIsBack ? t('common.back') : t('conversation.title')}
           onLeadingPress={onBack}
           onModelPress={onOpenModelPicker}
+          modelAccessibilityLabel={`${t('chat.model')}: ${modelTitle}`}
+          modelAccessibilityHint={t('chat.quickModelAccessibilityHint')}
           onNewConversation={onNewConversation}
           onSettings={onSettings}
           settingsTransitionActive={settingsTransitionActive}

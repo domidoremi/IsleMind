@@ -20,6 +20,7 @@ import type { IntentDraft, PendingStreamingMessage } from './chatStreamingIntent
 import type { ModelAccessSettings } from './chatModelSelection'
 import type { ConversationHealth } from './conversationHealth'
 import type { CompressionSummary } from './compressionSummary'
+import type { ComposerKeyboardMotion } from './chatWorkspaceKeyboard'
 
 export interface ChatActiveWorkspaceProps {
   conversation: Conversation
@@ -94,6 +95,7 @@ export interface ChatActiveWorkspaceProps {
   lastScrollOffset: MutableRefObject<number>
   autoStickToBottom: MutableRefObject<boolean>
   keyboardLift: number
+  keyboardMotion: ComposerKeyboardMotion
   keyboardVisible: boolean
   workspaceOverlayLocked: boolean
   settings: ReturnType<typeof useSettingsStore.getState>['settings']

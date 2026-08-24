@@ -2,15 +2,13 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 
-const SCHEMA = 'islemind.vnext-architecture-boundary.v1'
+const SCHEMA = 'islemind.module-architecture-boundary.v1'
 const root = path.resolve(__dirname, '..')
 const sourceExtensions = new Set(['.ts', '.tsx'])
 const targetRoots = ['src/core', 'src/bootstrap', 'src/modules', 'src/platform', 'src/presentation']
 const canonicalArchitectureDocuments = new Set([
-  'docs/architecture/islemind-vnext-architecture-refactor-plan.md',
-  'docs/architecture/vnext-module-public-api.md',
-  'docs/architecture/vnext-migration-status.md',
-  'docs/architecture/conversation-knowledge-memory-modernization.md',
+  'docs/architecture/architecture.md',
+  'docs/architecture/module-public-api.md',
 ])
 const durableWorkspaceEvidenceContractPhrases = [
   '`AssistantRun` schema v4 persists the exact captured handoff atomically with `run.created` as strictly validated durable evidence only; it does not grant recovery authority.',
@@ -230,10 +228,10 @@ function collectIssues(files) {
   const modulesRoot = path.join(root, 'src', 'modules')
   if (fs.existsSync(modulesRoot)) {
     const moduleEntries = fs.readdirSync(modulesRoot, { withFileTypes: true })
-    const manifestPath = path.join(root, 'docs', 'architecture', 'vnext-module-public-api.md')
+    const manifestPath = path.join(root, 'docs', 'architecture', 'module-public-api.md')
     const manifest = fs.existsSync(manifestPath) ? fs.readFileSync(manifestPath, 'utf8') : undefined
     if (!manifest) {
-      issues.push({ file: 'docs/architecture/vnext-module-public-api.md', specifier: '', rule: 'module-public-api-manifest' })
+      issues.push({ file: 'docs/architecture/module-public-api.md', specifier: '', rule: 'module-public-api-manifest' })
     }
     for (const entry of moduleEntries) {
       if (!entry.isDirectory()) continue
@@ -280,11 +278,11 @@ if (process.argv.includes('--self-test')) {
       rule: 'architecture-document-set',
     }],
   )
-  const missingStatusIssues = collectArchitectureDocumentSetIssues(
-    [...canonicalArchitectureDocuments].filter((document) => document !== 'docs/architecture/vnext-migration-status.md'),
+  const missingArchitectureIssues = collectArchitectureDocumentSetIssues(
+    [...canonicalArchitectureDocuments].filter((document) => document !== 'docs/architecture/architecture.md'),
   )
-  assert.deepEqual(missingStatusIssues, [{
-    file: 'docs/architecture/vnext-migration-status.md',
+  assert.deepEqual(missingArchitectureIssues, [{
+    file: 'docs/architecture/architecture.md',
     specifier: '',
     rule: 'architecture-document-set',
   }])
@@ -296,13 +294,13 @@ if (process.argv.includes('--self-test')) {
   )
   assert.deepEqual(collectDurableWorkspaceEvidenceContractIssues(durableEvidenceFixture), [])
   durableEvidenceFixture.set(
-    'docs/architecture/vnext-migration-status.md',
+    'docs/architecture/architecture.md',
     durableEvidenceFixture
-      .get('docs/architecture/vnext-migration-status.md')
+      .get('docs/architecture/architecture.md')
       .replace('does not grant recovery authority', 'grants recovery authority'),
   )
   assert.deepEqual(collectDurableWorkspaceEvidenceContractIssues(durableEvidenceFixture), [{
-    file: 'docs/architecture/vnext-migration-status.md',
+    file: 'docs/architecture/architecture.md',
     specifier: durableWorkspaceEvidenceContractPhrases[0],
     rule: 'durable-workspace-evidence-contract',
   }])
@@ -317,7 +315,7 @@ if (process.argv.includes('--self-test')) {
   assert.deepEqual(collectRetiredProviderIdentityIssues(new Map([
     ['src/modules/providers/fixture.ts', "presetId: 'custom-endpoint'"],
   ])), [])
-  console.log('vNext architecture document-set self-test passed')
+  console.log('Architecture document-set self-test passed')
 }
 
 const files = targetRoots.flatMap((directory) => walk(path.join(root, directory)))

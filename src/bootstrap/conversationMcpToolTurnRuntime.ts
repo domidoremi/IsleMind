@@ -15,7 +15,7 @@ import { executeExternalTaskBoundTool } from '@/bootstrap/taskBoundToolRuntime'
 import { buildPendingAction, formatPendingActionOutput } from '@/bootstrap/workflowPendingAction'
 import { truncateToolBlocks } from '@/bootstrap/mcpExecutionRuntime'
 import { resolveConversationGenerationParameterRequest } from '@/bootstrap/providerConversationGeneration'
-import { conversationProviderGateway } from '@/bootstrap/conversationProviderGateway'
+import { streamProviderChat } from '@/bootstrap/providerRuntime'
 import { createRichStreamEventReporter } from '@/bootstrap/conversationProviderStreamingRuntime'
 import { resolveWorkflowRunLimitsFromSettings } from '@/modules/tasks'
 import {
@@ -234,29 +234,27 @@ async function synthesizeMcpToolAnswer(
   const reporter = createRichStreamEventReporter(onStreamEvent, {
     ...(binding ? { binding } : {}),
   })
-  const handle = await conversationProviderGateway.startRuntimeStream(
-    providerRequest as unknown as Parameters<typeof conversationProviderGateway.startRuntimeStream>[0],
-    {
-      onChunk(chunk) {
-        text += chunk
-        reporter.text(chunk)
-      },
-      onDone(result) {
-        const streamedText = text
-        text = result.text || text
-        usage = result.usage
-        if (result.text && !streamedText) reporter.text(result.text)
-        reporter.complete(result)
-      },
-      onError(error) {
-        failure = error
-      },
-      onCitations(citations) {
-        reporter.citations(citations)
-      },
-      onTrace(trace) {
-        reporter.trace(trace)
-      },
+  const handle = await streamProviderChat(
+    providerRequest as unknown as Parameters<typeof streamProviderChat>[0],
+    (chunk) => {
+      text += chunk
+      reporter.text(chunk)
+    },
+    (result) => {
+      const streamedText = text
+      text = result.text || text
+      usage = result.usage
+      if (result.text && !streamedText) reporter.text(result.text)
+      reporter.complete(result)
+    },
+    (error) => {
+      failure = error
+    },
+    (citations) => {
+      reporter.citations(citations)
+    },
+    (trace) => {
+      reporter.trace(trace)
     },
   )
   await handle.done

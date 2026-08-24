@@ -4,7 +4,7 @@ import * as Application from 'expo-application'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
 import { st } from '@/i18n/service'
-import { sha256LocalModelFile } from '@/bootstrap/localModelFileIntegrity'
+import { createExpoLocalModelFileIntegrityPort } from '@/platform/localModels'
 import {
   fetchGithubTaggedAndroidReleaseSnapshot,
   fetchLatestGithubTagVersionSnapshot,
@@ -12,7 +12,7 @@ import {
   type GithubTagVersionSnapshot,
   type GithubTaggedAndroidReleaseSnapshot,
 } from '@/platform/native/githubReleaseChannel'
-import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/services/runtimeLog'
+import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/platform/native/runtimeLog'
 import { discardDownloadedApk, markDownloadedApkForCleanup } from '@/services/apkInstallCache'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
 export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'error'
@@ -82,6 +82,7 @@ export interface ApkInstallOptions {
 
 const APK_MIME_TYPE = 'application/vnd.android.package-archive'
 const ANDROID_GRANT_READ_URI_PERMISSION = 1
+const localModelFileIntegrityPort = createExpoLocalModelFileIntegrityPort()
 export const APK_AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 class ApkUpdateError extends Error {
@@ -433,7 +434,7 @@ async function verifyDownloadedApk(release: ApkReleaseInfo, uri: string): Promis
   }
 
   if (release.sha256) {
-    const actualSha256 = await sha256LocalModelFile(uri)
+    const actualSha256 = await localModelFileIntegrityPort.sha256File(uri)
     if (actualSha256.toLowerCase() !== release.sha256.toLowerCase()) {
       await discardDownloadedApk(uri)
       return {

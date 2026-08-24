@@ -30,18 +30,18 @@ const ids: IdGenerator = {
   },
 }
 
-export interface VNextChatWorkflowRuntimeOptions {
+export interface ChatWorkflowRuntimeOptions {
   contextRetriever?: KnowledgeContextRetriever
 }
 
-export interface VNextChatWorkflowRuntime
+export interface ChatWorkflowRuntime
   extends AssistantChatWorkflowRunRuntime<AssembledContext> {
   workflowCheckpoints: WorkflowCheckpointStore
 }
 
-export function createVNextChatWorkflowRuntime(
-  options: VNextChatWorkflowRuntimeOptions = {},
-): VNextChatWorkflowRuntime {
+export function createChatWorkflowRuntime(
+  options: ChatWorkflowRuntimeOptions = {},
+): ChatWorkflowRuntime {
   const container = createAppContainer({
     clock: systemClock,
     ids,

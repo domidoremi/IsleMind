@@ -15,7 +15,7 @@ import {
 import type { McpServerConfig, McpToolManifest } from '@/types/mcpContracts'
 import type { ProcessTrace, TaskId, ToolContentBlock } from '@/core'
 import type { SettingsActionName } from '@/modules/settings'
-import { createVNextTaskRuntime } from '@/bootstrap/vnextTaskRuntime'
+import { createTaskRuntime } from '@/bootstrap/taskRuntime'
 import { st } from '@/i18n/service'
 import { isAllowedMcpServerUrl } from '@/modules/integrations'
 import { logMcpOperation } from '@/services/runtimeHealthLog'
@@ -26,7 +26,7 @@ import {
 
 const BUILTIN_SERVER_ID = BUILT_IN_CAPABILITY_SERVER_ID
 
-const applicationActionTaskLookup = createVNextTaskRuntime({
+const applicationActionTaskLookup = createTaskRuntime({
   async evaluate() {
     return { outcome: 'denied', reasonCode: 'application_action_lookup_only' }
   },

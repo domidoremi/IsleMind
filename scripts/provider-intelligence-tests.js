@@ -6,6 +6,10 @@ const path = require('node:path')
 const ts = require('typescript')
 
 const root = path.resolve(__dirname, '..')
+const LEGACY_PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY =
+  '@islemind/vnext/portable-import-recovery/envelope-v1'
+const LEGACY_PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX =
+  '@islemind/vnext/portable-import-recovery/blob-v1/'
 const originalResolve = Module._resolveFilename
 const originalLoad = Module._load
 const memoryStorage = new Map()
@@ -1500,7 +1504,7 @@ const {
   toOpenAIChatToolCall,
   toOpenAIResponsesFunctionCallInput,
 } = require('../src/modules/providers/index.ts')
-const { appendRuntimeLog, clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText, redactRuntimeLogValue } = require('../src/services/runtimeLog.ts')
+const { appendRuntimeLog, clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText, redactRuntimeLogValue } = require('../src/platform/native/runtimeLog.ts')
 const {
   RUNTIME_EVENT_HISTORY_LIMIT,
   RUNTIME_EVENT_EXPLANATORY_HISTORY_RESERVE,
@@ -1526,7 +1530,7 @@ const {
   RUNTIME_DIAGNOSTICS_OBSERVABILITY_PREVIEW_EVENT_LIMIT,
   RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT,
   buildRuntimeDiagnosticsSummary,
-} = require('../src/services/runtimeDiagnostics.ts')
+} = require('../src/bootstrap/runtimeDiagnostics.ts')
 const { decideRemoteCompact } = require('../src/bootstrap/providerRemoteCompact.ts')
 const { estimateRemoteCompactSavedTokens } = require('../src/modules/providers/index.ts')
 const {
@@ -1557,6 +1561,7 @@ const {
   createAsyncStoragePortableImportRecoveryStore,
   createExpoSqliteDatabaseProvider,
   createSqlitePortableImportRecoveryBlobStorage,
+  PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX,
   PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY,
 } = require('../src/platform/storage/index.ts')
 const {
@@ -1632,7 +1637,7 @@ const {
   createPluginManifestFromWorkflowSkill,
   createPluginManifestFromMcpServer,
   validatePluginManifest,
-} = require('../src/services/pluginManifest.ts')
+} = require('../src/bootstrap/pluginManifest.ts')
 const { buildMemoryReviewSummary, filterPendingMemoriesForReview } = require('../src/utils/memoryReview.ts')
 const {
   capabilityLabel,
@@ -1742,7 +1747,7 @@ const {
   normalizeApkUpdateManifestForTest,
   selectApkAssetForTest,
   shouldRecordApkUpdateCheck,
-} = require('../src/services/appUpdates.ts')
+} = require('../src/platform/native/androidApkUpdates.ts')
 const {
   fetchLatestGithubTagVersionSnapshot,
 } = require('../src/platform/native/githubReleaseChannel.ts')
@@ -2387,11 +2392,87 @@ async function assertWholeImportCoordinatorRecoveryMatrix() {
     await store.removeBlob('large-operation', 'conversations')
     assert.equal(await store.readBlob('large-operation', 'conversations'), undefined, 'large recovery blob cleanup is reread-verified')
 
-    const legacyKey = '@islemind/vnext/portable-import-recovery/blob-v1/legacy-operation/conversations'
+    const legacyKey = `${LEGACY_PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}legacy-operation/conversations`
     legacy.set(legacyKey, 'legacy-before-image')
     assert.equal(await store.readBlob('legacy-operation', 'conversations'), undefined, 'native recovery no longer reads older AsyncStorage-backed blobs')
     await store.removeBlob('legacy-operation', 'conversations')
     assert.equal(legacy.has(legacyKey), true, 'current blob cleanup does not mutate retired storage')
+  }
+
+  {
+    const envelope = portableImportRecoveryCore.createPortableImportRecoveryEnvelope({
+      operationId: 'legacy-envelope-operation',
+      sourceDigest: `sha256:${'1'.repeat(64)}`,
+      participants: ['conversations'],
+      now: 100,
+    })
+    const rawEnvelope = JSON.stringify(envelope)
+    const harness = createPortableRecoveryStorageMigrationHarness([
+      [LEGACY_PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY, rawEnvelope],
+    ])
+    assert.deepEqual(await harness.store.readEnvelope(), envelope, 'legacy recovery envelopes migrate into the canonical key before decoding')
+    assert.equal(harness.values.get(PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY), rawEnvelope, 'recovery envelope migration preserves exact durable bytes')
+    assert.equal(harness.values.has(LEGACY_PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY), false, 'verified recovery envelope migration removes the legacy key')
+  }
+
+  {
+    const operationId = 'legacy-blob-operation'
+    const participantId = 'conversations'
+    const canonicalKey = `${PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${operationId}/${participantId}`
+    const legacyKey = `${LEGACY_PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${operationId}/${participantId}`
+    const harness = createPortableRecoveryStorageMigrationHarness([[legacyKey, 'legacy-before-image']])
+    assert.equal(await harness.store.readBlob(operationId, participantId), 'legacy-before-image', 'a lone legacy recovery blob migrates losslessly')
+    assert.equal(harness.values.get(canonicalKey), 'legacy-before-image', 'legacy recovery blob bytes are copied exactly to the canonical key')
+    assert.equal(harness.values.has(legacyKey), false, 'legacy recovery blob deletion follows canonical reread verification')
+  }
+
+  {
+    const operationId = 'identical-dual-key-operation'
+    const participantId = 'conversations'
+    const canonicalKey = `${PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${operationId}/${participantId}`
+    const legacyKey = `${LEGACY_PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${operationId}/${participantId}`
+    const harness = createPortableRecoveryStorageMigrationHarness([
+      [canonicalKey, 'same-before-image'],
+      [legacyKey, 'same-before-image'],
+    ])
+    assert.equal(await harness.store.readBlob(operationId, participantId), 'same-before-image', 'identical dual-key recovery blobs keep canonical authority')
+    assert.equal(harness.values.has(legacyKey), false, 'identical dual-key recovery blobs converge by deleting only the legacy copy')
+  }
+
+  {
+    const operationId = 'divergent-dual-key-operation'
+    const participantId = 'conversations'
+    const canonicalKey = `${PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${operationId}/${participantId}`
+    const legacyKey = `${LEGACY_PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${operationId}/${participantId}`
+    const harness = createPortableRecoveryStorageMigrationHarness([
+      [canonicalKey, 'canonical-before-image'],
+      [legacyKey, 'different-legacy-before-image'],
+    ])
+    await assert.rejects(
+      () => harness.store.readBlob(operationId, participantId),
+      (error) => error?.code === 'conflict',
+      'divergent canonical and legacy recovery blobs fail closed',
+    )
+    assert.equal(harness.values.get(canonicalKey), 'canonical-before-image', 'recovery blob conflicts preserve the canonical record')
+    assert.equal(harness.values.get(legacyKey), 'different-legacy-before-image', 'recovery blob conflicts preserve the legacy record for operator recovery')
+  }
+
+  for (const fault of ['write_failed', 'verification_failed', 'delete_failed', 'delete_verification_failed']) {
+    const operationId = `retry-${fault.replaceAll('_', '-')}`
+    const participantId = 'conversations'
+    const canonicalKey = `${PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${operationId}/${participantId}`
+    const legacyKey = `${LEGACY_PORTABLE_IMPORT_RECOVERY_BLOB_STORAGE_KEY_PREFIX}${operationId}/${participantId}`
+    const harness = createPortableRecoveryStorageMigrationHarness([[legacyKey, `before-image:${fault}`]])
+    harness.faults.next = fault
+    await assert.rejects(
+      () => harness.store.readBlob(operationId, participantId),
+      (error) => error?.code === (fault === 'delete_verification_failed' ? 'verification_failed' : fault),
+      `${fault} surfaces without deleting the only verified recovery blob`,
+    )
+    assert.equal(harness.values.get(legacyKey), `before-image:${fault}`, `${fault} retains the legacy source for retry`)
+    assert.equal(await harness.store.readBlob(operationId, participantId), `before-image:${fault}`, `${fault} migration retries to completion`)
+    assert.equal(harness.values.get(canonicalKey), `before-image:${fault}`, `${fault} retry leaves exact canonical bytes`)
+    assert.equal(harness.values.has(legacyKey), false, `${fault} retry removes the redundant legacy key only after verification`)
   }
 
   {
@@ -2409,6 +2490,46 @@ async function assertWholeImportCoordinatorRecoveryMatrix() {
       (error) => error?.code === 'invalid_envelope',
       'malformed durable recovery envelopes fail closed before any participant mutation',
     )
+  }
+}
+
+function createPortableRecoveryStorageMigrationHarness(initialEntries = []) {
+  const values = new Map(initialEntries)
+  const faults = { next: undefined }
+  const adapter = {
+    async getItem(key) {
+      return values.get(key) ?? null
+    },
+    async setItem(key, value) {
+      if (faults.next === 'write_failed') {
+        faults.next = undefined
+        throw new Error('injected migration write failure')
+      }
+      if (faults.next === 'verification_failed') {
+        faults.next = undefined
+        return
+      }
+      values.set(key, value)
+    },
+    async removeItem(key) {
+      if (faults.next === 'delete_failed') {
+        faults.next = undefined
+        throw new Error('injected migration delete failure')
+      }
+      if (faults.next === 'delete_verification_failed') {
+        faults.next = undefined
+        return
+      }
+      values.delete(key)
+    },
+  }
+  return {
+    values,
+    faults,
+    store: createAsyncStoragePortableImportRecoveryStore({
+      storage: adapter,
+      digest: async (value) => `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`,
+    }),
   }
 }
 
@@ -4231,7 +4352,7 @@ async function assertRuntimeLogFileBehavior() {
 async function assertRuntimeDiagnosticsBehavior() {
   await clearRuntimeLog()
   clearRuntimeEventHistoryForTest()
-  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/bootstrap/runtimeDiagnostics.ts'), 'utf8')
   const observabilityCompatibilitySource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/testing/observabilityCompatibilityEvaluation.ts'), 'utf8')
   const settingsTypeSource = fs.readFileSync(path.join(root, 'src/types/settingsContracts.ts'), 'utf8')
   const typesFacadeSource = fs.readFileSync(path.join(root, 'src/types/index.ts'), 'utf8')
@@ -5300,7 +5421,7 @@ async function assertRuntimeDiagnosticsFailurePath() {
   const providerSettingsContentSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderSettingsContent.tsx'), 'utf8')
   const providerActivationJobSource = fs.readFileSync(path.join(root, 'src/components/providers/useProviderActivationJob.ts'), 'utf8')
   const providerCompatibilityCatalogSource = fs.readFileSync(path.join(root, 'src/modules/providers/providerCompatibilityCatalog.ts'), 'utf8')
-  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/bootstrap/runtimeDiagnostics.ts'), 'utf8')
   assert.ok(settingsScreenSource.includes('runtimeDiagnosticsRefreshFailed'), 'settings diagnostics exposes refresh failure feedback')
   assert.ok(settingsScreenSource.includes('runtimeLogCopyFailed'), 'settings diagnostics exposes copy failure feedback')
   assert.ok(settingsScreenSource.includes('runtimeLogShareFailed'), 'settings diagnostics exposes share failure feedback')
@@ -9813,8 +9934,8 @@ async function assertProviderStoreLifecycleBehavior() {
   const activeSelectionConversations = [
     {
       id: 'active-selection-newest',
-      title: 'Newest historical conversation',
-      productMode: 'agent',
+      title: 'Newest metadata-bearing conversation',
+      untrustedMetadata: 'opaque-newest',
       providerId: 'selection-provider',
       model: 'selection-model',
       providerModelMode: 'inherited',
@@ -9827,8 +9948,8 @@ async function assertProviderStoreLifecycleBehavior() {
     },
     {
       id: 'active-selection-older',
-      title: 'Older historical conversation',
-      productMode: 'companion',
+      title: 'Older metadata-bearing conversation',
+      untrustedMetadata: 'opaque-older',
       providerId: 'selection-provider',
       model: 'selection-model',
       providerModelMode: 'inherited',
@@ -9844,7 +9965,7 @@ async function assertProviderStoreLifecycleBehavior() {
   await saveData('ACTIVE_CONVERSATION', 'active-selection-older')
   useChatStore.setState({ conversations: [], currentId: null, isLoading: false, error: null })
   await useChatStore.getState().load()
-  assert.equal(useChatStore.getState().currentId, 'active-selection-older', 'chat load retains one valid persisted active conversation regardless of historical mode metadata')
+  assert.equal(useChatStore.getState().currentId, 'active-selection-older', 'chat load retains one valid persisted active conversation regardless of unrelated metadata')
 
   await saveData('ACTIVE_CONVERSATION', 'missing-active-selection')
   useChatStore.setState({ conversations: [], currentId: null, isLoading: false, error: null })
@@ -9890,9 +10011,9 @@ async function assertProviderStoreLifecycleBehavior() {
   useChatStore.getState().clearAll()
   await new Promise((resolve) => setTimeout(resolve, 0))
 
-  const localSetupConversationId = useChatStore.getState().createLocalSetupConversation('agent')
+  const localSetupConversationId = useChatStore.getState().createLocalSetupConversation('opaque-extra-argument')
   assert.equal(useChatStore.getState().getCurrent()?.id, localSetupConversationId, 'chat store selects the local setup conversation')
-  assert.equal(Object.hasOwn(useChatStore.getState().getCurrent() ?? {}, 'productMode'), false, 'local setup creation discards historical mode arguments')
+  assert.equal(Object.hasOwn(useChatStore.getState().getCurrent() ?? {}, 'untrustedMetadata'), false, 'local setup creation discards unsupported arguments')
   assert.equal(useChatStore.getState().currentId, localSetupConversationId, 'local setup creation updates the unified active conversation')
   assert.equal(Object.hasOwn(useChatStore.getState(), 'modeCurrentIds'), false, 'chat state exposes no legacy mode-scoped active ids')
   assert.equal(memoryStorage.get(legacyActiveConversationByModeKey), legacyActiveConversationByModeValue, 'local setup creation leaves the legacy by-mode blob untouched')
@@ -10143,25 +10264,25 @@ async function assertProviderStoreLifecycleBehavior() {
   const primaryProvider = await useSettingsStore.getState().getPrimaryConfiguredProvider()
   assert.equal(primaryProvider?.id, allowedProvider.id, 'settings store primary provider resolves through configured provider filtering')
 
-  const conversationId = useChatStore.getState().create(allowedProvider.id, 'gpt-5.5-mini', 'companion')
-  assert.equal(Object.hasOwn(useChatStore.getState().getCurrent() ?? {}, 'productMode'), false, 'conversation creation discards historical mode arguments')
+  const conversationId = useChatStore.getState().create(allowedProvider.id, 'gpt-5.5-mini', 'opaque-extra-argument')
+  assert.equal(Object.hasOwn(useChatStore.getState().getCurrent() ?? {}, 'untrustedMetadata'), false, 'conversation creation discards unsupported arguments')
   assert.equal(useChatStore.getState().currentId, conversationId, 'conversation creation updates the unified active conversation')
   assert.equal(typeof useChatStore.getState().selectForMode, 'undefined', 'chat state exposes no legacy mode-scoped selector')
-  const historicalAgentConversation = {
+  const metadataBearingConversation = {
     ...useChatStore.getState().getCurrent(),
-    id: 'historical-agent-selection',
-    title: 'Historical Agent selection',
-    productMode: 'agent',
+    id: 'metadata-bearing-selection',
+    title: 'Metadata-bearing selection',
+    untrustedMetadata: 'opaque',
     createdAt: 1,
     updatedAt: 1,
   }
-  useChatStore.setState((state) => ({ conversations: [historicalAgentConversation, ...state.conversations] }))
-  useChatStore.getState().select(historicalAgentConversation.id)
-  assert.equal(useChatStore.getState().currentId, historicalAgentConversation.id, 'the unified selector admits a historical Agent conversation')
-  assert.equal(useChatStore.getState().getCurrent()?.id, historicalAgentConversation.id, 'the unified selector resolves the selected conversation without consulting historical mode metadata')
+  useChatStore.setState((state) => ({ conversations: [metadataBearingConversation, ...state.conversations] }))
+  useChatStore.getState().select(metadataBearingConversation.id)
+  assert.equal(useChatStore.getState().currentId, metadataBearingConversation.id, 'the unified selector admits a metadata-bearing conversation')
+  assert.equal(useChatStore.getState().getCurrent()?.id, metadataBearingConversation.id, 'the unified selector resolves the selected conversation without consulting unrelated metadata')
   assert.equal(memoryStorage.get(legacyActiveConversationByModeKey), legacyActiveConversationByModeValue, 'historical selection leaves the legacy by-mode blob untouched')
   useChatStore.getState().select(conversationId)
-  useChatStore.setState((state) => ({ conversations: state.conversations.filter((item) => item.id !== historicalAgentConversation.id) }))
+  useChatStore.setState((state) => ({ conversations: state.conversations.filter((item) => item.id !== metadataBearingConversation.id) }))
   const blockedSwitch = useChatStore.getState().switchConversationModel(conversationId, allowedProvider.id, 'blocked-chat')
   assert.equal(blockedSwitch, false, 'chat store rejects blocked model switches through the real store entry')
   assert.equal(useChatStore.getState().getCurrent()?.model, 'gpt-5.5-mini', 'chat store keeps the previous model after a blocked switch')
@@ -11056,7 +11177,7 @@ async function assertApkUpdateBehavior() {
   assert.ok(settingsScreenSource.includes('updateAndroidStatusNotification({'), 'Settings screen mirrors APK progress to Android status notifications')
 
   const githubReleaseChannelSource = fs.readFileSync(path.join(root, 'src/platform/native/githubReleaseChannel.ts'), 'utf8')
-  const appUpdatesSource = fs.readFileSync(path.join(root, 'src/services/appUpdates.ts'), 'utf8')
+  const appUpdatesSource = fs.readFileSync(path.join(root, 'src/platform/native/androidApkUpdates.ts'), 'utf8')
   assert.ok(githubReleaseChannelSource.includes('/tags.atom'), 'APK update discovery starts from the GitHub tags feed')
   assert.ok(githubReleaseChannelSource.includes('/releases/expanded_assets/'), 'APK update discovery verifies actual assets on the tagged GitHub Release')
   assert.ok(githubReleaseChannelSource.includes('Promise.race'), 'GitHub release channel requests enforce a bounded timeout')
@@ -14516,7 +14637,7 @@ async function assertProviderConversationAdmissionChatProjection() {
       messages: [],
       createdAt: caseSequence,
       updatedAt: caseSequence,
-      productMode: 'chat',
+      untrustedMetadata: 'opaque',
     }
     useChatStore.setState({
       conversations: [conversation],
@@ -14597,6 +14718,61 @@ async function assertProviderConversationAdmissionChatProjection() {
       expected: { status: 'cancelled', content: '', errorCode: undefined, providerId: undefined },
       cancelDuringAdmission: true,
     })
+
+    // A stop can win while provider admission is resolving. The admitted
+    // provider snapshot must retain the latest cancelled message projection
+    // when its queued SQLite write eventually runs.
+    caseSequence += 1
+    const cancellationRaceId = `provider-admission-chat-${caseSequence}`
+    const cancellationRaceConversation = {
+      id: cancellationRaceId,
+      title: 'Provider admission cancellation race',
+      providerId: 'projection-provider',
+      model: 'requested-model',
+      systemPrompt: '',
+      temperature: 0.7,
+      maxTokens: 1024,
+      messages: [],
+      createdAt: caseSequence,
+      updatedAt: caseSequence,
+    }
+    useChatStore.setState({
+      conversations: [cancellationRaceConversation],
+      currentId: cancellationRaceId,
+      error: null,
+      isLoading: false,
+    })
+    useChatStreamingStore.getState().clearAllStreaming()
+    clearActiveStream(cancellationRaceId)
+    conversationProviderAdmissionRuntime.admitConversation = async () => {
+      stopConversationMessage(cancellationRaceId)
+      return {
+        kind: 'ready',
+        conversation: {
+          ...cancellationRaceConversation,
+          model: 'upstream-normalized-model',
+          temperature: 0.4,
+          maxTokens: 768,
+        },
+        provider: {
+          id: 'projection-provider',
+          type: 'openai',
+          name: 'Projection provider',
+          apiKey: 'test-key',
+          models: ['upstream-normalized-model'],
+          enabled: true,
+        },
+        upstreamModel: 'upstream-normalized-model',
+        modelConfig: { id: 'upstream-normalized-model' },
+      }
+    }
+    await startConversationAssistantReplyAfterHistoryProjection(cancellationRaceId)
+    const persistedCancellationRace = await conversationPersistence.loadRecord(cancellationRaceId)
+    const persistedRaceMessage = persistedCancellationRace?.messages.find((message) => message.role === 'assistant')
+    assert.equal(persistedCancellationRace?.model, 'upstream-normalized-model', 'admission persistence keeps the provider-normalized model during cancellation')
+    assert.equal(persistedCancellationRace?.temperature, 0.4, 'admission persistence keeps normalized generation values during cancellation')
+    assert.equal(persistedRaceMessage?.status, 'cancelled', 'admission persistence cannot overwrite a stop with the captured streaming placeholder')
+    clearActiveStream(cancellationRaceId)
   } finally {
     conversationProviderAdmissionRuntime.admitConversation = originalAdmission
     for (let index = 1; index <= caseSequence; index += 1) {
@@ -14653,7 +14829,7 @@ async function assertMcpConversationContextChatProjection() {
       messages: [],
       createdAt: caseSequence,
       updatedAt: caseSequence,
-      productMode: 'chat',
+      untrustedMetadata: 'opaque',
       enabledTools: [{ serverId: 'mcp-context-test', name: 'lookup' }],
     }
     useChatStore.setState({
@@ -15416,79 +15592,6 @@ async function assertAssistantConversationDurableExecutionRuntimeBehavior() {
 
 async function assertProviderGatewayRichRuntimeBehavior() {
   const {
-    createProviderGateway,
-    ProviderRuntimeStreamUnavailableError,
-  } = require('../src/modules/providers/providerGateway.ts')
-  const request = Object.freeze({
-    provider: Object.freeze({
-      id: 'rich-gateway-provider',
-      type: 'openai',
-      name: 'Rich gateway provider',
-      apiKey: 'test-key',
-      enabled: true,
-      models: Object.freeze(['rich-gateway-model']),
-    }),
-    model: 'rich-gateway-model',
-    messages: Object.freeze([]),
-    attachments: Object.freeze([
-      Object.freeze({ id: 'rich-attachment', uri: 'file:///rich.txt' }),
-    ]),
-    retrievalSources: Object.freeze([
-      Object.freeze({ id: 'rich-source', title: 'Rich source' }),
-    ]),
-    remoteCompactEligible: true,
-    previousResponseId: 'rich-response-previous',
-    providerToolDeclarations: Object.freeze([
-      Object.freeze({ name: 'rich_tool' }),
-    ]),
-  })
-  const completion = Object.freeze({
-    text: 'rich completion',
-    responseId: 'rich-response-current',
-    providerToolCalls: Object.freeze([
-      Object.freeze({ id: 'provider-call', callId: 'call', name: 'rich_tool', arguments: '{}' }),
-    ]),
-    remoteCompactFallbackUsed: false,
-  })
-  const callbacks = Object.freeze({
-    onChunk() {},
-    onDone(result) {
-      assert.equal(result, completion, 'rich gateway preserves the complete terminal receipt identity')
-    },
-    onError() {},
-    onCitations() {},
-    onTrace() {},
-  })
-  const handle = Object.freeze({
-    controller: new AbortController(),
-    done: Promise.resolve(),
-  })
-  const handlePromise = Promise.resolve(handle)
-  let adapterCalls = 0
-  const gateway = createProviderGateway([], {
-    start(observedRequest, observedCallbacks) {
-      adapterCalls += 1
-      assert.equal(observedRequest, request, 'rich gateway preserves the complete request identity')
-      assert.equal(observedCallbacks, callbacks, 'rich gateway preserves callback identity')
-      observedCallbacks.onDone(completion)
-      return handlePromise
-    },
-  })
-
-  assert.equal(
-    gateway.startRuntimeStream(request, callbacks),
-    handlePromise,
-    'rich gateway preserves provider stream handle-promise identity',
-  )
-  assert.equal(adapterCalls, 1, 'rich gateway invokes the configured runtime adapter exactly once')
-
-  await assert.rejects(
-    createProviderGateway([]).startRuntimeStream(request, callbacks),
-    (error) => error instanceof ProviderRuntimeStreamUnavailableError,
-    'rich gateway fails closed when no runtime adapter is configured',
-  )
-
-  const {
     createRichStreamEventReporter,
   } = require('../src/bootstrap/conversationProviderStreamingRuntime.ts')
   const richEvents = []
@@ -15570,10 +15673,6 @@ async function assertProviderGatewayRichRuntimeBehavior() {
     path.join(root, 'src/bootstrap/conversationProviderStreamingRuntime.ts'),
     'utf8',
   )
-  const gatewayCompositionSource = fs.readFileSync(
-    path.join(root, 'src/bootstrap/conversationProviderGateway.ts'),
-    'utf8',
-  )
   const durableSource = fs.readFileSync(
     path.join(root, 'src/bootstrap/conversationAssistantDurableExecutionRuntime.ts'),
     'utf8',
@@ -15588,23 +15687,18 @@ async function assertProviderGatewayRichRuntimeBehavior() {
   )
   assert.match(
     streamingSource,
-    /conversationProviderGateway\.startRuntimeStream\(request/,
-    'rich Chat streaming enters the Providers gateway before provider runtime work',
+    /streamProviderChat\(\s*request/,
+    'rich Chat streaming enters the bootstrap-composed provider runtime directly',
   )
   assert.doesNotMatch(
     streamingSource,
     /dispatch:\s*streamProviderChat/,
     'rich Chat no longer installs the provider runtime as a direct streaming dependency',
   )
-  assert.match(
-    gatewayCompositionSource,
-    /createProviderGateway\(\[\],[^]*?streamProviderChat\(/,
-    'bootstrap binds the concrete rich stream adapter behind the Providers gateway',
-  )
-  assert.match(
+  assert.doesNotMatch(
     durableSource,
-    /providerGateway:\s*conversationProviderGateway/,
-    'durable Assistant Runtime and rich Chat share the exact canonical gateway instance',
+    /startRuntimeStream|conversationProviderGateway/,
+    'durable Rich Chat no longer depends on the transitional callback gateway entry',
   )
   assert.match(
     streamingSource,
@@ -15631,26 +15725,21 @@ async function assertProviderGatewayRichRuntimeBehavior() {
     /durableEvents\.trace\(trace\)/,
     'Rich trace callbacks enter the bounded durable evidence bridge',
   )
-  for (const [label, source] of [
-    ['provider-native continuation', providerToolTurnSource],
-    ['tagged MCP continuation', mcpToolTurnSource],
-  ]) {
-    assert.match(
-      source,
-      /conversationProviderGateway\.startRuntimeStream\(/,
-      `${label} enters the canonical provider gateway`,
-    )
-    assert.doesNotMatch(
-      source,
-      /from ['"]@\/bootstrap\/providerRuntime['"]/,
-      `${label} cannot import the concrete provider stream runtime`,
-    )
-    assert.match(
-      source,
-      /createRichStreamEventReporter\(onStreamEvent/,
-      `${label} forwards nested provider events through the Rich checkpoint bridge`,
-    )
-  }
+  assert.doesNotMatch(
+    providerToolTurnSource,
+    /startRuntimeStream|conversationProviderGateway|streamProviderChat/,
+    'provider-native declaration admission leaves continuation to the canonical Assistant Runtime loop',
+  )
+  assert.match(
+    mcpToolTurnSource,
+    /streamProviderChat\(/,
+    'tagged MCP synthesis enters the bootstrap-composed provider runtime',
+  )
+  assert.match(
+    mcpToolTurnSource,
+    /createRichStreamEventReporter\(onStreamEvent/,
+    'tagged MCP synthesis forwards nested provider events through the Rich checkpoint bridge',
+  )
 }
 
 async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
@@ -15692,6 +15781,7 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
     let activityInputAtRunCreation
     let durableRunAtExecutor
     let canonicalChatRequest
+    let prepareRequestCount = 0
     let preparedProviderRequest
     const checkpointedEvents = []
     const events = []
@@ -15722,6 +15812,7 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
     const modelOperationSession = kind === 'tool-declaration-parity'
       ? Object.freeze({
           prepareRequest(request) {
+            prepareRequestCount += 1
             canonicalChatRequest = Object.freeze({
               ...request,
               toolDefinitions: Object.freeze([canonicalToolDefinition]),
@@ -15936,18 +16027,21 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
       }],
       webSearchMode: 'off',
       fallbackProviders: [],
-      remoteCompactEligible: false,
-      remoteCompactFallback: undefined,
-      previousResponseId: undefined,
+      remoteCompactEligible: true,
+      remoteCompactFallback: {
+        messages: [{ role: 'user', content: 'local compact fallback' }],
+        contextPrompt: 'fallback context',
+      },
+      previousResponseId: 'durable-previous-response',
       providerToolDeclarations: kind === 'tool-declaration-parity'
         ? legacyProviderToolDeclarations
         : undefined,
       ...(modelOperationSession ? { modelOperationSession } : {}),
-      sourceMessages: [{ id: 'durable-dispatch-user', role: 'user', content: 'hello' }],
+      sourceMessages: [{ id: 'durable-dispatch-user', role: 'user', content: 'packed hello' }],
       requestMessageId: 'durable-dispatch-user',
       requestText: 'hello',
       approvedToolContextIds: ['edit_file'],
-      productMode: 'chat',
+      untrustedMetadata: 'opaque',
       workspaceWritebackHandoff,
       buildStreamLifecycle() {
         return {
@@ -16003,33 +16097,28 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
       `${kind} durable executor receives the exact workspace handoff from the persisted run`,
     )
     assert.equal(
-      activityInputAtRunCreation.requestEvidence.schema,
-      'islemind.assistant-activity-request-evidence.v1',
-      `${kind} durable dispatch carries versioned rich request evidence into run creation`,
+      activityInputAtRunCreation.request.schema,
+      'islemind.chat-request.v1',
+      `${kind} durable dispatch carries the canonical Rich request into run creation`,
     )
-    assert.equal(activityInputAtRunCreation.requestEvidence.providerId, 'durable-dispatch-provider')
-    assert.equal(activityInputAtRunCreation.requestEvidence.model, 'durable-dispatch-upstream-model')
-    assert.equal(activityInputAtRunCreation.requestEvidence.payload.model, 'durable-dispatch-model')
-    assert.equal(activityInputAtRunCreation.requestEvidence.payload.provider.apiKey, '[redacted]')
+    assert.equal(activityInputAtRunCreation.request.providerId, 'durable-dispatch-provider')
+    assert.equal(activityInputAtRunCreation.request.model, 'durable-dispatch-model')
     assert.equal(
-      activityInputAtRunCreation.requestEvidence.payload.provider.credentialGroups[0].apiKey,
-      '[redacted]',
+      activityInputAtRunCreation.request.messages[0].id,
+      'durable-dispatch-user',
+      `${kind} canonical Rich request reuses Plain message-identity preservation`,
     )
+    assert.ok(activityInputAtRunCreation.request.requestedCapabilities.includes('attachments'))
+    assert.ok(activityInputAtRunCreation.request.requestedCapabilities.includes('remote-compact'))
     assert.equal(
-      activityInputAtRunCreation.requestEvidence.payload.provider.baseUrl,
-      'https://example.com/v1',
-      `${kind} request evidence strips endpoint credentials and query secrets`,
+      preparedProviderRequest.remoteCompactEligible,
+      true,
+      `${kind} canonical capture does not alter initial remote compact dispatch`,
     )
-    assert.equal('signal' in activityInputAtRunCreation.requestEvidence.payload, false)
-    assert.equal(
-      activityInputAtRunCreation.requestEvidence.payload.attachments[0].base64,
-      '[omitted:21 characters]',
-    )
-    assert.equal(
-      activityInputAtRunCreation.requestEvidence.payload.attachments[0].uri,
-      'content://durable/attachment',
-    )
-    const serializedRequestEvidence = JSON.stringify(activityInputAtRunCreation.requestEvidence)
+    assert.equal(preparedProviderRequest.previousResponseId, 'durable-previous-response')
+    assert.equal(preparedProviderRequest.attachments[0].base64, 'durable-binary-secret')
+    assert.equal('requestEvidence' in activityInputAtRunCreation, false)
+    const serializedRequestEvidence = JSON.stringify(activityInputAtRunCreation.request)
     for (const secret of [
       'durable-provider-secret',
       'durable-group-secret',
@@ -16043,19 +16132,20 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
       assert.equal(
         serializedRequestEvidence.includes(secret),
         false,
-        `${kind} request evidence never persists ${secret}`,
+        `${kind} canonical request never persists ${secret}`,
       )
     }
     assert.deepEqual(
       events.slice(0, 3),
       ['provider.prepare', 'activity.execute', 'provider.dispatch'],
-      `${kind} freezes request evidence before durable execution and dispatches only after run creation`,
+      `${kind} freezes the canonical request before durable execution and dispatches only after run creation`,
     )
     let completionSettled = false
     void outcome.completion.then(() => { completionSettled = true })
 
     if (kind === 'tool-declaration-parity') {
       assert.ok(canonicalChatRequest, 'Rich initial dispatch prepares the canonical model-operation request')
+      assert.equal(prepareRequestCount, 1, 'Rich initial and continuation use one frozen catalog preparation')
       const expectedDeclarations = toRuntimeChatRequestForTest(
         { provider, settings: {} },
         canonicalChatRequest,
@@ -16087,9 +16177,9 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
         'Rich initial and continuation declarations share the canonical input schema',
       )
       assert.deepEqual(
-        activityInputAtRunCreation.requestEvidence.payload.providerToolDeclarations,
-        expectedDeclarations,
-        'Rich durable request evidence records the same canonical provider catalog that was dispatched',
+        activityInputAtRunCreation.request.toolDefinitions,
+        canonicalChatRequest.toolDefinitions,
+        'Rich durable canonical request records the exact tool catalog used for initial and continuation turns',
       )
       const finalization = lifecycle.complete({ text: 'canonical parity' }, {
         requestController: controller,
@@ -16304,7 +16394,7 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     id: 'reply-start-latest-user',
     role: 'user',
     content: 'latest history',
-    productMode: 'companion',
+    untrustedMetadata: 'opaque',
     attachments: latestUserAttachments,
   })
   const assistantMessage = Object.freeze({
@@ -16407,6 +16497,7 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
   })
 
   function createHarness(options = {}) {
+    const requestController = options.requestController ?? controller
     const state = {
       events: [],
       sessionInput: undefined,
@@ -16418,6 +16509,8 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
       lifecycleInput: undefined,
       dispatchInput: undefined,
       dispatchOutcome: undefined,
+      persistAdmissionInput: undefined,
+      admissionPersistenceFailure: undefined,
       workspaceSourceInput: undefined,
       workspaceSourceOptions: undefined,
       workspaceAdmissionInput: undefined,
@@ -16494,7 +16587,7 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
             kind: 'ready',
             conversation: sessionConversation,
             message: assistantMessage,
-            requestController: controller,
+            requestController,
           }
         },
       },
@@ -16512,6 +16605,19 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
             modelConfig,
           }
         },
+      },
+      async persistAdmissionConversation({ conversationId, assistantMessageId, conversation }) {
+        state.events.push('persist_admission')
+        state.persistAdmissionInput = { conversationId, assistantMessageId, conversation }
+        if (options.persistAdmissionErrors?.length) {
+          const nextError = options.persistAdmissionErrors.shift()
+          if (nextError) throw nextError
+        }
+        if (options.persistAdmissionError) throw options.persistAdmissionError
+      },
+      projectAdmissionPersistenceFailure(input) {
+        state.events.push('persist_admission_failure')
+        state.admissionPersistenceFailure = input
       },
       getProviderSettingsState() {
         state.events.push('provider_settings')
@@ -16615,6 +16721,7 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     'reply_session',
     'provider_settings',
     'provider_admission',
+    'persist_admission',
     'latest_conversation',
     'attachments',
     'runtime_settings',
@@ -16638,6 +16745,11 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     settings: admissionSettings,
     signal: controller.signal,
   }, 'reply-start admission preserves the first settings snapshot and exact request signal')
+  assert.equal(success.state.persistAdmissionInput.conversationId, sessionConversation.id, 'reply-start admission persistence targets the admitted conversation')
+  assert.equal(success.state.persistAdmissionInput.assistantMessageId, assistantMessage.id, 'reply-start admission persistence targets the assistant placeholder')
+  assert.equal(success.state.persistAdmissionInput.conversation, runtimeConversation, 'reply-start admission persistence uses the provider-normalized conversation identity')
+  assert.ok(success.state.events.indexOf('persist_admission') < success.state.events.indexOf('context_acquisition'), 'reply-start persists the admitted conversation before context/provider work')
+  assert.equal(success.state.admissionPersistenceFailure, undefined, 'successful admission persistence does not terminalize the placeholder')
   assert.equal(success.state.handoffInput, undefined, 'an associated workspace bypasses the plain Chat fast path')
   assert.equal(success.state.contextInput.lastUserMessage, latestUserMessage, 'context acquisition uses the latest reread user-message identity')
   assert.equal(success.state.contextInput.workspaceContext, workspaceContext, 'context acquisition receives the exact admitted workspace context')
@@ -16880,13 +16992,28 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     assert.equal(outcome.kind, 'terminal', `${stage} short-circuit returns a typed terminal outcome`)
     assert.equal(outcome.stage, stage, `${stage} short-circuit preserves its exact stage`)
     assert.equal(outcome.outcome, terminal.terminalOutcomes[stage], `${stage} short-circuit preserves exact outcome identity`)
-    const terminalEvent = stage === 'provider_streaming'
+        const terminalEvent = stage === 'provider_streaming'
       ? 'stream_lifecycle'
       : stage === 'durable_execution'
         ? 'durable_dispatch'
+        : stage === 'provider_admission'
+          ? 'persist_admission'
         : stage
     assert.equal(terminal.state.events.at(-1), terminalEvent, `${stage} prevents every later reply-start stage`)
   }
+
+  const cancelledAdmission = createHarness({ terminalStage: 'provider_admission' })
+  const cancelledOutcome = await cancelledAdmission.runtime.start(input)
+  assert.deepEqual(cancelledOutcome, {
+    kind: 'terminal',
+    stage: 'provider_admission',
+    outcome: cancelledAdmission.terminalOutcomes.provider_admission,
+  }, 'admission cancellation remains a typed terminal outcome')
+  assert.deepEqual(
+    cancelledAdmission.state.events,
+    ['reply_session', 'provider_settings', 'provider_admission', 'persist_admission'],
+    'admission cancellation persists the placeholder exactly once for recovery')
+  assert.equal(cancelledAdmission.state.persistAdmissionInput.conversation, sessionConversation, 'cancelled admission persists the pre-admission conversation snapshot')
 
   const admissionError = new Error('reply-start admission rejected')
   const rejecting = createHarness({ admissionError })
@@ -16899,6 +17026,69 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     rejecting.state.events,
     ['reply_session', 'provider_settings', 'provider_admission'],
     'reply-start rejection suppresses every later stage',
+  )
+
+  const persistenceError = new Error('admission snapshot persistence failed')
+  const persistenceRejecting = createHarness({ persistAdmissionError: persistenceError })
+  await assert.rejects(
+    persistenceRejecting.runtime.start(input),
+    (error) => error === persistenceError,
+    'admission persistence failure preserves the exact persistence rejection',
+  )
+  assert.deepEqual(
+    persistenceRejecting.state.events,
+    ['reply_session', 'provider_settings', 'provider_admission', 'persist_admission', 'persist_admission_failure'],
+    'admission persistence failure terminalizes before any context or provider work',
+  )
+  assert.deepEqual(
+    persistenceRejecting.state.admissionPersistenceFailure,
+    {
+      conversationId: sessionConversation.id,
+      assistantMessageId: assistantMessage.id,
+      providerId: provider.id,
+      error: persistenceError,
+    },
+    'admission persistence fencing preserves exact placeholder/provider/error identity',
+  )
+  assert.equal(controller.signal.aborted, true, 'admission persistence failure aborts the request before any provider effect')
+
+  const cancellationPersistenceError = new Error('cancelled admission snapshot persistence failed')
+  const cancelledPersistenceRejecting = createHarness({
+    terminalStage: 'provider_admission',
+    persistAdmissionError: cancellationPersistenceError,
+  })
+  await assert.rejects(
+    cancelledPersistenceRejecting.runtime.start(input),
+    (error) => error === cancellationPersistenceError,
+    'cancelled admission persistence failure remains observable',
+  )
+  assert.equal(
+    cancelledPersistenceRejecting.state.events.at(-1),
+    'persist_admission_failure',
+    'cancelled admission persistence failure fences before recovery can proceed',
+  )
+
+  const queuePersistenceErrors = [new Error('first admission snapshot write failed')]
+  const queuePersistenceFirst = createHarness({
+    persistAdmissionErrors: queuePersistenceErrors,
+    requestController: new AbortController(),
+  })
+  await assert.rejects(
+    queuePersistenceFirst.runtime.start(input),
+    /first admission snapshot write failed/,
+    'a rejected admission snapshot write remains observable',
+  )
+  const queuePersistenceSecond = createHarness({
+    persistAdmissionErrors: queuePersistenceErrors,
+    requestController: new AbortController(),
+  })
+  const recoveredQueueStart = await queuePersistenceSecond.runtime.start(input)
+  assert.equal(recoveredQueueStart.kind, 'completed', 'a later reply start remains usable after an admission snapshot rejection')
+  assert.equal(
+    queuePersistenceFirst.state.events.filter((event) => event === 'persist_admission').length
+      + queuePersistenceSecond.state.events.filter((event) => event === 'persist_admission').length,
+    2,
+    'admission snapshot persistence retries exactly once on the next queued start',
   )
 
   const replyStartSource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts'), 'utf8')
@@ -16991,25 +17181,25 @@ async function assertAssistantConversationReplySessionRuntimeBehavior() {
   assert.deepEqual(activeHandle, { controller, messageId: appendedMessage.id }, 'reply-session registers the exact controller/message pair')
   assert.deepEqual(input, { conversationId: conversation.id }, 'reply-session does not mutate frozen input')
 
-  for (const historicalProductMode of ['agent', 'companion', 'chat']) {
+  for (const metadataValue of ['opaque-a', 'opaque-b', 'opaque-c']) {
     let title
     let explicitMessage
     const explicitOutcome = createAssistantConversationReplySessionRuntime({
       stopConversationMessage() {},
       getConversation() { return conversation },
       now() { return 1800 },
-      generateId() { return `message-${historicalProductMode}` },
+      generateId() { return `message-${metadataValue}` },
       appendMessage(_conversationId, message) { explicitMessage = message },
       startConversationTaskActivity(task) { title = task.title },
       setStreaming() {},
       createRequestController() { return new AbortController() },
       setActiveStream() {},
-    }).start(Object.freeze({ conversationId: conversation.id, productMode: historicalProductMode }))
+    }).start(Object.freeze({ conversationId: conversation.id, untrustedMetadata: metadataValue }))
     const awaitedExplicitOutcome = await explicitOutcome
-    assert.equal(awaitedExplicitOutcome.kind, 'ready', `extra historical ${historicalProductMode} metadata cannot block a reply session`)
-    assert.equal('productMode' in awaitedExplicitOutcome, false, `extra historical ${historicalProductMode} metadata is not reflected by the reply-session outcome`)
-    assert.equal('productMode' in explicitMessage, false, `extra historical ${historicalProductMode} metadata cannot enter the canonical Chat assistant message`)
-    assert.equal(title, 'Chat reply', `extra historical ${historicalProductMode} metadata cannot change the Chat activity title`)
+    assert.equal(awaitedExplicitOutcome.kind, 'ready', `extra ${metadataValue} metadata cannot block a reply session`)
+    assert.equal('untrustedMetadata' in awaitedExplicitOutcome, false, `extra ${metadataValue} metadata is not reflected by the reply-session outcome`)
+    assert.equal('untrustedMetadata' in explicitMessage, false, `extra ${metadataValue} metadata cannot enter the canonical Chat assistant message`)
+    assert.equal(title, 'Chat reply', `extra ${metadataValue} metadata cannot change the Chat activity title`)
   }
 
   const missingEvents = []
@@ -17155,10 +17345,6 @@ async function assertAssistantConversationPlainChatHandoffRuntimeBehavior() {
         state.cancellationChecks += 1
         return false
       },
-      async saveConversation(conversation) {
-        state.events.push('save')
-        state.saved.push(conversation)
-      },
       async startPlainChatRun(startInput) {
         state.events.push('start')
         state.startInputs.push(startInput)
@@ -17200,28 +17386,17 @@ async function assertAssistantConversationPlainChatHandoffRuntimeBehavior() {
     'eligible',
     `get:${input.conversationId}`,
     'cancelled',
-    'save',
+    'cancelled',
     'start',
     `set:${input.conversationId}`,
-  ], 'plain-Chat handoff preserves eligibility, lookup, cancellation, normalized-conversation save, start, and registration order')
+  ], 'plain-Chat handoff preserves eligibility, lookup, cancellation fencing, runtime start, and registration order')
   assert.deepEqual(success.state.eligibleInputs, [{
     conversation: runtimeConversation,
     hasAttachments: input.hasAttachments,
     settings,
   }], 'eligibility receives exact runtime conversation, attachment, and settings identities')
-  assert.deepEqual(successOutcome.conversation, {
-    ...persistedConversation,
-    providerId: runtimeConversation.providerId,
-    model: runtimeConversation.model,
-    systemPrompt: runtimeConversation.systemPrompt,
-    temperature: runtimeConversation.temperature,
-    topP: runtimeConversation.topP,
-    topK: runtimeConversation.topK,
-    maxTokens: runtimeConversation.maxTokens,
-  }, 'plain-Chat handoff preserves persisted fields and replaces only runtime generation fields')
-  assert.notEqual(successOutcome.conversation, persistedConversation, 'plain-Chat handoff creates a shallow merged conversation')
-  assert.equal(success.state.saved[0], successOutcome.conversation, 'persistence receives the exact normalized conversation identity used by the runtime')
-  assert.equal(success.state.startInputs[0].conversation, successOutcome.conversation, 'runtime start receives the exact persisted conversation identity')
+  assert.equal(successOutcome.conversation, runtimeConversation, 'plain-Chat handoff preserves the exact admitted conversation identity')
+  assert.equal(success.state.startInputs[0].conversation, successOutcome.conversation, 'runtime start receives the exact admitted conversation identity')
   assert.equal(success.state.startInputs[0].provider, provider, 'runtime start receives the exact provider identity')
   assert.equal(success.state.startInputs[0].settings, settings, 'runtime start receives the exact settings identity')
   assert.equal(success.state.startInputs[0].controller, requestController, 'runtime start receives the exact request controller')
@@ -17251,7 +17426,7 @@ async function assertAssistantConversationPlainChatHandoffRuntimeBehavior() {
 
   const preCancelled = createHarness({ isReplyCancelled() { return true } })
   assert.deepEqual(await preCancelled.runtime.handoff(input), { kind: 'cancelled' })
-  assert.equal(preCancelled.state.saved.length, 0, 'pre-save cancellation suppresses normalized conversation persistence')
+  assert.equal(preCancelled.state.startInputs.length, 0, 'pre-admission cancellation suppresses runtime start')
   assert.equal(preCancelled.state.startInputs.length, 0, 'pre-save cancellation suppresses runtime start')
 
   let undefinedCancellationChecks = 0
@@ -17263,24 +17438,21 @@ async function assertAssistantConversationPlainChatHandoffRuntimeBehavior() {
     kind: 'continue',
     reason: 'runtime_not_started',
   }, 'undefined runtime start falls through when the reply remains active')
-  assert.equal(undefinedCancellationChecks, 2, 'undefined runtime start rechecks cancellation after the saved handoff')
+  assert.equal(undefinedCancellationChecks, 3, 'undefined runtime start fences cancellation before admission, before start, and after a missing runtime handle')
 
   let lateCancellationChecks = 0
   const lateCancelled = createHarness({
     isReplyCancelled() { lateCancellationChecks += 1; return lateCancellationChecks === 2 },
-    async startPlainChatRun() { return undefined },
+    async startPlainChatRun() { throw new Error('plain runtime must not start after post-save cancellation') },
   })
-  assert.deepEqual(await lateCancelled.runtime.handoff(input), { kind: 'cancelled' }, 'cancellation during runtime start prevents legacy continuation')
-  assert.equal(lateCancelled.state.saved.length, 1, 'late cancellation preserves the already completed normalized conversation save')
+  assert.deepEqual(await lateCancelled.runtime.handoff(input), { kind: 'cancelled' }, 'post-save cancellation prevents provider/runtime admission and legacy continuation')
+  assert.equal(lateCancellationChecks, 2, 'post-save cancellation is observed before provider/runtime admission')
   assert.equal(lateCancelled.state.startInputs.length, 0, 'late cancellation prevents a runtime handle from being registered')
 
   for (const [stage, thrown, expectedContent] of [
-    ['save', new Error('exact normalized conversation save failure'), 'exact normalized conversation save failure'],
     ['start', 'non-error start failure', 'localized send failure'],
   ]) {
-    const failure = createHarness(stage === 'save'
-      ? { async saveConversation() { throw thrown } }
-      : { async startPlainChatRun() { throw thrown } })
+    const failure = createHarness({ async startPlainChatRun() { throw thrown } })
     const outcome = await failure.runtime.handoff(input)
     assert.equal(outcome.kind, 'failed', `${stage} failure returns a typed failed outcome`)
     assert.equal(outcome.error, thrown, `${stage} failure preserves exact error identity`)
@@ -17328,12 +17500,12 @@ async function assertAssistantConversationPlainChatHandoffRuntimeBehavior() {
   const replyStartSource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts'), 'utf8')
   assert.match(runtimeSource, /export function createAssistantConversationPlainChatHandoffRuntime/, 'Assistant Runtime publicly defines plain-Chat handoff')
   assert.match(publicSource, /assistantConversationPlainChatHandoffRuntime/, 'Assistant Runtime exports plain-Chat handoff through its public entry')
-  assert.match(runtimeSource, /dependencies\.saveConversation\(targetConversation\)[^]*?dependencies\.startPlainChatRun\(/, 'plain-Chat handoff persists the normalized conversation before admitting the runtime')
-  assert.match(bootstrapSource, /createAssistantConversationPlainChatHandoffRuntime<[^]*?saveConversation:\s*saveConversationRecord,[^]*?tryStartVNextPlainChatRun[^]*?assistantMessage\?\.status !== 'done'[^]*?conversationAssistantDetachedWorkRegistry\.acquire\([^]*?runConversationMemoryExtraction\(\{[^]*?provider: input\.provider[^]*?signal: detachedWork\.signal[^]*?detachedWork\.release[^]*?setActiveStream[^]*?projectConversationAssistantFailure/, 'bootstrap composes queued normalized-conversation persistence, runtime start, registry-owned memory extraction, active-stream, and terminal projection effects')
+  assert.doesNotMatch(runtimeSource, /dependencies\.saveConversation|saveConversationRecord/, 'plain-Chat handoff does not perform a second conversation save')
+  assert.match(bootstrapSource, /createAssistantConversationPlainChatHandoffRuntime<[^]*?tryStartPlainChatRun[^]*?assistantMessage\?\.status !== 'done'[^]*?conversationAssistantDetachedWorkRegistry\.acquire\([^]*?runConversationMemoryExtraction\(\{[^]*?provider: input\.provider[^]*?signal: detachedWork\.signal[^]*?detachedWork\.release[^]*?setActiveStream[^]*?projectConversationAssistantFailure/, 'bootstrap composes runtime start, registry-owned memory extraction, active-stream, and terminal projection effects')
   assert.match(replyStartSource, /dependencies\.plainChatHandoffRuntime\.handoff\(\{[^]*?runtimeConversation,[^]*?requestController,[^]*?plainChatHandoff\.kind !== 'continue'/, 'Assistant Runtime reply start delegates the bounded handoff and continues only for typed continuation outcomes')
   assert.doesNotMatch(runtimeSource, /\b(?:TProductMode|productMode)\b/, 'plain-Chat handoff exposes no product-mode generic, input, or dependency field')
   assert.doesNotMatch(bootstrapSource, /ProductInteractionMode|@\/modules\/workspaces|\bproductMode\b/, 'plain-Chat bootstrap has no Workspaces mode dependency')
-  assert.doesNotMatch(replyStartSource, /\b(?:conversationPersistence|createVNextPlainChatRuntime|isVNextPlainChatEligible|tryStartVNextPlainChatRun|setActiveStream|getActiveStream|clearActiveStream|isReplyCancelled)\b/, 'covered plain-Chat handoff effects remain outside sequence policy')
+  assert.doesNotMatch(replyStartSource, /\b(?:conversationPersistence|createPlainChatRuntime|isPlainChatEligible|tryStartPlainChatRun|setActiveStream|getActiveStream|clearActiveStream|isReplyCancelled)\b/, 'covered plain-Chat handoff effects remain outside sequence policy')
 }
 
 function assertAssistantConversationStreamFailureRuntimeBehavior() {
@@ -18352,9 +18524,9 @@ async function assertAssistantConversationProviderToolAdmissionRuntimeBehavior()
     settings,
     mcpContext,
   })
-  const forgedHistoricalModeInput = Object.freeze({
+  const untrustedMetadataInput = Object.freeze({
     ...input,
-    productMode: 'companion',
+    untrustedMetadata: 'opaque',
   })
 
   const createHarness = (overrides = {}) => {
@@ -18407,7 +18579,7 @@ async function assertAssistantConversationProviderToolAdmissionRuntimeBehavior()
   }
 
   const admitted = createHarness()
-  const admittedOutcome = await admitted.runtime.admit(forgedHistoricalModeInput)
+  const admittedOutcome = await admitted.runtime.admit(untrustedMetadataInput)
   assert.deepEqual(admitted.state.events, [
     'support', 'admit', 'manifest', 'trace:provider-manifest',
     'gateway', 'gateway-trace', 'trace:gateway-trace',
@@ -18436,8 +18608,8 @@ async function assertAssistantConversationProviderToolAdmissionRuntimeBehavior()
     providerToolContext,
     runtimeLog: { enabled: true, maxBytes: 8192 },
   }], 'gateway receives only the exact prompt/count, support/context, and runtime-log contract')
-  assert.equal(forgedHistoricalModeInput.productMode, 'companion', 'forged historical mode remains inert caller data')
-  assert.equal(Object.isFrozen(forgedHistoricalModeInput), true, 'provider-tool admission does not mutate frozen input')
+  assert.equal(untrustedMetadataInput.untrustedMetadata, 'opaque', 'untrusted caller metadata remains inert')
+  assert.equal(Object.isFrozen(untrustedMetadataInput), true, 'provider-tool admission does not mutate frozen input')
 
   const unclaimedSupport = Object.freeze({
     supported: false,
@@ -18557,7 +18729,7 @@ async function assertAssistantConversationRequestPlanningRuntimeBehavior() {
       requestedSearchMode: 'native',
       sendableAttachments,
       runtimeConversation,
-      productMode: 'companion',
+      untrustedMetadata: 'opaque',
       settings,
       sourceMessages,
       lastUserMessage,
@@ -18791,7 +18963,7 @@ async function assertAssistantConversationRequestPlanningRuntimeBehavior() {
     hasWeb: true,
     retrievalSources: remote.retrievalSources,
   }, 'system-prompt construction receives exact request evidence without a product-mode discriminator')
-  assert.equal(remote.input.productMode, 'companion', 'forged historical mode remains inert caller data at the request-planning boundary')
+  assert.equal(remote.input.untrustedMetadata, 'opaque', 'untrusted caller metadata remains inert at the request-planning boundary')
   assert.equal(remote.dependencyInputs.previousState.model, 'requested-model', 'compact state is keyed by requested model')
   assert.equal(remote.dependencyInputs.previousState.provider, remote.provider, 'compact state admission receives the exact selected provider identity')
   assert.equal(remote.dependencyInputs.previousState.settings, remote.settings)
@@ -21349,7 +21521,7 @@ async function run() {
     language: 'zh-CN',
     modelConfig: { ...customVisionStaticModel, supportsFiles: true },
     provider: customToolInferredProvider,
-    productMode: 'companion',
+    untrustedMetadata: 'opaque',
     hasMemory: false,
     hasKnowledge: false,
     hasWeb: false,
@@ -21357,7 +21529,7 @@ async function run() {
   })
   assert.ok(customStaticPrompt.includes('不假定可处理图像输入'), 'system prompt does not claim custom endpoint image support from known model id alone')
   assert.ok(customStaticPrompt.includes('不假定可直接解析文件输入'), 'system prompt does not claim custom endpoint file support from known model id alone')
-  assert.equal(/Agent mode preset|Tavern mode preset|Companion\/Tavern/.test(customStaticPrompt), false, 'forged historical mode data cannot alter system-prompt construction')
+  assert.equal(/Agent mode preset|Tavern mode preset|Companion\/Tavern/.test(customStaticPrompt), false, 'untrusted metadata cannot alter system-prompt construction')
   const customRemotePrompt = buildSystemPrompt({
     language: 'zh-CN',
     modelConfig: { ...customVisionStaticModel, id: 'custom/remote-multimodal', supportsFiles: true, source: 'remote' },
@@ -21535,7 +21707,7 @@ async function run() {
   assert.equal(providerRuntimePipelineSource.includes("@/services/ai/providerRuntimeContracts"), false, 'provider pipeline consumes the provider public runtime contract')
   assert.equal(providerRuntimeExecutorSource.includes("@/services/ai/providerRuntimeContracts"), false, 'provider executor consumes the provider public runtime contract')
   assert.ok(providerRuntimePipelineSource.includes('bindProviderRuntimeCancellation(effectiveReq.signal, input.controller)') && providerRuntimePipelineSource.includes('controller.abort(signal.reason)'), 'provider request cancellation binds before preparation and preserves the exact reason in the runtime controller')
-  assert.ok(providerBootstrapSource.includes('upstreamRequestController.abort(gatewayOptions.signal.reason)') && providerBootstrapSource.includes('handle?.controller.abort(gatewayOptions.signal.reason)') && providerBootstrapSource.includes('if (gatewayOptions.signal.aborted) abort()'), 'vNext provider adapter preserves the exact gateway cancellation reason during preparation and after handle creation')
+  assert.ok(providerBootstrapSource.includes('upstreamRequestController.abort(gatewayOptions.signal.reason)') && providerBootstrapSource.includes('handle?.controller.abort(gatewayOptions.signal.reason)') && providerBootstrapSource.includes('if (gatewayOptions.signal.aborted) abort()'), 'provider runtime adapter preserves the exact gateway cancellation reason during preparation and after handle creation')
   assert.ok(providerRuntimePipelineSource.includes('const conformanceBlockers = routeResult.conformance.issues.filter((issue) => issue.severity === \'block\')'), 'runtime safety policy blocks conformance failures before upstream dispatch')
   assert.ok(providerRuntimePipelineSource.includes('if (payloadPolicy.blocked)'), 'runtime safety policy applies payload blocking before upstream dispatch')
   assert.ok(providerRuntimeExecutorSource.includes('formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model)'), 'chat runtime formats provider HTTP failures through the shared provider error mapper')
@@ -25145,7 +25317,7 @@ https://gateway.example/messages`
       { role: 'assistant', content: `已确认决策: 采用 structured-v2 本地压缩，并保留 localCompression false 路径。${'decision detail '.repeat(60)}` },
       { role: 'user', content: `失败与风险: 上次验证出现 TS2322 风险，运行命令可能 timeout。${'risk detail '.repeat(60)}` },
       { role: 'assistant', content: `待办与下一步: 需要运行 bun run test:provider-intelligence 并检查 src/services/contextPacker.ts。${'action detail '.repeat(60)}` },
-      { role: 'user', content: `重要引用: docs/architecture/islemind-vnext-architecture-refactor-plan.md scripts/provider-intelligence-tests.js G:\\Project\\IsleMind\\src\\services\\contextPacker.ts。${'reference detail '.repeat(45)}` },
+      { role: 'user', content: `重要引用: docs/architecture/architecture.md scripts/provider-intelligence-tests.js G:\\Project\\IsleMind\\src\\services\\contextPacker.ts。${'reference detail '.repeat(45)}` },
       { role: 'assistant', content: `完成: 远程压缩仍由 provider capability 和 responsesApi 控制。${'remote compact detail '.repeat(60)}` },
       ...Array.from({ length: 8 }, (_, index) => ({
         role: index % 2 ? 'assistant' : 'user',
@@ -25362,9 +25534,9 @@ https://gateway.example/messages`
   assert.equal(replyStartSource.includes("[context.prompt, webSources.length ? formatWebPrompt(webSources) : '', mcpContext.prompt].filter(Boolean).join('\\n\\n')"), false, 'reply-start sequencing does not manually join RAG, web, and MCP prompts')
   assert.equal(providerToolTurnBootstrapSource.includes('buildContextPlannerPrompt'), false, 'provider declaration admission does not rebuild model context')
   assert.ok(
-    durableExecutionSource.includes('input.modelOperationSession.prepareRequest(') &&
-      durableExecutionSource.includes('createCanonicalRichRequest(preparedDispatch.request)'),
-    'provider continuation reuses the captured canonical request and admitted operation session',
+    (durableExecutionSource.match(/input\.modelOperationSession\.prepareRequest\(/g) ?? []).length === 1 &&
+      durableExecutionSource.includes('request: canonicalRequest'),
+    'provider continuation reuses the single captured canonical request and admitted operation session',
   )
   assert.equal(replyStartSource.includes('[input.baseContextPrompt, flare.prompt].filter(Boolean).join'), false, 'reply-start sequencing does not manually join FLARE follow-up context')
   assert.ok(requestPlanningSource.includes('modelManifest: input.modelConfig'), 'Assistant Runtime passes model manifest into the context planner')
@@ -41505,7 +41677,7 @@ function assertRuntimeControlPlanePlanAudit() {
   assert.match(compactStateBindingSource, /useNewConnection: true,[\s\S]*finalizeUnusedStatementsBeforeClosing: false/, 'compact-state persistence disables Expo close-time FTS statement sweeping on its isolated connection')
   assert.equal(fs.existsSync(path.join(root, 'src/services/ai/compact/compactStateStore.ts')), false, 'legacy compact-state store stays deleted')
 
-  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/bootstrap/runtimeDiagnostics.ts'), 'utf8')
   const observabilityCompatibilitySource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/testing/observabilityCompatibilityEvaluation.ts'), 'utf8')
   const runtimeTimelineSource = fs.readFileSync(path.join(root, 'src/services/runtimeTimeline.ts'), 'utf8')
   assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES'), 'runtime diagnostics reads a bounded log tail')
@@ -41559,7 +41731,7 @@ function assertRuntimeControlPlanePlanAudit() {
   assert.ok(mcpCompatibilityEvaluationSource.includes('MCP_COMPATIBILITY_RUNTIME_SUMMARY_SCHEMA'), 'MCP compatibility evaluation exposes a runtime summary schema')
   assert.ok(mcpCompatibilityEvaluationSource.includes('emitMcpCompatibilityRuntimeSummaryEvent'), 'MCP compatibility evaluation can emit bounded runtime telemetry')
   assert.ok(mcpCompatibilityEvaluationSource.includes("event: 'tool.mcp.compatibility.checked'"), 'MCP compatibility evaluation emits the typed runtime event')
-  const pluginManifestSource = fs.readFileSync(path.join(root, 'src/services/pluginManifest.ts'), 'utf8')
+  const pluginManifestSource = fs.readFileSync(path.join(root, 'src/bootstrap/pluginManifest.ts'), 'utf8')
   assert.ok(pluginManifestSource.includes('PLUGIN_MANIFEST_SCHEMA'), 'plugin manifest exposes a versioned schema')
   assert.ok(pluginManifestSource.includes('PLUGIN_MANIFEST_CATALOG_SCHEMA'), 'plugin manifest catalog exposes a versioned schema')
   assert.ok(pluginManifestSource.includes('buildPluginManifestCatalogSnapshot'), 'plugin manifest catalog builds bounded control-plane snapshots')

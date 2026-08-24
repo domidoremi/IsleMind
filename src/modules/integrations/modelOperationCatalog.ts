@@ -16,7 +16,7 @@ import {
 } from './modelOperationProtocol'
 
 export const MODEL_OPERATION_CATALOG_LIMIT = 64
-export const MODEL_OPERATION_FALLBACK_PROMPT_LIMIT = 262_144
+export const MODEL_OPERATION_TAGGED_PROMPT_LIMIT = 262_144
 
 export type ModelOperationCatalogCreationFailureCode =
   | 'operation_limit_exceeded'
@@ -53,13 +53,13 @@ export type ModelOperationCallAdmissionResult =
     argumentErrors?: readonly string[]
   }>
 
-export type ModelOperationFallbackPromptFormatResult =
+export type ModelOperationTaggedPromptFormatResult =
   | Readonly<{ ok: true; prompt: string }>
   | Readonly<{
     ok: false
     code: 'invalid_catalog_snapshot' | 'prompt_limit_exceeded'
     message: string
-    limit: typeof MODEL_OPERATION_FALLBACK_PROMPT_LIMIT
+    limit: typeof MODEL_OPERATION_TAGGED_PROMPT_LIMIT
     requiredChars?: number
   }>
 
@@ -197,17 +197,17 @@ export function findModelOperationDescriptor(
   return snapshot.operations.find((descriptor) => descriptor.id === operationId)
 }
 
-/** Formats the provider fallback without interpreting user text as a local command. */
-export function formatModelOperationFallbackPrompt(
+/** Formats the tagged provider encoding without interpreting user text as a local command. */
+export function formatTaggedModelOperationPrompt(
   snapshot: ModelOperationCatalogSnapshot,
-): ModelOperationFallbackPromptFormatResult {
+): ModelOperationTaggedPromptFormatResult {
   if (snapshot.schema !== MODEL_OPERATION_CATALOG_SCHEMA
     || !isCanonicalCatalogRevision(snapshot.revision)
     || !Object.isFrozen(snapshot)
     || !Object.isFrozen(snapshot.operations)) {
-    return fallbackPromptFailure(
+    return taggedPromptFailure(
       'invalid_catalog_snapshot',
-      'Model operation fallback requires an immutable canonical catalog snapshot.',
+      'Tagged model operations require an immutable canonical catalog snapshot.',
     )
   }
 
@@ -232,10 +232,10 @@ export function formatModelOperationFallbackPrompt(
     `Whole-output envelope example: ${envelopeExample}`,
   ].join('\n')
 
-  if (prompt.length > MODEL_OPERATION_FALLBACK_PROMPT_LIMIT) {
-    return fallbackPromptFailure(
+  if (prompt.length > MODEL_OPERATION_TAGGED_PROMPT_LIMIT) {
+    return taggedPromptFailure(
       'prompt_limit_exceeded',
-      'Model operation fallback prompt exceeds the protocol limit; no partial catalog was emitted.',
+      'Tagged model-operation prompt exceeds the protocol limit; no partial catalog was emitted.',
       prompt.length,
     )
   }
@@ -278,16 +278,16 @@ function admissionFailure(
   })
 }
 
-function fallbackPromptFailure(
+function taggedPromptFailure(
   code: 'invalid_catalog_snapshot' | 'prompt_limit_exceeded',
   message: string,
   requiredChars?: number,
-): ModelOperationFallbackPromptFormatResult {
+): ModelOperationTaggedPromptFormatResult {
   return Object.freeze({
     ok: false,
     code,
     message,
-    limit: MODEL_OPERATION_FALLBACK_PROMPT_LIMIT,
+    limit: MODEL_OPERATION_TAGGED_PROMPT_LIMIT,
     ...(requiredChars !== undefined ? { requiredChars } : {}),
   })
 }

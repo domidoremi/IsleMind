@@ -7,7 +7,6 @@ import {
   type ProviderFallbackRoute,
   type ProviderGateway,
   type ProviderGatewayOptions,
-  type ProviderGatewayRuntimeStream,
 } from './contracts'
 
 export class UnknownProviderError extends Error {
@@ -29,13 +28,6 @@ export class UnsupportedProviderCapabilityError extends Error {
   }
 }
 
-export class ProviderRuntimeStreamUnavailableError extends Error {
-  constructor() {
-    super('The provider runtime stream adapter is not configured.')
-    this.name = 'ProviderRuntimeStreamUnavailableError'
-  }
-}
-
 export class ProviderContinuationBindingError extends Error {
   constructor(message = 'The provider continuation binding is invalid.') {
     super(message)
@@ -45,7 +37,6 @@ export class ProviderContinuationBindingError extends Error {
 
 export function createProviderGateway(
   adapters: readonly ProviderAdapter[],
-  runtimeStream?: ProviderGatewayRuntimeStream,
 ): ProviderGateway {
   const adaptersById = new Map<string, RegisteredAdapter>()
   for (const adapter of adapters) {
@@ -68,13 +59,6 @@ export function createProviderGateway(
   return {
     stream(request: ChatRequest, options: ProviderGatewayOptions): AsyncIterable<StreamEvent> {
       return streamWithFallback(adaptersById, request, options)
-    },
-
-    startRuntimeStream(request, callbacks) {
-      if (!runtimeStream) {
-        return Promise.reject(new ProviderRuntimeStreamUnavailableError())
-      }
-      return runtimeStream.start(request, callbacks)
     },
 
     describe(providerId: string): ProviderDescriptor | undefined {

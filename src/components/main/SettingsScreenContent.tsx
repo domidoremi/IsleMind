@@ -35,7 +35,7 @@ import {
   importPortableDataFromJsonFile,
 } from '@/presentation/features/settings/portableDataCommand'
 import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/platform/native/boundedImportFile'
-import type { ApkInstallProgress, ApkInstallProgressStage, ApkReleaseInfo } from '@/services/appUpdates'
+import type { ApkInstallProgress, ApkInstallProgressStage, ApkReleaseInfo } from '@/platform/native/androidApkUpdates'
 import { useIsleDialog } from '@/components/ui/isle'
 import { resolveSearchProvider } from '@/modules/integrations'
 import { searchProviderLabel } from '@/presentation/features/settings/searchProviderPresentation'
@@ -45,8 +45,8 @@ import {
   type SettingsControlSearchDocument,
 } from '@/presentation/features/settings/settingsControlSearch'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
-import type { RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
-import type { PluginManifestCatalogSnapshot } from '@/services/pluginManifest'
+import type { RuntimeDiagnosticsSummary } from '@/bootstrap/runtimeDiagnostics'
+import type { PluginManifestCatalogSnapshot } from '@/bootstrap/pluginManifest'
 import { changeAppLanguage } from '@/i18n'
 import type { BedrockCacheTtl, CanonicalThemeId, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeMode, UpstreamTransportMode } from '@/types/settingsContracts'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -675,7 +675,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   useEffect(() => {
     if (!expandedGovernanceGroups.accessRules && !expandedGroups.diagnostics) return
     let cancelled = false
-    void import('@/services/runtimeLog').then(({ getRuntimeLogPath }) => {
+    void import('@/platform/native/runtimeLog').then(({ getRuntimeLogPath }) => {
       if (!cancelled) setRuntimeLogPath(getRuntimeLogPath())
     })
     return () => {
@@ -909,7 +909,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     setApkInstallProgress(null)
     publishApkUpdateProgress('checking')
     try {
-      const { checkLatestApkRelease, downloadAndOpenApkInstaller } = await import('@/services/appUpdates')
+      const { checkLatestApkRelease, downloadAndOpenApkInstaller } = await import('@/platform/native/androidApkUpdates')
       const result = await checkLatestApkRelease()
       if (result.status === 'available' || result.status === 'unavailable') {
         updateSettings({ lastApkUpdateCheckAt: Date.now() })
@@ -1216,10 +1216,10 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     diagnosticsRefreshInFlightRef.current = true
     setRefreshingDiagnostics(true)
     try {
-      const { emitPluginManifestCatalogSnapshotEvent, loadPluginManifestCatalogSnapshot } = await import('@/services/pluginManifest')
+      const { emitPluginManifestCatalogSnapshotEvent, loadPluginManifestCatalogSnapshot } = await import('@/bootstrap/pluginManifest')
       const catalog = await loadPluginManifestCatalogSnapshot()
       await emitPluginManifestCatalogSnapshotEvent(catalog, 'settings-diagnostics-refresh')
-      const { buildRuntimeDiagnosticsSummary } = await import('@/services/runtimeDiagnostics')
+      const { buildRuntimeDiagnosticsSummary } = await import('@/bootstrap/runtimeDiagnostics')
       const summary = await buildRuntimeDiagnosticsSummary({ providers, settings })
       setDiagnostics(summary)
       setPluginCatalog(catalog)
@@ -1238,7 +1238,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   async function copyRuntimeLogTail() {
     try {
       const [{ readRuntimeLogText }, Clipboard] = await Promise.all([
-        import('@/services/runtimeLog'),
+        import('@/platform/native/runtimeLog'),
         import('expo-clipboard'),
       ])
       const text = await readRuntimeLogText()
@@ -1256,7 +1256,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   async function shareRuntimeLogFile() {
     try {
       const [{ getRuntimeLogInfo }, Sharing] = await Promise.all([
-        import('@/services/runtimeLog'),
+        import('@/platform/native/runtimeLog'),
         import('expo-sharing'),
       ])
       const logInfo = await getRuntimeLogInfo()
@@ -1280,7 +1280,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
 
   async function clearRuntimeLogFile() {
     try {
-      const { clearRuntimeLog } = await import('@/services/runtimeLog')
+      const { clearRuntimeLog } = await import('@/platform/native/runtimeLog')
       await clearRuntimeLog()
       await refreshRuntimeDiagnostics()
       dialog.toast({ title: t('settings.runtimeLogCleared'), tone: 'amber' })

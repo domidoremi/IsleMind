@@ -7,7 +7,7 @@ const { execFileSync, spawn } = require('node:child_process')
 const root = path.resolve(__dirname, '..')
 const worklistPath = path.join(root, 'scripts/fixtures/worklists/product-mobile-web-render-evidence-worklist.json')
 const storageEvidenceResultPath = 'test-evidence/qa/browser-storage-persistence-results.json'
-const storageEvidenceArtifactDir = 'output/playwright/vnext-storage-evidence'
+const storageEvidenceArtifactDir = 'output/playwright/storage-evidence'
 const storageAdapterRelativePath = 'src/platform/workspaces/asyncStorageTavernWorkspace.ts'
 const browserDefinitions = Object.freeze({
   chrome: Object.freeze({
@@ -156,9 +156,9 @@ function storageHarnessEntrySource() {
     `const evidencePhase = evidenceParams.get('evidencePhase') || ''`,
     `const evidenceRunId = evidenceParams.get('runId') || ''`,
     `const evidenceRole = evidenceParams.get('role') || ''`,
-    `const evidenceKey = 'islemind:vnext:browser-restart-evidence'`,
-    `const counterKey = 'islemind:vnext:browser-cross-tab-counter'`,
-    `const barrierPrefix = 'islemind:vnext:browser-evidence:' + evidenceRunId + ':'`,
+    `const evidenceKey = 'islemind:browser-restart-evidence'`,
+    `const counterKey = 'islemind:browser-cross-tab-counter'`,
+    `const barrierPrefix = 'islemind:browser-evidence:' + evidenceRunId + ':'`,
     `const waitForLocalValue = async (key, expected, timeoutMs = 15000) => {`,
     `  const deadline = Date.now() + timeoutMs`,
     `  while (Date.now() < deadline) {`,
@@ -585,8 +585,8 @@ async function collectAndroidChromiumStorageEvidence(options) {
     packageName = resolveAndroidBrowserPackage(options.device)
     runAdb(options.device, ['reverse', `tcp:${devicePort}`, `tcp:${devicePort}`])
 
-    const evidenceKey = 'islemind:vnext:browser-restart-evidence'
-    const counterKey = 'islemind:vnext:browser-cross-tab-counter'
+    const evidenceKey = 'islemind:browser-restart-evidence'
+    const counterKey = 'islemind:browser-cross-tab-counter'
     const writtenValue = JSON.stringify({ schema: 'islemind.browser-restart.v1', marker: crypto.randomUUID() })
 
     browserSession = await launchAndroidChromiumBrowser(playwright, options.device, packageName, server.origin, options.timeoutMs, (port) => {
@@ -816,8 +816,8 @@ async function collectBrowserStorageEvidence(options) {
     fs.mkdirSync(profilePath, { recursive: true })
     const harness = await buildStorageEvidenceHarness(artifactRoot)
     server = await listenStorageHarness(harness)
-    const evidenceKey = 'islemind:vnext:browser-restart-evidence'
-    const counterKey = 'islemind:vnext:browser-cross-tab-counter'
+    const evidenceKey = 'islemind:browser-restart-evidence'
+    const counterKey = 'islemind:browser-cross-tab-counter'
     const writtenValue = JSON.stringify({ schema: 'islemind.browser-restart.v1', marker: crypto.randomUUID() })
 
     browserSession = await launchPersistentBrowser(playwright, profilePath, options.timeoutMs, selectedBrowser.id)

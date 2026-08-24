@@ -92,9 +92,9 @@ jobs:
 
       - name: Architecture and recovery contracts
         run: |
-          bun run test:vnext-architecture-contract
-          bun run test:vnext-walking-skeleton
-          bun run test:vnext-task-runtime
+          bun run test:architecture-contract
+          bun run test:walking-skeleton
+          bun run test:task-runtime
 
       - name: Generate Android project
         run: CI=1 bunx expo prebuild --platform android --clean

@@ -33,7 +33,14 @@ export interface AssistantConversationReplySessionRuntimeDependencies<
   appendMessage(
     conversationId: string,
     message: AssistantConversationReplySessionMessage,
+    options?: { readonly persist?: boolean },
   ): void | Promise<void>
+  /**
+   * Plain and Rich reply starts may defer the placeholder write until
+   * provider admission has produced the normalized conversation. The
+   * concrete store remains the owner of that write.
+   */
+  readonly deferPersistenceUntilAdmission?: boolean
   projectAppendFailure?(input: {
     readonly conversationId: string
     readonly assistantMessageId: string
@@ -117,7 +124,13 @@ export function createAssistantConversationReplySessionRuntime<
     // runtime must not admit a provider or start an effect until its exact
     // store mutation has settled.
     try {
-      await dependencies.appendMessage(input.conversationId, message)
+      await dependencies.appendMessage(
+        input.conversationId,
+        message,
+        dependencies.deferPersistenceUntilAdmission
+          ? { persist: false }
+          : undefined,
+      )
     } catch (error) {
       // The local assistant projection already exists when its durable write
       // fails. Give bootstrap one chance to terminalize that projection before
@@ -148,7 +161,9 @@ export function createAssistantConversationReplySessionRuntime<
 
     return {
       kind: 'ready',
-      conversation,
+      conversation: dependencies.deferPersistenceUntilAdmission
+        ? dependencies.getConversation(input.conversationId) ?? conversation
+        : conversation,
       message,
       requestController,
     }

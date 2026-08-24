@@ -36,7 +36,7 @@ import type {
   TavernChatWorkspaceWritebackReceiptLookupOutcome,
 } from '../application/tavernChatWorkspaceWritebackReceiptLookup'
 export const TAVERN_WORKSPACE_KEY_VALUE_ENVELOPE_SCHEMA = 'islemind.tavern-workspace-key-value.v2'
-export const TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY = '@islemind/vnext/tavern-workspaces'
+export const TAVERN_WORKSPACE_KEY_VALUE_STORAGE_KEY = '@islemind/tavern-workspaces'
 export const TAVERN_CHAT_WORKSPACE_KEY_VALUE_WRITEBACK_RECEIPT_RECORD_SCHEMA =
   'islemind.tavern-chat-workspace-key-value-writeback-receipt.v1' as const
 

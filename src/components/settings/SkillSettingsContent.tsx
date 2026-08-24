@@ -37,7 +37,7 @@ import {
   saveApprovedWorkflowSkillState,
   saveApprovedWorkflowSkillSuggestion,
 } from '@/bootstrap/workflowSkills'
-import { createPluginManifestFromWorkflowSkill, validatePluginManifest } from '@/services/pluginManifest'
+import { createPluginManifestFromWorkflowSkill, validatePluginManifest } from '@/bootstrap/pluginManifest'
 import {
   applyAndPersistToolchainControlPlaneAction,
   buildPersistedToolchainCatalogSnapshot,

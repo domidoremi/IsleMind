@@ -1,7 +1,7 @@
 import { systemClock, type IdGenerator } from '@/core'
 import {
   createSqliteTaskPersistence,
-  createTaskRuntime,
+  createTaskRuntime as createOwnedTaskRuntime,
   type TaskPolicyEvaluator,
   type TaskRuntime,
 } from '@/modules/tasks'
@@ -18,8 +18,8 @@ const ids: IdGenerator = {
   },
 }
 
-export function createVNextTaskRuntime(policyEvaluator: TaskPolicyEvaluator): TaskRuntime {
-  return createTaskRuntime({
+export function createTaskRuntime(policyEvaluator: TaskPolicyEvaluator): TaskRuntime {
+  return createOwnedTaskRuntime({
     clock: systemClock,
     ids,
     persistence: taskPersistence,
@@ -32,8 +32,8 @@ export function createVNextTaskRuntime(policyEvaluator: TaskPolicyEvaluator): Ta
  * because the runtime contract also supports creation. Interrupted tasks are
  * terminalized from their durable state without re-running a side effect.
  */
-export function recoverVNextInterruptedTasks() {
-  const runtime = createVNextTaskRuntime({
+export function recoverInterruptedTasks() {
+  const runtime = createTaskRuntime({
     async evaluate() {
       return { outcome: 'denied', reasonCode: 'recovery_does_not_create_tasks' }
     },

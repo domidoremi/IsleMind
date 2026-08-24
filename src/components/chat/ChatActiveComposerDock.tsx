@@ -22,6 +22,9 @@ export function ChatActiveComposerDock({
   composerReferences,
   multimodalPolicy,
   reasoningEffort,
+  readyProviders,
+  modelAccessSettings,
+  confirmSwitchModel,
   composerOutputMode,
   supportsReasoningQuick,
   modeShowReasoningControl,
@@ -32,6 +35,7 @@ export function ChatActiveComposerDock({
   modeOutputLocked,
   setPendingStreamingMessage,
   keyboardLift,
+  keyboardMotion,
   composerPanel,
   setComposerPanel,
   collapseQuickTools,
@@ -134,6 +138,9 @@ export function ChatActiveComposerDock({
         inputPlaceholder={modeComposerPlaceholder}
         systemPromptPlaceholder={modeSystemPromptPlaceholder}
         onOpenModelPicker={handleOpenModelPicker}
+        switchableProviders={readyProviders}
+        modelAccessSettings={modelAccessSettings}
+        onSwitchModel={confirmSwitchModel}
         onOpenReasoningPicker={handleOpenModelPicker}
         onOpenKnowledge={goKnowledge}
         onOpenWorkspaceReview={openWorkspaceReview}
@@ -153,6 +160,7 @@ export function ChatActiveComposerDock({
         onInputFocus={handleInputFocus}
         onInputBlur={handleInputBlur}
         keyboardLift={keyboardLift}
+        keyboardMotion={keyboardMotion}
         panel={composerPanel}
         onPanelChange={setComposerPanel}
         onCollapseTools={collapseQuickTools}

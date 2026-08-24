@@ -13,6 +13,7 @@ import type { Message } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
+import { ProviderBrandIcon, type ProviderBrand } from '@/components/ui/ProviderBrandIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { mergeMessageWithStreamingTraceSnapshot, useChatStreamingStore } from '@/store/chatStreamingStore'
@@ -67,6 +68,7 @@ export interface MessageBubbleProps {
   index: number
   motion: MotionIntensity
   viewportHeight: number
+  providerBrand?: ProviderBrand
   isLastAssistant?: boolean
   showThinkingStatus?: boolean
   activeActionMessageId?: string | null
@@ -100,6 +102,7 @@ function MessageBubbleComponent({
   index,
   motion,
   viewportHeight,
+  providerBrand = 'generic',
   isLastAssistant = false,
   showThinkingStatus = false,
   activeActionMessageId,
@@ -127,7 +130,7 @@ function MessageBubbleComponent({
   selected = false,
 }: MessageBubbleProps) {
   const { colors, isGlass, canonicalThemeId } = useAppTheme()
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { width: windowWidth } = useWindowDimensions()
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
   const configuredAssistantDisplayName = useSettingsStore((state) => state.settings.assistantDisplayName)
@@ -259,6 +262,14 @@ function MessageBubbleComponent({
     if (!onCopyWorkArtifact && !onContinueWorkArtifact) return false
     return summarizeWorkArtifact(displayText).hasWorkArtifact
   }, [displayText, isStreamingContent, isUser, onCopyWorkArtifact, onContinueWorkArtifact])
+  const messageTimestamp = useMemo(
+    () => formatMessageTimestamp(message.timestamp, i18n.resolvedLanguage ?? i18n.language),
+    [i18n.language, i18n.resolvedLanguage, message.timestamp],
+  )
+  const showCompletedQuickActions = !isUser && message.status === 'done' && !multiSelectActive && Boolean(displayText.trim()) && Boolean(
+    onCopy || onSpeak || (isLastAssistant && onRegenerate),
+  )
+  const showInlineRetry = !isUser && message.status === 'error' && !multiSelectActive && Boolean(onRetry)
   useEffect(() => {
     setLocalActionsOpen(false)
     setProcessExpanded(false)
@@ -326,13 +337,15 @@ function MessageBubbleComponent({
       <View
         style={{
           alignSelf: displayFormulaLayout ? 'center' : isUser ? 'flex-end' : 'flex-start',
-          width: bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined,
-          maxWidth: bubbleMaxWidth,
+          width: bubbleUsesAvailableWidth ? (isUser ? bubbleMaxWidth : bubbleMaxWidth + 32) : undefined,
+          maxWidth: isUser ? bubbleMaxWidth : bubbleMaxWidth + 32,
           flexShrink: 1,
           position: 'relative',
         }}
       >
-        <View style={{ position: 'relative' }}>
+        <View style={{ width: isUser ? undefined : '100%', flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+          {!isUser ? <AssistantBrandBadge brand={providerBrand} /> : null}
+          <View style={{ width: isUser ? undefined : bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined, maxWidth: bubbleMaxWidth, flexShrink: 1, position: 'relative' }}>
           <MessageBubbleThemeSurface themeId={canonicalThemeId} colors={colors} isUser={isUser} selected={selected}>
             {multiSelectActive ? (
               <IslePressable
@@ -432,10 +445,138 @@ function MessageBubbleComponent({
             onStartMultiSelect={canStartMessageMultiSelect && onStartMultiSelect ? () => onStartMultiSelect(message) : undefined}
             />
           ) : null}
+          </View>
         </View>
+        {isUser ? (
+          <Text
+            accessibilityLabel={messageTimestamp}
+            style={{ marginTop: 4, alignSelf: 'flex-end', color: message.status === 'error' ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 10, lineHeight: 13, fontWeight: '500', fontVariant: ['tabular-nums'] }}
+          >
+            {messageTimestamp}
+          </Text>
+        ) : null}
+        {showCompletedQuickActions ? (
+          <MessageCompletedQuickActions
+            motion={motion}
+            onCopy={onCopy ? () => onCopy(message) : undefined}
+            onSpeak={onSpeak ? () => onSpeak(message) : undefined}
+            onRegenerate={isLastAssistant ? onRegenerate : undefined}
+          />
+        ) : null}
+        {showInlineRetry ? (
+          <MessageInlineRetry motion={motion} onPress={() => onRetry?.(message)} />
+        ) : null}
       </View>
     </View>
   )
+}
+
+function AssistantBrandBadge({ brand }: { brand: ProviderBrand }) {
+  const { colors } = useAppTheme()
+  return (
+    <View
+      accessible={false}
+      style={{
+        width: 24,
+        height: 24,
+        marginTop: 8,
+        borderRadius: 7,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.ui.semantic.surface.base,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: colors.ui.semantic.chrome.border,
+      }}
+    >
+      <ProviderBrandIcon brand={brand} size={15} />
+    </View>
+  )
+}
+
+function MessageCompletedQuickActions({
+  motion,
+  onCopy,
+  onSpeak,
+  onRegenerate,
+}: {
+  motion: MotionIntensity
+  onCopy?: () => void
+  onSpeak?: () => void
+  onRegenerate?: () => void
+}) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const actions: Array<{ id: string; label: string; icon: AppIconName; onPress: () => void }> = []
+  if (onCopy) actions.push({ id: 'copy', label: t('common.copy'), icon: 'copy', onPress: onCopy })
+  if (onSpeak) actions.push({ id: 'speak', label: t('messageBubble.speak'), icon: 'voice', onPress: onSpeak })
+  if (onRegenerate) actions.push({ id: 'regenerate', label: t('messageBubble.regenerate'), icon: 'regenerate', onPress: onRegenerate })
+
+  return (
+    <MotiView
+      from={motion === 'full' ? { opacity: 0, translateY: -3 } : undefined}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ type: 'timing', duration: motion === 'full' ? 176 : 1 }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, marginLeft: 32, marginTop: 2, flexDirection: 'row', alignItems: 'center' }}
+    >
+      {actions.map((action) => (
+        <IslePressable
+          key={action.id}
+          haptic
+          accessibilityRole="button"
+          accessibilityLabel={action.label}
+          onPress={action.onPress}
+          style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlSmall }}
+        >
+          <AppIcon name={action.icon} color={colors.textTertiary} size={15} strokeWidth={appIconStroke.regular} />
+        </IslePressable>
+      ))}
+    </MotiView>
+  )
+}
+
+function MessageInlineRetry({ motion, onPress }: { motion: MotionIntensity; onPress: () => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  return (
+    <MotiView
+      from={motion === 'full' ? { opacity: 0, translateY: -3 } : undefined}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ type: 'timing', duration: motion === 'full' ? 176 : 1 }}
+      style={{ marginLeft: 32, marginTop: 4, alignSelf: 'flex-start' }}
+    >
+      <IslePressable
+        haptic
+        accessibilityRole="button"
+        accessibilityLabel={t('messageBubble.retry')}
+        onPress={onPress}
+        style={{
+          minHeight: ISLE_MIN_TOUCH_TARGET,
+          paddingHorizontal: 13,
+          borderRadius: colors.ui.radius.controlMiddle,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 7,
+          backgroundColor: colors.ui.tone.danger.background,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.ui.tone.danger.border,
+        }}
+      >
+        <AppIcon name="retry" color={colors.ui.tone.danger.foreground} size={14} strokeWidth={appIconStroke.strong} />
+        <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>
+          {t('messageBubble.retry')}
+        </Text>
+      </IslePressable>
+    </MotiView>
+  )
+}
+
+function formatMessageTimestamp(timestamp: number, locale?: string): string {
+  try {
+    return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp))
+  } catch {
+    const date = new Date(timestamp)
+    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+  }
 }
 
 function PendingActionQuickAction({ onPress }: { onPress: () => void }) {
@@ -2103,6 +2244,7 @@ const areMessagesEqual = (
   if (prevMsg.content !== nextMsg.content) return false
   if (prevMsg.responseText !== nextMsg.responseText) return false
   if (prevMsg.status !== nextMsg.status) return false
+  if (prevMsg.timestamp !== nextMsg.timestamp) return false
 
   // 附件和 traces 长度比较
   if (prevMsg.attachments?.length !== nextMsg.attachments?.length) return false
@@ -2111,6 +2253,7 @@ const areMessagesEqual = (
   // 其他关键 props 比较
   if (prevProps.index !== nextProps.index) return false
   if (prevProps.motion !== nextProps.motion) return false
+  if (prevProps.providerBrand !== nextProps.providerBrand) return false
   if (prevProps.isLastAssistant !== nextProps.isLastAssistant) return false
   if (prevProps.showThinkingStatus !== nextProps.showThinkingStatus) return false
   if (prevProps.activeActionMessageId !== nextProps.activeActionMessageId) return false

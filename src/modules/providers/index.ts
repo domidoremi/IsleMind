@@ -1,4 +1,3 @@
-export * from './adapters/callbackProviderAdapter'
 export * from './adapters/responsesWebSocketTransport'
 export * from './contracts'
 export * from './providerCitations'

@@ -1115,7 +1115,7 @@ function assertSourceIntegration() {
 
   assertReleaseWorkflowIntegration()
 
-  const updatesSource = fs.readFileSync(path.join(root, 'src/services/appUpdates.ts'), 'utf8')
+  const updatesSource = fs.readFileSync(path.join(root, 'src/platform/native/androidApkUpdates.ts'), 'utf8')
   assert.ok(updatesSource.includes('safeHttpUrl'), 'app update release URLs pass through URL safety')
   assert.ok(updatesSource.includes('verifyDownloadedApk'), 'app update downloads verify size and checksum')
   assert.ok(updatesSource.includes('markDownloadedApkForCleanup') && updatesSource.includes('discardDownloadedApk'), 'app update staged APK lifecycle has cleanup paths')
@@ -1286,9 +1286,9 @@ function assertReleaseWorkflowIntegration() {
     'test:release-readiness-compatibility',
     'test:runtime-budget-governance-compatibility',
     'test:runtime-privacy-retention-compatibility',
-    'test:vnext-architecture-contract',
-    'test:vnext-walking-skeleton',
-    'test:vnext-task-runtime',
+    'test:architecture-contract',
+    'test:walking-skeleton',
+    'test:task-runtime',
   ]) {
     assert.ok(releaseWorkflowSource.includes(`bun run ${script}`), `signed release workflow runs ${script}`)
   }

@@ -13,6 +13,7 @@ import { conversationAssistantReplySessionRuntime } from '@/bootstrap/conversati
 import { conversationAssistantRequestPlanningRuntime } from '@/bootstrap/conversationAssistantRequestPlanningRuntime'
 import { conversationAssistantStreamLifecycleRuntime } from '@/bootstrap/conversationAssistantStreamLifecycleRuntime'
 import { createConversationModelOperationSession } from '@/bootstrap/conversationModelOperationRuntime'
+import { saveConversationRecord } from '@/presentation/features/conversations/conversationStorePersistenceCommand'
 import {
   conversationAssistantWorkspaceSourceRuntime,
   conversationAssistantWorkspaceWritebackHandoffRuntime,
@@ -38,23 +39,52 @@ export const conversationAssistantReplyStartRuntime =
     },
     replySessionRuntime: conversationAssistantReplySessionRuntime,
     providerAdmissionRuntime: conversationAssistantProviderAdmissionRuntime,
+    persistAdmissionConversation({ conversation }) {
+      // Admission normalizes provider-owned conversation fields, while a
+      // concurrent stop/recovery command may have already terminalized the
+      // placeholder in the live store. Persist the admitted identity with
+      // the latest message projection so an older streaming snapshot cannot
+      // overwrite cancellation or recovery state in the queued mutation.
+      const latestConversation = useChatStore
+        .getState()
+        .conversations
+        .find((item) => item.id === conversation.id)
+      const snapshot = latestConversation
+        ? {
+            ...conversation,
+            title: latestConversation.title,
+            messages: latestConversation.messages,
+            updatedAt: latestConversation.updatedAt,
+          }
+        : conversation
+      return saveConversationRecord(snapshot)
+    },
+    projectAdmissionPersistenceFailure({
+      conversationId,
+      assistantMessageId,
+      providerId,
+    }) {
+      const message = useChatStore.getState().conversations
+        .find((conversation) => conversation.id === conversationId)
+        ?.messages.find((item) => item.id === assistantMessageId)
+      if (message?.status === 'cancelled') return
+      projectConversationAssistantFailure({
+        conversationId,
+        assistantMessageId,
+        content: st('chatRunner.error.sendFailed'),
+        errorCode: 'unknown',
+        providerId,
+      })
+    },
     plainChatHandoffRuntime: conversationAssistantPlainChatHandoffRuntime,
     contextAcquisitionRuntime: conversationAssistantContextAcquisitionRuntime,
     providerToolAdmissionRuntime:
       conversationAssistantProviderToolAdmissionRuntime,
-    requestPlanningRuntime: {
-      plan(input) {
-        return conversationAssistantRequestPlanningRuntime.plan(
-          input as Parameters<
-            typeof conversationAssistantRequestPlanningRuntime.plan
-          >[0],
-        )
-      },
-    },
+    requestPlanningRuntime: conversationAssistantRequestPlanningRuntime,
     streamLifecycleRuntime: {
       build(input) {
         return conversationAssistantStreamLifecycleRuntime.build(
-          input as Parameters<
+          input as unknown as Parameters<
             typeof conversationAssistantStreamLifecycleRuntime.build
           >[0],
         )
@@ -63,7 +93,7 @@ export const conversationAssistantReplyStartRuntime =
     durableDispatchRuntime: {
       dispatch(input) {
         return conversationAssistantDurableExecutionRuntime.dispatch(
-          input as Parameters<
+          input as unknown as Parameters<
             typeof conversationAssistantDurableExecutionRuntime.dispatch
           >[0],
         )

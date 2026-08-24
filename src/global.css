@@ -1,6 +1,18 @@
 .composer-input-no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+[data-testid='message-input'] {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+[data-testid='message-input']:focus,
+.composer-input-no-scrollbar:focus {
+  outline-color: var(--color-inputFocus);
 }
 
 .composer-input-no-scrollbar::-webkit-scrollbar {
@@ -1096,7 +1108,7 @@
   --theme-lime-road-enabled: 0;
 }
 
-/* Canonical vNext prepaint fallbacks. Legacy ids above remain load-compatible;
+/* Canonical prepaint fallbacks. Legacy ids above remain load-compatible;
    these selectors make the four persisted families visible before hydration. */
 :root[data-theme-id='monet'][data-theme-mode='light'],
 :root[data-theme-id='lime-road'][data-theme-mode='light'],

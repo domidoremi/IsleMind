@@ -219,7 +219,11 @@ interface ChatState {
   switchConversationModel: (id: string, providerId: string, model: string) => boolean
   removeMessage: (convId: string, msgId: string) => void
   trimAfterMessage: (convId: string, msgId: string) => void
-  addMessage: (convId: string, message: Message) => Promise<void>
+  addMessage: (
+    convId: string,
+    message: Message,
+    options?: { readonly persist?: boolean },
+  ) => Promise<void>
   updateMessage: (convId: string, msgId: string, updates: Partial<Message>) => void
   upsertMessageTrace: (convId: string, msgId: string, trace: ProcessTrace) => void
   appendContent: (convId: string, msgId: string, content: string) => void
@@ -560,7 +564,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  addMessage: (convId: string, message: Message) => {
+  addMessage: (
+    convId: string,
+    message: Message,
+    options: { readonly persist?: boolean } = {},
+  ) => {
     let durability = Promise.resolve()
     set((state) => {
       const draftConversationIds = new Set(state.draftConversationIds)
@@ -575,7 +583,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
-      durability = persistConversationRecord(updated, convId)
+      durability = options.persist === false
+        ? Promise.resolve()
+        : persistConversationRecord(updated, convId)
       if (wasDraft) {
         void durability
           .then(() => {

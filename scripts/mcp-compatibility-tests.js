@@ -768,7 +768,7 @@ async function runAssistantMcpToolTurnRuntimeTests() {
   )
   assert.equal(rejection.state.synthesisRequests.length, 0, 'task rejection does not synthesize')
   assert.equal(rejection.state.traces.at(-1).completedAt, 2000, 'task rejection emits a completed error trace')
-  assert.equal(rejection.state.traces.at(-1).metadata.taskAdapter, 'vnext', 'task rejection identifies the vNext adapter')
+  assert.equal(rejection.state.traces.at(-1).metadata.taskAdapter, 'task-runtime', 'task rejection identifies the canonical task runtime')
 
   const cancellationController = new AbortController()
   const cancellationEvents = []
@@ -852,24 +852,26 @@ async function runAssistantMcpToolTurnRuntimeTests() {
   assert.equal(synthesisFailureTrace.completedAt, 2000, 'synthesis failure trace is completed')
   assert.equal(synthesisFailureTrace.content, 'provider synthesis failed', 'synthesis failure trace preserves the provider error')
 
-  const modeTasks = []
-  for (const mode of [undefined, 'agent', 'companion']) {
+  const metadataTasks = []
+  for (const metadataValue of [undefined, 'opaque-a', 'opaque-b']) {
     const parity = createAssistantMcpTurnHarness({
       async executeTask(taskInput) {
-        modeTasks.push(taskInput)
+        metadataTasks.push(taskInput)
         return {
           observation: {
             ok: true,
             status: 'done',
             output: 'mode output',
             blocks: [{ type: 'text', text: 'mode output' }],
-            diagnostic: { id: `mode-${mode ?? 'chat'}`, status: 'done' },
+            diagnostic: { id: `metadata-${metadataValue ?? 'absent'}`, status: 'done' },
           },
         }
       },
     })
     parity.resolved.tool.permission = 'destructive'
-    const conversation = { ...parity.input.conversation, productMode: mode }
+    const conversation = metadataValue === undefined
+      ? { ...parity.input.conversation }
+      : { ...parity.input.conversation, untrustedMetadata: metadataValue }
     const result = await parity.runtime.execute({
       ...parity.input,
       conversation,
@@ -878,18 +880,18 @@ async function runAssistantMcpToolTurnRuntimeTests() {
     assert.deepEqual(
       result,
       { text: 'synthesized answer', usage: { inputTokens: 7, outputTokens: 9, totalTokens: 16 } },
-      `${mode ?? 'chat'} keeps the tagged MCP post-observation synthesis behavior`,
+      `${metadataValue ?? 'absent'} metadata keeps the tagged MCP post-observation synthesis behavior`,
     )
-    assert.equal(parity.state.generationRequests[0].conversation, conversation, `${mode ?? 'chat'} remains available to generation shaping only as historical conversation metadata`)
-    assert.equal(parity.state.revisionMessageRequests[0].conversation, conversation, `${mode ?? 'chat'} remains available to revision projection only as historical conversation metadata`)
-    assert.equal(conversation.productMode, mode, `${mode ?? 'chat'} conversation metadata is not mutated by mode-free task admission`)
+    assert.equal(parity.state.generationRequests[0].conversation, conversation, 'untrusted conversation metadata remains available only to generation shaping')
+    assert.equal(parity.state.revisionMessageRequests[0].conversation, conversation, 'untrusted conversation metadata remains available only to revision projection')
+    assert.equal(conversation.untrustedMetadata, metadataValue, 'untrusted conversation metadata is not mutated by task admission')
   }
-  assert.equal(modeTasks.every((item) => !Object.hasOwn(item.options, 'mode')), true, 'tagged MCP task options stay mode-free for missing, Agent, and Companion conversation metadata')
-  for (const modeTask of modeTasks) {
-    assert.equal(modeTask.options.manifests[0].permission, 'destructive', 'destructive permission remains explicit in every product mode')
-    assert.equal(modeTask.options.manifests[0].requiresConfirmation, true, 'destructive manifests remain confirmation-gated')
-    assert.deepEqual(modeTask.options.evidenceSources, ['runtime:tagged-mcp-request'], 'visible tagged requests retain their evidence source')
-    assert.equal(modeTask.options.userConfirmed, false, 'visible intent does not forge destructive confirmation')
+  assert.equal(metadataTasks.every((item) => !Object.hasOwn(item.options, 'mode')), true, 'tagged MCP task options stay mode-free for arbitrary conversation metadata')
+  for (const metadataTask of metadataTasks) {
+    assert.equal(metadataTask.options.manifests[0].permission, 'destructive', 'destructive permission remains explicit for every metadata shape')
+    assert.equal(metadataTask.options.manifests[0].requiresConfirmation, true, 'destructive manifests remain confirmation-gated')
+    assert.deepEqual(metadataTask.options.evidenceSources, ['runtime:tagged-mcp-request'], 'visible tagged requests retain their evidence source')
+    assert.equal(metadataTask.options.userConfirmed, false, 'visible intent does not forge destructive confirmation')
   }
   const runtimeSource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/application/assistantMcpToolTurnRuntime.ts'), 'utf8')
   const bootstrapSource = fs.readFileSync(path.join(root, 'src/bootstrap/conversationMcpToolTurnRuntime.ts'), 'utf8')
@@ -980,7 +982,7 @@ async function runConversationMcpBootstrapIntegrationTest() {
     conversationId: 'conversation-store',
     assistantMessageId: 'assistant-1',
     provider: { id: 'provider-1' },
-    conversation: { id: 'conversation-session', model: 'model-1', productMode: 'companion' },
+    conversation: { id: 'conversation-session', model: 'model-1', untrustedMetadata: 'opaque' },
     systemPrompt: 'system',
     messages: [{ role: 'user', content: 'request' }],
     baseContextPrompt: 'context',
@@ -1149,7 +1151,7 @@ async function runConversationMcpBootstrapIntegrationTest() {
         conversationId: 'conversation-store',
         assistantMessageId: 'assistant-1',
         provider: { id: 'provider-1' },
-        conversation: { id: 'conversation-session', model: 'model-1', productMode: 'companion' },
+        conversation: { id: 'conversation-session', model: 'model-1', untrustedMetadata: 'opaque' },
         systemPrompt: 'system',
         messages: [{ role: 'user', content: 'request' }],
         baseContextPrompt: 'context',

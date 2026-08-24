@@ -53,7 +53,7 @@ async function main() {
   await testRegenerateStopsBeforeExactRemovalAndAwaitsReplyStart(controlModule)
   await testControlReplyStartFailuresPropagate(controlModule)
 
-  console.log('vNext conversation message-command tests passed')
+  console.log('Conversation message-command tests passed')
 }
 
 function testConversationAssistantMessageProjection(module) {
@@ -67,10 +67,10 @@ function testConversationAssistantMessageProjection(module) {
     estimateTextTokens: (text) => text.length,
   })
   const citation = Object.freeze({ id: 'citation-1', type: 'web', title: 'Evidence' })
-  const user = Object.freeze({ id: 'user', role: 'user', productMode: 'companion', content: 'hello', timestamp: 1, status: 'done' })
+  const user = Object.freeze({ id: 'user', role: 'user', untrustedMetadata: 'opaque', content: 'hello', timestamp: 1, status: 'done' })
   const failed = Object.freeze({ id: 'failed', role: 'assistant', content: 'ignore', timestamp: 2, status: 'error' })
   const assistant = Object.freeze({ id: 'assistant', role: 'assistant', content: 'streamed', citations: Object.freeze([citation]), timestamp: 3, status: 'streaming', startedAt: 80 })
-  const conversation = Object.freeze({ productMode: 'agent', messages: Object.freeze([user, failed, assistant]) })
+  const conversation = Object.freeze({ untrustedMetadata: 'opaque', messages: Object.freeze([user, failed, assistant]) })
   const before = JSON.stringify({ conversation, assistant })
 
   const providerPlan = policy.buildSuccessPlan({
@@ -111,10 +111,10 @@ function testConversationAssistantMessageProjection(module) {
   assert.deepEqual(failurePlan.taskCompletion, { status: 'failed', error: 'explicit failure', metadata: { errorCode: 'rate_limited', providerId: 'provider-error' } })
   assert.equal(failurePlan.error, 'explicit failure', 'terminal projection exposes one Chat error value')
 
-  const streamedFallback = policy.buildFailurePlan({ conversation, message: assistant, content: '', errorCode: 'unknown', productMode: 'agent', completedAt: 111 })
+  const streamedFallback = policy.buildFailurePlan({ conversation, message: assistant, content: '', errorCode: 'unknown', untrustedMetadata: 'opaque', completedAt: 111 })
   assert.equal(streamedFallback.kind, 'project')
   assert.equal(streamedFallback.messagePatch.content, 'streamed')
-  assert.equal(streamedFallback.error, '', 'explicit historical mode cannot create a separate terminal error channel')
+  assert.equal(streamedFallback.error, '', 'untrusted metadata cannot create a separate terminal error channel')
   assert.deepEqual(policy.buildSuccessPlan({ conversation, outputText: '', citations: [], providerId: 'p', model: 'm', completedAt: 1 }), { kind: 'skip', reason: 'message_missing' })
   assert.deepEqual(policy.buildSuccessPlan({ conversation, message: { ...assistant, status: 'cancelled' }, outputText: '', citations: [], providerId: 'p', model: 'm', completedAt: 1 }), { kind: 'skip', reason: 'message_cancelled' })
   assert.deepEqual(policy.buildSuccessPlan({ conversation, message: { ...assistant, status: 'done' }, outputText: '', citations: [], providerId: 'p', model: 'm', completedAt: 1 }), { kind: 'skip', reason: 'message_not_streaming' })
@@ -681,12 +681,12 @@ async function testConversationReplyDispatchController(replyDispatchModule) {
   await controller.dispatch({
     conversation,
     content: '  rag  ',
-    productMode: 'companion',
+    untrustedMetadata: 'opaque',
   })
 
   assert.equal(normalizeCalls, 1, 'post-user dispatch normalizes content exactly once')
   assert.deepEqual(events, ['normalize', 'assistant:start'], 'plain typed text starts Assistant Runtime without local routing')
-  assert.deepEqual(assistantStarts, [[conversation.id]], 'a forged historical mode does not reach ordinary reply startup')
+  assert.deepEqual(assistantStarts, [[conversation.id]], 'untrusted metadata does not reach ordinary reply startup')
   assert.deepEqual(agentStarts, [], 'plain typed text does not start Agent')
   assert.deepEqual(errors, [], 'plain model-first startup does not report an error')
 
@@ -716,7 +716,7 @@ async function testConversationReplyDispatchController(replyDispatchModule) {
     content: '  inspect context  ',
     workflowId: '  workflow-1  ',
     requestedOutput: 'work-artifact',
-    productMode: 'companion',
+    untrustedMetadata: 'opaque',
   })
 
   assert.equal(agentStarts[0].conversation, conversation, 'Agent startup preserves conversation identity')
@@ -779,7 +779,7 @@ async function testConversationReplyDispatchController(replyDispatchModule) {
     reportError(message) { agentErrors.push(message) },
     sendFailedFallback() { throw new Error('Error.message must bypass fallback') },
   })
-  await failingAgentController.dispatch({ conversation, content: 'agent', workflowId: 'workflow-1', productMode: 'agent' })
+  await failingAgentController.dispatch({ conversation, content: 'agent', workflowId: 'workflow-1', untrustedMetadata: 'opaque' })
   await Promise.resolve()
   assert.deepEqual(agentErrors, [agentFailure.message], 'structured startup reports the exact Error message through Chat')
 }
@@ -817,7 +817,7 @@ async function testConversationActionConfirmation(actionConfirmationModule) {
         id: 'user-confirm',
         role: 'user',
         content: 'Inspect my Android device.',
-        productMode: 'companion',
+        untrustedMetadata: 'opaque',
         status: 'done',
         timestamp: 1,
       },
@@ -1038,18 +1038,18 @@ async function testFinalMessageClipboardAction(messageActionModule) {
   const responseMessage = Object.freeze({
     content: 'fallback content',
     responseText: '  final response  ',
-    productMode: 'companion',
+    untrustedMetadata: 'opaque',
   })
   const responseSnapshot = { ...responseMessage }
   await controller.copyFinalText(responseMessage)
   assert.deepEqual(writes, ['  final response  '], 'responseText takes precedence and is written without trimming')
   assert.deepEqual(responseMessage, responseSnapshot, 'copying final text does not mutate the input message')
 
-  await controller.copyFinalText({ content: '  content fallback  ', productMode: 'agent' })
+  await controller.copyFinalText({ content: '  content fallback  ', untrustedMetadata: 'opaque' })
   assert.deepEqual(
     writes,
     ['  final response  ', '  content fallback  '],
-    'an absent responseText falls back to the original untrimmed content regardless of product mode',
+    'an absent responseText falls back to the original untrimmed content regardless of unrelated metadata',
   )
 
   await controller.copyFinalText({ content: 'forbidden fallback', responseText: '' })
@@ -1255,7 +1255,7 @@ function testStopFlushesBeforeTerminalProjectionAndKeepsConversationScope(contro
   const fixture = createControlFixture(controlModule, {
     conversations: [
       createControlConversation('conversation-a', [
-        createControlMessage('user-a', 'user', 'done', { content: 'Plan it.', productMode: 'agent' }),
+        createControlMessage('user-a', 'user', 'done', { content: 'Plan it.', untrustedMetadata: 'opaque' }),
         createControlMessage('assistant-a', 'assistant', 'streaming', { content: 'persisted', startedAt: 10 }),
       ]),
       createControlConversation('conversation-b', [
@@ -1304,7 +1304,7 @@ async function testStaleRecoveryCommitsBuffersAndIsIdempotent(controlModule) {
   const fixture = createControlFixture(controlModule, {
     conversations: [
       createControlConversation('conversation-tavern', [
-        createControlMessage('user-tavern', 'user', 'done', { content: 'Continue.', productMode: 'companion' }),
+        createControlMessage('user-tavern', 'user', 'done', { content: 'Continue.', untrustedMetadata: 'opaque' }),
         createControlMessage('assistant-tavern', 'assistant', 'sending', { content: 'saved', startedAt: 40 }),
       ]),
       createControlConversation('conversation-live', [
@@ -1369,7 +1369,7 @@ async function testRetryStopsBeforeTrimAndAwaitsReplyStart(controlModule) {
     conversations: [createControlConversation('conversation-retry', [
       createControlMessage('user-old', 'user', 'done', { content: 'Old.' }),
       createControlMessage('assistant-old', 'assistant', 'done', { content: 'Old answer.' }),
-      createControlMessage('user-agent', 'user', 'done', { content: 'Agent request.', productMode: 'agent' }),
+      createControlMessage('user-agent', 'user', 'done', { content: 'Agent request.', untrustedMetadata: 'opaque' }),
       createControlMessage('assistant-retry', 'assistant', 'streaming', { content: 'partial' }),
       createControlMessage('assistant-after', 'assistant', 'done', { content: 'later' }),
     ])],
@@ -1415,7 +1415,7 @@ async function testRegenerateStopsBeforeExactRemovalAndAwaitsReplyStart(controlM
   const fixture = createControlFixture(controlModule, {
     conversations: [createControlConversation('conversation-regenerate', [
       createControlMessage('assistant-orphan', 'assistant', 'done', { content: 'Keep me.' }),
-      createControlMessage('user-tavern', 'user', 'done', { content: 'Tavern turn.', productMode: 'companion' }),
+      createControlMessage('user-tavern', 'user', 'done', { content: 'Tavern turn.', untrustedMetadata: 'opaque' }),
       createControlMessage('assistant-final', 'assistant', 'streaming', { content: 'partial' }),
     ])],
     activeStreams: {
@@ -1461,7 +1461,7 @@ async function testRegenerateStopsBeforeExactRemovalAndAwaitsReplyStart(controlM
 async function testControlReplyStartFailuresPropagate(controlModule) {
   const retryFixture = createControlFixture(controlModule, {
     conversations: [createControlConversation('conversation-retry-error', [
-      createControlMessage('user-error', 'user', 'done', { productMode: 'agent' }),
+      createControlMessage('user-error', 'user', 'done', { untrustedMetadata: 'opaque' }),
       createControlMessage('assistant-error', 'assistant', 'done'),
     ])],
     startReply: async () => {
@@ -1479,7 +1479,7 @@ async function testControlReplyStartFailuresPropagate(controlModule) {
 
   const regenerateFixture = createControlFixture(controlModule, {
     conversations: [createControlConversation('conversation-regenerate-error', [
-      createControlMessage('user-error', 'user', 'done', { productMode: 'companion' }),
+      createControlMessage('user-error', 'user', 'done', { untrustedMetadata: 'opaque' }),
       createControlMessage('assistant-error', 'assistant', 'done'),
     ])],
     startReply: async () => {
@@ -1691,14 +1691,14 @@ async function testSettingsLikeTextUsesModelPath(commandModule) {
   await fixture.command.send({
     conversation: createConversation(),
     content: 'set theme',
-    productMode: 'companion',
+    untrustedMetadata: 'opaque',
   })
 
   assert.equal(fixture.messages.length, 1, 'the controller projects only the user turn')
   assert.equal(fixture.legacyInputs.length, 1, 'settings-like text reaches the model path')
   assert.equal(fixture.legacyInputs[0].content, 'set theme')
-  assert.equal(Object.hasOwn(fixture.messages[0].message, 'productMode'), false, 'settings-like metadata cannot create product-mode message state')
-  assert.equal('productMode' in fixture.legacyInputs[0], false, 'settings-like Companion metadata cannot reach runtime dispatch')
+  assert.equal(Object.hasOwn(fixture.messages[0].message, 'untrustedMetadata'), false, 'settings-like metadata cannot create message state')
+  assert.equal('untrustedMetadata' in fixture.legacyInputs[0], false, 'settings-like untrusted metadata cannot reach runtime dispatch')
 }
 
 async function testLegacyDelegation(commandModule) {
@@ -1711,7 +1711,7 @@ async function testLegacyDelegation(commandModule) {
     content: '  Ask%20the%20provider  ',
     attachments,
     requestedOutput: 'work-artifact',
-    productMode: 'agent',
+    untrustedMetadata: 'opaque',
   })
 
   assert.equal(fixture.messages.length, 1, 'non-local turns project exactly one user message before runtime dispatch')
@@ -1824,7 +1824,7 @@ async function testRuntimeDelegationAwaitsAndPropagates(commandModule) {
   const pending = awaitFixture.command.send({
     conversation: createConversation(),
     content: 'Await the runtime boundary.',
-    productMode: 'companion',
+    untrustedMetadata: 'opaque',
   }).then(() => {
     settled = true
   })
@@ -1832,7 +1832,7 @@ async function testRuntimeDelegationAwaitsAndPropagates(commandModule) {
 
   assert.equal(settled, false, 'presentation dispatch remains pending until the runtime adapter settles')
   assert.equal(awaitFixture.legacyInputs.length, 1, 'awaitable dispatch crosses the runtime boundary exactly once')
-  assert.equal(Object.hasOwn(awaitFixture.legacyInputs[0], 'productMode'), false, 'awaitable dispatch strips forged historical mode input')
+  assert.equal(Object.hasOwn(awaitFixture.legacyInputs[0], 'untrustedMetadata'), false, 'awaitable dispatch strips untrusted metadata input')
   assert.ok(awaitFixture.events.indexOf('get:conversation-1') < awaitFixture.events.indexOf('dispatch'), 'latest projection is read before the pending runtime starts')
   releaseDispatch()
   await pending
@@ -1848,7 +1848,7 @@ async function testRuntimeDelegationAwaitsAndPropagates(commandModule) {
     failureFixture.command.send({
       conversation: createConversation(),
       content: 'Preserve runtime failure.',
-      productMode: 'agent',
+      untrustedMetadata: 'opaque',
     }),
     (error) => error === runtimeFailure,
     'presentation dispatch preserves the exact runtime rejection',
@@ -2266,7 +2266,7 @@ function testProductionMessageRuntimeBoundary() {
   const chatPresentationSource = fs.readFileSync(path.join(root, 'src/presentation/features/chat/chatPresentationCatalog.ts'), 'utf8')
   const adapterSource = fs.readFileSync(path.join(root, 'src/bootstrap/conversationReplyStart.ts'), 'utf8')
   const workflowReplyStartSource = fs.readFileSync(path.join(root, 'src/modules/conversations/application/conversationChatWorkflowReplyStart.ts'), 'utf8')
-  const vnextChatWorkflowRuntimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/vnextChatWorkflowRuntime.ts'), 'utf8')
+  const chatWorkflowRuntimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/chatWorkflowRuntime.ts'), 'utf8')
   const assistantRuntimeEntrySource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/index.ts'), 'utf8')
   const assistantReplyBootstrapSource = fs.readFileSync(path.join(root, 'src/bootstrap/conversationAssistantReplyStartRuntime.ts'), 'utf8')
   const conversationsEntrySource = fs.readFileSync(path.join(root, 'src/modules/conversations/index.ts'), 'utf8')
@@ -2443,16 +2443,13 @@ function testProductionMessageRuntimeBoundary() {
   assert.match(workflowReplyStartSource, /dependencies\s*\.startOrdinaryReply\(conversation\.id\)/, 'structured workflow fallback forwards only conversation identity')
   assert.doesNotMatch(workflowReplyStartSource, /@\/(?:services|bootstrap|platform|presentation|store)\//, 'the Conversations application policy has no concrete runtime dependency')
   assert.match(adapterSource, /createConversationChatWorkflowReplyStarter\(\{/)
-  assert.match(adapterSource, /createChatWorkflowRuntime: createVNextChatWorkflowRuntime/, 'bootstrap starts new explicit workflows through the Chat-owned runtime')
+  assert.match(adapterSource, /createChatWorkflowRuntime: createChatWorkflowRuntime/, 'bootstrap starts new explicit workflows through the Chat-owned runtime')
   assert.match(adapterSource, /return runtime\.start\(\{[\s\S]*?cancellationSignal: controller\.signal/, 'bootstrap forwards the exact controller signal into the Chat workflow run')
-  assert.equal(adapterSource.includes('startVNextAgentRun'), false, 'production workflow startup no longer enters the Agent parent-run controller')
   assert.equal(fs.existsSync(path.join(root, 'src/bootstrap/conversationAgentReplyStart.ts')), false, 'the Agent-named workflow bootstrap facade is deleted')
   assert.equal(fs.existsSync(path.join(root, 'src/modules/conversations/application/conversationAgentReplyStart.ts')), false, 'the Agent-named Conversations starter is deleted')
   assert.equal(fs.existsSync(path.join(root, 'src/presentation/features/conversations/conversationAgentActionConfirmationController.ts')), false, 'the Agent-named confirmation controller is deleted')
-  assert.match(vnextChatWorkflowRuntimeSource, /export function createVNextChatWorkflowRuntime/)
-  assert.match(vnextChatWorkflowRuntimeSource, /createAssistantChatWorkflowRunRuntime\(\{/)
-  assert.equal(fs.existsSync(path.join(root, 'src/bootstrap/vnextAgentRuntime.ts')), false, 'the Agent-named workflow bootstrap is deleted')
-  assert.equal(fs.existsSync(path.join(root, 'src/presentation/features/conversations/vnextAgentRunCommand.ts')), false, 'the Agent-only recovery command is deleted')
+  assert.match(chatWorkflowRuntimeSource, /export function createChatWorkflowRuntime/)
+  assert.match(chatWorkflowRuntimeSource, /createAssistantChatWorkflowRunRuntime\(\{/)
   assert.match(assistantRuntimeEntrySource, /export \* from ['"]\.\/application\/assistantChatWorkflowRunRuntime['"]/, 'Assistant Runtime publicly exports the Chat workflow use case')
   assert.match(adapterSource, /startOrdinaryReply: startConversationAssistantReplyAfterHistoryProjection/, 'workflow fallback uses the target ordinary reply starter')
   assert.match(assistantReplyBootstrapSource, /createAssistantConversationReplyStartRuntime\(\{[\s\S]*?conversationAssistantReplySessionRuntime[\s\S]*?conversationAssistantProviderAdmissionRuntime[\s\S]*?conversationAssistantDurableExecutionRuntime/, 'bootstrap composes reply startup through the durable Chat execution runtime')
@@ -2528,10 +2525,10 @@ function testProductionMessageRuntimeBoundary() {
   )
 
   const initializationIndex = bootstrapSource.indexOf('initializeConversationReplyStart()')
-  const runRecoveryIndex = bootstrapSource.indexOf('await recoverVNextChatRuns')
-  const checkpointRecoveryIndex = bootstrapSource.indexOf('await recoverVNextWorkflowCheckpoints')
+  const runRecoveryIndex = bootstrapSource.indexOf('await recoverChatRuns')
+  const checkpointRecoveryIndex = bootstrapSource.indexOf('await recoverWorkflowCheckpoints')
   const workspaceReceiptRecoveryIndex = bootstrapSource.indexOf('await recoverConversationWorkspaceWritebackReceipts')
-  const taskRecoveryIndex = bootstrapSource.indexOf('await recoverVNextInterruptedTasks')
+  const taskRecoveryIndex = bootstrapSource.indexOf('await recoverInterruptedTasks')
   const readyIndex = bootstrapSource.indexOf('ready: true')
   const deferredRecoveryDispatchIndex = bootstrapSource.indexOf('void recoverDeferredRuntimeState()')
   assert.ok(initializationIndex >= 0, 'application startup explicitly initializes the conversation runtime binding')
@@ -2540,12 +2537,11 @@ function testProductionMessageRuntimeBoundary() {
   assert.ok(workspaceReceiptRecoveryIndex < taskRecoveryIndex, 'workspace receipt reconciliation precedes passive durable task recovery')
   assert.match(
     bootstrapSource,
-    /recoverVNextWorkflowCheckpoints\(\s*recoveredRuns\.map\(\(run\) => run\.id\),\s*\{ signal: recoveryController\.signal \},\s*\)/,
+    /recoverWorkflowCheckpoints\(\s*recoveredRuns\.map\(\(run\) => run\.id\),\s*\{ signal: recoveryController\.signal \},\s*\)/,
     'startup forwards only the exact recovered Chat run identities and recovery signal to checkpoint reconciliation',
   )
   assert.ok(initializationIndex < readyIndex, 'runtime binding initializes before the app becomes ready')
   assert.ok(deferredRecoveryDispatchIndex > readyIndex, 'non-blocking runtime recovery is dispatched after the app becomes ready')
-  assert.equal(bootstrapSource.includes('recoverVNextAgentRuns'), false, 'startup has no separate Agent recovery pass')
 
   const structuredGateIndex = replyDispatchControllerSource.indexOf('const startsStructuredWorkflow')
   const replyIndex = replyDispatchControllerSource.indexOf('void dependencies.startAssistantReply', structuredGateIndex)
@@ -2659,7 +2655,7 @@ function withTimeout(promise, timeoutMs, message) {
 withTimeout(
   main(),
   30_000,
-  'vNext conversation message-command tests did not settle.',
+  'Conversation message-command tests did not settle.',
 ).catch((error) => {
   console.error(error instanceof Error ? error.stack || error.message : error)
   process.exitCode = 1
