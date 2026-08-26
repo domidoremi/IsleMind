@@ -338,15 +338,15 @@ function MessageBubbleComponent({
       <View
         style={{
           alignSelf: resolveMessageBubbleRowAlignment(message.role),
-          width: bubbleUsesAvailableWidth ? (isUser ? bubbleMaxWidth : bubbleMaxWidth + 32) : undefined,
-          maxWidth: isUser ? bubbleMaxWidth : bubbleMaxWidth + 32,
+          width: bubbleUsesAvailableWidth || isUser ? bubbleMaxWidth : undefined,
+          maxWidth: bubbleMaxWidth,
           flexShrink: 1,
           position: 'relative',
         }}
       >
         <View style={{ width: isUser ? undefined : '100%', flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
           {!isUser ? <AssistantBrandBadge brand={providerBrand} /> : null}
-          <View style={{ width: isUser ? undefined : bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined, maxWidth: bubbleMaxWidth, flexShrink: 1, position: 'relative' }}>
+          <View style={{ width: isUser ? undefined : bubbleUsesAvailableWidth ? Math.max(0, bubbleMaxWidth - 32) : undefined, maxWidth: isUser ? bubbleMaxWidth : Math.max(0, bubbleMaxWidth - 32), flexShrink: 1, position: 'relative' }}>
           <MessageBubbleThemeSurface themeId={canonicalThemeId} colors={colors} isUser={isUser} selected={selected}>
             {multiSelectActive ? (
               <IslePressable
@@ -775,7 +775,6 @@ function MessageBody({
         ) : null}
       </RenderGuard>
       {!isUser && message.citations?.length ? <MessageSourceLink conversationId={conversationId} message={message} /> : null}
-      {isStreamingContent && displayText ? <Cursor motion={motion} /> : null}
     </>
   )
 }
@@ -1073,11 +1072,7 @@ function AnimatedProcessStatusText({ active, label, tone, motion, grammar }: { a
   const shimmer = active && motion === 'full' && grammar !== 'precision'
   const baseLabel = label.replace(/[.\u2026]+$/u, '').trimEnd()
   const displayLabel = active
-    ? grammar === 'precision'
-      ? `${baseLabel} /`
-      : grammar === 'material'
-        ? `${baseLabel}\u2026`
-        : `${baseLabel}${'.'.repeat(motion === 'full' ? dotCount : 3)}`
+    ? `${baseLabel}${'.'.repeat(motion === 'full' ? dotCount : 3)}`
     : label
   const cycleMs = grammar === 'organic' ? 520 : grammar === 'fluid' ? 420 : 360
   const shimmerDuration = grammar === 'organic' ? 1800 : grammar === 'fluid' ? 1380 : 980
@@ -2154,35 +2149,6 @@ function TypingDots({ motion }: { motion: MotionIntensity }) {
         />
       ))}
     </View>
-  )
-}
-
-function Cursor({ motion }: { motion: MotionIntensity }) {
-  const { colors, canonicalThemeId } = useAppTheme()
-  const grammar = resolveThemeComponentExpression(canonicalThemeId, 'loading').motion
-  const cursorStyle = grammar === 'organic'
-    ? { width: 7, height: 7, borderRadius: 7, marginTop: 8, marginLeft: 3 }
-    : grammar === 'material'
-      ? { width: 3, height: 18, borderRadius: 2, marginTop: 3, marginLeft: 2 }
-      : grammar === 'fluid'
-        ? { width: 14, height: 5, borderRadius: 5, marginTop: 10, marginLeft: 3 }
-        : { width: 1, height: 18, borderRadius: 0, marginTop: 3, marginLeft: 1 }
-  const duration = grammar === 'precision' ? 520 : grammar === 'organic' ? 920 : grammar === 'material' ? 600 : 820
-
-  return (
-    <MotiView
-      testID={`message-streaming-cursor-${canonicalThemeId}`}
-      from={motion === 'full'
-        ? grammar === 'organic'
-          ? { opacity: 0.24, scale: 0.78 }
-          : grammar === 'fluid'
-            ? { opacity: 0.36, scaleX: 0.68 }
-            : { opacity: 0.28, scaleY: 0.82 }
-        : { opacity: 0.82, scale: 1, scaleX: 1, scaleY: 1 }}
-      animate={{ opacity: 0.86, scale: 1, scaleX: 1, scaleY: 1 }}
-      transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? duration : 1 }}
-      style={[cursorStyle, { backgroundColor: colors.ui.icon.accentForeground }]}
-    />
   )
 }
 

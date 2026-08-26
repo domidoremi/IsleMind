@@ -25,6 +25,12 @@ const preferredAndroidJdkHomes = [
   'C:\\Program Files\\Eclipse Adoptium\\jdk-17',
   'C:\\Program Files\\Java\\jdk-17',
 ].filter(Boolean)
+const androidReleaseSigningProperties = [
+  'ISLEMIND_UPLOAD_STORE_FILE',
+  'ISLEMIND_UPLOAD_STORE_PASSWORD',
+  'ISLEMIND_UPLOAD_KEY_ALIAS',
+  'ISLEMIND_UPLOAD_KEY_PASSWORD',
+]
 const releaseBuildPasses = [
   {
     label: 'universal-64',
@@ -397,6 +403,16 @@ function writeReleaseSidecars(filePath) {
   writeReleaseSourceSnapshot(projectRoot, filePath)
 }
 
+function cleanStaleApkArtifacts() {
+  if (!fs.existsSync(outputDir)) return
+  const currentVersionMarker = `-${packageJson.version}-`
+  for (const name of fs.readdirSync(outputDir)) {
+    const generatedArtifact = name.endsWith('.apk') || name.endsWith('.apk.sha256') || name.endsWith('.apk.source-snapshot.json')
+    if (!generatedArtifact || !name.startsWith('IsleMind-') || name.includes(currentVersionMarker)) continue
+    fs.rmSync(path.join(outputDir, name), { force: true })
+  }
+}
+
 function listApks(dir) {
   if (!fs.existsSync(dir)) return []
   return fs.readdirSync(dir)
@@ -414,7 +430,7 @@ function waitForApks(dir, timeoutMs = apkOutputWaitMs) {
   return listApks(dir)
 }
 
-function copyOutputs(variant, buildType, pass) {
+function copyOutputs(variant, buildType, pass, artifactBuildType = buildType) {
   const sourceDir = path.join(androidDir, 'app', 'build', 'outputs', 'apk', buildType)
   const apks = waitForApks(sourceDir)
   if (!apks.length) {
@@ -426,22 +442,22 @@ function copyOutputs(variant, buildType, pass) {
     if (apks.length !== 1) {
       throw new Error(`Expected exactly one APK for release pass ${pass.label}, found ${apks.length}: ${apks.map((apk) => path.basename(apk)).join(', ')}`)
     }
-    const targetName = formatApkArtifactName({ version: packageJson.version, buildType, variant, arch: pass.arch })
+    const targetName = formatApkArtifactName({ version: packageJson.version, buildType: artifactBuildType, variant, arch: pass.arch })
     const target = path.join(outputDir, targetName)
     fs.copyFileSync(apks[0], target)
     copied.push(target)
-    assertReleaseOutputs(copied, variant, pass)
+    if (artifactBuildType === 'release') assertReleaseOutputs(copied, variant, pass, artifactBuildType)
     return copied
   }
   for (const apk of apks) {
     const base = path.basename(apk)
     const arch = inferArch(base, pass)
-    const targetName = formatApkArtifactName({ version: packageJson.version, buildType, variant, arch })
+    const targetName = formatApkArtifactName({ version: packageJson.version, buildType: artifactBuildType, variant, arch })
     const target = path.join(outputDir, targetName)
     fs.copyFileSync(apk, target)
     copied.push(target)
   }
-  if (buildType === 'release') {
+  if (buildType === 'release' && artifactBuildType === 'release') {
     assertReleaseOutputs(copied, variant, pass)
   }
   return copied
@@ -456,10 +472,10 @@ function inferArch(fileName, pass) {
   return 'universal'
 }
 
-function assertReleaseOutputs(outputs, variant, pass) {
+function assertReleaseOutputs(outputs, variant, pass, artifactBuildType = 'release') {
   const required = pass?.required ?? ['universal-64', 'arm64-v8a', 'x86_64', 'armeabi-v7a-legacy']
   const missing = required.filter((arch) => {
-    const expected = formatApkArtifactName({ version: packageJson.version, buildType: 'release', variant, arch })
+    const expected = formatApkArtifactName({ version: packageJson.version, buildType: artifactBuildType, variant, arch })
     return !outputs.some((output) => path.basename(output) === expected)
   })
   if (missing.length) {
@@ -467,16 +483,54 @@ function assertReleaseOutputs(outputs, variant, pass) {
   }
 }
 
+function resolveLocalReleaseSigningMode() {
+  const values = new Map(androidReleaseSigningProperties.map((name) => [
+    name,
+    process.env[`ORG_GRADLE_PROJECT_${name}`] || process.env[name] || '',
+  ]))
+  const configured = androidReleaseSigningProperties.filter((name) => String(values.get(name)).trim())
+  if (!configured.length) return { mode: 'qa-debug', env: {} }
+  if (configured.length !== androidReleaseSigningProperties.length) {
+    const missing = androidReleaseSigningProperties.filter((name) => !String(values.get(name)).trim())
+    throw new Error(`Android release signing is partially configured. Missing: ${missing.join(', ')}.`)
+  }
+
+  const storeFile = String(values.get('ISLEMIND_UPLOAD_STORE_FILE')).trim()
+  const storeCandidates = [
+    path.resolve(androidDir, 'app', storeFile),
+    path.resolve(androidDir, storeFile),
+    path.resolve(projectRoot, storeFile),
+  ]
+  if (!storeCandidates.some((candidate) => fs.existsSync(candidate))) {
+    throw new Error(`Android release signing keystore was not found at ${storeFile}.`)
+  }
+  const env = {}
+  for (const name of androidReleaseSigningProperties) {
+    env[`ORG_GRADLE_PROJECT_${name}`] = String(values.get(name))
+  }
+  return { mode: 'signed', env }
+}
+
 function prepareAndroidProjectForRelease(args) {
   const releaseOptimization = resolveAndroidReleaseOptimization(args)
-  console.warn('Local release APKs are QA artifacts signed with the Android debug certificate. Do not publish them as production releases.')
+  const signing = resolveLocalReleaseSigningMode()
+  if (signing.mode === 'qa-debug') {
+    console.warn('Local release APKs are QA artifacts signed with the Android debug certificate.')
+    console.warn('Do not publish them as production releases; they are named with an android-release-debug marker and cannot update a production-signed installation.')
+  } else {
+    console.log('Local release APKs use the configured IsleMind release signing certificate.')
+  }
   console.warn(`R8 and resource shrinking: ${releaseOptimization.enabled ? 'enabled for explicit QA validation' : 'disabled until exact-current device validation passes'}.`)
-  const env = releaseEnv()
+  const env = releaseEnv(signing.env)
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'], { env })
   prepareAndroidProject(env)
   allowReleaseCleartextTraffic()
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'], { env })
-  run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'], { env })
+  run(commandName('node'), [
+    'scripts/configure-android-release.js',
+    ...(signing.mode === 'qa-debug' ? ['--skip-signing'] : []),
+  ], { env })
+  return signing.mode
 }
 
 function prepareAndroidProject(env) {
@@ -484,7 +538,7 @@ function prepareAndroidProject(env) {
   ensureAndroidLocalProperties()
 }
 
-function buildVariant(variant, args) {
+function buildVariant(variant, args, artifactBuildType = args.buildType) {
   const assembleTask = args.buildType === 'release' ? 'assembleRelease' : 'assembleDebug'
   const releaseOptimization = resolveAndroidReleaseOptimization(args)
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
@@ -520,7 +574,7 @@ function buildVariant(variant, args) {
       ISLEMIND_MODEL_BUNDLE: variant,
       EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE: variant,
     })
-    outputs.push(...copyOutputs(variant, args.buildType, pass))
+    outputs.push(...copyOutputs(variant, args.buildType, pass, artifactBuildType))
   }
   if (args.buildType === 'release') {
     const sixtyFourBitOutputs = outputs.filter((output) => !path.basename(output).includes('armeabi-v7a-legacy'))
@@ -530,7 +584,9 @@ function buildVariant(variant, args) {
 }
 
 function installApk(device, apks) {
-  const universal = apks.find((apk) => apk.includes('-universal-64-')) || apks.find((apk) => apk.endsWith('-universal.apk')) || apks[0]
+  const universal = apks.find((apk) => /-universal-64(?:-|\.apk$)/.test(path.basename(apk)))
+    || apks.find((apk) => /-universal(?:-|\.apk$)/.test(path.basename(apk)))
+    || apks[0]
   run('adb', ['-s', device, 'install', '-r', universal])
 }
 
@@ -539,8 +595,11 @@ function main() {
   if (!fs.existsSync(androidDir)) {
     throw new Error('android directory does not exist. Run expo prebuild before local native APK builds.')
   }
+  cleanStaleApkArtifacts()
+  let artifactBuildType = args.buildType
   if (args.buildType === 'release') {
-    prepareAndroidProjectForRelease(args)
+    const signingMode = prepareAndroidProjectForRelease(args)
+    artifactBuildType = signingMode === 'signed' ? 'release' : 'release-debug'
   } else {
     prepareAndroidProject(androidBuildEnv())
   }
@@ -553,7 +612,7 @@ function main() {
   const outputs = []
   try {
     for (const variant of variants) {
-      outputs.push(...buildVariant(variant, args))
+      outputs.push(...buildVariant(variant, args, artifactBuildType))
     }
   } finally {
     if (args.buildType === 'release') {
@@ -562,6 +621,9 @@ function main() {
   }
   for (const output of outputs) {
     writeReleaseSidecars(output)
+  }
+  if (args.buildType === 'release' && artifactBuildType === 'release') {
+    run(commandName('node'), ['scripts/validate-android-release-signing.js', ...outputs])
   }
   if (args.installDevice) {
     installApk(args.installDevice, outputs)
