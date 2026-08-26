@@ -6,6 +6,8 @@ export interface AssistantConversationReplySessionConversationLike {
 export interface AssistantConversationReplySessionMessage {
   readonly id: string
   readonly role: 'assistant'
+  readonly providerId: string
+  readonly model: string
   readonly content: ''
   readonly timestamp: number
   readonly status: 'streaming'
@@ -114,6 +116,8 @@ export function createAssistantConversationReplySessionRuntime<
     const message: AssistantConversationReplySessionMessage = {
       id: dependencies.generateId(),
       role: 'assistant',
+      providerId: conversation.providerId,
+      model: conversation.model,
       content: '',
       timestamp: startedAt,
       status: 'streaming',

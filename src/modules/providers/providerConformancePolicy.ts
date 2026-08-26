@@ -693,6 +693,7 @@ function inferReasoningRequestShape(input: ProviderConformanceRequest, family: P
   }
   if (family === 'deepseek' && (config.reasoningMode === 'deepseek-thinking' || dependencies.isDeepSeekThinkingModel(input.provider, input.model))) return 'deepseek-thinking'
   if (family === 'dashscope' && (config.reasoningMode === 'dashscope-thinking' || dependencies.isDashScopeThinkingModel(input.provider, input.model))) return 'dashscope-thinking'
+  if (family === 'moonshot' && config.reasoningMode === 'openai-effort') return 'openai-reasoning-effort'
   if (family === 'moonshot' && (config.reasoningMode === 'kimi-thinking' || dependencies.isKimiThinkingModel(input.provider, input.model))) return 'kimi-thinking'
   if (family === 'minimax' && config.reasoningMode === 'minimax-thinking' && dependencies.isMiniMaxThinkingModel(input.provider, input.model)) return 'minimax-thinking'
   if (family === 'xai' && (config.reasoningMode === 'xai-reasoning-effort' || dependencies.isXAIReasoningModel(input.provider, input.model))) return 'xai-reasoning-effort'

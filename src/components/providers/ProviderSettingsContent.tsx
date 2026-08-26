@@ -92,9 +92,14 @@ const PROVIDER_MANUAL_SORT_RAIL_PROVIDER_LIMIT = 8
 const PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT = 8
 const PROVIDER_DETAILS_DEFER_FALLBACK_MS = 180
 const PROVIDER_IMPORT_PERSISTENCE_FLUSH_DELAY_MS = 1400
-const PROVIDER_OPERATION_NOTIFICATION_CLEAR_DELAY_MS = 5000
 const PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT = 120000
+let providerNotificationSequence = 0
 type ProviderFormFieldId = 'name' | 'baseUrl' | 'tokens' | 'models'
+
+function createProviderNotificationOwner(kind: string): string {
+  providerNotificationSequence = (providerNotificationSequence + 1) % 1000000
+  return `provider-${kind}:${Date.now()}:${providerNotificationSequence}`
+}
 
 function resolveProviderChrome(colors: AppThemeColors) {
   const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
@@ -215,7 +220,6 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const runtimeDiagnosticsRunRef = useRef(0)
-  const providerNotificationClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const providerPersistenceFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const suppressedSupplierPress = useRef<string | null>(null)
   const providerModelAccessSettings = useMemo(() => ({
@@ -289,7 +293,6 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
   }, [backgroundState, onBackgroundStateChange])
 
   useEffect(() => () => {
-    if (providerNotificationClearTimer.current) clearTimeout(providerNotificationClearTimer.current)
     if (providerPersistenceFlushTimer.current) clearTimeout(providerPersistenceFlushTimer.current)
   }, [])
 
@@ -454,18 +457,15 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
     await activateProviders([detectedProvider.id], 'single')
   }
 
-  async function publishImportProgress(progress: ProviderImportProgress, options: { waitForNotification?: boolean } = {}) {
+  async function publishImportProgress(progress: ProviderImportProgress, options: { waitForNotification?: boolean; owner?: string } = {}) {
     setImportProgress(progress)
-    const notification = publishProviderImportStatusNotification(progress, t)
+    const notification = publishProviderImportStatusNotification(
+      progress,
+      t,
+      useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true,
+      options.owner,
+    )
     if (options.waitForNotification) await notification
-  }
-
-  function scheduleProviderOperationNotificationClear(delayMs = PROVIDER_OPERATION_NOTIFICATION_CLEAR_DELAY_MS) {
-    if (providerNotificationClearTimer.current) clearTimeout(providerNotificationClearTimer.current)
-    providerNotificationClearTimer.current = setTimeout(() => {
-      providerNotificationClearTimer.current = null
-      void clearAndroidStatusNotification()
-    }, delayMs)
   }
 
   function scheduleProviderPersistenceFlush() {
@@ -478,28 +478,29 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
 
   async function importProvidersFromText(input: string): Promise<boolean> {
     if (importProgress) return false
-    await publishImportProgress({ stage: 'parsing', completed: 0, total: 0 }, { waitForNotification: true })
+    const notificationOwner = createProviderNotificationOwner('import')
+    await publishImportProgress({ stage: 'parsing', completed: 0, total: 0 }, { waitForNotification: true, owner: notificationOwner })
     Keyboard.dismiss()
     await yieldToNextPaint()
     try {
       const result = parseProviderImportText(input, { accessSettings: settings })
       if (!result.providers.length) {
         setImportProgress(null)
-        void clearAndroidStatusNotification()
+        void clearAndroidStatusNotification({ owner: notificationOwner })
         dialog.notice({ title: t('providerSettings.importEmpty'), message: result.warnings.join('\n') || t('providerSettings.importEmptyMessage'), tone: 'amber' })
         return false
       }
 
-      await publishImportProgress({ stage: 'saving', completed: 0, total: result.providers.length }, { waitForNotification: true })
+      await publishImportProgress({ stage: 'saving', completed: 0, total: result.providers.length }, { waitForNotification: true, owner: notificationOwner })
       await yieldToNextPaint()
       await addProviders(result.providers, {
         persist: 'deferred',
         yieldEvery: 4,
         onProgress: ({ completed, total, currentProviderName }) => {
-          void publishImportProgress({ stage: 'saving', completed, total, currentProviderName })
+          void publishImportProgress({ stage: 'saving', completed, total, currentProviderName }, { owner: notificationOwner })
         },
       })
-      void publishImportProgress({ stage: 'finishing', completed: result.providers.length, total: result.providers.length })
+      void publishImportProgress({ stage: 'finishing', completed: result.providers.length, total: result.providers.length }, { owner: notificationOwner })
       await yieldToNextPaint()
       updateSettings({ defaultProvider: result.providers[0].id })
       scheduleProviderPersistenceFlush()
@@ -509,14 +510,9 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
       setExpandedProviderId(result.providers.length === 1 ? result.providers[0]?.id ?? null : null)
       setSortMode('manual')
       setModelFilter('')
-      dialog.toast({
-        title: t('providerSettings.importDone'),
-        message: t('providerSettings.importDoneMessage', { count: result.providers.length }),
-        tone: result.warnings.length ? 'amber' : 'mint',
-        durationMs: 1800,
-      })
-      publishProviderImportCompletedNotification(result.providers.length, t)
-      scheduleProviderOperationNotificationClear()
+      // The follow-up confirmation is the single foreground terminal surface.
+      // Clear the optional system progress indicator before asking for the next step.
+      void clearAndroidStatusNotification({ owner: notificationOwner })
 
       const enableNow = await dialog.confirm({
         title: t('providerSettings.enableImportedTitle'),
@@ -532,8 +528,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
     } catch (error) {
       const failureMessage = providerImportFailureMessage(error, t)
       setImportProgress(null)
-      publishProviderImportFailedNotification(failureMessage, t)
-      scheduleProviderOperationNotificationClear(7000)
+      void clearAndroidStatusNotification({ owner: notificationOwner })
       dialog.notice({
         title: t('providerSettings.importFailed'),
         message: failureMessage,
@@ -626,13 +621,8 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
     setExpandedProviderId((current) => current && ids.has(current) ? null : current)
     setExpandedSupplierId((current) => current === group.id ? null : current)
     setSelectedIds((current) => new Set([...current].filter((id) => !ids.has(id))))
-    dialog.toast({
-      title: t('providerSettings.deleteSupplierStarted'),
-      message: t('providerSettings.deleteSupplierProgress', { completed: 0, total: count }),
-      tone: 'amber',
-      durationMs: 1800,
-    })
-    void publishProviderDeleteNotification('running', groupLabel, 0, count, t)
+    const notificationOwner = createProviderNotificationOwner('delete')
+    void publishProviderDeleteNotification(0, count, t, useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true, notificationOwner)
 
     let removed = 0
     try {
@@ -640,15 +630,15 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
         await removeProvider(provider.id)
         invalidateProviderUsage(provider.id)
         removed += 1
-        void publishProviderDeleteNotification('running', groupLabel, removed, count, t)
+        void publishProviderDeleteNotification(removed, count, t, useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true, notificationOwner)
       }
       dialog.toast({
         title: t('providerSettings.deleteSupplierDone'),
         message: t('providerSettings.deleteSupplierDoneMessage', { name: groupLabel, count }),
         tone: 'mint',
+        dedupeKey: 'provider-delete-supplier',
       })
-      void publishProviderDeleteNotification('completed', groupLabel, removed, count, t)
-      scheduleProviderOperationNotificationClear()
+      void clearAndroidStatusNotification({ owner: notificationOwner })
     } catch {
       const partial = removed > 0
       const message = partial
@@ -659,8 +649,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
         message,
         tone: 'danger',
       })
-      void publishProviderDeleteNotification('error', groupLabel, removed, count, t)
-      scheduleProviderOperationNotificationClear(7000)
+      void clearAndroidStatusNotification({ owner: notificationOwner })
     } finally {
       setDeletingSupplierId(null)
     }
@@ -1200,7 +1189,13 @@ async function yieldToNextPaint(): Promise<void> {
   })
 }
 
-function publishProviderImportStatusNotification(progress: ProviderImportProgress, t: ReturnType<typeof useTranslation>['t']) {
+function publishProviderImportStatusNotification(
+  progress: ProviderImportProgress,
+  t: ReturnType<typeof useTranslation>['t'],
+  enabled: boolean,
+  owner?: string,
+) {
+  if (!enabled) return Promise.resolve({ shown: false, reason: 'disabled', backgroundReliable: false } as const)
   const determinate = progress.total > 0
   const progressValue = determinate ? Math.min(1, Math.max(0, progress.completed / progress.total)) : 0
   const stage = t(`providerSettings.importProgress.${progress.stage}`)
@@ -1222,65 +1217,31 @@ function publishProviderImportStatusNotification(progress: ProviderImportProgres
     ongoing: true,
     requestPromotedOngoing: true,
     foregroundService: true,
-  })
-}
-
-function publishProviderImportCompletedNotification(count: number, t: ReturnType<typeof useTranslation>['t']) {
-  void updateAndroidStatusNotification({
-    state: 'completed',
-    title: t('providerSettings.importDone'),
-    message: t('providerSettings.importDoneMessage', { count }),
-    shortText: t('providerSettings.importDone'),
-    deepLink: 'islemind://settings/providers',
-    progress: 1,
-    indeterminate: false,
-    ongoing: false,
-    requestPromotedOngoing: false,
-    foregroundService: true,
-  })
-}
-
-function publishProviderImportFailedNotification(message: string, t: ReturnType<typeof useTranslation>['t']) {
-  void updateAndroidStatusNotification({
-    state: 'error',
-    title: t('providerSettings.importFailed'),
-    message,
-    shortText: t('providerSettings.importFailed'),
-    deepLink: 'islemind://settings/providers',
-    indeterminate: false,
-    ongoing: false,
-    requestPromotedOngoing: false,
-    foregroundService: true,
-  })
+  }, { enabled: true, owner })
 }
 
 function publishProviderDeleteNotification(
-  state: 'running' | 'completed' | 'error',
-  providerName: string,
   completed: number,
   total: number,
   t: ReturnType<typeof useTranslation>['t'],
+  enabled: boolean,
+  owner?: string,
 ) {
+  if (!enabled) return Promise.resolve({ shown: false, reason: 'disabled', backgroundReliable: false } as const)
   const progress = total > 0 ? Math.min(1, Math.max(0, completed / total)) : 0
-  const message = state === 'running'
-    ? t('providerSettings.deleteSupplierProgress', { completed, total })
-    : state === 'completed'
-      ? t('providerSettings.deleteSupplierDoneMessage', { name: providerName, count: total })
-      : completed > 0
-        ? t('providerSettings.deleteSupplierPartialMessage', { completed, total })
-        : t('providerSettings.deleteSupplierFailedMessage')
+  const message = t('providerSettings.deleteSupplierProgress', { completed, total })
   return updateAndroidStatusNotification({
-    state,
-    title: state === 'running' ? t('providerSettings.deleteSupplierStarted') : state === 'completed' ? t('providerSettings.deleteSupplierDone') : t('providerSettings.deleteSupplierFailed'),
+    state: 'running',
+    title: t('providerSettings.deleteSupplierStarted'),
     message,
-    shortText: state === 'running' ? `${completed}/${total}` : providerName,
+    shortText: `${completed}/${total}`,
     deepLink: 'islemind://settings/providers',
     progress,
     indeterminate: false,
-    ongoing: state === 'running',
-    requestPromotedOngoing: state === 'running',
+    ongoing: true,
+    requestPromotedOngoing: true,
     foregroundService: true,
-  })
+  }, { enabled: true, owner })
 }
 
 function useKeyboardAwareModalRequestClose(onClose: () => void) {

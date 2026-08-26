@@ -22,7 +22,7 @@ export function GlobalSystemStatusNotificationLayer() {
   const wasEnabledRef = useRef(enabled)
   enabledRef.current = enabled
   const notificationDispatcher = useMemo(() => createSystemStatusNotificationDispatcher({
-    update: (payload) => updateAndroidStatusNotification(payload, { enabled: enabledRef.current }),
+    update: (payload, options) => updateAndroidStatusNotification(payload, { ...options, enabled: enabledRef.current }),
     clear: clearAndroidStatusNotification,
   }), [])
 
@@ -45,7 +45,7 @@ function EnabledSystemStatusNotificationLayer({
   const conversations = useChatStore((state) => state.conversations)
   const activeStreams = useChatStreamingStore((state) => state.activeStreams)
   const activeStatus = useMemo(() => resolveGlobalGenerationStatus(conversations, activeStreams), [activeStreams, conversations])
-  const tracked = useRef<{ conversationId: string; messageId: string; title: string } | null>(null)
+  const tracked = useRef<{ conversationId: string; messageId: string; title: string; owner: string } | null>(null)
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -59,7 +59,8 @@ function EnabledSystemStatusNotificationLayer({
       const message = conversation?.messages.find((item) => item.id === activeStatus.messageId)
       const title = activeStatus.conversationTitle || t('conversation.untitled')
       const activity = message ? getMessageActivityLabel(message, t) : t('chat.generating')
-      tracked.current = { conversationId: activeStatus.conversationId, messageId: activeStatus.messageId, title }
+      const owner = `chat-generation:${activeStatus.conversationId}:${activeStatus.messageId}`
+      tracked.current = { conversationId: activeStatus.conversationId, messageId: activeStatus.messageId, title, owner }
       void notificationDispatcher.update({
         state: 'generating',
         title: t('chat.systemStatusGeneratingTitle'),
@@ -70,7 +71,7 @@ function EnabledSystemStatusNotificationLayer({
         indeterminate: true,
         ongoing: true,
         requestPromotedOngoing: true,
-      })
+      }, { owner })
       return
     }
 
@@ -80,7 +81,7 @@ function EnabledSystemStatusNotificationLayer({
     const completedMessage = conversation?.messages.find((item) => item.id === previous.messageId)
     if (!completedMessage) {
       tracked.current = null
-      void notificationDispatcher.clear()
+      void notificationDispatcher.clear({ owner: previous.owner })
       return
     }
     if (completedMessage.status === 'sending' || completedMessage.status === 'streaming') return
@@ -112,11 +113,11 @@ function EnabledSystemStatusNotificationLayer({
       indeterminate: false,
       ongoing: false,
       requestPromotedOngoing: false,
-    })
+    }, { owner: previous.owner })
     tracked.current = null
     clearTimer.current = setTimeout(() => {
       clearTimer.current = null
-      void notificationDispatcher.clear()
+      void notificationDispatcher.clear({ owner: previous.owner })
     }, SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS)
   }, [activeStatus, conversations, notificationDispatcher, t])
 

@@ -179,7 +179,9 @@ export function createOpenAICompatibleThinkingPolicy(
     if (!providerReasoningCanBeSent(request, modelConfig)) return false
     return (
       modelConfig.reasoningMode === 'kimi-thinking' ||
-      dependencies.isKimiThinkingModel(request.provider, request.model)
+      dependencies.isKimiThinkingModel(request.provider, request.model) ||
+      (modelConfig.reasoningMode === 'openai-effort' &&
+        (request.provider.presetId === 'moonshot' || request.provider.detectedPresetId === 'moonshot'))
     )
   }
 

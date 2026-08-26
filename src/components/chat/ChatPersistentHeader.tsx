@@ -3,7 +3,8 @@ import { Text, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } fr
 import { useTranslation } from 'react-i18next'
 import { MotiView } from 'moti'
 
-import { AnimatedNavigationTrigger, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationTrigger'
+import { useNavigationTrigger, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationTrigger'
+import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IsleOverlayPressable } from '@/components/ui/isle'
 import type { useAppTheme } from '@/hooks/useAppTheme'
@@ -63,6 +64,7 @@ export function ChatPersistentHeader({
 }: ChatPersistentHeaderProps) {
   const { t } = useTranslation()
   const motion = useMotionPreference()
+  const { active: leadingActive, running: leadingRunning, trigger: triggerLeading } = useNavigationTrigger(onLeadingPress)
   const iconStyle: StyleProp<ViewStyle> = [
     {
       width: ISLE_MIN_TOUCH_TARGET,
@@ -90,14 +92,15 @@ export function ChatPersistentHeader({
     <ChatChromeThemeSurface themeId={themeId} colors={colors} alertBorder={alertBorder} onLayout={onLayout}>
       <View style={{ minHeight: subtitle ? 58 : 52, position: 'relative', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10 }}>
         <View style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, flexShrink: 0, alignItems: 'center', justifyContent: 'center' }}>
-          <AnimatedNavigationTrigger
-            variant="iconButton"
-            label={leadingLabel}
-            glyph={leadingGlyph}
-            onNavigate={onLeadingPress}
-            color={colors.textSecondary}
+          <IsleOverlayPressable
+            onPress={triggerLeading}
+            disabled={leadingRunning}
+            accessibilityRole="button"
+            accessibilityLabel={leadingLabel}
             style={iconStyle}
-          />
+          >
+            <AnimatedNavigationIcon glyph={leadingGlyph} active={leadingActive} color={colors.textSecondary} accentColor={colors.ui.icon.accentForeground} size={22} />
+          </IsleOverlayPressable>
         </View>
         <IsleOverlayPressable
           onPress={onModelPress}

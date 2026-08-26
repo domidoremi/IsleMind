@@ -17165,6 +17165,8 @@ async function assertAssistantConversationReplySessionRuntimeBehavior() {
   assert.deepEqual(appendedMessage, {
     id: 'reply-session-message',
     role: 'assistant',
+    providerId: conversation.providerId,
+    model: conversation.model,
     content: '',
     timestamp: 1700,
     status: 'streaming',
@@ -35350,9 +35352,10 @@ function assertChatActivityStatusBehavior() {
   )
   assert.ok(
     messageBubbleSource.includes('testID="message-model-status"') &&
-      messageBubbleSource.includes('messageBubble.modelStatus') &&
-      messageBubbleSource.includes('<AppIcon name={statusIcon}') &&
-      messageBubbleSource.includes('<AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} />') &&
+      !messageBubbleSource.includes('messageBubble.modelStatus') &&
+      !messageBubbleSource.includes('const statusIcon') &&
+      messageBubbleSource.includes('<AppIcon name="back-next"') &&
+      messageBubbleSource.includes('<AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} grammar={processGrammar} />') &&
       messageBubbleSource.includes('accessibilityLiveRegion="polite"') &&
       messageBubbleSource.includes('loop: shimmer') &&
       !messageBubbleSource.includes('<ProcessAnchor') &&
