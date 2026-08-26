@@ -74,6 +74,8 @@ export function ChatPersistentHeader({
       borderWidth: 0,
       shadowOpacity: 0,
       elevation: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     leadingIconStyle,
   ]

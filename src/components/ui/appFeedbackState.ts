@@ -114,7 +114,6 @@ export function dismissActiveAppToast(state: AppToastQueueState): AppToastQueueS
 export function feedbackIdentity(feedback: AppFeedbackOptions): string {
   if (feedback.dedupeKey?.trim()) return `key:${feedback.dedupeKey.trim()}`
   return [
-    feedback.position ?? 'top',
     feedback.tone ?? 'default',
     feedback.title.trim(),
     feedback.message?.trim() ?? '',

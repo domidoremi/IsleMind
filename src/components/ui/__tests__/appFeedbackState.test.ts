@@ -28,6 +28,13 @@ describe('app feedback queue', () => {
     expect(repeated.pending).toHaveLength(0)
   })
 
+  it('treats legacy top-position feedback as the same bottom notification', () => {
+    const first = enqueueAppToast(EMPTY_APP_TOAST_QUEUE, feedback(1, 'Saved', { position: 'top' }))
+    const repeated = enqueueAppToast(first, feedback(2, 'Saved', { position: 'bottom' }))
+
+    expect(repeated.active).toMatchObject({ id: 2, occurrences: 2 })
+  })
+
   it('updates a stable in-flight key without incrementing repeat count', () => {
     const first = enqueueAppToast(EMPTY_APP_TOAST_QUEUE, feedback(1, 'Syncing', { replaceKey: 'provider-sync' }))
     const updated = enqueueAppToast(first, feedback(2, 'Synced', { replaceKey: 'provider-sync' }))

@@ -381,6 +381,7 @@ export function MessageInput({
     opacity: largeProgress.value,
     transform: [{ translateY: (1 - largeProgress.value) * 6 }],
   }))
+  const singleLineInput = !value.includes('\n') && sizeMode !== 'large' && bodyHeight <= 56
 
   const renderToolButton = ({
     key,
@@ -553,9 +554,9 @@ export function MessageInput({
           {
             height: bodyHeight,
             color: colors.text,
-            paddingTop: paddingVertical,
-            paddingBottom: paddingVertical,
-            textAlignVertical: 'top',
+            paddingTop: singleLineInput ? 0 : paddingVertical,
+            paddingBottom: singleLineInput ? 0 : paddingVertical,
+            textAlignVertical: singleLineInput ? 'center' : 'top',
           },
         ]}
       />

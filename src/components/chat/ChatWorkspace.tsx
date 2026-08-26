@@ -102,9 +102,8 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const assistantDisplayName = resolveChatAssistantDisplayName(settings.assistantDisplayName)
   const chatEmptyTitle = resolveChatIdentityTitle(assistantDisplayName, t(CHAT_PRESENTATION_CATALOG.emptyTitleKey))
-  const chatComposerPlaceholder = assistantDisplayName
-    ? t('chat.namedComposerPlaceholder', { name: assistantDisplayName })
-    : t(CHAT_PRESENTATION_CATALOG.composerPlaceholderKey)
+  // Keep the composer visually empty; the field itself already communicates its purpose.
+  const chatComposerPlaceholder = ''
   const pagerGestureLock = useMainPagerGestureLock()
   const setPagerGestureLocked = pagerGestureLock?.setLocked
   const listRef = useRef<FlashListRef<Message>>(null)
@@ -203,11 +202,8 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
     setComposerPanel,
     setShowOptions,
     settings,
-    shellNavigation,
     t,
-    topChromeInset,
     updateConversation,
-    visualTopInset,
   })
   const { modelAccessHasRules, quickModelProviders, setupReasoningEffort } = setupState
   const reasoningEffort = runtimeConversation ? runtimeConversation.reasoningEffort : setupReasoningEffort

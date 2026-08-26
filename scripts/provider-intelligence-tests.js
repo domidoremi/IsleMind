@@ -23652,7 +23652,7 @@ codex    ${FAKE_KEY_D} "
   assert.equal(newApiConnectionImported.sourceType, 'json', 'imports NewAPI connection config JSON as JSON')
   assert.equal(newApiConnectionImported.providers.length, 1, 'imports NewAPI connection config JSON')
   assert.equal(newApiConnectionImported.providers[0].presetId, 'newapi', 'NewAPI connection config selects the NewAPI preset')
-  assert.equal(newApiConnectionImported.providers[0].name, 'NewAPI / OneAPI', 'NewAPI connection config uses a non-secret provider name')
+  assert.equal(newApiConnectionImported.providers[0].name, 'gateway', 'NewAPI connection config derives a non-secret provider name from the URL host')
   assert.equal(newApiConnectionImported.providers[0].baseUrl, 'https://gateway.example/v1', 'NewAPI connection config preserves the provided Base URL')
   assert.equal(newApiConnectionImported.providers[0].credentialGroups.length, 1, 'NewAPI connection config imports one credential group')
   assert.equal(newApiConnectionImported.providers[0].credentialGroups[0][API_KEY_FIELD], FAKE_KEY_C, 'NewAPI connection config stores the provided key in the credential group')
@@ -23666,6 +23666,12 @@ codex    ${FAKE_KEY_D} "
   assert.equal(newApiConnectionDraft?.presetId, 'newapi', 'provider import draft exposes NewAPI preset for form application')
   assert.equal(newApiConnectionDraft?.baseUrl, 'https://gateway.example/v1', 'provider import draft exposes Base URL for form application')
   assert.equal(newApiConnectionDraft?.credentialText, FAKE_KEY_C, 'provider import draft exposes credential text only for field application')
+
+  const numberedImport = parseProviderImportText(`1.\nhttps://runanytime.hxi.me/v1\nGrok    ${FAKE_KEY_A}\ngemini    ${FAKE_KEY_B}`)
+  assert.equal(numberedImport.providers[0]?.name, 'hxi', 'numbered provider imports derive the supplier name from the registrable URL host')
+  assert.deepEqual(numberedImport.providers[0]?.credentialGroups.map((group) => group.label), ['Grok', 'gemini'], 'numbered provider imports preserve named credential groups')
+  const numberedJsonImport = parseProviderImportText(JSON.stringify({ _type: 'newapi_channel_conn', url: 'https://x666.me', key: FAKE_KEY_C }))
+  assert.equal(numberedJsonImport.providers[0]?.name, 'x666', 'NewAPI JSON imports derive the supplier name from the URL host')
 
   const providerSettingsContentSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderSettingsContent.tsx'), 'utf8')
   const providerActivationJobSource = fs.readFileSync(path.join(root, 'src/components/providers/useProviderActivationJob.ts'), 'utf8')
