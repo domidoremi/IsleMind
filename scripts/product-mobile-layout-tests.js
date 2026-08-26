@@ -482,12 +482,12 @@ function assertSourceIntegration() {
   assert.ok(
     messageBubbleSource.includes('const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser') &&
       messageBubbleSource.includes('processLayerVisible || hasWideMessageContent(renderedDisplayText)') &&
-      messageBubbleSource.includes('width: bubbleUsesAvailableWidth ? (isUser ? bubbleMaxWidth : bubbleMaxWidth + 32) : undefined') &&
-      messageBubbleSource.includes('width: isUser ? undefined : bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined'),
-    'wide assistant Markdown and process content claims its available mobile width plus the provider-badge gutter while short assistant and user bubbles remain compact',
+      messageBubbleSource.includes('width: bubbleUsesAvailableWidth || isUser ? bubbleMaxWidth : undefined') &&
+      messageBubbleSource.includes('maxWidth: isUser ? bubbleMaxWidth : Math.max(0, bubbleMaxWidth - 32)'),
+    'wide assistant Markdown and process content stay inside the available mobile width after reserving the provider-badge gutter',
   )
   assert.ok(messageBubbleSource.includes("!isStreamingContent && message.status !== 'cancelled'"), 'an empty cancelled assistant turn relies on its stopped status instead of rendering the empty-response failure copy')
-  assert.ok(messageBubbleSource.includes('minWidth: showStatusLabel ? 176 : undefined'), 'terminal process status and token text retain enough width to avoid truncating the stopped label')
+  assert.ok(messageBubbleSource.includes('minWidth: 0') && messageBubbleSource.includes('numberOfLines={1}'), 'terminal process status stays shrinkable without overflowing narrow screens')
   assert.ok(chatActiveWorkspaceLayoutSource.includes('resolveProductMobileMessageListLayout(activeWindowWidth'), 'chat workspace uses shared message-list top spacing metrics')
   assert.ok(chatActiveWorkspaceLayoutSource.includes('topChromeInset: Math.max(topChromeInset, visualTopInset)'), 'chat message-list top spacing includes the device safe area below persistent local chrome')
   assert.ok(chatActiveMessageVirtualListSource.includes('messageListLayout.horizontalPadding'), 'message list horizontal gutters are source-audited')

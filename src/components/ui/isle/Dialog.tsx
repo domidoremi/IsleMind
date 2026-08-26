@@ -135,6 +135,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const [dialogQueue, setDialogQueue] = useState<DialogState[]>([])
   const [toastQueue, setToastQueue] = useState(EMPTY_APP_TOAST_QUEUE)
   const [banners, setBanners] = useState<BannerState[]>([])
+  const toastBottomOffset = 18 + insets.bottom + (banners.length ? Math.min(banners.length, 2) * 104 : 0)
   const idRef = useRef(0)
   const lastUpdateNotice = useRef<string | null>(null)
   const dialogQueueRef = useRef(dialogQueue)
@@ -285,9 +286,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
             position: 'absolute',
             left: 0,
             right: 0,
-            ...(toast.position === 'bottom'
-              ? { bottom: toast.bottomOffset ?? 18 + insets.bottom }
-              : { top: toast.topOffset ?? 18 + insets.top + (banners.length ? Math.min(banners.length, 2) * 76 : 0) }),
+            bottom: toast.bottomOffset ?? toastBottomOffset,
             zIndex: 999,
             alignItems: 'center',
             paddingHorizontal: 16,
@@ -296,11 +295,11 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
           <MotiView
             key={toast.id}
             from={motion === 'full'
-              ? { opacity: 0, translateY: toast.position === 'bottom' ? toastTravel : -toastTravel, scale: toastScale }
+              ? { opacity: 0, translateY: toastTravel, scale: toastScale }
               : { opacity: 1, translateY: 0, scale: 1 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
             transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.emphasis : 1 }}
-            exit={motion === 'full' ? { opacity: 0, translateY: toast.position === 'bottom' ? toastTravel * 0.7 : -toastTravel * 0.7, scale: toastScale } : { opacity: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: toastTravel * 0.7, scale: toastScale } : { opacity: 0 }}
             style={{ width: '100%', maxWidth: toastMaxWidth }}
           >
             <AppToastSurface
@@ -440,11 +439,11 @@ function AppBannerViewport({
         <MotiView
           key="app-feedback-banners"
           pointerEvents="box-none"
-          from={motion === 'full' ? { opacity: 0, translateY: -8 } : { opacity: 1, translateY: 0 }}
+          from={motion === 'full' ? { opacity: 0, translateY: 10 } : { opacity: 1, translateY: 0 }}
           animate={{ opacity: 1, translateY: 0 }}
-          exit={motion === 'full' ? { opacity: 0, translateY: -6 } : { opacity: 0 }}
+          exit={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
           transition={{ type: 'timing', duration: motion === 'full' ? 140 : 1 }}
-          style={{ position: 'absolute', top: insets.top + 10, left: 0, right: 0, zIndex: 980, elevation: 11, alignItems: 'center', paddingHorizontal: 16, gap: 8 }}
+          style={{ position: 'absolute', bottom: insets.bottom + 14, left: 0, right: 0, zIndex: 980, elevation: 11, alignItems: 'center', paddingHorizontal: 16, gap: 8 }}
         >
           {banners.map((banner) => {
             const tone = banner.tone ?? 'default'

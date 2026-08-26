@@ -96,6 +96,18 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
     providers: capturedProvider ? [capturedProvider] : [],
   })
 
+  async function confirmRegenerate() {
+    const confirmed = await dialog.confirm({
+      title: t('chat.regenerateConfirmTitle', { defaultValue: '重新生成回复？' }),
+      message: t('chat.regenerateConfirmMessage', { defaultValue: '当前回复将被替换。' }),
+      confirmLabel: t('chat.regenerateConfirm', { defaultValue: '重新生成' }),
+      cancelLabel: t('common.cancel'),
+      tone: 'amber',
+    })
+    if (!confirmed) return
+    await regenerateLastConversationAssistant(conversationId)
+  }
+
   return (
     <MotiView
       animate={isRewinding
@@ -141,7 +153,7 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
             dedupeKey: 'chat-retry-failed',
           })
         })}
-        onRegenerate={() => void regenerateLastConversationAssistant(conversationId).catch(() => {
+        onRegenerate={() => void confirmRegenerate().catch(() => {
           dialog.toast({
             title: t('chat.regenerateFailed'),
             message: t('chat.regenerateFailedMessage'),

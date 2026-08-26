@@ -15,9 +15,7 @@ import { resolveProviderCapabilityManifest } from '@/bootstrap/providerConforman
 import { providerSupportsReasoning } from '@/utils/modelReasoning'
 import { isProviderConversationReady, resolveProviderModelAlias } from '@/utils/providerModels'
 
-import { FLOATING_CHROME_SAFE_AREA_GAP } from './FloatingChrome'
 import type { ComposerPanel } from './FloatingComposer'
-import { resolveFloatingNoticeTopOffset } from './chatNoticeLayout'
 import { resolveChatModelDisplayName } from './chatIdentityPresentation'
 import {
   DEFAULT_SETUP_REASONING_EFFORT,
@@ -53,11 +51,8 @@ interface ChatSetupWorkspaceStateOptions {
   setComposerPanel: Dispatch<SetStateAction<ComposerPanel>>
   setShowOptions: Dispatch<SetStateAction<boolean>>
   settings: ChatSetupSettings
-  shellNavigation: boolean
   t: TFunction
-  topChromeInset: number
   updateConversation: (id: string, updates: Partial<Conversation>) => void
-  visualTopInset: number
 }
 
 export interface ChatSetupWorkspaceState {
@@ -95,11 +90,8 @@ export function useChatSetupWorkspaceState({
   setComposerPanel,
   setShowOptions,
   settings,
-  shellNavigation,
   t,
-  topChromeInset,
   updateConversation,
-  visualTopInset,
 }: ChatSetupWorkspaceStateOptions): ChatSetupWorkspaceState {
   const [setupReasoningEffort, setSetupReasoningEffort] = useState<Conversation['reasoningEffort']>(DEFAULT_SETUP_REASONING_EFFORT)
   const [setupParameterOverrides] = useState<Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'maxTokens'>>>({})
@@ -160,13 +152,6 @@ export function useChatSetupWorkspaceState({
     setSetupSelectedModel(getPolicyPreferredProviderModel(homeProvider, modelAccessSettings) ?? homeProviderModels[0] ?? null)
   }, [active, homeProvider?.id, homeProviderModels.join('|'), modelAccessSettings, quickModelProviders, setupSelectedModel, setupSelectedProviderId])
 
-  const setupNoticeTopOffset = () => resolveFloatingNoticeTopOffset({
-    visualTopInset,
-    topChromeInset,
-    chromeSafeAreaGap: FLOATING_CHROME_SAFE_AREA_GAP,
-    hasLocalChrome: !shellNavigation,
-  })
-
   const showNoAvailableModelsFeedback = () => dialog.toast({
     title: t('chat.noAvailableModels'),
     message: t('chat.syncModelsBeforeChat'),
@@ -180,8 +165,6 @@ export function useChatSetupWorkspaceState({
     title: t('chat.noProviderConnected'),
     message: t('chat.configureProviderBeforeChat'),
     tone: 'amber',
-    position: 'top',
-    topOffset: setupNoticeTopOffset(),
     actionLabel: t('chat.configureProviders'),
     onAction: openSetupAiConfiguration,
     dedupeKey: 'chat-setup-provider-required',

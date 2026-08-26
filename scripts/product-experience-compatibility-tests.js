@@ -371,7 +371,7 @@ function assertSourceIntegration() {
   const chatEmptyStateSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatEmptyState.tsx'), 'utf8')
   const streamingIntentSheetSource = fs.readFileSync(path.join(root, 'src/components/chat/StreamingIntentSheet.tsx'), 'utf8')
   assert.ok(chatWorkspaceSource.includes('resolveChatMultimodalPolicy') && chatWorkspaceSource.includes('runtimeMultimodalPolicy'), 'chat workspace gates media entry points by product mode and current provider/model')
-  assert.ok(chatWorkspaceSource.includes('resolveChatAssistantDisplayName') && chatWorkspaceSource.includes('namedComposerPlaceholder'), 'Chat empty and composer copy resolve the optional assistant display name')
+  assert.ok(chatWorkspaceSource.includes('resolveChatAssistantDisplayName') && chatWorkspaceSource.includes('const chatComposerPlaceholder = \'\''), 'Chat identity remains available while the composer stays visually empty')
   assert.ok(chatWorkspaceSource.includes('getMessageActivityLabel(streamingMessage, t, assistantDisplayName)'), 'Chat accessibility and system activity projection use the same resolved assistant identity')
   assert.match(chatWorkspaceSource, /const applyQuickStartDraft = useCallback\([\s\S]*?\}, \[markChromeActive\]\)/, 'Chat keeps the high-fanout Composer draft callback stable across workspace state changes')
   assert.match(chatActiveMessageVirtualListSource, /actionSheetActive=\{activeActionMessageId === message\.id\}/, 'message actions project global menu state into a per-row boolean')
@@ -379,7 +379,7 @@ function assertSourceIntegration() {
   assert.match(chatActiveMessageItemSource, /export const ChatActiveMessageItem = memo\(function ChatActiveMessageItem/, 'message cells skip parent-driven renders when their row inputs are unchanged')
   assert.match(chatActiveMessageItemSource, /activeActionMessageId=\{actionSheetActive \? message\.id : null\}/, 'message cells preserve the controlled MessageBubble action contract')
   assert.match(chatActiveMessageItemSource, /retryConversationMessage\([\s\S]*?catch\(\(\) => \{[\s\S]*?chat\.retryFailed[\s\S]*?chat\.retryFailedMessage/, 'message retry failures remain visible and localized')
-  assert.match(chatActiveMessageItemSource, /regenerateLastConversationAssistant\([\s\S]*?catch\(\(\) => \{[\s\S]*?chat\.regenerateFailed[\s\S]*?chat\.regenerateFailedMessage/, 'message regeneration failures remain visible and localized')
+  assert.match(chatActiveMessageItemSource, /dialog\.confirm\([\s\S]*?regenerateLastConversationAssistant\([\s\S]*?catch\(\(\) => \{[\s\S]*?chat\.regenerateFailed[\s\S]*?chat\.regenerateFailedMessage/, 'message regeneration requires confirmation and keeps failures visible and localized')
   for (const actionName of ['safeStopMessage', 'repairAgentEvidenceFromMessage', 'confirmActionFromMessage']) {
     assert.match(chatActiveWorkspaceActionsSource, new RegExp(`const ${actionName} = useCallback\\(`), `message action dependency ${actionName} stays referentially stable`)
   }

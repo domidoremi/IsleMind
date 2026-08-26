@@ -815,9 +815,10 @@ function jsonProviderObjectToBlock(record: Record<string, unknown>, dependencies
   const clientCompatibilityProfile = firstString(record.clientCompatibilityProfile, record.client_compatibility_profile)
   if (isNewApiChannelConnection && (!baseUrl || !keys.length)) return null
   if (!baseUrl && !name && !keys.length) return null
-  const resolvedName = name ?? (isNewApiChannelConnection ? providerRegistryPolicy(dependencies).getPreset('newapi').name : undefined)
+  const resolvedName = name ?? (baseUrl ? inferProviderNameFromUrl(baseUrl) : undefined) ?? (isNewApiChannelConnection ? providerRegistryPolicy(dependencies).getPreset('newapi').name : undefined)
   const parts = [
-    resolvedName ? `供应商: ${resolvedName}` : '',
+    resolvedName ? `Name: ${resolvedName}` : '',
+    isNewApiChannelConnection ? 'Preset: newapi' : '',
     baseUrl ? `Base URL: ${baseUrl}` : '',
     ...keys.map((key, index) => `Key${index + 1}: ${key}`),
     models.length ? `Models: ${models.join('|')}` : '',
@@ -1013,7 +1014,13 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
   const clientCompatibilityProfile = normalizeProviderClientCompatibilityMode(pickField(fields, ['clientcompatibilityprofile', 'client compatibility profile', 'clientcompatibility', 'client compatibility']))
   const credentialEntries = extractProviderImportCredentialEntries(normalizedChunk, fields)
   const keysText = credentialEntries.map((item) => item.apiKey).join('\n')
-  const detection = registry.detect({ baseUrl, name, apiKey: keysText })
+  const hintedPreset = pickField(fields, ['preset', 'presetid', 'providerpreset'])
+  const hintedPresetId = hintedPreset && PROVIDER_PRESETS.some((item) => item.id === hintedPreset)
+    ? hintedPreset as ProviderPresetId
+    : undefined
+  const detection = hintedPresetId
+    ? { presetId: hintedPresetId, confidence: 'high' as const, reason: 'imported preset hint' }
+    : registry.detect({ baseUrl, name, apiKey: keysText })
   const presetId = resolveImportPresetId(detection)
   const preset = registry.getPreset(presetId)
   const isMimo = presetId === 'xiaomi-mimo'
@@ -1107,14 +1114,24 @@ function normalizeImportFieldKey(value: string): string {
 }
 
 function inferProviderName(chunk: string, index: number, baseUrl: string | undefined, dependencies: ProviderRegistryDependencies): string {
-  const first = chunk.split(/[,，\n\r]/)[0]?.trim()
+  const rawFirst = chunk.split(/[,，\n\r]/)[0]?.trim() ?? ''
+  const hasOrdinal = /^\d+\s*[.)、:：-]\s*/.test(rawFirst)
+  const first = rawFirst.replace(/^\d+\s*[.)、:：-]\s*/, '').trim()
   const prefix = first?.split(/[:：=]/)[0]?.trim()
-  const host = baseUrl ? getHost(baseUrl) : ''
+  const host = baseUrl ? (hasOrdinal ? inferProviderNameFromUrl(baseUrl) : getHost(baseUrl)) : ''
   if (first && /^https?:\/\//i.test(first) && host) return host
   if (prefix && isImportMetadataField(prefix)) return host || dependencies.translate('providerRegistry.importedProviderName', { index: index + 1 })
   if (prefix && !/^https?$/i.test(prefix) && !looksLikeApiKey(prefix) && !/^https?:\/\//i.test(prefix)) return prefix
   if (host) return host
   return dependencies.translate('providerRegistry.importedProviderName', { index: index + 1 })
+}
+
+function inferProviderNameFromUrl(value: string): string {
+  const host = getHost(value).replace(/^www\./i, '').split(':')[0]
+  if (!host) return ''
+  const labels = host.split('.').filter(Boolean)
+  if (labels.length >= 2) return labels[labels.length - 2]
+  return labels[0] ?? host
 }
 
 function resolveImportPresetId(detection: ProviderDetectionResult): ProviderPresetId {

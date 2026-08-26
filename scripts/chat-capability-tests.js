@@ -276,7 +276,6 @@ function assertChatPresentationCatalog() {
     definition.setupDescriptionKey,
     definition.emptyTitleKey,
     definition.emptyDescriptionKey,
-    definition.composerPlaceholderKey,
     definition.systemPromptPlaceholderKey,
     definition.boundary.titleKey,
     definition.boundary.descriptionKey,
