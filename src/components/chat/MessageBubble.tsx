@@ -31,6 +31,7 @@ import {
   traceStageLabel,
 } from './tracePresentation'
 import { MessageBubbleThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
+import { resolveMessageBubbleRowAlignment } from './messageBubbleLayout'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useMotionPreference, type MotionIntensity } from '@/hooks/useMotionPreference'
 import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage, getWorkflowRecoveryActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
@@ -49,7 +50,7 @@ const STREAMING_RENDER_FAST_FORWARD_THRESHOLD = 240
 const STREAMING_RENDER_THROTTLE_MS = 16
 const AGENT_ACTION_PROMPT_VISIBILITY_LIMIT = 900
 const MESSAGE_ACTION_LOCK_MS = 420
-const MESSAGE_BUBBLE_HORIZONTAL_GUTTER = 40
+const MESSAGE_BUBBLE_HORIZONTAL_GUTTER = 24
 const MESSAGE_ACTION_SHEET_MAX_WIDTH = 540
 const MESSAGE_ACTION_PRIMARY_LIMIT = 5
 
@@ -336,7 +337,7 @@ function MessageBubbleComponent({
     <View onLayout={handleBubbleLayout} style={{ marginBottom: 16 }}>
       <View
         style={{
-          alignSelf: displayFormulaLayout ? 'center' : isUser ? 'flex-end' : 'flex-start',
+          alignSelf: resolveMessageBubbleRowAlignment(message.role),
           width: bubbleUsesAvailableWidth ? (isUser ? bubbleMaxWidth : bubbleMaxWidth + 32) : undefined,
           maxWidth: isUser ? bubbleMaxWidth : bubbleMaxWidth + 32,
           flexShrink: 1,
@@ -472,7 +473,9 @@ function MessageBubbleComponent({
 }
 
 function AssistantBrandBadge({ brand }: { brand: ProviderBrand }) {
-  const { colors } = useAppTheme()
+  const theme = useAppTheme()
+  const { colors } = theme
+  const isDark = theme.isDark
   return (
     <View
       accessible={false}
@@ -483,12 +486,12 @@ function AssistantBrandBadge({ brand }: { brand: ProviderBrand }) {
         borderRadius: 7,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: colors.ui.semantic.surface.base,
+        backgroundColor: isDark ? colors.ui.semantic.surface.raised : colors.ui.semantic.surface.base,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: colors.ui.semantic.chrome.border,
+        borderColor: isDark ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
       }}
     >
-      <ProviderBrandIcon brand={brand} size={15} />
+      <ProviderBrandIcon brand={brand} size={15} variant={isDark ? 'onDark' : 'onLight'} />
     </View>
   )
 }
@@ -710,7 +713,7 @@ function nextStreamingTextFrame(current: string, next: string): string {
 
 function resolveMessageBubbleMaxWidth(displayText: string, isUser: boolean, processLayerVisible: boolean, windowWidth: number, displayFormulaLayout = false): number {
   const availableWidth = Math.max(220, windowWidth - MESSAGE_BUBBLE_HORIZONTAL_GUTTER)
-  const fullWidth = Math.floor(availableWidth * (displayFormulaLayout ? 0.94 : isUser ? 0.84 : 0.94))
+  const fullWidth = Math.floor(availableWidth * (displayFormulaLayout ? 0.97 : isUser ? 0.92 : 0.98))
   if (displayFormulaLayout || isUser || processLayerVisible || hasWideMessageContent(displayText)) return fullWidth
 
   const normalizedText = displayText.trim().replace(/\s+/g, ' ')
@@ -864,7 +867,6 @@ function MessageProcessLayer({
       />
     )
   }
-  const showStatusLabel = true
   const emphasizedStatus = message.status === 'cancelled' || traces.some(isAgentWorkflowWaitingTrace)
   const processAccessibilityLabel = canExpand
     ? expanded
@@ -912,13 +914,6 @@ function MessageProcessLayer({
           ? colors.ui.icon.accentForeground
           : colors.ui.tone.info.border
         : actionChrome.itemBorder
-  const statusIcon: AppIconName = message.status === 'error'
-    ? 'warning'
-    : message.status === 'cancelled'
-      ? 'stop'
-      : active
-        ? 'spark'
-        : 'check'
   const statusRadius = processExpression.shape === 'capsule'
     ? colors.ui.radius.chip
     : processExpression.shape === 'material'
@@ -933,23 +928,8 @@ function MessageProcessLayer({
       : processGrammar === 'organic' || processGrammar === 'fluid'
         ? 1
         : StyleSheet.hairlineWidth
-  const iconFrame = processGrammar === 'precision'
-    ? 18
-    : processGrammar === 'organic'
-      ? 28
-      : processGrammar === 'fluid'
-        ? 27
-        : 24
-  const iconSurface = processGrammar === 'precision'
-    ? 'transparent'
-    : processGrammar === 'fluid'
-      ? colors.ui.semantic.surface.overlay
-      : active
-        ? colors.ui.tone.info.border
-        : colors.ui.semantic.surface.base
-
   return (
-    <View style={{ marginBottom: 10, minWidth: showStatusLabel ? 176 : undefined }}>
+    <View style={{ marginBottom: 10 }}>
       <IslePressable
         testID="message-model-status"
         haptic
@@ -987,31 +967,10 @@ function MessageProcessLayer({
         {processGrammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 18, right: 18, height: 2, borderRadius: 2, backgroundColor: colors.ui.control.focus, opacity: 0.24 }} /> : null}
         {processGrammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: active ? 0.06 : 0.025 }} /> : null}
         {processGrammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 12, right: 12, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.62 }} /> : null}
-        <View
-          accessible={false}
-          style={{
-            width: iconFrame,
-            height: iconFrame,
-            borderRadius: processGrammar === 'precision' ? 0 : processGrammar === 'material' ? iconFrame / 2 : colors.ui.radius.controlSmall,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: iconSurface,
-            borderWidth: processGrammar === 'fluid' ? StyleSheet.hairlineWidth : 0,
-            borderColor: processGrammar === 'fluid' ? colors.ui.actionBar.itemBorder : 'transparent',
-          }}
-        >
-          <AppIcon name={statusIcon} color={tone} size={14} strokeWidth={appIconStroke.strong} />
-        </View>
         <View style={{ flex: 1, flexShrink: 1, minWidth: 0 }}>
-          <Text
-            numberOfLines={1}
-            style={{ color: tone, fontSize: 10, lineHeight: 13, fontWeight: '800', letterSpacing: 0.2 }}
-          >
-            {t('messageBubble.modelStatus', { defaultValue: '模型状态' })}
-          </Text>
           <View
             key={writingResponse ? 'writing' : active ? 'active-process' : 'settled-process'}
-            style={{ flexDirection: 'row', alignItems: 'center', minHeight: 16 }}
+            style={{ flexDirection: 'row', alignItems: 'center', minHeight: 20 }}
           >
             <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} grammar={processGrammar} />
           </View>
@@ -1221,7 +1180,7 @@ function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: 
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
         <AppIcon name="reasoning" color={colors.ui.icon.accentForeground} size={13} strokeWidth={appIconStroke.strong} />
         <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
-          {t('messageBubble.thinkingDetails', { defaultValue: '思考过程' })}
+          {t('messageBubble.thinkingDetails', { defaultValue: '思考摘要' })}
         </Text>
         {running ? (
           <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>
@@ -1339,7 +1298,7 @@ function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunctio
 }
 
 function settledThinkingDisclosureLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
-  const title = t('messageBubble.thinkingDetails', { defaultValue: '思考过程' })
+  const title = t('messageBubble.thinkingDetails', { defaultValue: '思考摘要' })
   const durationMs = resolveThinkingDurationMs(message, traces)
   return durationMs ? `${title} · ${formatDuration(durationMs)}` : title
 }

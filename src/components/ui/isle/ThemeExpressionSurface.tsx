@@ -98,7 +98,7 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
   const isContent = props.kind === 'message-content'
   const isMarkdown = props.kind === 'markdown'
   const isCodeBlock = props.kind === 'code-block'
-  const isNestedRichContent = props.kind === 'markdown' || props.kind === 'code-block'
+  const isNestedRichContent = props.kind === 'code-block'
   const assistantMessage = isMessage && !props.isUser
   const contentFrame = (
     <View style={[
@@ -122,9 +122,9 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
         isMessage && !props.isUser ? styles.monetAssistantMessage : null,
         props.kind === 'composer' ? styles.monetComposer : null,
         {
-          backgroundColor: isContent ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.base,
+          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.base,
           borderColor: props.alertBorder ?? props.colors.ui.semantic.chrome.border,
-          borderWidth: isContent ? 0 : props.selected ? 2 : component.border === 'none' ? 0 : 1,
+          borderWidth: isContent || isMarkdown ? 0 : props.selected ? 2 : component.border === 'none' ? 0 : 1,
           shadowOpacity: 0,
           elevation: 0,
         },
@@ -143,7 +143,7 @@ function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExp
   const isContent = props.kind === 'message-content'
   const isMarkdown = props.kind === 'markdown'
   const isCodeBlock = props.kind === 'code-block'
-  const isNestedRichContent = props.kind === 'markdown' || props.kind === 'code-block'
+  const isNestedRichContent = props.kind === 'code-block'
   return (
     <View
       testID={props.testID}
@@ -157,9 +157,9 @@ function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExp
         isMessage && !props.isUser ? styles.materialAssistantMessage : null,
         props.kind === 'composer' ? styles.materialComposer : null,
         {
-          backgroundColor: isContent ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.raised,
+          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.raised,
           borderColor: props.alertBorder ?? props.colors.ui.semantic.chrome.border,
-          borderWidth: isContent ? 0 : props.selected ? 2 : component.border === 'none' ? 0 : 1,
+          borderWidth: isContent || isMarkdown ? 0 : props.selected ? 2 : component.border === 'none' ? 0 : 1,
           shadowColor: props.colors.shadowTint,
           shadowOpacity: component.elevation === 'tonal' ? 0.12 : 0,
           shadowRadius: component.elevation === 'tonal' ? 6 : 0,
@@ -192,7 +192,7 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, expression: Theme
   const isContent = props.kind === 'message-content'
   const isMarkdown = props.kind === 'markdown'
   const isCodeBlock = props.kind === 'code-block'
-  const isNestedRichContent = props.kind === 'markdown' || props.kind === 'code-block'
+  const isNestedRichContent = props.kind === 'code-block'
   const glassLens = props.kind === 'chrome' || props.kind === 'composer'
   const glassStyle = Platform.OS === 'web' && glassLens
     ? ({ backdropFilter: 'blur(12px) saturate(1.08)' } as unknown as ViewStyle)
@@ -211,9 +211,9 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, expression: Theme
         isMessage && !props.isUser ? styles.glassAssistantMessage : null,
         props.kind === 'composer' ? styles.glassComposer : null,
         {
-          backgroundColor: isContent ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : glassLens ? props.colors.ui.semantic.surface.overlay : props.colors.ui.semantic.surface.base,
+          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : glassLens ? props.colors.ui.semantic.surface.overlay : props.colors.ui.semantic.surface.base,
           borderColor: props.alertBorder ?? props.colors.ui.semantic.chrome.border,
-          borderWidth: isContent ? 0 : props.selected ? 2 : glassLens || (isMessage && props.isUser) ? 1 : 0,
+          borderWidth: isContent || isMarkdown ? 0 : props.selected ? 2 : glassLens || (isMessage && props.isUser) ? 1 : 0,
           shadowColor: glassLens ? props.colors.shadowTint : undefined,
           shadowOpacity: glassLens ? 0.08 : 0,
           shadowRadius: glassLens ? 12 : 0,
@@ -247,8 +247,8 @@ const styles = StyleSheet.create({
   monetComposer: { marginHorizontal: 4, padding: 9 },
   monetUserMessage: { alignSelf: 'flex-end', maxWidth: '90%', borderTopLeftRadius: 22, borderBottomRightRadius: 10 },
   monetAssistantMessage: { width: '100%', marginVertical: 4, borderTopLeftRadius: 10, borderBottomRightRadius: 16 },
-  monetContent: { width: '100%', gap: 8, minHeight: 0 },
-  monetMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderTopLeftRadius: 9, borderBottomRightRadius: 19, paddingHorizontal: 10, paddingVertical: 7 },
+  monetContent: { width: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0 },
+  monetMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0 },
   monetCodeBlock: { width: '100%', minHeight: 0, borderTopLeftRadius: 9, borderBottomRightRadius: 19, padding: 3 },
   monetAssistantFlow: { width: '100%', alignItems: 'stretch', paddingVertical: 4 },
   monetContentFrame: { position: 'relative', zIndex: 1 },
@@ -258,8 +258,8 @@ const styles = StyleSheet.create({
   materialComposer: { marginHorizontal: 0, padding: 7 },
   materialUserMessage: { alignSelf: 'flex-end', maxWidth: '86%', borderRadius: 18, paddingHorizontal: 16, paddingVertical: 10 },
   materialAssistantMessage: { width: '100%', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12 },
-  materialContent: { width: '100%', gap: 6, minHeight: 0 },
-  materialMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 12, paddingHorizontal: 9, paddingVertical: 7 },
+  materialContent: { width: '100%', gap: 6, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0 },
+  materialMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0 },
   materialCodeBlock: { width: '100%', minHeight: 0, borderRadius: 12, padding: 2 },
   materialStateLayer: { ...StyleSheet.absoluteFill, opacity: 0.04 },
   materialComposerHandle: { position: 'absolute', top: 5, alignSelf: 'center', width: 32, height: 3, borderRadius: 2, opacity: 0.48 },
@@ -271,8 +271,8 @@ const styles = StyleSheet.create({
   glassComposer: { marginHorizontal: 6, padding: 8 },
   glassUserMessage: { alignSelf: 'flex-end', maxWidth: '90%', borderRadius: 24 },
   glassAssistantMessage: { width: '100%', borderRadius: 18 },
-  glassContent: { width: '100%', gap: 8, minHeight: 0 },
-  glassMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8 },
+  glassContent: { width: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0 },
+  glassMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0 },
   glassCodeBlock: { width: '100%', minHeight: 0, borderRadius: 20, padding: 3 },
   glassInnerPlane: { position: 'absolute', top: 2, right: 2, bottom: 2, left: 2, borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, opacity: 0.34 },
   glassContentFrame: { position: 'relative', zIndex: 1 },

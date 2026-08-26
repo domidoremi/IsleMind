@@ -1,13 +1,18 @@
-import type { AndroidStatusNotificationPayload } from '@/bootstrap/androidStatusNotification'
+import {
+  buildAndroidStatusNotificationMutationKey,
+  type AndroidStatusNotificationClearOptions,
+  type AndroidStatusNotificationPayload,
+  type AndroidStatusNotificationUpdateOptions,
+} from '@/platform/native/androidStatusNotification'
 
 interface SystemStatusNotificationPort {
-  update: (payload: AndroidStatusNotificationPayload) => Promise<unknown>
-  clear: () => Promise<unknown>
+  update: (payload: AndroidStatusNotificationPayload, options?: AndroidStatusNotificationUpdateOptions) => Promise<unknown>
+  clear: (options?: AndroidStatusNotificationClearOptions) => Promise<unknown>
 }
 
 export interface SystemStatusNotificationDispatcher {
-  update: (payload: AndroidStatusNotificationPayload) => Promise<boolean>
-  clear: () => Promise<boolean>
+  update: (payload: AndroidStatusNotificationPayload, options?: AndroidStatusNotificationUpdateOptions) => Promise<boolean>
+  clear: (options?: AndroidStatusNotificationClearOptions) => Promise<boolean>
 }
 
 /** Keeps semantically identical stream frames off the native bridge and preserves mutation order. */
@@ -35,29 +40,19 @@ export function createSystemStatusNotificationDispatcher(
   }
 
   return {
-    update: (payload) => dispatch(
-      buildSystemStatusNotificationMutationKey(payload),
-      () => port.update(payload),
+    update: (payload, options = {}) => dispatch(
+      JSON.stringify([options.owner ?? null, buildSystemStatusNotificationMutationKey(payload)]),
+      () => port.update(payload, options),
     ),
-    clear: () => dispatch('clear', port.clear),
+    clear: (options = {}) => dispatch(
+      `clear\u001f${options.owner?.trim() || '*'}`,
+      () => port.clear(options),
+    ),
   }
 }
 
 export function buildSystemStatusNotificationMutationKey(
   payload: AndroidStatusNotificationPayload,
 ): string {
-  return JSON.stringify([
-    'update',
-    payload.state,
-    payload.title,
-    payload.message,
-    payload.shortText ?? null,
-    payload.conversationId ?? null,
-    payload.deepLink ?? null,
-    payload.progress ?? null,
-    payload.indeterminate ?? null,
-    payload.ongoing ?? null,
-    payload.requestPromotedOngoing ?? null,
-    payload.foregroundService ?? null,
-  ])
+  return buildAndroidStatusNotificationMutationKey(payload)
 }

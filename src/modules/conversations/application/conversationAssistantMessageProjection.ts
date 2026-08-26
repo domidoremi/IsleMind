@@ -23,7 +23,7 @@ export interface ConversationAssistantTaskCompletion {
 
 export interface ConversationAssistantSuccessPlan {
   kind: 'project'
-  messagePatch: Pick<Message, 'status' | 'content' | 'responseText' | 'citations' | 'completedAt' | 'durationMs' | 'estimatedTokens' | 'tokenCount'> & {
+  messagePatch: Pick<Message, 'status' | 'providerId' | 'model' | 'content' | 'responseText' | 'citations' | 'completedAt' | 'durationMs' | 'estimatedTokens' | 'tokenCount'> & {
     usage: MessageUsage
   }
   taskCompletion: ConversationAssistantTaskCompletion
@@ -120,6 +120,8 @@ export function createConversationAssistantMessageProjectionPolicy(
         kind: 'project',
         messagePatch: {
           status: 'done',
+          providerId: input.providerId,
+          model: input.model,
           content: input.outputText,
           responseText: input.outputText,
           citations: input.citations.length ? [...input.citations] : message.citations,

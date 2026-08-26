@@ -160,17 +160,17 @@ assert.doesNotMatch(
 )
 assert.match(
   androidStatusNotificationSource,
-  /options\.enabled !== true && payload\.foregroundService !== true/,
-  'ordinary Android notifications fail closed unless their caller explicitly enables them',
+  /options\.enabled !== true/,
+  'Android status notifications fail closed unless their caller explicitly enables them',
 )
 assert.equal(
-  settingsScreenSource.match(/\}, \{ enabled: settings\.systemStatusNotificationsEnabled === true \}\)/g)?.length,
+  settingsScreenSource.match(/\}, \{ enabled: settings\.systemStatusNotificationsEnabled === true, owner \}\)/g)?.length,
   2,
   'APK update notifications receive the current Settings preference without coupling the bridge to the store',
 )
 assert.match(
   globalSystemStatusNotificationSource,
-  /updateAndroidStatusNotification\(payload, \{ enabled: enabledRef\.current \}\)/,
+  /updateAndroidStatusNotification\(payload, \{ \.\.\.options, enabled: enabledRef\.current \}\)/,
   'the global dispatcher evaluates the latest explicit enable state when queued updates execute',
 )
 assert.match(

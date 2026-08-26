@@ -1,5 +1,6 @@
 import {
   createExpoAndroidStatusNotificationPort,
+  type AndroidStatusNotificationClearOptions,
   type AndroidStatusNotificationPayload,
   type AndroidStatusNotificationPermissionRationale,
   type AndroidStatusNotificationPermissionStatus,
@@ -10,6 +11,7 @@ import {
 } from '@/platform/native/androidStatusNotification'
 
 export type {
+  AndroidStatusNotificationClearOptions,
   AndroidStatusNotificationPayload,
   AndroidStatusNotificationPermissionRationale,
   AndroidStatusNotificationPermissionStatus,
@@ -43,8 +45,10 @@ export function updateAndroidStatusNotification(
   return androidStatusNotificationPort.update(payload, options)
 }
 
-export function clearAndroidStatusNotification(): Promise<AndroidStatusNotificationResult> {
-  return androidStatusNotificationPort.clear()
+export function clearAndroidStatusNotification(
+  options: AndroidStatusNotificationClearOptions = {},
+): Promise<AndroidStatusNotificationResult> {
+  return androidStatusNotificationPort.clear(options)
 }
 
 export function openAndroidStatusNotificationSettings(

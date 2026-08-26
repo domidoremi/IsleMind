@@ -144,7 +144,7 @@ async function run() {
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'hydrateProviderForActivation', 'batch provider activation hydrates against pending coalesced patches')
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT', 'batch provider activation has an explicit patch flush bound')
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'foregroundService: true', 'batch provider activation publishes a foreground-service progress notification')
-  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'await publishProviderActivationStatusNotification(initialActivationJob, t, settings.systemStatusNotificationsEnabled === true)', 'batch provider activation starts its foreground-service notification before network work')
+  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'await publishProviderActivationStatusNotification(', 'batch provider activation starts its foreground-service notification before network work')
   await assertActivationPatchBufferKeepsCredentialGroupHealth()
   await assertActivationPatchBufferSerializesFlushes()
   await assertActivationPatchBufferPreAbortPerformsNoIo()

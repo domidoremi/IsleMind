@@ -154,7 +154,7 @@ export function FloatingComposer({
   onLayoutHeight: (height: number) => void
   motion: MotionIntensity
 }) {
-  const { colors, isGlass, canonicalThemeId } = useAppTheme()
+  const { colors, isGlass, canonicalThemeId, isDark } = useAppTheme()
   const { t } = useTranslation()
   const [reasoningPickerOpen, setReasoningPickerOpen] = useState(false)
   const [composerPresentation, setComposerPresentation] =
@@ -374,8 +374,9 @@ export function FloatingComposer({
           testID="chat-model-selector"
           family={canonicalThemeId}
           colors={colors}
+          isDark={isDark}
           label={modelStatusLabel}
-          icon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model)} size={17} />}
+          icon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model)} size={17} variant={isDark ? 'onDark' : 'onLight'} />}
           accessibilityLabel={`${t('chat.model')}: ${modelStatusAccessibilityLabel}`}
           accessibilityHint={t('chat.quickModelAccessibilityHint')}
           maxWidth={modelSelectorMaxWidth}
@@ -541,6 +542,7 @@ export function FloatingComposer({
         items={modelMenuItems}
         selectedId={selectedModelMenuId}
         colors={colors}
+        isDark={isDark}
         motion={motion}
         onSelect={(item) => {
           const selectedProvider = switchableProviders?.find((candidate) => candidate.id === item.providerId)

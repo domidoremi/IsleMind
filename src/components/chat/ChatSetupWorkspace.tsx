@@ -122,7 +122,7 @@ export function ChatSetupWorkspace({
   topChromeInset,
   visualTopInset,
 }: ChatSetupWorkspaceProps) {
-  const { colors, canonicalThemeId } = useAppTheme()
+  const { colors, canonicalThemeId, isDark } = useAppTheme()
   const { t } = useTranslation()
   const { width: setupViewportWidth, height: setupViewportHeight } = useWindowDimensions()
   const setupLayout = resolveProductMobileChatSetupLayout(
@@ -171,7 +171,7 @@ export function ChatSetupWorkspace({
         colors={colors}
         title={setupModelTitle}
         subtitle={t('chat.newConversation')}
-        modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(setupState.homeProvider, setupState.setupConversation.model)} size={18} color={colors.text} />}
+        modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(setupState.homeProvider, setupState.setupConversation.model)} size={18} variant={isDark ? 'onDark' : 'onLight'} />}
         modelStatusColor={setupState.hasAvailableModel ? colors.ui.tone.success.foreground : colors.ui.tone.warning.foreground}
         modelMenuOpen={showOptions}
         leadingGlyph="conversation"

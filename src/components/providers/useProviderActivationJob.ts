@@ -15,7 +15,12 @@ export type ProviderActivationMode = 'single' | 'batch' | 'all'
 const ACTIVATION_JOB_VISIBLE_ITEM_LIMIT = 8
 const ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT = 8
 const ACTIVATION_PROVIDER_PATCH_FLUSH_MS = 64
-const ACTIVATION_NOTIFICATION_CLEAR_DELAY_MS = 5000
+let activationNotificationSequence = 0
+
+function createProviderNotificationOwner(): string {
+  activationNotificationSequence = (activationNotificationSequence + 1) % 1000000
+  return `provider-activation:${Date.now()}:${activationNotificationSequence}`
+}
 
 interface UseProviderActivationJobInput {
   onActivationCompleted?: () => void
@@ -42,6 +47,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
   const mountedRef = useRef(true)
   const activationAbortController = useRef<AbortController | null>(null)
   const activationNotificationClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activationNotificationOwner = useRef<string | null>(null)
 
   useEffect(() => {
     mountedRef.current = true
@@ -52,8 +58,10 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
       controller?.abort()
       if (controller) {
         useActivationJobStore.getState().clear()
-        void clearAndroidStatusNotification()
+        const owner = activationNotificationOwner.current
+        if (owner) void clearAndroidStatusNotification({ owner })
       }
+      activationNotificationOwner.current = null
       if (activationNotificationClearTimer.current) clearTimeout(activationNotificationClearTimer.current)
     }
   }, [])
@@ -64,14 +72,6 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
     activationNotificationClearTimer.current = null
   }
 
-  function scheduleActivationNotificationClear() {
-    clearActivationNotificationTimer()
-    activationNotificationClearTimer.current = setTimeout(() => {
-      activationNotificationClearTimer.current = null
-      void clearAndroidStatusNotification()
-    }, ACTIVATION_NOTIFICATION_CLEAR_DELAY_MS)
-  }
-
   async function activateProviders(ids: string[], mode: ProviderActivationMode): Promise<void> {
     if (activationBusy || activationAbortController.current || activationJob?.status === 'running') return
     const currentProviders = useSettingsStore.getState().providers
@@ -80,23 +80,16 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
       dialog.toast({ title: t('providerSettings.enableNone'), tone: 'amber' })
       return
     }
-    const startTitle = chosen.length === 1 ? t('providerSettings.activatingProvider') : t('providerSettings.activationStarted')
     const activationPolicy = resolveProviderActivationRuntimePolicy(chosen.length, mode)
     const activationConcurrency = activationPolicy.concurrency
     const abortController = new AbortController()
     activationAbortController.current = abortController
+    const notificationOwner = createProviderNotificationOwner()
+    activationNotificationOwner.current = notificationOwner
     setActivationBusy(true)
     clearActivationNotificationTimer()
     let patchBuffer: ProviderActivationPatchBuffer | null = null
     try {
-      dialog.toast({
-        title: startTitle,
-        message: t('providerSettings.activationStartedMessage', { count: chosen.length, concurrency: activationConcurrency }),
-        tone: 'mint',
-        position: 'bottom',
-        durationMs: 1800,
-        dedupeKey: 'provider-activation',
-      })
       let activationItems = createActivationItems(chosen, t('providerSettings.activationQueued'))
       const progressThrottleMs = chosen.length > 1 ? 240 : 0
       patchBuffer = mode === 'single'
@@ -122,7 +115,12 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         }
         if (!pendingProgressUpdate || abortController.signal.aborted) return
         updateActivationJob(pendingProgressUpdate)
-        void publishProviderActivationStatusNotification(pendingProgressUpdate, t, settings.systemStatusNotificationsEnabled === true)
+        void publishProviderActivationStatusNotification(
+          pendingProgressUpdate,
+          t,
+          useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true,
+          notificationOwner,
+        )
         pendingProgressUpdate = null
         lastProgressPublishedAt = Date.now()
       }
@@ -135,7 +133,12 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           }
           pendingProgressUpdate = null
           updateActivationJob(updates)
-          void publishProviderActivationStatusNotification(updates, t, settings.systemStatusNotificationsEnabled === true)
+          void publishProviderActivationStatusNotification(
+            updates,
+            t,
+            useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true,
+            notificationOwner,
+          )
           lastProgressPublishedAt = Date.now()
           return
         }
@@ -175,7 +178,12 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         items: compactActivationItemsForUi(activationItems),
       } satisfies Omit<ActivationJobState, 'id' | 'updatedAt'>
       startActivationJob(initialActivationJob)
-      await publishProviderActivationStatusNotification(initialActivationJob, t, settings.systemStatusNotificationsEnabled === true)
+      await publishProviderActivationStatusNotification(
+        initialActivationJob,
+        t,
+        useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true,
+        notificationOwner,
+      )
       const runProviderActivation = async (provider: AIProvider): Promise<ProviderActivationResult> => {
         const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
         const currentStage = t('providerSettings.activationCurrent', { name: providerDisplayName })
@@ -309,8 +317,12 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         issueGroups,
       } satisfies Omit<ActivationJobState, 'id' | 'updatedAt'>
       finishActivationJob(finalActivationJob)
-      void publishProviderActivationStatusNotification(finalActivationJob, t, settings.systemStatusNotificationsEnabled === true)
-      scheduleActivationNotificationClear()
+      void publishProviderActivationStatusNotification(
+        finalActivationJob,
+        t,
+        useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true,
+        notificationOwner,
+      )
       if (mode !== 'single') {
         setTimeout(() => {
           void flushProviderPersistence()
@@ -321,6 +333,8 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
       if (!isAbortError(error)) throw error
     } finally {
       patchBuffer?.dispose()
+      void clearAndroidStatusNotification({ owner: notificationOwner })
+      if (activationNotificationOwner.current === notificationOwner) activationNotificationOwner.current = null
       if (activationAbortController.current === abortController) activationAbortController.current = null
       if (mountedRef.current) setActivationBusy(false)
     }
@@ -339,15 +353,13 @@ function publishProviderActivationStatusNotification(
   job: ActivationNotificationJob,
   t: ReturnType<typeof useTranslation>['t'],
   enabled: boolean,
+  owner?: string,
 ) {
+  // The in-app terminal toast is the single result notification. Keep the
+  // native channel reserved for an ongoing operation and clear it on finish.
+  if (job.status !== 'running') return clearAndroidStatusNotification({ owner })
   if (!enabled) return Promise.resolve({ shown: false, reason: 'disabled', backgroundReliable: false } as const)
-  const running = job.status === 'running'
-  const failed = job.status === 'failed'
-  const title = running
-    ? t('providerSettings.activationRunning')
-    : failed
-      ? t('providerSettings.activationFailed')
-      : activationDoneTitle(job.total === 1 ? 'single' : 'batch', job.total, t)
+  const title = t('providerSettings.activationRunning')
   const progress = resolveActivationJobProgress({
     total: job.total,
     completed: job.completed,
@@ -363,17 +375,17 @@ function publishProviderActivationStatusNotification(
   })
 
   return updateAndroidStatusNotification({
-    state: running ? 'running' : failed ? 'error' : 'completed',
+    state: 'running',
     title,
     message: [job.stage, job.currentName, summary].filter(Boolean).join('\n'),
     shortText: `${job.completed}/${job.total}`,
     deepLink: 'islemind://settings/providers',
     progress,
     indeterminate: job.total <= 0,
-    ongoing: running,
-    requestPromotedOngoing: running,
+    ongoing: true,
+    requestPromotedOngoing: true,
     foregroundService: true,
-  })
+  }, { enabled: true, owner })
 }
 
 async function runProviderActivationPool(

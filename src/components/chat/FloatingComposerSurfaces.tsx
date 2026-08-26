@@ -107,7 +107,6 @@ function keyboardEasing(easing: ComposerKeyboardMotion['easing']) {
 }
 
 const AnimatedView = Animated.createAnimatedComponent(View)
-const AnimatedTextInput = Animated.createAnimatedComponent(TextInput)
 
 export function ComposerOverlay({
   viewportWidth,
@@ -182,6 +181,7 @@ export function ComposerOverlay({
 export function ModelSelector({
   family,
   colors,
+  isDark,
   label,
   accessibilityLabel,
   accessibilityHint,
@@ -196,6 +196,7 @@ export function ModelSelector({
 }: {
   family: CanonicalThemeId
   colors: ThemeColors
+  isDark: boolean
   label: string
   accessibilityLabel: string
   accessibilityHint?: string
@@ -313,7 +314,6 @@ export function MessageInput({
 }) {
   const [toolMode, setToolMode] = useState<'formatting' | 'more'>('formatting')
   const animatedSurfaceHeight = useSharedValue(surfaceHeight)
-  const animatedBodyHeight = useSharedValue(bodyHeight)
   const largeProgress = useSharedValue(sizeMode === 'large' ? 1 : 0)
   const focusProgress = useSharedValue(focused ? 1 : 0)
   const reviewProgress = useSharedValue(
@@ -327,11 +327,7 @@ export function MessageInput({
       duration,
       easing: Easing.inOut(Easing.cubic),
     })
-    animatedBodyHeight.value = withTiming(bodyHeight, {
-      duration,
-      easing: Easing.inOut(Easing.cubic),
-    })
-  }, [animatedBodyHeight, animatedSurfaceHeight, bodyHeight, duration, surfaceHeight])
+  }, [animatedSurfaceHeight, duration, surfaceHeight])
 
   useEffect(() => {
     focusProgress.value = withTiming(focused ? 1 : 0, {
@@ -369,9 +365,6 @@ export function MessageInput({
       [0, 1],
       [colors.ui.input.border, colors.ui.input.focus],
     ),
-  }))
-  const bodyStyle = useAnimatedStyle(() => ({
-    height: animatedBodyHeight.value,
   }))
   const headerStyle = useAnimatedStyle(() => ({
     height: COMPOSER_LARGE_HEADER_HEIGHT * largeProgress.value,
@@ -530,7 +523,7 @@ export function MessageInput({
           {tools.labels.characterCount}
         </Text>
       </AnimatedView>
-      <AnimatedTextInput
+      <TextInput
         {...inputProps}
         ref={inputRef}
         testID="message-input"
@@ -558,12 +551,12 @@ export function MessageInput({
         style={[
           styles.messageInput,
           {
+            height: bodyHeight,
             color: colors.text,
             paddingTop: paddingVertical,
             paddingBottom: paddingVertical,
-            textAlignVertical: multiline ? 'top' : 'center',
+            textAlignVertical: 'top',
           },
-          bodyStyle,
         ]}
       />
       <AnimatedView
@@ -803,6 +796,7 @@ export function ModelMenu({
   items,
   selectedId,
   colors,
+  isDark,
   motion,
   onSelect,
   onOpenConfiguration,
@@ -813,6 +807,7 @@ export function ModelMenu({
   items: ModelMenuItem[]
   selectedId?: string
   colors: ThemeColors
+  isDark: boolean
   motion: MotionIntensity
   onSelect: (item: ModelMenuItem) => void
   onOpenConfiguration: () => void
@@ -900,7 +895,7 @@ export function ModelMenu({
         >
           <View style={styles.modelMenuHeader}>
             <View style={styles.modelMenuTitleRow}>
-              <ProviderBrandIcon brand={selectedId ? (items.find((item) => item.id === selectedId)?.brand ?? 'generic') : 'generic'} size={17} />
+              <ProviderBrandIcon brand={selectedId ? (items.find((item) => item.id === selectedId)?.brand ?? 'generic') : 'generic'} size={17} variant={isDark ? 'onDark' : 'onLight'} />
               <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 10, fontWeight: '900', letterSpacing: 0.3, textTransform: 'uppercase' }}>{t('chat.model')}</Text>
               <IslePressable
                 onPress={onClose}
@@ -944,7 +939,7 @@ export function ModelMenu({
                   }}
                 >
                   <View style={{ width: 26, height: 26, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.icon.accentBackground : colors.ui.semantic.surface.base }}>
-                    <ProviderBrandIcon brand={item.brand} size={16} />
+                    <ProviderBrandIcon brand={item.brand} size={16} variant={isDark ? 'onDark' : 'onLight'} />
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text numberOfLines={1} style={{ color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{item.modelLabel}</Text>

@@ -606,6 +606,8 @@ function isPersistedMessage(value: unknown): value is Conversation['messages'][n
   }
   return typeof message.id === 'string'
     && (message.role === 'user' || message.role === 'assistant')
+    && (message.providerId === undefined || (typeof message.providerId === 'string' && message.providerId.trim().length > 0))
+    && (message.model === undefined || (typeof message.model === 'string' && message.model.trim().length > 0))
     && (
       typeof message.content === 'string'
       || typeof message.text === 'string'
