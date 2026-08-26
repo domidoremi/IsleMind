@@ -1,5 +1,6 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { BackHandler, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { router } from 'expo-router'
 import * as Application from 'expo-application'
 import Constants from 'expo-constants'
@@ -44,6 +45,12 @@ import {
   normalizeSettingsControlSearch,
   type SettingsControlSearchDocument,
 } from '@/presentation/features/settings/settingsControlSearch'
+import {
+  resolveSettingsControlBackAction,
+  resolveSettingsControlPanelScrollTarget,
+  resolveSettingsControlSwipeAction,
+  type SettingsControlPanel,
+} from '@/presentation/features/settings/settingsControlNavigation'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import type { RuntimeDiagnosticsSummary } from '@/bootstrap/runtimeDiagnostics'
 import type { PluginManifestCatalogSnapshot } from '@/bootstrap/pluginManifest'
@@ -100,6 +107,12 @@ const themeModeCardHeight = 58
 type ApkUpdateUiStage = 'checking' | ApkInstallProgressStage
 const APK_UPDATE_BANNER_ID = 'apk-update-progress'
 const APK_UPDATE_FEEDBACK_CLEAR_DELAY_MS = 12_000
+let apkNotificationSequence = 0
+
+function createApkNotificationOwner(): string {
+  apkNotificationSequence = (apkNotificationSequence + 1) % 1000000
+  return `apk-update:${Date.now()}:${apkNotificationSequence}`
+}
 
 const RuntimeDiagnosticsDetails = createLazyComponent(
   () => import('@/components/settings/RuntimeDiagnosticsDetails')
@@ -228,7 +241,7 @@ const describeSystemStatusNotification = (
   return t('settings.systemStatusNotificationsStatusPromotedUnknown')
 }
 
-type SettingsAdvancedGroup = 'appearance' | 'data' | 'advanced' | 'diagnostics' | 'governance' | 'updates' | 'danger'
+type SettingsAdvancedGroup = SettingsControlPanel
 type SettingsGovernanceGroup = 'routing' | 'workflow' | 'observability' | 'runtimeLimits' | 'requestShaping' | 'accessRules'
 interface SettingsControlEntry extends SettingsControlSearchDocument {
   key: string
@@ -240,6 +253,16 @@ interface SettingsControlEntry extends SettingsControlSearchDocument {
 type RuntimeRepairTask = RuntimeDiagnosticsSummary['timeline']['repairPlan']['tasks'][number]
 type RuntimeRepairSettingsRoute = '/settings/providers' | '/settings/context' | '/settings/mcp' | '/settings/skills'
 type SettingsChildRoute = RuntimeRepairSettingsRoute | '/settings/usage' | '/settings/preferences' | '/settings/memory' | '/settings/knowledge'
+
+const COLLAPSED_SYSTEM_PANELS: Readonly<Record<SettingsAdvancedGroup, boolean>> = {
+  appearance: false,
+  data: false,
+  advanced: false,
+  diagnostics: false,
+  governance: false,
+  updates: false,
+  danger: false,
+}
 
 function pushSettingsChildRoute(pathname: SettingsChildRoute, params?: Record<string, string>) {
   router.push({
@@ -286,6 +309,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   const scrollRef = useRef<ScrollView>(null)
   const revealedSystemPanelRef = useRef<SettingsAdvancedGroup | null>(null)
   const apkUpdateFeedbackClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const apkNotificationOwnerRef = useRef<string | null>(null)
   const diagnosticsRefreshInFlightRef = useRef(false)
   const [apkUpdateStage, setApkUpdateStage] = useState<ApkUpdateUiStage | null>(null)
   const [activeApkRelease, setActiveApkRelease] = useState<ApkReleaseInfo | null>(null)
@@ -331,8 +355,34 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
             : expandedGroups.danger
               ? 'danger'
               : expandedGroups.advanced
-                ? 'advanced'
-                : null
+                  ? 'advanced'
+                  : null
+  const closeSystemPanel = useCallback(() => {
+    revealedSystemPanelRef.current = null
+    setExpandedGroups({ ...COLLAPSED_SYSTEM_PANELS })
+  }, [])
+  const applySettingsSwipe = useCallback((translationX: number, velocityX: number) => {
+    if (!controlView) return
+    const action = resolveSettingsControlSwipeAction({
+      activePanel: activeSystemPanel,
+      currentView: controlView,
+      translationX,
+      velocityX,
+    })
+    if (action.kind === 'close-panel') {
+      closeSystemPanel()
+      return
+    }
+    if (action.kind !== 'show-view') return
+    if (action.view === 'ai') closeSystemPanel()
+    revealedSystemPanelRef.current = null
+    setControlView(action.view)
+  }, [activeSystemPanel, closeSystemPanel, controlView])
+  const settingsSwipeGesture = useMemo(() => Gesture.Pan()
+    .activeOffsetX([-32, 32])
+    .failOffsetY([-18, 18])
+    .runOnJS(true)
+    .onEnd((event) => applySettingsSwipe(event.translationX, event.velocityX)), [applySettingsSwipe])
   const enabledProviders = providers.filter((provider) => provider.enabled).length
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
   const defaultProviderDisplayName = defaultProvider ? resolveProviderDisplayName(defaultProvider, t('providerSettings.customProvider')) : undefined
@@ -668,6 +718,16 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   }, [aiSearchMatches.length, controlView, normalizedSettingsSearch, systemSearchMatches.length])
 
   useEffect(() => {
+    if (Platform.OS !== 'android') return
+    if (resolveSettingsControlBackAction(activeSystemPanel).kind !== 'close-panel') return
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeSystemPanel()
+      return true
+    })
+    return () => subscription.remove()
+  }, [activeSystemPanel, closeSystemPanel])
+
+  useEffect(() => {
     if (!expandedGroups.advanced) return
     void refreshSystemStatusNotificationStatus()
   }, [expandedGroups.advanced, settings.systemStatusNotificationsEnabled])
@@ -827,8 +887,10 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   function dismissApkUpdateFeedback() {
     cancelApkUpdateFeedbackClear()
     dialog.dismissBanner(APK_UPDATE_BANNER_ID)
+    const owner = apkNotificationOwnerRef.current
+    apkNotificationOwnerRef.current = null
     void loadAndroidStatusNotification()
-      .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification())
+      .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification(owner ? { owner } : {}))
       .catch(() => undefined)
   }
 
@@ -838,6 +900,8 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     progress: ApkInstallProgress | null = null,
   ) {
     cancelApkUpdateFeedbackClear()
+    const owner = apkNotificationOwnerRef.current ?? createApkNotificationOwner()
+    apkNotificationOwnerRef.current = owner
     const title = t(updateStageLabelKey(stage))
     const detail = release
       ? formatApkUpdateProgressDetail(stage, release, progress, t)
@@ -862,7 +926,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
         ongoing: true,
         requestPromotedOngoing: stage !== 'checking',
         foregroundService: stage !== 'checking',
-      }, { enabled: settings.systemStatusNotificationsEnabled === true }))
+      }, { enabled: settings.systemStatusNotificationsEnabled === true, owner }))
       .catch(() => undefined)
   }
 
@@ -873,6 +937,8 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     installFlow?: boolean
   }) {
     cancelApkUpdateFeedbackClear()
+    const owner = apkNotificationOwnerRef.current ?? createApkNotificationOwner()
+    apkNotificationOwnerRef.current = owner
     dialog.banner({
       id: APK_UPDATE_BANNER_ID,
       title: options.title,
@@ -891,13 +957,14 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
         ongoing: false,
         requestPromotedOngoing: false,
         foregroundService: options.installFlow === true,
-      }, { enabled: settings.systemStatusNotificationsEnabled === true }))
+      }, { enabled: settings.systemStatusNotificationsEnabled === true, owner }))
       .catch(() => undefined)
     apkUpdateFeedbackClearTimerRef.current = setTimeout(() => {
       apkUpdateFeedbackClearTimerRef.current = null
       dialog.dismissBanner(APK_UPDATE_BANNER_ID)
+      if (apkNotificationOwnerRef.current === owner) apkNotificationOwnerRef.current = null
       void loadAndroidStatusNotification()
-        .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification())
+        .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification({ owner }))
         .catch(() => undefined)
     }, APK_UPDATE_FEEDBACK_CLEAR_DELAY_MS)
   }
@@ -1073,15 +1140,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     revealedSystemPanelRef.current = null
     setControlView('system')
     setExpandedGroups((current) => {
-      const empty: Record<SettingsAdvancedGroup, boolean> = {
-        appearance: false,
-        data: false,
-        advanced: false,
-        diagnostics: false,
-        governance: false,
-        updates: false,
-        danger: false,
-      }
+      const empty = { ...COLLAPSED_SYSTEM_PANELS }
       const nestedAdvancedOpen = current.diagnostics || current.governance || current.updates || current.danger
       const active = group === 'advanced' ? current.advanced && !nestedAdvancedOpen : current[group]
       if (active) return empty
@@ -1094,6 +1153,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     revealedSystemPanelRef.current = null
     // A tab is a stable navigation state, not a collapsible toggle.
     // Keeping the active tab mounted preserves discoverability and tab semantics.
+    if (nextView === 'ai') closeSystemPanel()
     setControlView(nextView)
   }
 
@@ -1101,7 +1161,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     if (revealedSystemPanelRef.current === group) return
     revealedSystemPanelRef.current = group
     requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: motion === 'full' })
+      scrollRef.current?.scrollTo({ y: resolveSettingsControlPanelScrollTarget(y), animated: motion === 'full' })
     })
   }
 
@@ -1294,6 +1354,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   }
 
   return (
+    <GestureDetector gesture={settingsSwipeGesture}>
     <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" removeClippedSubviews={Platform.OS === 'android'} contentContainerStyle={{ paddingHorizontal: narrowLayout ? 12 : 16, paddingTop: shellNavigation ? 10 : 8, paddingBottom: settingsPageBottomPadding }}>
       <View style={{ width: '100%', maxWidth: 860, alignSelf: 'center' }}>
       <SettingsOverviewExperience
@@ -1362,6 +1423,20 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
           <Text style={{ paddingVertical: 18, textAlign: 'center', color: colors.textTertiary, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>{t('settings.controlSearchEmpty')}</Text>
         ) : undefined}
       />
+
+      {activeSystemPanel ? (
+        <IslePressable
+          testID="settings-system-detail-back"
+          haptic
+          accessibilityRole="button"
+          accessibilityLabel={`${t('common.back')} · ${t('settings.controlSystem')}`}
+          onPress={closeSystemPanel}
+          style={{ minHeight: 44, marginTop: 8, paddingHorizontal: 2, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}
+        >
+          <AppIcon name="back-previous" color={colors.textSecondary} size={16} />
+          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '700' }}>{t('settings.controlSystem')}</Text>
+        </IslePressable>
+      ) : null}
 
       <AnimatePresence>
       {controlView === 'system' && expandedGroups.appearance ? (
@@ -2210,6 +2285,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
       ) : null}
       </View>
     </ScrollView>
+    </GestureDetector>
   )
 })
 

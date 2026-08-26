@@ -12,8 +12,10 @@ import {
 import { speakText } from '@/services/speech'
 import type { Attachment, Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
+import { useSettingsStore } from '@/store/settingsStore'
 
 import { MessageBubble } from './MessageBubble'
+import { resolveMessageProviderIdentity } from './messageProviderIdentity'
 import type { ChatActiveWorkspaceActions } from './chatActiveWorkspaceActions'
 import {
   continueChatAgentWorkflow,
@@ -84,6 +86,15 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
   isRewinding = false,
 }: ChatActiveMessageItemProps) {
   const { t } = useTranslation()
+  const capturedProvider = useSettingsStore((state) => message.providerId
+    ? state.providers.find((item) => item.id === message.providerId)
+    : undefined)
+  const messageIdentity = resolveMessageProviderIdentity({
+    message,
+    conversationProvider: provider,
+    conversationModel: modelId,
+    providers: capturedProvider ? [capturedProvider] : [],
+  })
 
   return (
     <MotiView
@@ -99,7 +110,7 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
         index={index}
         motion={motion}
         viewportHeight={viewportHeight}
-        providerBrand={resolveProviderBrand(provider, modelId)}
+        providerBrand={resolveProviderBrand(messageIdentity.provider, messageIdentity.model)}
         isLastAssistant={message.id === regenerableAssistantId}
         activeActionMessageId={actionSheetActive ? message.id : null}
         onActionMessageChange={onActionMessageChange}

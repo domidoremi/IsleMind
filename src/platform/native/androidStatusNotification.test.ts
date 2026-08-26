@@ -75,12 +75,34 @@ describe('Expo Android status notification port', () => {
     expect(nativeCalls).toEqual(['permission', 'update'])
   })
 
-  it('allows an admitted foreground-service notification without the preference flag', async () => {
+  it('keeps foreground-service updates behind the same preference gate', async () => {
     const { dependencies, nativeCalls } = createDependencies()
     const port = createExpoAndroidStatusNotificationPort(dependencies)
 
-    await expect(port.update({ ...payload, foregroundService: true })).resolves.toMatchObject({ shown: true })
+    await expect(port.update({ ...payload, foregroundService: true })).resolves.toMatchObject({ shown: false, reason: 'disabled' })
+    expect(nativeCalls).toEqual([])
+  })
+
+  it('deduplicates identical updates at the native boundary', async () => {
+    const { dependencies, nativeCalls } = createDependencies()
+    const port = createExpoAndroidStatusNotificationPort(dependencies)
+
+    const first = port.update({ ...payload, foregroundService: true }, { enabled: true })
+    const duplicate = port.update({ ...payload, foregroundService: true }, { enabled: true })
+
+    await expect(duplicate).resolves.toMatchObject({ shown: false, reason: 'deduplicated' })
+    await expect(first).resolves.toMatchObject({ shown: true, reason: 'shown' })
     expect(nativeCalls).toEqual(['permission', 'update'])
+  })
+
+  it('does not let a stale owner clear a newer notification', async () => {
+    const { dependencies, nativeCalls } = createDependencies()
+    const port = createExpoAndroidStatusNotificationPort(dependencies)
+
+    await expect(port.update({ ...payload, title: 'Chat' }, { enabled: true, owner: 'chat' })).resolves.toMatchObject({ shown: true })
+    await expect(port.clear({ owner: 'provider-import' })).resolves.toMatchObject({ shown: false, reason: 'superseded' })
+    await expect(port.clear({ owner: 'chat' })).resolves.toMatchObject({ shown: false, reason: 'cleared' })
+    expect(nativeCalls).toEqual(['permission', 'update', 'clear'])
   })
 
   it('normalizes permission and native failures without claiming background reliability', async () => {

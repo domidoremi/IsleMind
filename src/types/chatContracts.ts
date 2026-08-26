@@ -25,6 +25,9 @@ export interface CommandReference {
 export interface Message {
   id: string
   role: MessageRole
+  /** Provider/model captured for this assistant turn; absent on legacy rows. */
+  providerId?: string
+  model?: string
   content: string
   responseText?: string
   reasoning?: ProcessTrace[]

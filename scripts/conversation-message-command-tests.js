@@ -86,7 +86,7 @@ function testConversationAssistantMessageProjection(module) {
   assert.equal(providerPlan.kind, 'project')
   assert.deepEqual(providerPlan.messagePatch.usage, { inputTokens: 7, outputTokens: 3, cachedInputTokens: 2, source: 'provider', totalTokens: 10 })
   assert.deepEqual(providerPlan.messagePatch, {
-    status: 'done', content: 'complete', responseText: 'complete', citations: [citation], completedAt: 100,
+    status: 'done', providerId: 'provider', model: 'model', content: 'complete', responseText: 'complete', citations: [citation], completedAt: 100,
     durationMs: 20, usage: providerPlan.messagePatch.usage, estimatedTokens: false, tokenCount: 3,
   })
   assert.deepEqual(providerPlan.taskCompletion, { status: 'done', metadata: { providerId: 'provider', model: 'model', outputTokens: 3, totalTokens: 10 } })

@@ -12,6 +12,9 @@ export type ProviderBrand =
   | 'qwen'
   | 'mistral'
   | 'meta'
+  | 'zhipu'
+  | 'moonshot'
+  | 'minimax'
   | 'generic'
 
 const BRAND_COLORS: Record<ProviderBrand, string> = {
@@ -23,7 +26,26 @@ const BRAND_COLORS: Record<ProviderBrand, string> = {
   qwen: '#6950EF',
   mistral: '#FA520F',
   meta: '#0467DF',
+  zhipu: '#2D2D2D',
+  moonshot: '#000000',
+  minimax: '#E73562',
   generic: '#6B7280',
+}
+
+export type ProviderBrandIconVariant = 'brand' | 'onLight' | 'onDark'
+
+const LIGHT_ICON_COLORS: Record<ProviderBrand, string> = {
+  openai: '#111827', anthropic: '#7C2D12', grok: '#111827', deepseek: '#315DE6', gemini: '#6D4C9F', qwen: '#5B3FD1', mistral: '#D63D0A', meta: '#075BC7', zhipu: '#374151', moonshot: '#374151', minimax: '#C02655', generic: '#4B5563',
+}
+
+const DARK_ICON_COLORS: Record<ProviderBrand, string> = {
+  openai: '#F8FAFC', anthropic: '#FED7AA', grok: '#F8FAFC', deepseek: '#A9C1FF', gemini: '#D8C5FF', qwen: '#C4B5FD', mistral: '#FF9D75', meta: '#8FC5FF', zhipu: '#E5E7EB', moonshot: '#F3F4F6', minimax: '#FF9FC0', generic: '#D1D5DB',
+}
+
+export function resolveProviderBrandIconColor(brand: ProviderBrand, variant: ProviderBrandIconVariant = 'brand'): string {
+  if (variant === 'onDark') return DARK_ICON_COLORS[brand]
+  if (variant === 'onLight') return LIGHT_ICON_COLORS[brand]
+  return BRAND_COLORS[brand]
 }
 
 export function resolveProviderBrand(provider: AIProvider | undefined, model: string): ProviderBrand {
@@ -46,13 +68,19 @@ export function resolveProviderBrand(provider: AIProvider | undefined, model: st
       return 'mistral'
     case 'llama':
       return 'meta'
+    case 'glm':
+      return 'zhipu'
+    case 'kimi':
+      return 'moonshot'
+    case 'minimax':
+      return 'minimax'
     default:
       return 'generic'
   }
 }
 
-export function ProviderBrandIcon({ brand, size = 18, color }: { brand: ProviderBrand; size?: number; color?: string }): ReactNode {
-  const fill = color ?? BRAND_COLORS[brand]
+export function ProviderBrandIcon({ brand, size = 18, color, variant = 'brand' }: { brand: ProviderBrand; size?: number; color?: string; variant?: ProviderBrandIconVariant }): ReactNode {
+  const fill = color ?? resolveProviderBrandIconColor(brand, variant)
   const path = BRAND_PATHS[brand]
   if (!path) return null
   return (
@@ -71,5 +99,8 @@ const BRAND_PATHS: Record<ProviderBrand, string> = {
   qwen: 'M23.919 14.545 20.817 9.17l1.47-2.544a.56.56 0 0 0 0-.566l-1.633-2.83a.57.57 0 0 0-.49-.283h-6.207L12.487.402a.57.57 0 0 0-.49-.284H8.732a.56.56 0 0 0-.49.284L5.139 5.775h-2.94a.56.56 0 0 0-.49.284L.077 8.887a.56.56 0 0 0 0 .567L3.18 14.83l-1.47 2.545a.56.56 0 0 0 0 .566l1.634 2.83a.57.57 0 0 0 .49.283h6.205l1.47 2.545a.57.57 0 0 0 .49.284h3.266a.56.56 0 0 0 .49-.284l3.104-5.375h2.94a.57.57 0 0 0 .49-.283l1.634-2.828a.55.55 0 0 0-.004-.568M8.733.686l1.634 2.828-1.634 2.828H21.8L20.164 9.17H7.425L5.63 6.06Zm1.306 19.801-6.205-.002 1.634-2.83h3.265L2.201 6.344h3.267q3.182 5.517 6.367 11.032zm10.124-5.66L18.53 12l-6.532 11.315-1.634-2.83c2.129-3.673-4.25-7.351-6.373-11.028h3.592l3.102 5.374z',
   mistral: 'M17.143 3.429v3.428h-3.429v3.429h-3.428V6.857H6.857V3.43H3.43v13.714H0v3.428h10.286v-3.428H6.857v-3.429h3.429v3.429h3.429v-3.429h3.428v3.429h-3.428v3.428H24v-3.428h-3.43V3.429z',
   meta: 'M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a6.624 6.624 0 0 0 .265.86 5.297 5.297 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927 1.497 0 2.633-.671 3.965-2.444.76-1.012 1.144-1.626 2.663-4.32l.756-1.339.186-.325c.061.1.121.196.183.3l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314 1.046.987 1.992 1.22 3.06 1.22 1.075 0 1.876-.355 2.455-.843a3.743 3.743 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745 0-2.72-.681-5.357-2.084-7.45-1.282-1.912-2.957-2.93-4.716-2.93-1.047 0-2.088.467-3.053 1.308-.652.57-1.257 1.29-1.82 2.05-.69-.875-1.335-1.547-1.958-2.056-1.182-.966-2.315-1.303-3.454-1.303zm10.16 2.053c1.147 0 2.188.758 2.992 1.999 1.132 1.748 1.647 4.195 1.647 6.4 0 1.548-.368 2.9-1.839 2.9-.58 0-1.027-.23-1.664-1.004-.496-.601-1.343-1.878-2.832-4.358l-.617-1.028a44.908 44.908 0 0 0-1.255-1.98c.07-.109.141-.224.211-.327 1.12-1.667 2.118-2.602 3.358-2.602zm-10.201.553c1.265 0 2.058.791 2.675 1.446.307.327.737.871 1.234 1.579l-1.02 1.566c-.757 1.163-1.882 3.017-2.837 4.338-1.191 1.649-1.81 1.817-2.486 1.817-.524 0-1.038-.237-1.383-.794-.263-.426-.464-1.13-.464-2.046 0-2.221.63-4.535 1.66-6.088.454-.687.964-1.226 1.533-1.533a2.264 2.264 0 0 1 1.088-.285z',
+  zhipu: 'M12.606 1.806 10.929 4.194c-.258.374-.697.606-1.161.606H.606V1.794c-.012.012 12 .012 12 .012ZM24 1.806 9.6 22.206H0l14.4-20.4Zm-12.606 20.4 1.69-2.4c.258-.374.697-.606 1.161-.606h9.149v3.006Z',
+  moonshot: 'm1.053 16.91 9.538 2.55a21 20.981 0 0 0 .06 2.031l5.956 1.592A12 11.99 0 0 1 1.053 16.91m-1.02-5.79 11.352 3.035a21 20.981 0 0 0-.469 2.01l10.817 2.89a12 11.99 0 0 1-1.845 2.004L.658 15.918a12 11.99 0 0 1-.625-4.796m1.593-5.146L13.573 9.17a21 20.981 0 0 0-1.01 1.874l11.297 3.02a21 20.981 0 0 1-.67 2.362l-11.55-3.087L.125 10.26a12 11.99 0 0 1 1.499-4.285ZM6.067 1.58l11.285 3.016a21 20.981 0 0 0-1.688 1.719l7.824 2.091a21 20.981 0 0 1 .513 2.664L2.107 5.218a12 11.99 0 0 1 3.96-3.638M21.68 4.866 7.222 1.003A12 11.99 0 0 1 21.68 4.866',
+  minimax: 'M11.43 3.92a.86.86 0 1 0-1.718 0v14.236a1.999 1.999 0 0 1-3.997 0V9.022a.86.86 0 1 0-1.718 0v3.87a1.999 1.999 0 0 1-3.997 0V11.49a.57.57 0 0 1 1.139 0v1.404a.86.86 0 0 0 1.719 0V9.022a1.999 1.999 0 0 1 3.997 0v9.134a.86.86 0 0 0 1.719 0V3.92a1.998 1.998 0 1 1 3.996 0v11.788a.57.57 0 1 1-1.139 0Zm10.572 3.105a2 2 0 0 0-1.999 1.997v7.63a.86.86 0 0 1-1.718 0V3.923a1.999 1.999 0 0 0-3.997 0v16.16a.86.86 0 0 1-1.719 0V18.08a.57.57 0 1 0-1.138 0v2a1.998 1.998 0 0 0 3.996 0V3.92a.86.86 0 0 1 1.719 0v12.73a1.999 1.999 0 0 0 3.996 0V9.023a.86.86 0 1 1 1.72 0v6.686a.57.57 0 0 0 1.138 0V9.022a2 2 0 0 0-1.998-1.997',
   generic: 'M12 2.5a9.5 9.5 0 1 0 0 19a9.5 9.5 0 0 0 0-19Zm0 4a5.5 5.5 0 1 1 0 11a5.5 5.5 0 0 1 0-11Z',
 }

@@ -144,12 +144,12 @@ export function isOpenAIReasoningModel(provider: AIProvider, model: string): boo
 
 export function isClaudeThinkingModel(provider: AIProvider, model: string): boolean {
   if (provider.type !== 'anthropic' && provider.wireProtocol !== 'anthropic-compatible') return false
-  return /claude-(3[.-]7|sonnet-3[.-]7|fable-5|opus-4|sonnet-4|haiku-4|mythos)/.test(normalizeModelId(model))
+  return /claude-(3[.-]7|sonnet-3[.-]7|fable-5|opus-5|sonnet-5|opus-4|sonnet-4|haiku-4|mythos)/.test(normalizeModelId(model))
 }
 
 export function modelDisallowsAnthropicSampling(model: string): boolean {
   const normalized = normalizeModelId(model)
-  if (/^claude-(fable-5|mythos-5|mythos-preview)/.test(normalized)) return true
+  if (/^claude-(fable-5|mythos-5|mythos-preview|opus-5|sonnet-5)/.test(normalized)) return true
   const opusMatch = normalized.match(/^claude-opus-4-(\d+)/)
   return opusMatch ? Number(opusMatch[1]) >= 7 : false
 }
@@ -197,7 +197,7 @@ export function isMiniMaxThinkingModel(provider: AIProvider, model: string): boo
 export function isXAIReasoningModel(provider: AIProvider, model: string): boolean {
   if (!isProviderFamily(provider, 'xai', /(^|[-_./])xai($|[-_./])|grok|api\.x\.ai/i)) return false
   const normalized = normalizeModelId(model)
-  if (normalized === 'grok-4.3') return true
+  if (/^grok-4\.(?:3|5|6)(?:[-.]|$)/.test(normalized) || /^grok-code-fast(?:-1)?(?:[-.]|$)/.test(normalized)) return true
   if (normalized.includes('non-reasoning')) return false
   return /^grok-4\.20(?:[.-]|$)/.test(normalized)
 }
@@ -257,6 +257,7 @@ export function isSiliconFlowReasoningModel(provider: AIProvider, model: string)
 function cerebrasReasoningEffortOptions(model: string): ReasoningEffort[] {
   const normalized = normalizeModelId(model)
   if (normalized === 'gpt-oss-120b') return ['low', 'medium', 'high']
+  if (normalized === 'gemma-4-31b') return ['low', 'medium', 'high']
   if (normalized === 'zai-glm-4.7') return ['none']
   return []
 }

@@ -249,18 +249,7 @@ export function Composer({
           ? 'typing'
           : 'focused'
         : 'idle'
-  const multilineLayout =
-    editor.visualLineCount > 1 ||
-    content.includes('\n') ||
-    editor.sizeMode !== 'compact'
   const multilineInput = true
-  const inputPaddingVertical =
-    multilineLayout
-      ? COMPOSER_INPUT_VERTICAL_PADDING
-      : Math.max(
-        4,
-        (COMPOSER_INPUT_MIN_HEIGHT - effectiveInputLineHeight) / 2,
-      )
   const composerGeometry = resolveFloatingComposerGeometry({
     viewportWidth: composerWindowWidth,
     viewportHeight,
@@ -660,13 +649,13 @@ export function Composer({
             onChangeText={editor.changeText}
             surfaceHeight={composerGeometry.messageInputHeight}
             bodyHeight={composerGeometry.bodyViewportHeight}
-            paddingVertical={inputPaddingVertical}
+            paddingVertical={COMPOSER_INPUT_VERTICAL_PADDING}
             toolbarBottomPadding={composerGeometry.toolbarBottomPadding}
             sizeMode={editor.sizeMode}
             motion={motion}
             focused={focused}
             colors={colors}
-            placeholder={streaming ? t('chat.keepTyping') : placeholder ?? t('chat.askAnything')}
+            placeholder={streaming ? t('chat.keepTyping') : placeholder ?? ''}
             accessibilityLabel={t('chat.inputAccessibility')}
             accessibilityHint={streaming ? t('chat.keepTypingInputAccessibilityHint') : t('chat.inputAccessibilityHint')}
             accessibilityState={{ disabled }}

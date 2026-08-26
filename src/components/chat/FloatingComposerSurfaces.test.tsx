@@ -140,6 +140,11 @@ describe('FloatingComposerSurfaces', () => {
   it('keeps the same native TextInput mounted while its geometry changes', async () => {
     const screen = await render(<MessageInput {...inputProps} />)
     const input = screen.getByTestId('message-input')
+    const compactStyle = StyleSheet.flatten(input.props.style)
+    expect(compactStyle.paddingTop).toBe(8)
+    expect(compactStyle.paddingBottom).toBe(8)
+    expect(compactStyle.textAlignVertical).toBe('top')
+    expect(compactStyle.height).toBe(48)
     await screen.rerender(
       <MessageInput
         {...inputProps}
@@ -149,7 +154,13 @@ describe('FloatingComposerSurfaces', () => {
         scrollEnabled
       />,
     )
-    expect(screen.getByTestId('message-input')).toBe(input)
+    const expandedInput = screen.getByTestId('message-input')
+    const expandedStyle = StyleSheet.flatten(expandedInput.props.style)
+    expect(expandedInput).toBe(input)
+    expect(expandedStyle.paddingTop).toBe(compactStyle.paddingTop)
+    expect(expandedStyle.paddingBottom).toBe(compactStyle.paddingBottom)
+    expect(expandedStyle.textAlignVertical).toBe('top')
+    expect(expandedStyle.height).toBe(184)
   })
 
   it('centers all independent surfaces on the overlay row', async () => {

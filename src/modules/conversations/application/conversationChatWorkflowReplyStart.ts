@@ -153,6 +153,8 @@ export function createConversationChatWorkflowReplyStarter(
     const assistantMessage: Message = {
       id: dependencies.createMessageId(),
       role: 'assistant',
+      providerId: conversation.providerId,
+      model: conversation.model,
       content: '',
       responseText: '',
       timestamp: startedAt,

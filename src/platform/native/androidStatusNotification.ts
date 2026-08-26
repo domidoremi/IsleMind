@@ -16,6 +16,13 @@ export interface AndroidStatusNotificationPayload {
 
 export interface AndroidStatusNotificationUpdateOptions {
   enabled?: boolean
+  /** Logical owner of the shared status notification slot. */
+  owner?: string
+}
+
+export interface AndroidStatusNotificationClearOptions {
+  /** Only clear when this owner still owns the shared status notification slot. */
+  owner?: string
 }
 
 export interface AndroidStatusNotificationPermissionRationale {
@@ -61,7 +68,7 @@ export interface AndroidStatusNotificationPort {
   getPermissionStatus(): Promise<AndroidStatusNotificationPermissionStatus>
   requestPermission(rationale: AndroidStatusNotificationPermissionRationale): Promise<AndroidStatusNotificationPermissionStatus>
   update(payload: AndroidStatusNotificationPayload, options?: AndroidStatusNotificationUpdateOptions): Promise<AndroidStatusNotificationResult>
-  clear(): Promise<AndroidStatusNotificationResult>
+  clear(options?: AndroidStatusNotificationClearOptions): Promise<AndroidStatusNotificationResult>
   openSettings(target?: AndroidStatusNotificationSettingsTarget): Promise<AndroidStatusNotificationSettingsResult>
 }
 
@@ -101,6 +108,9 @@ export function createExpoAndroidStatusNotificationPort(
   dependencies?: AndroidStatusNotificationAdapterDependencies,
 ): AndroidStatusNotificationPort {
   let resolvedDependencies = dependencies
+  let lastMutationKey: string | null = null
+  let mutationTail: Promise<void> = Promise.resolve()
+  let activeOwner: string | null = null
   const resolveDependencies = () => {
     resolvedDependencies ??= loadDefaultDependencies()
     return resolvedDependencies
@@ -121,6 +131,60 @@ export function createExpoAndroidStatusNotificationPort(
     } catch (error) {
       return permissionStatusFallback(runtime, true, 'native_error', error)
     }
+  }
+
+  const updateRaw = async (
+    payload: AndroidStatusNotificationPayload,
+    options: AndroidStatusNotificationUpdateOptions = {},
+  ): Promise<AndroidStatusNotificationResult> => {
+    const runtime = resolveDependencies()
+    if (!isRuntimeAvailable(runtime) || !runtime.nativeModule) return unavailableStatusResult()
+    if (options.enabled !== true) {
+      return { shown: false, reason: 'disabled', backgroundReliable: false }
+    }
+    const permission = await getPermissionStatus()
+    if (!permission.granted) {
+      return {
+        shown: false,
+        reason: permission.reason ?? 'permission_denied',
+        backgroundReliable: false,
+        errorMessage: permission.errorMessage,
+      }
+    }
+    return safeNativeStatusCall(() => runtime.nativeModule!.updateStatus(payload))
+  }
+
+  const clearRaw = async (options: AndroidStatusNotificationClearOptions = {}): Promise<AndroidStatusNotificationResult> => {
+    const runtime = resolveDependencies()
+    if (!isRuntimeAvailable(runtime) || !runtime.nativeModule) return unavailableStatusResult()
+    const owner = normalizeOwner(options.owner)
+    if (owner && activeOwner !== owner) {
+      return { shown: false, reason: 'superseded', backgroundReliable: false }
+    }
+    return safeNativeStatusCall(() => runtime.nativeModule!.clearStatus())
+  }
+
+  const dispatchMutation = (
+    mutationKey: string,
+    operation: () => Promise<AndroidStatusNotificationResult>,
+  ): Promise<AndroidStatusNotificationResult> => {
+    if (mutationKey === lastMutationKey) {
+      return Promise.resolve({ shown: false, reason: 'deduplicated', backgroundReliable: false })
+    }
+    lastMutationKey = mutationKey
+    const execute = async () => {
+      const result = await operation()
+      // A denied/unavailable update should be eligible for a later retry.
+      if (!result.shown && result.reason !== 'cleared' && lastMutationKey === mutationKey) lastMutationKey = null
+      return result
+    }
+    const result = mutationTail.then(execute, execute)
+    const guardedResult = result.catch((error: unknown) => {
+      if (lastMutationKey === mutationKey) lastMutationKey = null
+      throw error
+    })
+    mutationTail = guardedResult.then(() => undefined, () => undefined)
+    return guardedResult
   }
 
   return {
@@ -147,27 +211,23 @@ export function createExpoAndroidStatusNotificationPort(
         return permissionStatusFallback(runtime, true, 'native_error', error, apiLevel)
       }
     },
-    async update(payload, options = {}) {
-      const runtime = resolveDependencies()
-      if (!isRuntimeAvailable(runtime) || !runtime.nativeModule) return unavailableStatusResult()
-      if (options.enabled !== true && payload.foregroundService !== true) {
-        return { shown: false, reason: 'disabled', backgroundReliable: false }
-      }
-      const permission = await getPermissionStatus()
-      if (!permission.granted) {
-        return {
-          shown: false,
-          reason: permission.reason ?? 'permission_denied',
-          backgroundReliable: false,
-          errorMessage: permission.errorMessage,
-        }
-      }
-      return safeNativeStatusCall(() => runtime.nativeModule!.updateStatus(payload))
+    update(payload, options = {}) {
+      if (options.enabled !== true) return updateRaw(payload, options)
+      const owner = normalizeOwner(options.owner)
+      return dispatchMutation(`${owner}\u001f${buildAndroidStatusNotificationMutationKey(payload)}`, async () => {
+        const result = await updateRaw(payload, options)
+        if (result.shown) activeOwner = owner
+        return result
+      })
     },
-    async clear() {
-      const runtime = resolveDependencies()
-      if (!isRuntimeAvailable(runtime) || !runtime.nativeModule) return unavailableStatusResult()
-      return safeNativeStatusCall(() => runtime.nativeModule!.clearStatus())
+    clear(options = {}) {
+      const owner = normalizeOwner(options.owner)
+      const mutationKey = `clear\u001f${owner ?? '*'}`
+      return dispatchMutation(mutationKey, async () => {
+        const result = await clearRaw(options)
+        if (result.reason === 'cleared') activeOwner = null
+        return result
+      })
     },
     async openSettings(target = 'notifications') {
       const runtime = resolveDependencies()
@@ -201,6 +261,28 @@ export function createExpoAndroidStatusNotificationPort(
       }
     },
   }
+}
+
+function normalizeOwner(owner: string | undefined): string | null {
+  const normalized = owner?.trim()
+  return normalized ? normalized : null
+}
+
+/** Includes every user-visible field so equivalent updates cross the native bridge once. */
+export function buildAndroidStatusNotificationMutationKey(payload: AndroidStatusNotificationPayload): string {
+  return JSON.stringify([
+    payload.state,
+    payload.title,
+    payload.message,
+    payload.shortText ?? null,
+    payload.conversationId ?? null,
+    payload.deepLink ?? null,
+    payload.progress ?? null,
+    payload.indeterminate ?? null,
+    payload.ongoing ?? null,
+    payload.requestPromotedOngoing ?? null,
+    payload.foregroundService ?? null,
+  ])
 }
 
 function loadDefaultDependencies(): AndroidStatusNotificationAdapterDependencies {
