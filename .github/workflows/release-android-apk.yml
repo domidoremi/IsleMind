@@ -207,7 +207,7 @@ jobs:
             while IFS= read -r asset; do
               [ -z "$asset" ] && continue
               case "$asset" in
-                IsleMind-*.apk|IsleMind-*.apk.sha256)
+                IsleMind-*.apk|IsleMind-*.apk.sha256|IsleMind-*.apk.source-snapshot.json)
                   gh release delete-asset "$old_tag" "$asset" --yes
                   ;;
               esac
