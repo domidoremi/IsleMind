@@ -48,8 +48,8 @@ The following operations access the network:
 ### v1.0.21 highlights
 
 - Unified in-app notification delivery to prevent duplicate provider-import and status messages.
-- Improved message bubbles, generation status, expandable thinking summaries, provider icons, and mobile layout.
-- Improved bulk provider import with endpoint-based naming and preserved credential groups.
+- Improved message bubbles, model generation status, thinking-summary interaction, provider icons, and mobile layout.
+- Improved bulk provider import with endpoint-based provider naming while preserving each credential's original label.
 - Published `no-model` and `with-model-small` APK variants for `universal-64`, `arm64-v8a`, `armeabi-v7a-legacy`, and `x86_64`.
 
 ### APK selection
