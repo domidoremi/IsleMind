@@ -40,9 +40,23 @@ The following operations access the network:
 
 ## Current release
 
-- Stable release: `v1.0.19`
-- Android: `versionCode 119`
-- [View Releases and the Chinese/English version history](https://github.com/domidoremi/IsleMind/releases)
+- Stable release: `v1.0.21`
+- Android: `versionCode 121`
+- [Download v1.0.21 APKs and checksums](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
+- [View all Releases and localized version history](https://github.com/domidoremi/IsleMind/releases)
+
+### v1.0.21 highlights
+
+- Unified in-app notification delivery to prevent duplicate provider-import and status messages.
+- Improved message bubbles, generation status, expandable thinking summaries, provider icons, and mobile layout.
+- Improved bulk provider import with endpoint-based naming and preserved credential groups.
+- Published `no-model` and `with-model-small` APK variants for `universal-64`, `arm64-v8a`, `armeabi-v7a-legacy`, and `x86_64`.
+
+### APK selection
+
+- `no-model`: smaller package without a bundled local embedding model.
+- `with-model-small`: includes the small local RAG embedding model.
+- When unsure about the device architecture, choose the matching `universal-64` variant; use the `.sha256` files to verify downloads.
 
 ## Development environment
 
