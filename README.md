@@ -40,9 +40,23 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 ## 当前版本
 
-- 稳定版本：`v1.0.19`
-- Android：`versionCode 119`
-- [查看 Releases 与中英文版本记录](https://github.com/domidoremi/IsleMind/releases)
+- 稳定版本：`v1.0.21`
+- Android：`versionCode 121`
+- [下载 v1.0.21 APK 与校验文件](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
+- [查看全部 Releases 与中英文版本记录](https://github.com/domidoremi/IsleMind/releases)
+
+### v1.0.21 更新
+
+- 统一应用内通知出口，避免服务商导入和状态操作重复提示。
+- 优化消息气泡、生成状态、思考摘要展开、模型图标和移动端布局。
+- 改进服务商批量导入，支持从端点识别名称并保留密钥分组。
+- 发布 `no-model` 与 `with-model-small` 两种 APK，覆盖 `universal-64`、`arm64-v8a`、`armeabi-v7a-legacy` 和 `x86_64`。
+
+### APK 选择
+
+- `no-model`：安装包更小，不内置本地 embedding 模型。
+- `with-model-small`：内置小型本地 RAG embedding 模型。
+- 不确定设备架构时，优先选择对应变体的 `universal-64` 包；`.sha256` 文件可用于校验下载完整性。
 
 ## 开发环境
 

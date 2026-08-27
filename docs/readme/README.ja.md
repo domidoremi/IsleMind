@@ -37,6 +37,26 @@ IsleMind は、モデルプロバイダー、会話、ナレッジとメモリ�
 - ローカルモデル用リソースのダウンロード
 - ユーザーが有効にしたネットワークツール、MCP サーバー、外部サービス連携
 
+## 現在のリリース
+
+- 安定版：`v1.0.21`
+- Android：`versionCode 121`
+- [v1.0.21 の APK とチェックサムをダウンロード](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
+- [すべての Releases と多言語の更新履歴を見る](https://github.com/domidoremi/IsleMind/releases)
+
+### v1.0.21 の更新
+
+- アプリ内通知の出力先を統一し、プロバイダーのインポートや状態操作で同じ通知が重複しないようにしました。
+- メッセージバブル、生成状態、折りたたみ可能な思考要約、プロバイダーアイコン、モバイルレイアウトを改善しました。
+- エンドポイント名の推定と認証情報グループを保持する一括プロバイダーインポートに対応しました。
+- `universal-64`、`arm64-v8a`、`armeabi-v7a-legacy`、`x86_64` 向けに `no-model` と `with-model-small` の APK を提供します。
+
+### APK の選択
+
+- `no-model`：ローカル embedding モデルを含まない小さいパッケージです。
+- `with-model-small`：小型のローカル RAG embedding モデルを含みます。
+- 端末のアーキテクチャが不明な場合は、対応する `universal-64` を選び、`.sha256` ファイルでダウンロードを確認してください。
+
 ## 開発環境
 
 - [Bun 1.3.14](https://bun.sh/)（依存関係の導入とスクリプト実行）
