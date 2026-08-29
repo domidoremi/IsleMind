@@ -36,7 +36,7 @@ import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useMotionPreference, type MotionIntensity } from '@/hooks/useMotionPreference'
 import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage, getWorkflowRecoveryActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
 import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
-import { clampTraceText, redactSensitiveText } from '@/core'
+import { clampTraceText, redactSensitiveText, relocalizeUserFacingError } from '@/core'
 import { extractTaggedThinkingOutputText, sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
@@ -149,7 +149,13 @@ function MessageBubbleComponent({
     () => mergeMessageWithStreamingTraceSnapshot(message, liveStreamingTraceSnapshot),
     [liveStreamingTraceSnapshot, message]
   )
-  const rawDisplayText = liveStreamingText ?? message.responseText ?? message.content
+  // A failed reply persists the sentence that was rendered when it failed, so the bubble
+  // would keep speaking the language selected back then. Its copy is rebuilt from the
+  // persisted error code on every render instead.
+  const persistedDisplayText = message.responseText ?? message.content
+  const rawDisplayText = liveStreamingText ?? (!isUser && message.status === 'error'
+    ? relocalizeUserFacingError(persistedDisplayText, message.errorCode, t)
+    : persistedDisplayText)
   const displayText = sanitizeInternalChatOutputText(rawDisplayText)
   const renderedDisplayText = useThrottledStreamingText(displayText, isStreamingContent)
   const displayFormulaLayout = useMemo(

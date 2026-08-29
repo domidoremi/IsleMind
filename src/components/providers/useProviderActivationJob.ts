@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useIsleDialog } from '@/components/ui/isle'
+import { composeUserFacingError, extractUserFacingErrorDetail } from '@/core'
 import { createProviderActivationPatchBuffer, type ProviderActivationPatchBuffer } from '@/modules/providers'
 import { isProviderActivationReady, syncAndTestProvider, summarizeProviderActivation, type ProviderActivationResult } from '@/bootstrap/providerActivationRuntime'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
@@ -235,7 +236,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
             messages: [],
             failures: [{
               providerName: providerDisplayName,
-              message: error instanceof Error ? error.message : t('providerSettings.activationFailed'),
+              message: composeUserFacingError(t('providerSettings.activationFailed'), extractUserFacingErrorDetail(error)),
             }],
           }
         })

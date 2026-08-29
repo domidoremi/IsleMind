@@ -22,6 +22,7 @@ import { resolveActivationJobProgress, useActivationJobStore, type ActivationJob
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
 import type { AIProvider } from '@/types/providerContracts'
+import { composeUserFacingError, extractUserFacingErrorDetail } from '@/core'
 import type { ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
 import { applyProviderPreset, countDetectedProviderImports, formatProviderNameList, getProviderPreset, looksLikeProviderImportConnectionText, parseCredentialGroups, parseProviderImportDraft, parseProviderImportText, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
@@ -2818,6 +2819,5 @@ function clipboardReadFailureMessage(error: unknown, t: ReturnType<typeof useTra
 }
 
 function providerImportFailureMessage(error: unknown, t: ReturnType<typeof useTranslation>['t']): string {
-  const message = error instanceof Error ? error.message : String(error ?? '')
-  return [t('providerSettings.importFailedMessage'), message.trim()].filter(Boolean).join('\n')
+  return composeUserFacingError(t('providerSettings.importFailedMessage'), extractUserFacingErrorDetail(error))
 }

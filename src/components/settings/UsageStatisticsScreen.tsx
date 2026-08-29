@@ -14,6 +14,7 @@ import {
   loadUsageStatistics,
   saveUsagePricingEntry,
 } from '@/bootstrap/usageStatisticsRuntime'
+import { describeUserFacingError } from '@/core'
 import { useIsleDialog } from '@/components/ui/isle'
 import type {
   UsageOperationSource,
@@ -98,7 +99,7 @@ export function UsageStatisticsScreen() {
     } catch (error) {
       if (loadSequence.current !== sequence) return
       setScreenState('error')
-      setErrorMessage(error instanceof Error ? error.message : t('usage.loadFailed'))
+      setErrorMessage(describeUserFacingError(error, t, { headlineKey: 'usage.loadFailed' }))
     } finally {
       if (loadSequence.current === sequence) setRefreshing(false)
     }

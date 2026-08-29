@@ -11,6 +11,7 @@ import { initializeConversationComposerDraftPersistence } from '@/bootstrap/conv
 import { initializeSettingsStorePersistence } from '@/bootstrap/settingsStorePersistence'
 import { cancelAllConversationAssistantDetachedWork } from '@/bootstrap/conversationAssistantDetachedWorkRegistry'
 import { initI18n } from '@/i18n'
+import { extractUserFacingErrorDetail } from '@/core'
 import { st } from '@/i18n/service'
 import { useAppTheme } from './useAppTheme'
 
@@ -202,9 +203,7 @@ export function useBootstrap() {
 }
 
 function formatBootstrapFailureMessage(error: unknown): string {
-  const message = error instanceof Error && error.message.trim()
-    ? error.message.trim()
-    : st('error.unknownError')
+  const message = extractUserFacingErrorDetail(error) || st('error.unknownError')
   return message
     .replace(/\b(tp-[A-Za-z0-9_-]{24,})\b/g, 'tp-***')
     .replace(/\b(sk-[A-Za-z0-9_-]{20,})\b/g, 'sk-***')
@@ -218,7 +217,7 @@ async function safeBootstrap(label: string, task: () => Promise<void>): Promise<
   try {
     await task()
   } catch (error) {
-    const message = error instanceof Error ? error.message : st('error.unknownError')
+    const message = extractUserFacingErrorDetail(error) || st('error.unknownError')
     useChatStore.getState().setError(st('bootstrap.failed', { label, message }))
     throw error
   }

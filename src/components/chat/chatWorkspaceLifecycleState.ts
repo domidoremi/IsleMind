@@ -2,6 +2,7 @@ import { useEffect, useRef, type Dispatch, type MutableRefObject, type RefObject
 import { AppState, BackHandler, Keyboard, Platform, type AppStateStatus } from 'react-native'
 import type { FlashListRef } from '@shopify/flash-list'
 
+import { extractUserFacingErrorDetail } from '@/core'
 import { st } from '@/i18n/service'
 import { recoverStaleConversationMessages } from '@/presentation/features/conversations/conversationControlCommand'
 import { useChatStore } from '@/store/chatStore'
@@ -14,9 +15,7 @@ import type { IntentDraft } from './chatStreamingIntentActions'
 type ApplyQuickStartDraft = (draft: string, attachments?: Attachment[], restoreIfEmpty?: boolean) => void
 
 function reportConversationRecoveryFailure(error: unknown): void {
-  const message = error instanceof Error && error.message.trim()
-    ? error.message
-    : st('error.unknownError')
+  const message = extractUserFacingErrorDetail(error) || st('error.unknownError')
   useChatStore.getState().setError(st('storage.sqliteRestoreFailed', { message }))
 }
 

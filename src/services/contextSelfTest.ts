@@ -1,4 +1,5 @@
 import type { Conversation, Message } from '@/types/chatContracts'
+import { describeUserFacingError } from '@/core'
 import type { RetrievalSource } from '@/types/contextContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
@@ -260,7 +261,7 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
       pushStep({
         name: input.t('contextPanel.selfTest.tavilySearch'),
         status: 'fail',
-        detail: error instanceof Error ? error.message : input.t('contextPanel.selfTest.tavilyFailed'),
+        detail: describeUserFacingError(error, input.t, { headlineKey: 'contextPanel.selfTest.tavilyFailed' }),
       })
     }
   }
