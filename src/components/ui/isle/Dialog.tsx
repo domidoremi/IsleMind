@@ -108,7 +108,7 @@ function dialogBorderWidth(colors: ReturnType<typeof useAppTheme>['colors']) {
 }
 
 export function IsleDialogProvider({ children, updateNotice }: { children: ReactNode; updateNotice?: string | null }) {
-  const { colors, canonicalThemeId } = useAppTheme()
+  const { colors, canonicalThemeId, design } = useAppTheme()
   const motion = useMotionPreference()
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
@@ -119,7 +119,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const dialogMaxWidth = Math.min(460, Math.max(240, width - modalPaddingHorizontal * 2))
   const dialogMaxHeight = Math.max(240, height - modalPaddingTop - modalPaddingBottom)
   const routeDialog = canonicalThemeId === 'monet'
-  const toastMaxWidth = Math.min(420, Math.max(240, width - 32))
+  const toastMaxWidth = Math.min(design.component.toast.maxWidth, Math.max(240, width - 32))
   const themeExpression = resolveThemeExpression(canonicalThemeId)
   const dialogExpression = resolveThemeComponentExpression(canonicalThemeId, 'dialog')
   const toastExpression = resolveThemeComponentExpression(canonicalThemeId, 'toast')
@@ -141,7 +141,9 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const dialogQueueRef = useRef(dialogQueue)
   const dialogSettlementsRef = useRef(createAppConfirmSettlementRegistry())
   const dialog = dialogQueue[0] ?? null
-  const toast = toastQueue.active
+  const toastStack = toastQueue.active
+    ? [toastQueue.active, ...toastQueue.pending.slice(0, 2)]
+    : []
 
   useEffect(() => {
     dialogQueueRef.current = dialogQueue
@@ -199,21 +201,22 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   }, [])
 
   useEffect(() => {
-    if (!toast) return undefined
-    const durationMs = toast.durationMs ?? defaultToastDuration(toast)
+    const activeToast = toastQueue.active
+    if (!activeToast) return undefined
+    const durationMs = activeToast.durationMs ?? defaultToastDuration(activeToast)
     if (durationMs <= 0) return undefined
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     void resolveAppFeedbackTimeout(durationMs, AccessibilityInfo)
       .then((recommendedDurationMs) => {
         if (cancelled) return
-        timer = setTimeout(() => dismissToast(toast.id), recommendedDurationMs)
+        timer = setTimeout(() => dismissToast(activeToast.id), recommendedDurationMs)
       })
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [dismissToast, toast])
+  }, [dismissToast, toastQueue.active])
 
   useEffect(() => {
     if (!updateNotice || lastUpdateNotice.current === updateNotice) return
@@ -279,38 +282,41 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
         }}
       />
       <AnimatePresence>
-      {toast ? (
+      {toastStack.length ? (
         <View
           pointerEvents="box-none"
           style={{
             position: 'absolute',
             left: 0,
             right: 0,
-            bottom: toast.bottomOffset ?? toastBottomOffset,
+            bottom: toastStack[0]?.bottomOffset ?? toastBottomOffset,
             zIndex: 999,
             alignItems: 'center',
             paddingHorizontal: 16,
+            gap: 8,
           }}
         >
-          <MotiView
-            key={toast.id}
-            from={motion === 'full'
-              ? { opacity: 0, translateY: toastTravel, scale: toastScale }
-              : { opacity: 1, translateY: 0, scale: 1 }}
-            animate={{ opacity: 1, translateY: 0, scale: 1 }}
-            transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.emphasis : 1 }}
-            exit={motion === 'full' ? { opacity: 0, translateY: toastTravel * 0.7, scale: toastScale } : { opacity: 0 }}
-            style={{ width: '100%', maxWidth: toastMaxWidth }}
-          >
-            <AppToastSurface
-              toast={toast}
-              onAction={() => {
-                toast.onAction?.()
-                dismissToast(toast.id)
-              }}
-              onDismiss={() => dismissToast(toast.id)}
-            />
-          </MotiView>
+          {toastStack.map((item, index) => (
+            <MotiView
+              key={item.id}
+              from={index === 0 && motion === 'full'
+                ? { opacity: 0, translateY: toastTravel, scale: toastScale }
+                : { opacity: index === 0 ? 1 : 0.72, translateY: 0, scale: index === 0 ? 1 : 0.98 }}
+              animate={{ opacity: index === 0 ? 1 : 0.72, translateY: 0, scale: index === 0 ? 1 : 0.98 }}
+              transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.emphasis : 1 }}
+              style={{ width: '100%', maxWidth: toastMaxWidth }}
+            >
+              <AppToastSurface
+                toast={item}
+                interactive={index === 0}
+                onAction={() => {
+                  item.onAction?.()
+                  dismissToast(item.id)
+                }}
+                onDismiss={() => dismissToast(item.id)}
+              />
+            </MotiView>
+          ))}
         </View>
       ) : null}
       </AnimatePresence>
@@ -320,21 +326,23 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
 
 function AppToastSurface({
   toast,
+  interactive = true,
   onAction,
   onDismiss,
 }: {
   toast: AppFeedbackItem
+  interactive?: boolean
   onAction: () => void
   onDismiss: () => void
 }) {
-  const { colors, canonicalThemeId } = useAppTheme()
+  const { colors, canonicalThemeId, design } = useAppTheme()
   const { t } = useTranslation()
   const tone = toast.tone ?? 'default'
   const toneToken = dialogToneToken(colors, tone === 'default' ? 'info' : tone)
   const toastExpression = resolveThemeComponentExpression(canonicalThemeId, 'toast')
   const grammar = toastExpression.motion
   const radius = toastExpression.shape === 'capsule'
-    ? colors.ui.radius.panel
+    ? design.component.toast.radius
     : toastExpression.shape === 'material'
       ? colors.ui.radius.controlMiddle
       : toastExpression.shape === 'soft'
@@ -370,11 +378,12 @@ function AppToastSurface({
       {grammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: toneToken.foreground, opacity: 0.035 }} /> : null}
       {grammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 20, right: 20, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.64 }} /> : null}
       <View
-        accessible
+        accessible={interactive}
+        pointerEvents={interactive ? 'auto' : 'none'}
         accessibilityRole="alert"
-        accessibilityLiveRegion={tone === 'danger' ? 'assertive' : 'polite'}
+        accessibilityLiveRegion={isDangerTone(tone) ? 'assertive' : 'polite'}
         accessibilityLabel={[toast.title, toast.message, toast.occurrences > 1 ? String(toast.occurrences) : null].filter(Boolean).join('. ')}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingLeft: 12, paddingRight: 7, paddingVertical: 10 }}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: design.component.toast.gap, paddingLeft: design.component.toast.paddingHorizontal, paddingRight: 7, paddingVertical: design.component.toast.paddingVertical, minHeight: design.component.toast.minHeight }}
       >
         <View style={{ width: grammar === 'precision' ? 22 : 30, height: grammar === 'precision' ? 22 : 30, alignItems: 'center', justifyContent: 'center', borderRadius: grammar === 'precision' ? 2 : grammar === 'material' ? 15 : 8, backgroundColor: grammar === 'precision' ? 'transparent' : toastToneSurface(tone, colors), borderWidth: grammar === 'fluid' ? StyleSheet.hairlineWidth : 0, borderColor: toneToken.border }}>
           <AppIcon name={toastIconName(tone)} color={toastToneForeground(tone, colors)} size={16} strokeWidth={appIconStroke.strong} />
@@ -453,7 +462,7 @@ function AppBannerViewport({
                 key={banner.id}
                 accessible
                 accessibilityRole="alert"
-                accessibilityLiveRegion={tone === 'danger' ? 'assertive' : 'polite'}
+                accessibilityLiveRegion={isDangerTone(tone) ? 'assertive' : 'polite'}
                 style={{ width: '100%', maxWidth: 560, minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: StyleSheet.hairlineWidth, borderLeftWidth: 3, borderColor: token.border, borderLeftColor: token.foreground, borderRadius: 8, backgroundColor: colors.ui.semantic.chrome.background, paddingLeft: 11, paddingRight: 6, paddingVertical: 8, shadowColor: colors.shadowTint, shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } }}
               >
                 <AppIcon name={toastIconName(tone)} color={token.foreground} size={17} strokeWidth={appIconStroke.strong} />
@@ -480,29 +489,33 @@ function AppBannerViewport({
 
 function defaultToastDuration(toast: AppFeedbackOptions): number {
   if (toast.actionLabel) return 6200
-  if (toast.tone === 'danger') return 5200
+  if (toast.tone === 'danger' || toast.tone === 'error') return 5200
   if (toast.message) return 3600
   return 2600
 }
 
 function toastIconName(tone: ToastOptions['tone']): 'check' | 'warning' | 'zap' | 'info' {
-  if (tone === 'danger') return 'warning'
-  if (tone === 'amber') return 'zap'
-  if (tone === 'mint') return 'check'
+  if (tone === 'danger' || tone === 'error') return 'warning'
+  if (tone === 'amber' || tone === 'warning') return 'zap'
+  if (tone === 'mint' || tone === 'success') return 'check'
   return 'info'
 }
 
+function isDangerTone(tone: DialogTone | undefined): boolean {
+  return tone === 'danger' || tone === 'error'
+}
+
 function toastToneForeground(tone: DialogTone, colors: ReturnType<typeof useAppTheme>['colors']): string {
-  if (tone === 'danger') return colors.ui.tone.danger.foreground
-  if (tone === 'amber') return colors.ui.tone.warning.foreground
-  if (tone === 'mint') return colors.ui.tone.success.foreground
+  if (tone === 'danger' || tone === 'error') return colors.ui.tone.danger.foreground
+  if (tone === 'amber' || tone === 'warning') return colors.ui.tone.warning.foreground
+  if (tone === 'mint' || tone === 'success') return colors.ui.tone.success.foreground
   return colors.textSecondary
 }
 
 function toastToneSurface(tone: DialogTone, colors: ReturnType<typeof useAppTheme>['colors']): string {
-  if (tone === 'danger') return colors.ui.tone.danger.background
-  if (tone === 'amber') return colors.ui.tone.warning.background
-  if (tone === 'mint') return colors.ui.tone.success.background
+  if (tone === 'danger' || tone === 'error') return colors.ui.tone.danger.background
+  if (tone === 'amber' || tone === 'warning') return colors.ui.tone.warning.background
+  if (tone === 'mint' || tone === 'success') return colors.ui.tone.success.background
   return colors.ui.semantic.surface.muted
 }
 
@@ -838,9 +851,9 @@ function DialogMetricRow({ metric }: { metric: IsleDialogMetric }) {
 }
 
 function dialogToneToken(colors: ReturnType<typeof useAppTheme>['colors'], tone: DialogTone | 'info') {
-  if (tone === 'mint') return colors.ui.tone.success
-  if (tone === 'amber') return colors.ui.tone.warning
-  if (tone === 'danger') return colors.ui.tone.danger
+  if (tone === 'mint' || tone === 'success') return colors.ui.tone.success
+  if (tone === 'amber' || tone === 'warning') return colors.ui.tone.warning
+  if (tone === 'danger' || tone === 'error') return colors.ui.tone.danger
   if (tone === 'info') return colors.ui.tone.info
   return colors.ui.tone.neutral
 }

@@ -61,6 +61,7 @@ function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpr
   const isContent = props.kind === 'message-content'
   const isMarkdown = props.kind === 'markdown'
   const isCodeBlock = props.kind === 'code-block'
+  const isChrome = props.kind === 'chrome'
   const horizontalPadding = props.horizontalPadding ?? 0
   return (
     <View
@@ -75,7 +76,7 @@ function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpr
         isCodeBlock ? styles.minimalCodeBlock : null,
         props.kind === 'composer' ? { marginHorizontal: -horizontalPadding, paddingHorizontal: horizontalPadding } : null,
         {
-          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isCodeBlock && props.isUser ? props.colors.ui.message.userActionBackground : 'transparent',
+          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isCodeBlock && props.isUser ? props.colors.ui.message.userActionBackground : isChrome ? props.colors.ui.semantic.surface.base : 'transparent',
           borderColor: props.alertBorder ?? props.colors.ui.semantic.chrome.border,
           borderWidth: isContent || isMarkdown ? 0 : props.selected ? 2 : component.border === 'divider' ? StyleSheet.hairlineWidth : 0,
         },
@@ -235,31 +236,31 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, expression: Theme
 }
 
 const styles = StyleSheet.create({
-  minimalBase: { minHeight: 44, justifyContent: 'center', position: 'relative' },
+  minimalBase: { minHeight: 44, minWidth: 0, maxWidth: '100%', justifyContent: 'center', position: 'relative' },
   minimalUserMessage: { alignSelf: 'flex-end', maxWidth: '92%', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 4 },
   minimalAssistantMessage: { width: '100%', paddingVertical: 6 },
-  minimalContent: { width: '100%', gap: 5, minHeight: 0 },
-  minimalMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start' },
+  minimalContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 5, minHeight: 0, overflow: 'hidden' },
+  minimalMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', overflow: 'hidden' },
   minimalCodeBlock: { width: '100%', minHeight: 0, borderRadius: 2, padding: 0 },
   minimalComposerRule: { position: 'absolute', top: 0, left: 0, right: 0, height: StyleSheet.hairlineWidth },
   minimalMessageIndex: { position: 'absolute', top: 7, bottom: 7, left: 0, width: 2 },
-  monetBase: { minHeight: 48, justifyContent: 'center', overflow: 'hidden', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
+  monetBase: { minHeight: 48, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
   monetComposer: { marginHorizontal: 4, padding: 9 },
   monetUserMessage: { alignSelf: 'flex-end', maxWidth: '90%', borderTopLeftRadius: 22, borderBottomRightRadius: 10 },
   monetAssistantMessage: { width: '100%', marginVertical: 4, borderTopLeftRadius: 10, borderBottomRightRadius: 16 },
-  monetContent: { width: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0 },
-  monetMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0 },
+  monetContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
+  monetMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   monetCodeBlock: { width: '100%', minHeight: 0, borderTopLeftRadius: 9, borderBottomRightRadius: 19, padding: 3 },
   monetAssistantFlow: { width: '100%', alignItems: 'stretch', paddingVertical: 4 },
   monetContentFrame: { position: 'relative', zIndex: 1 },
   monetComposerFrame: { paddingTop: 2 },
-  monetUserContentFrame: { transform: [{ translateX: -1 }] },
-  materialBase: { minHeight: 48, justifyContent: 'center', overflow: 'hidden', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
+  monetUserContentFrame: { minWidth: 0 },
+  materialBase: { minHeight: 48, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
   materialComposer: { marginHorizontal: 0, padding: 7 },
   materialUserMessage: { alignSelf: 'flex-end', maxWidth: '86%', borderRadius: 18, paddingHorizontal: 16, paddingVertical: 10 },
   materialAssistantMessage: { width: '100%', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12 },
-  materialContent: { width: '100%', gap: 6, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0 },
-  materialMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0 },
+  materialContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 6, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
+  materialMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   materialCodeBlock: { width: '100%', minHeight: 0, borderRadius: 12, padding: 2 },
   materialStateLayer: { ...StyleSheet.absoluteFill, opacity: 0.04 },
   materialComposerHandle: { position: 'absolute', top: 5, alignSelf: 'center', width: 32, height: 3, borderRadius: 2, opacity: 0.48 },
@@ -267,15 +268,15 @@ const styles = StyleSheet.create({
   materialContentFrame: { position: 'relative', zIndex: 1 },
   materialComposerFrame: { paddingTop: 4 },
   materialAssistantContentFrame: { paddingLeft: 2 },
-  glassBase: { minHeight: 50, justifyContent: 'center', overflow: 'hidden', borderRadius: 18, paddingHorizontal: 13, paddingVertical: 9 },
+  glassBase: { minHeight: 50, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 18, paddingHorizontal: 13, paddingVertical: 9 },
   glassComposer: { marginHorizontal: 6, padding: 8 },
   glassUserMessage: { alignSelf: 'flex-end', maxWidth: '90%', borderRadius: 24 },
   glassAssistantMessage: { width: '100%', borderRadius: 18 },
-  glassContent: { width: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0 },
-  glassMarkdown: { width: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0 },
+  glassContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
+  glassMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   glassCodeBlock: { width: '100%', minHeight: 0, borderRadius: 20, padding: 3 },
   glassInnerPlane: { position: 'absolute', top: 2, right: 2, bottom: 2, left: 2, borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, opacity: 0.34 },
   glassContentFrame: { position: 'relative', zIndex: 1 },
   glassComposerFrame: { paddingHorizontal: 2, paddingVertical: 2 },
-  glassUserContentFrame: { transform: [{ translateY: -1 }] },
+  glassUserContentFrame: { minWidth: 0 },
 })

@@ -167,6 +167,15 @@ export interface ThemeComponentTokens {
     assistantForeground: string
     border: string
   }
+  toast: {
+    radius: number
+    maxWidth: number
+    minHeight: number
+    paddingHorizontal: number
+    paddingVertical: number
+    gap: number
+    elevation: number
+  }
 }
 
 export interface ThemeDesignTokens {
@@ -496,6 +505,15 @@ const baseComponents = (color: ThemeSemanticColorTokens, radius: ThemeRadiusToke
     assistantForeground: color.onSurface,
     border: color.border,
   },
+  toast: {
+    radius: radius.medium,
+    maxWidth: 440,
+    minHeight: 56,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+    elevation: 2,
+  },
 })
 
 const componentsFor = (family: ThemeFamily, color: ThemeSemanticColorTokens, radius: ThemeRadiusTokens): ThemeComponentTokens => {
@@ -505,6 +523,7 @@ const componentsFor = (family: ThemeFamily, color: ThemeSemanticColorTokens, rad
     button: { ...base.button, radius: radius.small, minHeight: 40, secondaryBackground: color.surface },
     field: { ...base.field, radius: radius.small, minHeight: 44, background: color.surface },
     navigation: { ...base.navigation, background: color.surface, activeBackground: color.surfaceMuted },
+    toast: { ...base.toast, radius: radius.small, maxWidth: 420, minHeight: 48, paddingHorizontal: 10, paddingVertical: 8, gap: 8, elevation: 1 },
   }
   if (family === 'material') return {
     ...base,
@@ -513,17 +532,20 @@ const componentsFor = (family: ThemeFamily, color: ThemeSemanticColorTokens, rad
     panel: { ...base.panel, radius: radius.extraLarge, background: color.surfaceContainer },
     navigation: { ...base.navigation, background: color.surfaceContainer },
     message: { ...base.message, assistantBackground: color.surfaceContainer },
+    toast: { ...base.toast, radius: radius.extraLarge, maxWidth: 460, minHeight: 60, paddingHorizontal: 16, paddingVertical: 12, gap: 12, elevation: 3 },
   }
   if (family === 'liquid-glass') return {
     ...base,
     button: { ...base.button, radius: radius.pill },
     navigation: { ...base.navigation, background: color.surfaceOverlay, border: color.borderStrong, blur: true },
     message: { ...base.message, assistantBackground: color.surface },
+    toast: { ...base.toast, radius: radius.large, maxWidth: 460, minHeight: 58, paddingHorizontal: 14, paddingVertical: 11, gap: 11, elevation: 3 },
   }
   return {
     ...base,
     button: { ...base.button, radius: radius.large },
     panel: { ...base.panel, radius: radius.large, elevatedBackground: color.surfaceElevated },
+    toast: { ...base.toast, radius: radius.large, maxWidth: 440, minHeight: 56, paddingHorizontal: 13, paddingVertical: 10, gap: 10, elevation: 2 },
   }
 }
 
