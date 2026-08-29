@@ -1,4 +1,5 @@
-export type AppFeedbackTone = 'default' | 'mint' | 'amber' | 'danger'
+/** Canonical semantic tones plus the legacy aliases kept for existing callers. */
+export type AppFeedbackTone = 'default' | 'mint' | 'amber' | 'danger' | 'success' | 'warning' | 'error' | 'info' | 'neutral'
 export type AppFeedbackPosition = 'top' | 'bottom'
 export type AppFeedbackPriority = 'normal' | 'high'
 

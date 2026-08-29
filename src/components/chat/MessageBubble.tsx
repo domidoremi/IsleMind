@@ -31,7 +31,7 @@ import {
   traceStageLabel,
 } from './tracePresentation'
 import { MessageBubbleThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
-import { resolveMessageBubbleRowAlignment } from './messageBubbleLayout'
+import { hasWideMessageContent, resolveMessageBubbleMaxWidth, resolveMessageBubbleRowAlignment } from './messageBubbleLayout'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useMotionPreference, type MotionIntensity } from '@/hooks/useMotionPreference'
 import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage, getWorkflowRecoveryActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
@@ -50,7 +50,6 @@ const STREAMING_RENDER_FAST_FORWARD_THRESHOLD = 240
 const STREAMING_RENDER_THROTTLE_MS = 16
 const AGENT_ACTION_PROMPT_VISIBILITY_LIMIT = 900
 const MESSAGE_ACTION_LOCK_MS = 420
-const MESSAGE_BUBBLE_HORIZONTAL_GUTTER = 24
 const MESSAGE_ACTION_SHEET_MAX_WIDTH = 540
 const MESSAGE_ACTION_PRIMARY_LIMIT = 5
 
@@ -203,8 +202,8 @@ function MessageBubbleComponent({
   )
   const processHasDetails = processLayerVisible
   const bubbleMaxWidth = useMemo(
-    () => resolveMessageBubbleMaxWidth(renderedDisplayText, isUser, processHasDetails, windowWidth, displayFormulaLayout),
-    [displayFormulaLayout, renderedDisplayText, isUser, processHasDetails, windowWidth]
+    () => resolveMessageBubbleMaxWidth(renderedDisplayText, message.role, processHasDetails, windowWidth, displayFormulaLayout),
+    [displayFormulaLayout, message.role, renderedDisplayText, processHasDetails, windowWidth]
   )
   const processWidthClaim = processHasDetails || hasWideMessageContent(renderedDisplayText)
   const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser && processWidthClaim && (
@@ -334,19 +333,36 @@ function MessageBubbleComponent({
   }
 
   return (
-    <View onLayout={handleBubbleLayout} style={{ marginBottom: 16 }}>
+    <View onLayout={handleBubbleLayout} style={{ width: '100%', minWidth: 0, marginBottom: 16 }}>
       <View
         style={{
-          alignSelf: resolveMessageBubbleRowAlignment(message.role),
-          width: bubbleUsesAvailableWidth || isUser ? bubbleMaxWidth : undefined,
-          maxWidth: bubbleMaxWidth,
-          flexShrink: 1,
-          position: 'relative',
+          width: '100%',
+          minWidth: 0,
+          alignItems: resolveMessageBubbleRowAlignment(message.role),
         }}
       >
-        <View style={{ width: isUser ? undefined : '100%', flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+        <View
+          style={{
+            alignSelf: resolveMessageBubbleRowAlignment(message.role),
+            width: bubbleUsesAvailableWidth || isUser ? bubbleMaxWidth : undefined,
+            maxWidth: '100%',
+            minWidth: 0,
+            flexShrink: 1,
+            position: 'relative',
+          }}
+        >
+        <View
+          style={{
+            width: '100%',
+            minWidth: 0,
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+            justifyContent: resolveMessageBubbleRowAlignment(message.role),
+            gap: 8,
+          }}
+        >
           {!isUser ? <AssistantBrandBadge brand={providerBrand} /> : null}
-          <View style={{ width: isUser ? undefined : bubbleUsesAvailableWidth ? Math.max(0, bubbleMaxWidth - 32) : undefined, maxWidth: isUser ? bubbleMaxWidth : Math.max(0, bubbleMaxWidth - 32), flexShrink: 1, position: 'relative' }}>
+          <View style={{ width: isUser ? undefined : bubbleUsesAvailableWidth ? Math.max(0, bubbleMaxWidth - 32) : undefined, maxWidth: isUser ? bubbleMaxWidth : Math.max(0, bubbleMaxWidth - 32), minWidth: 0, flexShrink: 1, position: 'relative' }}>
           <MessageBubbleThemeSurface themeId={canonicalThemeId} colors={colors} isUser={isUser} selected={selected}>
             {multiSelectActive ? (
               <IslePressable
@@ -467,6 +483,7 @@ function MessageBubbleComponent({
         {showInlineRetry ? (
           <MessageInlineRetry motion={motion} onPress={() => onRetry?.(message)} />
         ) : null}
+        </View>
       </View>
     </View>
   )
@@ -711,28 +728,6 @@ function nextStreamingTextFrame(current: string, next: string): string {
   return next.slice(0, current.length + frameStep)
 }
 
-function resolveMessageBubbleMaxWidth(displayText: string, isUser: boolean, processLayerVisible: boolean, windowWidth: number, displayFormulaLayout = false): number {
-  const availableWidth = Math.max(220, windowWidth - MESSAGE_BUBBLE_HORIZONTAL_GUTTER)
-  const fullWidth = Math.floor(availableWidth * (displayFormulaLayout ? 0.97 : isUser ? 0.92 : 0.98))
-  if (displayFormulaLayout || isUser || processLayerVisible || hasWideMessageContent(displayText)) return fullWidth
-
-  const normalizedText = displayText.trim().replace(/\s+/g, ' ')
-  const charCount = Array.from(normalizedText).length
-  if (charCount <= 0) return Math.min(fullWidth, 180)
-  if (charCount <= 18) return Math.min(fullWidth, 220)
-  if (charCount <= 56) return Math.min(fullWidth, 320)
-  if (charCount <= 120) return Math.min(fullWidth, 430)
-  return fullWidth
-}
-
-function hasWideMessageContent(displayText: string): boolean {
-  if (/```|^\s*[\[{]/m.test(displayText)) return true
-  const lines = displayText.split('\n')
-  if (lines.length > 4) return true
-  if (lines.some((line) => line.length > 88)) return true
-  return lines.some((line) => /^\s*\|.+\|\s*$/.test(line))
-}
-
 function MessageBody({
   conversationId,
   message,
@@ -879,6 +874,13 @@ function MessageProcessLayer({
     : active
       ? { busy: true }
       : undefined
+  const processStatusIcon: AppIconName = message.status === 'error'
+    ? 'warning'
+    : message.status === 'cancelled'
+      ? 'stop'
+      : active
+        ? 'spark'
+        : 'check'
   const tone =
     message.status === 'error'
       ? colors.ui.tone.danger.foreground
@@ -971,7 +973,7 @@ function MessageProcessLayer({
             key={writingResponse ? 'writing' : active ? 'active-process' : 'settled-process'}
             style={{ flexDirection: 'row', alignItems: 'center', minHeight: 20 }}
           >
-            <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} grammar={processGrammar} />
+            <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} icon={processStatusIcon} motion={motion} grammar={processGrammar} />
           </View>
         </View>
         {canExpand ? (
@@ -1067,7 +1069,7 @@ function SettledThinkingDisclosure({
   )
 }
 
-function AnimatedProcessStatusText({ active, label, tone, motion, grammar }: { active: boolean; label: string; tone: string; motion: MotionIntensity; grammar: ThemeMotionGrammar }) {
+function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar }: { active: boolean; label: string; tone: string; icon: AppIconName; motion: MotionIntensity; grammar: ThemeMotionGrammar }) {
   const [dotCount, setDotCount] = useState(1)
   const shimmer = active && motion === 'full' && grammar !== 'precision'
   const baseLabel = label.replace(/[.\u2026]+$/u, '').trimEnd()
@@ -1095,12 +1097,14 @@ function AnimatedProcessStatusText({ active, label, tone, motion, grammar }: { a
     <View testID={`message-thinking-status-${grammar}`} style={{ flex: 1, flexShrink: 1, minWidth: 0, minHeight: 16, justifyContent: 'center', overflow: 'hidden' }}>
       <View
         key={label}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}
       >
+        <AppIcon name={icon} color={tone} size={14} strokeWidth={appIconStroke.strong} />
         <Text
           numberOfLines={1}
           ellipsizeMode="tail"
           accessibilityLabel={label}
-          style={{ color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}
+          style={{ flexShrink: 1, color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}
         >
           {displayLabel}
         </Text>

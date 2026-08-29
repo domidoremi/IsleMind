@@ -39,6 +39,12 @@ describe('resolveAppFeedbackTimeout', () => {
     })).resolves.toBe(2800)
   })
 
+  it('falls back when the native timeout lookup never settles', async () => {
+    await expect(resolveAppFeedbackTimeout(2800, {
+      getRecommendedTimeoutMillis: () => new Promise<number>(() => undefined),
+    }, 5)).resolves.toBe(2800)
+  })
+
   it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, -1])(
     'falls back for an invalid recommendation: %p',
     async (recommendedTimeout) => {
