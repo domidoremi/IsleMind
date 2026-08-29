@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1114" />
+    <meta name="description" content="IsleMind 是面向 Android 的本地优先 AI 工作区。对话、知识、任务与工具，由你选择模型，也由你决定数据边界。" />
+    <meta property="og:title" content="IsleMind · 掌控每一次 AI 交互" />
+    <meta property="og:description" content="本地优先的 Android AI 工作区，连接你自己的模型服务商。" />
+    <meta property="og:type" content="website" />
+    <title>IsleMind · 掌控每一次 AI 交互</title>
+    <link rel="icon" href="./assets/favicon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="./main.js"></script>
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="icon-arrow-up-right" viewBox="0 0 24 24"><path d="M5 19 19 5M9 5h10v10" /></symbol>
+      <symbol id="icon-arrow-right" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" /></symbol>
+      <symbol id="icon-arrow-down" viewBox="0 0 24 24"><path d="M12 4v15M6 13l6 6 6-6" /></symbol>
+      <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></symbol>
+      <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6l8-3Z" /><path d="m8.5 12 2.3 2.3 4.8-5" /></symbol>
+      <symbol id="icon-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-7 5 14 2.5-7H21" /></symbol>
+      <symbol id="icon-route" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2" /><circle cx="18" cy="19" r="2" /><path d="M6 7v2c0 2 1.5 3 3.5 3H14c2.2 0 4 1.8 4 4v1" /></symbol>
+      <symbol id="icon-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" /></symbol>
+      <symbol id="icon-spark" viewBox="0 0 24 24"><path d="m12 2 1.6 7.4L21 12l-7.4 1.6L12 21l-1.6-7.4L3 12l7.4-2.6L12 2Z" /></symbol>
+      <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></symbol>
+    </svg>
+
+    <header class="site-header" data-header>
+      <div class="header-inner">
+        <a class="brand" href="#top" aria-label="IsleMind 首页">
+          <span class="brand-mark">IM</span>
+          <span>IsleMind</span>
+        </a>
+        <nav class="site-nav" data-nav aria-label="主导航">
+          <a href="#product">产品</a>
+          <a href="#runtime">运行时</a>
+          <a href="#privacy">数据边界</a>
+          <a href="#download">下载</a>
+        </nav>
+        <div class="header-tools">
+          <span class="header-version"><i></i><span data-release-version>v1.0.21</span></span>
+          <a class="header-github" href="https://github.com/domidoremi/IsleMind" target="_blank" rel="noreferrer">GitHub <svg class="icon" aria-hidden="true"><use href="#icon-arrow-up-right" /></svg></a>
+          <a class="button button-header" href="#download">获取 Android 版</a>
+          <button class="menu-toggle" type="button" aria-label="打开导航" aria-expanded="false" data-menu-toggle>
+            <svg class="icon menu-icon" aria-hidden="true"><use href="#icon-menu" /></svg>
+            <svg class="icon close-icon" aria-hidden="true"><use href="#icon-close" /></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" id="top">
+        <div class="hero-copy reveal">
+          <h1>在你的设备上，<br /><em>掌控每一次</em><br />AI 交互。</h1>
+          <p class="hero-lede">IsleMind 把对话、知识、任务与工具放进一个工作区。模型由你选择，数据边界由你决定，任务状态始终清楚可见。</p>
+          <div class="hero-actions">
+            <a class="button button-primary" data-release-link href="https://github.com/domidoremi/IsleMind/releases/latest" target="_blank" rel="noreferrer"><svg class="icon" aria-hidden="true"><use href="#icon-download" /></svg>下载 Android 版</a>
+            <a class="button button-ghost" href="https://github.com/domidoremi/IsleMind" target="_blank" rel="noreferrer">查看源代码 <svg class="icon" aria-hidden="true"><use href="#icon-arrow-up-right" /></svg></a>
+          </div>
+          <div class="hero-proof" aria-label="产品承诺">
+            <span><i></i>数据默认留在本机</span>
+            <span><i></i>支持多个模型服务商</span>
+            <span><i></i>任务可取消与恢复</span>
+          </div>
+        </div>
+
+        <div class="hero-visual reveal reveal-delay">
+          <div class="visual-meta"><span>最新模拟器演示</span><span>2026.08.26</span></div>
+          <div class="hero-device-stack">
+            <div class="hero-device hero-device-back"><img src="./assets/screens/chat-material-dark.png" alt="IsleMind Android 模拟器深色主题聊天界面" /></div>
+            <div class="hero-device hero-device-front"><img src="./assets/screens/chat-material-light.png" alt="IsleMind Android 模拟器 Material 主题聊天界面" /></div>
+            <div class="device-index"><span>01</span><b>真实应用画面</b><small>模拟器 · Material light</small></div>
+          </div>
+          <div class="visual-note"><span class="status-dot"></span><span>Android app / simulator evidence</span><span class="visual-note-line"></span><span>1080 × 2400</span></div>
+        </div>
+      </section>
+
+      <section class="signal-bar" aria-label="IsleMind 核心特征">
+        <div><span>01</span><strong>本地优先</strong><small>对话、设置和上下文默认保存在设备上</small></div>
+        <div><span>02</span><strong>多服务商</strong><small>连接官方协议或兼容端点</small></div>
+        <div><span>03</span><strong>可恢复运行</strong><small>任务步骤、检查点和证据持续记录</small></div>
+        <div><span>04</span><strong>Android 原生体验</strong><small>安全区、键盘与后台状态适配</small></div>
+      </section>
+
+      <section class="section showcase-section" id="product">
+        <div class="section-intro reveal">
+          <div class="section-label">实机界面</div>
+          <h2>看见正在运行的<br /><strong>IsleMind。</strong></h2>
+          <p>这里展示的是最近一次模拟器演示与测试证据，不是抽象的产品插画。切换不同画面，了解工作区、运行诊断和主题系统。</p>
+        </div>
+        <div class="showcase reveal reveal-delay">
+          <div class="showcase-tabs" role="tablist" aria-label="真实应用画面">
+            <button class="showcase-tab is-active" type="button" role="tab" aria-selected="true" data-shot-tab="chat"><span>01</span><strong>聊天工作区</strong><small>Material light · 08.26</small></button>
+            <button class="showcase-tab" type="button" role="tab" aria-selected="false" data-shot-tab="diagnostics"><span>02</span><strong>运行诊断</strong><small>Provider runtime · 08.24</small></button>
+            <button class="showcase-tab" type="button" role="tab" aria-selected="false" data-shot-tab="themes"><span>03</span><strong>主题系统</strong><small>Dark mode · 08.26</small></button>
+          </div>
+          <figure class="showcase-frame">
+            <div class="frame-bar"><span class="frame-brand"><i></i> IsleMind / Android</span><span data-shot-label>CHAT / MATERIAL LIGHT</span><span data-shot-date>SIMULATOR · 2026.08.26</span></div>
+            <div class="frame-screen"><img data-shot-image src="./assets/screens/chat-material-light.png" alt="IsleMind Android 模拟器 Material 主题聊天工作区" /></div>
+            <figcaption><span data-shot-caption>最近一次模拟器演示中的聊天工作区，展示模型、消息与输入区的真实状态。</span><span class="caption-source">来源：仓库测试证据</span></figcaption>
+          </figure>
+          <div class="showcase-copy">
+            <span class="showcase-number" data-shot-number>01</span>
+            <h3 data-shot-title>真正的应用画面，而不是占位稿。</h3>
+            <p data-shot-description>模型、消息、引用与输入区在同一条工作流中。你可以在 Android 上直接开始对话，再把它交给知识或任务工作区继续处理。</p>
+            <ul data-shot-points>
+              <li><svg class="icon" aria-hidden="true"><use href="#icon-check" /></svg>Material 3 主题与清晰状态层级</li>
+              <li><svg class="icon" aria-hidden="true"><use href="#icon-check" /></svg>模型、上下文与回复保持在同一视图</li>
+              <li><svg class="icon" aria-hidden="true"><use href="#icon-check" /></svg>来自 Android 模拟器演示模式</li>
+            </ul>
+            <a class="text-link" href="#download">了解下载与版本 <svg class="icon" aria-hidden="true"><use href="#icon-arrow-right" /></svg></a>
+          </div>
+        </div>
+      </section>
+
+      <section class="runtime-section" id="runtime">
+        <div class="runtime-inner">
+          <div class="runtime-copy reveal">
+            <div class="section-label section-label-light">运行时</div>
+            <h2>从请求发出，<br /><strong>到结果交付。</strong></h2>
+            <p>IsleMind 把模型路由、工具授权、运行状态和工作产物放进同一条可检查的记录里。复杂任务不再是一个黑盒。</p>
+            <div class="runtime-callout"><span class="callout-mark">↳</span><span>可取消、可恢复、可追溯</span></div>
+          </div>
+          <div class="runtime-ledger reveal reveal-delay">
+            <div class="ledger-top"><span>WORKSPACE / RUN 0042</span><span class="ledger-live"><i></i>RUNNING</span></div>
+            <div class="ledger-heading"><span>研究资料整理</span><b>2 / 4</b></div>
+            <div class="ledger-row is-done"><span class="ledger-marker"><svg class="icon" aria-hidden="true"><use href="#icon-check" /></svg></span><div><strong>读取来源与引用</strong><small>12 个来源 · 已保存检查点</small></div><time>00:42</time></div>
+            <div class="ledger-row is-active"><span class="ledger-marker"><i></i></span><div><strong>识别待验证假设</strong><small>运行中 · 可以取消或继续</small></div><time>01:18</time></div>
+            <div class="ledger-row"><span class="ledger-marker"></span><div><strong>生成结构化摘要</strong><small>等待上一阶段</small></div><time>--:--</time></div>
+            <div class="ledger-row"><span class="ledger-marker"></span><div><strong>写入任务清单</strong><small>等待上一阶段</small></div><time>--:--</time></div>
+            <div class="ledger-bottom"><span>证据链已记录</span><span>最后更新：刚刚</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section boundary-section" id="privacy">
+        <div class="boundary-copy reveal">
+          <div class="section-label">数据边界</div>
+          <h2>清楚知道什么<br /><strong>留在本机。</strong></h2>
+          <p>本地优先不是一句口号。每一类内容的默认位置、联网条件和凭据处理方式，都有明确边界。</p>
+        </div>
+        <div class="boundary-list reveal reveal-delay">
+          <div class="boundary-row"><span class="boundary-index">01</span><div><strong>对话、设置、知识索引</strong><small>默认保存在本机，可随时导出与恢复</small></div><span class="boundary-state">LOCAL</span></div>
+          <div class="boundary-row"><span class="boundary-index">02</span><div><strong>服务商凭据</strong><small>使用系统安全存储，不进入便携导出</small></div><span class="boundary-state">SECURE</span></div>
+          <div class="boundary-row"><span class="boundary-index">03</span><div><strong>推理、模型发现与语音</strong><small>按所选服务商与启用状态联网</small></div><span class="boundary-state">ON USE</span></div>
+          <div class="boundary-row"><span class="boundary-index">04</span><div><strong>MCP、联网检索与第三方工具</strong><small>只有在你启用后，才进入请求路径</small></div><span class="boundary-state">OPT-IN</span></div>
+        </div>
+      </section>
+
+      <section class="provider-section">
+        <div class="provider-inner">
+          <div class="provider-heading reveal"><div class="section-label">模型服务</div><h2>连接你的模型，<br /><strong>不被单一平台绑定。</strong></h2><p>OpenAI、Anthropic、Gemini、xAI、DeepSeek、Qwen、GLM，以及 OpenAI-compatible 与 Anthropic-compatible 端点。</p></div>
+          <div class="provider-strip reveal reveal-delay"><span>OpenAI</span><span>Anthropic</span><span>Gemini</span><span>xAI</span><span>DeepSeek</span><span>Qwen</span><span>GLM</span><span>Compatible endpoints</span></div>
+        </div>
+      </section>
+
+      <section class="download-section" id="download">
+        <div class="download-inner">
+          <div class="download-copy reveal">
+            <div class="section-label section-label-light">开始使用</div>
+            <h2>把 AI 工作区<br /><strong>带在身边。</strong></h2>
+            <p>下载 IsleMind Android 版，连接自己的模型服务商，在本机开始一条更清楚、更可控的工作流。</p>
+            <div class="download-actions"><a class="button button-primary" data-release-link href="https://github.com/domidoremi/IsleMind/releases/latest" target="_blank" rel="noreferrer"><svg class="icon" aria-hidden="true"><use href="#icon-download" /></svg>查看最新 Release</a><a class="button button-dark" href="https://github.com/domidoremi/IsleMind" target="_blank" rel="noreferrer">查看 GitHub <svg class="icon" aria-hidden="true"><use href="#icon-arrow-up-right" /></svg></a></div>
+          </div>
+          <div class="release-panel reveal reveal-delay">
+            <div class="release-panel-top"><span>LATEST BUILD</span><span class="release-live"><i></i>AVAILABLE</span></div>
+            <strong data-release-version>v1.0.21</strong>
+            <div class="release-meta"><span>Platform</span><b>Android</b></div>
+            <div class="release-meta"><span>Source versionCode</span><b data-release-version-code>121</b></div>
+            <div class="release-meta"><span>Release channel</span><b>GitHub Releases</b></div>
+            <div class="release-meta"><span>Data model</span><b>Local-first</b></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <a class="brand brand-footer" href="#top"><span class="brand-mark">IM</span><span>IsleMind</span></a>
+        <p>本地优先、服务商可控的 Android AI 工作区。</p>
+        <div class="footer-links"><a href="https://github.com/domidoremi/IsleMind/releases/latest" target="_blank" rel="noreferrer">最新 Release <svg class="icon" aria-hidden="true"><use href="#icon-arrow-up-right" /></svg></a><a href="https://github.com/domidoremi/IsleMind" target="_blank" rel="noreferrer">GitHub <svg class="icon" aria-hidden="true"><use href="#icon-arrow-up-right" /></svg></a></div>
+      </div>
+      <div class="footer-meta"><span>© <span data-year>2026</span> IsleMind</span><span>Android / Local-first AI workspace</span></div>
+    </footer>
+  </body>
+</html>
