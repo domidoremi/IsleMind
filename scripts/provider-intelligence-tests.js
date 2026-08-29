@@ -35361,7 +35361,7 @@ function assertChatActivityStatusBehavior() {
       !messageBubbleSource.includes('messageBubble.modelStatus') &&
       !messageBubbleSource.includes('const statusIcon') &&
       messageBubbleSource.includes('<AppIcon name="back-next"') &&
-      messageBubbleSource.includes('<AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} grammar={processGrammar} />') &&
+      messageBubbleSource.includes('<AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} icon={processStatusIcon} motion={motion} grammar={processGrammar} />') &&
       messageBubbleSource.includes('accessibilityLiveRegion="polite"') &&
       messageBubbleSource.includes('loop: shimmer') &&
       !messageBubbleSource.includes('<ProcessAnchor') &&

@@ -241,7 +241,7 @@ function RichMarkdown({
       ? `${content.slice(0, STREAMING_MARKDOWN_RENDER_CHAR_LIMIT).trimEnd()}\n\n…`
       : content
     return (
-      <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
+      <View style={{ width: '100%', minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
         <Text
           selectable={selectionEnabled}
           style={{
@@ -280,7 +280,7 @@ function RichMarkdown({
   }
 
   return (
-    <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
+    <View style={{ width: '100%', minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
       <Markdown
         rules={markdownRules}
         style={{
@@ -701,7 +701,7 @@ function TableBlockCard({
           selectionEnabled={selectionEnabled}
         />
       ) : (
-        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={tableMinWidth > width - 32}>
+        <ScrollView style={{ width: '100%', minWidth: 0, maxWidth: '100%' }} horizontal nestedScrollEnabled showsHorizontalScrollIndicator={tableMinWidth > width - 32}>
           {tableGrid}
         </ScrollView>
       )}

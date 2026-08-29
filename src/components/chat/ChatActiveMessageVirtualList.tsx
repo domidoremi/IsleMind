@@ -141,6 +141,8 @@ export function ChatActiveMessageVirtualList({
       drawDistance={messageListDrawDistance}
       getItemType={getMessageItemType}
       contentContainerStyle={{
+        width: '100%',
+        minWidth: 0,
         paddingLeft: messageListLayout.horizontalPadding,
         paddingRight: messageListLayout.horizontalPadding,
         paddingTop: conversation.messages.length ? 0 : emptyConversationTopPadding,

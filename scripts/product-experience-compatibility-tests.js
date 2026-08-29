@@ -148,7 +148,7 @@ function run() {
   assert.ok(messageBubbleSource.includes('Gesture.LongPress()') && messageBubbleSource.includes('openActionBarFromLongPress'), 'message actions remain available from a message long press')
   assert.equal(messageBubbleSource.includes('AppIcon name="more"'), false, 'message bubbles do not expose a persistent top-right overflow button')
   assert.ok(
-    /function AnimatedProcessStatusText\(\{ active, label, tone, motion, grammar \}[\s\S]*?const shimmer = active && motion === 'full' && grammar !== 'precision'[\s\S]*?setInterval\(\(\) =>[\s\S]*?loop: shimmer/.test(messageBubbleSource) &&
+    /function AnimatedProcessStatusText\(\{ active, label, tone, icon, motion, grammar \}[\s\S]*?const shimmer = active && motion === 'full' && grammar !== 'precision'[\s\S]*?setInterval\(\(\) =>[\s\S]*?<AppIcon name=\{icon\}[\s\S]*?loop: shimmer/.test(messageBubbleSource) &&
       messageBubbleSource.includes("grammar === 'precision'") &&
       messageBubbleSource.includes("grammar === 'material'") &&
       messageBubbleSource.includes("'.'.repeat(motion === 'full' ? dotCount : 3)") &&
@@ -483,12 +483,14 @@ function assertSourceIntegration() {
   assert.doesNotMatch(dialogSource, /<Pressable[\s\S]*?accessibilityLabel=\{t\('dialog\.closeLayer'\)\}[\s\S]*?closeDialog\(false\)/, 'shared dialogs do not announce an unreachable duplicate backdrop close button')
   assert.equal((dialogSource.match(/<DialogScrollableContent/g) ?? []).length, 4, 'all four canonical theme dialogs keep long content scrollable above fixed actions')
   assert.match(dialogSource, /function DialogScrollableContent[\s\S]*keyboardDismissMode="on-drag"[\s\S]*keyboardShouldPersistTaps="handled"[\s\S]*style=\{\{ flexShrink: 1 \}\}/, 'dialog content scrolls without blocking embedded form controls')
-  assert.match(dialogSource, /resolveAppFeedbackTimeout\(durationMs, AccessibilityInfo\)[\s\S]*setTimeout\(\(\) => dismissToast\(toast\.id\), recommendedDurationMs\)/, 'toast dismissal resolves the system accessibility timeout before scheduling dismissal')
+  assert.match(dialogSource, /resolveAppFeedbackTimeout\(durationMs, AccessibilityInfo\)[\s\S]*setTimeout\(\(\) => dismissToast\(activeToast\.id\), recommendedDurationMs\)/, 'toast dismissal resolves the system accessibility timeout before scheduling dismissal')
   assert.doesNotMatch(dialogSource, /AccessibilityInfo\.getRecommendedTimeoutMillis\(/, 'the Dialog provider does not directly call an optional platform accessibility method')
   const appFeedbackTimeoutSource = fs.readFileSync(path.join(root, 'src/components/ui/appFeedbackTimeout.ts'), 'utf8')
   assert.ok(
     appFeedbackTimeoutSource.includes("typeof resolveRecommendedTimeout !== 'function'") &&
     appFeedbackTimeoutSource.includes('resolveRecommendedTimeout.call(accessibilityInfo, durationMs)') &&
+    appFeedbackTimeoutSource.includes('await Promise.race([') &&
+    appFeedbackTimeoutSource.includes('setTimeout(() => resolve(durationMs), lookupLimitMs)') &&
     appFeedbackTimeoutSource.includes('isValidRecommendedTimeout(recommendedTimeout) ? recommendedTimeout : durationMs') &&
     appFeedbackTimeoutSource.includes('catch {') &&
     appFeedbackTimeoutSource.includes('return durationMs'),
