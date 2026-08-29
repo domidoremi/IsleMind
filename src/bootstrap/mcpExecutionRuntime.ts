@@ -13,7 +13,7 @@ import {
   type McpToolObservationSource,
 } from '@/modules/integrations'
 import type { McpServerConfig, McpToolManifest } from '@/types/mcpContracts'
-import type { ProcessTrace, TaskId, ToolContentBlock } from '@/core'
+import { composeUserFacingError, extractUserFacingErrorDetail, type ProcessTrace, type TaskId, type ToolContentBlock } from '@/core'
 import type { SettingsActionName } from '@/modules/settings'
 import { createTaskRuntime } from '@/bootstrap/taskRuntime'
 import { st } from '@/i18n/service'
@@ -304,7 +304,7 @@ export async function callMcpTool(
       server,
       toolName,
       tool,
-      error instanceof Error ? error.message : st('mcpRuntime.callFailed'),
+      composeUserFacingError(st('mcpRuntime.callFailed'), extractUserFacingErrorDetail(error)),
       startedAt,
       'execution_failed',
       'error',

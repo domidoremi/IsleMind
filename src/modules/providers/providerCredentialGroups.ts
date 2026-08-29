@@ -1,4 +1,5 @@
 import type { AIModel, AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderOperationCode } from '@/types/providerContracts'
+import { extractUserFacingErrorDetail } from '@/core'
 import { mergeModelConfig, sortModelConfigs } from '@/types/modelCatalog'
 import { selectProviderCredential, updateProviderCredentialHealth } from './providerCredentials'
 
@@ -199,7 +200,7 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
     } catch (error) {
       if (isAbortError(error) || deps.signal?.aborted) throw abortError()
       const message = redactCredentialSyncError(
-        error instanceof Error ? error.message : messages.modelSyncFailed,
+        extractUserFacingErrorDetail(error) || messages.modelSyncFailed,
         provider,
       )
       nextGroups[index] = {

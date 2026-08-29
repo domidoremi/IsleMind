@@ -1665,6 +1665,8 @@ const {
 } = require('../src/utils/mem0Interop.ts')
 const { buildKnowledgeRecoverySummary } = require('../src/utils/knowledgeRecovery.ts')
 const { setServiceLanguage, st } = require('../src/i18n/service.ts')
+const { composeUserFacingError, relocalizeUserFacingError, userFacingErrorCodeKey } = require('../src/core/userFacingError.ts')
+const { PROVIDER_HTTP_COPY_ONLY_CODE_KEYS, isProviderHttpCopyOnlyCode } = require('../src/modules/providers/providerOperationResult.ts')
 const { sanitizeInternalChatOutputText, sanitizeMessageInternalOutput } = require('../src/services/chatInternalOutputGuard.ts')
 const {
   buildCompressedContextPrompt,
@@ -21449,18 +21451,116 @@ async function run() {
   assert.equal(toUserFacingError('provider_conformance_blocked:unsupported_modality'), st('chatRunner.userError.providerConformanceBlocked'), 'chat error helper maps provider conformance blockers to user-facing copy')
   assert.equal(
     toUserFacingError('Provider A returned HTTP 502. status_code=502, bad response status code 502', 'network_error'),
-    'Provider A returned HTTP 502. status_code=502, bad response status code 502',
-    'chat error helper preserves provider HTTP status details for retryable upstream failures'
+    `${st('chatRunner.userError.network')}\n(Provider A returned HTTP 502. status_code=502, bad response status code 502)`,
+    'chat error helper keeps provider HTTP status details behind localized copy for retryable upstream failures'
   )
   assert.equal(
     toUserFacingError('Xiaomi MiMo returned HTTP 400. Base URL is already verified; upstream rejected the payload.', 'unknown'),
-    'Xiaomi MiMo returned HTTP 400. Base URL is already verified; upstream rejected the payload.',
-    'chat error helper honors explicit runtime error codes instead of reclassifying provider text'
+    `${st('chatRunner.error.sendFailed')}\n(Xiaomi MiMo returned HTTP 400. Base URL is already verified; upstream rejected the payload.)`,
+    'chat error helper honors explicit runtime error codes and demotes provider text to a localized detail'
   )
   for (const locale of ['en', 'zh-CN', 'ja']) {
     const resource = JSON.parse(fs.readFileSync(path.join(root, `src/i18n/resources/${locale}.json`), 'utf8'))
     assert.ok(resource.chatRunner.userError.providerConformanceBlocked, `chat error helper ${locale} locale explains provider conformance blockers`)
   }
+  const untranslatableUpstreamFailure = 'stream ended unexpectedly'
+  const localizedChatFailures = new Set()
+  for (const locale of ['en', 'zh-CN', 'ja']) {
+    setServiceLanguage(locale)
+    const rendered = toUserFacingError(untranslatableUpstreamFailure)
+    assert.ok(
+      rendered.startsWith(st('chatRunner.error.sendFailed')),
+      `chat error helper leads with ${locale} copy for untranslatable upstream text`
+    )
+    assert.ok(
+      rendered.endsWith(`\n(${untranslatableUpstreamFailure})`),
+      `chat error helper keeps upstream detail readable behind ${locale} copy`
+    )
+    localizedChatFailures.add(rendered)
+  }
+  assert.equal(localizedChatFailures.size, 3, 'chat error helper follows the selected language instead of leaking English upstream text')
+  const persistedFailureContents = new Set()
+  for (const locale of ['en', 'zh-CN', 'ja']) {
+    setServiceLanguage(locale)
+    const rebuilt = relocalizeUserFacingError(
+      toUserFacingError(untranslatableUpstreamFailure),
+      'unknown',
+      st,
+    )
+    assert.ok(
+      rebuilt.startsWith(st('messageBubble.error.default')),
+      `stored failure copy is rebuilt with ${locale} headline instead of the language it was written in`
+    )
+    assert.ok(
+      rebuilt.includes(st('messageBubble.errorDescription.default')),
+      `stored failure copy carries ${locale} recovery guidance`
+    )
+    assert.ok(
+      rebuilt.endsWith(`\n(${untranslatableUpstreamFailure})`),
+      `stored failure copy keeps the upstream detail behind ${locale} copy`
+    )
+    persistedFailureContents.add(rebuilt)
+  }
+  assert.equal(persistedFailureContents.size, 3, 'stored failure copy follows the language selected at render time')
+  setServiceLanguage('zh-CN')
+  const rebuiltKnownCode = relocalizeUserFacingError('Request timed out', 'timeout', st)
+  assert.equal(
+    rebuiltKnownCode,
+    `${st('messageBubble.error.timeout')}\n${st('messageBubble.errorDescription.timeout')}`,
+    'a known error code replaces its stored sentence outright instead of demoting it to detail'
+  )
+  assert.equal(
+    relocalizeUserFacingError('Network request failed\n(HTTP 500 (upstream gateway))', 'network_error', st),
+    `${st('messageBubble.error.network_error')}\n${st('messageBubble.errorDescription.network_error')}\n(HTTP 500 (upstream gateway))`,
+    'stored detail survives rebuilding even when it contains parentheses'
+  )
+  // A copy-only HTTP failure message is pure localized copy, so replaying the stored
+  // sentence as technical detail would print the language the request failed in. Both
+  // display paths drop it, and these fixtures pin the map that tells them which codes
+  // qualify to what `formatProviderHttpError` actually produces.
+  const upstreamFailureMarker = 'UPSTREAM_DETAIL_7f3'
+  const copyOnlyProviderFailures = [
+    { code: 'bad_auth', status: 401, responseText: `{"message":"${upstreamFailureMarker}"}` },
+    { code: 'model_unavailable', status: 404, responseText: `{"message":"model_not_found ${upstreamFailureMarker}"}` },
+    { code: 'models_endpoint_unavailable', status: 404, responseText: `{"message":"${upstreamFailureMarker}"}` },
+    { code: 'rate_limited', status: 429, responseText: `{"message":"${upstreamFailureMarker}"}` },
+    { code: 'max_tokens_exceeded', status: 400, responseText: `{"message":"max_tokens ${upstreamFailureMarker}"}` },
+    { code: 'timeout', status: 408, responseText: `{"message":"${upstreamFailureMarker}"}` },
+    { code: 'bad_base_url', status: 400, responseText: `{"message":"${upstreamFailureMarker}"}` },
+  ]
+  assert.deepEqual(
+    copyOnlyProviderFailures.map((failureCase) => failureCase.code).sort(),
+    Object.keys(PROVIDER_HTTP_COPY_ONLY_CODE_KEYS).sort(),
+    'every copy-only provider failure code carries a fixture that proves it formats as pure copy'
+  )
+  setServiceLanguage('zh-CN')
+  for (const failureCase of copyOnlyProviderFailures) {
+    assert.equal(classifyHttpStatus(failureCase.status, failureCase.responseText), failureCase.code, `provider failure fixture for ${failureCase.code} classifies as that code`)
+    assert.ok(isProviderHttpCopyOnlyCode(failureCase.code), `${failureCase.code} is registered as copy-only`)
+    assert.equal(
+      formatProviderHttpErrorForTest(failureCase.status, failureCase.responseText).includes(upstreamFailureMarker),
+      false,
+      `${failureCase.code} formats as pure localized copy, so its stored sentence holds no upstream detail worth replaying`
+    )
+  }
+  assert.equal(isProviderHttpCopyOnlyCode('network_error'), false, 'a summary-bearing failure code is not treated as copy-only')
+  assert.ok(
+    formatProviderHttpErrorForTest(500, `{"message":"${upstreamFailureMarker}"}`).includes(upstreamFailureMarker),
+    'a summary-bearing failure message embeds the upstream payload, so display paths keep it as detail'
+  )
+  const storedCopyOnlyFailure = formatProviderHttpErrorForTest(401, '{"message":"Invalid token"}')
+  const providerCardFailures = new Set()
+  for (const locale of ['en', 'zh-CN', 'ja']) {
+    setServiceLanguage(locale)
+    assert.equal(
+      composeUserFacingError(st(userFacingErrorCodeKey('bad_auth')), isProviderHttpCopyOnlyCode('bad_auth') ? undefined : storedCopyOnlyFailure),
+      st(userFacingErrorCodeKey('bad_auth')),
+      `provider failure copy is rebuilt in ${locale} with no stale sentence trailing it`
+    )
+    providerCardFailures.add(st(userFacingErrorCodeKey('bad_auth')))
+  }
+  assert.equal(providerCardFailures.size, 3, 'provider failure copy follows the language selected at render time')
+  setServiceLanguage('en')
   assert.equal(
     resolveProviderNativeToolSupport({ id: 'openai-tools', type: 'openai', name: 'OpenAI', apiKey: '', models: [], enabled: true }, { id: 'gpt-4.1', name: 'GPT', maxOutputTokens: 4096, defaultMaxTokens: 1024, supportsTools: false }).supported,
     false,

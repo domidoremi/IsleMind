@@ -769,6 +769,7 @@ async function testConversationReplyDispatchController(replyDispatchModule) {
 
   const agentErrors = []
   const agentFailure = new Error('agent startup failed')
+  let agentFallbackCalls = 0
   const failingAgentController = replyDispatchModule.createConversationReplyDispatchController({
     normalizeContent: (content) => content,
     readSettings: () => settings,
@@ -777,11 +778,12 @@ async function testConversationReplyDispatchController(replyDispatchModule) {
     async startWorkflowReply() { throw agentFailure },
     async startAssistantReply() { throw new Error('Assistant must not start') },
     reportError(message) { agentErrors.push(message) },
-    sendFailedFallback() { throw new Error('Error.message must bypass fallback') },
+    sendFailedFallback() { agentFallbackCalls += 1; return 'localized fallback' },
   })
   await failingAgentController.dispatch({ conversation, content: 'agent', workflowId: 'workflow-1', untrustedMetadata: 'opaque' })
   await Promise.resolve()
-  assert.deepEqual(agentErrors, [agentFailure.message], 'structured startup reports the exact Error message through Chat')
+  assert.deepEqual(agentErrors, [`localized fallback\n(${agentFailure.message})`], 'structured startup leads with localized copy and keeps the upstream message as technical detail')
+  assert.equal(agentFallbackCalls, 1, 'structured startup resolves the localized fallback once')
 }
 
 async function testConversationActionConfirmation(actionConfirmationModule) {

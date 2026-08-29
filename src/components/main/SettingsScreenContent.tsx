@@ -6,6 +6,7 @@ import * as Application from 'expo-application'
 import Constants from 'expo-constants'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
+import { userFacingErrorDetail } from '@/core'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
@@ -802,7 +803,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     } catch (error) {
       dialog.toast({
         title: t('settings.clearData'),
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingErrorDetail(error),
         tone: 'danger',
       })
     }
@@ -822,7 +823,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     }).catch((error) => {
       dialog.toast({
         title: t('settings.clearChats'),
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingErrorDetail(error),
         tone: 'danger',
       })
     })
@@ -852,7 +853,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     } catch (error) {
       dialog.toast({
         title: t('settings.observabilitySinkApiKeySaveFailed'),
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingErrorDetail(error),
         tone: 'danger',
       })
     } finally {
@@ -870,7 +871,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     } catch (error) {
       dialog.toast({
         title: t('settings.observabilitySinkApiKeySaveFailed'),
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingErrorDetail(error),
         tone: 'danger',
       })
     } finally {
@@ -1286,7 +1287,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     } catch (error) {
       dialog.toast({
         title: t('settings.runtimeDiagnosticsRefreshFailed'),
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingErrorDetail(error),
         tone: 'danger',
       })
     } finally {
@@ -1307,7 +1308,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     } catch (error) {
       dialog.toast({
         title: t('settings.runtimeLogCopyFailed'),
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingErrorDetail(error),
         tone: 'danger',
       })
     }
@@ -1332,7 +1333,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     } catch (error) {
       dialog.toast({
         title: t('settings.runtimeLogShareFailed'),
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingErrorDetail(error),
         tone: 'danger',
       })
     }
@@ -1347,7 +1348,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     } catch (error) {
       dialog.toast({
         title: t('settings.runtimeLogClearFailed'),
-        message: error instanceof Error ? error.message : String(error),
+        message: userFacingErrorDetail(error),
         tone: 'danger',
       })
     }

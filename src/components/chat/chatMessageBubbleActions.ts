@@ -6,6 +6,7 @@ import {
   copyConversationMessageFinalText,
   saveConversationWorkflowSkillFromMessage,
 } from '@/presentation/features/conversations/conversationMessageActionCommand'
+import { userFacingErrorDetail } from '@/core'
 import { buildAndroidUndoPromptContext } from '@/services/chatAndroidUndoPrompt'
 import type { Message } from '@/types/chatContracts'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
@@ -176,7 +177,7 @@ export function confirmActionForMessage({
     })
     .catch((error) => dialog.toast({
       title: t('messageBubble.confirmAgentActionFailed'),
-      message: error instanceof Error ? error.message : t('messageBubble.confirmAgentActionFailedMessage'),
+      message: userFacingErrorDetail(error) || t('messageBubble.confirmAgentActionFailedMessage'),
       tone: 'danger',
     }))
 }
@@ -220,7 +221,7 @@ export function saveWorkflowSkillFromMessage({
       })
   }).catch((error) => dialog.toast({
     title: t('messageBubble.saveAgentWorkflowFailed'),
-    message: error instanceof Error ? error.message : t('messageBubble.saveAgentWorkflowFailedMessage'),
+    message: userFacingErrorDetail(error) || t('messageBubble.saveAgentWorkflowFailedMessage'),
     tone: 'danger',
   }))
 }

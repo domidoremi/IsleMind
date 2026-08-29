@@ -48,7 +48,7 @@ function run() {
   assert.equal((conversationControlSource.match(/startAssistantReplyAfterHistoryProjection\(conversationId\)/g) ?? []).length, 2, 'retry and regenerate both start through the mode-free ordinary reply seam')
   assert.equal(/startAssistantReplyAfterHistoryProjection\(\s*conversationId\s*,/.test(conversationControlSource), false, 'retry and regenerate cannot restore a mode-bearing reply-start argument')
   assert.equal((conversationControlSource.match(/reportReplyStartFailure\((?:'retry'|'regenerate'), error\)/g) ?? []).length, 2, 'retry and regenerate report through one error callback')
-  assert.ok(conversationControlCommandSource.includes('setError(error instanceof Error ? error.message : st(fallbackKey))'), 'retry and regenerate failures write the single Chat error')
+  assert.ok(conversationControlCommandSource.includes("setError(describeUserFacingError(error, st, { headlineKey: fallbackKey }))"), 'retry and regenerate failures write the single Chat error in the selected language')
   assert.equal(conversationControlSource.includes('previousUser.productMode ??'), false, 'historical user mode cannot select retry or regenerate execution')
   assert.ok(conversationReplyDispatchSource.includes('reportError(message: string): void'), 'ordinary and structured startup share one mode-free error contract')
 

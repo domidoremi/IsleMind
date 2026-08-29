@@ -5,6 +5,7 @@ import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { AIProvider } from '@/types/providerContracts'
+import { composeUserFacingError, isUserFacingErrorCode, userFacingErrorCodeKey } from '@/core'
 import type { ModelAlias, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
 import { getModelName } from '@/types/modelCatalog'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, looksLikeProviderImportConnectionText, maskSecret, parseCredentialGroups, parseProviderImportDraft, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
@@ -31,6 +32,7 @@ import {
   summarizeProviderCapabilityMatrixDetails,
 } from '@/bootstrap/providerCapabilityMatrix'
 import { PROVIDER_MODEL_CAPABILITY_KEYS } from '@/modules/providers'
+import { isProviderHttpCopyOnlyCode } from '@/modules/providers'
 import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompatibilityBehavior } from '@/modules/providers'
 import type { RuntimeDiagnosticsProviderDetail } from '@/bootstrap/runtimeDiagnostics'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
@@ -898,7 +900,7 @@ export function ApiKeyPanel({
               <AppIcon name="warning" color={colors.ui.tone.danger.foreground} size={15} />
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>{t('apiKeyPanel.latestCheck')}</Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2 }}>{provider.lastModelSyncMessage}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2 }}>{describeProviderSyncFailure(provider, t)}</Text>
               </View>
             </MotiView>
           ) : null}
@@ -912,6 +914,24 @@ export function ApiKeyPanel({
         </MotiView>
       ) : null}
     </MotiView>
+  )
+}
+
+/**
+ * The last sync/test result is persisted as a pre-rendered sentence, so replaying it
+ * verbatim freezes the copy at the language that was active when the check ran. When the
+ * persisted code can carry the headline, it is rebuilt in the selected language and the
+ * stored sentence is demoted to technical detail; otherwise the stored sentence is all
+ * there is to show.
+ */
+function describeProviderSyncFailure(provider: AIProvider, t: TFunction): string {
+  const code = provider.lastModelSyncCode ?? provider.lastTestCode
+  if (!isUserFacingErrorCode(code)) return provider.lastModelSyncMessage ?? ''
+  // A copy-only code already says everything the stored sentence said, in the language
+  // selected right now rather than the one the sync ran in.
+  return composeUserFacingError(
+    t(userFacingErrorCodeKey(code)),
+    isProviderHttpCopyOnlyCode(code) ? undefined : provider.lastModelSyncMessage,
   )
 }
 

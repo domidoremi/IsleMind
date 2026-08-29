@@ -17,7 +17,7 @@ import {
   useChatStreamingStore,
 } from '@/store/chatStreamingStore'
 import type { Message } from '@/types/chatContracts'
-import type { ProcessTrace } from '@/core'
+import { describeUserFacingError, type ProcessTrace } from '@/core'
 
 import {
   createConversationControlController,
@@ -112,7 +112,7 @@ const controller = createConversationControlController({
   },
   reportReplyStartFailure(kind, error) {
     const fallbackKey = kind === 'retry' ? 'chatRunner.error.retryFailed' : 'chatRunner.error.regenerateFailed'
-    useChatStore.getState().setError(error instanceof Error ? error.message : st(fallbackKey))
+    useChatStore.getState().setError(describeUserFacingError(error, st, { headlineKey: fallbackKey }))
   },
   settleRunningTraces: settleConversationRunningTraces,
   startAssistantReplyAfterHistoryProjection: startConversationReplyAfterHistoryProjectionRuntime,
