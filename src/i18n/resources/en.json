@@ -864,10 +864,13 @@
       "bad_auth": "Key or permission unavailable",
       "bad_base_url": "Provider URL may be incorrect",
       "model_unavailable": "Model unavailable",
+      "models_endpoint_unavailable": "Model list unavailable",
+      "empty_models": "No available models",
       "network_error": "Network request failed",
       "timeout": "Request timed out",
       "rate_limited": "Rate limited or quota exhausted",
       "max_tokens_exceeded": "Output limit exceeded",
+      "provider_conformance_blocked": "Request not supported by this provider",
       "default": "Send failed"
     },
     "errorDescription": {
@@ -877,10 +880,13 @@
       "bad_auth": "Save the key again and test it to confirm permissions.",
       "bad_base_url": "If you use a proxy or Token Plan, confirm the Base URL includes /v1.",
       "model_unavailable": "Sync available models and choose one your account can use.",
+      "models_endpoint_unavailable": "The provider did not return a model list. Check Base URL and protocol, then sync models again.",
+      "empty_models": "Sync models for this provider, or add a model manually.",
       "network_error": "Check network, proxy, and provider status, then retry.",
       "timeout": "The request waited too long. Check network, proxy, or Base URL.",
       "rate_limited": "Retry later, or check provider subscription, balance, and rate limits.",
       "max_tokens_exceeded": "Lower Max Tokens in chat options or switch to a model with a larger output limit.",
+      "provider_conformance_blocked": "Remove unsupported attachments or tools, enable the required capability, or choose a compatible model.",
       "default": "Test the current model or open settings to inspect provider configuration."
     }
   },

@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
+import { userFacingErrorDetail } from '@/core'
 import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IsleField, IsleListItem, IslePressable, IsleToggle, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { listMcpServers, refreshMcpManifest, saveMcpServers, upsertMcpServer } from '@/bootstrap/mcpCatalog'
@@ -127,7 +128,7 @@ export function McpSettingsContent() {
         title: connected.status === 'connected' ? t('mcp.presetConnected') : t('mcp.presetInstalled'),
         message: connected.status === 'connected'
           ? t('mcp.refreshSummary', { tools: connected.tools.length, resources: connected.resources.length, prompts: connected.prompts.length })
-          : connected.lastError ?? t('mcp.presetRetry'),
+          : userFacingErrorDetail(connected.lastError) || t('mcp.presetRetry'),
         tone: connected.status === 'connected' ? 'mint' : 'amber',
       })
     } finally {
@@ -143,7 +144,7 @@ export function McpSettingsContent() {
       title: next.status === 'connected' ? t('mcp.connected') : t('mcp.refreshFailed'),
       message: next.status === 'connected'
         ? t('mcp.refreshSummary', { tools: next.tools.length, resources: next.resources.length, prompts: next.prompts.length })
-        : next.lastError ?? t('error.unknownError'),
+        : userFacingErrorDetail(next.lastError) || t('error.unknownError'),
       tone: next.status === 'connected' ? 'mint' : 'danger',
     })
   }

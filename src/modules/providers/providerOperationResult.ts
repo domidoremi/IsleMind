@@ -26,6 +26,30 @@ export class ProviderHttpError extends Error {
   }
 }
 
+/**
+ * Codes whose HTTP failure message is pure localized copy.
+ *
+ * `formatProviderHttpError` resolves these straight from the bundle and drops the
+ * upstream detail, so a stored message for one of them restates its own headline in
+ * whatever language was selected when the request failed. Replaying it later would
+ * leak that language, so display paths rebuild the copy from the code instead. Codes
+ * outside this map fall through to the summary branches, whose message embeds the
+ * upstream payload and stays worth keeping as technical detail.
+ */
+export const PROVIDER_HTTP_COPY_ONLY_CODE_KEYS = {
+  bad_auth: 'badAuth',
+  model_unavailable: 'modelUnavailable',
+  models_endpoint_unavailable: 'modelsEndpointUnavailable',
+  rate_limited: 'rateLimited',
+  max_tokens_exceeded: 'maxTokensExceeded',
+  timeout: 'timeout',
+  bad_base_url: 'badBaseUrl',
+} as const satisfies Partial<Record<ProviderOperationCode, string>>
+
+export function isProviderHttpCopyOnlyCode(code: unknown): boolean {
+  return typeof code === 'string' && Object.hasOwn(PROVIDER_HTTP_COPY_ONLY_CODE_KEYS, code)
+}
+
 export function success<T>(message: string, data?: T, credentialGroupId?: string): ProviderOperationResult<T> {
   return { ok: true, code: 'ok', message, data, credentialGroupId }
 }
@@ -63,7 +87,7 @@ export function createProviderOperationResultPolicy(messages: ProviderOperationR
     const code = classifyHttpStatus(status, responseText, model, provider)
     const providerName = provider?.name ?? t('providerOperation.provider')
     const detail = extractProviderErrorDetail(responseText)
-    const key = ({ bad_auth: 'badAuth', model_unavailable: 'modelUnavailable', models_endpoint_unavailable: 'modelsEndpointUnavailable', rate_limited: 'rateLimited', max_tokens_exceeded: 'maxTokensExceeded', timeout: 'timeout', bad_base_url: 'badBaseUrl' } as Partial<Record<ProviderOperationCode, string>>)[code]
+    const key = (PROVIDER_HTTP_COPY_ONLY_CODE_KEYS as Partial<Record<ProviderOperationCode, string>>)[code]
     if (key === 'modelUnavailable') return t(`providerOperation.http.${key}`, { model: model || t('providerOperation.currentModel') })
     if (key) return t(`providerOperation.http.${key}`, { provider: providerName })
     if (code === 'network_error') return detail ? t('providerOperation.http.errorWithSummary', { provider: providerName, status, detail }) : t('providerOperation.http.network', { provider: providerName })

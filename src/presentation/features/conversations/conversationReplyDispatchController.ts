@@ -1,3 +1,4 @@
+import { composeUserFacingError, extractUserFacingErrorDetail } from '@/core'
 import type { ConversationToolCatalogManifest } from '@/modules/integrations'
 import type {
   ConversationChatWorkflowRuntimeRequestedOutput,
@@ -79,10 +80,7 @@ export function createConversationReplyDispatchController<
   >,
 ): ConversationReplyDispatchController {
   const reportStartupFailure = (error: unknown): void => {
-    const message = error instanceof Error
-      ? error.message
-      : dependencies.sendFailedFallback()
-    dependencies.reportError(message)
+    dependencies.reportError(composeUserFacingError(dependencies.sendFailedFallback(), extractUserFacingErrorDetail(error)))
   }
 
   return {

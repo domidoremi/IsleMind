@@ -1,4 +1,5 @@
 import type { ChatErrorCode } from '@/types/providerContracts'
+import { composeUserFacingError } from '@/core'
 import { st } from '@/i18n/service'
 export function buildSetupGuide(): string {
   return [
@@ -45,16 +46,23 @@ function hasProviderHttpStatusDetail(message: string): boolean {
   return /\bHTTP\s*[45]\d{2}\b/i.test(message) || /\bstatus[_ -]?code\s*=?\s*[45]\d{2}\b/i.test(message) || /\bbad response status code\s*[45]\d{2}\b/i.test(message)
 }
 
+/**
+ * Maps a chat failure onto localized copy. Upstream provider text is never returned on
+ * its own: it is appended as a detail behind the localized sentence so the message the
+ * user reads always follows the selected language.
+ */
 export function toUserFacingError(message: string, code: ChatErrorCode = classifyChatError(message)): string {
   switch (code) {
     case 'bad_auth':
       return st('chatRunner.userError.badAuth')
     case 'credential_mismatch':
-      return message || st('chatRunner.userError.credentialMismatch')
+      return composeUserFacingError(st('chatRunner.userError.credentialMismatch'), message)
     case 'model_unavailable':
       return st('chatRunner.userError.modelUnavailable')
     case 'network_error':
-      if (hasProviderHttpStatusDetail(message)) return message
+      if (hasProviderHttpStatusDetail(message)) {
+        return composeUserFacingError(st('chatRunner.userError.network'), message)
+      }
       return message.toLowerCase().includes('no response body') || message.toLowerCase().includes('empty response')
         ? st('chatRunner.userError.emptyResponse')
         : st('chatRunner.userError.network')
@@ -63,14 +71,16 @@ export function toUserFacingError(message: string, code: ChatErrorCode = classif
     case 'rate_limited':
       return st('chatRunner.userError.rateLimited')
     case 'max_tokens_exceeded':
-      return message || st('chatRunner.userError.maxTokens')
+      return composeUserFacingError(st('chatRunner.userError.maxTokens'), message)
     case 'bad_base_url':
       return st('chatRunner.userError.badBaseUrl')
     case 'provider_conformance_blocked':
       return st('chatRunner.userError.providerConformanceBlocked')
     case 'missing_key':
+      return composeUserFacingError(st('chatRunner.error.missingKey'), message)
     case 'disabled_provider':
+      return composeUserFacingError(st('chatRunner.error.providerDisabled'), message)
     case 'unknown':
-      return message || st('chatRunner.error.sendFailed')
+      return composeUserFacingError(st('chatRunner.error.sendFailed'), message)
   }
 }

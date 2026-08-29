@@ -21,6 +21,7 @@ import { getReasoningEffortOptions } from '@/utils/modelReasoning'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 import {
   clampTraceText,
+  extractUserFacingErrorDetail,
   redactSensitiveText,
   sanitizeProcessTraceForBoundary,
   sanitizeProcessTracesForBoundary,
@@ -315,7 +316,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       return true
     } catch (error) {
-      const message = error instanceof Error ? error.message : st('error.unknownError')
+      const message = extractUserFacingErrorDetail(error) || st('error.unknownError')
       set({ historyLoadingMore: false, historyHasMore: false })
       set({ error: st('storage.sqliteRestoreFailed', { message }) })
       return false
@@ -854,7 +855,7 @@ function persistConversations(
 
 function trackConversationPersistence(operation: Promise<void>): Promise<void> {
   const reported = operation.catch((error: unknown) => {
-    const detail = error instanceof Error ? error.message : st('error.unknownError')
+    const detail = extractUserFacingErrorDetail(error) || st('error.unknownError')
     const safeDetail = clampTraceText(redactSensitiveText(detail), 240) || st('error.unknownError')
     useChatStore.getState().setError(st('storage.sqliteSyncFailed', { message: safeDetail }))
     throw error
@@ -882,7 +883,7 @@ async function hydrateSqliteConversationsInBackground(): Promise<void> {
     useChatStore.setState({ conversations, draftConversationIds: new Set<string>(), currentId: selectedId })
     void writeActiveConversationSelection(selectedId)
   } catch (error) {
-    const message = error instanceof Error ? error.message : st('error.unknownError')
+    const message = extractUserFacingErrorDetail(error) || st('error.unknownError')
     useChatStore.getState().setError(st('storage.sqliteRestoreFailed', { message }))
   }
 }

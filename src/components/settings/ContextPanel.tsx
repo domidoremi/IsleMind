@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
+import { describeUserFacingError, extractUserFacingErrorDetail, userFacingErrorDetail } from '@/core'
 import type { KnowledgeDocument, LocalRagModelCapability, MemoryItem, RagEvaluationLog, RagIndexingJobStatus } from '@/types/contextContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
@@ -621,13 +622,13 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           {
         name: t('contextPanel.selfTest.exception'),
         status: 'fail',
-        detail: error instanceof Error ? error.message : t('contextPanel.selfTest.failed'),
+        detail: describeUserFacingError(error, t, { headlineKey: 'contextPanel.selfTest.failed' }),
           },
         ],
       }))
       dialog.notice({
         title: t('contextPanel.selfTest.doneWithIssues'),
-        message: error instanceof Error ? error.message : t('contextPanel.selfTest.failed'),
+        message: describeUserFacingError(error, t, { headlineKey: 'contextPanel.selfTest.failed' }),
         tone: 'danger',
       })
     } finally {
@@ -655,7 +656,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       })
       await refresh()
     } catch (error) {
-      dialog.notice({ title: t('contextPanel.ragDebug.evaluationFailed'), message: error instanceof Error ? error.message : t('contextPanel.localModel.unknownError'), tone: 'danger' })
+      dialog.notice({ title: t('contextPanel.ragDebug.evaluationFailed'), message: userFacingErrorDetail(error) || t('contextPanel.localModel.unknownError'), tone: 'danger' })
     } finally {
       setRagEvaluating(false)
     }
@@ -699,7 +700,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       })
       dialog.notice({ title: t('contextPanel.localModel.downloaded'), message: view.model.name, tone: 'mint' })
     } catch (error) {
-      dialog.notice({ title: t('contextPanel.localModel.downloadFailed'), message: t('contextPanel.localModel.downloadFailedDetail', { error: error instanceof Error ? error.message : t('contextPanel.localModel.unknownError') }), tone: 'danger' })
+      dialog.notice({ title: t('contextPanel.localModel.downloadFailed'), message: t('contextPanel.localModel.downloadFailedDetail', { error: extractUserFacingErrorDetail(error) || t('contextPanel.localModel.unknownError') }), tone: 'danger' })
     } finally {
       setModelBusyId(null)
       setDownloadProgress(null)
@@ -749,7 +750,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       dialog.notice({ title: t('contextPanel.localModel.rebuildDone'), message: t('contextPanel.localModel.rebuildDoneMessage', { count }), tone: 'mint' })
       await refresh()
     } catch (error) {
-      dialog.notice({ title: t('contextPanel.localModel.rebuildFailed'), message: error instanceof Error ? error.message : t('contextPanel.localModel.unknownError'), tone: 'danger' })
+      dialog.notice({ title: t('contextPanel.localModel.rebuildFailed'), message: userFacingErrorDetail(error) || t('contextPanel.localModel.unknownError'), tone: 'danger' })
     } finally {
       setRebuilding(false)
     }

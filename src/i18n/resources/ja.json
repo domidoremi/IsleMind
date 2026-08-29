@@ -864,10 +864,13 @@
       "bad_auth": "キーまたは権限を利用できません",
       "bad_base_url": "プロバイダー URL が正しくない可能性があります",
       "model_unavailable": "モデルを利用できません",
+      "models_endpoint_unavailable": "モデル一覧を利用できません",
+      "empty_models": "利用可能なモデルがありません",
       "network_error": "ネットワーク要求に失敗しました",
       "timeout": "リクエストがタイムアウトしました",
       "rate_limited": "レート制限または残高不足です",
       "max_tokens_exceeded": "出力上限を超えました",
+      "provider_conformance_blocked": "このプロバイダーはこのリクエストに対応していません",
       "default": "送信に失敗しました"
     },
     "errorDescription": {
@@ -877,10 +880,13 @@
       "bad_auth": "キーを保存し直し、テストで権限を確認してください。",
       "bad_base_url": "プロキシや Token Plan を使う場合、Base URL に /v1 が含まれるか確認してください。",
       "model_unavailable": "利用可能モデルを同期し、アカウントで使えるモデルを選んでください。",
+      "models_endpoint_unavailable": "プロバイダーがモデル一覧を返しませんでした。Base URL とプロトコルを確認してからモデルを再同期してください。",
+      "empty_models": "このプロバイダーのモデルを再同期するか、モデルを手動で追加してください。",
       "network_error": "ネットワーク、プロキシ、プロバイダー状態を確認してから再試行してください。",
       "timeout": "待機時間が長すぎます。ネットワーク、プロキシ、Base URL を確認してください。",
       "rate_limited": "後で再試行するか、サブスクリプション、残高、レート制限を確認してください。",
       "max_tokens_exceeded": "会話オプションの Max Tokens を下げるか、出力上限が大きいモデルへ切り替えてください。",
+      "provider_conformance_blocked": "未対応の添付やツールを外すか、必要な機能を有効にするか、対応モデルへ切り替えてください。",
       "default": "現在のモデルをテストするか、設定でプロバイダー構成を確認してください。"
     }
   },
