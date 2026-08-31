@@ -115,7 +115,7 @@ export function ChatActiveMessageVirtualList({
   return (
     <FlashList
       ref={listRef}
-      style={{ flex: 1 }}
+      style={{ flex: 1, width: '100%', maxWidth: messageListLayout.readingColumnMaxWidth, alignSelf: 'center' }}
       data={conversation.messages}
       extraData={messageListRenderExtraData}
       keyExtractor={(item) => item.id}

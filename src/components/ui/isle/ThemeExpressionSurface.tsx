@@ -21,6 +21,17 @@ export interface ThemeExpressionSurfaceProps {
   testID?: string
 }
 
+/**
+ * Surface roles, not one box per component.
+ *
+ * Chat Home paints exactly three regions: the application chrome band, the
+ * conversation canvas, and the composer dock. Assistant turns live inside the
+ * canvas and paint nothing. Only user turns and genuinely nested rich content
+ * own a surface. Families differ by how those regions are rendered, never by
+ * adding another card per component.
+ */
+export type ThemeSurfaceRole = 'chrome' | 'composer' | 'assistant' | 'user' | 'flow' | 'block'
+
 const COMPONENT_BY_SURFACE: Record<ThemeExpressionSurfaceKind, ThemeComponentId> = {
   composer: 'composer',
   chrome: 'navigation',
@@ -35,7 +46,51 @@ function componentIdForSurface(props: ThemeExpressionSurfaceProps): ThemeCompone
   return COMPONENT_BY_SURFACE[props.kind]
 }
 
+export function resolveThemeSurfaceRole(props: Pick<ThemeExpressionSurfaceProps, 'kind' | 'isUser'>): ThemeSurfaceRole {
+  if (props.kind === 'chrome') return 'chrome'
+  if (props.kind === 'composer') return 'composer'
+  if (props.kind === 'code-block') return 'block'
+  if (props.kind === 'message') return props.isUser ? 'user' : 'assistant'
+  return 'flow'
+}
+
 type Renderer = (props: ThemeExpressionSurfaceProps, expression: ThemeExpression) => ReactNode
+
+type WebLayerStyle = ViewStyle & {
+  backdropFilter?: string
+  WebkitBackdropFilter?: string
+  isolation?: 'auto' | 'isolate'
+}
+
+function rgbaColor(color: string, alpha: number): string {
+  const clamped = Math.max(0, Math.min(1, alpha))
+  const hex = color.trim().match(/^#([0-9a-f]{3,8})$/i)?.[1]
+  if (hex) {
+    const expanded = hex.length === 3
+      ? hex.split('').map((part) => `${part}${part}`).join('')
+      : hex.slice(0, 6)
+    const channels = [0, 2, 4].map((offset) => Number.parseInt(expanded.slice(offset, offset + 2), 16))
+    if (channels.every(Number.isFinite)) return `rgba(${channels.join(', ')}, ${clamped})`
+  }
+  const rgb = color.match(/^rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)/i)
+  if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${clamped})`
+  return color
+}
+
+/**
+ * The Liquid Glass token contract allows one blurred layer per region
+ * (`blur.maxLayersPerRegion`). Chrome and the composer dock are the two
+ * regions that spend it; conversation content stays clear so long responses
+ * remain readable instead of turning into stacked frosted cards.
+ */
+function chromeBlurStyle(enabled: boolean, radius: number): WebLayerStyle | null {
+  if (!enabled || Platform.OS !== 'web') return null
+  return {
+    backdropFilter: `blur(${radius}px) saturate(1.18)`,
+    WebkitBackdropFilter: `blur(${radius}px) saturate(1.18)`,
+    isolation: 'isolate',
+  }
+}
 
 /**
  * One renderer contract, four expression grammars. Business children and
@@ -55,38 +110,62 @@ export function ThemeExpressionSurface(props: ThemeExpressionSurfaceProps) {
   return RENDERERS[props.family]({ ...props, testID, children: props.children }, expression)
 }
 
-function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpression) {
-  const component = expression.components[componentIdForSurface(props)]
-  const isMessage = props.kind === 'message'
-  const isContent = props.kind === 'message-content'
-  const isMarkdown = props.kind === 'markdown'
-  const isCodeBlock = props.kind === 'code-block'
-  const isChrome = props.kind === 'chrome'
-  const horizontalPadding = props.horizontalPadding ?? 0
+/**
+ * Content flow carries no surface in any family: the message column already is
+ * the surface. Padding, background, and border stay at zero so a long response
+ * reads as one column instead of a document card.
+ */
+function renderFlow(props: ThemeExpressionSurfaceProps, gap: number) {
   return (
     <View
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
-        styles.minimalBase,
-        isMessage && props.isUser ? styles.minimalUserMessage : null,
-        isMessage && !props.isUser ? styles.minimalAssistantMessage : null,
-        isContent ? styles.minimalContent : null,
-        isMarkdown ? styles.minimalMarkdown : null,
-        isCodeBlock ? styles.minimalCodeBlock : null,
-        props.kind === 'composer' ? { marginHorizontal: -horizontalPadding, paddingHorizontal: horizontalPadding } : null,
+        styles.flow,
+        props.kind === 'markdown' ? styles.flowMarkdown : { gap },
+      ]}
+    >
+      {props.children}
+    </View>
+  )
+}
+
+function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpression) {
+  const role = resolveThemeSurfaceRole(props)
+  if (role === 'flow') return renderFlow(props, 5)
+  const component = expression.components[componentIdForSurface(props)]
+  const horizontalPadding = props.horizontalPadding ?? 0
+  const rule = props.alertBorder ?? props.colors.ui.semantic.chrome.border
+  return (
+    <View
+      testID={props.testID}
+      onLayout={props.onLayout}
+      style={[
+        styles.base,
+        role === 'chrome' ? styles.minimalChrome : null,
+        role === 'composer' ? [styles.minimalComposer, { marginHorizontal: -horizontalPadding, paddingHorizontal: horizontalPadding }] : null,
+        role === 'assistant' ? styles.minimalAssistant : null,
+        role === 'user' ? styles.minimalUser : null,
+        role === 'block' ? styles.minimalBlock : null,
         {
-          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isCodeBlock && props.isUser ? props.colors.ui.message.userActionBackground : isChrome ? props.colors.ui.semantic.surface.base : 'transparent',
-          borderColor: props.alertBorder ?? props.colors.ui.semantic.chrome.border,
-          borderWidth: isContent || isMarkdown ? 0 : props.selected ? 2 : component.border === 'divider' ? StyleSheet.hairlineWidth : 0,
+          backgroundColor: role === 'chrome' || role === 'composer'
+            ? props.colors.ui.semantic.surface.canvas
+            : role === 'block' && props.isUser
+              ? props.colors.ui.message.userActionBackground
+              : 'transparent',
+          borderColor: rule,
+          borderWidth: props.selected ? 2 : role === 'block' && component.border === 'divider' ? StyleSheet.hairlineWidth : 0,
         },
       ]}
     >
-      {props.kind === 'composer' ? (
-        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.minimalComposerRule, { backgroundColor: props.colors.ui.semantic.chrome.border }]} />
+      {role === 'chrome' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.edgeRuleBottom, { backgroundColor: rule, height: props.alertBorder ? 2 : StyleSheet.hairlineWidth }]} />
       ) : null}
-      {isMessage && props.isUser ? (
-        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.minimalMessageIndex, { backgroundColor: props.colors.ui.control.primaryBackground }]} />
+      {role === 'composer' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.edgeRuleTop, { backgroundColor: rule }]} />
+      ) : null}
+      {role === 'user' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.minimalUserIndex, { backgroundColor: props.colors.ui.control.primaryBackground }]} />
       ) : null}
       {props.children}
     </View>
@@ -94,189 +173,229 @@ function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpr
 }
 
 function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpression) {
+  const role = resolveThemeSurfaceRole(props)
+  if (role === 'flow') return renderFlow(props, 8)
   const component = expression.components[componentIdForSurface(props)]
-  const isMessage = props.kind === 'message'
-  const isContent = props.kind === 'message-content'
-  const isMarkdown = props.kind === 'markdown'
-  const isCodeBlock = props.kind === 'code-block'
-  const isNestedRichContent = props.kind === 'code-block'
-  const assistantMessage = isMessage && !props.isUser
-  const contentFrame = (
-    <View style={[
-      styles.monetContentFrame,
-      props.kind === 'composer' ? styles.monetComposerFrame : null,
-      isMessage && props.isUser ? styles.monetUserContentFrame : null,
-    ]}>
-      {props.children}
-    </View>
-  )
+  const horizontalPadding = props.horizontalPadding ?? 0
+  const rule = props.alertBorder ?? props.colors.ui.semantic.chrome.border
+  const painted = role === 'chrome' || role === 'composer'
   return (
     <View
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
-        styles.monetBase,
-        isContent ? styles.monetContent : null,
-        isMarkdown ? styles.monetMarkdown : null,
-        isCodeBlock ? styles.monetCodeBlock : null,
-        isMessage && props.isUser ? styles.monetUserMessage : null,
-        isMessage && !props.isUser ? styles.monetAssistantMessage : null,
-        props.kind === 'composer' ? styles.monetComposer : null,
+        styles.base,
+        role === 'chrome' ? styles.monetChrome : null,
+        role === 'composer' ? [styles.monetComposer, { marginHorizontal: -horizontalPadding, paddingHorizontal: horizontalPadding }] : null,
+        role === 'assistant' ? styles.monetAssistant : null,
+        role === 'user' ? styles.monetUser : null,
+        role === 'block' ? styles.monetBlock : null,
         {
-          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.base,
-          borderColor: props.alertBorder ?? props.colors.ui.semantic.chrome.border,
-          borderWidth: isContent || isMarkdown ? 0 : props.selected ? 2 : component.border === 'none' ? 0 : 1,
+          backgroundColor: painted
+            ? props.colors.ui.semantic.surface.base
+            : role === 'user'
+              ? rgbaColor(props.colors.ui.message.userBackground, 0.9)
+              : role === 'block'
+                ? props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.base
+                : 'transparent',
+          borderColor: rule,
+          borderWidth: props.selected ? 2 : role === 'user' || role === 'block' ? StyleSheet.hairlineWidth : 0,
           shadowOpacity: 0,
           elevation: 0,
         },
       ]}
     >
-      {assistantMessage ? (
-        <View style={styles.monetAssistantFlow}>{contentFrame}</View>
-      ) : contentFrame}
+      {painted ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetWash, { backgroundColor: props.colors.ui.icon.accentBackground }]} />
+      ) : null}
+      {role === 'chrome' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.edgeRuleBottom, { backgroundColor: rule, height: props.alertBorder ? 2 : StyleSheet.hairlineWidth }]} />
+      ) : null}
+      {role === 'composer' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={styles.monetPigmentRow}>
+          <View style={[styles.monetPigmentLong, { backgroundColor: props.colors.primary }]} />
+          <View style={[styles.monetPigmentShort, { backgroundColor: props.colors.accent }]} />
+        </View>
+      ) : null}
+      {role === 'assistant' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetAssistantBrush, { backgroundColor: props.colors.primary }]} />
+      ) : null}
+      {role === 'user' && component.border === 'edge-highlight' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetUserBrush, { backgroundColor: props.colors.accent }]} />
+      ) : null}
+      {props.children}
     </View>
   )
 }
 
+/**
+ * Material 3 hierarchy comes from tonal relationship, component role, and
+ * spacing. The chrome band and the composer dock are surface containers; the
+ * conversation canvas is the base surface; assistant turns carry no container
+ * at all and use the active indicator plus type roles instead.
+ */
 function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExpression) {
+  const role = resolveThemeSurfaceRole(props)
+  if (role === 'flow') return renderFlow(props, 6)
   const component = expression.components[componentIdForSurface(props)]
-  const isMessage = props.kind === 'message'
-  const isContent = props.kind === 'message-content'
-  const isMarkdown = props.kind === 'markdown'
-  const isCodeBlock = props.kind === 'code-block'
-  const isNestedRichContent = props.kind === 'code-block'
+  const horizontalPadding = props.horizontalPadding ?? 0
+  const container = props.colors.design?.semantic.color.surfaceContainer ?? props.colors.ui.semantic.surface.raised
+  const outline = props.alertBorder ?? props.colors.ui.semantic.chrome.border
   return (
     <View
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
-        styles.materialBase,
-        isContent ? styles.materialContent : null,
-        isMarkdown ? styles.materialMarkdown : null,
-        isCodeBlock ? styles.materialCodeBlock : null,
-        isMessage && props.isUser ? styles.materialUserMessage : null,
-        isMessage && !props.isUser ? styles.materialAssistantMessage : null,
-        props.kind === 'composer' ? styles.materialComposer : null,
+        styles.base,
+        role === 'chrome' ? styles.materialChrome : null,
+        role === 'composer' ? [styles.materialComposer, { marginHorizontal: -horizontalPadding, paddingHorizontal: horizontalPadding }] : null,
+        role === 'assistant' ? styles.materialAssistant : null,
+        role === 'user' ? styles.materialUser : null,
+        role === 'block' ? styles.materialBlock : null,
         {
-          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.raised,
-          borderColor: props.alertBorder ?? props.colors.ui.semantic.chrome.border,
-          borderWidth: isContent || isMarkdown ? 0 : props.selected ? 2 : component.border === 'none' ? 0 : 1,
-          shadowColor: props.colors.shadowTint,
-          shadowOpacity: component.elevation === 'tonal' ? 0.12 : 0,
-          shadowRadius: component.elevation === 'tonal' ? 6 : 0,
-          shadowOffset: { width: 0, height: component.elevation === 'tonal' ? 2 : 0 },
-          elevation: component.elevation === 'tonal' ? 1 : 0,
+          backgroundColor: role === 'chrome' || role === 'composer'
+            ? container
+            : role === 'user'
+              ? props.colors.ui.message.userBackground
+              : role === 'block'
+                ? props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.muted
+                : 'transparent',
+          borderColor: outline,
+          borderWidth: props.selected ? 2 : role === 'block' && component.border === 'outline' ? 1 : 0,
+          shadowOpacity: 0,
+          elevation: 0,
         },
       ]}
     >
-      {props.kind === 'chrome' || props.kind === 'composer' ? <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.materialStateLayer, { backgroundColor: props.colors.primary }]} /> : null}
-      {props.kind === 'composer' ? (
-        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.materialComposerHandle, { backgroundColor: props.colors.textTertiary }]} />
+      {role === 'chrome' && props.alertBorder ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.edgeRuleBottom, { backgroundColor: props.alertBorder, height: 2 }]} />
       ) : null}
-      {isMessage && !props.isUser ? (
-        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.materialMessageIndicator, { backgroundColor: props.colors.primary }]} />
+      {role === 'assistant' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.materialIndicator, { backgroundColor: props.colors.primary }]} />
       ) : null}
-      <View style={[
-        styles.materialContentFrame,
-        props.kind === 'composer' ? styles.materialComposerFrame : null,
-        isMessage && !props.isUser ? styles.materialAssistantContentFrame : null,
-      ]}>
-        {props.children}
-      </View>
+      <View style={styles.contentFrame}>{props.children}</View>
     </View>
   )
 }
 
+/**
+ * Liquid Glass depth is material layering, not tinted boxes:
+ *
+ *   environment  ->  glass chrome  ->  clear conversation  ->  glass composer
+ *
+ * Only chrome and the composer dock spend the single blurred layer the token
+ * contract allows per region. Assistant content stays clear so long responses
+ * never become stacked frosted cards; the user capsule and code lens are the
+ * only foreground glass in the canvas.
+ */
 function renderLiquidGlass(props: ThemeExpressionSurfaceProps, expression: ThemeExpression) {
+  const role = resolveThemeSurfaceRole(props)
+  if (role === 'flow') return renderFlow(props, 8)
   const component = expression.components[componentIdForSurface(props)]
-  const isMessage = props.kind === 'message'
-  const isContent = props.kind === 'message-content'
-  const isMarkdown = props.kind === 'markdown'
-  const isCodeBlock = props.kind === 'code-block'
-  const isNestedRichContent = props.kind === 'code-block'
-  const glassLens = props.kind === 'chrome' || props.kind === 'composer'
-  const glassStyle = Platform.OS === 'web' && glassLens
-    ? ({ backdropFilter: 'blur(12px) saturate(1.08)' } as unknown as ViewStyle)
-    : null
+  const horizontalPadding = props.horizontalPadding ?? 0
+  const edge = props.alertBorder ?? props.colors.ui.actionBar.itemBorder
+  const chromeRegion = role === 'chrome' || role === 'composer'
+  const blurRadius = props.colors.design?.semantic.blur.radius ?? 12
+  const specular = props.colors.ui.control.primaryForeground
   return (
     <View
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
-        styles.glassBase,
-        glassStyle,
-        isContent ? styles.glassContent : null,
-        isMarkdown ? styles.glassMarkdown : null,
-        isCodeBlock ? styles.glassCodeBlock : null,
-        isMessage && props.isUser ? styles.glassUserMessage : null,
-        isMessage && !props.isUser ? styles.glassAssistantMessage : null,
-        props.kind === 'composer' ? styles.glassComposer : null,
+        styles.base,
+        chromeBlurStyle(chromeRegion, blurRadius),
+        role === 'chrome' ? styles.glassChrome : null,
+        role === 'composer' ? [styles.glassComposer, { marginHorizontal: -horizontalPadding, paddingHorizontal: horizontalPadding }] : null,
+        role === 'assistant' ? styles.glassAssistant : null,
+        role === 'user' ? styles.glassUser : null,
+        role === 'block' ? styles.glassBlock : null,
         {
-          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? props.colors.ui.message.userBackground : isNestedRichContent && props.isUser ? props.colors.ui.message.userActionBackground : glassLens ? props.colors.ui.semantic.surface.overlay : props.colors.ui.semantic.surface.base,
-          borderColor: props.alertBorder ?? props.colors.ui.semantic.chrome.border,
-          borderWidth: isContent || isMarkdown ? 0 : props.selected ? 2 : glassLens || (isMessage && props.isUser) ? 1 : 0,
-          shadowColor: glassLens ? props.colors.shadowTint : undefined,
-          shadowOpacity: glassLens ? 0.08 : 0,
-          shadowRadius: glassLens ? 12 : 0,
-          shadowOffset: { width: 0, height: glassLens ? 4 : 0 },
-          elevation: glassLens ? 2 : 0,
+          backgroundColor: chromeRegion
+            ? rgbaColor(props.colors.ui.semantic.surface.overlay, 0.72)
+            : role === 'user'
+              ? rgbaColor(props.colors.ui.message.userBackground, 0.78)
+              : role === 'block'
+                ? rgbaColor(props.isUser ? props.colors.ui.message.userActionBackground : props.colors.ui.semantic.surface.overlay, 0.82)
+                : 'transparent',
+          borderColor: edge,
+          borderWidth: props.selected ? 2 : role === 'user' || role === 'block' ? StyleSheet.hairlineWidth : 0,
+          shadowColor: role === 'user' ? props.colors.shadowTint : undefined,
+          shadowOpacity: role === 'user' ? 0.05 : 0,
+          shadowRadius: role === 'user' ? 6 : 0,
+          shadowOffset: { width: 0, height: role === 'user' ? 2 : 0 },
+          elevation: 0,
         },
       ]}
     >
-      {glassLens ? <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.glassInnerPlane, { borderColor: props.colors.ui.actionBar.itemBorder }]} /> : null}
-      <View style={[
-        styles.glassContentFrame,
-        props.kind === 'composer' ? styles.glassComposerFrame : null,
-        isMessage && props.isUser ? styles.glassUserContentFrame : null,
-      ]}>
-        {props.children}
-      </View>
+      {role === 'chrome' ? (
+        <>
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassSpecular, { backgroundColor: specular }]} />
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.edgeRuleBottom, { backgroundColor: edge, height: props.alertBorder ? 2 : StyleSheet.hairlineWidth }]} />
+        </>
+      ) : null}
+      {role === 'composer' ? (
+        <>
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.edgeRuleTop, { backgroundColor: edge }]} />
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassSpecular, { backgroundColor: specular }]} />
+        </>
+      ) : null}
+      {(role === 'user' || role === 'block') && component.border === 'edge-highlight' ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassLensSpecular, { backgroundColor: specular }]} />
+      ) : null}
+      <View style={styles.contentFrame}>{props.children}</View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  minimalBase: { minHeight: 44, minWidth: 0, maxWidth: '100%', justifyContent: 'center', position: 'relative' },
-  minimalUserMessage: { alignSelf: 'flex-end', maxWidth: '92%', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 4 },
-  minimalAssistantMessage: { width: '100%', paddingVertical: 6 },
-  minimalContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 5, minHeight: 0, overflow: 'hidden' },
-  minimalMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', overflow: 'hidden' },
-  minimalCodeBlock: { width: '100%', minHeight: 0, borderRadius: 2, padding: 0 },
-  minimalComposerRule: { position: 'absolute', top: 0, left: 0, right: 0, height: StyleSheet.hairlineWidth },
-  minimalMessageIndex: { position: 'absolute', top: 7, bottom: 7, left: 0, width: 2 },
-  monetBase: { minHeight: 48, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
-  monetComposer: { marginHorizontal: 4, padding: 9 },
-  monetUserMessage: { alignSelf: 'flex-end', maxWidth: '90%', borderTopLeftRadius: 22, borderBottomRightRadius: 10 },
-  monetAssistantMessage: { width: '100%', marginVertical: 4, borderTopLeftRadius: 10, borderBottomRightRadius: 16 },
-  monetContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
-  monetMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
-  monetCodeBlock: { width: '100%', minHeight: 0, borderTopLeftRadius: 9, borderBottomRightRadius: 19, padding: 3 },
-  monetAssistantFlow: { width: '100%', alignItems: 'stretch', paddingVertical: 4 },
-  monetContentFrame: { position: 'relative', zIndex: 1 },
-  monetComposerFrame: { paddingTop: 2 },
-  monetUserContentFrame: { minWidth: 0 },
-  materialBase: { minHeight: 48, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
-  materialComposer: { marginHorizontal: 0, padding: 7 },
-  materialUserMessage: { alignSelf: 'flex-end', maxWidth: '86%', borderRadius: 18, paddingHorizontal: 16, paddingVertical: 10 },
-  materialAssistantMessage: { width: '100%', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12 },
-  materialContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 6, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
-  materialMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
-  materialCodeBlock: { width: '100%', minHeight: 0, borderRadius: 12, padding: 2 },
-  materialStateLayer: { ...StyleSheet.absoluteFill, opacity: 0.04 },
-  materialComposerHandle: { position: 'absolute', top: 5, alignSelf: 'center', width: 32, height: 3, borderRadius: 2, opacity: 0.48 },
-  materialMessageIndicator: { position: 'absolute', top: 10, bottom: 10, left: 0, width: 3, opacity: 0.72 },
-  materialContentFrame: { position: 'relative', zIndex: 1 },
-  materialComposerFrame: { paddingTop: 4 },
-  materialAssistantContentFrame: { paddingLeft: 2 },
-  glassBase: { minHeight: 50, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 18, paddingHorizontal: 13, paddingVertical: 9 },
-  glassComposer: { marginHorizontal: 6, padding: 8 },
-  glassUserMessage: { alignSelf: 'flex-end', maxWidth: '90%', borderRadius: 24 },
-  glassAssistantMessage: { width: '100%', borderRadius: 18 },
-  glassContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
-  glassMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
-  glassCodeBlock: { width: '100%', minHeight: 0, borderRadius: 20, padding: 3 },
-  glassInnerPlane: { position: 'absolute', top: 2, right: 2, bottom: 2, left: 2, borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, opacity: 0.34 },
-  glassContentFrame: { position: 'relative', zIndex: 1 },
-  glassComposerFrame: { paddingHorizontal: 2, paddingVertical: 2 },
-  glassUserContentFrame: { minWidth: 0 },
+  base: { minWidth: 0, maxWidth: '100%', justifyContent: 'center', position: 'relative' },
+  contentFrame: { position: 'relative', zIndex: 1 },
+  flow: {
+    width: '100%',
+    minWidth: 0,
+    maxWidth: '100%',
+    minHeight: 0,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    overflow: 'hidden',
+  },
+  flowMarkdown: { justifyContent: 'flex-start' },
+  edgeRuleTop: { position: 'absolute', top: 0, right: 0, left: 0, height: StyleSheet.hairlineWidth },
+  edgeRuleBottom: { position: 'absolute', right: 0, bottom: 0, left: 0 },
+
+  minimalChrome: { minHeight: 44, paddingHorizontal: 0, paddingVertical: 0 },
+  minimalComposer: { paddingTop: 8, paddingBottom: 4 },
+  minimalAssistant: { width: '100%', justifyContent: 'flex-start', paddingVertical: 6 },
+  minimalUser: { alignSelf: 'flex-end', maxWidth: '94%', paddingVertical: 6, paddingHorizontal: 0, borderRadius: 0 },
+  minimalBlock: { width: '100%', minHeight: 0, borderRadius: 2, padding: 0 },
+  minimalUserIndex: { position: 'absolute', top: 0, right: 0, width: 24, height: 2 },
+
+  monetChrome: { minHeight: 48, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
+  monetComposer: { paddingTop: 12, paddingBottom: 6, overflow: 'hidden' },
+  monetAssistant: { width: '100%', justifyContent: 'flex-start', paddingLeft: 12, paddingVertical: 8 },
+  monetUser: { alignSelf: 'flex-end', maxWidth: '94%', paddingHorizontal: 12, paddingVertical: 8, overflow: 'hidden', borderTopLeftRadius: 18, borderTopRightRadius: 8, borderBottomRightRadius: 8, borderBottomLeftRadius: 16 },
+  monetBlock: { width: '100%', minHeight: 0, padding: 3, borderTopLeftRadius: 9, borderTopRightRadius: 16, borderBottomRightRadius: 16, borderBottomLeftRadius: 9 },
+  monetWash: { position: 'absolute', top: -22, right: -20, width: 120, height: 70, borderBottomLeftRadius: 64, opacity: 0.18 },
+  monetPigmentRow: { position: 'absolute', top: 5, right: 18, left: 18, height: 3, flexDirection: 'row', gap: 5, opacity: 0.5 },
+  monetPigmentLong: { flex: 1, borderRadius: 2 },
+  monetPigmentShort: { width: 30, borderRadius: 2 },
+  monetAssistantBrush: { position: 'absolute', top: 10, bottom: 10, left: 2, width: 3, borderRadius: 2, opacity: 0.42 },
+  monetUserBrush: { position: 'absolute', right: 10, bottom: 3, width: 30, height: 2, borderRadius: 1, opacity: 0.44 },
+
+  materialChrome: { minHeight: 56, paddingHorizontal: 0, paddingVertical: 0 },
+  materialComposer: { paddingTop: 8, paddingBottom: 6 },
+  materialAssistant: { width: '100%', justifyContent: 'flex-start', paddingLeft: 12, paddingVertical: 10 },
+  materialUser: { alignSelf: 'flex-end', maxWidth: '94%', paddingHorizontal: 16, paddingVertical: 10, borderTopLeftRadius: 20, borderTopRightRadius: 4, borderBottomRightRadius: 20, borderBottomLeftRadius: 20 },
+  materialBlock: { width: '100%', minHeight: 0, borderRadius: 12, padding: 2, overflow: 'hidden' },
+  materialIndicator: { position: 'absolute', top: 12, bottom: 12, left: 0, width: 3, borderRadius: 2, opacity: 0.5 },
+
+  glassChrome: { minHeight: 48, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
+  glassComposer: { paddingTop: 8, paddingBottom: 6, overflow: 'hidden' },
+  glassAssistant: { width: '100%', justifyContent: 'flex-start', paddingLeft: 12, paddingVertical: 8 },
+  glassUser: { alignSelf: 'flex-end', maxWidth: '94%', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, overflow: 'hidden' },
+  glassBlock: { width: '100%', minHeight: 0, borderRadius: 16, padding: 3, overflow: 'hidden' },
+  glassSpecular: { position: 'absolute', top: 0, right: 24, left: 24, height: StyleSheet.hairlineWidth, opacity: 0.4 },
+  glassLensSpecular: { position: 'absolute', top: 1, right: 14, left: 14, height: StyleSheet.hairlineWidth, opacity: 0.36 },
 })

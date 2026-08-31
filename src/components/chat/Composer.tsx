@@ -24,6 +24,7 @@ import { appendComposerVoiceTranscript, composerVoiceIsBusy, formatComposerVoice
 import { useComposerVoiceInput } from './useComposerVoiceInput'
 import { useComposerDraftPersistence } from './useComposerDraftPersistence'
 import { MessageInput, SendButton } from './FloatingComposerSurfaces'
+import { ChatComposerThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 import { useComposerLongDraftEditor } from './useComposerLongDraftEditor'
 import type { ComposerSizeMode } from './composerLongDraftState'
 import {
@@ -491,7 +492,8 @@ export function Composer({
   }
 
   return (
-    <View style={{ width: '100%', position: 'relative', backgroundColor: 'transparent' }}>
+    <ChatComposerThemeSurface themeId={canonicalThemeId} colors={colors} horizontalPadding={horizontalPadding}>
+      <View style={{ width: '100%', position: 'relative', backgroundColor: 'transparent' }}>
       {attachments.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}>
           {attachments.map((item) => (
@@ -837,7 +839,8 @@ export function Composer({
           ) : null}
         </View>
       ) : null}
-    </View>
+      </View>
+    </ChatComposerThemeSurface>
   )
 }
 

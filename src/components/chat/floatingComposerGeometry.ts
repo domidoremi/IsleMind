@@ -42,26 +42,38 @@ export interface FloatingComposerGeometry {
 interface FloatingComposerWidthInput {
   viewportWidth: number
   horizontalPadding: number
-  sizeMode: ComposerSizeMode
-  activityState: ComposerActivityState
+  /**
+   * Outer width of the conversation canvas. Callers pass the message list's
+   * reading column so the dock's content stays aligned with the transcript on
+   * wide viewports. Kept as an input rather than an import: this module is pure
+   * geometry and must not depend on the layout module that consumes it.
+   */
+  readingColumnMaxWidth?: number
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value))
 }
 
+/**
+ * The composer is a dock, not a floating pill.
+ *
+ * Its width is a function of the viewport alone, so focus, streaming, and size
+ * mode change the input height without moving the dock's edges. The dock's own
+ * surface bleeds to the viewport edge; this width governs the inset content
+ * column inside it, capped at the conversation canvas's reading column so the
+ * input stays aligned with the messages above it on wide viewports.
+ */
 export function resolveFloatingComposerWidth({
   viewportWidth,
   horizontalPadding,
-  sizeMode,
-  activityState,
+  readingColumnMaxWidth,
 }: FloatingComposerWidthInput): number {
-  const fullWidth = Math.max(0, viewportWidth - Math.max(8, horizontalPadding) * 2)
-  if (sizeMode !== 'compact' || activityState !== 'idle') return fullWidth
-  const idleTarget = viewportWidth < 430
-    ? viewportWidth - 84
-    : viewportWidth * 0.58
-  return Math.min(fullWidth, Math.max(248, Math.min(idleTarget, 520)))
+  const gutter = Math.max(8, horizontalPadding)
+  const canvasWidth = readingColumnMaxWidth && readingColumnMaxWidth > 0
+    ? Math.min(viewportWidth, readingColumnMaxWidth)
+    : viewportWidth
+  return Math.max(0, canvasWidth - gutter * 2)
 }
 
 export function resolveFloatingComposerGeometry(

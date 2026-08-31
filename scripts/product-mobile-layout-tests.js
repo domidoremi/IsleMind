@@ -18,7 +18,9 @@ registerTypeScriptSupport()
 
 const {
   PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT,
+  PRODUCT_MOBILE_CONVERSATION_NAVIGATION_BREAKPOINT,
   PRODUCT_MOBILE_LAYOUT_AUDIT_VIEWPORTS,
+  PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH,
   PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS,
   resolveProductMobileChatConfigurationSheetLayout,
   resolveProductMobileChatSetupLayout,
@@ -255,6 +257,8 @@ function run() {
     assert.ok(messageList.topInset >= 68, `${width}px message list clears persistent top chrome`)
     assert.ok(messageList.conversationHeaderTopPadding >= messageList.topInset, `${width}px conversation header starts below top chrome`)
     assert.ok(messageList.emptyConversationTopPadding > messageList.conversationHeaderTopPadding, `${width}px empty state has extra top breathing room`)
+    assert.equal(messageList.horizontalPadding, width < 340 ? 12 : 14, `${width}px message list uses the denser responsive gutter`)
+    assert.equal('conversationNavigationDockClearance' in messageList, false, `${width}px message list contract exposes no navigation dock reservation`)
 
     assert.equal(transition.persistentTopBarOffset, 68, `${width}px pager reserves the persistent navigation chrome`)
     assert.ok(transition.activeHorizontalOffset < transition.minHorizontalDrag, `${width}px pager waits for a deliberate horizontal drag`)
@@ -284,6 +288,25 @@ function run() {
     assert.equal(shortFrame.composerOverlapRisk, false, `${width}px source visual audit reserves composer clearance`)
     assert.equal(keyboardFrame.scrollFallbackExpected, true, `${width}px keyboard-open empty state expects scroll instead of hidden controls`)
     assert.equal(keyboardFrame.composerOverlapRisk, false, `${width}px keyboard-open frame still reserves composer clearance`)
+  }
+
+  const desktopMessageList = resolveProductMobileMessageListLayout(PRODUCT_MOBILE_CONVERSATION_NAVIGATION_BREAKPOINT)
+  assert.equal(desktopMessageList.horizontalPadding, 16, 'desktop message list keeps a restrained safe gutter')
+  assert.deepEqual(
+    Object.keys(desktopMessageList).sort(),
+    ['conversationHeaderTopPadding', 'emptyConversationTopPadding', 'horizontalPadding', 'readingColumnMaxWidth', 'topInset'],
+    'message list layout stays a spacing and reading-column contract and reserves no navigation surface',
+  )
+  assert.equal(
+    desktopMessageList.readingColumnMaxWidth,
+    PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH,
+    'the conversation canvas caps at the shared reading column so both roles measure against one box',
+  )
+  for (const width of PRODUCT_MOBILE_LAYOUT_AUDIT_VIEWPORTS) {
+    assert.ok(
+      resolveProductMobileMessageListLayout(width).readingColumnMaxWidth > width,
+      `${width}px mobile canvas is narrower than the reading column, so the cap changes nothing on phones`,
+    )
   }
 
   assert.ok(CHAT_PRESENTATION_CATALOG.starters.length >= 3, 'Chat keeps one-tap starter actions for mobile entry')
@@ -392,6 +415,7 @@ function assertSourceIntegration() {
   const chatActiveMessageEmptyStateSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageEmptyState.tsx'), 'utf8')
   const chatActiveMessageItemSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageItem.tsx'), 'utf8')
   const chatActiveNavigationRailSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveNavigationRail.tsx'), 'utf8')
+  const conversationNavigationRailSource = fs.readFileSync(path.join(root, 'src/components/chat/ConversationNavigationRail.tsx'), 'utf8')
   const chatActiveChromeLayerSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveChromeLayer.tsx'), 'utf8')
   const chatActiveControlsLayerSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveControlsLayer.tsx'), 'utf8')
   const chatActiveWorkspaceControllersSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceControllers.ts'), 'utf8')
@@ -446,11 +470,18 @@ function assertSourceIntegration() {
   assert.ok(floatingComposerSource.includes('minHeight: ISLE_MIN_TOUCH_TARGET') && floatingComposerSource.includes('height: ISLE_MIN_TOUCH_TARGET'), 'composer context and panel actions use the shared physical touch target')
   assert.ok(floatingComposerSource.includes('resolveChatModelDisplayName') && floatingComposerSource.includes('ellipsizeMode="middle"') && persistentHeaderSource.includes('numberOfLines={1}'), 'custom model labels retain a bounded one-line mobile presentation while preserving a useful model suffix')
   assert.ok(
-    floatingComposerSource.includes('composerPresentation.sizeMode') &&
-      floatingComposerSource.includes('composerPresentation.activityState') &&
-      floatingComposerGeometrySource.includes("sizeMode !== 'compact'") &&
-      floatingComposerGeometrySource.includes("activityState !== 'idle'"),
-    'Composer width follows independent size and activity axes',
+    floatingComposerSource.includes('composerPresentation.activityState') &&
+      floatingComposerGeometrySource.includes("input.sizeMode === 'compact'") &&
+      floatingComposerGeometrySource.includes("input.sizeMode === 'review'"),
+    'Composer height follows the size and activity axes',
+  )
+  assert.ok(
+    /export function resolveFloatingComposerWidth\(\{\s*viewportWidth,\s*horizontalPadding,\s*\}/.test(floatingComposerGeometrySource) &&
+      !/sizeMode/.test(floatingComposerGeometrySource.slice(
+        floatingComposerGeometrySource.indexOf('export function resolveFloatingComposerWidth'),
+        floatingComposerGeometrySource.indexOf('export function resolveFloatingComposerGeometry'),
+      )),
+    'the composer dock keeps a stable width so focus and streaming never move its edges',
   )
   assert.match(floatingComposerSource, /const modelStatusLabel = provider[\s\S]*resolveChatModelDisplayName[\s\S]*t\('chat\.configure'\)[\s\S]*const modelStatusAccessibilityLabel = provider[\s\S]*t\('chat\.configureProviders'\)/, 'setup Composer uses a compact localized action while preserving a descriptive accessibility label')
   assert.ok(chatOptionsSource.includes('SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH') && chatOptionsSource.includes('numberOfLines={1}'), 'model alias editing stays bounded and canonical identity text truncates on narrow screens')
@@ -482,15 +513,25 @@ function assertSourceIntegration() {
   assert.ok(
     messageBubbleSource.includes('const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser') &&
       messageBubbleSource.includes('processLayerVisible || hasWideMessageContent(renderedDisplayText)') &&
-      messageBubbleSource.includes('width: bubbleUsesAvailableWidth || isUser ? bubbleMaxWidth : undefined') &&
+      messageBubbleSource.includes('width: bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined') &&
+      messageBubbleSource.includes("maxWidth: isUser ? bubbleMaxWidth : '100%'") &&
       messageBubbleSource.includes('maxWidth: isUser ? bubbleMaxWidth : Math.max(0, bubbleMaxWidth - 32)'),
-    'wide assistant Markdown and process content stay inside the available mobile width after reserving the provider-badge gutter',
+    'wide assistant Markdown and process content stay inside the available mobile width after reserving the provider-badge gutter, while plain turns hug their own text',
   )
   assert.ok(messageBubbleSource.includes("!isStreamingContent && message.status !== 'cancelled'"), 'an empty cancelled assistant turn relies on its stopped status instead of rendering the empty-response failure copy')
   assert.ok(messageBubbleSource.includes('minWidth: 0') && messageBubbleSource.includes('numberOfLines={1}'), 'terminal process status stays shrinkable without overflowing narrow screens')
   assert.ok(chatActiveWorkspaceLayoutSource.includes('resolveProductMobileMessageListLayout(activeWindowWidth'), 'chat workspace uses shared message-list top spacing metrics')
   assert.ok(chatActiveWorkspaceLayoutSource.includes('topChromeInset: Math.max(topChromeInset, visualTopInset)'), 'chat message-list top spacing includes the device safe area below persistent local chrome')
   assert.ok(chatActiveMessageVirtualListSource.includes('messageListLayout.horizontalPadding'), 'message list horizontal gutters are source-audited')
+  assert.ok(!chatActiveMessageListSource.includes('messageListViewportBottomInset') && !chatActiveMessageListSource.includes('marginBottom:'), 'the conversation canvas is one continuous scroll surface and scroll utilities never shrink the message viewport')
+  assert.match(chatActiveMessageVirtualListSource, /paddingBottom: messageListBottomPadding/, 'virtualized message list consumes the composed bottom clearance')
+  assert.match(conversationNavigationRailSource, /pointerEvents=\{visible \? 'box-none' : 'none'\}/, 'hidden conversation navigation does not intercept pointer input')
+  assert.ok(!conversationNavigationRailSource.includes('chat-conversation-navigation-latest'), 'the contextual scroll utility is the single owner of the latest-message action, so the rail never duplicates it')
+  assert.ok(conversationNavigationRailSource.includes('chat-conversation-navigation-dismiss') && conversationNavigationRailSource.includes('showTitle={!compact}'), 'compact conversation navigation is a dismissible control strip instead of a titled card')
+  assert.ok(chatActiveNavigationRailSource.includes('chat-scroll-to-latest') && chatActiveNavigationRailSource.includes('chat-conversation-navigation-toggle'), 'one cluster owns both scroll utilities so the page never shows two competing floating controls')
+  assert.ok(chatActiveNavigationRailSource.includes('if (!indexVisible && !latestVisible) return null') && chatActiveNavigationRailSource.includes('bottom: bottomOffset'), 'the contextual scroll utility renders nothing at rest and sits just above the composer')
+  assert.ok(chatActiveNavigationRailSource.includes('useState(false)') && chatActiveNavigationRailSource.includes('CONVERSATION_NAVIGATION_MIN_ITEMS'), 'indexed conversation navigation stays collapsed by default and only offers itself on long transcripts')
+  assert.ok(chatMessageListScrollStateSource.includes('nextViewport.awayFromBottom') && chatMessageListScrollStateSource.includes('assistantNavigationProgrammaticLockUntil.current'), 'wheel and trackpad scrolling reveal conversation navigation without exposing programmatic auto-follow')
   assert.ok(chatActiveMessageFeedSource.includes("from './chatActiveMessageFeedState'") && chatActiveMessageFeedSource.includes("from './ChatActiveMessageVirtualList'") && chatActiveMessageFeedStateSource.includes("from './chatMessageListState'"), 'message feed state stays behind the active message feed state hook')
   assert.equal(chatActiveMessageFeedStateSource.includes("from '@/product/modeHandoff'"), false, 'message feed state does not restore product-mode handoff derivation')
   assert.ok(chatWorkspaceSource.includes('composerLayout.messageListBottomPadding'), 'message list bottom padding clears composer through shared metrics')
@@ -507,7 +548,9 @@ function assertSourceIntegration() {
   assert.ok(chatActiveWorkspaceLayoutSource.includes("from './FloatingChrome'") && chatActiveWorkspaceLayoutSource.includes("from './chatNoticeLayout'"), 'active Chat retains shared chrome and notice layout metrics')
   assert.ok(chatActiveWorkspaceViewSource.includes("from './ChatActiveChromeLayer'") && chatActiveChromeLayerSource.includes("from './FloatingChrome'") && floatingChromeSource.includes('export function FloatingChrome'), 'full top provider chrome stays behind reusable active chrome and floating chrome components')
   assert.ok(floatingChromeSource.includes('export const FLOATING_CHROME_SAFE_AREA_GAP = 0') && floatingChromeSource.includes('<ChatPersistentHeader'), 'floating chrome meets the parent safe area without adding a second visual gap and delegates controls to the persistent header')
-  assert.ok(floatingChromeStateSource.includes('const chromeCollapsed = false') && !floatingChromeStateSource.includes('setTimeout('), 'Chat header remains visible across idle, streaming, focus, and scroll state changes')
+  assert.ok(floatingChromeStateSource.includes('useState(false)') && floatingChromeStateSource.includes('collapseLocked') && !floatingChromeStateSource.includes('setTimeout('), 'Chat header visibility uses immediate state with explicit interaction locks')
+  assert.ok(floatingChromeSource.includes('<MotiView') && floatingChromeSource.includes('hiddenTranslateY') && floatingChromeSource.includes('transitionDuration'), 'Chat header auto-hide uses a bounded reduced-motion-aware transform')
+  assert.ok(chatMessageListScrollStateSource.includes('CHAT_CHROME_COLLAPSE_SCROLL_DISTANCE') && chatMessageListScrollStateSource.includes('CHAT_CHROME_RESTORE_SCROLL_DISTANCE') && chatMessageListScrollStateSource.includes('CHAT_CHROME_TOP_RESTORE_OFFSET') && chatMessageListScrollStateSource.includes('const chromeScrollActivity = navigationScrollActivity'), 'Chat header scroll visibility uses asymmetric hysteresis for touch, wheel, and trackpad input and always restores at the transcript top')
   assert.ok(chatActiveChromeLayerSource.includes('onNewConversation') && !chatActiveWorkspaceViewSource.includes('showFloatingControlOrb') && !chatActiveControlsLayerSource.includes('FloatingControlOrb'), 'Chat header remains visible while Composer owns the only toolbox entry')
   assert.ok(chatActiveControlsLayerSource.includes("from './MessageMultiSelectBar'"), 'active multi-select controls stay behind the controls layer instead of the active shell')
   assert.ok(chatEmptyStateSource.includes('maxWidth={starterLayout.emptyContentMaxWidth}'), 'Chat entry actions share the mobile content width budget')

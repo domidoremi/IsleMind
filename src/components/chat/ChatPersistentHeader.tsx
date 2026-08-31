@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Text, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native'
+import { StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { MotiView } from 'moti'
 
@@ -21,6 +21,8 @@ export interface ChatPersistentHeaderProps {
   title: string
   subtitle?: string
   subtitleColor?: string
+  /** Safe-area padding painted inside the chrome band, not above it. */
+  topInset?: number
   modelIcon?: ReactNode
   modelStatusColor?: string
   modelMenuOpen?: boolean
@@ -39,12 +41,20 @@ export interface ChatPersistentHeaderProps {
   trailingContent?: ReactNode
 }
 
+/**
+ * Application chrome, not a card in the page.
+ *
+ * The band is edge to edge, paints its own safe-area inset, and separates from
+ * the canvas by one rule or one tonal step. Model and conversation names are
+ * information levels; the controls are transparent hit areas.
+ */
 export function ChatPersistentHeader({
   themeId,
   colors,
   title,
   subtitle,
   subtitleColor,
+  topInset = 0,
   modelIcon,
   modelStatusColor,
   modelMenuOpen = false,
@@ -63,143 +73,157 @@ export function ChatPersistentHeader({
   trailingContent,
 }: ChatPersistentHeaderProps) {
   const { t } = useTranslation()
+  const { width: viewportWidth } = useWindowDimensions()
   const motion = useMotionPreference()
   const { active: leadingActive, running: leadingRunning, trigger: triggerLeading } = useNavigationTrigger(onLeadingPress)
-  const iconStyle: StyleProp<ViewStyle> = [
-    {
-      width: ISLE_MIN_TOUCH_TARGET,
-      height: ISLE_MIN_TOUCH_TARGET,
-      borderRadius: colors.ui.radius.controlMiddle,
-      backgroundColor: 'transparent',
-      borderWidth: 0,
-      shadowOpacity: 0,
-      elevation: 0,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    leadingIconStyle,
-  ]
-  const actionStyle: StyleProp<ViewStyle> = {
+  const minimal = themeId === 'minimal'
+  const monet = themeId === 'monet'
+  const material = themeId === 'material'
+  const glass = themeId === 'liquid-glass'
+  const compactHeaderLayout = viewportWidth <= 360
+  const controlStyle: ViewStyle = {
     width: ISLE_MIN_TOUCH_TARGET,
     height: ISLE_MIN_TOUCH_TARGET,
-    borderRadius: colors.ui.radius.controlMiddle,
+    borderRadius: minimal ? 2 : material ? 22 : 24,
     backgroundColor: 'transparent',
-    borderWidth: 0,
-    shadowOpacity: 0,
-    elevation: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   }
-  const titleSafeInset = ISLE_MIN_TOUCH_TARGET * 2 + 12
+  const iconStyle: StyleProp<ViewStyle> = [controlStyle, leadingIconStyle]
+
+  const leadingControl = (
+    <IsleOverlayPressable
+      onPress={triggerLeading}
+      disabled={leadingRunning}
+      accessibilityRole="button"
+      accessibilityLabel={leadingLabel}
+      style={iconStyle}
+    >
+      <AnimatedNavigationIcon glyph={leadingGlyph} active={leadingActive} color={colors.textSecondary} accentColor={colors.ui.icon.accentForeground} size={22} />
+    </IsleOverlayPressable>
+  )
+
+  const modelControl = (
+    <IsleOverlayPressable
+      onPress={onModelPress}
+      accessibilityRole="button"
+      accessibilityLabel={modelAccessibilityLabel ?? `${t('chat.model')}: ${title}`}
+      accessibilityHint={modelAccessibilityHint ?? t('chat.quickModelAccessibilityHint')}
+      accessibilityState={{ expanded: modelMenuOpen }}
+      style={[
+        styles.modelControl,
+        monet ? styles.modelControlMonet : null,
+        glass ? styles.modelControlGlass : null,
+        modelMenuOpen
+          ? { backgroundColor: colors.ui.actionBar.itemActiveBackground, borderRadius: minimal ? 2 : 20 }
+          : null,
+      ]}
+    >
+      <MotiView
+        key={`${title}:${subtitle ?? ''}`}
+        from={motion === 'full' ? { opacity: 0.72, translateY: monet ? 3 : 2 } : undefined}
+        animate={{ opacity: 1, translateY: 0 }}
+        transition={{ type: 'timing', duration: motion === 'full' ? (monet ? 240 : 176) : 1 }}
+        style={styles.modelIdentity}
+      >
+        <View style={styles.modelTitleRow}>
+          {!compactHeaderLayout && modelIcon ? (
+            <View style={styles.modelIconFrame}>
+              {modelIcon}
+              {modelStatusColor ? <View pointerEvents="none" style={[styles.modelStatusDot, { backgroundColor: modelStatusColor, borderColor: colors.ui.semantic.surface.canvas }]} /> : null}
+            </View>
+          ) : modelStatusColor ? (
+            <View style={[styles.modelStatusOnly, { backgroundColor: modelStatusColor }]} />
+          ) : null}
+          <Text
+            accessibilityRole="header"
+            numberOfLines={1}
+            ellipsizeMode="middle"
+            style={[
+              styles.modelTitle,
+              minimal ? styles.modelTitleMinimal : null,
+              monet ? styles.modelTitleMonet : null,
+              material ? styles.modelTitleMaterial : null,
+              glass ? styles.modelTitleGlass : null,
+              { color: colors.text },
+            ]}
+          >
+            {title}
+          </Text>
+          <MotiView
+            animate={{ rotate: modelMenuOpen ? '180deg' : '0deg' }}
+            transition={{ type: 'timing', duration: motion === 'full' ? (glass ? 220 : 176) : 1 }}
+            style={styles.modelChevron}
+          >
+            <AppIcon name="arrow-down" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
+          </MotiView>
+        </View>
+        {subtitle ? (
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={[styles.modelSubtitle, { color: subtitleColor ?? colors.textTertiary, fontWeight: subtitleColor ? '700' : '500' }]}
+          >
+            {subtitle}
+          </Text>
+        ) : null}
+      </MotiView>
+    </IsleOverlayPressable>
+  )
+
+  const newConversationAction = (
+    <IsleOverlayPressable onPress={onNewConversation} accessibilityRole="button" accessibilityLabel={t('chat.newConversation')} style={controlStyle}>
+      <AppIcon name="new-chat" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
+    </IsleOverlayPressable>
+  )
+  const settingsAction = (
+    <IsleOverlayPressable
+      onPress={onSettings}
+      accessibilityRole="button"
+      accessibilityLabel={t('settings.title')}
+      style={[controlStyle, settingsTransitionActive ? { backgroundColor: colors.ui.actionBar.itemActiveBackground } : null]}
+    >
+      <AppIcon name="settings" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
+    </IsleOverlayPressable>
+  )
+  const actions = <>{trailingContent}{newConversationAction}{settingsAction}</>
+
+  const bandHeight = material
+    ? (subtitle ? 60 : 56)
+    : monet || glass
+      ? (subtitle ? 54 : 50)
+      : (subtitle ? 50 : 46)
 
   return (
     <ChatChromeThemeSurface themeId={themeId} colors={colors} alertBorder={alertBorder} onLayout={onLayout}>
-      <View style={{ minHeight: subtitle ? 58 : 52, position: 'relative', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10 }}>
-        <View style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, flexShrink: 0, alignItems: 'center', justifyContent: 'center' }}>
-          <IsleOverlayPressable
-            onPress={triggerLeading}
-            disabled={leadingRunning}
-            accessibilityRole="button"
-            accessibilityLabel={leadingLabel}
-            style={iconStyle}
-          >
-            <AnimatedNavigationIcon glyph={leadingGlyph} active={leadingActive} color={colors.textSecondary} accentColor={colors.ui.icon.accentForeground} size={22} />
-          </IsleOverlayPressable>
-        </View>
-        <IsleOverlayPressable
-          onPress={onModelPress}
-          accessibilityRole="button"
-          accessibilityLabel={modelAccessibilityLabel ?? `${t('chat.model')}: ${title}`}
-          accessibilityHint={modelAccessibilityHint ?? t('chat.quickModelAccessibilityHint')}
-          accessibilityState={{ expanded: modelMenuOpen }}
-          style={{
-            position: 'absolute',
-            top: 0,
-            right: titleSafeInset,
-            bottom: 0,
-            left: titleSafeInset,
-            minHeight: ISLE_MIN_TOUCH_TARGET,
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingHorizontal: 4,
-          }}
-        >
-          <MotiView
-            key={`${title}:${subtitle ?? ''}`}
-            from={motion === 'full' ? { opacity: 0.72, translateY: 2 } : undefined}
-            animate={{ opacity: 1, translateY: 0 }}
-            transition={{ type: 'timing', duration: motion === 'full' ? 176 : 1 }}
-            style={{ maxWidth: '100%', minWidth: 0, alignItems: 'center' }}
-          >
-            <View style={{ maxWidth: '100%', minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              {modelIcon ? (
-                <View style={{ width: 19, height: 19, alignItems: 'center', justifyContent: 'center' }}>
-                  {modelIcon}
-                  {modelStatusColor ? (
-                    <View
-                      pointerEvents="none"
-                      style={{
-                        position: 'absolute',
-                        right: -2,
-                        bottom: -1,
-                        width: 7,
-                        height: 7,
-                        borderRadius: 4,
-                        backgroundColor: modelStatusColor,
-                        borderWidth: 1.5,
-                        borderColor: colors.ui.semantic.surface.base,
-                      }}
-                    />
-                  ) : null}
-                </View>
-              ) : modelStatusColor ? (
-                <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: modelStatusColor }} />
-              ) : null}
-              <Text
-                accessibilityRole="header"
-                numberOfLines={1}
-                ellipsizeMode="middle"
-                style={{ flexShrink: 1, minWidth: 0, color: colors.text, fontSize: 15, lineHeight: 19, fontWeight: '800', includeFontPadding: false, textAlign: 'center' }}
-              >
-                {title}
-              </Text>
-              <MotiView
-                animate={{ rotate: modelMenuOpen ? '180deg' : '0deg' }}
-                transition={{ type: 'timing', duration: motion === 'full' ? 176 : 1 }}
-                style={{ width: 14, height: 14, alignItems: 'center', justifyContent: 'center' }}
-              >
-                <AppIcon name="arrow-down" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
-              </MotiView>
-            </View>
-            {subtitle ? (
-              <Text
-                numberOfLines={1}
-                ellipsizeMode="tail"
-                style={{ maxWidth: '100%', marginTop: 1, color: subtitleColor ?? colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: subtitleColor ? '700' : '500', includeFontPadding: false, textAlign: 'center' }}
-              >
-                {subtitle}
-              </Text>
-            ) : null}
-          </MotiView>
-        </IsleOverlayPressable>
-        <View style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-          {trailingContent}
-          <IsleOverlayPressable
-            onPress={onNewConversation}
-            accessibilityRole="button"
-            accessibilityLabel={t('chat.newConversation')}
-            style={[actionStyle, { alignItems: 'center', justifyContent: 'center' }]}
-          >
-            <AppIcon name="new-chat" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
-          </IsleOverlayPressable>
-          <IsleOverlayPressable
-            onPress={onSettings}
-            accessibilityRole="button"
-            accessibilityLabel={t('settings.title')}
-            style={settingsTransitionActive ? { ...actionStyle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.actionBar.itemActiveBackground } : [actionStyle, { alignItems: 'center', justifyContent: 'center' }]}
-          >
-            <AppIcon name="settings" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
-          </IsleOverlayPressable>
-        </View>
+      <View style={[styles.header, { paddingTop: topInset, minHeight: bandHeight + topInset }]}>
+        <View style={styles.leadingSlot}>{leadingControl}</View>
+        {minimal ? <View pointerEvents="none" style={[styles.minimalHeaderIndex, { backgroundColor: colors.ui.control.primaryBackground }]} /> : null}
+        {modelControl}
+        <View style={styles.actions}>{actions}</View>
       </View>
     </ChatChromeThemeSurface>
   )
 }
+
+const styles = StyleSheet.create({
+  header: { position: 'relative', minWidth: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6 },
+  leadingSlot: { width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
+  actions: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 0 },
+  minimalHeaderIndex: { width: 2, height: 20, marginLeft: 4, opacity: 0.72 },
+  modelControl: { flex: 1, minWidth: 0, minHeight: ISLE_MIN_TOUCH_TARGET, marginLeft: 6, justifyContent: 'center', paddingHorizontal: 4 },
+  modelControlMonet: { paddingHorizontal: 8 },
+  modelControlGlass: { paddingHorizontal: 8 },
+  modelIdentity: { maxWidth: '100%', minWidth: 0, alignItems: 'flex-start' },
+  modelTitleRow: { maxWidth: '100%', minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  modelIconFrame: { width: 19, height: 19, alignItems: 'center', justifyContent: 'center' },
+  modelStatusDot: { position: 'absolute', right: -2, bottom: -1, width: 7, height: 7, borderRadius: 4, borderWidth: 1.5 },
+  modelStatusOnly: { width: 7, height: 7, borderRadius: 4 },
+  modelTitle: { flexShrink: 1, minWidth: 0, includeFontPadding: false },
+  modelTitleMinimal: { fontSize: 14, lineHeight: 18, fontWeight: '700' },
+  modelTitleMonet: { fontSize: 15, lineHeight: 20, fontWeight: '600' },
+  modelTitleMaterial: { fontSize: 16, lineHeight: 21, fontWeight: '500' },
+  modelTitleGlass: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  modelChevron: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
+  modelSubtitle: { maxWidth: '100%', marginTop: 1, fontSize: 10.5, lineHeight: 14, includeFontPadding: false, textAlign: 'left' },
+})

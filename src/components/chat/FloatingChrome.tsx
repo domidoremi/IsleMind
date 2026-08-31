@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import { View, type LayoutChangeEvent, type ViewStyle } from 'react-native'
+import { Easing } from 'react-native-reanimated'
 import { useTranslation } from 'react-i18next'
+import { MotiView } from 'moti'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
 import type { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -20,11 +23,12 @@ type ChatOptionsPlacement = 'popover' | 'sheet'
 export const FLOATING_CHROME_SAFE_AREA_GAP = 0
 
 const FLOATING_CHROME_ANDROID_TOP_GAP = 0
-const FLOATING_CHROME_BOTTOM_PADDING = 4
+const FLOATING_CHROME_BOTTOM_PADDING = 0
 
 export function FloatingChrome({
   colors,
   visualTopInset,
+  collapsed,
   showOptions,
   conversation,
   provider,
@@ -43,6 +47,7 @@ export function FloatingChrome({
   onSwitchModel,
   switchableProviders,
   onLayoutHeight,
+  motion,
   modelAccessSettings,
   settingsTransitionActive,
 }: {
@@ -81,6 +86,7 @@ export function FloatingChrome({
 }) {
   const { canonicalThemeId, isDark } = useAppTheme()
   const { t } = useTranslation()
+  const [headerHeight, setHeaderHeight] = useState(0)
   const header = getProviderHeaderState(conversation, t)
   const modelTitle = getProviderDisplayModel(provider, conversation.model)
   const chromeTopPadding = visualTopInset + topChromeInset + FLOATING_CHROME_SAFE_AREA_GAP
@@ -95,37 +101,62 @@ export function FloatingChrome({
     right: 0,
     zIndex: showOptions ? 70 : 40,
   }
+  const hiddenOffset = Math.max(
+    64,
+    headerHeight + FLOATING_CHROME_BOTTOM_PADDING + FLOATING_CHROME_ANDROID_TOP_GAP,
+  )
+  const hiddenTranslateY = motion === 'full' ? -hiddenOffset : motion === 'reduced' ? -12 : 0
+  const transitionDuration = motion === 'full' ? 240 : motion === 'reduced' ? 120 : 1
 
   function handleLayout(event: LayoutChangeEvent) {
     const measuredHeight = Math.ceil(event.nativeEvent.layout.height)
-    onLayoutHeight(measuredHeight + chromeTopPadding + FLOATING_CHROME_BOTTOM_PADDING + FLOATING_CHROME_ANDROID_TOP_GAP)
+    setHeaderHeight((current) => current === measuredHeight ? current : measuredHeight)
+    // The chrome band paints its own safe-area inset, so the measured surface
+    // already contains it.
+    onLayoutHeight(measuredHeight + FLOATING_CHROME_BOTTOM_PADDING + FLOATING_CHROME_ANDROID_TOP_GAP)
   }
 
   return (
     <View pointerEvents="box-none" style={shellStyle}>
-      <View style={{ marginTop: FLOATING_CHROME_ANDROID_TOP_GAP, paddingTop: chromeTopPadding, paddingHorizontal: 8, paddingBottom: FLOATING_CHROME_BOTTOM_PADDING }}>
-        <ChatPersistentHeader
-          themeId={canonicalThemeId}
-          colors={colors}
-          title={modelTitle}
-          subtitle={providerHealth?.code ? providerHealth.title : header.title}
-          subtitleColor={providerHealth?.code ? providerHealthTone.foreground : undefined}
-          modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model)} size={18} variant={isDark ? 'onDark' : 'onLight'} />}
-          modelStatusColor={providerHealth?.code ? providerHealthTone.foreground : colors.ui.tone.success.foreground}
-          modelMenuOpen={showOptions}
-          leadingGlyph={leadingChromeIsBack ? 'back' : 'conversation'}
-          leadingLabel={leadingChromeIsBack ? t('common.back') : t('conversation.title')}
-          onLeadingPress={onBack}
-          onModelPress={onOpenModelPicker}
-          modelAccessibilityLabel={`${t('chat.model')}: ${modelTitle}`}
-          modelAccessibilityHint={t('chat.quickModelAccessibilityHint')}
-          onNewConversation={onNewConversation}
-          onSettings={onSettings}
-          settingsTransitionActive={settingsTransitionActive}
-          alertBorder={providerHealth?.code ? providerHealthTone.border : undefined}
-          onLayout={handleLayout}
-        />
-      </View>
+      <MotiView
+        pointerEvents={collapsed ? 'none' : 'box-none'}
+        aria-hidden={collapsed}
+        importantForAccessibility={collapsed ? 'no-hide-descendants' : 'auto'}
+        animate={{
+          opacity: collapsed ? 0 : 1,
+          translateY: collapsed ? hiddenTranslateY : 0,
+        }}
+        transition={{
+          type: 'timing',
+          duration: transitionDuration,
+          easing: Easing.out(Easing.cubic),
+        }}
+      >
+        <View style={{ marginTop: FLOATING_CHROME_ANDROID_TOP_GAP, paddingTop: 0, paddingHorizontal: 0, paddingBottom: FLOATING_CHROME_BOTTOM_PADDING }}>
+          <ChatPersistentHeader
+            themeId={canonicalThemeId}
+            colors={colors}
+            topInset={chromeTopPadding}
+            title={modelTitle}
+            subtitle={providerHealth?.code ? providerHealth.title : header.title}
+            subtitleColor={providerHealth?.code ? providerHealthTone.foreground : undefined}
+            modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model)} size={18} variant={isDark ? 'onDark' : 'onLight'} />}
+            modelStatusColor={providerHealth?.code ? providerHealthTone.foreground : colors.ui.tone.success.foreground}
+            modelMenuOpen={showOptions}
+            leadingGlyph={leadingChromeIsBack ? 'back' : 'conversation'}
+            leadingLabel={leadingChromeIsBack ? t('common.back') : t('conversation.title')}
+            onLeadingPress={onBack}
+            onModelPress={onOpenModelPicker}
+            modelAccessibilityLabel={`${t('chat.model')}: ${modelTitle}`}
+            modelAccessibilityHint={t('chat.quickModelAccessibilityHint')}
+            onNewConversation={onNewConversation}
+            onSettings={onSettings}
+            settingsTransitionActive={settingsTransitionActive}
+            alertBorder={providerHealth?.code ? providerHealthTone.border : undefined}
+            onLayout={handleLayout}
+          />
+        </View>
+      </MotiView>
       <ChatAiConfigurationSheet
         visible={showOptions}
         conversation={conversation}

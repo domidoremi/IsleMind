@@ -141,9 +141,9 @@ describe('FloatingComposerSurfaces', () => {
     const screen = await render(<MessageInput {...inputProps} />)
     const input = screen.getByTestId('message-input')
     const compactStyle = StyleSheet.flatten(input.props.style)
-    expect(compactStyle.paddingTop).toBe(8)
-    expect(compactStyle.paddingBottom).toBe(8)
-    expect(compactStyle.textAlignVertical).toBe('top')
+    expect(compactStyle.paddingTop).toBe(0)
+    expect(compactStyle.paddingBottom).toBe(0)
+    expect(compactStyle.textAlignVertical).toBe('center')
     expect(compactStyle.height).toBe(48)
     await screen.rerender(
       <MessageInput
@@ -157,8 +157,8 @@ describe('FloatingComposerSurfaces', () => {
     const expandedInput = screen.getByTestId('message-input')
     const expandedStyle = StyleSheet.flatten(expandedInput.props.style)
     expect(expandedInput).toBe(input)
-    expect(expandedStyle.paddingTop).toBe(compactStyle.paddingTop)
-    expect(expandedStyle.paddingBottom).toBe(compactStyle.paddingBottom)
+    expect(expandedStyle.paddingTop).toBe(8)
+    expect(expandedStyle.paddingBottom).toBe(8)
     expect(expandedStyle.textAlignVertical).toBe('top')
     expect(expandedStyle.height).toBe(184)
   })
@@ -170,8 +170,6 @@ describe('FloatingComposerSurfaces', () => {
         horizontalPadding={12}
         keyboardLift={0}
         keyboardMotion={{ durationMs: 232, easing: 'keyboard', phase: 'show' }}
-        sizeMode="large"
-        activityState="typing"
         motion="full"
       >
         <View />
