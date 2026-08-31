@@ -339,7 +339,7 @@ function MessageBubbleComponent({
   }
 
   return (
-    <View onLayout={handleBubbleLayout} style={{ width: '100%', minWidth: 0, marginBottom: 16 }}>
+    <View onLayout={handleBubbleLayout} style={{ width: '100%', minWidth: 0, marginBottom: 14 }}>
       <View
         style={{
           width: '100%',
@@ -349,9 +349,12 @@ function MessageBubbleComponent({
       >
         <View
           style={{
-            alignSelf: resolveMessageBubbleRowAlignment(message.role),
-            width: bubbleUsesAvailableWidth || isUser ? bubbleMaxWidth : undefined,
-            maxWidth: '100%',
+            alignSelf: displayFormulaLayout ? 'center' : resolveMessageBubbleRowAlignment(message.role),
+            // Rich assistant content claims a measured width so nested tables
+            // and code can lay out. Plain turns, including every user turn, keep
+            // an upper bound and hug their own text instead.
+            width: bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined,
+            maxWidth: isUser ? bubbleMaxWidth : '100%',
             minWidth: 0,
             flexShrink: 1,
             position: 'relative',
@@ -495,9 +498,13 @@ function MessageBubbleComponent({
   )
 }
 
+/**
+ * Assistant identity is a glyph in the canvas gutter, not a bordered chip. The
+ * conversation already establishes who is speaking through alignment, so the
+ * badge adds recognition without adding another surface.
+ */
 function AssistantBrandBadge({ brand }: { brand: ProviderBrand }) {
   const theme = useAppTheme()
-  const { colors } = theme
   const isDark = theme.isDark
   return (
     <View
@@ -505,16 +512,12 @@ function AssistantBrandBadge({ brand }: { brand: ProviderBrand }) {
       style={{
         width: 24,
         height: 24,
-        marginTop: 8,
-        borderRadius: 7,
+        marginTop: 6,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: isDark ? colors.ui.semantic.surface.raised : colors.ui.semantic.surface.base,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: isDark ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
       }}
     >
-      <ProviderBrandIcon brand={brand} size={15} variant={isDark ? 'onDark' : 'onLight'} />
+      <ProviderBrandIcon brand={brand} size={17} variant={isDark ? 'onDark' : 'onLight'} />
     </View>
   )
 }

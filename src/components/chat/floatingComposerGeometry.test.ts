@@ -19,7 +19,7 @@ const base = {
 } as const
 
 describe('resolveFloatingComposerGeometry', () => {
-  it('centers a visibly compact Idle composer and expands Focused', () => {
+  it('keeps the composer dock width stable across activity states', () => {
     const idle = resolveFloatingComposerGeometry({
       ...base,
       sizeMode: 'compact',
@@ -30,11 +30,10 @@ describe('resolveFloatingComposerGeometry', () => {
       sizeMode: 'compact',
       activityState: 'focused',
     })
-    expect(idle.overlayWidth).toBeLessThan(focused.overlayWidth)
-    expect(idle.horizontalInset).toBeCloseTo(
-      (base.viewportWidth - idle.overlayWidth) / 2,
-    )
-    expect(focused.overlayWidth).toBe(base.viewportWidth - base.horizontalPadding * 2)
+    const dockWidth = base.viewportWidth - base.horizontalPadding * 2
+    expect(idle.overlayWidth).toBe(dockWidth)
+    expect(focused.overlayWidth).toBe(dockWidth)
+    expect(idle.horizontalInset).toBeCloseTo(base.horizontalPadding)
   })
 
   it('keeps Review full width even when activity returns to Idle', () => {

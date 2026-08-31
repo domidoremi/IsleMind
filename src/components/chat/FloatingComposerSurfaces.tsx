@@ -20,6 +20,7 @@ import {
   type LayoutChangeEvent,
   type TextInputSubmitEditingEvent,
   type TextInputProps,
+  type ViewStyle,
 } from 'react-native'
 import { useTranslation } from 'react-i18next'
 
@@ -27,8 +28,10 @@ import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ProviderBrandIcon, type ProviderBrand } from '@/components/ui/ProviderBrandIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { IslePressable } from '@/components/ui/isle'
+import { ThemeModelSelectorExpression } from '@/components/ui/isle/ThemeModelSelectorExpression'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import type { useAppTheme } from '@/hooks/useAppTheme'
+import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 
 import type {
@@ -111,20 +114,18 @@ const AnimatedView = Animated.createAnimatedComponent(View)
 export function ComposerOverlay({
   viewportWidth,
   horizontalPadding,
+  readingColumnMaxWidth,
   keyboardLift,
   keyboardMotion,
-  sizeMode,
-  activityState,
   motion,
   onLayout,
   children,
 }: {
   viewportWidth: number
   horizontalPadding: number
+  readingColumnMaxWidth?: number
   keyboardLift: number
   keyboardMotion: ComposerKeyboardMotion
-  sizeMode: ComposerSizeMode
-  activityState: ComposerActivityState
   motion: MotionIntensity
   onLayout?: (event: LayoutChangeEvent) => void
   children: ReactNode
@@ -132,8 +133,7 @@ export function ComposerOverlay({
   const targetWidth = resolveFloatingComposerWidth({
     viewportWidth,
     horizontalPadding,
-    sizeMode,
-    activityState,
+    readingColumnMaxWidth,
   })
   const animatedWidth = useSharedValue(targetWidth)
   const keyboardProgress = useSharedValue(Math.max(0, keyboardLift))
@@ -209,45 +209,22 @@ export function ModelSelector({
   onPress: () => void
   testID?: string
 }) {
-  const foreground = selected ? colors.ui.icon.accentForeground : colors.textSecondary
   return (
-    <IslePressable
+    <ThemeModelSelectorExpression
+      family={family}
+      colors={colors}
+      expression={resolveThemeComponentExpression(family, 'modelSelector')}
       testID={testID}
-      haptic
-      accessibilityRole="button"
+      label={label}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ selected, expanded }}
+      maxWidth={maxWidth}
+      selected={selected || expanded}
+      iconOnly={iconOnly}
+      ellipsizeMode={ellipsizeMode}
+      icon={icon}
       onPress={onPress}
-      style={[
-        styles.independentSurface,
-        {
-          minWidth: iconOnly ? 44 : 96,
-          maxWidth,
-          height: 44,
-          paddingHorizontal: 10,
-          borderRadius: 22,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 7,
-          backgroundColor: colors.ui.semantic.surface.base,
-          borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-          borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
-          shadowColor: colors.shadowTint,
-          shadowOpacity: 0.08,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 5 },
-          elevation: 1,
-        },
-      ]}
-    >
-      <View style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}>
-        {icon ?? <AppIcon name="model" color={foreground} size={15} strokeWidth={appIconStroke.strong} />}
-      </View>
-      {!iconOnly ? <Text numberOfLines={1} ellipsizeMode={ellipsizeMode} style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>{label}</Text> : null}
-      <AppIcon name="collapse" color={colors.textTertiary} size={14} strokeWidth={appIconStroke.strong} />
-    </IslePressable>
+    />
   )
 }
 
@@ -312,6 +289,11 @@ export function MessageInput({
   tools: MessageInputLongDraftTools
   inputProps?: Partial<TextInputProps>
 }) {
+  const family = colors.design?.family ?? 'minimal'
+  const minimal = family === 'minimal'
+  const monet = family === 'monet'
+  const material = family === 'material'
+  const glass = family === 'liquid-glass'
   const [toolMode, setToolMode] = useState<'formatting' | 'more'>('formatting')
   const animatedSurfaceHeight = useSharedValue(surfaceHeight)
   const largeProgress = useSharedValue(sizeMode === 'large' ? 1 : 0)
@@ -506,13 +488,39 @@ export function MessageInput({
       testID="message-input-surface"
       style={[
         styles.messageInputSurface,
+        minimal ? styles.messageInputMinimal : null,
+        monet ? styles.messageInputMonet : null,
+        material ? styles.messageInputMaterial : null,
+        glass ? styles.messageInputGlass : null,
         {
-          borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+          borderWidth: minimal ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+          shadowOpacity: glass ? 0.05 : 0,
+          shadowRadius: glass ? 8 : 0,
+          shadowOffset: { width: 0, height: glass ? 3 : 0 },
+          elevation: glass ? 1 : 0,
         },
         surfaceStyle,
         focusStyle,
       ]}
     >
+      {minimal ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.minimalInputBaseline, { backgroundColor: focused ? colors.ui.input.focus : colors.ui.input.border }]} />
+      ) : null}
+      {monet ? (
+        <>
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetInputWash, { backgroundColor: colors.ui.icon.accentBackground }]} />
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetInputBrush, { backgroundColor: colors.primary }]} />
+        </>
+      ) : null}
+      {material ? (
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.materialInputStateLayer, { backgroundColor: colors.primary, opacity: focused ? 0.09 : 0.035 }]} />
+      ) : null}
+      {glass ? (
+        <>
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassInputReadingPlane, { borderColor: colors.ui.actionBar.itemBorder }]} />
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassInputHighlight, { backgroundColor: colors.ui.control.primaryForeground }]} />
+        </>
+      ) : null}
       <AnimatedView
         pointerEvents={sizeMode === 'large' ? 'auto' : 'none'}
         style={[styles.longDraftHeader, headerStyle]}
@@ -670,6 +678,10 @@ export function SendButton({
   accessibilityLabel: string
   accessibilityHint: string
 }) {
+  const family = colors.design?.family ?? 'minimal'
+  const minimal = family === 'minimal'
+  const material = family === 'material'
+  const glass = family === 'liquid-glass'
   const state = sending ? 'sending' : streaming && !hasSendableDraft ? 'stop' : canSend ? 'send' : 'disabled'
   const transition = useSharedValue(1)
   const sizeProgress = useSharedValue(activityState === 'idle' ? 0 : 1)
@@ -710,7 +722,7 @@ export function SendButton({
       width: size,
       minWidth: size,
       height: size,
-      borderRadius: 20 + sizeProgress.value * 2,
+      borderRadius: minimal ? 4 : 20 + sizeProgress.value * 2,
       backgroundColor: interpolateColor(
         stateColorProgress.value,
         [0, 1, 2],
@@ -732,12 +744,12 @@ export function SendButton({
       style={[
         styles.independentSurface,
         {
-          borderRadius: 22,
+          borderRadius: minimal ? 4 : 22,
           shadowColor: colors.shadowTint,
-          shadowOpacity: 0.08,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 5 },
-          elevation: 1,
+          shadowOpacity: glass ? 0.06 : material ? 0.03 : 0,
+          shadowRadius: glass || material ? 7 : 0,
+          shadowOffset: { width: 0, height: glass || material ? 3 : 0 },
+          elevation: glass || material ? 1 : 0,
         },
         sizeStyle,
       ]}
@@ -760,11 +772,11 @@ export function SendButton({
         hitSlop={{ top: 12, right: 10, bottom: 12, left: 10 }}
         style={{
           flex: 1,
-          borderRadius: 22,
+          borderRadius: minimal ? 4 : 22,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: 'transparent',
-          borderWidth: enabled ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+          borderWidth: enabled ? 0 : minimal ? StyleSheet.hairlineWidth : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
           borderColor: enabled ? 'transparent' : colors.ui.control.disabledBorder,
         }}
       >
@@ -816,6 +828,13 @@ export function ModelMenu({
 }) {
   const { t } = useTranslation()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
+  const family = colors.design?.family ?? 'minimal'
+  const minimal = family === 'minimal'
+  const material = family === 'material'
+  const glass = family === 'liquid-glass'
+  const menuBackdropStyle = glass && Platform.OS === 'web'
+    ? ({ backdropFilter: 'blur(16px) saturate(1.12)' } as unknown as ViewStyle)
+    : null
   const [mounted, setMounted] = useState(visible)
   const estimatedMenuHeight = 58 + Math.min(items.length, 4) * 60 + 60
   const progress = useSharedValue(visible ? 1 : 0)
@@ -886,91 +905,248 @@ export function ModelMenu({
           testID="model-menu"
           style={[
             styles.modelMenu,
+            minimal ? styles.modelMenuMinimal : null,
+            family === 'monet' ? styles.modelMenuMonet : null,
+            material ? styles.modelMenuMaterial : null,
+            glass ? styles.modelMenuGlass : null,
             placementStyle,
             {
-              backgroundColor: colors.ui.semantic.surface.raised,
+              backgroundColor: minimal ? colors.ui.semantic.surface.base : glass ? colors.ui.semantic.surface.overlay : material ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base,
               borderColor: colors.ui.semantic.chrome.border,
+              borderWidth: glass ? 1 : StyleSheet.hairlineWidth,
+              borderRadius: minimal ? 4 : glass ? 16 : material ? 12 : 10,
+              shadowOpacity: glass ? 0.07 : material ? 0.04 : 0,
+              shadowRadius: glass || material ? 10 : 0,
+              shadowOffset: { width: 0, height: glass || material ? 3 : 0 },
+              elevation: glass || material ? 2 : 0,
             },
+            menuBackdropStyle,
             menuMotionStyle,
           ]}
         >
-          <View style={styles.modelMenuHeader}>
-            <View style={styles.modelMenuTitleRow}>
-              <ProviderBrandIcon brand={selectedId ? (items.find((item) => item.id === selectedId)?.brand ?? 'generic') : 'generic'} size={17} variant={isDark ? 'onDark' : 'onLight'} />
-              <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 10, fontWeight: '900', letterSpacing: 0.3, textTransform: 'uppercase' }}>{t('chat.model')}</Text>
-              <IslePressable
-                onPress={onClose}
-                accessibilityRole="button"
-                accessibilityLabel={t('dialog.closeLayer')}
-                style={styles.menuIconButton}
-              >
-                <AppIcon name="close" color={colors.textSecondary} size={14} strokeWidth={appIconStroke.strong} />
-              </IslePressable>
-            </View>
-          </View>
+          <ModelMenuHeader
+            family={family}
+            colors={colors}
+            isDark={isDark}
+            brand={selectedId ? (items.find((item) => item.id === selectedId)?.brand ?? 'generic') : 'generic'}
+            title={t('chat.model')}
+            closeLabel={t('dialog.closeLayer')}
+            onClose={onClose}
+          />
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             style={{ maxHeight: Math.min(280, windowHeight * 0.42) }}
-            contentContainerStyle={{ padding: 8, gap: 6 }}
+            contentContainerStyle={[
+              styles.modelMenuContent,
+              family === 'monet' ? styles.modelMenuContentMonet : null,
+              minimal ? styles.modelMenuContentMinimal : null,
+            ]}
           >
-            {items.length ? items.map((item) => {
-              const active = item.id === selectedId
-              return (
-                <IslePressable
-                  key={item.id}
-                  haptic
-                  onPress={() => {
-                    onSelect(item)
-                    onClose()
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${item.providerLabel} · ${item.modelLabel}`}
-                  accessibilityState={{ selected: active }}
-                  style={{
-                    minHeight: 48,
-                    paddingHorizontal: 11,
-                    borderRadius: colors.ui.radius.field,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 9,
-                    backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted,
-                    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-                    borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
-                  }}
-                >
-                  <View style={{ width: 26, height: 26, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.icon.accentBackground : colors.ui.semantic.surface.base }}>
-                    <ProviderBrandIcon brand={item.brand} size={16} variant={isDark ? 'onDark' : 'onLight'} />
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text numberOfLines={1} style={{ color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{item.modelLabel}</Text>
-                    <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '700', marginTop: 1 }}>{item.providerLabel}</Text>
-                  </View>
-                  <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: active ? colors.ui.control.primaryBackground : colors.ui.semantic.chrome.border, alignItems: 'center', justifyContent: 'center' }}>
-                    {active ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.ui.control.primaryBackground }} /> : null}
-                  </View>
-                </IslePressable>
-              )
-            }) : (
+            {items.length ? items.map((item, index) => (
+              <ModelMenuRow
+                key={item.id}
+                family={family}
+                colors={colors}
+                item={item}
+                index={index}
+                active={item.id === selectedId}
+                isDark={isDark}
+                onPress={() => {
+                  onSelect(item)
+                  onClose()
+                }}
+              />
+            )) : (
               <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700', padding: 10 }}>{t('chat.noAvailableModels')}</Text>
             )}
-            <IslePressable
-              haptic
+            <ModelMenuConfigurationAction
+              family={family}
+              colors={colors}
+              label={t('chat.aiConfiguration')}
               onPress={() => {
                 onClose()
                 onOpenConfiguration()
               }}
-              accessibilityRole="button"
-              accessibilityLabel={t('chat.aiConfiguration')}
-              style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.control.primaryBackground, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.control.primaryBorder }}
-            >
-              <AppIcon name="settings-sliders" color={colors.ui.control.primaryForeground} size={15} strokeWidth={appIconStroke.strong} />
-              <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 11, fontWeight: '900' }}>{t('chat.aiConfiguration')}</Text>
-            </IslePressable>
+            />
           </ScrollView>
         </AnimatedView>
       </View>
     </Modal>
+  )
+}
+
+function ModelMenuHeader({
+  family,
+  colors,
+  isDark,
+  brand,
+  title,
+  closeLabel,
+  onClose,
+}: {
+  family: CanonicalThemeId
+  colors: ThemeColors
+  isDark: boolean
+  brand: ProviderBrand
+  title: string
+  closeLabel: string
+  onClose: () => void
+}) {
+  const close = (
+    <IslePressable onPress={onClose} accessibilityRole="button" accessibilityLabel={closeLabel} style={styles.menuIconButton}>
+      <AppIcon name="close" color={colors.textSecondary} size={14} strokeWidth={appIconStroke.strong} />
+    </IslePressable>
+  )
+  const brandIcon = <ProviderBrandIcon brand={brand} size={17} variant={isDark ? 'onDark' : 'onLight'} />
+
+  if (family === 'minimal') {
+    return (
+      <View testID="model-menu-header-minimal" style={[styles.modelMenuHeader, styles.modelMenuHeaderMinimal, { borderBottomColor: colors.ui.semantic.chrome.border }]}>
+        <View style={[styles.minimalMenuIndex, { borderLeftColor: colors.ui.control.primaryBorder }]} />
+        {brandIcon}
+        <Text style={[styles.minimalMenuTitle, { color: colors.text }]}>{title}</Text>
+        {close}
+      </View>
+    )
+  }
+
+  if (family === 'monet') {
+    return (
+      <View testID="model-menu-header-monet" style={[styles.modelMenuHeader, styles.modelMenuHeaderMonet]}>
+        <View pointerEvents="none" style={[styles.monetMenuHeaderWash, { backgroundColor: colors.ui.icon.accentBackground }]} />
+        {brandIcon}
+        <View style={styles.monetMenuTitleBlock}>
+          <Text style={[styles.monetMenuTitle, { color: colors.text }]}>{title}</Text>
+          <View style={styles.monetMenuBrushRow}>
+            <View style={[styles.monetMenuBrushLong, { backgroundColor: colors.primary }]} />
+            <View style={[styles.monetMenuBrushShort, { backgroundColor: colors.accent }]} />
+          </View>
+        </View>
+        {close}
+      </View>
+    )
+  }
+
+  if (family === 'material') {
+    return (
+      <View testID="model-menu-header-material" style={[styles.modelMenuHeader, styles.modelMenuHeaderMaterial, { borderBottomColor: colors.ui.section.divider }]}>
+        <View style={[styles.materialMenuLeading, { backgroundColor: colors.ui.icon.accentBackground }]}>{brandIcon}</View>
+        <Text style={[styles.materialMenuTitle, { color: colors.text }]}>{title}</Text>
+        <View style={[styles.materialMenuCloseState, { backgroundColor: colors.ui.actionBar.itemBackground }]}>{close}</View>
+      </View>
+    )
+  }
+
+  return (
+    <View testID="model-menu-header-liquid-glass" style={[styles.modelMenuHeader, styles.modelMenuHeaderGlass, { backgroundColor: colors.ui.semantic.chrome.background, borderColor: colors.ui.actionBar.itemBorder }]}>
+      <View pointerEvents="none" style={[styles.glassMenuHighlight, { backgroundColor: colors.ui.control.primaryForeground }]} />
+      <View style={[styles.glassMenuLeadingLens, { backgroundColor: colors.ui.semantic.surface.base }]}>{brandIcon}</View>
+      <Text style={[styles.glassMenuTitle, { color: colors.text }]}>{title}</Text>
+      {close}
+    </View>
+  )
+}
+
+function ModelMenuRow({
+  family,
+  colors,
+  item,
+  index,
+  active,
+  isDark,
+  onPress,
+}: {
+  family: CanonicalThemeId
+  colors: ThemeColors
+  item: ModelMenuItem
+  index: number
+  active: boolean
+  isDark: boolean
+  onPress: () => void
+}) {
+  const label = `${item.providerLabel} · ${item.modelLabel}`
+  const brandIcon = <ProviderBrandIcon brand={item.brand} size={16} variant={isDark ? 'onDark' : 'onLight'} />
+
+  if (family === 'minimal') {
+    return (
+      <IslePressable haptic onPress={onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} style={[styles.menuRowMinimal, { borderBottomColor: colors.ui.semantic.chrome.border }]}>
+        <Text style={[styles.minimalMenuRowIndex, { color: active ? colors.ui.icon.accentForeground : colors.textTertiary }]}>{String(index + 1).padStart(2, '0')}</Text>
+        <View style={[styles.minimalMenuRowRule, { backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.semantic.chrome.border }]} />
+        <View style={styles.modelMenuCopy}>
+          <Text numberOfLines={1} style={[styles.minimalMenuRowTitle, { color: active ? colors.text : colors.textSecondary }]}>{item.modelLabel}</Text>
+          <Text numberOfLines={1} style={[styles.modelMenuProvider, { color: colors.textTertiary }]}>{item.providerLabel}</Text>
+        </View>
+        {active ? <AppIcon name="check" color={colors.ui.icon.accentForeground} size={15} strokeWidth={appIconStroke.bold} /> : brandIcon}
+      </IslePressable>
+    )
+  }
+
+  if (family === 'monet') {
+    return (
+      <IslePressable haptic onPress={onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} style={[styles.menuRowMonet, index % 2 ? styles.menuRowMonetEven : styles.menuRowMonetOdd, { backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.base, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }]}>
+        <View pointerEvents="none" style={[styles.monetMenuRowWash, { backgroundColor: active ? colors.primary : colors.ui.icon.accentBackground }]} />
+        <View style={styles.monetMenuBrand}>{brandIcon}</View>
+        <View style={styles.modelMenuCopy}>
+          <Text numberOfLines={1} style={[styles.monetMenuRowTitle, { color: colors.text }]}>{item.modelLabel}</Text>
+          <Text numberOfLines={1} style={[styles.modelMenuProvider, { color: colors.textSecondary }]}>{item.providerLabel}</Text>
+        </View>
+        <View style={[styles.monetMenuSelectionBrush, { backgroundColor: active ? colors.primary : colors.ui.semantic.chrome.border }]} />
+      </IslePressable>
+    )
+  }
+
+  if (family === 'material') {
+    return (
+      <IslePressable haptic onPress={onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} style={[styles.menuRowMaterial, { backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : 'transparent' }]}>
+        <View style={[styles.materialMenuRowIcon, { backgroundColor: active ? colors.ui.icon.accentBackground : colors.ui.semantic.surface.base }]}>{brandIcon}</View>
+        <View style={styles.modelMenuCopy}>
+          <Text numberOfLines={1} style={[styles.materialMenuRowTitle, { color: colors.text }]}>{item.modelLabel}</Text>
+          <Text numberOfLines={1} style={[styles.modelMenuProvider, { color: colors.textSecondary }]}>{item.providerLabel}</Text>
+        </View>
+        {active ? <AppIcon name="check" color={colors.ui.control.primaryBackground} size={18} strokeWidth={appIconStroke.bold} /> : null}
+      </IslePressable>
+    )
+  }
+
+  return (
+    <IslePressable haptic onPress={onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} style={[styles.menuRowGlass, { backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.chrome.background, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }]}>
+      <View pointerEvents="none" style={[styles.glassMenuRowHighlight, { backgroundColor: colors.ui.control.primaryForeground }]} />
+      <View style={[styles.glassMenuRowLens, { backgroundColor: colors.ui.semantic.surface.base }]}>{brandIcon}</View>
+      <View style={styles.modelMenuCopy}>
+        <Text numberOfLines={1} style={[styles.glassMenuRowTitle, { color: colors.text }]}>{item.modelLabel}</Text>
+        <Text numberOfLines={1} style={[styles.modelMenuProvider, { color: colors.textSecondary }]}>{item.providerLabel}</Text>
+      </View>
+      <View style={[styles.glassMenuRadio, { borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }]}>
+        {active ? <View style={[styles.glassMenuRadioDot, { backgroundColor: colors.ui.control.primaryBackground }]} /> : null}
+      </View>
+    </IslePressable>
+  )
+}
+
+function ModelMenuConfigurationAction({ family, colors, label, onPress }: { family: CanonicalThemeId; colors: ThemeColors; label: string; onPress: () => void }) {
+  return (
+    <IslePressable
+      haptic
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={[
+        styles.modelMenuConfiguration,
+        family === 'minimal' ? styles.modelMenuConfigurationMinimal : null,
+        family === 'monet' ? styles.modelMenuConfigurationMonet : null,
+        family === 'material' ? styles.modelMenuConfigurationMaterial : null,
+        family === 'liquid-glass' ? styles.modelMenuConfigurationGlass : null,
+        {
+          backgroundColor: family === 'minimal' ? 'transparent' : colors.ui.control.primaryBackground,
+          borderColor: family === 'minimal' ? colors.ui.semantic.chrome.border : colors.ui.control.primaryBorder,
+        },
+      ]}
+    >
+      <AppIcon name="settings-sliders" color={family === 'minimal' ? colors.textSecondary : colors.ui.control.primaryForeground} size={15} strokeWidth={appIconStroke.strong} />
+      <Text style={[styles.modelMenuConfigurationText, { color: family === 'minimal' ? colors.text : colors.ui.control.primaryForeground }]}>{label}</Text>
+      {family === 'minimal' ? <AppIcon name="arrow-right" color={colors.textTertiary} size={14} /> : null}
+    </IslePressable>
   )
 }
 
@@ -997,11 +1173,74 @@ const styles = StyleSheet.create({
     marginHorizontal: 0,
     borderRadius: 22,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 1,
+    // The dock is flat, so the field needs no lift of its own; the field's own
+    // fill and focus outline carry the affordance.
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+  },
+  messageInputMinimal: {
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+    overflow: 'visible',
+  },
+  messageInputMonet: {
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 9,
+    borderBottomRightRadius: 20,
+    borderBottomLeftRadius: 12,
+  },
+  messageInputMaterial: {
+    borderRadius: 12,
+  },
+  messageInputGlass: {
+    borderRadius: 20,
+  },
+  minimalInputBaseline: {
+    position: 'absolute',
+    right: 4,
+    bottom: 4,
+    left: 4,
+    height: StyleSheet.hairlineWidth,
+  },
+  monetInputWash: {
+    position: 'absolute',
+    top: -12,
+    right: -18,
+    width: 86,
+    height: 54,
+    borderBottomLeftRadius: 48,
+    opacity: 0.18,
+  },
+  monetInputBrush: {
+    position: 'absolute',
+    top: 9,
+    bottom: 9,
+    left: 3,
+    width: 3,
+    borderRadius: 2,
+    opacity: 0.46,
+  },
+  materialInputStateLayer: {
+    ...StyleSheet.absoluteFill,
+  },
+  glassInputReadingPlane: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+    bottom: 3,
+    left: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 17,
+    opacity: 0.42,
+  },
+  glassInputHighlight: {
+    position: 'absolute',
+    top: 3,
+    right: 18,
+    left: 18,
+    height: StyleSheet.hairlineWidth,
+    opacity: 0.48,
   },
   messageInput: {
     width: '100%',
@@ -1072,18 +1311,71 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 8,
   },
+  modelMenuMinimal: { borderRadius: 2 },
+  modelMenuMonet: { borderTopLeftRadius: 20, borderTopRightRadius: 10, borderBottomRightRadius: 26, borderBottomLeftRadius: 14 },
+  modelMenuMaterial: { borderRadius: 12 },
+  modelMenuGlass: { borderRadius: 24 },
+  modelMenuContent: { padding: 8, gap: 6 },
+  modelMenuContentMinimal: { paddingTop: 2, gap: 0 },
+  modelMenuContentMonet: { paddingHorizontal: 10, gap: 8 },
   modelMenuHeader: {
     paddingHorizontal: 10,
     paddingTop: 8,
     paddingBottom: 6,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  modelMenuHeaderMinimal: { minHeight: 44, paddingVertical: 3, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  modelMenuHeaderMonet: { minHeight: 54, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 9, overflow: 'hidden', borderBottomWidth: 0 },
+  modelMenuHeaderMaterial: { minHeight: 56, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  modelMenuHeaderGlass: { minHeight: 50, margin: 5, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: StyleSheet.hairlineWidth, borderRadius: 19, overflow: 'hidden' },
   modelMenuTitleRow: {
     minHeight: 36,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  minimalMenuIndex: { width: 8, height: 22, borderLeftWidth: 2 },
+  minimalMenuTitle: { flex: 1, fontSize: 11, lineHeight: 15, fontWeight: '800', textTransform: 'uppercase' },
+  monetMenuHeaderWash: { position: 'absolute', top: -24, right: -18, width: 120, height: 74, borderBottomLeftRadius: 64, opacity: 0.24 },
+  monetMenuTitleBlock: { flex: 1, minWidth: 0 },
+  monetMenuTitle: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  monetMenuBrushRow: { width: 84, height: 3, marginTop: 3, flexDirection: 'row', gap: 4 },
+  monetMenuBrushLong: { flex: 1, borderRadius: 2 },
+  monetMenuBrushShort: { width: 20, borderRadius: 2 },
+  materialMenuLeading: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  materialMenuTitle: { flex: 1, fontSize: 14, lineHeight: 19, fontWeight: '700' },
+  materialMenuCloseState: { borderRadius: 20 },
+  glassMenuHighlight: { position: 'absolute', top: 1, right: 18, left: 18, height: StyleSheet.hairlineWidth, opacity: 0.5 },
+  glassMenuLeadingLens: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  glassMenuTitle: { flex: 1, fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  modelMenuCopy: { flex: 1, minWidth: 0 },
+  modelMenuProvider: { marginTop: 1, fontSize: 10, lineHeight: 13, fontWeight: '600' },
+  menuRowMinimal: { minHeight: 52, paddingHorizontal: 4, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth },
+  minimalMenuRowIndex: { width: 22, fontSize: 9, lineHeight: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  minimalMenuRowRule: { width: 2, alignSelf: 'stretch', marginVertical: 9 },
+  minimalMenuRowTitle: { fontSize: 12, lineHeight: 16, fontWeight: '700' },
+  menuRowMonet: { minHeight: 52, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  menuRowMonetOdd: { marginRight: 7, borderTopLeftRadius: 15, borderTopRightRadius: 8, borderBottomRightRadius: 17, borderBottomLeftRadius: 10 },
+  menuRowMonetEven: { marginLeft: 7, borderTopLeftRadius: 9, borderTopRightRadius: 16, borderBottomRightRadius: 10, borderBottomLeftRadius: 18 },
+  monetMenuRowWash: { position: 'absolute', top: -18, right: -14, width: 76, height: 54, borderBottomLeftRadius: 48, opacity: 0.18 },
+  monetMenuBrand: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  monetMenuRowTitle: { fontSize: 12.5, lineHeight: 17, fontWeight: '700' },
+  monetMenuSelectionBrush: { width: 18, height: 4, borderRadius: 2, opacity: 0.7 },
+  menuRowMaterial: { minHeight: 52, paddingHorizontal: 10, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  materialMenuRowIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  materialMenuRowTitle: { fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  menuRowGlass: { minHeight: 52, paddingHorizontal: 8, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 9, overflow: 'hidden' },
+  glassMenuRowHighlight: { position: 'absolute', top: 1, right: 16, left: 16, height: StyleSheet.hairlineWidth, opacity: 0.42 },
+  glassMenuRowLens: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  glassMenuRowTitle: { fontSize: 12.5, lineHeight: 17, fontWeight: '700' },
+  glassMenuRadio: { width: 18, height: 18, borderRadius: 9, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  glassMenuRadioDot: { width: 8, height: 8, borderRadius: 4 },
+  modelMenuConfiguration: { minHeight: 46, marginTop: 2, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: StyleSheet.hairlineWidth },
+  modelMenuConfigurationMinimal: { borderRadius: 0, borderRightWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0 },
+  modelMenuConfigurationMonet: { marginHorizontal: 4, borderTopLeftRadius: 14, borderTopRightRadius: 8, borderBottomRightRadius: 18, borderBottomLeftRadius: 10 },
+  modelMenuConfigurationMaterial: { borderRadius: 23, justifyContent: 'center' },
+  modelMenuConfigurationGlass: { borderRadius: 23, justifyContent: 'center' },
+  modelMenuConfigurationText: { flex: 1, fontSize: 11, lineHeight: 15, fontWeight: '800' },
   menuIconButton: {
     width: 36,
     height: 36,

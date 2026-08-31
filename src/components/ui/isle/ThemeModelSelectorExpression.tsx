@@ -28,7 +28,6 @@ interface ThemeModelSelectorExpressionProps {
 
 const decorativeAccessibility = {
   accessible: false,
-  accessibilityElementsHidden: true,
   importantForAccessibility: 'no-hide-descendants' as const,
   pointerEvents: 'none' as const,
 }
@@ -377,7 +376,7 @@ const styles = StyleSheet.create({
   materialLabelSlot: { minWidth: 0, flex: 1, justifyContent: 'center', paddingHorizontal: 6 },
   materialLabel: { fontSize: 11.5, lineHeight: 16, fontWeight: '800', includeFontPadding: false },
   materialDisclosureSlot: { width: 26, height: 26, flexShrink: 0, alignSelf: 'center', marginRight: 4, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  glassPressable: { height: 44, overflow: 'hidden', borderRadius: 20, shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
+  glassPressable: { height: 44, overflow: 'hidden', borderRadius: 20, shadowOpacity: 0, shadowRadius: 0, elevation: 0 },
   glassComposition: { position: 'relative', flex: 1, minWidth: 0, justifyContent: 'center', paddingHorizontal: 3 },
   glassInnerPlane: { minWidth: 0, height: 34, paddingLeft: 4, paddingRight: 3, borderWidth: StyleSheet.hairlineWidth, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 5 },
   glassInnerPlaneIconOnly: { justifyContent: 'center', paddingHorizontal: 0 },
