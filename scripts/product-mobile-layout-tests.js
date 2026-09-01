@@ -11,13 +11,15 @@ if (process.argv.includes('--focus=pager-transition')) {
   process.exit(0)
 }
 
-const ts = require('typescript')
+const { transformTypeScriptModule } = require('./node-ts-support')
 const originalResolve = Module._resolveFilename
 
 registerTypeScriptSupport()
 
 const {
   PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT,
+  PRODUCT_MOBILE_CONVERSATION_NAVIGATION_BREAKPOINT,
+  PRODUCT_MOBILE_CONVERSATION_NAVIGATION_DOCK_CLEARANCE,
   PRODUCT_MOBILE_LAYOUT_AUDIT_VIEWPORTS,
   PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS,
   resolveProductMobileChatConfigurationSheetLayout,
@@ -44,17 +46,7 @@ function registerTypeScriptSupport() {
 
   const hook = function compileTypeScript(module, filename) {
     const source = fs.readFileSync(filename, 'utf8')
-    const output = ts.transpileModule(source, {
-      compilerOptions: {
-        esModuleInterop: true,
-        jsx: ts.JsxEmit.ReactJSX,
-        module: ts.ModuleKind.CommonJS,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        target: ts.ScriptTarget.ES2021,
-      },
-      fileName: filename,
-    })
-    module._compile(output.outputText, filename)
+    module._compile(transformTypeScriptModule(source, filename), filename)
   }
   hook.isProductMobileLayoutHook = true
   require.extensions['.ts'] = hook
@@ -255,6 +247,8 @@ function run() {
     assert.ok(messageList.topInset >= 68, `${width}px message list clears persistent top chrome`)
     assert.ok(messageList.conversationHeaderTopPadding >= messageList.topInset, `${width}px conversation header starts below top chrome`)
     assert.ok(messageList.emptyConversationTopPadding > messageList.conversationHeaderTopPadding, `${width}px empty state has extra top breathing room`)
+    assert.equal(messageList.horizontalPadding, width < 340 ? 12 : 14, `${width}px message list uses the denser responsive gutter`)
+    assert.equal(messageList.conversationNavigationDockClearance, PRODUCT_MOBILE_CONVERSATION_NAVIGATION_DOCK_CLEARANCE, `${width}px mobile message list reserves the navigation dock clearance`)
 
     assert.equal(transition.persistentTopBarOffset, 68, `${width}px pager reserves the persistent navigation chrome`)
     assert.ok(transition.activeHorizontalOffset < transition.minHorizontalDrag, `${width}px pager waits for a deliberate horizontal drag`)
@@ -285,6 +279,10 @@ function run() {
     assert.equal(keyboardFrame.scrollFallbackExpected, true, `${width}px keyboard-open empty state expects scroll instead of hidden controls`)
     assert.equal(keyboardFrame.composerOverlapRisk, false, `${width}px keyboard-open frame still reserves composer clearance`)
   }
+
+  const desktopMessageList = resolveProductMobileMessageListLayout(PRODUCT_MOBILE_CONVERSATION_NAVIGATION_BREAKPOINT)
+  assert.equal(desktopMessageList.horizontalPadding, 16, 'desktop message list keeps a restrained safe gutter')
+  assert.equal(desktopMessageList.conversationNavigationDockClearance, 0, 'desktop message list does not reserve mobile navigation dock clearance')
 
   assert.ok(CHAT_PRESENTATION_CATALOG.starters.length >= 3, 'Chat keeps one-tap starter actions for mobile entry')
   assert.ok(CHAT_PRESENTATION_CATALOG.cues.length >= 3, 'Chat retains cue metadata without rendering a mode strip')
@@ -392,6 +390,7 @@ function assertSourceIntegration() {
   const chatActiveMessageEmptyStateSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageEmptyState.tsx'), 'utf8')
   const chatActiveMessageItemSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageItem.tsx'), 'utf8')
   const chatActiveNavigationRailSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveNavigationRail.tsx'), 'utf8')
+  const conversationNavigationRailSource = fs.readFileSync(path.join(root, 'src/components/chat/ConversationNavigationRail.tsx'), 'utf8')
   const chatActiveChromeLayerSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveChromeLayer.tsx'), 'utf8')
   const chatActiveControlsLayerSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveControlsLayer.tsx'), 'utf8')
   const chatActiveWorkspaceControllersSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceControllers.ts'), 'utf8')
@@ -491,6 +490,19 @@ function assertSourceIntegration() {
   assert.ok(chatActiveWorkspaceLayoutSource.includes('resolveProductMobileMessageListLayout(activeWindowWidth'), 'chat workspace uses shared message-list top spacing metrics')
   assert.ok(chatActiveWorkspaceLayoutSource.includes('topChromeInset: Math.max(topChromeInset, visualTopInset)'), 'chat message-list top spacing includes the device safe area below persistent local chrome')
   assert.ok(chatActiveMessageVirtualListSource.includes('messageListLayout.horizontalPadding'), 'message list horizontal gutters are source-audited')
+  assert.ok(
+    chatActiveMessageListSource.includes('messageListLayout.conversationNavigationDockClearance')
+      && chatActiveMessageListSource.includes('messageListContentBottomPadding = mobileConversationNavigationEnabled')
+      && chatActiveMessageListSource.includes('messageListBottomPadding + conversationNavigationViewportClearance')
+      && !chatActiveMessageListSource.includes('marginBottom: messageListViewportBottomInset'),
+    'the floating navigation dock overlays the message list: the viewport frame stays stable and composer/navigation clearance is reserved as scroll content padding instead of resizing the list',
+  )
+  assert.match(chatActiveMessageVirtualListSource, /paddingBottom: messageListBottomPadding/, 'virtualized message list consumes the composed bottom clearance')
+  assert.ok(chatActiveNavigationRailSource.includes('<AnimatePresence>') && chatActiveNavigationRailSource.includes('showAssistantNavigation && assistantNavigationFloatingVisible && activeAssistantNavigationItem'), 'hidden conversation navigation unmounts instead of lingering as a disabled subtree')
+  assert.ok(conversationNavigationRailSource.includes('from={{ opacity: 0, translateY: 2 }}') && conversationNavigationRailSource.includes('exit={{ opacity: 0, translateY: 2 }}'), 'conversation navigation animates enter/exit instead of intercepting pointer input while hidden')
+  assert.ok(conversationNavigationRailSource.includes('chat-conversation-navigation-latest') && conversationNavigationRailSource.includes('awayFromBottom'), 'expanded mobile conversation navigation owns the latest-message action')
+  assert.ok(chatActiveNavigationRailSource.includes('!assistantNavigationFloatingVisible') && chatActiveNavigationRailSource.includes('bottom: bottomOffset'), 'collapsed mobile latest action stays below the expanded dock and near the composer')
+  assert.ok(chatMessageListScrollStateSource.includes('nextViewport.awayFromBottom') && chatMessageListScrollStateSource.includes('assistantNavigationProgrammaticLockUntil.current'), 'wheel and trackpad scrolling reveal conversation navigation without exposing programmatic auto-follow')
   assert.ok(chatActiveMessageFeedSource.includes("from './chatActiveMessageFeedState'") && chatActiveMessageFeedSource.includes("from './ChatActiveMessageVirtualList'") && chatActiveMessageFeedStateSource.includes("from './chatMessageListState'"), 'message feed state stays behind the active message feed state hook')
   assert.equal(chatActiveMessageFeedStateSource.includes("from '@/product/modeHandoff'"), false, 'message feed state does not restore product-mode handoff derivation')
   assert.ok(chatWorkspaceSource.includes('composerLayout.messageListBottomPadding'), 'message list bottom padding clears composer through shared metrics')
@@ -507,7 +519,9 @@ function assertSourceIntegration() {
   assert.ok(chatActiveWorkspaceLayoutSource.includes("from './FloatingChrome'") && chatActiveWorkspaceLayoutSource.includes("from './chatNoticeLayout'"), 'active Chat retains shared chrome and notice layout metrics')
   assert.ok(chatActiveWorkspaceViewSource.includes("from './ChatActiveChromeLayer'") && chatActiveChromeLayerSource.includes("from './FloatingChrome'") && floatingChromeSource.includes('export function FloatingChrome'), 'full top provider chrome stays behind reusable active chrome and floating chrome components')
   assert.ok(floatingChromeSource.includes('export const FLOATING_CHROME_SAFE_AREA_GAP = 0') && floatingChromeSource.includes('<ChatPersistentHeader'), 'floating chrome meets the parent safe area without adding a second visual gap and delegates controls to the persistent header')
-  assert.ok(floatingChromeStateSource.includes('const chromeCollapsed = false') && !floatingChromeStateSource.includes('setTimeout('), 'Chat header remains visible across idle, streaming, focus, and scroll state changes')
+  assert.ok(floatingChromeStateSource.includes('useState(false)') && floatingChromeStateSource.includes('collapseLocked') && !floatingChromeStateSource.includes('setTimeout('), 'Chat header visibility uses immediate state with explicit interaction locks')
+  assert.ok(floatingChromeSource.includes('<MotiView') && floatingChromeSource.includes('hiddenTranslateY') && floatingChromeSource.includes('transitionDuration'), 'Chat header auto-hide uses a bounded reduced-motion-aware transform')
+  assert.ok(chatMessageListScrollStateSource.includes('CHAT_CHROME_COLLAPSE_SCROLL_DISTANCE') && chatMessageListScrollStateSource.includes('CHAT_CHROME_RESTORE_SCROLL_DISTANCE') && chatMessageListScrollStateSource.includes('CHAT_CHROME_TOP_RESTORE_OFFSET') && chatMessageListScrollStateSource.includes('const chromeScrollActivity = navigationScrollActivity'), 'Chat header scroll visibility uses asymmetric hysteresis for touch, wheel, and trackpad input and always restores at the transcript top')
   assert.ok(chatActiveChromeLayerSource.includes('onNewConversation') && !chatActiveWorkspaceViewSource.includes('showFloatingControlOrb') && !chatActiveControlsLayerSource.includes('FloatingControlOrb'), 'Chat header remains visible while Composer owns the only toolbox entry')
   assert.ok(chatActiveControlsLayerSource.includes("from './MessageMultiSelectBar'"), 'active multi-select controls stay behind the controls layer instead of the active shell')
   assert.ok(chatEmptyStateSource.includes('maxWidth={starterLayout.emptyContentMaxWidth}'), 'Chat entry actions share the mobile content width budget')

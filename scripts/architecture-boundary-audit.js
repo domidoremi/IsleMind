@@ -998,8 +998,8 @@ const requiredContracts = [
       ['src/platform/native/expoPortableDataTransfer.ts', /FileSystem\.writeAsStringAsync\(uri, json[\s\S]*?publishPortableJsonFileToDownloads\(uri, filename\)[\s\S]*?Sharing\.shareAsync\(uri/],
       ['src/platform/native/boundedImportFile.ts', /readUtf8ImportFile[\s\S]*?isFileTooLargeError[\s\S]*?deleteTemporaryImportCopy/],
       ['src/modules/data-management/application/portableDataPayload.ts', /export function createPortableDataPayloadRuntime\([\s\S]*?async function exportPayload\([\s\S]*?async function importJson\(/],
-      ['src/modules/data-management/application/portableDataPayload.ts', /dependencies\.workspaces\.exportSnapshots\(\{[\s\S]*?includeEmptyScopeIds: Object\.values\(linkedActiveScopes\)[\s\S]*?JSON\.stringify\(payload, null, 2\)/],
-      ['src/modules/data-management/application/portableDataPayload.ts', /JSON\.parse\(json\)[\s\S]*?isExportPayload\(data\)[\s\S]*?dependencies\.recovery\.importApplication\(\{[\s\S]*?portableSource: json,[\s\S]*?conversations: normalizedConversations,[\s\S]*?providerMetadata: normalizedProviders,[\s\S]*?credentialProviders: data\.providers,[\s\S]*?knowledge: data\.context \?\? \{\},[\s\S]*?conversationIds: normalizedConversations\.map/],
+      ['src/modules/data-management/application/portableDataPayload.ts', /dependencies\.workspaces\.exportSnapshots\(\{[\s\S]*?includeEmptyScopeIds: Object\.values\(linkedActiveScopes\)[\s\S]*?createPortableBackupEnvelope\(payload, options\.selection[\s\S]*?JSON\.stringify\(serialized, null, 2\)/],
+      ['src/modules/data-management/application/portableDataPayload.ts', /JSON\.parse\(json\)[\s\S]*?migratePortableBackup\(data\)[\s\S]*?isExportPayload\(backup\.payload\)[\s\S]*?const selection = normalizePortableBackupSelection\(backup\.selection\)[\s\S]*?dependencies\.recovery\.importApplication\(\{[\s\S]*?portableSource: json,[\s\S]*?selection,[\s\S]*?preserveSecureState: selective,[\s\S]*?conversations: normalizedConversations,[\s\S]*?providerMetadata: normalizedProviders,[\s\S]*?credentialProviders: payload\.providers,[\s\S]*?knowledge,[\s\S]*?conversationIds: normalizedConversations\.map/],
       ['src/modules/data-management/application/portableDataPayload.ts', /if \(recovery\.status !== 'committed'\)[\s\S]*?recovery\.cancellationObserved[\s\S]*?'operation_cancelled'[\s\S]*?'persistence_failed'/],
       ['src/modules/data-management/application/portableDataPayload.ts', /importMem0Memories\(data, \{ defaultStatus: 'pending' \}\)/],
       ['src/modules/data-management/application/portableDataReset.ts', /export function createPortableDataResetRuntime<[\s\S]*?dependencies\.prepare\(\)[\s\S]*?Promise\.all\([\s\S]*?participant\.clear\(snapshot\)[\s\S]*?dependencies\.reportFailure\(error\)/],
@@ -1043,7 +1043,7 @@ const requiredContracts = [
       ['src/platform/storage/portableImportRecoveryStore.ts', /async digest\(value[\s\S]*?\^sha256:\[0-9a-f\]\{64\}\$/],
       ['src/platform/storage/sqlitePortableImportRecoveryBlobStorage.ts', /CREATE TABLE IF NOT EXISTS \$\{TABLE\}[\s\S]*?key TEXT PRIMARY KEY NOT NULL[\s\S]*?value TEXT NOT NULL[\s\S]*?SELECT value FROM \$\{TABLE\} WHERE key = \?[\s\S]*?INSERT OR REPLACE INTO \$\{TABLE\}[\s\S]*?DELETE FROM \$\{TABLE\} WHERE key = \?/],
       ['src/platform/storage/index.ts', /export \* from ['"]\.\/asyncStorageApplicationRecords['"][\s\S]*?export \* from ['"]\.\/portableImportRecoveryStore['"][\s\S]*?export \* from ['"]\.\/sqlitePortableImportRecoveryBlobStorage['"]/],
-      ['src/bootstrap/portableImportRecovery.ts', /const PARTICIPANT_IDS = Object\.freeze\(\[[\s\S]*?'workspaces'[\s\S]*?'application_records'[\s\S]*?'conversations'[\s\S]*?'secure_state'[\s\S]*?'knowledge'/],
+      ['src/bootstrap/portableImportRecovery.ts', /const PARTICIPANT_IDS = Object\.freeze\(\[[\s\S]*?'workspaces'[\s\S]*?'application_records'[\s\S]*?'conversations'[\s\S]*?'secure_state'[\s\S]*?'knowledge'[\s\S]*?'usage'/],
       ['src/bootstrap/portableImportRecovery.ts', /createAsyncStoragePortableImportRecoveryStore\(\{[\s\S]*?blobStorage: createSqlitePortableImportRecoveryBlobStorage\([\s\S]*?createExpoSqliteDatabaseProvider\(\)[\s\S]*?\)/],
       ['src/bootstrap/portableImportRecovery.ts', /const productionCoordinator = createPortableImportRecoveryCoordinator\(\{[\s\S]*?participants: productionParticipants/],
       ['src/bootstrap/portableImportRecovery.ts', /while \(envelope\.phase === 'rollback_required'\)[\s\S]*?dependencies\.participants\[index\]\.restore\(envelope\)[\s\S]*?completePortableImportRestoreParticipant/],
@@ -5239,11 +5239,15 @@ function checkChatWorkspaceExtractionBoundary(projectRoot) {
   const floatingChromeStateFile = 'src/components/chat/chatFloatingChromeState.ts'
   const floatingChromeStateText = readConsumerText(floatingChromeStateFile, 'chatFloatingChromeState')
   if (floatingChromeStateText) {
-    if (!/\bconst\s+chromeCollapsed\s*=\s*false\b/.test(floatingChromeStateText)) {
-      issues.push('chatFloatingChromeState must keep chromeCollapsed fixed to false for the persistent Chat header.')
+    if (
+      !/\buseState\s*\(\s*false\s*\)/.test(floatingChromeStateText) ||
+      !/\bcollapseLocked\b/.test(floatingChromeStateText) ||
+      !/\brestoreChrome\b/.test(floatingChromeStateText)
+    ) {
+      issues.push('chatFloatingChromeState must keep scroll collapse immediate, reversible, and locked while local interactions require the header.')
     }
     if (/\b(?:setTimeout|setInterval)\s*\(/.test(floatingChromeStateText)) {
-      issues.push('chatFloatingChromeState must not schedule idle timers for the persistent Chat header.')
+      issues.push('chatFloatingChromeState must not schedule idle timers for Chat header visibility.')
     }
   }
 
@@ -7886,8 +7890,8 @@ function runArchitectureBoundaryAuditSelfTest() {
       portableRecoveryBootstrapPath,
       portableRecoveryOriginals.get(portableRecoveryBootstrapPath)
         .replace(
-          "'workspaces', 'application_records', 'conversations', 'secure_state', 'knowledge'",
-          "'workspaces', 'application_records', 'secure_state', 'conversations', 'knowledge'",
+          "'workspaces', 'application_records', 'conversations', 'secure_state', 'knowledge', 'usage'",
+          "'workspaces', 'application_records', 'secure_state', 'conversations', 'knowledge', 'usage'",
         )
         .replace('await participant.cleanup(envelope)', 'await skipParticipantCleanup(envelope)')
         .replace('clearRuntimeLog()', 'keepRuntimeLog()'),
@@ -11947,8 +11951,10 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       [
         'export interface ChatFloatingChromeState {}',
         'export function useChatFloatingChromeState() {',
-        '  const chromeCollapsed = false',
-        '  return { chromeCollapsed }',
+        '  const collapseLocked = false',
+        '  const [chromeCollapsed] = useState(false)',
+        '  const restoreChrome = () => undefined',
+        '  return { chromeCollapsed, collapseLocked, restoreChrome }',
         '}',
       ].join('\n'),
     ],
@@ -13576,22 +13582,30 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '      includeEmptyScopeIds: Object.values(linkedActiveScopes),',
         '    })',
         '    const payload = { conversations: conversations.map(normalizeConversation) }',
-        '    return { json: JSON.stringify(payload, null, 2), workspaceEntries }',
+        '    const serialized = createPortableBackupEnvelope(payload, options.selection)',
+        '    return { json: JSON.stringify(serialized, null, 2), workspaceEntries }',
         '  }',
         '  async function importJson(json) {',
         '    const data = JSON.parse(json)',
-        '    if (isExportPayload(data)) {',
-        '      const normalizedProviders = data.providers',
-        '      const normalizedConversations = data.conversations',
+        '    const backup = migratePortableBackup(data)',
+        '    if (backup && isExportPayload(backup.payload)) {',
+        '      const payload = backup.payload',
+        '      const selection = normalizePortableBackupSelection(backup.selection)',
+        "      const selective = selection.mode === 'selective'",
+        '      const normalizedProviders = payload.providers',
+        '      const normalizedConversations = payload.conversations',
         '      const tavernEntries = []',
+        '      const knowledge = payload.context ?? {}',
         '      const recovery = await dependencies.recovery.importApplication({',
         '        portableSource: json,',
+        '        selection,',
+        '        preserveSecureState: selective,',
         '        conversations: normalizedConversations,',
         '        providerMetadata: normalizedProviders,',
-        '        credentialProviders: data.providers,',
+        '        credentialProviders: payload.providers,',
         '        skills: [],',
         '        mcpServers: [],',
-        '        knowledge: data.context ?? {},',
+        '        knowledge,',
         '        tavernEntries,',
         '        tavernActiveScopeLinks: {},',
         '        conversationIds: normalizedConversations.map((conversation) => conversation.id),',
@@ -13791,7 +13805,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '    createExpoSqliteDatabaseProvider(),',
         '  ),',
         '})',
-        "const PARTICIPANT_IDS = Object.freeze(['workspaces', 'application_records', 'conversations', 'secure_state', 'knowledge'])",
+        "const PARTICIPANT_IDS = Object.freeze(['workspaces', 'application_records', 'conversations', 'secure_state', 'knowledge', 'usage'])",
         'async function cleanupAndRemove(envelope) {',
         '  for (const participant of dependencies.participants) {',
         '    await participant.cleanup(envelope)',

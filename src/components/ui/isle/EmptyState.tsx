@@ -37,7 +37,9 @@ export function IsleEmptyState({ title, description, actionLabel, actionGlyph, a
   const iconSize = minimal ? 38 : compact ? 52 : 58
   const panelMaxWidth = Math.max(260, Math.min(340, width - 48))
   const actionMinWidth = Math.max(124, Math.min(148, panelMaxWidth * 0.44))
-  const panelMaterial = contextual || minimal ? 'transparent' : glass ? 'chrome' : material ? 'muted' : 'raised'
+  // Empty states are an open composition; only Material and Glass need a
+  // bounded surface to establish their tonal/lens hierarchy.
+  const panelMaterial = contextual || minimal || monet ? 'transparent' : glass ? 'chrome' : material ? 'muted' : 'raised'
   const iconSurface = contextual || minimal
     ? 'transparent'
     : toneColors
@@ -81,8 +83,8 @@ export function IsleEmptyState({ title, description, actionLabel, actionGlyph, a
             elevation: glass ? 3 : monet ? 1 : 0,
           }}
         >
-          {monet ? <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', top: 4, left: 10, right: 10, height: 2, borderRadius: 2, backgroundColor: colors.ui.control.focus, opacity: 0.22 }} /> : null}
-          {glass ? <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', top: 1, left: 9, right: 9, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.56 }} /> : null}
+          {monet ? <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', top: 4, left: 10, right: 10, height: 2, borderRadius: 2, backgroundColor: colors.ui.control.focus, opacity: 0.22 }} /> : null}
+          {glass ? <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', top: 1, left: 9, right: 9, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.56 }} /> : null}
           <AppIcon name={tone === 'error' ? 'warning' : 'message'} color={tone === 'error' ? colors.ui.tone.danger.foreground : colors.ui.icon.accentForeground} size={minimal ? 20 : compact ? 23 : 25} strokeWidth={minimal ? appIconStroke.regular : appIconStroke.fine} />
         </View>
         <IslePanel material={panelMaterial} elevated={expression.elevation !== 'none'} radius={panelRadius} style={{ width: '100%', maxWidth: panelMaxWidth }} contentStyle={{ padding: contentPadding }}>

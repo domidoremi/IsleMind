@@ -88,8 +88,8 @@ const criticalFallbacks = [
   ['minimal dark', cssFallbackBlock('minimal', 'dark'), { '--color-primary': '#a8dccb', '--color-controlprimarybackground': '#a8dccb', '--color-iconaccentbackground': '#174a3e', '--color-iconaccentforeground': '#c8f3e5' }],
   ['monet light', cssFallbackBlock('monet', 'light'), { '--color-primary': '#2f6e68', '--color-controlprimarybackground': '#2f6e68', '--color-iconaccentbackground': '#cfe8df', '--color-iconaccentforeground': '#153d3a' }],
   ['monet dark', cssFallbackBlock('monet', 'dark'), { '--color-primary': '#9dd6c8', '--color-controlprimarybackground': '#9dd6c8', '--color-iconaccentbackground': '#28564a', '--color-iconaccentforeground': '#c6efe2' }],
-  ['material light', cssFallbackBlock('material', 'light'), { '--color-primary': '#6750a4', '--color-controlprimarybackground': '#6750a4', '--color-iconaccentbackground': '#eaddff', '--color-iconaccentforeground': '#21005d' }],
-  ['material dark', cssFallbackBlock('material', 'dark'), { '--color-primary': '#d0bcff', '--color-controlprimarybackground': '#d0bcff', '--color-iconaccentbackground': '#4f378b', '--color-iconaccentforeground': '#eaddff' }],
+  ['material light', cssFallbackBlock('material', 'light'), { '--color-primary': '#365f86', '--color-controlprimarybackground': '#365f86', '--color-iconaccentbackground': '#d8e7f5', '--color-iconaccentforeground': '#17324a' }],
+  ['material dark', cssFallbackBlock('material', 'dark'), { '--color-primary': '#a6c8ea', '--color-controlprimarybackground': '#a6c8ea', '--color-iconaccentbackground': '#234b6d', '--color-iconaccentforeground': '#d3e7fa' }],
   ['liquid-glass light', cssFallbackBlock('liquid-glass', 'light'), { '--color-primary': '#155e87', '--color-controlprimarybackground': '#155e87', '--color-iconaccentbackground': 'rgba(139, 205, 237, 0.56)', '--color-iconaccentforeground': '#0a3047' }],
   ['liquid-glass dark', cssFallbackBlock('liquid-glass', 'dark'), { '--color-primary': '#8ed0f0', '--color-controlprimarybackground': '#8ed0f0', '--color-iconaccentbackground': 'rgba(55, 113, 145, 0.72)', '--color-iconaccentforeground': '#d7f1ff' }],
 ]

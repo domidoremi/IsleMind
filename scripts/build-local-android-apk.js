@@ -17,10 +17,21 @@ const apkOutputWaitMs = 10 * 60 * 1000
 const apkOutputPollMs = 2000
 const gradleNativeRetryAttempts = 3
 const preferredCmakeVersions = ['3.22.1', '4.1.2']
-const preferredAndroidJdkMajor = 17
+const preferredAndroidJdkMajor = 25
+const miseJavaInstallsDir = path.join('G:\\', 'dev', 'managers', 'mise', 'data', 'installs', 'java')
+const miseJavaPreferredHome = (() => {
+  try {
+    const versions = fs.readdirSync(miseJavaInstallsDir)
+      .filter((entry) => entry.startsWith(`${preferredAndroidJdkMajor}.`))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    return versions.length > 0 ? path.join(miseJavaInstallsDir, versions.at(-1)) : undefined
+  } catch {
+    return undefined
+  }
+})()
 const preferredAndroidJdkHomes = [
   process.env.ISLEMIND_ANDROID_JAVA_HOME,
-  path.join('G:\\', 'dev', 'managers', 'mise', 'data', 'installs', 'java', '17.0.2'),
+  miseJavaPreferredHome,
   'C:\\Program Files\\Android\\Android Studio\\jbr',
   'C:\\Program Files\\Eclipse Adoptium\\jdk-17',
   'C:\\Program Files\\Java\\jdk-17',
@@ -188,6 +199,13 @@ function envPathKey(env) {
 
 function childEnv(overrides = {}) {
   const env = { ...process.env, ...overrides }
+  // JDK 24+ prints a restricted-method WARNING that AGP's CMake/Prefab tasks treat as fatal;
+  // the warning originates in Gradle daemons spawned outside the daemon JVM, so it must be
+  // suppressed through the environment inherited by every child JVM.
+  const nativeAccessFlag = '--enable-native-access=ALL-UNNAMED'
+  if (!String(env.JAVA_TOOL_OPTIONS || '').includes(nativeAccessFlag)) {
+    env.JAVA_TOOL_OPTIONS = [env.JAVA_TOOL_OPTIONS, nativeAccessFlag].filter(Boolean).join(' ')
+  }
   if (!Object.prototype.hasOwnProperty.call(overrides, 'FORCE_COLOR')) {
     delete env.FORCE_COLOR
   }

@@ -1,8 +1,10 @@
 import {
   DEFAULT_USAGE_PRICING_ENTRIES,
   USAGE_RECORD_SCHEMA,
+  createSqliteUsagePortableSnapshotRepository,
   createSqliteUsageRecordRepository,
   createUsageStatisticsService,
+  resolveUsageRouteAttribution,
   type UsageAttemptReason,
   type UsageOperationSource,
   type UsagePricingEntry,
@@ -18,6 +20,9 @@ import type { AIProvider } from '@/types/providerContracts'
 import { conversationPersistence } from '@/bootstrap/conversationPersistence'
 
 const usageRecordRepository = createSqliteUsageRecordRepository(createExpoSqliteDatabaseProvider())
+export const usagePortableSnapshotRepository = createSqliteUsagePortableSnapshotRepository(
+  createExpoSqliteDatabaseProvider(),
+)
 export const usageStatisticsService = createUsageStatisticsService(usageRecordRepository, {
   builtInPricing: DEFAULT_USAGE_PRICING_ENTRIES,
 })
@@ -27,7 +32,7 @@ let legacyImportPromise: Promise<void> | undefined
 let lastRetentionAt = 0
 
 export interface ProviderUsageAttemptInput {
-  provider: Pick<AIProvider, 'id' | 'name'>
+  provider: Pick<AIProvider, 'id' | 'name' | 'type'>
   credentialGroupId?: string
   requestedModel?: string
   upstreamModel: string
@@ -46,22 +51,50 @@ export interface ProviderUsageAttemptInput {
   conversationId?: string
   runId?: string
   usage?: MessageUsage
+  /** Original route before a retry/fallback; omitted for the ordinary path. */
+  originalProviderId?: string
+  originalModel?: string
+  retryCount?: number
+  failoverCount?: number
+  attemptIdentity?: string
 }
 
 export async function recordProviderUsageAttempt(input: ProviderUsageAttemptInput): Promise<boolean> {
   const completedAt = input.completedAt ?? Date.now()
   const usage = input.usage
   try {
+    const recordId = nextUsageRecordId(input.provider.id, input.startedAt)
+    const providerId = bounded(input.provider.id, 120) || 'unknown-provider'
+    const upstreamModel = bounded(input.upstreamModel, 240) || 'unknown-model'
+    const attribution = resolveUsageRouteAttribution({
+      actualProviderId: providerId,
+      actualModel: upstreamModel,
+      originalProviderId: input.originalProviderId,
+      originalModel: input.originalModel,
+      attempt: input.attempt,
+      attemptReason: input.attemptReason,
+      retryCount: input.retryCount,
+      failoverCount: input.failoverCount,
+      attemptIdentity: input.attemptIdentity ?? recordId,
+    })
     return await usageStatisticsService.record({
       schema: USAGE_RECORD_SCHEMA,
-      id: nextUsageRecordId(input.provider.id, input.startedAt),
+      id: recordId,
       occurredAt: input.startedAt,
       completedAt,
-      providerId: bounded(input.provider.id, 120),
+      providerId,
+      providerType: bounded(input.provider.type, 64),
       providerName: bounded(input.provider.name, 120),
       ...(input.credentialGroupId ? { credentialGroupId: bounded(input.credentialGroupId, 120) } : {}),
-      requestedModel: bounded(input.requestedModel ?? input.upstreamModel, 240),
-      upstreamModel: bounded(input.upstreamModel, 240),
+      requestedModel: bounded(input.requestedModel ?? upstreamModel, 240) || upstreamModel,
+      upstreamModel,
+      originalProviderId: attribution.originalProviderId,
+      originalModel: attribution.originalModel,
+      actualProviderId: attribution.actualProviderId,
+      actualModel: attribution.actualModel,
+      retryCount: attribution.retryCount,
+      failoverCount: attribution.failoverCount,
+      attemptIdentity: attribution.attemptIdentity,
       ...(input.pricingModel ? { pricingModel: bounded(input.pricingModel, 240) } : {}),
       operationSource: input.operationSource,
       dataSource: usage?.source === 'estimated' ? 'estimated' : 'live-provider',

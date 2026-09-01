@@ -30,6 +30,7 @@ export function createUsageStatisticsService(
         record.providerId,
         record.pricingModel ?? record.upstreamModel,
         record.occurredAt,
+        record.providerType,
       )
       const cost = calculateUsageCost(record.tokens, pricing)
       return repository.append({
@@ -101,11 +102,17 @@ export function summarizeUsageRecords(
   let successCount = 0
   let failedCount = 0
   let estimatedCount = 0
+  let retryCount = 0
+  let failoverCount = 0
 
   for (const record of records) {
     if (record.status === 'success') successCount += 1
     if (record.status === 'failed') failedCount += 1
     if (record.measurementSource === 'estimated') estimatedCount += 1
+    retryCount += record.attemptReason === 'retry' || record.attemptReason === 'rectification'
+      ? 1
+      : Math.min(1, count(record.retryCount))
+    failoverCount += record.failoverCount ?? (record.attemptReason === 'fallback' ? 1 : 0)
     inputTokens += count(record.tokens.inputTokens)
     outputTokens += count(record.tokens.outputTokens)
     totalTokens += count(record.tokens.totalTokens ?? inferredTotal(record))
@@ -137,6 +144,8 @@ export function summarizeUsageRecords(
   let rollupRequestCount = 0
   for (const rollup of rollups) {
     rollupRequestCount += count(rollup.requestCount)
+    retryCount += count(rollup.retryCount)
+    failoverCount += count(rollup.failoverCount)
     successCount += count(rollup.successCount)
     failedCount += count(rollup.failedCount)
     if (rollup.measurementSource === 'estimated') estimatedCount += count(rollup.requestCount)
@@ -163,6 +172,8 @@ export function summarizeUsageRecords(
     successCount,
     failedCount,
     estimatedCount,
+    retryCount,
+    failoverCount,
     inputTokens,
     outputTokens,
     totalTokens,
@@ -231,7 +242,8 @@ function usageRecordsToCsv(records: readonly UsageRecord[], rollups: readonly Us
   const headers = [
     'record_type', 'request_count', 'time', 'provider', 'model', 'input_tokens', 'output_tokens', 'cache_creation_tokens',
     'cache_read_tokens', 'reasoning_tokens', 'duration_ms', 'first_token_ms', 'cost_usd',
-    'status', 'status_code', 'source', 'data_source',
+    'status', 'status_code', 'source', 'data_source', 'original_provider', 'original_model',
+    'actual_provider', 'actual_model', 'retry_count', 'failover_count', 'attempt_identity', 'attempt_reason',
   ]
   const rows = records.map((record) => [
     'request',
@@ -251,6 +263,14 @@ function usageRecordsToCsv(records: readonly UsageRecord[], rollups: readonly Us
     record.statusCode,
     record.operationSource,
     record.dataSource,
+    record.originalProviderId ?? record.providerId,
+    record.originalModel ?? record.requestedModel,
+    record.actualProviderId ?? record.providerId,
+    record.actualModel ?? record.upstreamModel,
+    record.retryCount ?? (record.attemptReason === 'retry' || record.attemptReason === 'rectification' ? record.attempt : 0),
+    record.failoverCount ?? (record.attemptReason === 'fallback' ? 1 : 0),
+    record.attemptIdentity,
+    record.attemptReason,
   ].map(csvCell).join(','))
   const rollupRows = rollups.map((rollup) => [
     'daily_rollup',
@@ -270,6 +290,14 @@ function usageRecordsToCsv(records: readonly UsageRecord[], rollups: readonly Us
     undefined,
     rollup.operationSource,
     rollup.dataSource,
+    undefined,
+    undefined,
+    rollup.providerId,
+    rollup.upstreamModel,
+    rollup.retryCount,
+    rollup.failoverCount,
+    undefined,
+    undefined,
   ].map(csvCell).join(','))
   return [headers.join(','), ...rows, ...rollupRows].join('\n')
 }

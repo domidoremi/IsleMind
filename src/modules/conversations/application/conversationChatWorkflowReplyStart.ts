@@ -17,7 +17,12 @@ import type {
   WorkflowCheckpointStore,
   WorkflowRuntimeBlockState,
 } from '@/modules/tasks'
-import type { Conversation, Message, MessageUsage } from '@/types/chatContracts'
+import type {
+  Conversation,
+  Message,
+  MessageUsage,
+  ResponseLifecycleStage,
+} from '@/types/chatContracts'
 import type { ChatErrorCode } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
 
@@ -70,10 +75,14 @@ export interface ConversationChatWorkflowReplyActivityFinishUpdates {
 export interface ConversationChatWorkflowReplyStartDependencies {
   clock: Clock
   createMessageId(): string
-  createTraceId(prefix: string): string
   createAbortController(): AbortController
   stopConversation(conversationId: string): void
   addMessage(conversationId: string, message: Message): void
+  projectLifecycleStage?(input: {
+    conversationId: string
+    assistantMessageId: string
+    stage: ResponseLifecycleStage
+  }): void
   getConversation(conversationId: string): Conversation | undefined
   getMessage(conversationId: string, messageId: string): Message | undefined
   updateMessage(
@@ -160,16 +169,6 @@ export function createConversationChatWorkflowReplyStarter(
       timestamp: startedAt,
       status: 'streaming',
       startedAt,
-      reasoning: [
-        {
-          id: dependencies.createTraceId('agent-runtime'),
-          type: 'system',
-          title: 'Chat workflow',
-          content: 'Chat workflow is running.',
-          status: 'running',
-          startedAt,
-        },
-      ],
     }
 
     dependencies.addMessage(conversation.id, assistantMessage)
@@ -189,6 +188,11 @@ export function createConversationChatWorkflowReplyStarter(
       controller: requestController,
       messageId: assistantMessage.id,
     })
+    dependencies.projectLifecycleStage?.({
+      conversationId: conversation.id,
+      assistantMessageId: assistantMessage.id,
+      stage: 'sending',
+    })
     let releaseTaskCancellation = (): void => undefined
 
     try {
@@ -197,6 +201,11 @@ export function createConversationChatWorkflowReplyStarter(
         .reverse()
         .find((message) => message.role === 'user')
       const runtime = dependencies.createChatWorkflowRuntime()
+      dependencies.projectLifecycleStage?.({
+        conversationId: conversation.id,
+        assistantMessageId: assistantMessage.id,
+        stage: 'waiting',
+      })
       const handle = dependencies.startChatWorkflowRun({
         runtime,
         controller: requestController,
@@ -209,6 +218,11 @@ export function createConversationChatWorkflowReplyStarter(
         responseMessageId: assistantMessage.id,
         executor: {
           execute: async ({ run, signal }) => {
+            dependencies.projectLifecycleStage?.({
+              conversationId: conversation.id,
+              assistantMessageId: assistantMessage.id,
+              stage: 'working',
+            })
             const resolution = await dependencies.resolveChatWorkflowReply({
               conversation,
               content,

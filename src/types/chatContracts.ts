@@ -22,6 +22,42 @@ export interface CommandReference {
   metadata?: Record<string, unknown>
 }
 
+/**
+ * The user-visible lifecycle of one assistant response. This is deliberately
+ * separate from MessageStatus: the latter remains the compact persistence and
+ * action-state discriminator, while this field records the observable work
+ * phases between sending and completion.
+ */
+export type ResponseLifecycleStage =
+  | 'preparing'
+  | 'sending'
+  | 'waiting'
+  | 'thinking'
+  | 'working'
+  | 'tool_calling'
+  | 'tool_result'
+  | 'generating'
+  | 'completed'
+  | 'error'
+  | 'cancelled'
+
+export interface MessageResponseLifecycleEntry {
+  stage: ResponseLifecycleStage
+  startedAt: number
+  completedAt?: number
+  /** A short, safe, high-level description; never raw chain-of-thought. */
+  summary?: string
+  traceId?: string
+}
+
+export interface MessageResponseLifecycle {
+  stage: ResponseLifecycleStage
+  startedAt: number
+  stageStartedAt: number
+  completedAt?: number
+  history: MessageResponseLifecycleEntry[]
+}
+
 export interface Message {
   id: string
   role: MessageRole
@@ -45,6 +81,7 @@ export interface Message {
   estimatedTokens?: boolean
   errorCode?: ChatErrorCode
   errorProviderId?: string
+  responseLifecycle?: MessageResponseLifecycle
 }
 
 export interface MessageUsage {

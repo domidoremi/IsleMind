@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const ts = require('typescript')
+const { transformTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const sourcePath = path.join(root, 'src/modules/integrations/mcpPresetCatalog.ts')
@@ -14,15 +14,9 @@ const publicApiSource = fs.readFileSync(
   path.join(root, 'src/modules/integrations/index.ts'),
   'utf8',
 )
-const transpiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
-  fileName: sourcePath,
-})
+const transpiled = transformTypeScriptModule(source, sourcePath)
 const moduleRef = { exports: {} }
-new Function('require', 'module', 'exports', transpiled.outputText)(require, moduleRef, moduleRef.exports)
+new Function('require', 'module', 'exports', transpiled)(require, moduleRef, moduleRef.exports)
 
 const presets = moduleRef.exports.listMcpRemotePresets()
 assert.deepEqual(presets.map((preset) => preset.id), ['context7', 'microsoft-learn'])

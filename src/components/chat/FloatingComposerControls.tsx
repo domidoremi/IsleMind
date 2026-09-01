@@ -50,8 +50,10 @@ export function ComposerToolButton({
   const { colors, isGlass } = useAppTheme()
   const motion = useMotionPreference()
   const accessibilityLabel = stateLabel ? `${label}: ${stateLabel}` : label
-  const itemSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const itemBorder = colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  // Glass panels already own the lens; wide tool controls stay transparent
+  // with a hairline instead of opaque item cards inside them.
+  const itemSurface = isGlass ? 'transparent' : colors.design?.semantic.surface.interactive.background ?? colors.ui.semantic.surface.muted
+  const itemBorder = colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.design?.semantic.surface.interactive.border ?? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
   const controlSize = 44
   const activeBackground = activeSurface === 'quiet' ? colors.ui.actionBar.itemActiveBackground : colors.ui.control.primaryBackground
@@ -87,7 +89,7 @@ export function ComposerToolButton({
           alignItems: 'center',
           justifyContent: 'center',
           gap: iconOnly ? 0 : compact ? 4 : 7,
-          borderWidth: active || !iconOnly ? subtleBorderWidth : 0,
+          borderWidth: active ? subtleBorderWidth : 0,
           opacity: disabled ? 0.68 : 1,
         }}
       >

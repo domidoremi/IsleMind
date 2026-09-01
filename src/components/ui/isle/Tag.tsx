@@ -51,6 +51,7 @@ export function IsleTag({
 }: IsleTagProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const family = colors.design?.family ?? 'minimal'
   const metrics = tagMetrics[size]
   const selected = color === 'default'
     ? { bg: colors.ui.tone.neutral.background, fg: colors.ui.tone.neutral.foreground }
@@ -62,7 +63,7 @@ export function IsleTag({
     : color === 'default'
       ? solid
         ? colors.ui.tone.ink.background
-        : colors.ui.tone.neutral.background
+        : family === 'minimal' ? 'transparent' : colors.ui.tone.neutral.background
       : variant === 'soft'
         ? withAlpha(selected.bg, 0.48)
         : selected.bg
@@ -91,11 +92,11 @@ export function IsleTag({
       paddingLeft: metrics.paddingHorizontal,
       paddingRight: closable ? 4 : metrics.paddingHorizontal,
       borderRadius: colors.ui.radius.chip,
-      borderWidth: outlined ? 1 : StyleSheet.hairlineWidth,
+      borderWidth: outlined ? 1 : color === 'default' && family === 'minimal' ? 0 : StyleSheet.hairlineWidth,
       borderStyle: variant === 'dashed' ? 'dashed' : 'solid',
       borderColor,
       backgroundColor,
-      opacity: disabled ? 0.5 : 1,
+      opacity: disabled ? 0.72 : 1,
       cursor: onPress && !disabled ? 'pointer' : 'auto',
     },
     style,

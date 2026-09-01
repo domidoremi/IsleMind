@@ -210,6 +210,7 @@ export function ModelSelector({
   testID?: string
 }) {
   const foreground = selected ? colors.ui.icon.accentForeground : colors.textSecondary
+  const activeMaterial = colors.design?.semantic.surface.active
   return (
     <IslePressable
       testID={testID}
@@ -225,20 +226,17 @@ export function ModelSelector({
           minWidth: iconOnly ? 44 : 96,
           maxWidth,
           height: 44,
-          paddingHorizontal: 10,
-          borderRadius: 22,
+          paddingHorizontal: iconOnly ? 0 : 8,
+          borderRadius: family === 'minimal' ? 4 : colors.design?.semantic.radius.medium ?? 12,
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'center',
           gap: 7,
-          backgroundColor: colors.ui.semantic.surface.base,
-          borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-          borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
-          shadowColor: colors.shadowTint,
-          shadowOpacity: 0.08,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 5 },
-          elevation: 1,
+          backgroundColor: selected ? activeMaterial?.background ?? colors.ui.actionBar.itemActiveBackground : 'transparent',
+          borderWidth: selected ? StyleSheet.hairlineWidth : 0,
+          borderColor: selected ? activeMaterial?.border ?? colors.ui.control.primaryBorder : 'transparent',
+          shadowOpacity: 0,
+          elevation: 0,
         },
       ]}
     >
@@ -312,6 +310,8 @@ export function MessageInput({
   tools: MessageInputLongDraftTools
   inputProps?: Partial<TextInputProps>
 }) {
+  const interactiveMaterial = colors.design?.semantic.surface.interactive
+  const activeMaterial = colors.design?.semantic.surface.active
   const [toolMode, setToolMode] = useState<'formatting' | 'more'>('formatting')
   const animatedSurfaceHeight = useSharedValue(surfaceHeight)
   const largeProgress = useSharedValue(sizeMode === 'large' ? 1 : 0)
@@ -354,18 +354,20 @@ export function MessageInput({
   const surfaceStyle = useAnimatedStyle(() => ({
     height: animatedSurfaceHeight.value,
   }))
-  const focusStyle = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(
-      focusProgress.value,
-      [0, 1],
-      [colors.ui.input.background, colors.ui.input.backgroundFocused],
-    ),
-    borderColor: interpolateColor(
-      focusProgress.value,
-      [0, 1],
-      [colors.ui.input.border, colors.ui.input.focus],
-    ),
-  }))
+  const focusStyle = useAnimatedStyle(() => {
+    return {
+      backgroundColor: interpolateColor(
+        focusProgress.value,
+        [0, 1],
+        [interactiveMaterial?.background ?? colors.ui.input.background, activeMaterial?.background ?? colors.ui.input.backgroundFocused],
+      ),
+      borderColor: interpolateColor(
+        focusProgress.value,
+        [0, 1],
+        [interactiveMaterial?.border ?? colors.ui.input.border, colors.ui.input.focus],
+      ),
+    }
+  })
   const headerStyle = useAnimatedStyle(() => ({
     height: COMPOSER_LARGE_HEADER_HEIGHT * largeProgress.value,
     opacity: largeProgress.value,
@@ -396,7 +398,7 @@ export function MessageInput({
     hint: string
     disabled?: boolean
     onPress: () => void
-    children: ReactNode
+    children: (foreground: string, disabled: boolean) => ReactNode
   }) => (
     <IslePressable
       key={key}
@@ -415,10 +417,9 @@ export function MessageInput({
         height: 40,
         alignItems: 'center',
         justifyContent: 'center',
-        opacity: disabled ? 0.42 : 1,
       }}
     >
-      {children}
+      {children(disabled ? colors.ui.control.disabledForeground : colors.textSecondary, disabled)}
     </IslePressable>
   )
 
@@ -429,9 +430,7 @@ export function MessageInput({
       hint: tools.labels.undoHint,
       disabled: !tools.canUndo,
       onPress: tools.onUndo,
-      children: (
-        <AppIcon name="undo" color={colors.textSecondary} size={16} />
-      ),
+      children: (foreground) => <AppIcon name="undo" color={foreground} size={16} />,
     }),
     renderToolButton({
       key: 'redo',
@@ -439,10 +438,10 @@ export function MessageInput({
       hint: tools.labels.redoHint,
       disabled: !tools.canRedo,
       onPress: tools.onRedo,
-      children: (
+      children: (foreground) => (
         <AppIcon
           name="undo"
-          color={colors.textSecondary}
+          color={foreground}
           size={16}
           style={{ transform: [{ scaleX: -1 }] }}
         />
@@ -453,28 +452,28 @@ export function MessageInput({
       label: tools.labels.unorderedList,
       hint: tools.labels.unorderedListHint,
       onPress: () => tools.onMarkdown('unordered-list'),
-      children: <Text style={{ color: colors.textSecondary, fontSize: 18 }}>•</Text>,
+      children: (foreground) => <Text style={{ color: foreground, fontSize: 18 }}>•</Text>,
     }),
     renderToolButton({
       key: 'ordered-list',
       label: tools.labels.orderedList,
       hint: tools.labels.orderedListHint,
       onPress: () => tools.onMarkdown('ordered-list'),
-      children: <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>1.</Text>,
+      children: (foreground) => <Text style={{ color: foreground, fontSize: 12, fontWeight: '900' }}>1.</Text>,
     }),
     renderToolButton({
       key: 'quote',
       label: tools.labels.quote,
       hint: tools.labels.quoteHint,
       onPress: () => tools.onMarkdown('quote'),
-      children: <Text style={{ color: colors.textSecondary, fontSize: 16, fontWeight: '900' }}>❯</Text>,
+      children: (foreground) => <Text style={{ color: foreground, fontSize: 16, fontWeight: '900' }}>❯</Text>,
     }),
     renderToolButton({
       key: 'code-block',
       label: tools.labels.codeBlock,
       hint: tools.labels.codeBlockHint,
       onPress: () => tools.onMarkdown('code-block'),
-      children: <AppIcon name="code" color={colors.textSecondary} size={16} />,
+      children: (foreground) => <AppIcon name="code" color={foreground} size={16} />,
     }),
   ]
 
@@ -484,17 +483,17 @@ export function MessageInput({
       label: tools.labels.copyAll,
       hint: tools.labels.copyAllHint,
       onPress: tools.onCopyAll,
-      children: <AppIcon name="copy" color={colors.textSecondary} size={16} />,
+      children: (foreground) => <AppIcon name="copy" color={foreground} size={16} />,
     }),
     renderToolButton({
       key: 'clear-text',
       label: tools.labels.clearText,
       hint: tools.labels.clearTextHint,
       onPress: tools.onClearText,
-      children: (
+      children: (foreground, disabled) => (
         <AppIcon
           name="delete"
-          color={colors.ui.tone.danger.foreground}
+          color={disabled ? foreground : colors.ui.tone.danger.foreground}
           size={16}
         />
       ),
@@ -507,7 +506,7 @@ export function MessageInput({
       style={[
         styles.messageInputSurface,
         {
-          borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+          borderWidth: StyleSheet.hairlineWidth,
         },
         surfaceStyle,
         focusStyle,
@@ -601,9 +600,7 @@ export function MessageInput({
           label: tools.labels.collapse,
           hint: tools.labels.collapseHint,
           onPress: tools.onCollapse,
-          children: (
-            <AppIcon name="collapse" color={colors.textSecondary} size={16} />
-          ),
+          children: (foreground) => <AppIcon name="collapse" color={foreground} size={16} />,
         })}
         <View style={styles.toolTrackFrame}>
           <ScrollView
@@ -630,10 +627,10 @@ export function MessageInput({
             setToolMode((current) =>
               current === 'formatting' ? 'more' : 'formatting'
             ),
-          children: (
+          children: (foreground) => (
             <AppIcon
               name={toolMode === 'formatting' ? 'more' : 'back-previous'}
-              color={colors.textSecondary}
+              color={foreground}
               size={16}
             />
           ),
@@ -733,11 +730,8 @@ export function SendButton({
         styles.independentSurface,
         {
           borderRadius: 22,
-          shadowColor: colors.shadowTint,
-          shadowOpacity: 0.08,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 5 },
-          elevation: 1,
+          shadowOpacity: 0,
+          elevation: 0,
         },
         sizeStyle,
       ]}
@@ -995,13 +989,8 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     marginHorizontal: 0,
-    borderRadius: 22,
+    borderRadius: 12,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 1,
   },
   messageInput: {
     width: '100%',

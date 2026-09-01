@@ -46,6 +46,11 @@ export const conversationAssistantPlainChatHandoffRuntime =
       )?.status === 'cancelled'
     },
     async startPlainChatRun(input) {
+      useChatStore.getState().transitionMessageLifecycle(
+        input.conversation.id,
+        input.assistantMessageId,
+        'sending',
+      )
       const handle = await tryStartPlainChatRun({
         ...input,
         createRuntime: createPlainChatRuntime,

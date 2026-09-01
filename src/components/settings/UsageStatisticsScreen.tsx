@@ -188,6 +188,8 @@ export function UsageStatisticsScreen() {
     successfulRequests: formatInteger(snapshot?.summary.successCount ?? 0),
     failedRequests: formatInteger(snapshot?.summary.failedCount ?? 0),
     estimatedRequests: formatInteger(snapshot?.summary.estimatedCount ?? 0),
+    retryCount: formatInteger(snapshot?.summary.retryCount ?? 0),
+    failoverCount: formatInteger(snapshot?.summary.failoverCount ?? 0),
     estimatedCost: formatUsageCost(snapshot?.summary.totalCostNanodollars),
     averageLatency: formatMilliseconds(snapshot?.summary.averageDurationMs),
     errorRate: formatPercent(snapshot?.summary.failedCount ?? 0, snapshot?.summary.requestCount ?? 0),
@@ -422,9 +424,18 @@ function mapRequestDetail(
   t: ReturnType<typeof useTranslation>['t'],
 ): RedactedUsageRequestDetail {
   const tokens = record.tokens
+  const originalProviderId = record.originalProviderId ?? record.providerId
+  const originalModel = record.originalModel ?? record.requestedModel
+  const routeChanged = originalProviderId !== record.providerId || originalModel !== record.upstreamModel
   const fields: RedactedUsageRequestDetail['fields'] = [
     { id: 'provider', label: t('usage.provider'), value: providerLabel(record, providerById, t) },
     { id: 'model', label: t('usage.model'), value: resolveChatModelDisplayName(providerById.get(record.providerId), record.upstreamModel, aliases) },
+    ...(routeChanged ? [
+      { id: 'original-provider', label: t('usage.originalProvider'), value: providerLabelFromId(originalProviderId, providerById, t) },
+      { id: 'original-model', label: t('usage.originalModel'), value: resolveChatModelDisplayName(providerById.get(originalProviderId), originalModel, aliases) },
+    ] : []),
+    ...((record.retryCount ?? 0) > 0 ? [{ id: 'retries', label: t('usage.retries'), value: formatInteger(record.retryCount ?? 0) }] : []),
+    ...((record.failoverCount ?? 0) > 0 ? [{ id: 'failovers', label: t('usage.failovers'), value: formatInteger(record.failoverCount ?? 0), tone: 'warning' as const }] : []),
     { id: 'source', label: t('usage.requestSource'), value: usageSourceLabel(record.operationSource, t) },
     { id: 'measurement', label: t('usage.measurementSource'), value: measurementSourceLabel(record, t) },
     { id: 'input', label: t('usage.inputTokens'), value: formatInteger(tokens.inputTokens ?? 0) },
@@ -464,6 +475,8 @@ function buildUsageCopy(t: ReturnType<typeof useTranslation>['t']): Partial<Usag
     successfulRequests: t('usage.statusSuccess'),
     failedRequests: t('usage.statusFailed'),
     estimatedRequests: t('usage.estimatedRequests'),
+    retries: t('usage.retries'),
+    failovers: t('usage.failovers'),
     estimatesExcluded: t('usage.estimatesExcluded'),
     trends: t('usage.trends'),
     filters: t('usage.filters'),

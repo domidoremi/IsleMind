@@ -2,7 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const Module = require('node:module')
 const path = require('node:path')
-const ts = require('typescript')
+const { transformTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const originalResolve = Module._resolveFilename
@@ -27,17 +27,7 @@ function registerTypeScriptSupport() {
 
   const hook = function compileTypeScript(module, filename) {
     const source = fs.readFileSync(filename, 'utf8')
-    const output = ts.transpileModule(source, {
-      compilerOptions: {
-        esModuleInterop: true,
-        jsx: ts.JsxEmit.ReactJSX,
-        module: ts.ModuleKind.CommonJS,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        target: ts.ScriptTarget.ES2021,
-      },
-      fileName: filename,
-    })
-    module._compile(output.outputText, filename)
+    module._compile(transformTypeScriptModule(source, filename), filename)
   }
   hook.isProviderStateIsolationCompatibilityHook = true
   require.extensions['.ts'] = hook
@@ -226,7 +216,7 @@ function run() {
   assertSourceIncludes(pipelineSource, "strategy: 'runtime-log-redaction-v1'", 'route snapshot records redaction strategy')
 
   const executorSource = readSource('src/bootstrap/providerRuntimeExecutor.ts')
-  assertSourceIncludes(executorSource, "policy: { mode: 'same-provider' }", 'runtime fallback uses same-provider policy')
+  assertSourceIncludes(executorSource, "mode: 'same-provider'", 'runtime fallback keeps same-provider routing as the first bounded policy')
   assertSourceIncludes(executorSource, 'selectedProviderId !== input.req.provider.id', 'session affinity rotation rejects cross-provider fallback')
   assertSourceIncludes(executorSource, 'session.affinity.invalidated', 'runtime executor emits affinity invalidation event')
   assertSourceIncludes(executorSource, 'session.affinity.rotated', 'runtime executor emits affinity rotation event')

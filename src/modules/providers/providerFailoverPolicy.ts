@@ -28,6 +28,8 @@ export type ProviderFailoverBlockReason =
   | 'stream_already_started'
   | 'explicit_model_lock'
   | 'no_eligible_candidates'
+  | 'candidate_limit_reached'
+  | 'failover_limit_reached'
   | 'cross_provider_confirmation_required'
 
 type ProviderCostTier = 'low' | 'medium' | 'high' | 'unknown'
@@ -35,6 +37,8 @@ type ProviderCostTier = 'low' | 'medium' | 'high' | 'unknown'
 export interface ProviderFailoverPolicy {
   mode: ProviderFailoverMode
   approvedProviderIds?: string[]
+  /** Credential rotation is opt-in; authentication failures are otherwise terminal. */
+  allowCredentialFailover?: boolean
   allowAfterStreamStart?: boolean
   explicitModelLock?: boolean
   allowedRegions?: string[]
@@ -139,7 +143,6 @@ const ALLOWED_TRIGGERS = new Set<ProviderFailoverTrigger>([
   'server_error',
   'model_unavailable',
   'overloaded',
-  'credential_unhealthy',
   'empty_response',
 ])
 
@@ -162,7 +165,7 @@ export function classifyProviderFailure(input: ProviderFailureClassificationInpu
   if (input.emptyResponse) return { trigger: 'empty_response', retryable: true, source: 'explicit', evidence }
   if (input.timedOut) return { trigger: 'timeout', retryable: true, source: 'explicit', evidence }
   if (input.networkError) return { trigger: 'network_error', retryable: true, source: 'explicit', evidence }
-  if (input.credentialUnhealthy) return { trigger: 'credential_unhealthy', retryable: true, source: 'explicit', evidence }
+  if (input.credentialUnhealthy) return { trigger: 'credential_unhealthy', retryable: false, source: 'explicit', evidence }
   if (input.rateLimited) return { trigger: 'rate_limited', retryable: true, source: 'explicit', evidence }
   if (input.modelUnavailable) return { trigger: 'model_unavailable', retryable: true, source: 'explicit', evidence }
   if (input.overloaded) return { trigger: 'overloaded', retryable: true, source: 'explicit', evidence }
@@ -171,7 +174,7 @@ export function classifyProviderFailure(input: ProviderFailureClassificationInpu
   if (textTrigger) {
     return {
       trigger: textTrigger.trigger,
-      retryable: ALLOWED_TRIGGERS.has(textTrigger.trigger),
+      retryable: textTrigger.trigger !== 'credential_unhealthy' && ALLOWED_TRIGGERS.has(textTrigger.trigger),
       source: textTrigger.source,
       evidence,
     }
@@ -181,7 +184,7 @@ export function classifyProviderFailure(input: ProviderFailureClassificationInpu
   if (statusTrigger) {
     return {
       trigger: statusTrigger,
-      retryable: ALLOWED_TRIGGERS.has(statusTrigger),
+      retryable: statusTrigger !== 'credential_unhealthy' && ALLOWED_TRIGGERS.has(statusTrigger),
       source: 'status',
       evidence,
     }
@@ -193,7 +196,9 @@ export function classifyProviderFailure(input: ProviderFailureClassificationInpu
 export function resolveFailoverDecision(input: ProviderFailoverInput): ProviderFailoverDecision {
   const blockedReasons: ProviderFailoverBlockReason[] = []
   if (input.policy.mode === 'off') blockedReasons.push('policy_off')
-  if (!ALLOWED_TRIGGERS.has(input.trigger)) blockedReasons.push('trigger_not_allowed')
+  const triggerAllowed = ALLOWED_TRIGGERS.has(input.trigger) ||
+    (input.trigger === 'credential_unhealthy' && input.policy.allowCredentialFailover === true)
+  if (!triggerAllowed) blockedReasons.push('trigger_not_allowed')
   if ((input.streamStarted || input.trigger === 'stream_started') && input.policy.allowAfterStreamStart !== true) blockedReasons.push('stream_already_started')
   if (input.policy.explicitModelLock === true) blockedReasons.push('explicit_model_lock')
 
@@ -315,12 +320,20 @@ function classifyErrorText(
 ): { trigger: ProviderFailoverTrigger; source: 'error_code' | 'message' } | undefined {
   const code = (errorCode ?? '').toLowerCase()
   const message = `${errorName ?? ''} ${errorMessage ?? ''}`.toLowerCase()
+  // Relay and gateway responses can return a model-not-found payload with a
+  // transient HTTP status (often 503). Prefer the explicit model evidence so
+  // callers do not mislabel a configuration/model problem as overload.
+  if (code.includes('model') && (code.includes('unavailable') || /model[_ -]?not[_ -]?found/.test(code))) {
+    return { trigger: 'model_unavailable', source: 'error_code' }
+  }
+  if (/model(?:[_ -]?id)?[^\n]{0,160}(?:not[_ -]?found|unavailable|not exist|does not exist)/.test(message)
+    || /no available channel/.test(message)
+    || /无可用渠道/.test(message)) {
+    return { trigger: 'model_unavailable', source: 'message' }
+  }
   if (code.includes('rate') || message.includes('rate limit')) return { trigger: 'rate_limited', source: code ? 'error_code' : 'message' }
   if (code.includes('timeout') || message.includes('timeout') || message.includes('aborterror')) return { trigger: 'timeout', source: code ? 'error_code' : 'message' }
   if (code.includes('overload') || message.includes('overload')) return { trigger: 'overloaded', source: code ? 'error_code' : 'message' }
-  if (code.includes('model') && (code.includes('unavailable') || code.includes('not_found'))) return { trigger: 'model_unavailable', source: 'error_code' }
-  if (message.includes('model') && (message.includes('unavailable') || message.includes('not found') || message.includes('not exist') || message.includes('does not exist'))) return { trigger: 'model_unavailable', source: 'message' }
-  if (message.includes('no available channel') || message.includes('无可用渠道')) return { trigger: 'model_unavailable', source: 'message' }
   if (code.includes('econnreset') || code.includes('enotfound') || code.includes('network')) return { trigger: 'network_error', source: 'error_code' }
   if (message.includes('network') || message.includes('fetch failed')) return { trigger: 'network_error', source: 'message' }
   return undefined

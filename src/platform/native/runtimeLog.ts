@@ -40,6 +40,8 @@ export type RuntimeLogEvent =
   | 'render.error'
   | 'android.operation.audit'
 
+export type RuntimeLogLevel = 'debug' | 'info' | 'warning' | 'error'
+
 export interface RuntimeLogOptions {
   enabled?: boolean
   maxBytes?: number
@@ -49,6 +51,7 @@ export interface RuntimeLogEntry {
   schema: typeof SCHEMA
   ts: string
   event: RuntimeLogEvent
+  level: RuntimeLogLevel
   [key: string]: unknown
 }
 
@@ -130,16 +133,51 @@ export async function appendRuntimeLog(event: RuntimeLogEvent, data: Record<stri
   const maxBytes = normalizeMaxBytes(options.maxBytes)
   const redactedData = redactRuntimeLogRecord(data)
   const entry: RuntimeLogEntry = {
+    ...redactedData,
     schema: SCHEMA,
     ts: new Date().toISOString(),
     event,
-    ...redactedData,
+    level: resolveRuntimeLogLevel(event, redactedData),
   }
   try {
     await enqueueRuntimeLogMutation(() => writeRuntimeLogLine(uri, `${JSON.stringify(entry)}\n`, maxBytes))
   } catch {
     // Logging must not change the chat request result.
   }
+}
+
+export function resolveRuntimeLogLevel(
+  event: RuntimeLogEvent,
+  data: Readonly<Record<string, unknown>> = {},
+): RuntimeLogLevel {
+  if (event === 'upstream.error' || event === 'render.error') return 'error'
+  if (event === 'upstream.response') {
+    const status = typeof data.statusCode === 'number'
+      ? data.statusCode
+      : typeof data.status === 'number'
+        ? data.status
+        : undefined
+    if (status !== undefined && status >= 500) return 'error'
+    if (status !== undefined && status >= 400) return 'warning'
+    return 'info'
+  }
+  if (
+    event === 'upstream.retry' ||
+    event === 'circuit.breaker' ||
+    event === 'transport.fallback' ||
+    event === 'fallback.decision' ||
+    event === 'request.rectification'
+  ) return 'warning'
+  if (
+    event === 'upstream.request' ||
+    event === 'payload.rule' ||
+    event === 'provider.compatibility' ||
+    event === 'provider.conformance' ||
+    event === 'route.snapshot' ||
+    event === 'session.lease' ||
+    event === 'session.affinity'
+  ) return 'debug'
+  return 'info'
 }
 
 export function redactRuntimeLogValue(value: unknown): unknown {
@@ -221,6 +259,11 @@ function utf8ByteLength(value: string): number {
 }
 
 function isSensitiveKey(key: string): boolean {
+  const normalized = key.replace(/[-_ ]/g, '').toLowerCase()
+  if (/^(?:input|output|total|cached|cachedinput|cachecreationinput|cachereadinput|reasoning|estimatedsaved|max|prompt|completion)tokens?$/.test(normalized)) {
+    return false
+  }
+  if (/^(?:input|output|total|cached|reasoning)tokencount$/.test(normalized)) return false
   if (/^credential[-_ ]?group[-_ ]?ids?$/i.test(key)) return false
   return /authorization|api[-_]?key|token|secret|password|credential|bearer/i.test(key)
 }

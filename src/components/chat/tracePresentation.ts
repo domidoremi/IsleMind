@@ -634,7 +634,7 @@ export function formatProcessTraceForCopy(trace: ProcessTrace): string {
   ].filter(Boolean).join(' · ')
   const safeDetails = redactSensitiveText(details)
   const header = `${traceStageLabel(trace)} · ${safeProcessTraceTitle(trace)}`
-  const content = trace.content?.trim()
+  const content = safeProcessTraceContent(trace, TRACE_COPY_CONTENT_LIMIT)
   return [
     safeDetails ? `${header} [${safeDetails}]` : header,
     content ? clampTraceText(redactSensitiveText(content), TRACE_COPY_CONTENT_LIMIT) : '',
@@ -646,6 +646,17 @@ export function safeProcessTraceTitle(trace: ProcessTrace): string {
 }
 
 export function safeProcessTraceContent(trace: ProcessTrace, limit = TRACE_DISPLAY_CONTENT_LIMIT): string {
+  // Raw reasoning is provider-private by default. Only an explicitly marked
+  // safe/display summary may cross into a user-facing detail or copy surface.
+  if (trace.type === 'reasoning') {
+    const metadata = trace.metadata ?? {}
+    const summary = typeof metadata.safeSummary === 'string'
+      ? metadata.safeSummary
+      : typeof metadata.displaySummary === 'string'
+        ? metadata.displaySummary
+        : ''
+    return summary ? clampTraceText(redactSensitiveText(summary.trim()), limit) : ''
+  }
   const content = trace.content?.trim()
   return content ? clampTraceText(redactSensitiveText(content), limit) : ''
 }

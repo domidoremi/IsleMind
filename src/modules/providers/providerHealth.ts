@@ -19,6 +19,21 @@ export type ProviderHealthFailureTrigger =
   | 'empty_response'
   | 'unknown'
 
+export type ProviderHealthFailureKind =
+  | 'network_error'
+  | 'dns_error'
+  | 'tls_error'
+  | 'connection_timeout'
+  | 'request_timeout'
+  | 'auth_error'
+  | 'invalid_endpoint'
+  | 'model_not_found'
+  | 'rate_limit'
+  | 'client_error'
+  | 'server_error'
+  | 'provider_unavailable'
+  | 'unknown'
+
 export interface ProviderHealthRouteKey {
   providerId: string
   model?: string
@@ -44,6 +59,7 @@ export interface ProviderHealthRecord extends ProviderHealthRouteKey {
   lastSuccessAtMs?: number
   lastFailureAtMs?: number
   lastFailureTrigger?: ProviderHealthFailureTrigger
+  lastFailureKind?: ProviderHealthFailureKind
   cooldownUntilMs?: number
   circuitOpenUntilMs?: number
   averageLatencyMs?: number
@@ -65,6 +81,7 @@ export interface ProviderHealthSuccessInput {
 export interface ProviderHealthFailureInput {
   key: ProviderHealthRouteKey
   trigger: ProviderHealthFailureTrigger
+  failureKind?: ProviderHealthFailureKind
   nowMs: number
   latencyMs?: number
   retryAfterMs?: number
@@ -142,6 +159,7 @@ export function recordProviderFailure(
     consecutiveFailures,
     lastFailureAtMs: input.nowMs,
     lastFailureTrigger: input.trigger,
+    lastFailureKind: input.failureKind,
     cooldownUntilMs,
     circuitOpenUntilMs,
     averageLatencyMs: updateAverageLatency(base.averageLatencyMs, input.latencyMs, base.successes),

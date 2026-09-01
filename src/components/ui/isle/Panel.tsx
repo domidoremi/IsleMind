@@ -2,7 +2,6 @@ import type { PropsWithChildren } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useTransparencyPreference } from '@/hooks/useTransparencyPreference'
-import { IsleCard } from './IsleKit'
 export type IsleMaterial = 'paper' | 'raised' | 'muted' | 'glass' | 'chrome' | 'field' | 'transparent'
 
 interface IslePanelProps extends PropsWithChildren {
@@ -31,15 +30,26 @@ export function IslePanel({
   const reduceTransparency = useTransparencyPreference()
   const resolvedMaterial = material ?? (blur ? 'glass' : 'paper')
   const resolvedRadius = Math.min(radius ?? colors.ui.radius.panel, colors.ui.radius.panel)
-  const ornamented = colors.ui.limeRoad && colors.ui.ornamented
   const functionalMaterial = isLiquidGlass && (blur || resolvedMaterial === 'glass' || resolvedMaterial === 'chrome')
   const webBlurEnabled = functionalMaterial && Platform.OS === 'web' && !reduceTransparency && supportsBackdropFilter()
-  const backgroundColor = functionalMaterial
+  const tokenBackground = panelBackground(resolvedMaterial, colors)
+  // Minimal paper panels are layout aids, not nested cards. Keep a real
+  // surface for dialogs/raised sheets while allowing ordinary sections to
+  // remain on the continuous canvas.
+  const backgroundColor = resolvedMaterial === 'paper' && design.component.panel.background === 'transparent'
+    ? 'transparent'
+    : functionalMaterial
     ? webBlurEnabled
       ? design.semantic.color.surfaceOverlay
       : design.semantic.color.surfaceElevated
-    : panelBackground(resolvedMaterial, colors)
+    : tokenBackground
   const borderColor = panelBorder(resolvedMaterial, colors)
+  const shouldElevate = elevated && resolvedMaterial !== 'transparent' && (resolvedMaterial === 'raised' || resolvedMaterial === 'glass' || resolvedMaterial === 'chrome')
+  const shadowOpacity = shouldElevate
+    ? Math.min(0.1, design.semantic.elevation.shadowOpacity * (isLiquidGlass ? 0.72 : 0.42))
+    : 0
+  const shadowRadius = shouldElevate ? Math.min(16, design.semantic.elevation.shadowBlur) : 0
+  const shadowOffsetY = shouldElevate ? Math.min(4, design.semantic.elevation.shadowOffsetY) : 0
   const functionalMaterialStyle = functionalMaterial
     ? {
         backgroundColor,
@@ -61,11 +71,11 @@ export function IslePanel({
       ...Platform.select<ViewStyle>({
         web: { boxShadow: 'none' },
         default: {
-          shadowColor: colors.shadowTint,
-          shadowOpacity: 0,
-          shadowRadius: 0,
-          shadowOffset: { width: 0, height: 0 },
-          elevation: 0,
+          shadowColor: design.semantic.elevation.shadowColor,
+          shadowOpacity,
+          shadowRadius,
+          shadowOffset: { width: 0, height: shadowOffsetY },
+          elevation: shouldElevate ? 1 : 0,
         },
       }),
     },
@@ -76,18 +86,6 @@ export function IslePanel({
     contentStyle,
     functionalMaterialStyle ? { backgroundColor } : null,
   ]
-
-  if (resolvedMaterial === 'paper' || resolvedMaterial === 'raised' || resolvedMaterial === 'muted' || resolvedMaterial === 'glass' || resolvedMaterial === 'chrome') {
-    return (
-      <IsleCard
-        type="default"
-        style={panelStyle}
-        contentStyle={resolvedContentStyle}
-      >
-        {children}
-      </IsleCard>
-    )
-  }
 
   return <View style={[panelStyle, resolvedContentStyle]}>{children}</View>
 }

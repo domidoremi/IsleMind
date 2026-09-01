@@ -107,6 +107,13 @@ type ConversationProviderStreamingInput = Omit<ProviderStreamingInput, 'citation
 export const conversationProviderStreamingRuntime = {
   start(input: ConversationProviderStreamingInput) {
     const { onStreamEvent, ...streamInput } = input
+    // The provider request is now admitted to its streaming transport. Until
+    // a trace or text chunk arrives, the visible state is genuinely waiting.
+    useChatStore.getState().transitionMessageLifecycle(
+      input.conversationId,
+      input.assistantMessageId,
+      'waiting',
+    )
     const durableEvents = createRichStreamEventReporter(onStreamEvent, {
       binding: {
         providerId: input.request.provider.id,

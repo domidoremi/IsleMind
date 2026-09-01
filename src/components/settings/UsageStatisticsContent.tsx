@@ -58,6 +58,8 @@ export interface UsageStatisticsSummary {
   successfulRequests?: string
   failedRequests?: string
   estimatedRequests?: string
+  retryCount?: string
+  failoverCount?: string
   estimatedCost?: string
   averageLatency: string
   errorRate: string
@@ -174,6 +176,8 @@ export interface UsageStatisticsCopy {
   successfulRequests: string
   failedRequests: string
   estimatedRequests: string
+  retries: string
+  failovers: string
   estimatesExcluded: string
   trends: string
   filters: string
@@ -273,6 +277,8 @@ export const DEFAULT_USAGE_STATISTICS_COPY: UsageStatisticsCopy = {
   successfulRequests: 'Successful',
   failedRequests: 'Failed',
   estimatedRequests: 'Estimated',
+  retries: 'Retries',
+  failovers: 'Failovers',
   estimatesExcluded: 'Excluded',
   trends: 'Trends',
   filters: 'Filters',
@@ -395,6 +401,8 @@ export function UsageStatisticsContent({
     { id: 'latency', label: copy.averageLatency, value: summary.averageLatency, icon: 'activity' as AppIconName },
     { id: 'first-token', label: copy.firstTokenLatency, value: summary.firstTokenLatency ?? '-', icon: 'zap' as AppIconName },
     { id: 'cache-rate', label: copy.cacheHitRate, value: summary.cacheHitRate ?? '-', icon: 'knowledge-database' as AppIconName },
+    { id: 'retries', label: copy.retries, value: summary.retryCount ?? '0', icon: 'refresh' as AppIconName },
+    { id: 'failovers', label: copy.failovers, value: summary.failoverCount ?? '0', icon: 'arrow-right' as AppIconName },
     { id: 'errors', label: copy.errorRate, value: summary.errorRate, icon: 'warning' as AppIconName },
   ]
 

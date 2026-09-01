@@ -45,6 +45,14 @@ export interface AssistantConversationReplyStartProviderToolContextLike<
   }
 }
 
+export type AssistantConversationReplyStartLifecycleStage =
+  | 'sending'
+  | 'waiting'
+  | 'working'
+  | 'tool_calling'
+  | 'tool_result'
+  | 'generating'
+
 export interface AssistantConversationReplyStartActivePromptLike<
   TPackedMessages,
 > {
@@ -371,6 +379,15 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
   TContextFragments extends readonly unknown[],
   TStreamLifecycle,
 > {
+  /**
+   * Optional UI projection for real request milestones. The runtime never
+   * schedules synthetic work states; composition may render these events.
+   */
+  readonly projectLifecycleStage?: (input: {
+    readonly conversationId: string
+    readonly assistantMessageId: string
+    readonly stage: AssistantConversationReplyStartLifecycleStage
+  }) => void
   readonly allocateAssistantRunId?: () => AssistantRunId
   readonly workspaceSourceRuntime: {
     resolve(
@@ -670,7 +687,17 @@ export function createAssistantConversationReplyStartRuntime<
       message: assistantMessage,
       requestController,
     } = session
+    dependencies.projectLifecycleStage?.({
+      conversationId: input.conversationId,
+      assistantMessageId: assistantMessage.id,
+      stage: 'sending',
+    })
     const settingsState = dependencies.getProviderSettingsState()
+    dependencies.projectLifecycleStage?.({
+      conversationId: input.conversationId,
+      assistantMessageId: assistantMessage.id,
+      stage: 'waiting',
+    })
     const admission = await dependencies.providerAdmissionRuntime.admit({
       conversationId: input.conversationId,
       assistantMessageId: assistantMessage.id,
@@ -708,6 +735,11 @@ export function createAssistantConversationReplyStartRuntime<
       upstreamModel,
       modelConfig,
     } = admission
+    dependencies.projectLifecycleStage?.({
+      conversationId: input.conversationId,
+      assistantMessageId: assistantMessage.id,
+      stage: 'working',
+    })
     try {
       await persistAdmissionConversation({
         conversationId: input.conversationId,
@@ -975,6 +1007,11 @@ export function createAssistantConversationReplyStartRuntime<
       model: upstreamModel,
       plan: contextPlan,
       activePrompt,
+    })
+    dependencies.projectLifecycleStage?.({
+      conversationId: input.conversationId,
+      assistantMessageId: assistantMessage.id,
+      stage: 'sending',
     })
     const durableDispatchOutcome =
       await dependencies.durableDispatchRuntime.dispatch({

@@ -20,6 +20,12 @@ import {
   routeForRuntimeFallback,
   type ProviderRuntimeFallbackRequest,
 } from './providerRuntimeFallback'
+import {
+  classifyProviderHealthCheckError,
+  projectProviderHealthStatus,
+  type ProviderHealthCheckClassification,
+  type ProviderProjectedHealthStatus,
+} from './providerHealthCheckPolicy'
 
 export const PROVIDER_RUNTIME_HEALTH_VIEW_SCHEMA = 'islemind.provider-runtime-health-view.v1'
 
@@ -38,6 +44,9 @@ export interface ProviderRuntimeHealthView {
   circuitOpenUntilMs?: number
   lastSuccessAtMs?: number
   lastFailureAtMs?: number
+  lastFailureTrigger?: ProviderHealthRecord['lastFailureTrigger']
+  lastFailureKind?: ProviderHealthRecord['lastFailureKind']
+  projectedStatus: ProviderProjectedHealthStatus
 }
 
 export interface ProviderRuntimeHealthSuccessInput {
@@ -108,7 +117,8 @@ export function createProviderRuntimeHealth(
   async function recordProviderRuntimeFailure(
     input: ProviderRuntimeHealthFailureInput,
   ): Promise<ProviderFailureClassification> {
-    const classification = classifyRuntimeFailure(input)
+    const healthClassification = classifyRuntimeHealthCheckFailure(input)
+    const classification = classifyRuntimeFailure(input, healthClassification)
     await recordProviderRuntimeRouteFailure(providerRuntimeHealthRoute(input.req, input.credentialGroupId), {
       ...input,
       trigger: classification.trigger,
@@ -139,14 +149,15 @@ export function createProviderRuntimeHealth(
     route: ProviderFailoverRoute,
     input: ProviderRuntimeRouteHealthFailureInput,
   ): Promise<ProviderFailureClassification> {
+    const healthClassification = classifyRuntimeHealthCheckFailure(input)
     const classification = input.trigger
       ? {
           trigger: input.trigger,
-          retryable: true,
+          retryable: healthClassification.retryable,
           source: 'explicit' as const,
           evidence: { status: input.status, errorName: input.errorName, errorCode: input.errorCode },
         }
-      : classifyRuntimeFailure(input)
+      : classifyRuntimeFailure(input, healthClassification)
     try {
       const nowMs = input.nowMs ?? Date.now()
       const existing = await loadExactProviderHealthRecord(route, nowMs)
@@ -154,6 +165,7 @@ export function createProviderRuntimeHealth(
         recordProviderFailure(existing, {
           key: route,
           trigger: classification.trigger,
+          failureKind: healthClassification.kind,
           nowMs,
           latencyMs: input.latencyMs,
           retryAfterMs: input.retryAfterMs ?? retryAfterMsFromFailure(input.status),
@@ -195,16 +207,77 @@ function providerRuntimeHealthView(record: ProviderHealthRecord, nowMs: number):
     circuitOpenUntilMs: record.circuitOpenUntilMs,
     lastSuccessAtMs: record.lastSuccessAtMs,
     lastFailureAtMs: record.lastFailureAtMs,
+    lastFailureTrigger: record.lastFailureTrigger,
+    lastFailureKind: record.lastFailureKind,
+    projectedStatus: projectProviderHealthStatus({ record, nowMs }),
   }
 }
 
 function classifyRuntimeFailure(
   input: ProviderRuntimeHealthFailureInput | ProviderRuntimeRouteHealthFailureInput,
+  healthClassification = classifyRuntimeHealthCheckFailure(input),
 ): ProviderFailureClassification {
   const error = input.error
-  return classifyProviderFailure({
+  const coarse = classifyProviderFailure({
     ...input,
     errorName: input.errorName ?? (error instanceof Error ? error.name : undefined),
     errorMessage: input.errorMessage ?? input.responseText ?? (error instanceof Error ? error.message : undefined),
   })
+  if (coarse.source === 'explicit' || coarse.source === 'stream') return coarse
+  return {
+    trigger: failoverTriggerForHealthKind(healthClassification.kind),
+    retryable: healthClassification.retryable,
+    source: healthClassification.source,
+    evidence: {
+      status: healthClassification.status,
+      errorName: input.errorName ?? (error instanceof Error ? error.name : undefined),
+      errorCode: healthClassification.errorCode,
+    },
+  }
+}
+
+function classifyRuntimeHealthCheckFailure(
+  input: ProviderRuntimeHealthFailureInput | ProviderRuntimeRouteHealthFailureInput,
+): ProviderHealthCheckClassification {
+  const error = input.error
+  const errorRecord = error && typeof error === 'object'
+    ? error as { code?: unknown }
+    : undefined
+  return classifyProviderHealthCheckError({
+    status: input.status,
+    errorName: input.errorName ?? (error instanceof Error ? error.name : undefined),
+    errorCode: input.errorCode ?? (typeof errorRecord?.code === 'string' ? errorRecord.code : undefined),
+    errorMessage: input.errorMessage ?? input.responseText ?? (error instanceof Error ? error.message : undefined),
+    timedOut: input.timedOut,
+    networkError: input.networkError,
+  })
+}
+
+function failoverTriggerForHealthKind(
+  kind: ProviderHealthCheckClassification['kind'],
+): ProviderFailureClassification['trigger'] {
+  switch (kind) {
+    case 'dns_error':
+    case 'tls_error':
+    case 'network_error':
+      return 'network_error'
+    case 'connection_timeout':
+    case 'request_timeout':
+      return 'timeout'
+    case 'auth_error':
+      return 'credential_unhealthy'
+    case 'model_not_found':
+      return 'model_unavailable'
+    case 'rate_limit':
+      return 'rate_limited'
+    case 'server_error':
+      return 'server_error'
+    case 'provider_unavailable':
+      return 'overloaded'
+    case 'invalid_endpoint':
+    case 'client_error':
+      return 'payload_error'
+    case 'unknown':
+      return 'unknown'
+  }
 }

@@ -30,6 +30,7 @@ export function createProviderRequestShapePolicy<Attachment extends ProviderSele
   compatibilityCapabilityCanBeSent(provider: AIProvider, capability: ProviderRequestCompatibilityCapability, explicitDeclaration: boolean): boolean
   compatibilityCapabilityStatus(provider: AIProvider, capability: ProviderRequestCompatibilityCapability): ProviderRequestCompatibilityStatus
   usesProtocolReferenceEvidence(provider: AIProvider): boolean
+  modelCapabilityCanBeSent(provider: AIProvider, modelId: string, capability: ProviderRequestShapeCapability): boolean
 }) {
   const toolCapabilityPolicy = createProviderToolCapabilityPolicy({
     compatibilityCapabilityCanBeSent(provider, capability, explicitDeclaration) {
@@ -49,9 +50,10 @@ export function createProviderRequestShapePolicy<Attachment extends ProviderSele
   }
 
   function requestModelCapabilityCanBeSent(request: Request, capability: ProviderRequestShapeCapability): boolean {
-    if (request.provider.type !== 'openai-compatible' || request.provider.wireProtocol === 'anthropic-compatible') return true
     const provider = request.provider
     const resolvedModel = resolveProviderModelAlias(provider, request.model)
+    if (!dependencies.modelCapabilityCanBeSent(provider, resolvedModel, capability)) return false
+    if (provider.type !== 'openai-compatible' || provider.wireProtocol === 'anthropic-compatible') return true
     const modelConfig = getModelConfig(resolvedModel, provider.type, provider.modelConfigs)
     const compatibilityCapability = capability === 'responseFormat' ? 'structuredOutput' : capability
     const declared = modelDeclaresCapability(modelConfig, capability)

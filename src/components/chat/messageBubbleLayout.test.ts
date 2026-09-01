@@ -7,8 +7,8 @@ describe('message bubble row alignment', () => {
   })
 
   it('clamps wide bubbles to the list content box', () => {
-    expect(resolveMessageBubbleMaxWidth('x'.repeat(200), 'assistant', true, 390)).toBeLessThanOrEqual(390 - 40)
-    expect(resolveMessageBubbleMaxWidth('x'.repeat(200), 'user', false, 320)).toBeLessThanOrEqual(320 - 32)
+    expect(resolveMessageBubbleMaxWidth('x'.repeat(200), 'assistant', true, 390)).toBeLessThanOrEqual(390 - 28)
+    expect(resolveMessageBubbleMaxWidth('x'.repeat(200), 'user', false, 320)).toBeLessThanOrEqual(320 - 24)
     expect(resolveMessageBubbleMaxWidth('x'.repeat(200), 'assistant', true, 180)).toBeLessThanOrEqual(180)
   })
 

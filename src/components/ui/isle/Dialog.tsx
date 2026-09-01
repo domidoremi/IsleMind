@@ -361,16 +361,16 @@ function AppToastSurface({
     <IslePanel
       material={material}
       blur={grammar === 'fluid'}
-      elevated
+      elevated={grammar === 'fluid' || grammar === 'material'}
       radius={radius}
       style={{
         backgroundColor: surface,
         borderColor: toneToken.border,
-        borderWidth: grammar === 'precision' ? 0 : grammar === 'organic' || grammar === 'fluid' ? 1 : StyleSheet.hairlineWidth,
+        borderWidth: grammar === 'precision' ? 0 : grammar === 'organic' || grammar === 'fluid' ? StyleSheet.hairlineWidth : 0,
         borderLeftWidth: grammar === 'precision' || grammar === 'material' ? 3 : undefined,
         borderLeftColor: toneToken.foreground,
       }}
-      contentStyle={{ padding: 0, backgroundColor: grammar === 'fluid' ? 'transparent' : surface }}
+      contentStyle={{ padding: 0, backgroundColor: 'transparent' }}
     >
       <View testID={`theme-toast-${canonicalThemeId}`} style={{ overflow: 'hidden', borderRadius: radius }}>
       {grammar === 'precision' ? <View style={{ height: 1, backgroundColor: toneToken.foreground }} /> : null}
@@ -385,12 +385,12 @@ function AppToastSurface({
         accessibilityLabel={[toast.title, toast.message, toast.occurrences > 1 ? String(toast.occurrences) : null].filter(Boolean).join('. ')}
         style={{ flexDirection: 'row', alignItems: 'center', gap: design.component.toast.gap, paddingLeft: design.component.toast.paddingHorizontal, paddingRight: 7, paddingVertical: design.component.toast.paddingVertical, minHeight: design.component.toast.minHeight }}
       >
-        <View style={{ width: grammar === 'precision' ? 22 : 30, height: grammar === 'precision' ? 22 : 30, alignItems: 'center', justifyContent: 'center', borderRadius: grammar === 'precision' ? 2 : grammar === 'material' ? 15 : 8, backgroundColor: grammar === 'precision' ? 'transparent' : toastToneSurface(tone, colors), borderWidth: grammar === 'fluid' ? StyleSheet.hairlineWidth : 0, borderColor: toneToken.border }}>
+        <View style={{ width: grammar === 'precision' ? 22 : 30, height: grammar === 'precision' ? 22 : 30, alignItems: 'center', justifyContent: 'center', borderRadius: grammar === 'precision' ? 2 : grammar === 'material' ? 15 : 8, backgroundColor: grammar === 'fluid' ? toastToneSurface(tone, colors) : 'transparent', borderWidth: grammar === 'fluid' ? StyleSheet.hairlineWidth : 0, borderColor: toneToken.border }}>
           <AppIcon name={toastIconName(tone)} color={toastToneForeground(tone, colors)} size={16} strokeWidth={appIconStroke.strong} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text numberOfLines={2} style={{ flexShrink: 1, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800' }}>{toast.title}</Text>
+            <Text numberOfLines={2} style={{ flexShrink: 1, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '700' }}>{toast.title}</Text>
             {toast.occurrences > 1 ? (
               <View style={{ minWidth: 22, height: 20, paddingHorizontal: 6, borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted }}>
                 <Text style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 13, fontWeight: '900' }}>{toast.occurrences}</Text>
@@ -463,7 +463,7 @@ function AppBannerViewport({
                 accessible
                 accessibilityRole="alert"
                 accessibilityLiveRegion={isDangerTone(tone) ? 'assertive' : 'polite'}
-                style={{ width: '100%', maxWidth: 560, minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: StyleSheet.hairlineWidth, borderLeftWidth: 3, borderColor: token.border, borderLeftColor: token.foreground, borderRadius: 8, backgroundColor: colors.ui.semantic.chrome.background, paddingLeft: 11, paddingRight: 6, paddingVertical: 8, shadowColor: colors.shadowTint, shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } }}
+                style={{ width: '100%', maxWidth: 560, minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 0, borderLeftWidth: 3, borderColor: token.border, borderLeftColor: token.foreground, borderRadius: 6, backgroundColor: colors.ui.semantic.chrome.background, paddingLeft: 11, paddingRight: 6, paddingVertical: 8, shadowColor: colors.shadowTint, shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } }}
               >
                 <AppIcon name={toastIconName(tone)} color={token.foreground} size={17} strokeWidth={appIconStroke.strong} />
                 <View style={{ flex: 1, minWidth: 0 }}>

@@ -27,6 +27,7 @@ import { openAICompatibleReasoningReplayField, openAIResponsesNativeWebSearchToo
 import { providerRequestReasoningPolicy } from './providerRequestReasoning'
 import type { Attachment } from '@/types/chatContracts'
 import type { ProviderRuntimeChatRequest } from '@/modules/providers'
+import { providerModelCapabilityCanBeSent } from './providerCapabilityMatrix'
 
 export { resolveProviderRoute } from './providerRouteBinding'
 
@@ -45,6 +46,7 @@ const providerRequestShapePolicy = createProviderRequestShapePolicy<Attachment, 
   compatibilityCapabilityCanBeSent: providerRequestCompatibilityPolicy.capabilityCanBeSent,
   compatibilityCapabilityStatus: providerRequestCompatibilityPolicy.capabilityStatus,
   usesProtocolReferenceEvidence: providerRequestCompatibilityPolicy.usesProtocolReferenceEvidence,
+  modelCapabilityCanBeSent: providerModelCapabilityCanBeSent,
 })
 
 const providerNativeSearchPolicy = createProviderNativeSearchPolicy<ProviderRuntimeChatRequest>({

@@ -62,7 +62,7 @@ The following operations access the network:
 
 - [Bun 1.3.14](https://bun.sh/) for dependency installation and scripts
 - Node.js for selected project scripts
-- JDK 17
+- JDK 25
 - Android SDK
 - Android Platform Tools / ADB
 - Android emulator or a USB-debuggable device

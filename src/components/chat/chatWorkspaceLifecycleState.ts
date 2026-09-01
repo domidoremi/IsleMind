@@ -5,6 +5,11 @@ import type { FlashListRef } from '@shopify/flash-list'
 import { extractUserFacingErrorDetail } from '@/core'
 import { st } from '@/i18n/service'
 import { recoverStaleConversationMessages } from '@/presentation/features/conversations/conversationControlCommand'
+import {
+  resolveAndroidBackAction,
+  resolveAndroidLifecyclePolicy,
+  type AndroidLifecycleState,
+} from '@/platform/native/androidCompatibilityPolicy'
 import { useChatStore } from '@/store/chatStore'
 import type { Attachment, Message } from '@/types/chatContracts'
 
@@ -110,11 +115,25 @@ export function useChatWorkspaceConversationRecovery({
     const subscription = AppState.addEventListener('change', (nextState) => {
       const previousState = appStateRef.current
       appStateRef.current = nextState
-      if (nextState !== 'active' || previousState === 'active') return
+      const recoverOnResume = Platform.OS === 'android'
+        ? resolveAndroidLifecyclePolicy({
+            previousState: normalizeAndroidLifecycleState(previousState),
+            nextState: normalizeAndroidLifecycleState(nextState),
+          }).recoverOnResume
+        : nextState === 'active' && previousState !== 'active'
+      if (!recoverOnResume) return
       void recoverStaleConversationMessages(activeConversationId).catch(reportConversationRecoveryFailure)
     })
     return () => subscription.remove()
   }, [active, conversationId])
+}
+
+function normalizeAndroidLifecycleState(
+  state: AppStateStatus | null,
+): AndroidLifecycleState {
+  return state === 'active' || state === 'inactive' || state === 'background'
+    ? state
+    : 'unknown'
 }
 
 export function useChatWorkspaceOverlayNavigation({
@@ -153,32 +172,24 @@ export function useChatWorkspaceOverlayNavigation({
     if (!active) return undefined
     if (Platform.OS !== 'android') return undefined
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (workspaceReviewOpen) {
-        onCloseWorkspaceReview()
-        return true
-      }
-      if (showOptions) {
-        setShowOptions(false)
-        return true
-      }
-      if (composerPanel) {
-        setComposerPanel(null)
-        return true
-      }
-      if (intentDraft) {
+      const plan = resolveAndroidBackAction({
+        workspaceReviewOpen,
+        showOptions,
+        composerPanelOpen: !!composerPanel,
+        intentDraftPresent: !!intentDraft,
+        keyboardVisible,
+        canNavigateUp: !!onUnhandledAndroidBack,
+      })
+      if (plan.action === 'close-workspace-review') onCloseWorkspaceReview()
+      if (plan.action === 'close-options') setShowOptions(false)
+      if (plan.action === 'close-composer-panel') setComposerPanel(null)
+      if (plan.action === 'restore-intent-draft' && intentDraft) {
         onRestoreIntentDraft(intentDraft.content, intentDraft.attachments, true)
         setIntentDraft(null)
-        return true
       }
-      if (keyboardVisible) {
-        Keyboard.dismiss()
-        return true
-      }
-      if (onUnhandledAndroidBack) {
-        onUnhandledAndroidBack()
-        return true
-      }
-      return false
+      if (plan.action === 'dismiss-keyboard') Keyboard.dismiss()
+      if (plan.action === 'navigate-up') onUnhandledAndroidBack?.()
+      return plan.handled
     })
     return () => subscription.remove()
   }, [

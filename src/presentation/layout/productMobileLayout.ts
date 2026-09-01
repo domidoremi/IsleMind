@@ -93,6 +93,11 @@ export interface ProductMobileMessageListLayout {
   topInset: number
   conversationHeaderTopPadding: number
   emptyConversationTopPadding: number
+  /**
+   * Vertical clearance for the expanded mobile conversation navigation dock.
+   * The active message viewport uses it to stop above the dock.
+   */
+  conversationNavigationDockClearance: number
 }
 
 export interface ProductMobilePagerTransitionInput {
@@ -152,6 +157,8 @@ export interface ProductMobileLayout {
 const MIN_TOUCH_TARGET = 44
 export const PRODUCT_MOBILE_COMPOSER_COLLAPSED_MIN_HEIGHT = 112
 export const PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT = 400
+export const PRODUCT_MOBILE_CONVERSATION_NAVIGATION_BREAKPOINT = 720
+export const PRODUCT_MOBILE_CONVERSATION_NAVIGATION_DOCK_CLEARANCE = 64
 const PRODUCT_MOBILE_COMPOSER_BOTTOM_EXTRA = 4
 const PRODUCT_MOBILE_COMPOSER_INNER_BOTTOM_EXTRA = 6
 const PRODUCT_MOBILE_COMPOSER_INNER_TOP_PADDING = 2
@@ -159,6 +166,8 @@ const PRODUCT_MOBILE_SAFE_BOTTOM_FLOOR = 10
 const PRODUCT_MOBILE_MESSAGE_LIST_CHROME_GAP = 8
 const PRODUCT_MOBILE_MESSAGE_LIST_CHROME_OVERLAY = 0
 const PRODUCT_MOBILE_MESSAGE_LIST_CHROME_UNDERLAP = 0
+const PRODUCT_MOBILE_MESSAGE_LIST_TIGHT_BREAKPOINT = 340
+const PRODUCT_MOBILE_MESSAGE_LIST_MOBILE_BREAKPOINT = 600
 const PRODUCT_MOBILE_MESSAGE_LIST_COMPOSER_GAP = 12
 const PRODUCT_MOBILE_EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 20
 const PRODUCT_MOBILE_PAGER_PAGE_SETTLE_MS = 176
@@ -392,13 +401,22 @@ export function resolveProductMobileMessageListLayout(
     chromeHeight - PRODUCT_MOBILE_MESSAGE_LIST_CHROME_OVERLAY + PRODUCT_MOBILE_MESSAGE_LIST_CHROME_GAP,
   )
   return {
-    horizontalPadding: width < 340 ? 16 : 20,
+    horizontalPadding:
+      width < PRODUCT_MOBILE_MESSAGE_LIST_TIGHT_BREAKPOINT
+        ? 12
+        : width < PRODUCT_MOBILE_MESSAGE_LIST_MOBILE_BREAKPOINT
+          ? 14
+          : 16,
     topInset,
     conversationHeaderTopPadding: Math.max(0, topInset - PRODUCT_MOBILE_MESSAGE_LIST_CHROME_UNDERLAP),
     emptyConversationTopPadding: Math.max(
       PRODUCT_MOBILE_EMPTY_CONVERSATION_DEFAULT_TOP_PADDING,
       topInset - PRODUCT_MOBILE_MESSAGE_LIST_CHROME_UNDERLAP + 6,
     ),
+    conversationNavigationDockClearance:
+      width < PRODUCT_MOBILE_CONVERSATION_NAVIGATION_BREAKPOINT
+        ? PRODUCT_MOBILE_CONVERSATION_NAVIGATION_DOCK_CLEARANCE
+        : 0,
   }
 }
 

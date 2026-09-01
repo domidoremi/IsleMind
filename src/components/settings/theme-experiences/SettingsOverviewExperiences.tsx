@@ -140,15 +140,14 @@ export function MonetSettingsOverviewExperience({
             <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ flexDirection: 'row', gap: 5, marginTop: 5, height: 3 }}>
               <View style={{ flex: 1.1, borderRadius: 2, backgroundColor: colors.primary }} />
               <View style={{ flex: 0.38, borderRadius: 2, backgroundColor: colors.accent }} />
-              <View style={{ flex: 0.68, borderRadius: 2, backgroundColor: colors.material.strokeStrong }} />
             </View>
           </View>
         </View>
       ) : null}
-      <View testID="settings-monet-atmosphere" style={{ marginTop: embedded ? 0 : 12, gap: 12 }}>
-        <View style={{ paddingLeft: 12, borderLeftWidth: 2, borderLeftColor: colors.primary }}>{status}</View>
+      <View testID="settings-monet-atmosphere" style={{ marginTop: embedded ? 0 : 10, gap: 10 }}>
+        <View style={{ paddingLeft: 10, borderLeftWidth: 2, borderLeftColor: colors.primary }}>{status}</View>
         {attention ? <View style={{ marginTop: -3 }}>{attention}</View> : null}
-        <View style={{ gap: 11 }}>
+        <View style={{ gap: 10 }}>
           {search}
           {tabs}
           {catalog}
@@ -174,12 +173,12 @@ export function MaterialSettingsOverviewExperience({
   return (
     <View testID="settings-overview-experience-material">
       {!embedded ? (
-        <View style={{ minHeight: 72, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 24, backgroundColor: colors.ui.semantic.surface.muted }}>
+        <View style={{ minHeight: 64, paddingHorizontal: 4, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider, backgroundColor: colors.ui.semantic.surface.muted }}>
           {leading}
           <Text accessibilityRole="header" numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 23, lineHeight: 30, fontWeight: '500', includeFontPadding: false }}>{title}</Text>
         </View>
       ) : null}
-      <View testID="settings-material-surface" style={{ marginTop: embedded ? 0 : 12, gap: 12 }}>
+      <View testID="settings-material-surface" style={{ marginTop: embedded ? 0 : 10, gap: 10 }}>
         <View style={{ paddingHorizontal: 4 }}>{status}</View>
         {attention ? <View>{attention}</View> : null}
         <View style={{ gap: 12 }}>
@@ -208,12 +207,12 @@ export function LiquidGlassSettingsOverviewExperience({
   return (
     <View testID="settings-overview-experience-liquid-glass">
       {!embedded ? (
-        <View style={{ minHeight: 66, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 28, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, backgroundColor: colors.ui.semantic.chrome.background }}>
+        <View style={{ minHeight: 60, paddingHorizontal: 6, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 18, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, backgroundColor: colors.ui.semantic.chrome.background }}>
           {leading}
           <Text accessibilityRole="header" numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 20, lineHeight: 27, fontWeight: '700', includeFontPadding: false }}>{title}</Text>
         </View>
       ) : null}
-      <View testID="settings-liquid-glass-chrome" style={{ marginTop: embedded ? 0 : 12, gap: 12 }}>
+      <View testID="settings-liquid-glass-chrome" style={{ marginTop: embedded ? 0 : 10, gap: 10 }}>
         <View style={{ paddingHorizontal: 6 }}>{status}</View>
         {attention ? <View>{attention}</View> : null}
         <View style={{ gap: 10 }}>

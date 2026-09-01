@@ -1,0 +1,7 @@
+[tools]
+java = "25"
+
+[env]
+# JDK 24+ 打印 restricted-method 警告，AGP 的 CMake/Prefab 任务会把它当作致命错误；
+# 该警告来自 Gradle daemon 之外的派生 JVM，只能通过环境变量覆盖。
+JAVA_TOOL_OPTIONS = "--enable-native-access=ALL-UNNAMED"

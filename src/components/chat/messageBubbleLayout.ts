@@ -3,7 +3,7 @@ import { resolveProductMobileMessageListLayout } from '@/presentation/layout/pro
 
 export type MessageBubbleRowAlignment = 'flex-start' | 'flex-end'
 
-const MESSAGE_BUBBLE_MAX_CONTENT_WIDTH = 760
+const MESSAGE_BUBBLE_MAX_CONTENT_WIDTH = 840
 
 /** Formula and rich-content width may grow, but role direction never changes. */
 export function resolveMessageBubbleRowAlignment(role: MessageRole): MessageBubbleRowAlignment {

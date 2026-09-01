@@ -6,6 +6,14 @@
   const menuToggle = document.querySelector('[data-menu-toggle]');
   const nav = document.querySelector('[data-nav]');
 
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const closeNav = () => {
+    header?.classList.remove('nav-open');
+    menuToggle?.setAttribute('aria-expanded', 'false');
+    menuToggle?.setAttribute('aria-label', '打开导航');
+  };
+
   menuToggle?.addEventListener('click', () => {
     const open = header?.classList.toggle('nav-open') ?? false;
     menuToggle.setAttribute('aria-expanded', String(open));
@@ -13,12 +21,84 @@
   });
 
   nav?.querySelectorAll('a').forEach((link) => {
-    link.addEventListener('click', () => {
-      header?.classList.remove('nav-open');
-      menuToggle?.setAttribute('aria-expanded', 'false');
-      menuToggle?.setAttribute('aria-label', '打开导航');
-    });
+    link.addEventListener('click', closeNav);
   });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && header?.classList.contains('nav-open')) {
+      closeNav();
+      menuToggle?.focus();
+    }
+  });
+
+  const onScrollHeader = () => {
+    header?.classList.toggle('is-scrolled', window.scrollY > 8);
+  };
+  onScrollHeader();
+  window.addEventListener('scroll', onScrollHeader, { passive: true });
+
+  const navLinks = [...(nav?.querySelectorAll('a[href^="#"]') ?? [])];
+  const spyTargets = navLinks
+    .map((link) => document.getElementById(link.getAttribute('href').slice(1)))
+    .filter(Boolean);
+  if (spyTargets.length) {
+    const spy = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          navLinks.forEach((link) => {
+            const active = link.getAttribute('href') === `#${entry.target.id}`;
+            if (active) link.setAttribute('aria-current', 'true');
+            else link.removeAttribute('aria-current');
+          });
+        });
+      },
+      { rootMargin: '-40% 0px -55% 0px' },
+    );
+    spyTargets.forEach((section) => spy.observe(section));
+  }
+
+  const revealNodes = [...document.querySelectorAll('.reveal, [data-stagger]')];
+  if (reducedMotion || !('IntersectionObserver' in window)) {
+    revealNodes.forEach((node) => node.classList.add('in-view'));
+  } else if (revealNodes.length) {
+    const revealObserver = new IntersectionObserver(
+      (entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('in-view');
+          observer.unobserve(entry.target);
+        });
+      },
+      { threshold: 0.14, rootMargin: '0px 0px -8% 0px' },
+    );
+    revealNodes.forEach((node) => revealObserver.observe(node));
+  }
+
+  const heroSection = document.querySelector('.hero');
+  const deviceBack = document.querySelector('.hero-device-back');
+  const deviceFront = document.querySelector('.hero-device-front');
+  if (heroSection && deviceBack && deviceFront && !reducedMotion) {
+    let ticking = false;
+    const applyParallax = () => {
+      ticking = false;
+      const rect = heroSection.getBoundingClientRect();
+      if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+      const progress = Math.min(Math.max(-rect.top / rect.height, 0), 1);
+      deviceBack.style.transform = `rotate(-6deg) translateY(${progress * 26}px)`;
+      deviceFront.style.transform = `rotate(4deg) translateY(${progress * -34}px)`;
+    };
+    window.addEventListener(
+      'scroll',
+      () => {
+        if (!ticking) {
+          ticking = true;
+          requestAnimationFrame(applyParallax);
+        }
+      },
+      { passive: true },
+    );
+  }
 
   const shots = {
     chat: {

@@ -26,6 +26,11 @@ import type {
   KnowledgeRepositorySnapshot,
   PortableKnowledgeSnapshot,
 } from '@/modules/knowledge'
+import type { PortableBackupCategory, PortableBackupSelection } from '@/modules/data-management'
+import {
+  parseUsagePortableSnapshot,
+  type UsagePortableSnapshot,
+} from '@/modules/diagnostics'
 import type { ProviderCredentialMutation } from '@/modules/providers'
 import type { TavernSnapshot } from '@/modules/workspaces'
 import { conversationPersistence } from './conversationPersistence'
@@ -50,6 +55,7 @@ import {
   restorePortableTavernWorkspaceBackup,
 } from './tavernWorkspace'
 import { clearRuntimeLog } from '@/platform/native/runtimeLog'
+import { usagePortableSnapshotRepository } from './usageStatisticsRuntime'
 
 const PARTICIPANT_IDS = Object.freeze([
   'workspaces',
@@ -57,7 +63,9 @@ const PARTICIPANT_IDS = Object.freeze([
   'conversations',
   'secure_state',
   'knowledge',
+  'usage',
 ] as const)
+const LEGACY_PARTICIPANT_IDS = Object.freeze(PARTICIPANT_IDS.slice(0, 5))
 
 const APPLICATION_RECORD_KEYS = Object.freeze({
   settings: '@islemind/settings',
@@ -73,6 +81,8 @@ const CONVERSATION_BACKUP_SCHEMA =
   'islemind.portable-import-conversations.v1'
 const KNOWLEDGE_BACKUP_SCHEMA =
   'islemind.portable-import-knowledge.v1'
+const USAGE_BACKUP_SCHEMA =
+  'islemind.portable-import-usage.v1'
 const WORKSPACE_PLAN_SCHEMA =
   'islemind.portable-import-workspaces.v1'
 const SECURE_MANIFEST_SCHEMA =
@@ -85,6 +95,8 @@ let portableImportOperationSequence = 0
 
 export interface PortableApplicationImportPlan {
   readonly portableSource: string
+  readonly selection: Required<PortableBackupSelection>
+  readonly preserveSecureState: boolean
   readonly conversations: readonly Conversation[]
   readonly settings: Settings | null
   readonly languagePreferenceSource?: LanguagePreferenceSource
@@ -93,6 +105,7 @@ export interface PortableApplicationImportPlan {
   readonly skills: readonly SkillDefinition[]
   readonly mcpServers: readonly McpServerConfig[]
   readonly knowledge: Partial<PortableKnowledgeSnapshot>
+  readonly usage?: UsagePortableSnapshot
   readonly tavernEntries: readonly {
     readonly scopeId?: string
     readonly snapshot: Partial<TavernSnapshot> | undefined
@@ -198,7 +211,7 @@ export function createPortableImportRecoveryCoordinator<Plan>(
   async function recoverLocked(): Promise<InterruptedPortableImportRecoveryResult> {
     let envelope = await dependencies.store.readEnvelope()
     if (!envelope) return { status: 'none' }
-    if (!sameStrings(envelope.participants, participantIds)) {
+    if (!isSupportedPortableImportParticipantList(envelope.participants, participantIds)) {
       return { status: 'recovery_required' }
     }
 
@@ -379,6 +392,16 @@ export function createPortableImportRecoveryCoordinator<Plan>(
   })
 }
 
+function isSupportedPortableImportParticipantList(
+  persisted: readonly string[],
+  current: readonly string[],
+): boolean {
+  return sameStrings(persisted, current) || (
+    sameStrings(current, PARTICIPANT_IDS) &&
+    sameStrings(persisted, LEGACY_PARTICIPANT_IDS)
+  )
+}
+
 const recoveryStore = createAsyncStoragePortableImportRecoveryStore({
   blobStorage: createSqlitePortableImportRecoveryBlobStorage(
     createExpoSqliteDatabaseProvider(),
@@ -421,6 +444,7 @@ function createProductionParticipants(
     createConversationParticipant(store),
     createSecureStateParticipant(store),
     createKnowledgeParticipant(store),
+    createUsageParticipant(store),
   ])
 }
 
@@ -431,6 +455,19 @@ function createWorkspaceParticipant(
   return {
     id,
     async prepare(plan, envelope, signal) {
+      if (!isPortableCategorySelected(plan, 'workspaces')) {
+        const raw = JSON.stringify({
+          schema: WORKSPACE_PLAN_SCHEMA,
+          operationId: envelope.operationId,
+          selected: false,
+          backupId: '',
+          entries: [],
+          activeScopeLinks: {},
+          conversationIds: [],
+        })
+        await store.createBlob(envelope.operationId, id, raw)
+        return store.digest(raw)
+      }
       const backupId = await resolvePortableTavernWorkspaceBackupId({
         operationId: envelope.operationId,
         portableSource: plan.portableSource,
@@ -439,6 +476,7 @@ function createWorkspaceParticipant(
       const raw = JSON.stringify({
         schema: WORKSPACE_PLAN_SCHEMA,
         operationId: envelope.operationId,
+        selected: true,
         backupId,
         entries: plan.tavernEntries,
         activeScopeLinks: plan.tavernActiveScopeLinks,
@@ -449,6 +487,7 @@ function createWorkspaceParticipant(
     },
     async apply(envelope, signal) {
       const plan = parseWorkspacePlan(await readVerifiedBlob(store, envelope, id))
+      if (!plan.selected) return
       const result = await importPortableTavernWorkspaceState({
         backupId: plan.backupId,
         entries: plan.entries,
@@ -463,6 +502,7 @@ function createWorkspaceParticipant(
     },
     async restore(envelope) {
       const plan = parseWorkspacePlan(await readVerifiedBlob(store, envelope, id))
+      if (!plan.selected) return
       const result = await restorePortableTavernWorkspaceBackup(plan.backupId)
       if (!result.ok) throw new PortableImportParticipantApplyError(true)
     },
@@ -470,7 +510,7 @@ function createWorkspaceParticipant(
       const raw = await store.readBlob(envelope.operationId, id)
       if (raw !== undefined) {
         const plan = parseWorkspacePlan(raw)
-        await cleanupPortableTavernWorkspaceBackup(plan.backupId)
+        if (plan.selected) await cleanupPortableTavernWorkspaceBackup(plan.backupId)
       }
       await store.removeBlob(envelope.operationId, id)
     },
@@ -485,16 +525,32 @@ function createApplicationRecordParticipant(
     id,
     async prepare(plan, envelope, signal) {
       throwIfCancelled(signal)
-      const targets = new Map<string, string | null>([
-        [APPLICATION_RECORD_KEYS.settings, JSON.stringify(plan.settings)],
-        [APPLICATION_RECORD_KEYS.providers, JSON.stringify(plan.providerMetadata)],
-        [APPLICATION_RECORD_KEYS.skills, JSON.stringify(plan.skills)],
-        [APPLICATION_RECORD_KEYS.mcpServers, JSON.stringify(plan.mcpServers)],
-        [APPLICATION_RECORD_KEYS.languageSource, plan.languagePreferenceSource ?? null],
+      const requestedTargets = new Map<string, { selected: boolean; value: string | null }>([
+        [APPLICATION_RECORD_KEYS.settings, {
+          selected: isPortableCategorySelected(plan, 'settings'),
+          value: JSON.stringify(plan.settings),
+        }],
+        [APPLICATION_RECORD_KEYS.providers, {
+          selected: isPortableCategorySelected(plan, 'providers') || isPortableCategorySelected(plan, 'models'),
+          value: JSON.stringify(plan.providerMetadata),
+        }],
+        [APPLICATION_RECORD_KEYS.skills, {
+          selected: isPortableCategorySelected(plan, 'skills'),
+          value: JSON.stringify(plan.skills),
+        }],
+        [APPLICATION_RECORD_KEYS.mcpServers, {
+          selected: isPortableCategorySelected(plan, 'mcp'),
+          value: JSON.stringify(plan.mcpServers),
+        }],
+        [APPLICATION_RECORD_KEYS.languageSource, {
+          selected: isPortableCategorySelected(plan, 'settings'),
+          value: plan.languagePreferenceSource ?? null,
+        }],
       ])
       const records: Array<ApplicationRecordBackup['records'][number]> = []
-      for (const [key, target] of targets) {
-        records.push({ key, source: await store.readRaw(key), target })
+      for (const [key, requested] of requestedTargets) {
+        const source = await store.readRaw(key)
+        records.push({ key, source, target: requested.selected ? requested.value : source })
       }
       throwIfCancelled(signal)
       const raw = JSON.stringify({
@@ -528,7 +584,9 @@ function createConversationParticipant(
     async prepare(plan, envelope, signal) {
       throwIfCancelled(signal)
       const source = await conversationPersistence.loadReplacementSnapshot()
-      const target = canonicalConversationSnapshot(plan.conversations)
+      const target = isPortableCategorySelected(plan, 'conversations')
+        ? canonicalConversationSnapshot(plan.conversations)
+        : source
       throwIfCancelled(signal)
       const raw = JSON.stringify({
         schema: CONVERSATION_BACKUP_SCHEMA,
@@ -564,9 +622,11 @@ function createKnowledgeParticipant(
       const source = canonicalKnowledgeSnapshot(
         await knowledgeRepository.loadSnapshot({ signal }),
       )
-      const target = canonicalKnowledgeSnapshot(
-        portableKnowledgeSnapshot.prepareImportSnapshot(plan.knowledge),
-      )
+      const target = isPortableCategorySelected(plan, 'knowledge')
+        ? canonicalKnowledgeSnapshot(
+            portableKnowledgeSnapshot.prepareImportSnapshot(plan.knowledge),
+          )
+        : source
       throwIfCancelled(signal)
       const raw = JSON.stringify({
         schema: KNOWLEDGE_BACKUP_SCHEMA,
@@ -584,6 +644,52 @@ function createKnowledgeParticipant(
     async restore(envelope) {
       const backup = parseKnowledgeBackup(await readVerifiedBlob(store, envelope, id))
       await replaceKnowledge(backup, 'source')
+    },
+    cleanup(envelope) {
+      return store.removeBlob(envelope.operationId, id)
+    },
+  }
+}
+
+function createUsageParticipant(
+  store: PortableImportRecoveryStore,
+): PortableImportRecoveryParticipant<PortableApplicationImportPlan> {
+  const id = PARTICIPANT_IDS[5]
+  return {
+    id,
+    async prepare(plan, envelope, signal) {
+      throwIfCancelled(signal)
+      if (!isPortableCategorySelected(plan, 'usage') || !plan.usage) {
+        const raw = JSON.stringify({
+          schema: USAGE_BACKUP_SCHEMA,
+          operationId: envelope.operationId,
+          selected: false,
+        })
+        await store.createBlob(envelope.operationId, id, raw)
+        return store.digest(raw)
+      }
+      const source = await usagePortableSnapshotRepository.load({ signal })
+      const target = parseUsagePortableSnapshot(plan.usage)
+      throwIfCancelled(signal)
+      const raw = JSON.stringify({
+        schema: USAGE_BACKUP_SCHEMA,
+        operationId: envelope.operationId,
+        selected: true,
+        source,
+        target,
+      })
+      await store.createBlob(envelope.operationId, id, raw)
+      return store.digest(raw)
+    },
+    async apply(envelope, signal) {
+      const backup = parseUsageBackup(await readVerifiedBlob(store, envelope, id))
+      if (!backup.selected) return
+      await replaceUsage(backup, 'target', signal)
+    },
+    async restore(envelope) {
+      const backup = parseUsageBackup(await readVerifiedBlob(store, envelope, id))
+      if (!backup.selected) return
+      await replaceUsage(backup, 'source')
     },
     cleanup(envelope) {
       return store.removeBlob(envelope.operationId, id)
@@ -611,7 +717,7 @@ function createSecureStateParticipant(
         throwIfCancelled(signal)
         const descriptor = descriptors[index]
         const source = await readSecureDescriptor(descriptor)
-        const target = descriptor.target
+        const target = plan.preserveSecureState ? source : descriptor.target
         const sourceRaw = encodeSecureSidecar(source)
         const targetRaw = encodeSecureSidecar(target)
         prepared.push({
@@ -689,9 +795,24 @@ interface KnowledgeBackup {
   readonly target: KnowledgeRepositorySnapshot
 }
 
+type UsageBackup =
+  | Readonly<{
+      schema: typeof USAGE_BACKUP_SCHEMA
+      operationId: string
+      selected: false
+    }>
+  | Readonly<{
+      schema: typeof USAGE_BACKUP_SCHEMA
+      operationId: string
+      selected: true
+      source: UsagePortableSnapshot
+      target: UsagePortableSnapshot
+    }>
+
 interface WorkspacePlan {
   readonly schema: typeof WORKSPACE_PLAN_SCHEMA
   readonly operationId: string
+  readonly selected: boolean
   readonly backupId: string
   readonly entries: readonly {
     readonly scopeId?: string
@@ -804,6 +925,22 @@ async function replaceKnowledge(
   const persisted = await knowledgeRepository.loadSnapshot({ signal })
   if (!sameJson(persisted, backup[target])) {
     throw new Error('Portable import knowledge verification failed.')
+  }
+  throwIfCancelled(signal)
+}
+
+async function replaceUsage(
+  backup: Extract<UsageBackup, { selected: true }>,
+  target: 'source' | 'target',
+  signal?: AbortSignal,
+): Promise<void> {
+  throwIfCancelled(signal)
+  const current = await usagePortableSnapshotRepository.load({ signal })
+  assertSourceOrTarget(current, backup.source, backup.target, 'usage')
+  await usagePortableSnapshotRepository.replace(backup[target], { signal })
+  const persisted = await usagePortableSnapshotRepository.load({ signal })
+  if (!sameJson(persisted, backup[target])) {
+    throw new Error('Portable import usage verification failed.')
   }
   throwIfCancelled(signal)
 }
@@ -1051,11 +1188,37 @@ function parseKnowledgeBackup(raw: string): KnowledgeBackup {
   return value as unknown as KnowledgeBackup
 }
 
+function parseUsageBackup(raw: string): UsageBackup {
+  const value = parseJsonRecord(raw)
+  if (
+    value.schema !== USAGE_BACKUP_SCHEMA ||
+    typeof value.operationId !== 'string' ||
+    typeof value.selected !== 'boolean'
+  ) {
+    throw new Error('The portable import usage backup is invalid.')
+  }
+  if (!value.selected) {
+    return {
+      schema: USAGE_BACKUP_SCHEMA,
+      operationId: value.operationId,
+      selected: false,
+    }
+  }
+  return {
+    schema: USAGE_BACKUP_SCHEMA,
+    operationId: value.operationId,
+    selected: true,
+    source: parseUsagePortableSnapshot(value.source),
+    target: parseUsagePortableSnapshot(value.target),
+  }
+}
+
 function parseWorkspacePlan(raw: string): WorkspacePlan {
   const value = parseJsonRecord(raw)
   if (
     value.schema !== WORKSPACE_PLAN_SCHEMA ||
     typeof value.operationId !== 'string' ||
+    typeof value.selected !== 'boolean' ||
     typeof value.backupId !== 'string' ||
     !Array.isArray(value.entries) ||
     !isRecord(value.activeScopeLinks) ||
@@ -1065,6 +1228,13 @@ function parseWorkspacePlan(raw: string): WorkspacePlan {
     throw new Error('The portable import workspace plan is invalid.')
   }
   return value as unknown as WorkspacePlan
+}
+
+function isPortableCategorySelected(
+  plan: PortableApplicationImportPlan,
+  category: PortableBackupCategory,
+): boolean {
+  return plan.selection.mode === 'full' || plan.selection.categories.includes(category)
 }
 
 function parseSecureManifest(raw: string): SecureManifest {
