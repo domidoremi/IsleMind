@@ -12,6 +12,11 @@ import {
   sanitizeProviderPortableExportUrl,
 } from '@/modules/providers'
 import {
+  parseUsagePortableSnapshot,
+  type UsagePortableSnapshot,
+  type UsagePortableSnapshotRepository,
+} from '@/modules/diagnostics'
+import {
   normalizeSettingsIdentityPreferences,
   sanitizeSettingsForPortableExport,
 } from '@/modules/settings'
@@ -51,16 +56,27 @@ import {
 import {
   exportMemoriesAsMem0,
   importMem0Memories,
-  type Mem0MemoryEnvelope,
 } from '@/utils/mem0Interop'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
 import { sanitizeSkillForBackup } from '@/utils/skillSafety'
+import { normalizeResponseLifecycle } from '@/services/responseLifecycle'
 import type {
+  PortableBackupCategory,
+  PortableBackupSelection,
   PortableDataExportOptions,
+  PortableDataExportPayload,
   PortableDataImportOptions,
   PortableDataImportResult,
+  PortableDataLanguagePreferenceSource,
   PortableDataSerializedExport,
 } from '../contracts'
+import {
+  createPortableBackupEnvelope,
+  migratePortableBackup,
+  normalizePortableBackupSelection,
+  planPortableBackupRestore,
+  selectPortableDataPayload,
+} from './portableBackupPolicy'
 
 const MCP_PORTABLE_TEXT_LIMIT = 240
 const IMPORTED_SETTINGS_URL_FIELDS = [
@@ -69,25 +85,6 @@ const IMPORTED_SETTINGS_URL_FIELDS = [
   'observabilitySinkEndpointUrl',
   'proxyBaseUrl',
 ] as const satisfies readonly (keyof Settings)[]
-
-export type PortableDataLanguagePreferenceSource = 'system' | 'user'
-
-export interface PortableDataExportPayload {
-  app: 'islemind'
-  version: 1
-  conversations: Conversation[]
-  settings: Settings | null
-  languagePreferenceSource?: PortableDataLanguagePreferenceSource
-  providers: AIProvider[]
-  skills?: SkillDefinition[]
-  mcpServers?: McpServerConfig[]
-  context?: PortableKnowledgeSnapshot
-  tavernSnapshots?: Record<string, TavernSnapshot>
-  tavernSnapshotAudits?: Record<string, TavernExportAudit>
-  tavernActiveScopes?: Record<string, string>
-  mem0?: Mem0MemoryEnvelope
-  exportedAt: number
-}
 
 export interface PortableDataRecordSourcePort {
   loadSettings(): Promise<Settings | null>
@@ -128,6 +125,8 @@ export interface PortableDataWorkspacePort {
 
 export interface PortableDataApplicationImportPlan {
   readonly portableSource: string
+  readonly selection: Required<PortableBackupSelection>
+  readonly preserveSecureState: boolean
   readonly conversations: readonly Conversation[]
   readonly settings: Settings | null
   readonly languagePreferenceSource?: PortableDataLanguagePreferenceSource
@@ -136,6 +135,7 @@ export interface PortableDataApplicationImportPlan {
   readonly skills: readonly SkillDefinition[]
   readonly mcpServers: readonly McpServerConfig[]
   readonly knowledge: Partial<PortableKnowledgeSnapshot>
+  readonly usage?: UsagePortableSnapshot
   readonly tavernEntries: readonly {
     readonly scopeId?: string
     readonly snapshot: Partial<TavernSnapshot> | undefined
@@ -165,6 +165,7 @@ export interface PortableDataPayloadRuntimeDependencies {
   conversations: PortableDataConversationSourcePort
   knowledge: PortableDataKnowledgePort
   workspaces: PortableDataWorkspacePort
+  usage: UsagePortableSnapshotRepository
   recovery: PortableDataRecoveryPort
   now(): number
   reportFailure(failure: PortableDataPayloadFailure): void | Promise<void>
@@ -185,6 +186,8 @@ export function createPortableDataPayloadRuntime(
   async function exportPayload(
     options: PortableDataExportOptions = {},
   ): Promise<PortableDataExportPayload> {
+    const selection = normalizePortableBackupSelection(options.selection)
+    const includeUsage = selection.mode === 'full' || selection.categories.includes('usage')
     const [
       conversations,
       settings,
@@ -193,6 +196,7 @@ export function createPortableDataPayloadRuntime(
       mcpServers,
       languagePreferenceSource,
       context,
+      usage,
     ] = await Promise.all([
       dependencies.conversations.loadAll(),
       dependencies.records.loadSettings(),
@@ -201,6 +205,7 @@ export function createPortableDataPayloadRuntime(
       dependencies.records.loadMcpServers(),
       dependencies.records.loadLanguagePreferenceSource(),
       dependencies.knowledge.exportSnapshot(),
+      includeUsage ? dependencies.usage.load() : Promise.resolve(undefined),
     ])
     const conversationIds = conversations.map((conversation) => conversation.id)
     const allScopeIds = await dependencies.workspaces.listScopeIds()
@@ -226,7 +231,7 @@ export function createPortableDataPayloadRuntime(
       ? Object.fromEntries(workspaceEntries.map((entry) => [entry.scopeId, entry.exportAudit]))
       : undefined
 
-    return {
+    const payload: PortableDataExportPayload = {
       app: 'islemind',
       version: 1,
       conversations: normalizedConversations,
@@ -254,16 +259,21 @@ export function createPortableDataPayloadRuntime(
         { app_id: 'islemind' },
         new Date(exportedAt).toISOString(),
       ),
+      ...(usage ? { usage } : {}),
       exportedAt,
     }
+    return selectPortableDataPayload(payload, options.selection)
   }
 
   async function exportJson(
     options: PortableDataExportOptions = {},
   ): Promise<PortableDataSerializedExport> {
     const payload = await exportPayload(options)
+    const serialized = options.selection
+      ? createPortableBackupEnvelope(payload, options.selection, payload.exportedAt)
+      : payload
     return {
-      json: JSON.stringify(payload, null, 2),
+      json: JSON.stringify(serialized, null, 2),
       tavernSnapshotAudits: payload.tavernSnapshotAudits,
     }
   }
@@ -286,50 +296,162 @@ export function createPortableDataPayloadRuntime(
       return { ok: false, kind: 'invalid', reason: 'invalid_json' }
     }
 
-    if (isExportPayload(data)) {
+    const backup = migratePortableBackup(data)
+    if (backup && isExportPayload(backup.payload)) {
+      const payload = backup.payload
+      const selection = normalizePortableBackupSelection(backup.selection)
+      let importedUsage: UsagePortableSnapshot | undefined
+      try {
+        importedUsage = payload.usage === undefined
+          ? undefined
+          : parseUsagePortableSnapshot(payload.usage)
+        if (
+          selection.mode === 'selective' &&
+          selection.categories.includes('usage') &&
+          importedUsage === undefined
+        ) {
+          throw new Error('The selected usage snapshot is missing.')
+        }
+      } catch (error) {
+        await dependencies.reportFailure({
+          operation: 'import',
+          detail: 'portableDataPayload:usage-validation',
+          error,
+        })
+        return { ok: false, kind: 'invalid', reason: 'invalid_structure' }
+      }
       try {
         throwIfPortableImportCancelled(options.signal)
-        const normalizedProviders = data.providers.map(normalizeProvider)
-        const normalizedConversations = data.conversations.map(normalizeConversation)
-        const tavernEntries = isRecord(data.tavernSnapshots)
-          ? Object.entries(data.tavernSnapshots).map(([scopeId, snapshot]) => ({
+        const selective = selection.mode === 'selective'
+        const has = (category: PortableBackupCategory) => selection.categories.includes(category)
+        const importedProviders = payload.providers.map(normalizeProvider)
+        const importedConversations = payload.conversations.map(normalizeConversation)
+        const importedSettings = payload.settings
+          ? normalizeSettingsIdentityPreferences(
+              sanitizeImportedSettingsUrls({
+                ...payload.settings,
+                observabilitySinkApiKeyConfigured: false,
+              }),
+            )
+          : null
+        const importedSkills = Array.isArray(payload.skills)
+          ? payload.skills
+              .map(normalizeSkill)
+              .filter((skill): skill is SkillDefinition => Boolean(skill))
+          : []
+        const importedMcpServers = Array.isArray(payload.mcpServers)
+          ? payload.mcpServers
+              .map(normalizeMcpServer)
+              .filter((server): server is McpServerConfig => Boolean(server))
+          : []
+        const importedTavernEntries = isRecord(payload.tavernSnapshots)
+          ? Object.entries(payload.tavernSnapshots).map(([scopeId, snapshot]) => ({
               scopeId,
               snapshot: snapshot as Partial<TavernSnapshot> | undefined,
             }))
           : []
+
+        const restoreBaseline = options.confirmRestore
+          ? await loadPortableRestoreBaseline(dependencies)
+          : undefined
+        if (options.confirmRestore) {
+          const preview = planPortableBackupRestore({
+            backup,
+            existing: {
+              providerIds: restoreBaseline?.providers.map((provider) => provider.id),
+              modelIds: restoreBaseline?.providers.flatMap(providerModelIds),
+              conversationIds: restoreBaseline?.conversations.map((conversation) => conversation.id),
+              workspaceIds: restoreBaseline?.workspaceIds,
+              skillIds: restoreBaseline?.skills.map((skill) => skill.id),
+              mcpServerIds: restoreBaseline?.mcpServers.map((server) => server.id),
+            },
+            conflictMode: selection.mode === 'full' ? 'replace' : 'merge',
+          })
+          const confirmed = await options.confirmRestore(preview)
+          throwIfPortableImportCancelled(options.signal)
+          if (!confirmed) return cancelledImportResult()
+        }
+
+        const [currentSettings, currentProviders, currentSkills, currentMcpServers, currentLanguageSource] = selective
+          ? await Promise.all([
+              has('settings') ? dependencies.records.loadSettings() : Promise.resolve(null),
+              has('providers') || has('models')
+                ? Promise.resolve(restoreBaseline?.providers ?? await dependencies.records.loadProviders())
+                : Promise.resolve(null),
+              has('skills')
+                ? Promise.resolve(restoreBaseline?.skills ?? await dependencies.records.loadSkills())
+                : Promise.resolve(null),
+              has('mcp')
+                ? Promise.resolve(restoreBaseline?.mcpServers ?? await dependencies.records.loadMcpServers())
+                : Promise.resolve(null),
+              has('settings') ? dependencies.records.loadLanguagePreferenceSource() : Promise.resolve('system' as const),
+            ])
+          : [null, null, null, null, 'system' as const]
+
+        const normalizedProviders = selective
+          ? mergeProvidersForSelectiveRestore(currentProviders ?? [], importedProviders, selection)
+          : importedProviders
+        const normalizedConversations = selective && has('conversations')
+          ? mergeById(restoreBaseline?.conversations ?? await dependencies.conversations.loadAll(), importedConversations)
+              .map(normalizeConversation)
+          : importedConversations
+        const settings = selective && has('settings') && importedSettings
+          ? { ...(currentSettings ?? {}), ...importedSettings } as Settings
+          : importedSettings
+        const skills = selective && has('skills')
+          ? mergeById(currentSkills ?? [], importedSkills)
+          : importedSkills
+        const mcpServers = selective && has('mcp')
+          ? mergeById(currentMcpServers ?? [], importedMcpServers)
+          : importedMcpServers
+        const knowledge = selective && has('knowledge')
+          ? mergeKnowledgeSnapshots(
+              await dependencies.knowledge.exportSnapshot(),
+              payload.context ?? {},
+            )
+          : payload.context ?? {}
+
+        let tavernEntries: PortableDataApplicationImportPlan['tavernEntries'][number][] =
+          importedTavernEntries
+        let tavernActiveScopeLinks = isRecord(payload.tavernActiveScopes)
+          ? payload.tavernActiveScopes as Record<string, string>
+          : {}
+        if (selective && has('workspaces')) {
+          const scopeIds = restoreBaseline?.workspaceIds ?? await dependencies.workspaces.listScopeIds()
+          const currentConversationIds = normalizedConversations.map((conversation) => conversation.id)
+          const currentLinks = await dependencies.workspaces.exportActiveScopeLinks({
+            conversationIds: currentConversationIds,
+            scopeIds,
+          })
+          const currentEntries = await dependencies.workspaces.exportSnapshots({
+            includeHiddenMemory: true,
+            includePendingWritebacks: true,
+            includeEmptyScopeIds: Object.values(currentLinks),
+          })
+          tavernEntries = mergeWorkspaceEntries(currentEntries, importedTavernEntries)
+          tavernActiveScopeLinks = { ...currentLinks, ...tavernActiveScopeLinks }
+        }
         const recovery = await dependencies.recovery.importApplication({
           portableSource: json,
+          selection,
+          preserveSecureState: selective,
           conversations: normalizedConversations,
-          settings: data.settings
-            ? normalizeSettingsIdentityPreferences(
-                sanitizeImportedSettingsUrls({
-                  ...data.settings,
-                  observabilitySinkApiKeyConfigured: false,
-                }),
-              )
-            : null,
-          languagePreferenceSource: isLanguagePreferenceSource(data.languagePreferenceSource)
-            ? data.languagePreferenceSource
-            : undefined,
+          settings,
+          languagePreferenceSource: isLanguagePreferenceSource(payload.languagePreferenceSource)
+            ? payload.languagePreferenceSource
+            : selective && has('settings')
+              ? currentLanguageSource
+              : undefined,
           providerMetadata: normalizedProviders,
-          credentialProviders: data.providers,
-          skills: Array.isArray(data.skills)
-            ? data.skills
-                .map(normalizeSkill)
-                .filter((skill): skill is SkillDefinition => Boolean(skill))
-            : [],
-          mcpServers: Array.isArray(data.mcpServers)
-            ? data.mcpServers
-                .map(normalizeMcpServer)
-                .filter((server): server is McpServerConfig => Boolean(server))
-            : [],
-          knowledge: data.context ?? {},
+          credentialProviders: payload.providers,
+          skills,
+          mcpServers,
+          knowledge,
+          usage: importedUsage,
           tavernEntries,
-          tavernActiveScopeLinks: isRecord(data.tavernActiveScopes)
-            ? data.tavernActiveScopes as Record<string, string>
-            : {},
+          tavernActiveScopeLinks,
           conversationIds: normalizedConversations.map((conversation) => conversation.id),
-        }, options)
+        }, options.signal ? { signal: options.signal } : undefined)
         if (recovery.status !== 'committed') {
           await dependencies.reportFailure({
             operation: 'import',
@@ -398,6 +520,134 @@ export function createPortableDataPayloadRuntime(
   }
 
   return Object.freeze({ exportPayload, exportJson, importJson })
+}
+
+interface PortableRestoreBaseline {
+  providers: AIProvider[]
+  conversations: Conversation[]
+  workspaceIds: string[]
+  skills: SkillDefinition[]
+  mcpServers: McpServerConfig[]
+}
+
+async function loadPortableRestoreBaseline(
+  dependencies: PortableDataPayloadRuntimeDependencies,
+): Promise<PortableRestoreBaseline> {
+  const [providers, conversations, workspaceIds, skills, mcpServers] = await Promise.all([
+    dependencies.records.loadProviders(),
+    dependencies.conversations.loadAll(),
+    dependencies.workspaces.listScopeIds(),
+    dependencies.records.loadSkills(),
+    dependencies.records.loadMcpServers(),
+  ])
+  return {
+    providers: providers ?? [],
+    conversations,
+    workspaceIds,
+    skills: skills ?? [],
+    mcpServers: mcpServers ?? [],
+  }
+}
+
+function providerModelIds(provider: AIProvider): string[] {
+  return Array.from(new Set([
+    ...provider.models,
+    ...(provider.manualModels ?? []),
+    ...(provider.modelConfigs ?? []).map((model) => model.id),
+  ]))
+}
+
+function mergeProvidersForSelectiveRestore(
+  currentProviders: readonly AIProvider[],
+  importedProviders: readonly AIProvider[],
+  selection: Required<PortableBackupSelection>,
+): AIProvider[] {
+  const restoreProviders = selection.categories.includes('providers')
+  const restoreModels = selection.categories.includes('models')
+  const current = currentProviders.filter(isProviderLike).map(normalizeProvider)
+  if (!restoreProviders && !restoreModels) return current
+
+  const byId = new Map(current.map((provider) => [provider.id, provider]))
+  for (const imported of importedProviders) {
+    const existing = byId.get(imported.id)
+    if (restoreProviders && restoreModels) {
+      byId.set(imported.id, imported)
+      continue
+    }
+    if (restoreProviders) {
+      byId.set(imported.id, preserveProviderModels(imported, existing))
+      continue
+    }
+    if (existing) byId.set(imported.id, replaceProviderModels(existing, imported))
+  }
+  return [...byId.values()]
+}
+
+function preserveProviderModels(imported: AIProvider, existing?: AIProvider): AIProvider {
+  const existingGroups = new Map(
+    (existing?.credentialGroups ?? []).map((group) => [group.id, group]),
+  )
+  return {
+    ...imported,
+    models: [...(existing?.models ?? [])],
+    manualModels: existing?.manualModels ? [...existing.manualModels] : undefined,
+    modelAliases: existing?.modelAliases ? [...existing.modelAliases] : undefined,
+    modelAvailability: existing?.modelAvailability
+      ? [...existing.modelAvailability]
+      : undefined,
+    modelConfigs: existing?.modelConfigs ? [...existing.modelConfigs] : undefined,
+    credentialGroups: imported.credentialGroups?.map((group) => ({
+      ...group,
+      availableModels: existingGroups.get(group.id)?.availableModels
+        ? [...existingGroups.get(group.id)!.availableModels!]
+        : [],
+    })),
+  }
+}
+
+function replaceProviderModels(existing: AIProvider, imported: AIProvider): AIProvider {
+  return {
+    ...existing,
+    models: [...imported.models],
+    manualModels: imported.manualModels ? [...imported.manualModels] : undefined,
+    modelAliases: imported.modelAliases ? [...imported.modelAliases] : undefined,
+    modelAvailability: imported.modelAvailability
+      ? [...imported.modelAvailability]
+      : undefined,
+    modelConfigs: imported.modelConfigs ? [...imported.modelConfigs] : undefined,
+  }
+}
+
+function mergeKnowledgeSnapshots(
+  current: PortableKnowledgeSnapshot,
+  imported: Partial<PortableKnowledgeSnapshot>,
+): PortableKnowledgeSnapshot {
+  return {
+    memories: mergeById(current.memories, imported.memories ?? []),
+    documents: mergeById(current.documents, imported.documents ?? []),
+    chunks: mergeById(current.chunks, imported.chunks ?? []),
+  }
+}
+
+function mergeWorkspaceEntries(
+  current: readonly PortableDataWorkspaceExportEntry[],
+  imported: readonly PortableDataApplicationImportPlan['tavernEntries'][number][],
+): PortableDataApplicationImportPlan['tavernEntries'][number][] {
+  const byId = new Map<string, PortableDataApplicationImportPlan['tavernEntries'][number]>()
+  for (const entry of current) byId.set(entry.scopeId, entry)
+  for (const entry of imported) {
+    if (entry.scopeId) byId.set(entry.scopeId, entry)
+  }
+  return [...byId.values()]
+}
+
+function mergeById<T extends { id: string }>(
+  current: readonly T[],
+  imported: readonly T[],
+): T[] {
+  const byId = new Map(current.map((item) => [item.id, item]))
+  for (const item of imported) byId.set(item.id, item)
+  return [...byId.values()]
 }
 
 function cancelledImportResult(): PortableDataImportResult {
@@ -505,22 +755,36 @@ function normalizeConversation(conversation: Conversation): Conversation {
     topP: Number.isFinite(conversation.topP) ? conversation.topP : 1,
     reasoningEffort: conversation.reasoningEffort ?? 'medium',
     maxTokens: Number.isFinite(conversation.maxTokens) ? conversation.maxTokens : 4096,
-    messages: conversation.messages.map((message) => ({
-      ...message,
-      status: normalizeMessageStatus(message.status),
-      responseText: typeof message.responseText === 'string'
-        ? message.responseText
-        : undefined,
-      reasoning: normalizeTraces(message.reasoning),
-      toolCalls: normalizeTraces(message.toolCalls),
-      retrievalTrace: normalizeTraces(message.retrievalTrace),
-      attachments: sanitizeAttachmentsForPortableData(message.attachments),
-      usage: normalizeUsage(message.usage),
-      durationMs: finiteNumber(message.durationMs),
-      startedAt: finiteNumber(message.startedAt),
-      completedAt: finiteNumber(message.completedAt),
-      estimatedTokens: Boolean(message.estimatedTokens || message.usage?.source === 'estimated'),
-    })),
+    messages: conversation.messages.map((message) => {
+      const status = normalizeMessageStatus(message.status)
+      const startedAt = finiteNumber(message.startedAt)
+      const completedAt = finiteNumber(message.completedAt)
+      const responseLifecycle = message.role === 'assistant'
+        ? normalizeResponseLifecycle(
+            message.responseLifecycle,
+            startedAt ?? message.timestamp,
+            status,
+            completedAt,
+          )
+        : undefined
+      return {
+        ...message,
+        status,
+        responseText: typeof message.responseText === 'string'
+          ? message.responseText
+          : undefined,
+        reasoning: normalizeTraces(message.reasoning),
+        toolCalls: normalizeTraces(message.toolCalls),
+        retrievalTrace: normalizeTraces(message.retrievalTrace),
+        attachments: sanitizeAttachmentsForPortableData(message.attachments),
+        usage: normalizeUsage(message.usage),
+        durationMs: finiteNumber(message.durationMs),
+        startedAt,
+        completedAt,
+        estimatedTokens: Boolean(message.estimatedTokens || message.usage?.source === 'estimated'),
+        ...(responseLifecycle ? { responseLifecycle } : {}),
+      }
+    }),
     createdAt: conversation.createdAt ?? Date.now(),
     updatedAt: conversation.updatedAt ?? Date.now(),
   }

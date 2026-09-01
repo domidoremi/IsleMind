@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const ts = require('typescript')
+const { transformTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 
@@ -13,16 +13,7 @@ function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderStreamingPolicyHook) return
   const hook = function compileTypeScript(module, filename) {
     const source = fs.readFileSync(filename, 'utf8')
-    const output = ts.transpileModule(source, {
-      compilerOptions: {
-        esModuleInterop: true,
-        module: ts.ModuleKind.CommonJS,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        target: ts.ScriptTarget.ES2021,
-      },
-      fileName: filename,
-    })
-    module._compile(output.outputText, filename)
+    module._compile(transformTypeScriptModule(source, filename), filename)
   }
   hook.isProviderStreamingPolicyHook = true
   require.extensions['.ts'] = hook

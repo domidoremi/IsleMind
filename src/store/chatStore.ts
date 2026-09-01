@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Conversation, ConversationGenerationParameterKey, ConversationGenerationParameterOverrides, Message } from '@/types/chatContracts'
+import type { Conversation, ConversationGenerationParameterKey, ConversationGenerationParameterOverrides, Message, ResponseLifecycleStage } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
 import { getModelConfig } from '@/types/modelCatalog'
 import {
@@ -37,6 +37,16 @@ import {
 } from '@/bootstrap/providerConversationGeneration'
 import type { ConversationGenerationParameterRanges } from '@/modules/providers'
 import { useSettingsStore } from './settingsStore'
+import {
+  createResponseLifecycle,
+  lifecycleStageForMessageStatus,
+  lifecycleStageForTrace,
+  normalizeResponseLifecycle,
+  responseLifecycleTraceTimestamp,
+  safeResponseLifecycleSummary,
+  safeResponseLifecycleTraceSummary,
+  transitionResponseLifecycle,
+} from '@/services/responseLifecycle'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -226,6 +236,12 @@ interface ChatState {
     options?: { readonly persist?: boolean },
   ) => Promise<void>
   updateMessage: (convId: string, msgId: string, updates: Partial<Message>) => void
+  transitionMessageLifecycle: (
+    convId: string,
+    msgId: string,
+    stage: ResponseLifecycleStage,
+    options?: { readonly at?: number; readonly summary?: string; readonly traceId?: string },
+  ) => void
   upsertMessageTrace: (convId: string, msgId: string, trace: ProcessTrace) => void
   appendContent: (convId: string, msgId: string, content: string) => void
   commitStreamingContent: (convId: string, msgId: string, content: string) => void
@@ -577,10 +593,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const updated = state.conversations.map((c) => {
         if (c.id !== convId) return c
         const firstUserMsg = c.messages.length === 0 && message.role === 'user'
+        const nextMessage = message.role === 'assistant'
+          ? {
+              ...message,
+              // Render a real placeholder immediately. Runtime admission will
+              // advance this from preparing to sending/waiting.
+              responseLifecycle: message.responseLifecycle
+                ?? createInitialAssistantResponseLifecycle(message),
+            }
+          : message
         return {
           ...c,
           title: c.title || (firstUserMsg ? generateTitle(message.content) : c.title),
-          messages: [...c.messages, message],
+          messages: [...c.messages, nextMessage],
           updatedAt: Date.now(),
         }
       })
@@ -608,13 +633,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return {
           ...c,
           messages: c.messages.map((m) =>
-            m.id === msgId ? { ...m, ...safeUpdates } : m
+            m.id === msgId ? applyMessageUpdateWithLifecycle(m, safeUpdates) : m
           ),
           updatedAt: Date.now(),
         }
       })
       void persistConversationRecord(updated, convId)
       return { conversations: updated }
+    })
+  },
+
+  transitionMessageLifecycle: (convId, msgId, stage, options = {}) => {
+    let shouldDebouncePersist = false
+    set((state) => {
+      let changed = false
+      const updated = state.conversations.map((conversation) => {
+        if (conversation.id !== convId) return conversation
+        const messages = conversation.messages.map((message) => {
+          if (message.id !== msgId || message.role !== 'assistant') return message
+          shouldDebouncePersist = message.status === 'streaming'
+          const nextLifecycle = transitionResponseLifecycle(
+            message.responseLifecycle,
+            stage,
+            options.at ?? Date.now(),
+            {
+              summary: safeResponseLifecycleSummary(options.summary),
+              traceId: options.traceId,
+            },
+          )
+          if (areResponseLifecyclesEquivalent(message.responseLifecycle, nextLifecycle)) return message
+          changed = true
+          return { ...message, responseLifecycle: nextLifecycle }
+        })
+        return messages.some((message, index) => message !== conversation.messages[index])
+          ? { ...conversation, messages, updatedAt: Date.now() }
+          : conversation
+      })
+      if (changed) {
+        if (shouldDebouncePersist) scheduleStreamingPersist(get, convId, msgId)
+        else void persistConversationRecord(updated, convId)
+      }
+      return changed ? { conversations: updated } : state
     })
   },
 
@@ -629,12 +688,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
           {
             if (m.id !== msgId) return m
             shouldDebouncePersist = m.status === 'streaming'
-            const nextMessage = upsertTraceOnMessage(m, trace)
-            if (nextMessage !== m) {
+            const safeTrace = sanitizeProcessTraceForStore(trace)
+            const nextMessage = upsertTraceOnMessage(m, safeTrace)
+            const lifecycleStage = lifecycleStageForTrace(safeTrace, Boolean(m.content || m.responseText))
+            const nextWithLifecycle = lifecycleStage
+              ? applyLifecycleTransition(nextMessage, lifecycleStage, responseLifecycleTraceTimestamp(safeTrace), {
+                  summary: safeResponseLifecycleTraceSummary(safeTrace),
+                  traceId: safeTrace.id,
+                })
+              : nextMessage
+            if (nextWithLifecycle !== m) {
               conversationChanged = true
               changed = true
             }
-            return nextMessage
+            return nextWithLifecycle
           }
         )
         if (!conversationChanged) return c
@@ -753,10 +820,23 @@ function buildStreamingContentSnapshot(
     let conversationChanged = false
     const messages = conversation.messages.map((message) => {
       if (message.id !== msgId) return message
-      if (message.content === content && (message.responseText ?? message.content) === content) return message
+      const contentUnchanged = message.content === content && (message.responseText ?? message.content) === content
+      const nextLifecycle = message.role === 'assistant'
+        ? transitionResponseLifecycle(
+            message.responseLifecycle,
+            'generating',
+            Date.now(),
+          )
+        : message.responseLifecycle
+      if (contentUnchanged && areResponseLifecyclesEquivalent(message.responseLifecycle, nextLifecycle)) return message
       conversationChanged = true
       changed = true
-      return { ...message, content, responseText: content }
+      return {
+        ...message,
+        content,
+        responseText: content,
+        ...(nextLifecycle ? { responseLifecycle: nextLifecycle } : {}),
+      }
     })
     if (!conversationChanged) return conversation
     return {
@@ -941,11 +1021,20 @@ function sanitizeConversationTracesForStore(conversations: Conversation[]): Conv
 }
 
 function sanitizeMessageTracesForStore(message: Message): Message {
+  const responseLifecycle = message.role === 'assistant'
+    ? normalizeResponseLifecycle(
+        message.responseLifecycle,
+        message.startedAt ?? message.timestamp,
+        message.status,
+        message.completedAt,
+      )
+    : undefined
   return {
     ...message,
     reasoning: sanitizeProcessTracesForBoundary(message.reasoning),
     toolCalls: sanitizeProcessTracesForBoundary(message.toolCalls),
     retrievalTrace: sanitizeProcessTracesForBoundary(message.retrievalTrace),
+    ...(responseLifecycle ? { responseLifecycle } : {}),
   }
 }
 
@@ -954,7 +1043,90 @@ function sanitizeMessageTraceUpdates(updates: Partial<Message>): Partial<Message
   if ('reasoning' in safe) safe.reasoning = sanitizeProcessTracesForBoundary(safe.reasoning)
   if ('toolCalls' in safe) safe.toolCalls = sanitizeProcessTracesForBoundary(safe.toolCalls)
   if ('retrievalTrace' in safe) safe.retrievalTrace = sanitizeProcessTracesForBoundary(safe.retrievalTrace)
+  if ('responseLifecycle' in safe && safe.responseLifecycle) {
+    safe.responseLifecycle = normalizeResponseLifecycle(
+      safe.responseLifecycle,
+      safe.responseLifecycle.startedAt,
+      safe.responseLifecycle.stage === 'error'
+        ? 'error'
+        : safe.responseLifecycle.stage === 'cancelled'
+          ? 'cancelled'
+          : safe.responseLifecycle.stage === 'completed'
+            ? 'done'
+            : 'streaming',
+    )
+  }
   return safe
+}
+
+function applyMessageUpdateWithLifecycle(message: Message, updates: Partial<Message>): Message {
+  const merged = { ...message, ...updates }
+  if (message.role !== 'assistant') return merged
+  const status = updates.status ?? message.status
+  const lifecycle = updates.responseLifecycle
+    ?? message.responseLifecycle
+    ?? createResponseLifecycle(message.startedAt ?? message.timestamp, 'preparing')
+  if (status === 'done' || status === 'error' || status === 'cancelled') {
+    const terminalStage = lifecycleStageForMessageStatus(status)
+    merged.responseLifecycle = transitionResponseLifecycle(
+      lifecycle,
+      terminalStage,
+      updates.completedAt ?? Date.now(),
+    )
+  } else {
+    merged.responseLifecycle = lifecycle
+  }
+  return merged
+}
+
+function createInitialAssistantResponseLifecycle(message: Message) {
+  const traces = [
+    ...(message.reasoning ?? []),
+    ...(message.toolCalls ?? []),
+    ...(message.retrievalTrace ?? []),
+  ]
+  for (let index = traces.length - 1; index >= 0; index -= 1) {
+    const trace = traces[index]
+    const stage = lifecycleStageForTrace(trace, Boolean(message.content || message.responseText))
+    if (stage) {
+      return createResponseLifecycle(message.startedAt ?? message.timestamp, stage, {
+        traceId: trace.id,
+        summary: safeResponseLifecycleTraceSummary(trace),
+      })
+    }
+  }
+  return createResponseLifecycle(message.startedAt ?? message.timestamp, 'preparing')
+}
+
+function applyLifecycleTransition(
+  message: Message,
+  stage: import('@/types/chatContracts').ResponseLifecycleStage,
+  at: number,
+  options: { readonly summary?: string; readonly traceId?: string } = {},
+): Message {
+  if (message.role !== 'assistant') return message
+  const nextLifecycle = transitionResponseLifecycle(
+    message.responseLifecycle,
+    stage,
+    at,
+    options,
+  )
+  return areResponseLifecyclesEquivalent(message.responseLifecycle, nextLifecycle)
+    ? message
+    : { ...message, responseLifecycle: nextLifecycle }
+}
+
+function areResponseLifecyclesEquivalent(
+  current: Message['responseLifecycle'],
+  next: Message['responseLifecycle'],
+): boolean {
+  if (current === next) return true
+  if (!current || !next) return false
+  return current.stage === next.stage &&
+    current.startedAt === next.startedAt &&
+    current.stageStartedAt === next.stageStartedAt &&
+    current.completedAt === next.completedAt &&
+    JSON.stringify(current.history) === JSON.stringify(next.history)
 }
 
 function sanitizeProcessTraceForStore(trace: ProcessTrace): ProcessTrace {

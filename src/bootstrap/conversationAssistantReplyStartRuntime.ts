@@ -24,6 +24,13 @@ import { useSettingsStore } from '@/store/settingsStore'
 
 export const conversationAssistantReplyStartRuntime =
   createAssistantConversationReplyStartRuntime({
+    projectLifecycleStage(input) {
+      useChatStore.getState().transitionMessageLifecycle(
+        input.conversationId,
+        input.assistantMessageId,
+        input.stage,
+      )
+    },
     allocateAssistantRunId: allocateConversationAssistantRunId,
     workspaceSourceRuntime: conversationAssistantWorkspaceSourceRuntime,
     workspaceWritebackHandoffRuntime:

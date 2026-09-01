@@ -3,7 +3,7 @@ const { createHash } = require('node:crypto')
 const fs = require('node:fs')
 const Module = require('node:module')
 const path = require('node:path')
-const ts = require('typescript')
+const { transformTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const originalResolve = Module._resolveFilename
@@ -132,17 +132,7 @@ function registerTypeScriptSupport() {
 
   const hook = function compileTypeScript(module, filename) {
     const source = fs.readFileSync(filename, 'utf8')
-    const output = ts.transpileModule(source, {
-      compilerOptions: {
-        esModuleInterop: true,
-        jsx: ts.JsxEmit.ReactJSX,
-        module: ts.ModuleKind.CommonJS,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        target: ts.ScriptTarget.ES2021,
-      },
-      fileName: filename,
-    })
-    module._compile(output.outputText, filename)
+    module._compile(transformTypeScriptModule(source, filename), filename)
   }
   hook.isToolchainCatalogHook = true
   require.extensions['.ts'] = hook

@@ -119,11 +119,12 @@ function MonetControlNavigation({ value, onChange }: { value: SettingsControlVie
   const { t } = useTranslation()
   const tabs = controlTabs(t)
   return (
-    <View testID="settings-control-navigation-monet" accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 2 }}>
-      {tabs.map((tab) => {
+    <View testID="settings-control-navigation-monet" accessibilityRole="tablist" style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 3 }}>
+      {tabs.map((tab, index) => {
         const active = value === tab.value
         return (
-          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 46, flex: 1, minWidth: 0, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderBottomWidth: active ? 3 : StyleSheet.hairlineWidth, borderBottomColor: active ? colors.primary : colors.ui.semantic.chrome.border }}>
+          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ position: 'relative', minHeight: active ? 52 : 46, flex: 1, minWidth: 0, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, overflow: 'hidden', borderTopLeftRadius: index ? 9 : 18, borderTopRightRadius: index ? 18 : 10, borderBottomRightRadius: index ? 11 : 20, borderBottomLeftRadius: index ? 20 : 12, backgroundColor: active ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: StyleSheet.hairlineWidth, borderColor: active ? colors.primary : colors.ui.semantic.chrome.border }}>
+            <View pointerEvents="none" style={{ position: 'absolute', top: -18, right: -16, width: 76, height: 52, borderBottomLeftRadius: 46, backgroundColor: active ? colors.ui.icon.accentBackground : colors.ui.semantic.surface.muted, opacity: active ? 0.28 : 0.14 }} />
             <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: active ? 0 : 1, scale: active ? 1 : 0.98 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <AppIcon name={tab.icon} color={active ? colors.primary : colors.textTertiary} size={16} />
               <Text numberOfLines={1} style={{ color: active ? colors.text : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
@@ -172,12 +173,12 @@ function MaterialControlNavigation({ value, onChange }: { value: SettingsControl
   const { t } = useTranslation()
   const tabs = controlTabs(t)
   return (
-    <View testID="settings-control-navigation-material" accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 8, padding: 4, borderRadius: 18, backgroundColor: colors.ui.semantic.surface.muted }}>
+    <View testID="settings-control-navigation-material" accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 4, padding: 4, borderRadius: 16, backgroundColor: colors.ui.semantic.surface.muted }}>
       {tabs.map((tab) => {
         const active = value === tab.value
         return (
-          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 44, flex: 1, minWidth: 0, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: active ? colors.ui.control.primaryBackground : 'transparent' }}>
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: active ? 0 : 1, scale: active ? 1 : 0.98 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 58, flex: 1, minWidth: 0, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: active ? colors.ui.control.primaryBackground : 'transparent' }}>
+            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: active ? 0 : 1, scale: active ? 1 : 0.98 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }} style={{ alignItems: 'center', gap: 3 }}>
               <AppIcon name={tab.icon} color={active ? colors.ui.control.primaryForeground : colors.textSecondary} size={15} />
               <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
             </MotiView>
@@ -194,11 +195,12 @@ function LiquidGlassControlNavigation({ value, onChange }: { value: SettingsCont
   const { t } = useTranslation()
   const tabs = controlTabs(t)
   return (
-    <View testID="settings-control-navigation-liquid-glass" accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 6, padding: 5, borderRadius: 26, backgroundColor: colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border }}>
+    <View testID="settings-control-navigation-liquid-glass" accessibilityRole="tablist" style={{ position: 'relative', flexDirection: 'row', gap: 6, padding: 5, borderRadius: 26, overflow: 'hidden', backgroundColor: colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border }}>
+      <View pointerEvents="none" style={{ position: 'absolute', top: 2, right: 24, left: 24, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.42 }} />
       {tabs.map((tab) => {
         const active = value === tab.value
         return (
-          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 42, flex: 1, minWidth: 0, borderRadius: 21, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: active ? colors.ui.semantic.surface.raised : 'transparent', borderWidth: active ? 1 : 0, borderColor: colors.ui.semantic.chrome.border }}>
+          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 42, flex: 1, minWidth: 0, borderRadius: 21, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: active ? colors.ui.semantic.surface.raised : 'transparent', borderWidth: active ? 1 : StyleSheet.hairlineWidth, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
             <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: active ? 0 : 1, scale: active ? 1 : 0.98 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
               <AppIcon name={tab.icon} color={active ? colors.ui.control.link : colors.textTertiary} size={15} />
               <Text numberOfLines={1} style={{ color: active ? colors.text : colors.textSecondary, fontSize: 11.5, lineHeight: 15, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
@@ -276,17 +278,18 @@ function LimeRoadControlCatalog({ entries, compact }: { entries: SettingsControl
 function MonetControlCatalog({ entries, compact }: { entries: SettingsControlExperienceEntry[]; compact: boolean }) {
   const { colors } = useAppTheme()
   return (
-    <View testID="settings-control-catalog-monet" style={{ gap: 8 }}>
-      {entries.map((entry) => {
+    <View testID="settings-control-catalog-monet" style={{ gap: compact ? 7 : 9, paddingHorizontal: 2 }}>
+      {entries.map((entry, index) => {
         const tone = controlTone(colors, entry)
         return (
-          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ minHeight: compact ? 64 : 70, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 11, borderRadius: 18, backgroundColor: entry.active ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderColor: entry.active || entry.tone ? tone.foreground : colors.ui.semantic.chrome.border }}>
-            <View testID={`settings-control-icon-monet-${entry.key}`} style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' }}><AppIcon name={entry.icon} color={tone.foreground} size={16} /></View>
+          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ position: 'relative', minHeight: compact ? 62 : 70, marginLeft: index % 2 ? 10 : 0, marginRight: index % 2 ? 0 : 10, paddingHorizontal: 10, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 11, overflow: 'hidden', backgroundColor: entry.active ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: StyleSheet.hairlineWidth, borderColor: entry.active || entry.tone ? tone.border : colors.ui.semantic.chrome.border, borderTopLeftRadius: index % 2 ? 9 : 18, borderTopRightRadius: index % 2 ? 18 : 10, borderBottomRightRadius: index % 2 ? 11 : 20, borderBottomLeftRadius: index % 2 ? 20 : 12 }}>
+            <View pointerEvents="none" style={{ position: 'absolute', top: -20, right: -16, width: 92, height: 62, borderBottomLeftRadius: 56, backgroundColor: entry.active || entry.tone ? tone.background : colors.ui.icon.accentBackground, opacity: 0.24 }} />
+            <View testID={`settings-control-icon-monet-${entry.key}`} style={{ width: 32, height: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 0 }}><AppIcon name={entry.icon} color={tone.foreground} size={16} /></View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700' }}>{entry.title}</Text>
               <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '500' }}>{entry.detail}</Text>
             </View>
-            <AppIcon name="arrow-right" color={colors.textTertiary} size={14} />
+            <View style={{ width: 22, height: 4, borderRadius: 2, backgroundColor: entry.active || entry.tone ? tone.foreground : colors.ui.semantic.chrome.border, opacity: 0.66 }} />
           </IslePressable>
         )
       })}
@@ -327,17 +330,20 @@ function MarkdownControlCatalog({ entries, compact }: { entries: SettingsControl
 function MaterialControlCatalog({ entries, compact }: { entries: SettingsControlExperienceEntry[]; compact: boolean }) {
   const { colors } = useAppTheme()
   return (
-    <View testID="settings-control-catalog-material" style={{ gap: 8 }}>
+    <View testID="settings-control-catalog-material" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {entries.map((entry) => {
         const tone = controlTone(colors, entry)
         return (
-          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ minHeight: compact ? 64 : 72, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 18, backgroundColor: entry.active ? colors.ui.semantic.surface.raised : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: entry.active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
-            <View testID={`settings-control-icon-material-${entry.key}`} style={{ width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' }}><AppIcon name={entry.icon} color={tone.foreground} size={18} /></View>
+          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ minHeight: compact ? 72 : 86, width: compact ? '100%' : '48.8%', flexGrow: compact ? 0 : 1, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: entry.active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+              <View testID={`settings-control-icon-material-${entry.key}`} style={{ width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 0 }}><AppIcon name={entry.icon} color={tone.foreground} size={18} /></View>
+              <View style={{ flex: 1 }} />
+              <AppIcon name="arrow-right" color={colors.textTertiary} size={15} />
+            </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700' }}>{entry.title}</Text>
+              <Text numberOfLines={1} style={{ marginTop: 7, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700' }}>{entry.title}</Text>
               <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '500' }}>{entry.detail}</Text>
             </View>
-            <AppIcon name="arrow-right" color={colors.textTertiary} size={15} />
           </IslePressable>
         )
       })}
@@ -352,13 +358,14 @@ function LiquidGlassControlCatalog({ entries, compact }: { entries: SettingsCont
       {entries.map((entry) => {
         const tone = controlTone(colors, entry)
         return (
-          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ minHeight: compact ? 62 : 68, paddingHorizontal: 13, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 11, borderRadius: 22, backgroundColor: colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: entry.active ? tone.foreground : colors.ui.semantic.chrome.border }}>
-            <View testID={`settings-control-icon-liquid-glass-${entry.key}`} style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 0 }}><AppIcon name={entry.icon} color={tone.foreground} size={16} /></View>
+          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ position: 'relative', minHeight: compact ? 62 : 68, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 10, overflow: 'hidden', borderRadius: 22, backgroundColor: entry.active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: entry.active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
+            <View pointerEvents="none" style={{ position: 'absolute', top: 2, right: 28, left: 28, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.42 }} />
+            <View testID={`settings-control-icon-liquid-glass-${entry.key}`} style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 0 }}><AppIcon name={entry.icon} color={tone.foreground} size={16} /></View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '700' }}>{entry.title}</Text>
               <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '500' }}>{entry.detail}</Text>
             </View>
-            <AppIcon name="arrow-right" color={colors.textTertiary} size={14} />
+            <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.actionBar.itemBorder }}><AppIcon name="arrow-right" color={colors.textTertiary} size={14} /></View>
           </IslePressable>
         )
       })}

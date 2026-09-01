@@ -55,11 +55,17 @@ function createMessageId(): string {
 const startConversationChatWorkflowReply = createConversationChatWorkflowReplyStarter({
   clock: systemClock,
   createMessageId,
-  createTraceId: (prefix) => `${prefix}-${createMessageId()}`,
   createAbortController: () => new AbortController(),
   stopConversation: stopConversationMessage,
   addMessage(conversationId, message) {
     useChatStore.getState().addMessage(conversationId, message)
+  },
+  projectLifecycleStage({ conversationId, assistantMessageId, stage }) {
+    useChatStore.getState().transitionMessageLifecycle(
+      conversationId,
+      assistantMessageId,
+      stage,
+    )
   },
   getConversation(conversationId) {
     return useChatStore.getState().conversations.find((item) => item.id === conversationId)

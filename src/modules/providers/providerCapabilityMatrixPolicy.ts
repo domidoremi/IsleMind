@@ -528,7 +528,7 @@ function buildModelResponseFormatCapability(provider: AIProvider, modelConfig: A
   if (modelOwnConfigWasDeclared(provider, modelConfig.id) && modelDeclaresResponseFormat && modelConfig.source !== 'remote') {
     return modelCapability('responseFormat', 'manual', 'manual-declaration', 'provider model metadata explicitly declares response_format support')
   }
-  if (modelHasNonRelayCatalogEvidence(provider, modelConfig) || resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'structuredOutput') === 'supported') {
+  if (modelHasNonRelayCatalogEvidence(provider, modelConfig)) {
     return modelCapability('responseFormat', 'verified', 'provider-contract', 'provider contract maps structured-output request controls for this family')
   }
   return modelCapability('responseFormat', 'inferred', 'provider-contract', 'structured output is allowed, but model-level response_format metadata is not explicit')
@@ -1097,7 +1097,10 @@ function buildCacheStatus(provider: AIProvider, hostingProfile: ProviderHostingP
     return { area: 'cache', level: 'partial', reason: 'AWS Bedrock Mantle can route OpenAI-compatible requests, while prompt-cache semantics remain model/provider-specific and require runtime observation' }
   }
   if (isAwsBedrockProvider(provider)) {
-    return { area: 'cache', level: 'partial', reason: 'Bedrock-style cache injection is implemented through request optimization, not generic provider cache detection' }
+    return { area: 'cache', level: 'full', reason: 'Anthropic-wire cache_control injection and cache read/write usage fields are implemented for Bedrock requests when request optimization is enabled' }
+  }
+  if (provider.type === 'anthropic' && provider.wireProtocol === undefined) {
+    return { area: 'cache', level: 'full', reason: 'Direct Anthropic Messages supports opt-in cache_control breakpoints, 5-minute or 1-hour TTL, and separate cache read/write token usage' }
   }
   if (provider.type === 'google' || getProviderCompatibilityEvidenceForProvider(provider).id === 'google') {
     return { area: 'cache', level: 'partial', reason: 'Gemini context caching is documented as a reusable-prefix cache; it must not be reported as native context compaction' }

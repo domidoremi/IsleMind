@@ -57,7 +57,7 @@ export function IsleIconButton({
       : StyleSheet.hairlineWidth
   const elevated = iconButtonExpression.elevation !== 'none'
   const webLensStyle = tone === 'default' && iconButtonExpression.surface === 'lens' && Platform.OS === 'web'
-    ? ({ backdropFilter: 'blur(12px) saturate(1.08)', WebkitBackdropFilter: 'blur(12px) saturate(1.08)' } as unknown as ViewStyle)
+    ? ({ backdropFilter: 'blur(10px) saturate(1.06)', WebkitBackdropFilter: 'blur(10px) saturate(1.06)' } as unknown as ViewStyle)
     : undefined
   return (
     <IsleButton
@@ -90,10 +90,10 @@ export function IsleIconButton({
               : defaultBorder
             : undefined,
           shadowColor: colors.shadowTint,
-          shadowOpacity: tone === 'default' && elevated ? (iconButtonExpression.elevation === 'layered' ? 0.14 : 0.07) : 0,
-          shadowRadius: iconButtonExpression.elevation === 'layered' ? 12 : elevated ? 7 : 0,
-          shadowOffset: { width: 0, height: elevated ? 3 : 0 },
-          elevation: tone === 'default' && elevated ? (iconButtonExpression.elevation === 'layered' ? 2 : 1) : 0,
+          shadowOpacity: tone === 'default' && elevated ? (iconButtonExpression.elevation === 'layered' ? 0.08 : 0.03) : 0,
+          shadowRadius: iconButtonExpression.elevation === 'layered' ? 9 : elevated ? 5 : 0,
+          shadowOffset: { width: 0, height: elevated ? 2 : 0 },
+          elevation: tone === 'default' && iconButtonExpression.elevation === 'layered' ? 1 : 0,
         },
         webLensStyle,
         style,
@@ -186,6 +186,7 @@ export function IsleToggle({
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const playful = colors.ui.limeRoad && colors.ui.ornamented
+  const family = colors.design?.family ?? 'minimal'
   const toggleSurface = active
     ? colors.ui.glass
       ? colors.ui.semantic.chrome.background
@@ -216,7 +217,7 @@ export function IsleToggle({
       accessibilityLabel={description ? `${title}. ${description}` : title}
       accessibilityState={{ checked: active }}
       style={{
-        borderRadius: Math.min(colors.ui.radius.panel, 8),
+         borderRadius: family === 'liquid-glass' ? colors.ui.radius.panel : (colors.design?.semantic.radius.small ?? colors.ui.radius.controlSmall),
       }}
       >
       <MotiView
@@ -228,11 +229,12 @@ export function IsleToggle({
         transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
         style={{
           minHeight: 56,
-          borderRadius: Math.min(colors.ui.radius.panel, 8),
-          paddingHorizontal: 10,
+           borderRadius: family === 'liquid-glass' ? colors.ui.radius.panel : (colors.design?.semantic.radius.small ?? colors.ui.radius.controlSmall),
+          paddingHorizontal: family === 'minimal' ? 4 : 10,
           paddingVertical: 8,
           justifyContent: 'center',
-          borderWidth: playful ? 1 : StyleSheet.hairlineWidth,
+          borderWidth: active && (playful || family === 'liquid-glass') ? 1 : 0,
+          borderBottomWidth: family === 'minimal' && !active ? StyleSheet.hairlineWidth : undefined,
           shadowColor: active ? colors.ui.control.shadow : colors.shadowTint,
           shadowOpacity: 0,
           shadowRadius: 0,
@@ -245,7 +247,7 @@ export function IsleToggle({
             <MotiView
               animate={{ backgroundColor: iconBackground, rotate: '0deg' }}
               transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
-              style={{ width: 32, height: 32, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: 32, height: 32, borderRadius: family === 'minimal' ? 2 : Math.min(colors.ui.radius.controlLarge, 10), alignItems: 'center', justifyContent: 'center' }}
             >
               {icon}
             </MotiView>
@@ -338,6 +340,7 @@ export function IsleListItem({
   const { width } = useWindowDimensions()
   const compact = width < 430
   const stackTrailing = compact && !!trailing
+  const family = colors.design?.family ?? 'minimal'
   const borderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
   const itemBackground = danger
     ? colors.ui.tone.danger.background
@@ -346,6 +349,7 @@ export function IsleListItem({
       : colors.ui.glass
         ? colors.ui.actionBar.itemBackground
         : colors.ui.semantic.surface.base
+  const listBackground = family === 'minimal' || family === 'monet' ? 'transparent' : itemBackground
   const itemBorderColor = danger
     ? colors.ui.tone.danger.border
     : colors.ui.glass
@@ -378,14 +382,16 @@ export function IsleListItem({
         style={[
           {
             minHeight: 52,
-            borderRadius: Math.min(colors.ui.radius.card, 8),
-            padding: 10,
+            borderRadius: family === 'liquid-glass' ? colors.ui.radius.card : family === 'monet' ? (colors.design?.semantic.radius.small ?? colors.ui.radius.controlSmall) : 0,
+            paddingHorizontal: family === 'minimal' ? 4 : 10,
+            paddingVertical: 8,
             justifyContent: 'center',
-            backgroundColor: itemBackground,
-            borderWidth,
+            backgroundColor: listBackground,
+            borderWidth: danger ? borderWidth : 0,
+            borderBottomWidth: danger ? 0 : family === 'liquid-glass' ? 0 : StyleSheet.hairlineWidth,
             borderColor: itemBorderColor,
             shadowColor: danger ? colors.ui.tone.danger.foreground : colors.shadowTint,
-            shadowOpacity: itemShadowOpacity,
+            shadowOpacity: family === 'liquid-glass' ? 0.04 : itemShadowOpacity,
             shadowRadius: 0,
             shadowOffset: { width: 0, height: 0 },
             elevation: 0,
@@ -403,14 +409,16 @@ export function IsleListItem({
       style={[
         {
           minHeight: 52,
-          borderRadius: Math.min(colors.ui.radius.card, 8),
-          padding: 10,
+          borderRadius: family === 'liquid-glass' ? colors.ui.radius.card : family === 'monet' ? (colors.design?.semantic.radius.small ?? colors.ui.radius.controlSmall) : 0,
+          paddingHorizontal: family === 'minimal' ? 4 : 10,
+          paddingVertical: 8,
           justifyContent: 'center',
-          backgroundColor: itemBackground,
-          borderWidth,
+          backgroundColor: listBackground,
+          borderWidth: danger ? borderWidth : 0,
+          borderBottomWidth: danger ? 0 : family === 'liquid-glass' ? 0 : StyleSheet.hairlineWidth,
           borderColor: itemBorderColor,
           shadowColor: danger ? colors.ui.tone.danger.foreground : colors.shadowTint,
-          shadowOpacity: itemShadowOpacity,
+          shadowOpacity: family === 'liquid-glass' ? 0.04 : itemShadowOpacity,
           shadowRadius: 0,
           shadowOffset: { width: 0, height: 0 },
           elevation: 0,

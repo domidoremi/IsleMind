@@ -167,13 +167,13 @@ function controlHeight(size: IsleButtonSize | IsleInputSize) {
 }
 
 function organicRadius(titleCard: boolean, palette: ReturnType<typeof useIslePalette>) {
-  return Math.min(titleCard ? palette.ui.radius.titleCard : palette.ui.radius.card, 8)
+  return titleCard ? palette.ui.radius.titleCard : palette.ui.radius.card
 }
 
 function controlRadius(size: IsleButtonSize | IsleInputSize, palette: ReturnType<typeof useIslePalette>) {
-  if (size === 'small') return Math.min(palette.ui.radius.controlSmall, 8)
-  if (size === 'large') return Math.min(palette.ui.radius.controlLarge, 8)
-  return Math.min(palette.ui.radius.controlMiddle, 8)
+  if (size === 'small') return palette.ui.radius.controlSmall
+  if (size === 'large') return palette.ui.radius.controlLarge
+  return palette.ui.radius.controlMiddle
 }
 
 function disabledContentStyle(palette: ReturnType<typeof useIslePalette>) {
@@ -246,10 +246,12 @@ export function IsleButton({
         ? expressionBackground ?? control.primaryBackground
         : expressionBackground
           ?? (palette.glass
-           ? palette.ui.actionBar.itemBackground
-           : palette.minimal
-             ? palette.ui.semantic.surface.muted
-             : control.defaultBackground)
+            ? palette.ui.actionBar.itemBackground
+            : palette.minimal
+              ? 'transparent'
+              : palette.colors.design?.family === 'monet'
+                ? palette.ui.semantic.surface.base
+                : control.defaultBackground)
   const background = disabled && !text ? disabledStyle.backgroundColor : enabledBackground
   const enabledBorderColor = text
     ? 'transparent'
@@ -262,15 +264,23 @@ export function IsleButton({
           : palette.border
   const borderColor = disabled && !text ? disabledStyle.borderColor : enabledBorderColor
   const shadowColor = danger && primary ? control.dangerShadow : control.shadow
-  const shadowOpacity = 0
-  const shadowRadius = 0
-  const pressedOffset = 0
-  const borderWidth = text ? 0 : buttonExpression?.border === 'none' ? 0 : palette.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const resolvedShadowOpacity = buttonExpression?.elevation === 'layered'
-    ? Math.max(shadowOpacity, 0.12)
-    : buttonExpression?.elevation === 'low' || buttonExpression?.elevation === 'tonal'
-      ? Math.max(shadowOpacity, 0.06)
-      : shadowOpacity
+  // A button is a control, not a card. Keep one boundary and reserve lift for
+  // the Liquid Glass lens where it actually communicates material.
+  const shadowOpacity = buttonExpression?.elevation === 'layered' ? 0.08 : 0
+  const shadowRadius = buttonExpression?.elevation === 'layered' ? Math.min(10, design?.semantic.elevation.shadowBlur ?? 8) : 0
+  const pressedOffset = buttonExpression?.interaction === 'physical' ? 1 : 0
+  const borderWidth = text
+    ? 0
+    : type === 'dashed'
+      ? StyleSheet.hairlineWidth
+      : buttonExpression?.border === 'none'
+        ? 0
+        : buttonExpression?.border === 'outline' || buttonExpression?.border === 'edge-highlight'
+          ? 1
+          : palette.minimal
+            ? 0
+            : StyleSheet.hairlineWidth
+  const resolvedShadowOpacity = shadowOpacity
   const buttonAccessibilityState = loading
     ? { ...accessibilityState, busy: true }
     : accessibilityState
@@ -284,7 +294,7 @@ export function IsleButton({
     </View>
   ) : undefined
   const contentNode = children || label ? (
-    <Text numberOfLines={1} style={[{ flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(16, fontSize + 4), fontWeight: primary ? '800' : '700', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }, textStyle]}>
+    <Text numberOfLines={1} style={[{ flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(16, fontSize + 4), fontWeight: design?.semantic.typography.label.fontWeight ?? (primary ? '700' : '600'), letterSpacing: design?.semantic.typography.label.letterSpacing ?? 0, includeFontPadding: false, textAlignVertical: 'center' }, textStyle]}>
       {children ?? label}
     </Text>
   ) : undefined
@@ -332,10 +342,10 @@ export function IsleButton({
             web: { boxShadow: 'none' },
             default: {
               shadowColor,
-               shadowOpacity: palette.minimal && !primary ? 0 : resolvedShadowOpacity,
-               shadowRadius: buttonExpression?.elevation === 'layered' ? Math.max(shadowRadius, 12) : shadowRadius,
+               shadowOpacity: palette.minimal ? 0 : resolvedShadowOpacity,
+               shadowRadius,
               shadowOffset: { width: 0, height: pressedOffset },
-              elevation: 0,
+              elevation: resolvedShadowOpacity > 0 ? 1 : 0,
             },
           }),
         },
@@ -401,6 +411,7 @@ export function IsleInput({
   const design = palette.colors.design
   const fieldExpression = design ? resolveThemeComponentExpression(design.family, 'textField') : null
   const fieldTokens = design?.component.field
+  const fieldFamily = design?.family ?? 'minimal'
   const borderColor = status === 'error'
     ? palette.ui.tone.danger.border
     : status === 'warning'
@@ -412,11 +423,11 @@ export function IsleInput({
   const statusShadow = status === 'error' ? palette.ui.tone.danger.foreground : status === 'warning' ? palette.ui.tone.warning.foreground : input.shadow
   const shadowEnabled = shadow || !!status
   const height = controlHeight(size)
-  const inputBorderWidth = fieldExpression?.border === 'none'
-    ? 0
-    : fieldExpression?.border === 'divider'
-      ? StyleSheet.hairlineWidth
-      : 1
+  const inputBorderWidth = status
+    ? 1
+    : fieldFamily === 'material'
+      ? fieldExpression?.border === 'none' ? 0 : 1
+      : 0
   const fieldRadius = fieldExpression?.shape === 'capsule'
     ? palette.ui.radius.chip
     : fieldExpression?.shape === 'material'
@@ -429,12 +440,8 @@ export function IsleInput({
     : palette.limeRoad
       ? palette.ui.semantic.surface.muted
       : palette.ui.semantic.surface.muted
-  const inputShadowOpacity = shadowEnabled
-    ? fieldExpression?.elevation === 'layered'
-      ? 0.14
-      : fieldExpression?.elevation === 'low' || fieldExpression?.elevation === 'tonal'
-        ? 0.08
-        : 0
+  const inputShadowOpacity = shadowEnabled && fieldFamily === 'liquid-glass'
+    ? 0.08
     : 0
   const inputShadowRadius = shadowEnabled && fieldExpression?.elevation !== 'none'
     ? Math.min(18, design?.semantic.elevation.shadowBlur ?? 8)
@@ -456,7 +463,13 @@ export function IsleInput({
       {label ? <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{label}</Text> : null}
       <MotiView
         animate={{
-          backgroundColor: disabled ? input.disabledBackground : focused ? input.backgroundFocused : input.background,
+          backgroundColor: disabled
+            ? input.disabledBackground
+            : fieldFamily === 'minimal'
+              ? 'transparent'
+              : focused
+                ? input.backgroundFocused
+                : input.background,
           borderColor: activeBorderColor,
         }}
         transition={{ type: 'timing', duration: motion === 'full' ? design?.semantic.motion.interaction ?? motionTokens.duration.fast : 1 }}
@@ -464,7 +477,7 @@ export function IsleInput({
           height: multilineShellHeight,
           minHeight: Math.max(inputMinimumHeight, fieldTokens?.minHeight ?? inputMinimumHeight),
           maxHeight: multiline ? multilineMaxHeight : undefined,
-          borderRadius: multiline ? fieldRadius : fieldRadius,
+          borderRadius: fieldRadius,
           paddingHorizontal: size === 'large' ? 16 : 12,
           position: 'relative',
           borderWidth: inputBorderWidth,
@@ -694,16 +707,23 @@ export function IsleCard({
   const selected = palette.colors.cardColors[color]
   const titleCard = type === 'title'
   const uiCard = palette.ui.card
+  const family = design?.family ?? 'minimal'
+  const explicitColor = color !== 'default'
+  const continuousCard = family === 'minimal' && !explicitColor && type === 'default'
   const cardBackground = color === 'default'
-    ? palette.glass
-      ? palette.ui.semantic.chrome.background
-      : panelTokens?.background ?? uiCard.defaultBackground
+    ? continuousCard
+      ? 'transparent'
+      : family === 'liquid-glass'
+        ? palette.ui.semantic.surface.overlay
+        : family === 'monet'
+          ? palette.ui.semantic.surface.base
+          : panelTokens?.background ?? uiCard.defaultBackground
     : selected.bg
   const cardBorderColor = type === 'dashed'
     ? hoverable && hovered
       ? palette.colors.borderStrong
       : palette.borderLight
-    : cardExpression?.border === 'none'
+    : continuousCard || cardExpression?.border === 'none'
       ? 'transparent'
       : cardExpression?.border === 'divider'
         ? palette.ui.semantic.chrome.border
@@ -726,21 +746,23 @@ export function IsleCard({
         ? palette.ui.radius.card
         : organicRadius(titleCard, palette)
   const cardElevation = cardExpression?.elevation
-  const cardShadowOpacity = cardElevation === 'layered'
-    ? 0.16
-    : cardElevation === 'low' || cardElevation === 'tonal'
+  const cardShadowOpacity = continuousCard
+    ? 0
+    : cardElevation === 'layered'
       ? 0.08
-      : 0
-  const cardShadowRadius = cardShadowOpacity > 0 ? Math.min(20, design?.semantic.elevation.shadowBlur ?? uiCard.shadowRadius) : 0
-  const cardElevationValue = cardElevation === 'layered' ? 4 : cardShadowOpacity > 0 ? 1 : 0
+      : cardElevation === 'low' || cardElevation === 'tonal'
+        ? 0.04
+        : 0
+  const cardShadowRadius = cardShadowOpacity > 0 ? Math.min(14, design?.semantic.elevation.shadowBlur ?? uiCard.shadowRadius) : 0
+  const cardElevationValue = cardShadowOpacity > 0 ? 1 : 0
   const cardStyle: StyleProp<ViewStyle> = [
     {
       position: 'relative',
       top: hoverOffset,
       borderRadius: cardRadius,
-      padding: titleCard ? 12 : 10,
+      padding: continuousCard ? 4 : titleCard ? 12 : 8,
       backgroundColor: cardBackground,
-      borderWidth: type === 'dashed' ? StyleSheet.hairlineWidth : cardExpression?.border === 'none' ? 0 : StyleSheet.hairlineWidth,
+      borderWidth: type === 'dashed' ? StyleSheet.hairlineWidth : continuousCard || cardExpression?.border === 'none' ? 0 : cardExpression?.border === 'outline' || cardExpression?.border === 'edge-highlight' ? 1 : StyleSheet.hairlineWidth,
       borderStyle: type === 'dashed' ? 'dashed' : 'solid',
       borderColor: cardBorderColor,
       shadowColor: palette.colors.shadowTint,
@@ -749,7 +771,8 @@ export function IsleCard({
       shadowOffset: { width: 0, height: cardShadowOpacity > 0 ? (design?.semantic.elevation.shadowOffsetY ?? 2) : 0 },
       elevation: cardElevationValue,
       cursor: interactive ? 'pointer' : 'auto',
-      opacity: disabled ? 0.56 : 1,
+      opacity: disabled ? 0.72 : 1,
+      overflow: 'hidden',
     },
     style,
     contentStyle,
@@ -757,7 +780,7 @@ export function IsleCard({
 
   const cardLayers = (
     <ThemeCardExpressionLayers
-      family={design?.family ?? 'minimal'}
+      family={family}
       colors={palette.colors}
       interactive={interactive}
       titleCard={titleCard}

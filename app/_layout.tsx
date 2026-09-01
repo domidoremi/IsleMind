@@ -2,8 +2,9 @@ import '../src/devLogFilters'
 import '../src/theme/webGlobalStyles'
 import 'react-native-gesture-handler'
 import * as Clipboard from 'expo-clipboard'
+import * as Network from 'expo-network'
 import type { ErrorBoundaryProps, NativeStackNavigationOptions } from 'expo-router'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { ActivityIndicator, Platform, Text, View } from 'react-native'
@@ -22,6 +23,12 @@ import { IsleDialogProvider } from '@/components/ui/isle'
 import { initI18n } from '@/i18n'
 import { GlobalGenerationStatusLayer } from '@/components/ui/GlobalGenerationStatusLayer'
 import { GlobalSystemStatusNotificationLayer } from '@/components/ui/GlobalSystemStatusNotificationLayer'
+import {
+  resolveAndroidNetworkRecovery,
+  type AndroidNetworkRecoveryPolicy,
+  type AndroidNetworkState,
+} from '@/platform/native/androidCompatibilityPolicy'
+import { useChatStreamingStore } from '@/store/chatStreamingStore'
 
 initI18n()
 
@@ -47,6 +54,8 @@ export default function RootLayout() {
     themeAccent,
   })
 
+  const networkRecovery = useAndroidNetworkRecoveryBridge()
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <IsleDialogProvider updateNotice={boot.ready ? boot.updateNotice ?? qaUpdateMessage : null}>
@@ -71,9 +80,141 @@ export default function RootLayout() {
         )}
         {boot.ready ? <GlobalSystemStatusNotificationLayer /> : null}
         {boot.ready ? <GlobalGenerationStatusLayer /> : null}
+        {boot.ready ? <AndroidNetworkRecoverySurface recovery={networkRecovery} /> : null}
       </IsleDialogProvider>
     </GestureHandlerRootView>
   )
+}
+
+/** Keep the pure Android recovery policy backed by the actual OS network signal. */
+interface AndroidNetworkRecoveryView {
+  state: AndroidNetworkState
+  policy: AndroidNetworkRecoveryPolicy
+  recoveredNoticeVisible: boolean
+}
+
+function useAndroidNetworkRecoveryBridge(): AndroidNetworkRecoveryView {
+  const [view, setView] = useState<AndroidNetworkRecoveryView>(() => ({
+    state: 'unknown',
+    policy: resolveAndroidNetworkRecovery({
+      previousState: 'unknown',
+      nextState: 'unknown',
+      requestInFlight: false,
+      streamStarted: false,
+    }),
+    recoveredNoticeVisible: false,
+  }))
+  const recoveredNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined
+    let cancelled = false
+    let previous: 'online' | 'offline' | 'unknown' = 'unknown'
+    const normalize = (state: Network.NetworkState): 'online' | 'offline' | 'unknown' => {
+      if (state.isInternetReachable === false || state.isConnected === false) return 'offline'
+      if (state.isInternetReachable === true || state.isConnected === true) return 'online'
+      return 'unknown'
+    }
+    const publish = (next: 'online' | 'offline' | 'unknown') => {
+      if (cancelled) return
+      if (next === previous && next !== 'unknown') return
+      const activeRequest = useChatStreamingStore.getState().activeStreams.size > 0
+      const policy = resolveAndroidNetworkRecovery({
+        previousState: previous,
+        nextState: next,
+        requestInFlight: activeRequest,
+        streamStarted: activeRequest,
+      })
+      previous = next
+      if (recoveredNoticeTimer.current) {
+        clearTimeout(recoveredNoticeTimer.current)
+        recoveredNoticeTimer.current = null
+      }
+      const recoveredNoticeVisible = policy.reason === 'recovered'
+      setView({ state: next, policy, recoveredNoticeVisible })
+      if (recoveredNoticeVisible) {
+        recoveredNoticeTimer.current = setTimeout(() => {
+          recoveredNoticeTimer.current = null
+          setView((current) => ({ ...current, recoveredNoticeVisible: false }))
+        }, 5_000)
+      }
+    }
+    void Network.getNetworkStateAsync()
+      .then((state) => publish(normalize(state)))
+      .catch(() => publish('unknown'))
+    const subscription = Network.addNetworkStateListener((state) => {
+      const next = normalize(state)
+      // The runtime owns retry admission; this bridge only keeps a current OS
+      // signal available for future recovery UI and avoids automatic replay.
+      if (next !== previous) publish(next)
+    })
+    return () => {
+      cancelled = true
+      subscription.remove()
+      if (recoveredNoticeTimer.current) {
+        clearTimeout(recoveredNoticeTimer.current)
+        recoveredNoticeTimer.current = null
+      }
+    }
+  }, [])
+
+  return view
+}
+
+function AndroidNetworkRecoverySurface({
+  recovery,
+}: {
+  recovery: AndroidNetworkRecoveryView
+}) {
+  const { t } = useTranslation()
+  if (Platform.OS !== 'android') return null
+  if (recovery.state === 'offline') {
+    return (
+      <View pointerEvents="box-none" style={styles.networkSurface}>
+        <AppStatusSurface
+          title={t('chat.androidNetworkOfflineTitle')}
+          message={t('chat.androidNetworkOfflineMessage')}
+          tone="warning"
+          icon="network"
+          compact
+          safeArea="top"
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+          testID="android-network-offline"
+        />
+      </View>
+    )
+  }
+  if (recovery.recoveredNoticeVisible && recovery.policy.reason === 'recovered') {
+    return (
+      <View pointerEvents="box-none" style={styles.networkSurface}>
+        <AppStatusSurface
+          title={t('chat.androidNetworkRecoveredTitle')}
+          message={t('chat.androidNetworkRecoveredMessage')}
+          tone="success"
+          icon="check"
+          compact
+          safeArea="top"
+          accessibilityRole="text"
+          accessibilityLiveRegion="polite"
+          testID="android-network-recovered"
+        />
+      </View>
+    )
+  }
+  return null
+}
+
+const styles = {
+  networkSurface: {
+    position: 'absolute' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1_200,
+    elevation: 12,
+    paddingHorizontal: 10,
+  },
 }
 
 function BootFallback({

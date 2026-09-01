@@ -1981,6 +1981,15 @@ function applyThemeAccent(base: AppPalette, accent: string, mode: ResolvedThemeM
             focus: readableAccent,
             selection: wash,
           },
+          surface: {
+            ...base.design.semantic.surface,
+            active: {
+              ...base.design.semantic.surface.active,
+              background: wash,
+              foreground: readableAccentOnWash,
+              border,
+            },
+          },
         },
         component: {
           ...base.design.component,

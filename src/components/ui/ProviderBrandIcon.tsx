@@ -84,7 +84,7 @@ export function ProviderBrandIcon({ brand, size = 18, color, variant = 'brand' }
   const path = BRAND_PATHS[brand]
   if (!path) return null
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet" accessibilityElementsHidden>
+    <Svg width={size} height={size} viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet">
       <Path d={path} fill={fill} />
     </Svg>
   )

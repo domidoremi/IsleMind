@@ -9,6 +9,7 @@ import {
   PRODUCT_MOBILE_COMPOSER_COLLAPSED_MIN_HEIGHT,
   resolveProductMobileComposerLayout,
 } from '@/presentation/layout/productMobileLayout'
+import { resolveAndroidKeyboardLift } from '@/platform/native/androidCompatibilityPolicy'
 
 export const COMPOSER_KEYBOARD_FALLBACK_DURATION_MS = 232
 
@@ -31,12 +32,12 @@ export function resolveComposerKeyboardLift({
   baselineWindowHeight,
   windowHeight,
 }: ResolveComposerKeyboardLiftInput): number {
-  const androidResizeInset = platform === 'android' && keyboardHeight > 0
-    ? Math.max(0, baselineWindowHeight - windowHeight)
-    : 0
-  return platform === 'android'
-    ? Math.max(0, keyboardHeight - androidResizeInset)
-    : Math.max(0, keyboardHeight)
+  if (platform !== 'android') return Math.max(0, keyboardHeight)
+  return resolveAndroidKeyboardLift({
+    windowHeight,
+    baselineWindowHeight,
+    keyboardHeight,
+  })
 }
 
 export function normalizeComposerKeyboardMotion(

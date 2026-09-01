@@ -1,4 +1,5 @@
 export const USAGE_RECORD_SCHEMA = 'islemind.usage-record.v1' as const
+export const USAGE_PORTABLE_SNAPSHOT_SCHEMA = 'islemind.usage-portable-snapshot.v1' as const
 
 export type UsageOperationSource =
   | 'chat'
@@ -36,11 +37,13 @@ export interface UsagePricingRates {
   cacheReadNanodollarsPerMillionTokens?: number
   cacheCreationNanodollarsPerMillionTokens?: number
   reasoningNanodollarsPerMillionTokens?: number
-  reasoningBilling: 'included-in-output' | 'separate'
+  /** Whether reasoning tokens are included in, separate from, or additional to outputTokens. */
+  reasoningBilling: 'included-in-output' | 'separate' | 'additional-to-output'
 }
 
 export interface UsagePricingEntry {
   id: string
+  providerType?: string
   providerId?: string
   modelPattern: string
   displayName: string
@@ -63,10 +66,19 @@ export interface UsageRecord {
   occurredAt: number
   completedAt: number
   providerId: string
+  providerType?: string
   providerName: string
   credentialGroupId?: string
   requestedModel: string
   upstreamModel: string
+  /** Optional route attribution added after the v1 record shape was introduced. */
+  originalProviderId?: string
+  originalModel?: string
+  actualProviderId?: string
+  actualModel?: string
+  retryCount?: number
+  failoverCount?: number
+  attemptIdentity?: string
   pricingModel?: string
   operationSource: UsageOperationSource
   dataSource: UsageDataSource
@@ -122,6 +134,8 @@ export interface UsageDailyRollup {
   measurementSource: UsageMeasurementSource
   status: UsageRecordStatus
   requestCount: number
+  retryCount?: number
+  failoverCount?: number
   successCount: number
   failedCount: number
   cancelledCount: number
@@ -147,6 +161,9 @@ export interface UsageStatisticsSummary extends UsageTokenCounts {
   successCount: number
   failedCount: number
   estimatedCount: number
+  /** Counts are attempt-level; a fallback can therefore count more than once. */
+  retryCount: number
+  failoverCount: number
   totalCostNanodollars?: number
   averageDurationMs?: number
   averageFirstTokenMs?: number
@@ -181,6 +198,21 @@ export interface UsageRecordRepository {
   deletePricingEntry(id: string): Promise<void>
   compactBefore(cutoff: number): Promise<void>
   clear(): Promise<void>
+}
+
+export interface UsagePortableSnapshot {
+  schema: typeof USAGE_PORTABLE_SNAPSHOT_SCHEMA
+  records: readonly UsageRecord[]
+  dailyRollups: readonly UsageDailyRollup[]
+  pricingEntries: readonly UsagePricingEntry[]
+}
+
+export interface UsagePortableSnapshotRepository {
+  load(options?: { signal?: AbortSignal }): Promise<UsagePortableSnapshot>
+  replace(
+    snapshot: UsagePortableSnapshot,
+    options?: { signal?: AbortSignal },
+  ): Promise<void>
 }
 
 export interface UsageStatisticsService {

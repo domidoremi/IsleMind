@@ -119,21 +119,25 @@ export function createProviderRequestOptimizationPolicy(
     body: Record<string, unknown>,
     request: ProviderRequestOptimizationInput,
   ): Record<string, unknown> {
-    if (
-      !isBedrockProvider(request.provider) ||
-      !dependencies.isBedrockRuntimeProvider(request.provider) ||
-      !isAnthropicWireProvider(request.provider) ||
-      request.settings?.bedrockRequestOptimizerEnabled !== true
-    ) {
-      return body
-    }
+    if (!isAnthropicWireProvider(request.provider)) return body
+
+    const bedrock = isBedrockProvider(request.provider) &&
+      dependencies.isBedrockRuntimeProvider(request.provider)
+    const nativeAnthropic = request.provider.type === 'anthropic' && !bedrock
+    if (!bedrock && !nativeAnthropic) return body
 
     let next = { ...body }
-    if (request.settings.thinkingOptimizerEnabled === true) {
+    if (
+      bedrock &&
+      request.settings?.bedrockRequestOptimizerEnabled === true &&
+      request.settings.thinkingOptimizerEnabled === true
+    ) {
       next = optimizeBedrockThinking(next, request)
     }
-    if (request.settings.cacheInjectionEnabled === true) {
-      next = injectBedrockCache(next, request.settings.cacheTtl ?? 'default')
+    const cacheEnabled = request.settings?.cacheInjectionEnabled === true &&
+      (nativeAnthropic || request.settings.bedrockRequestOptimizerEnabled === true)
+    if (cacheEnabled) {
+      next = injectBedrockCache(next, request.settings?.cacheTtl ?? 'default')
     }
     return next
   }
@@ -159,24 +163,35 @@ export function injectBedrockCache(
     ? { type: 'ephemeral' }
     : { type: 'ephemeral', ttl }
   const next = { ...body }
+  let breakpointCount = countAnthropicCacheBreakpoints(body)
 
   if (typeof next.system === 'string' && next.system.trim()) {
-    next.system = [{ type: 'text', text: next.system, cache_control: cacheControl }]
+    if (breakpointCount < MAX_ANTHROPIC_CACHE_BREAKPOINTS) {
+      next.system = [{ type: 'text', text: next.system, cache_control: { ...cacheControl } }]
+      breakpointCount += 1
+    }
+  } else if (Array.isArray(next.system) && breakpointCount < MAX_ANTHROPIC_CACHE_BREAKPOINTS) {
+    const updated = addCacheControlToLastTextPart(next.system, cacheControl)
+    next.system = updated.content
+    if (updated.added) breakpointCount += 1
   }
 
   if (Array.isArray(next.messages)) {
+    const messageIndexes = next.messages.length === 1
+      ? [0]
+      : [0, next.messages.length - 1]
     next.messages = next.messages.map((message, index) => {
       if (!message || typeof message !== 'object') return message
       const record = message as Record<string, unknown>
-      if (
-        !Array.isArray(record.content) ||
-        (index !== 0 && index !== (next.messages as unknown[]).length - 1)
-      ) {
+      if (!messageIndexes.includes(index) || !Array.isArray(record.content)) {
         return record
       }
+      if (breakpointCount >= MAX_ANTHROPIC_CACHE_BREAKPOINTS) return record
+      const updated = addCacheControlToLastTextPart(record.content, cacheControl)
+      if (updated.added) breakpointCount += 1
       return {
         ...record,
-        content: addCacheControlToLastTextPart(record.content, cacheControl),
+        content: updated.content,
       }
     })
   }
@@ -187,7 +202,7 @@ export function injectBedrockCache(
 function addCacheControlToLastTextPart(
   content: unknown[],
   cacheControl: Record<string, unknown>,
-): unknown[] {
+): { content: unknown[]; added: boolean } {
   const next = [...content]
   for (let index = next.length - 1; index >= 0; index -= 1) {
     const part = next[index]
@@ -196,14 +211,42 @@ function addCacheControlToLastTextPart(
       typeof part === 'object' &&
       (part as Record<string, unknown>).type === 'text'
     ) {
-      next[index] = {
-        ...(part as Record<string, unknown>),
-        cache_control: cacheControl,
+      const record = part as Record<string, unknown>
+      if (Object.prototype.hasOwnProperty.call(record, 'cache_control')) {
+        return { content: next, added: false }
       }
-      break
+      next[index] = {
+        ...record,
+        cache_control: { ...cacheControl },
+      }
+      return { content: next, added: true }
     }
   }
-  return next
+  return { content: next, added: false }
+}
+
+const MAX_ANTHROPIC_CACHE_BREAKPOINTS = 4
+
+function countAnthropicCacheBreakpoints(body: Record<string, unknown>): number {
+  let count = 0
+  const countParts = (parts: unknown): void => {
+    if (!Array.isArray(parts)) return
+    for (const part of parts) {
+      if (
+        part &&
+        typeof part === 'object' &&
+        Object.prototype.hasOwnProperty.call(part, 'cache_control')
+      ) count += 1
+    }
+  }
+  if (Array.isArray(body.system)) countParts(body.system)
+  if (Array.isArray(body.messages)) {
+    for (const message of body.messages) {
+      if (!message || typeof message !== 'object') continue
+      countParts((message as Record<string, unknown>).content)
+    }
+  }
+  return count
 }
 
 function numberValue(value: unknown): number | undefined {

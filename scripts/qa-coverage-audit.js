@@ -258,7 +258,7 @@ const {
   validateProviderRuntimeScenarioEvidence: validateProviderRuntimeScenarioEvidenceContract,
   validateProviderRuntimeScenarioSteps: validateProviderRuntimeScenarioStepsContract,
 } = require('./provider-runtime-android-contract')
-const ts = require('typescript')
+const { parseTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
@@ -714,26 +714,20 @@ function auditStaticControls(files) {
   const controls = []
   for (const file of files) {
     const text = fs.readFileSync(file, 'utf8')
-    const sourceFile = ts.createSourceFile(
-      file,
-      text,
-      ts.ScriptTarget.Latest,
-      true,
-      file.endsWith('.tsx') || file.endsWith('.jsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-    )
-    visit(sourceFile)
+    const ast = parseTypeScriptModule(text, file)
+    visitNode(ast.program, null)
 
-    function visit(node) {
-      if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
-        const tag = jsxTagName(node.tagName)
+    function visitNode(node, parent) {
+      if (node.type === 'JSXOpeningElement') {
+        const selfClosing = parent.type === 'JSXElement' && parent.selfClosing
+        const tag = jsxTagName(node.name, text)
         if (interactiveTags.includes(tag)) {
-          const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+          const line = node.loc.start.line
           const props = jsxPropNames(node.attributes)
           const hiddenFromAccessibility = jsxBooleanPropValue(node.attributes, 'accessible') === false
           const forwardsAccessibilityProps = jsxHasSpreadAttribute(node.attributes) && isUiPrimitiveFile(file)
-          const parent = node.parent
           const hasLabel = ['accessibilityLabel', 'accessibilityHint', 'label', 'title', 'placeholder', 'description'].some((prop) => props.has(prop))
-          const hasVisibleText = !ts.isJsxSelfClosingElement(node) && ts.isJsxElement(parent) && parent.openingElement === node && jsxElementHasText(parent)
+          const hasVisibleText = !selfClosing && jsxElementHasText(parent)
           const likelyAccessible = hiddenFromAccessibility || forwardsAccessibilityProps || hasLabel || hasVisibleText
           controls.push({
             file: relative(file),
@@ -748,41 +742,57 @@ function auditStaticControls(files) {
           })
         }
       }
-      ts.forEachChild(node, visit)
+      for (const child of childNodes(node)) visitNode(child, node)
     }
   }
   const reviewNeeded = controls.filter((control) => !control.likelyAccessible)
   return { total: controls.length, reviewNeeded }
 }
 
-function jsxTagName(name) {
-  if (ts.isIdentifier(name)) return name.text
-  if (ts.isPropertyAccessExpression(name)) return name.name.text
-  return name.getText()
+function childNodes(node) {
+  const children = []
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'extra' || key === 'range' || key.endsWith('Comments')) continue
+    const value = node[key]
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item.type === 'string') children.push(item)
+      }
+    } else if (value && typeof value.type === 'string') {
+      children.push(value)
+    }
+  }
+  return children
+}
+
+function jsxTagName(name, source) {
+  if (name.type === 'JSXIdentifier') return name.name
+  if (name.type === 'JSXMemberExpression') return name.property.name
+  return source.slice(name.start, name.end)
 }
 
 function jsxPropNames(attributes) {
   const props = new Set()
-  for (const prop of attributes.properties) {
-    if (ts.isJsxAttribute(prop) && ts.isIdentifier(prop.name)) props.add(prop.name.text)
+  for (const prop of attributes) {
+    if (prop.type === 'JSXAttribute' && prop.name.type === 'JSXIdentifier') props.add(prop.name.name)
   }
   return props
 }
 
 function jsxHasSpreadAttribute(attributes) {
-  return attributes.properties.some((prop) => ts.isJsxSpreadAttribute(prop))
+  return attributes.some((prop) => prop.type === 'JSXSpreadAttribute')
 }
 
 function jsxBooleanPropValue(attributes, name) {
-  for (const prop of attributes.properties) {
-    if (!ts.isJsxAttribute(prop) || !ts.isIdentifier(prop.name) || prop.name.text !== name) continue
-    if (!prop.initializer) return true
-    if (prop.initializer.kind === ts.SyntaxKind.FalseKeyword) return false
-    if (prop.initializer.kind === ts.SyntaxKind.TrueKeyword) return true
-    if (ts.isJsxExpression(prop.initializer)) {
-      if (!prop.initializer.expression) return true
-      if (prop.initializer.expression.kind === ts.SyntaxKind.FalseKeyword) return false
-      if (prop.initializer.expression.kind === ts.SyntaxKind.TrueKeyword) return true
+  for (const prop of attributes) {
+    if (prop.type !== 'JSXAttribute' || prop.name.type !== 'JSXIdentifier' || prop.name.name !== name) continue
+    const initializer = prop.value
+    if (!initializer) return true
+    if (initializer.type === 'BooleanLiteral') return initializer.value
+    if (initializer.type === 'JSXExpressionContainer') {
+      const expression = initializer.expression
+      if (!expression || expression.type === 'JSXEmptyExpression') return true
+      if (expression.type === 'BooleanLiteral') return expression.value
     }
   }
   return undefined
@@ -795,9 +805,9 @@ function isUiPrimitiveFile(file) {
 
 function jsxElementHasText(element) {
   for (const child of element.children) {
-    if (ts.isJsxText(child) && child.getText().trim()) return true
-    if (ts.isJsxExpression(child) && child.expression) return true
-    if (ts.isJsxElement(child) && jsxElementHasText(child)) return true
+    if (child.type === 'JSXText' && child.value.trim()) return true
+    if (child.type === 'JSXExpressionContainer' && child.expression && child.expression.type !== 'JSXEmptyExpression') return true
+    if (child.type === 'JSXElement' && jsxElementHasText(child)) return true
   }
   return false
 }

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { StyleProp, ViewProps, ViewStyle } from 'react-native'
+import { Platform, type StyleProp, type ViewProps, type ViewStyle } from 'react-native'
 import { MotiView } from 'moti'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -52,11 +52,14 @@ export function IsleMotionFrame({
     direction,
     order,
   })
+  const nativeAccessibilityProps = Platform.OS === 'web'
+    ? {}
+    : { accessibilityElementsHidden }
 
   return (
     <MotiView
-      aria-hidden={ariaHidden}
-      accessibilityElementsHidden={accessibilityElementsHidden}
+      aria-hidden={ariaHidden ?? accessibilityElementsHidden}
+      {...nativeAccessibilityProps}
       importantForAccessibility={importantForAccessibility}
       pointerEvents={pointerEvents}
       testID={testID}

@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const ts = require('typescript')
+const { transformTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const providerCompatibilityLiveSmokePlanSchema = 'islemind.provider-compatibility-live-smoke-plan.v1'
@@ -22,17 +22,7 @@ function registerTypeScriptSupport() {
       return previousTsHook(module, filename)
     }
     const source = fs.readFileSync(filename, 'utf8')
-    const output = ts.transpileModule(source, {
-      compilerOptions: {
-        esModuleInterop: true,
-        jsx: ts.JsxEmit.ReactJSX,
-        module: ts.ModuleKind.CommonJS,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        target: ts.ScriptTarget.ES2021,
-      },
-      fileName: filename,
-    })
-    module._compile(output.outputText, filename)
+    module._compile(transformTypeScriptModule(source, filename), filename)
   }
   hook.isProviderCompatibilityLiveSmokePlanHook = true
   require.extensions['.ts'] = hook

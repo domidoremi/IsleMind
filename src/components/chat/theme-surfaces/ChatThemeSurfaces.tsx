@@ -6,6 +6,7 @@ import {
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { ThemeExpressionSurface } from '@/components/ui/isle/ThemeExpressionSurface'
+import { GlassSurface } from '../glass'
 
 type ThemeColors = ReturnType<typeof useAppTheme>['colors']
 
@@ -54,7 +55,20 @@ export function ChatComposerThemeSurface({
   horizontalPadding,
   children,
 }: ThemeSurfaceProps & { horizontalPadding: number }) {
-  return <ThemeExpressionSurface family={themeId} colors={colors} kind="composer" horizontalPadding={horizontalPadding} testID={CHAT_SURFACE_TEST_IDS.composer[themeId]}>{children}</ThemeExpressionSurface>
+  const surface = <ThemeExpressionSurface family={themeId} colors={colors} kind="composer" horizontalPadding={horizontalPadding} testID={CHAT_SURFACE_TEST_IDS.composer[themeId]}>{children}</ThemeExpressionSurface>
+  if (themeId !== 'liquid-glass') return surface
+  const material = colors.design?.semantic.surface.chrome
+  return (
+    <GlassSurface
+      enabled
+      intensity={Math.min(60, Math.max(24, Math.round((material?.blurRadius ?? 18) * 1.8)))}
+      tint={colors.design?.mode === 'dark' ? 'dark' : 'light'}
+      borderRadius={colors.design?.semantic.radius.large ?? 16}
+      style={{ width: '100%' }}
+    >
+      {surface}
+    </GlassSurface>
+  )
 }
 
 export function ChatChromeThemeSurface({
@@ -67,7 +81,20 @@ export function ChatChromeThemeSurface({
   alertBorder?: string
   onLayout?: (event: LayoutChangeEvent) => void
 }) {
-  return <ThemeExpressionSurface family={themeId} colors={colors} kind="chrome" alertBorder={alertBorder} onLayout={onLayout} testID={CHAT_SURFACE_TEST_IDS.chrome[themeId]}>{children}</ThemeExpressionSurface>
+  const surface = <ThemeExpressionSurface family={themeId} colors={colors} kind="chrome" alertBorder={alertBorder} onLayout={onLayout} testID={CHAT_SURFACE_TEST_IDS.chrome[themeId]}>{children}</ThemeExpressionSurface>
+  if (themeId !== 'liquid-glass') return surface
+  const material = colors.design?.semantic.surface.chrome
+  return (
+    <GlassSurface
+      enabled
+      intensity={Math.min(60, Math.max(24, Math.round((material?.blurRadius ?? 18) * 1.8)))}
+      tint={colors.design?.mode === 'dark' ? 'dark' : 'light'}
+      borderRadius={colors.design?.semantic.radius.large ?? 16}
+      style={{ width: '100%' }}
+    >
+      {surface}
+    </GlassSurface>
+  )
 }
 
 export function MessageBubbleThemeSurface({

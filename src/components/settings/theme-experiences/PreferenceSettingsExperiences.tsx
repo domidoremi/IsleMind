@@ -46,18 +46,21 @@ function PreferenceSectionBand({
   node,
   family,
   index,
+  compact,
 }: {
   label: string
   node: ReactNode
   family: 'monet' | 'material' | 'liquid-glass'
   index: number
+  compact: boolean
 }) {
   const { colors, design } = useAppTheme()
   if (family === 'material') {
     return (
       <View
         style={{
-          flex: 1,
+          flex: compact ? undefined : 1,
+          width: compact ? '100%' : undefined,
           minWidth: 0,
           padding: design.semantic.spacing.lg,
           borderRadius: design.semantic.radius.extraLarge,
@@ -75,7 +78,8 @@ function PreferenceSectionBand({
     return (
       <View
         style={{
-          flex: 1,
+          flex: compact ? undefined : 1,
+          width: compact ? '100%' : undefined,
           minWidth: 0,
           padding: design.semantic.spacing.md,
           borderRadius: design.semantic.radius.extraLarge,
@@ -120,7 +124,7 @@ export function MonetPreferenceSettingsExperience({
   return (
     <View testID="preference-settings-experience-monet" style={{ gap: compact ? 10 : 14 }}>
       <View testID="preference-settings-layout-monet" style={{ flexDirection: compact ? 'column' : 'row', flexWrap: compact ? 'nowrap' : 'wrap', gap: compact ? 4 : 10 }}>
-        {sections.map((section, index) => <PreferenceSectionBand key={section.key} label={section.label} node={section.node} family="monet" index={index} />)}
+        {sections.map((section, index) => <PreferenceSectionBand key={section.key} label={section.label} node={section.node} family="monet" index={index} compact={compact} />)}
       </View>
     </View>
   )
@@ -143,7 +147,7 @@ export function MaterialPreferenceSettingsExperience({
   return (
     <View testID="preference-settings-experience-material" style={{ gap: 12 }}>
       <View testID="preference-settings-layout-material" style={{ flexDirection: compact ? 'column' : 'row', flexWrap: compact ? 'nowrap' : 'wrap', gap: 12 }}>
-        {sections.map((section, index) => <PreferenceSectionBand key={section.key} label={section.label} node={section.node} family="material" index={index} />)}
+        {sections.map((section, index) => <PreferenceSectionBand key={section.key} label={section.label} node={section.node} family="material" index={index} compact={compact} />)}
       </View>
     </View>
   )
@@ -166,7 +170,7 @@ export function LiquidGlassPreferenceSettingsExperience({
   return (
     <View testID="preference-settings-experience-liquid-glass" style={{ gap: 14 }}>
       <View testID="preference-settings-layout-liquid-glass" style={{ flexDirection: compact ? 'column' : 'row', flexWrap: compact ? 'nowrap' : 'wrap', gap: 14 }}>
-        {sections.map((section, index) => <PreferenceSectionBand key={section.key} label={section.label} node={section.node} family="liquid-glass" index={index} />)}
+        {sections.map((section, index) => <PreferenceSectionBand key={section.key} label={section.label} node={section.node} family="liquid-glass" index={index} compact={compact} />)}
       </View>
     </View>
   )

@@ -657,6 +657,18 @@ async function testPortableDataPayloadRuntime(dataManagementModule) {
         }]
       },
     },
+    usage: {
+      async load() {
+        calls.push({ kind: 'usage-export' })
+        return {
+          schema: 'islemind.usage-portable-snapshot.v1',
+          records: [],
+          dailyRollups: [],
+          pricingEntries: [],
+        }
+      },
+      async replace() {},
+    },
     recovery: {
       async importApplication(plan, options) {
         calls.push({ kind: 'recovery', signal: options?.signal })
@@ -682,6 +694,7 @@ async function testPortableDataPayloadRuntime(dataManagementModule) {
   assert.equal(exported.conversations[0].messages[0].attachments[0].uri, '', 'portable export removes private attachment URIs')
   assert.deepEqual(exported.tavernActiveScopes, { 'portable-conversation': 'portable-scope' }, 'portable export retains admitted active workspace links')
   assert.equal(exported.tavern, undefined, 'portable export omits the retired single-workspace mirror')
+  assert.equal(exported.usage.schema, 'islemind.usage-portable-snapshot.v1', 'portable export includes the Diagnostics-owned usage snapshot')
   assert.deepEqual(serialized.tavernSnapshotAudits, { 'portable-scope': workspaceAudit }, 'portable export returns scoped audits without reparsing JSON')
   assert.deepEqual(
     calls.find((call) => call.kind === 'workspace-export').input.includeEmptyScopeIds,
@@ -699,6 +712,7 @@ async function testPortableDataPayloadRuntime(dataManagementModule) {
   assert.equal(recoveryPlans[0].providerMetadata[0].presetId, 'custom-endpoint', 'portable import persists custom supplier identity after legacy migration')
   assert.equal(recoveryPlans[0].providerMetadata[0].wireProtocol, 'anthropic-compatible', 'portable import preserves the migrated wire protocol')
   assert.equal(recoveryPlans[0].credentialProviders[0].apiKey, '', 'serialized portable exports do not recreate provider credentials')
+  assert.equal(recoveryPlans[0].usage.schema, 'islemind.usage-portable-snapshot.v1', 'portable import carries the validated usage snapshot into recovery')
 
   const cancelledController = new AbortController()
   cancelledController.abort(new Error('cancel before payload admission'))
@@ -7394,12 +7408,14 @@ function testPortableImportRecoveryContract(core, storageModule) {
   assert.match(platformSource, /createBlob[\s\S]*current === value[\s\S]*conflict/, 'Platform Storage creates immutable operation-scoped blobs')
   assert.match(platformSource, /navigator\?\.locks/, 'Platform Storage uses Web Locks when a cross-context lock is available')
 
-  assert.match(bootstrapSource, /'workspaces'[\s\S]*'application_records'[\s\S]*'conversations'[\s\S]*'secure_state'[\s\S]*'knowledge'/, 'Bootstrap fixes the participant order')
+  assert.match(bootstrapSource, /'workspaces'[\s\S]*'application_records'[\s\S]*'conversations'[\s\S]*'secure_state'[\s\S]*'knowledge'[\s\S]*'usage'/, 'Bootstrap fixes the participant order')
+  assert.match(bootstrapSource, /LEGACY_PARTICIPANT_IDS[\s\S]*isSupportedPortableImportParticipantList/, 'Bootstrap can finish the exact pre-Usage recovery participant prefix after an upgrade')
   assert.match(bootstrapSource, /while \(envelope\.phase === 'rollback_required'\)[\s\S]*dependencies\.participants\[index\]\.restore\(envelope\)[\s\S]*completePortableImportRestoreParticipant/, 'Bootstrap persists reverse participant recovery')
   assert.match(bootstrapSource, /SECURE_SIDECAR_KEY_PREFIX[\s\S]*createSecureSidecar[\s\S]*readSecureSidecar/, 'provider, search, and observability before-images use secure sidecars')
   assert.match(bootstrapSource, /isUnprotectedWebRuntime\(\)[\s\S]*Credential-bearing portable imports require protected recovery storage/, 'credential-bearing web imports fail closed without protected sidecars')
   assert.match(bootstrapSource, /phase === 'committed'[\s\S]*postCommit[\s\S]*cleanupAndRemove/, 'committed restart performs invalidation and cleanup without rollback')
   assert.match(bootstrapSource, /clearProviderHealthSnapshot[\s\S]*clearAllCompactStates[\s\S]*clearRuntimeLog[\s\S]*clearCompactUsageRecords/, 'derived health, compact, usage, and log state invalidate only post-commit')
+  assert.match(bootstrapSource, /createUsageParticipant[\s\S]*usagePortableSnapshotRepository\.load[\s\S]*usagePortableSnapshotRepository\.replace/, 'Usage restore participates in the same verified rollback transaction')
 
   assert.match(payloadSource, /dependencies\.recovery\.importApplication\(\{/, 'Data Management constructs one typed recovery plan after payload admission')
   assert.match(payloadBootstrapSource, /importPortableApplicationDataWithRecovery\(plan/, 'bootstrap binds the target recovery port to whole-import recovery')

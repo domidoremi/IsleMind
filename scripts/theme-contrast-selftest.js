@@ -4,6 +4,9 @@ const { getColors, normalizeThemeAccent, themePalettes } = await import('../src/
 
 function parseColor(input) {
   const value = String(input).trim()
+  if (value.toLowerCase() === 'transparent') {
+    return { r: 0, g: 0, b: 0, a: 0 }
+  }
   if (value.startsWith('#')) {
     const hex = value.slice(1)
     const full = hex.length === 3 ? hex.split('').map((part) => part + part).join('') : hex

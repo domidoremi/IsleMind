@@ -23,11 +23,19 @@ import {
   type MessageScrollViewport,
 } from './messageListNavigation'
 
+const CHAT_CHROME_COLLAPSE_SCROLL_DISTANCE = 44
+const CHAT_CHROME_RESTORE_SCROLL_DISTANCE = 16
+const CHAT_CHROME_TOP_RESTORE_OFFSET = 10
+const CHAT_CHROME_SCROLL_DELTA_FLOOR = 1
+
+type ChatChromeScrollDirection = -1 | 0 | 1
+
 export function useChatMessageListScrollController({
   activeActionMessageId,
   autoStickToBottom,
   chromeCollapsed,
   collapseChrome,
+  restoreChrome,
   conversationId,
   lastScrollOffset,
   listRef,
@@ -43,6 +51,7 @@ export function useChatMessageListScrollController({
   autoStickToBottom: MutableRefObject<boolean>
   chromeCollapsed: boolean
   collapseChrome: () => void
+  restoreChrome: () => void
   conversationId: string
   lastScrollOffset: MutableRefObject<number>
   listRef: RefObject<FlashListRef<Message> | null>
@@ -66,6 +75,7 @@ export function useChatMessageListScrollController({
   const latestAssistantNavigationId = assistantNavigationItems.at(-1)?.messageId ?? null
   const [activeAssistantNavigationId, setActiveAssistantNavigationId] = useState<string | null>(latestAssistantNavigationId)
   const [assistantNavigationFloatingVisible, setAssistantNavigationFloatingVisible] = useState(false)
+  const [assistantNavigationJumping, setAssistantNavigationJumping] = useState(false)
   const activeAssistantNavigationItem = assistantNavigationItems.find((item) => item.messageId === activeAssistantNavigationId) ?? assistantNavigationItems.at(-1)
   const activeAssistantNavigationIndex = activeAssistantNavigationItem
     ? assistantNavigationItems.findIndex((item) => item.messageId === activeAssistantNavigationItem.messageId)
@@ -78,6 +88,7 @@ export function useChatMessageListScrollController({
   )
   const messageListViewabilityConfig = useMemo(() => ({ viewAreaCoveragePercentThreshold: 18, minimumViewTime: 80 }), [])
   const assistantNavigationHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const assistantNavigationJumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const assistantNavigationGestureActive = useRef(false)
   const assistantNavigationProgrammaticLockUntil = useRef(0)
   const layoutScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -87,6 +98,10 @@ export function useChatMessageListScrollController({
   const pagerGestureScrollReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const persistentPagerGestureLockRef = useRef(false)
   const lastLayoutScrollAt = useRef(0)
+  const chromeScrollAccumulator = useRef<{ direction: ChatChromeScrollDirection; distance: number }>({
+    direction: 0,
+    distance: 0,
+  })
 
   const clearLatestMessageScrollTimers = useCallback(() => {
     for (const timer of latestMessageScrollTimers.current) clearTimeout(timer)
@@ -99,11 +114,31 @@ export function useChatMessageListScrollController({
     layoutScrollTimer.current = null
   }, [])
 
+  const resetChromeScrollAccumulator = useCallback(() => {
+    chromeScrollAccumulator.current.direction = 0
+    chromeScrollAccumulator.current.distance = 0
+  }, [])
+
   const clearAssistantNavigationHideTimer = useCallback(() => {
     if (!assistantNavigationHideTimer.current) return
     clearTimeout(assistantNavigationHideTimer.current)
     assistantNavigationHideTimer.current = null
   }, [])
+
+  const clearAssistantNavigationJumpTimer = useCallback(() => {
+    if (!assistantNavigationJumpTimer.current) return
+    clearTimeout(assistantNavigationJumpTimer.current)
+    assistantNavigationJumpTimer.current = null
+  }, [])
+
+  const markAssistantNavigationJumping = useCallback((durationMs: number) => {
+    clearAssistantNavigationJumpTimer()
+    setAssistantNavigationJumping(true)
+    assistantNavigationJumpTimer.current = setTimeout(() => {
+      assistantNavigationJumpTimer.current = null
+      setAssistantNavigationJumping(false)
+    }, Math.max(120, durationMs))
+  }, [clearAssistantNavigationJumpTimer])
 
   const revealAssistantNavigation = useCallback((delayMs = CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS) => {
     if (!assistantNavigationVisible) return
@@ -140,6 +175,8 @@ export function useChatMessageListScrollController({
   }, [conversationId, messageIdentitySignature])
 
   useEffect(() => () => clearAssistantNavigationHideTimer(), [clearAssistantNavigationHideTimer])
+
+  useEffect(() => () => clearAssistantNavigationJumpTimer(), [clearAssistantNavigationJumpTimer])
 
   useEffect(() => {
     if (assistantNavigationVisible) return
@@ -212,19 +249,24 @@ export function useChatMessageListScrollController({
     clearPagerGestureScrollReleaseTimer()
     if (!persistentPagerGestureLockRef.current) setPagerGestureLocked?.(false)
     clearPendingMessageScrolls()
+    clearAssistantNavigationJumpTimer()
+    setAssistantNavigationJumping(false)
+    resetChromeScrollAccumulator()
+    restoreChrome()
     autoStickToBottom.current = true
     lastScrollOffset.current = 0
     lastLayoutScrollAt.current = 0
-  }, [autoStickToBottom, clearPagerGestureScrollReleaseTimer, clearPendingMessageScrolls, conversationId, lastScrollOffset, setActiveActionMessageId, setPagerGestureLocked])
+  }, [autoStickToBottom, clearAssistantNavigationJumpTimer, clearPagerGestureScrollReleaseTimer, clearPendingMessageScrolls, conversationId, lastScrollOffset, resetChromeScrollAccumulator, restoreChrome, setActiveActionMessageId, setPagerGestureLocked])
 
   useEffect(() => {
     return () => {
       clearPendingMessageScrolls()
+      clearAssistantNavigationJumpTimer()
       if (userDragMomentumEligibilityTimer.current) clearTimeout(userDragMomentumEligibilityTimer.current)
       clearPagerGestureScrollReleaseTimer()
       if (!persistentPagerGestureLockRef.current) setPagerGestureLocked?.(false)
     }
-  }, [clearPendingMessageScrolls, clearPagerGestureScrollReleaseTimer, setPagerGestureLocked])
+  }, [clearAssistantNavigationJumpTimer, clearPendingMessageScrolls, clearPagerGestureScrollReleaseTimer, setPagerGestureLocked])
 
   const requestMessageLayoutScroll = useCallback((options?: { force?: boolean }) => {
     const force = options?.force === true
@@ -275,9 +317,14 @@ export function useChatMessageListScrollController({
 
   const scrollToMessageListBottom = useCallback(() => {
     setUnreadMessageCount(0)
+    if (latestAssistantNavigationId) {
+      setActiveAssistantNavigationId(latestAssistantNavigationId)
+      markAssistantNavigationJumping(560)
+      revealAssistantNavigation(CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS)
+    }
     onCloseOverlays()
     scrollToLatestMessage(true, 0, { force: true, replacePending: true })
-  }, [onCloseOverlays, scrollToLatestMessage])
+  }, [latestAssistantNavigationId, markAssistantNavigationJumping, onCloseOverlays, revealAssistantNavigation, scrollToLatestMessage])
 
   const handleListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     if (activeActionMessageId) setActiveActionMessageId(null)
@@ -302,12 +349,40 @@ export function useChatMessageListScrollController({
       autoStickToBottom.current = false
     }
     const userDrivenScroll = userScrollInteractionActive.current || userDragMomentumEligible.current
-    if (assistantNavigationVisible && userDrivenScroll) {
+    const navigationScrollActivity = userDrivenScroll || (
+      nextViewport.awayFromBottom &&
+      Math.abs(delta) > 4 &&
+      Date.now() >= assistantNavigationProgrammaticLockUntil.current
+    )
+    const chromeScrollActivity = navigationScrollActivity
+    if (assistantNavigationVisible && navigationScrollActivity) {
       revealAssistantNavigation()
     }
-    if (userDrivenScroll && delta > 8 && !chromeCollapsed) collapseChrome()
+    if (y <= CHAT_CHROME_TOP_RESTORE_OFFSET) {
+      resetChromeScrollAccumulator()
+      if (chromeCollapsed) restoreChrome()
+    } else if (chromeScrollActivity && Math.abs(delta) >= CHAT_CHROME_SCROLL_DELTA_FLOOR) {
+      const direction: ChatChromeScrollDirection = delta > 0 ? 1 : -1
+      const accumulator = chromeScrollAccumulator.current
+      if (accumulator.direction !== direction) {
+        accumulator.direction = direction
+        accumulator.distance = Math.abs(delta)
+      } else {
+        accumulator.distance += Math.abs(delta)
+      }
+
+      if (!chromeCollapsed && direction === -1 && accumulator.distance >= CHAT_CHROME_COLLAPSE_SCROLL_DISTANCE) {
+        accumulator.distance = 0
+        collapseChrome()
+      } else if (chromeCollapsed && direction === 1 && accumulator.distance >= CHAT_CHROME_RESTORE_SCROLL_DISTANCE) {
+        accumulator.distance = 0
+        restoreChrome()
+      }
+    } else if (!chromeScrollActivity) {
+      resetChromeScrollAccumulator()
+    }
     lastScrollOffset.current = y
-  }, [activeActionMessageId, assistantNavigationVisible, autoStickToBottom, chromeCollapsed, collapseChrome, commitMessageScrollViewport, lastScrollOffset, latestAssistantNavigationId, revealAssistantNavigation, setActiveActionMessageId])
+  }, [activeActionMessageId, assistantNavigationVisible, autoStickToBottom, chromeCollapsed, collapseChrome, commitMessageScrollViewport, lastScrollOffset, latestAssistantNavigationId, resetChromeScrollAccumulator, restoreChrome, revealAssistantNavigation, setActiveActionMessageId])
 
   const handleListTouchStart = useCallback(() => {
     Keyboard.dismiss()
@@ -320,6 +395,7 @@ export function useChatMessageListScrollController({
   }, [releasePagerGestureAfterMessageScroll])
 
   const handleListScrollBeginDrag = useCallback(() => {
+    resetChromeScrollAccumulator()
     lockPagerGestureForMessageScroll()
     assistantNavigationProgrammaticLockUntil.current = 0
     revealAssistantNavigation()
@@ -331,7 +407,7 @@ export function useChatMessageListScrollController({
     userDragMomentumEligible.current = true
     autoStickToBottom.current = false
     clearPendingMessageScrolls()
-  }, [autoStickToBottom, clearPendingMessageScrolls, lockPagerGestureForMessageScroll, revealAssistantNavigation])
+  }, [autoStickToBottom, clearPendingMessageScrolls, lockPagerGestureForMessageScroll, resetChromeScrollAccumulator, revealAssistantNavigation])
 
   const restoreAutoStickIfNearBottom = useCallback(() => {
     if (!messageScrollViewportRef.current.awayFromBottom) autoStickToBottom.current = true
@@ -368,9 +444,10 @@ export function useChatMessageListScrollController({
       clearTimeout(userDragMomentumEligibilityTimer.current)
       userDragMomentumEligibilityTimer.current = null
     }
+    resetChromeScrollAccumulator()
     restoreAutoStickIfNearBottom()
     releasePagerGestureAfterMessageScroll()
-  }, [releasePagerGestureAfterMessageScroll, restoreAutoStickIfNearBottom])
+  }, [releasePagerGestureAfterMessageScroll, resetChromeScrollAccumulator, restoreAutoStickIfNearBottom])
 
   const handleListLayout = useCallback((event: LayoutChangeEvent) => {
     const viewportHeight = Math.ceil(event.nativeEvent.layout.height)
@@ -398,10 +475,19 @@ export function useChatMessageListScrollController({
     const animated = options?.animated ?? true
     const settle = options?.settle === true
     autoStickToBottom.current = false
+    if (settle) markAssistantNavigationJumping(animated ? 560 : 240)
     setActiveAssistantNavigationId(item.messageId)
     assistantNavigationProgrammaticLockUntil.current = Date.now() + (animated ? 520 : CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS)
     revealAssistantNavigation(settle ? CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS : CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS)
     onCloseOverlays()
+    // The newest reply is also the bottom boundary of the transcript. Using
+    // scrollToIndex(viewPosition: 0) would place a tall reply at the top and
+    // leave its lower paragraphs underneath the mobile dock/composer. An
+    // explicit latest jump should land on the bottom clearance instead.
+    if (item.messageId === latestAssistantNavigationId) {
+      scrollToLatestMessage(animated, 0, { force: true, replacePending: true })
+      return
+    }
     const scrollParams = {
       index: item.messageIndex,
       animated,
@@ -416,7 +502,7 @@ export function useChatMessageListScrollController({
         void retryRequest?.catch(() => undefined)
       }, 80)
     })
-  }, [autoStickToBottom, listRef, messageListTopInset, onCloseOverlays, revealAssistantNavigation])
+  }, [autoStickToBottom, latestAssistantNavigationId, listRef, markAssistantNavigationJumping, messageListTopInset, onCloseOverlays, revealAssistantNavigation, scrollToLatestMessage])
 
   const handleAssistantNavigationInteractionStart = useCallback(() => {
     assistantNavigationGestureActive.current = true
@@ -442,6 +528,7 @@ export function useChatMessageListScrollController({
     activeAssistantNavigationIndex,
     activeAssistantNavigationItem,
     assistantNavigationFloatingVisible,
+    assistantNavigationJumping,
     assistantNavigationItems,
     assistantNavigationVisible,
     handleAssistantNavigationInteractionEnd,

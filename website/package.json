@@ -1,0 +1,9 @@
+{
+  "name": "islemind-website",
+  "private": true,
+  "version": "1.0.0",
+  "description": "IsleMind official website (static)",
+  "scripts": {
+    "serve": "python -m http.server 8630 --bind 127.0.0.1"
+  }
+}

@@ -13,6 +13,46 @@ export interface AssistantNavigationScrollOptions {
   settle?: boolean
 }
 
+/**
+ * Returns a bounded set of marker indexes for the visual navigation track.
+ *
+ * The full assistant reply list remains the source of truth for selection and
+ * accessibility. Only the decorative marker layer is sampled so a very long
+ * transcript does not mount hundreds of animated views while the user scrolls.
+ */
+export function sampleAssistantNavigationIndices(
+  itemCount: number,
+  activeIndex = 0,
+  maxMarkers = 28,
+): number[] {
+  const count = Number.isFinite(itemCount) ? Math.max(0, Math.floor(itemCount)) : 0
+  if (count === 0) return []
+
+  const markerLimit = Number.isFinite(maxMarkers) ? Math.max(3, Math.floor(maxMarkers)) : 28
+  if (count <= markerLimit) return Array.from({ length: count }, (_, index) => index)
+
+  const normalizedActiveIndex = Number.isFinite(activeIndex) ? Math.floor(activeIndex) : 0
+  const safeActiveIndex = Math.max(0, Math.min(count - 1, normalizedActiveIndex))
+  const selected = new Set<number>([0, count - 1, safeActiveIndex])
+  const evenlySpacedCount = Math.max(0, markerLimit - selected.size)
+  for (let index = 1; index <= evenlySpacedCount; index += 1) {
+    const ratio = index / (evenlySpacedCount + 1)
+    selected.add(Math.round(ratio * (count - 1)))
+  }
+
+  // The active marker is always retained. If rounding produced one extra
+  // marker, remove the closest non-boundary/non-active item.
+  while (selected.size > markerLimit) {
+    const removable = [...selected]
+      .filter((index) => index !== 0 && index !== count - 1 && index !== safeActiveIndex)
+      .sort((left, right) => Math.abs(left - safeActiveIndex) - Math.abs(right - safeActiveIndex))[0]
+    if (removable === undefined) break
+    selected.delete(removable)
+  }
+
+  return [...selected].sort((left, right) => left - right)
+}
+
 export interface MessageScrollViewport {
   contentHeight: number
   viewportHeight: number
@@ -61,9 +101,14 @@ export function getMessageItemType(message: Message) {
 }
 
 export function buildAssistantNavigationItems(messages: Message[]): AssistantNavigationItem[] {
-  const assistantMessages = messages
-    .map((message, messageIndex) => ({ message, messageIndex }))
-    .filter((item) => item.message.role === 'assistant')
+  // Keep one bounded intermediate array instead of map + filter. This helper
+  // runs whenever a streamed message snapshot changes, so avoiding a second
+  // full-list allocation matters for long conversations.
+  const assistantMessages: Array<{ message: Message; messageIndex: number }> = []
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex]
+    if (message.role === 'assistant') assistantMessages.push({ message, messageIndex })
+  }
   const assistantCount = assistantMessages.length
   return assistantMessages.map((item, index) => ({
     messageId: item.message.id,

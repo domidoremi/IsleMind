@@ -2,7 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const Module = require('node:module')
 const path = require('node:path')
-const ts = require('typescript')
+const { transformTypeScriptModule, parseTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const originalResolve = Module._resolveFilename
@@ -33,17 +33,7 @@ function registerTypeScriptSupport() {
 
   const hook = function compileTypeScript(module, filename) {
     const source = fs.readFileSync(filename, 'utf8')
-    const output = ts.transpileModule(source, {
-      compilerOptions: {
-        esModuleInterop: true,
-        jsx: ts.JsxEmit.ReactJSX,
-        module: ts.ModuleKind.CommonJS,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        target: ts.ScriptTarget.ES2021,
-      },
-      fileName: filename,
-    })
-    module._compile(output.outputText, filename)
+    module._compile(transformTypeScriptModule(source, filename), filename)
   }
   hook.isAgentWorkflowCompatibilityHook = true
   require.extensions['.ts'] = hook
@@ -2893,17 +2883,19 @@ function assertConversationChatWorkflowMessageProjection() {
 
 function readStringUnionMembers(relativePath, typeName) {
   const filename = path.join(root, relativePath)
-  const sourceFile = ts.createSourceFile(filename, fs.readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true)
-  const declaration = sourceFile.statements.find((statement) => (
-    ts.isTypeAliasDeclaration(statement) && statement.name.text === typeName
-  ))
-  assert.ok(declaration && ts.isUnionTypeNode(declaration.type), `${typeName} is a string union`)
-  return declaration.type.types.map((member) => {
+  const ast = parseTypeScriptModule(fs.readFileSync(filename, 'utf8'), filename)
+  const declaration = ast.program.body
+    .map((statement) => (statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement))
+    .find((statement) => (
+      statement?.type === 'TSTypeAliasDeclaration' && statement.id.name === typeName
+    ))
+  assert.ok(declaration && declaration.typeAnnotation.type === 'TSUnionType', `${typeName} is a string union`)
+  return declaration.typeAnnotation.types.map((member) => {
     assert.ok(
-      ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal),
+      member.type === 'TSLiteralType' && member.literal.type === 'StringLiteral',
       `${typeName} contains only string literals`,
     )
-    return member.literal.text
+    return member.literal.value
   }).sort()
 }
 

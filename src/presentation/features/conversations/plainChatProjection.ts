@@ -18,6 +18,11 @@ export function createPlainChatProjection(
   input: PlainChatProjectionInput,
   onTerminalPersisted: () => void,
 ): ConversationRunProjection {
+  useChatStore.getState().transitionMessageLifecycle(
+    input.conversation.id,
+    input.assistantMessageId,
+    'waiting',
+  )
   const state: ProjectionState = {
     conversationId: input.conversation.id,
     messageId: input.assistantMessageId,

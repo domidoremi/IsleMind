@@ -3,7 +3,7 @@ import { st } from '@/i18n/service'
 import type { MessageUsage } from '@/types/chatContracts'
 import type { MessageCitation } from '@/types/contextContracts'
 import type { ProcessTrace } from '@/core'
-import { fallbackProvidersForRequest, providerForRuntimeFallback, requiredFallbackCapabilities, retryAfterMsFromFailure, routeForRuntimeFallback, updateCredentialGroupHealth, type ProviderFallbackCandidateBuilder } from '@/modules/providers'
+import { classifyProviderHealthCheckError, fallbackProvidersForRequest, parseProviderRetryAfterMs, providerForRuntimeFallback, requiredFallbackCapabilities, retryAfterMsFromFailure, routeForRuntimeFallback, updateCredentialGroupHealth, type ProviderFallbackCandidateBuilder } from '@/modules/providers'
 import type { ProviderFailureClassification } from '@/modules/providers'
 import type {
   ProviderRuntimeChatRequest,
@@ -13,7 +13,7 @@ import type {
   ProviderRuntimeErrorCallback,
   ProviderRuntimeTraceCallback,
 } from '@/modules/providers'
-import { resolveFailoverDecision } from '@/modules/providers'
+import { resolveLocalProviderRoute } from '@/modules/providers'
 import {
   createProviderTextToolCallStreamFilter,
   dedupeCitations,
@@ -80,6 +80,7 @@ interface SuccessfulProviderUsageAttempt {
   startedAt: number
   attempt: number
   reason: ProviderUsageAttemptReason
+  retryCount: number
   firstTokenAt?: number
 }
 
@@ -986,6 +987,13 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
     const attemptReason = nextAttemptReason
     nextAttemptReason = 'retry'
     const attemptStartedAt = Date.now()
+    // Keep the usage ordinal cumulative across wire attempts. Rectification is
+    // a retry-like wire attempt even though it does not consume maxRetries.
+    const retryCountAtAttempt = attemptReason === 'rectification'
+      ? Math.max(1, attempt)
+      : attemptReason === 'retry'
+        ? retryCount
+        : 0
     let attemptObserved = false
     try {
       throwIfProviderRetryAborted(input.controller.signal)
@@ -1002,6 +1010,7 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
           startedAt: attemptStartedAt,
           attempt,
           reason: attemptReason,
+          retryCount: retryCountAtAttempt,
         })
         recordProviderCircuitSuccess(circuitKey, input.controller.signal)
         if (openAICompatibleMinimalRectification) {
@@ -1024,11 +1033,12 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
         startedAt: attemptStartedAt,
         attempt,
         reason: attemptReason,
+        retryCount: retryCountAtAttempt,
         statusCode: response.status,
       })
       attemptObserved = true
 
-      const canRetryStatus = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500
+      const canRetryStatus = classifyProviderHealthCheckError({ status: response.status }).retryable
       if (isAnthropicWireRequest(input.req)) {
         const errorText = await input.transport.readResponseText(response)
         throwIfProviderRetryAborted(input.controller.signal)
@@ -1050,10 +1060,10 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
         if (canRetryStatus && retryCount < maxRetries) {
           logProviderRetryAttempt(input.req, retryCount + 1, maxRetries, { status: response.status })
           retryCount += 1
-          await delayProviderRetry(providerRetryDelayMs(retryCount - 1), input.controller.signal)
+          await delayProviderRetry(providerRetryDelayForResponse(response, retryCount - 1), input.controller.signal)
           continue
         }
-        recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
+        if (canRetryStatus) recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
         return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
       }
 
@@ -1089,7 +1099,7 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
           continue
         }
         if (!canRetryStatus || retryCount >= maxRetries) {
-          recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
+          if (canRetryStatus) recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
           return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
         }
       }
@@ -1145,22 +1155,22 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
             status: response.status,
             attempt: retryCount,
           }, runtimeLogOptions(input.req))
-          recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
+          if (canRetryStatus) recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
           return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
         }
         if (!canRetryStatus || retryCount >= maxRetries) {
-          recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
+          if (canRetryStatus) recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
           return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
         }
       }
 
       if (!canRetryStatus || retryCount >= maxRetries) {
-        recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
+        if (canRetryStatus) recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
         return response
       }
       logProviderRetryAttempt(input.req, retryCount + 1, maxRetries, { status: response.status })
       retryCount += 1
-      await delayProviderRetry(providerRetryDelayMs(retryCount - 1), input.controller.signal)
+      await delayProviderRetry(providerRetryDelayForResponse(response, retryCount - 1), input.controller.signal)
     } catch (error) {
       if (isProviderRetryCancellation(input.controller.signal)) {
         if (!attemptObserved) {
@@ -1168,6 +1178,7 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
             startedAt: attemptStartedAt,
             attempt,
             reason: attemptReason,
+            retryCount: retryCountAtAttempt,
             cancelled: true,
           })
         }
@@ -1178,11 +1189,13 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
           startedAt: attemptStartedAt,
           attempt,
           reason: attemptReason,
+          retryCount: retryCountAtAttempt,
           errorCode: error instanceof Error ? error.name : 'request_failed',
         })
       }
-      if (retryCount >= maxRetries) {
-        recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
+      const retryClassification = classifyProviderHealthCheckError(providerHealthCheckErrorInput(error))
+      if (!retryClassification.retryable || retryCount >= maxRetries) {
+        if (retryClassification.retryable) recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
         throw error
       }
       logProviderRetryAttempt(input.req, retryCount + 1, maxRetries, { error: error instanceof Error ? error.message : 'request_failed' })
@@ -1192,12 +1205,38 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
   }
 }
 
+function providerHealthCheckErrorInput(error: unknown): {
+  errorName?: string
+  errorCode?: string
+  errorMessage?: string
+} {
+  if (!error || typeof error !== 'object') {
+    return { errorMessage: typeof error === 'string' ? error : undefined }
+  }
+  const record = error as { name?: unknown; code?: unknown; message?: unknown }
+  return {
+    errorName: typeof record.name === 'string' ? record.name : undefined,
+    errorCode: typeof record.code === 'string' ? record.code : undefined,
+    errorMessage: typeof record.message === 'string' ? record.message : undefined,
+  }
+}
+
+/** Honor a bounded provider Retry-After hint without allowing an unbounded stall. */
+function providerRetryDelayForResponse(response: Response, attempt: number): number {
+  const retryAfterMs = parseProviderRetryAfterMs(response.headers.get('retry-after'))
+  return Math.max(
+    providerRetryDelayMs(attempt),
+    Math.min(30_000, retryAfterMs ?? 0),
+  )
+}
+
 function observeFailedProviderUsageAttempt(
   input: Pick<FetchChatStreamWithRetryInput, 'req' | 'credentialGroupId' | 'stream'>,
   attempt: {
     startedAt: number
     attempt: number
     reason: ProviderUsageAttemptReason
+    retryCount: number
     statusCode?: number
     errorCode?: string
     cancelled?: boolean
@@ -1223,6 +1262,7 @@ function observeFailedProviderUsageAttempt(
     startedAt: attempt.startedAt,
     attempt: attempt.attempt,
     attemptReason: attempt.reason,
+    retryCount: attempt.retryCount,
     ...(input.req.usageContext?.correlationId ? { correlationId: input.req.usageContext.correlationId } : {}),
     ...(input.req.conversationId ? { conversationId: input.req.conversationId } : {}),
     ...(input.req.usageContext?.runId ? { runId: input.req.usageContext.runId } : {}),
@@ -1254,6 +1294,7 @@ function recordSuccessfulProviderUsageAttempt(
     ...(attempt.firstTokenAt === undefined ? {} : { firstTokenAt: attempt.firstTokenAt }),
     attempt: attempt.attempt,
     attemptReason: attempt.reason,
+    retryCount: attempt.retryCount,
     ...(input.req.usageContext?.correlationId ? { correlationId: input.req.usageContext.correlationId } : {}),
     ...(input.req.conversationId ? { conversationId: input.req.conversationId } : {}),
     ...(input.req.usageContext?.runId ? { runId: input.req.usageContext.runId } : {}),
@@ -1530,15 +1571,31 @@ export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput
     healthRecords,
     nowMs,
   })
-  const decision = resolveFailoverDecision({
-    policy: { mode: 'same-provider' },
+  const routingInput = {
     trigger: classification.trigger,
     original,
     candidates: candidates.candidates,
     requiredCapabilities,
     streamStarted: input.streamStarted,
+  }
+  const sameProviderRoute = resolveLocalProviderRoute({
+    ...routingInput,
+    policy: {
+      mode: 'same-provider',
+      maxCandidates: 8,
+      maxFailovers: 1,
+    },
   })
-  return { classification, decision, candidates }
+  const routed = sameProviderRoute.decision.eligible
+    ? sameProviderRoute
+    : resolveLocalProviderRoute({
+        ...routingInput,
+        policy: {
+          maxCandidates: 8,
+          maxFailovers: 1,
+        },
+      })
+  return { classification, decision: routed.decision, candidates }
 }
 
 async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise<boolean> {
@@ -1577,6 +1634,11 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     signal: input.controller.signal,
   }
   const selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback)
+  const fallbackUsageAttribution = {
+    originalProviderId: input.req.provider.id,
+    originalModel: input.req.requestedModel ?? input.req.model,
+    failoverCount: 1,
+  }
   const selectedAssembly = input.transport.assembleRoute({
     provider: selectedReq.provider,
     model: selectedReq.model,
@@ -1591,7 +1653,13 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     requestedTransportMode: selectedAssembly.transportSelection.requestedMode,
     transportFallbackReason: selectedAssembly.transportSelection.fallbackReason,
   }, {
-    policy: { mode: 'same-provider' },
+    policy: {
+      mode: plan.decision.mode,
+      preserveRegion: true,
+      maxCostTier: 'medium',
+      allowHigherCostTier: false,
+      allowCredentialFailover: false,
+    },
     trigger: plan.classification.trigger,
     original: routeForRuntimeFallback(input.req, input.credentialGroupId),
     candidates: plan.candidates.candidates,
@@ -1641,6 +1709,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   } catch (error) {
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
+      ...fallbackUsageAttribution,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -1665,6 +1734,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   if (input.controller.signal.aborted) {
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
+      ...fallbackUsageAttribution,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -1685,6 +1755,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   if (!selectedResponse.ok) {
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
+      ...fallbackUsageAttribution,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -1723,6 +1794,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   const selectedResult = await parseProviderNonStreamingResponse(selectedResponse, selectedReq).catch((error) => {
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
+      ...fallbackUsageAttribution,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -1748,6 +1820,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   if (!hasDeliverableProviderOutput(selectedResult)) {
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
+      ...fallbackUsageAttribution,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -1776,6 +1849,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   }
   void recordProviderUsageAttempt({
     provider: selectedReq.provider,
+    ...fallbackUsageAttribution,
     credentialGroupId: selectedRoute.credentialGroupId,
     requestedModel: selectedReq.requestedModel,
     upstreamModel: selectedReq.model,

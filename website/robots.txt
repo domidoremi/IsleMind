@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://domidoremi.github.io/IsleMind/sitemap.xml

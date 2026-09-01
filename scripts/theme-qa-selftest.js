@@ -46,6 +46,7 @@ const chatChromeSurfaces = read('src/components/chat/chatChromeSurfaces.ts')
 const floatingChrome = read('src/components/chat/FloatingChrome.tsx')
 const chatPersistentHeader = read('src/components/chat/ChatPersistentHeader.tsx')
 const floatingComposer = read('src/components/chat/FloatingComposer.tsx')
+const floatingComposerSurfaces = read('src/components/chat/FloatingComposerSurfaces.tsx')
 const composer = read('src/components/chat/Composer.tsx')
 const optionsPanel = read('src/components/chat/ChatOptionsPanel.tsx')
 const conversationsScreen = read('src/components/main/ConversationsScreenContent.tsx')
@@ -190,11 +191,11 @@ check(
 )
 check(
   'chat quick panels and health banner use glass chrome containers',
-  /panelChromeSurface = isGlass \? colors\.ui\.semantic\.chrome\.background/.test(floatingComposer)
+  /panelChromeSurface = canonicalThemeId === 'minimal'[\s\S]*?: isGlass[\s\S]*?\? colors\.ui\.semantic\.chrome\.background/.test(floatingComposer)
     && (/backgroundColor: isGlass \? colors\.ui\.semantic\.chrome\.background/.test(chatWorkspace)
       || /backgroundColor: isGlass \? colors\.ui\.semantic\.chrome\.background/.test(chatStatusBanners)
       || /backgroundColor: resolveChatChromeSurface\(colors, isGlass\)/.test(chatStatusBanners))
-    && /\? colors\.ui\.actionBar\.itemBackground/.test(floatingComposer)
+    && /const chipSurface[\s\S]*?isGlass[\s\S]*?'transparent'/.test(floatingComposer)
     && /resolveChatChromeSurface[\s\S]*?colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(chatChromeSurfaces),
   'quick panels and health banner should avoid heavy card styling in glass mode',
 )
@@ -253,7 +254,7 @@ check(
   /fill,\s*\n\s*style,/.test(appIcon)
     && /fill=\{fill \?\? 'none'\}/.test(appIcon)
     && /name="star"[\s\S]*fill=\{isDefault \? colors\.ui\.control\.primaryForeground : 'transparent'\}/.test(apiKeyPanel)
-    && /name="stop"[\s\S]*fill=\{colors\.ui\.control\.primaryForeground\}/.test(floatingComposer),
+    && /name="stop"[\s\S]*fill=\{colors\.ui\.tone\.danger\.foreground\}/.test(floatingComposerSurfaces),
   'selected stars and stop controls should render filled icons instead of silently dropping fill props',
 )
 check(
@@ -295,11 +296,14 @@ check(
 )
 check(
   'composer and shared controls keep weak states light but readable',
-  /const composerShadowOpacity = 0/.test(composer)
-    && /shadowRadius: focused \? 12 : 6/.test(composer)
-    && /placeholderTextColor=\{colors\.ui\.input\.placeholderForeground\}/.test(composer)
-    && /backgroundColor: canSend \? colors\.ui\.control\.primaryBackground : colors\.ui\.control\.disabledBackground/.test(composer)
-    && /color=\{canSend \? colors\.ui\.control\.primaryForeground : colors\.ui\.control\.disabledForeground\}/.test(composer)
+  /interactiveMaterial\?\.background \?\? colors\.ui\.input\.background/.test(floatingComposerSurfaces)
+    && /activeMaterial\?\.background \?\? colors\.ui\.input\.backgroundFocused/.test(floatingComposerSurfaces)
+    && /interactiveMaterial\?\.border \?\? colors\.ui\.input\.border/.test(floatingComposerSurfaces)
+    && /placeholderTextColor=\{colors\.ui\.input\.placeholderForeground\}/.test(floatingComposerSurfaces)
+    && /colors\.ui\.control\.disabledBackground/.test(floatingComposerSurfaces)
+    && /color=\{canSend \? colors\.ui\.control\.primaryForeground : colors\.ui\.control\.disabledForeground\}/.test(floatingComposerSurfaces)
+    && /disabled \? colors\.ui\.control\.disabledForeground : colors\.textSecondary/.test(floatingComposerSurfaces)
+    && !/opacity: disabled \? 0\.42 : 1/.test(floatingComposerSurfaces)
     && /backgroundColor: disabled \? 'transparent'/.test(composer)
     && /activeSurface="quiet"/.test(floatingComposer)
     && /placeholderTextColor=\{input\.placeholderForeground\}/.test(isleKit)
@@ -329,7 +333,7 @@ check(
 )
 check(
   'ambient loading indicators stop looping outside full motion',
-  (messageBubble.match(/loop: motion === 'full'/g) ?? []).length >= 5
+  (messageBubble.match(/loop: motion === 'full'/g) ?? []).length >= 4
     && messageBubble.includes("const shimmer = active && motion === 'full' && grammar !== 'precision'")
     && messageBubble.includes('loop: shimmer')
     && messageBubble.includes("'.'.repeat(motion === 'full' ? dotCount : 3)")
@@ -373,7 +377,10 @@ check(
 )
 check(
   'message content rich cards stay secondary to plain content',
-  /richCardSurface: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(messageContent) && /blockRaisedSurface: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(messageContent) && /fontSize: 10\.5/.test(messageContent),
+  /richCardSurface: glass \? colors\.ui\.actionBar\.itemBackground : 'transparent'/.test(messageContent)
+    && /blockSurface: minimal \? 'transparent' : glass \? colors\.ui\.actionBar\.itemBackground : material \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(messageContent)
+    && /blockRaisedSurface: minimal \|\| monet \? 'transparent' : glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(messageContent)
+    && /fontSize: 10\.5/.test(messageContent),
   'rich blocks should read lighter than primary message text',
 )
 check(

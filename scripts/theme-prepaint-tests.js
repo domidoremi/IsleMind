@@ -17,8 +17,8 @@ const palettes = {
   'minimal:dark': ['#101513', '#ECF4F0'],
   'monet:light': ['#F4F6F2', '#17201D'],
   'monet:dark': ['#101918', '#ECF4F0'],
-  'material:light': ['#FFFBFE', '#1D1B20'],
-  'material:dark': ['#1C1B1F', '#E6E1E5'],
+  'material:light': ['#FAFAFC', '#1B1D20'],
+  'material:dark': ['#191B1E', '#E2E4E7'],
   'liquid-glass:light': ['#EAF2F8', '#152331'],
   'liquid-glass:dark': ['#0D1722', '#EFF8FF'],
 }

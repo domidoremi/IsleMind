@@ -4,6 +4,11 @@ import type { ProcessTrace } from '@/core'
 import { clampTraceContent } from '@/services/chatTraceUtils'
 import { registerStreamStateCleaner } from '@/services/chatStreamLifecycle'
 import { useChatStore } from './chatStore'
+import {
+  lifecycleStageForTrace,
+  responseLifecycleTraceTimestamp,
+  safeResponseLifecycleTraceSummary,
+} from '@/services/responseLifecycle'
 
 type StreamingPersistHandle = ReturnType<typeof setTimeout>
 
@@ -57,6 +62,10 @@ export const useChatStreamingStore = create<StreamingState>((set, get) => ({
 
   appendContent: (convId: string, msgId: string, content: string) => {
     if (!content) return
+    // The projection receives real provider text chunks. Promote the durable
+    // response state on the first chunk rather than inferring generation from
+    // a display timer.
+    useChatStore.getState().transitionMessageLifecycle(convId, msgId, 'generating')
     const key = streamingKey(convId, msgId)
     const state = get()
     const existing = state.persistTimers.get(key)
@@ -102,6 +111,15 @@ export const useChatStreamingStore = create<StreamingState>((set, get) => ({
 
   upsertTrace: (convId: string, msgId: string, trace: ProcessTrace) => {
     const key = streamingKey(convId, msgId)
+    const hasOutput = Boolean(get().streamingText.get(key) || resolveBaseMessageText(convId, msgId))
+    const lifecycleStage = lifecycleStageForTrace(trace, hasOutput)
+    if (lifecycleStage) {
+      useChatStore.getState().transitionMessageLifecycle(convId, msgId, lifecycleStage, {
+        at: responseLifecycleTraceTimestamp(trace),
+        summary: safeResponseLifecycleTraceSummary(trace),
+        traceId: trace.id,
+      })
+    }
     set((state) => {
       const updated = new Map(state.streamingTraces)
       const current = updated.get(key) ?? cloneMessageTraceSnapshot(resolveBaseMessageTraceSnapshot(convId, msgId))
@@ -254,6 +272,12 @@ function resolveBaseMessageTraceSnapshot(convId: string, msgId: string): Streami
   const conversation = useChatStore.getState().conversations.find((item) => item.id === convId)
   const message = conversation?.messages.find((item) => item.id === msgId)
   return cloneMessageTraceSnapshot(message)
+}
+
+function resolveBaseMessageText(convId: string, msgId: string): string {
+  const conversation = useChatStore.getState().conversations.find((item) => item.id === convId)
+  const message = conversation?.messages.find((item) => item.id === msgId)
+  return message?.responseText ?? message?.content ?? ''
 }
 
 function cloneMessageTraceSnapshot(

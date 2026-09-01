@@ -27,17 +27,21 @@ export function resolveUsagePricingEntry(
   providerId: string,
   model: string,
   occurredAt: number,
+  providerType?: string,
 ): UsagePricingEntry | undefined {
   const normalizedModel = normalizeUsagePricingModel(model)
   return [...entries]
     .filter((entry) =>
       (!entry.providerId || entry.providerId === providerId) &&
+      (!entry.providerType || entry.providerType === providerType) &&
       entry.effectiveFrom <= occurredAt &&
       modelPatternMatches(entry.modelPattern, normalizedModel),
     )
     .sort((left, right) => {
       const providerSpecificity = Number(Boolean(right.providerId)) - Number(Boolean(left.providerId))
       if (providerSpecificity) return providerSpecificity
+      const providerTypeSpecificity = Number(Boolean(right.providerType)) - Number(Boolean(left.providerType))
+      if (providerTypeSpecificity) return providerTypeSpecificity
       const sourceSpecificity = Number(right.source === 'manual') - Number(left.source === 'manual')
       if (sourceSpecificity) return sourceSpecificity
       const patternSpecificity = right.modelPattern.length - left.modelPattern.length
@@ -76,14 +80,13 @@ export function calculateUsageCost(
   const billedOutput = rates.reasoningBilling === 'separate'
     ? Math.max(0, output - reasoning)
     : output
+  const billedReasoning = rates.reasoningBilling === 'included-in-output' ? 0 : reasoning
   const numerator =
     multiplyExact(uncachedInput, inputRate) +
     multiplyExact(billedOutput, outputRate) +
     multiplyExact(cacheRead, cacheReadRate) +
     multiplyExact(cacheCreation, cacheCreationRate) +
-    (rates.reasoningBilling === 'separate'
-      ? multiplyExact(reasoning, reasoningRate)
-      : 0n)
+    multiplyExact(billedReasoning, reasoningRate)
   const rounded = (numerator + 500_000n) / 1_000_000n
   if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) return { provenance: 'unavailable' }
 

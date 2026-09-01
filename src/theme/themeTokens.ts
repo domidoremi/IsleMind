@@ -94,6 +94,30 @@ export interface ThemeBlurTokens {
   dimmingOpacity: number
 }
 
+export interface ThemeSurfaceMaterialToken {
+  background: string
+  foreground: string
+  border: string
+  highlight: string
+  blurRadius: number
+  saturation: number
+  shadowColor: string
+  shadowOpacity: number
+  shadowBlur: number
+  shadowOffsetY: number
+  elevation: number
+}
+
+export interface ThemeSurfaceMaterialTokens {
+  background: ThemeSurfaceMaterialToken
+  chrome: ThemeSurfaceMaterialToken
+  conversation: ThemeSurfaceMaterialToken
+  elevated: ThemeSurfaceMaterialToken
+  floating: ThemeSurfaceMaterialToken
+  interactive: ThemeSurfaceMaterialToken
+  active: ThemeSurfaceMaterialToken
+}
+
 export interface ThemeSemanticColorTokens {
   canvas: string
   surface: string
@@ -196,6 +220,7 @@ export interface ThemeDesignTokens {
     elevation: ThemeElevationTokens
     motion: ThemeMotionTokens
     blur: ThemeBlurTokens
+    surface: ThemeSurfaceMaterialTokens
   }
   component: ThemeComponentTokens
   behavior: {
@@ -349,7 +374,7 @@ const monetDark: ThemeSemanticColorTokens = {
   primary: '#9DD6C8',
   onPrimary: '#123C35',
   primaryContainer: '#28564A',
-  onPrimaryContainer: '#C6EFE2',
+  onPrimaryContainer: '#D6F6ED',
   secondary: '#A8C8D5',
   secondaryContainer: '#2E4855',
   onSecondaryContainer: '#D2EBF3',
@@ -360,54 +385,54 @@ const monetDark: ThemeSemanticColorTokens = {
 
 const materialLight: ThemeSemanticColorTokens = {
   ...sharedLight,
-  canvas: '#FFFBFE',
-  surface: '#FFFBFE',
-  surfaceContainer: '#F3EDF7',
-  surfaceElevated: '#F7F2FA',
-  surfaceMuted: '#E8DEF8',
-  onSurface: '#1D1B20',
-  onSurfaceMuted: '#49454F',
-  primary: '#6750A4',
+  canvas: '#FAFAFC',
+  surface: '#FAFAFC',
+  surfaceContainer: '#F0F1F3',
+  surfaceElevated: '#F7F8FA',
+  surfaceMuted: '#E5E8EC',
+  onSurface: '#1B1D20',
+  onSurfaceMuted: '#4D5359',
+  primary: '#365F86',
   onPrimary: '#FFFFFF',
-  primaryContainer: '#EADDFF',
-  onPrimaryContainer: '#21005D',
-  secondary: '#625B71',
-  secondaryContainer: '#E8DEF8',
-  onSecondaryContainer: '#1D192B',
-  tertiary: '#7D5260',
+  primaryContainer: '#D8E7F5',
+  onPrimaryContainer: '#17324A',
+  secondary: '#59636D',
+  secondaryContainer: '#E0E6EB',
+  onSecondaryContainer: '#28323B',
+  tertiary: '#76565F',
   onTertiary: '#FFFFFF',
-  border: '#79747E',
-  borderStrong: '#49454F',
-  divider: '#CAC4D0',
-  focus: '#6750A4',
-  selection: '#EADDFF',
+  border: '#73777D',
+  borderStrong: '#454A50',
+  divider: '#C8CDD2',
+  focus: '#365F86',
+  selection: '#D8E7F5',
   error: '#B3261E',
 }
 
 const materialDark: ThemeSemanticColorTokens = {
   ...sharedDark,
-  canvas: '#1C1B1F',
-  surface: '#1C1B1F',
-  surfaceContainer: '#211F26',
-  surfaceElevated: '#2B2930',
-  surfaceMuted: '#49454F',
-  onSurface: '#E6E1E5',
-  onSurfaceMuted: '#CAC4D0',
-  primary: '#D0BCFF',
-  onPrimary: '#381E72',
-  primaryContainer: '#4F378B',
-  onPrimaryContainer: '#EADDFF',
-  secondary: '#CCC2DC',
-  onSecondary: '#332D41',
-  secondaryContainer: '#4A4458',
-  onSecondaryContainer: '#E8DEF8',
-  tertiary: '#EFB8C8',
-  onTertiary: '#492532',
-  border: '#938F99',
-  borderStrong: '#CAC4D0',
-  divider: '#49454F',
-  focus: '#D0BCFF',
-  selection: '#4F378B',
+  canvas: '#191B1E',
+  surface: '#191B1E',
+  surfaceContainer: '#22252A',
+  surfaceElevated: '#2A2E34',
+  surfaceMuted: '#343A42',
+  onSurface: '#E2E4E7',
+  onSurfaceMuted: '#C2C7CD',
+  primary: '#A6C8EA',
+  onPrimary: '#0D314E',
+  primaryContainer: '#234B6D',
+  onPrimaryContainer: '#D3E7FA',
+  secondary: '#BEC7D0',
+  onSecondary: '#29323A',
+  secondaryContainer: '#3B454F',
+  onSecondaryContainer: '#DBE3EA',
+  tertiary: '#DDB8C1',
+  onTertiary: '#422932',
+  border: '#8D9298',
+  borderStrong: '#C2C7CD',
+  divider: '#45494F',
+  focus: '#A6C8EA',
+  selection: '#234B6D',
   error: '#F2B8B5',
 }
 
@@ -418,7 +443,9 @@ const glassLight: ThemeSemanticColorTokens = {
   surfaceContainer: '#E1ECF3',
   surfaceElevated: '#FFFFFF',
   surfaceMuted: '#D9E6EE',
-  surfaceOverlay: 'rgba(255, 255, 255, 0.88)',
+  // Realtime backdrop blur carries the material; the tint stays low so text
+  // behind the glass reads as color/light/shadow, never as letters.
+  surfaceOverlay: 'rgba(255, 255, 255, 0.28)',
   onSurface: '#152331',
   onSurfaceMuted: '#43586A',
   primary: '#155E87',
@@ -443,7 +470,7 @@ const glassDark: ThemeSemanticColorTokens = {
   surfaceContainer: '#233A4E',
   surfaceElevated: '#2E4A62',
   surfaceMuted: '#334E63',
-  surfaceOverlay: 'rgba(22, 39, 54, 0.92)',
+  surfaceOverlay: 'rgba(22, 39, 54, 0.3)',
   onSurface: '#EFF8FF',
   onSurfaceMuted: '#B8CDDC',
   primary: '#8ED0F0',
@@ -462,7 +489,12 @@ const glassDark: ThemeSemanticColorTokens = {
   divider: 'rgba(219, 243, 255, 0.18)',
 }
 
-const baseComponents = (color: ThemeSemanticColorTokens, radius: ThemeRadiusTokens, navigationBlur: boolean): ThemeComponentTokens => ({
+const baseComponents = (
+  color: ThemeSemanticColorTokens,
+  radius: ThemeRadiusTokens,
+  surface: ThemeSurfaceMaterialTokens,
+  navigationBlur: boolean,
+): ThemeComponentTokens => ({
   button: {
     radius: radius.medium,
     minHeight: 44,
@@ -477,33 +509,33 @@ const baseComponents = (color: ThemeSemanticColorTokens, radius: ThemeRadiusToke
   field: {
     radius: radius.medium,
     minHeight: 48,
-    background: color.surfaceContainer,
-    backgroundFocused: color.surface,
-    border: color.border,
+    background: surface.interactive.background,
+    backgroundFocused: surface.active.background,
+    border: surface.interactive.border,
     focus: color.focus,
     placeholder: color.onSurfaceMuted,
   },
   panel: {
     radius: radius.large,
-    background: color.surface,
-    elevatedBackground: color.surfaceElevated,
-    border: color.border,
+    background: surface.elevated.background,
+    elevatedBackground: surface.floating.background,
+    border: surface.elevated.border,
     blur: false,
   },
   navigation: {
-    background: color.surfaceOverlay,
-    foreground: color.onSurface,
-    activeBackground: color.primaryContainer,
-    activeForeground: color.onPrimaryContainer,
-    border: color.border,
+    background: surface.chrome.background,
+    foreground: surface.chrome.foreground,
+    activeBackground: surface.active.background,
+    activeForeground: surface.active.foreground,
+    border: surface.chrome.border,
     blur: navigationBlur,
   },
   message: {
     userBackground: color.primary,
     userForeground: color.onPrimary,
-    assistantBackground: color.surface,
+    assistantBackground: surface.conversation.background,
     assistantForeground: color.onSurface,
-    border: color.border,
+    border: surface.conversation.border,
   },
   toast: {
     radius: radius.medium,
@@ -516,44 +548,236 @@ const baseComponents = (color: ThemeSemanticColorTokens, radius: ThemeRadiusToke
   },
 })
 
-const componentsFor = (family: ThemeFamily, color: ThemeSemanticColorTokens, radius: ThemeRadiusTokens): ThemeComponentTokens => {
-  const base = baseComponents(color, radius, family === 'liquid-glass')
+const componentsFor = (
+  family: ThemeFamily,
+  color: ThemeSemanticColorTokens,
+  radius: ThemeRadiusTokens,
+  mode: ThemeTokenMode,
+  surface: ThemeSurfaceMaterialTokens,
+): ThemeComponentTokens => {
+  const base = baseComponents(color, radius, surface, family === 'liquid-glass')
   if (family === 'minimal') return {
     ...base,
-    button: { ...base.button, radius: radius.small, minHeight: 40, secondaryBackground: color.surface },
-    field: { ...base.field, radius: radius.small, minHeight: 44, background: color.surface },
-    navigation: { ...base.navigation, background: color.surface, activeBackground: color.surfaceMuted },
-    toast: { ...base.toast, radius: radius.small, maxWidth: 420, minHeight: 48, paddingHorizontal: 10, paddingVertical: 8, gap: 8, elevation: 1 },
+    // Minimal keeps the canvas continuous. Boundaries are communicated by
+    // typography, spacing, and a single hairline only when interaction needs
+    // it; a logical panel must not automatically become a visual card.
+    button: { ...base.button, radius: radius.small, minHeight: 40, secondaryBackground: 'transparent', primaryBackground: color.primary },
+    field: { ...base.field, radius: radius.small, minHeight: 44 },
+    panel: { ...base.panel, radius: radius.medium, blur: false },
+    navigation: { ...base.navigation },
+    message: {
+      ...base.message,
+      userBackground: 'transparent',
+      userForeground: color.onSurface,
+      assistantBackground: 'transparent',
+      border: 'transparent',
+    },
+    toast: { ...base.toast, radius: radius.small, maxWidth: 420, minHeight: 48, paddingHorizontal: 10, paddingVertical: 8, gap: 8, elevation: 0 },
   }
   if (family === 'material') return {
     ...base,
+    // Material uses tonal roles first. Outlines and shadows are reserved for
+    // controls that need a boundary, keeping routine content on one plane.
     button: { ...base.button, radius: radius.pill, minHeight: 40 },
-    field: { ...base.field, radius: radius.small, minHeight: 56, background: color.surface, border: color.borderStrong },
-    panel: { ...base.panel, radius: radius.extraLarge, background: color.surfaceContainer },
-    navigation: { ...base.navigation, background: color.surfaceContainer },
-    message: { ...base.message, assistantBackground: color.surfaceContainer },
-    toast: { ...base.toast, radius: radius.extraLarge, maxWidth: 460, minHeight: 60, paddingHorizontal: 16, paddingVertical: 12, gap: 12, elevation: 3 },
+    field: { ...base.field, radius: radius.small, minHeight: 56 },
+    panel: { ...base.panel, radius: radius.large },
+    navigation: { ...base.navigation },
+    message: {
+      ...base.message,
+      userBackground: color.primaryContainer,
+      userForeground: color.onPrimaryContainer,
+      assistantBackground: color.surfaceContainer,
+      border: 'transparent',
+    },
+    toast: { ...base.toast, radius: radius.large, maxWidth: 460, minHeight: 60, paddingHorizontal: 16, paddingVertical: 12, gap: 12, elevation: 2 },
   }
   if (family === 'liquid-glass') return {
     ...base,
+    // Only chrome and transient surfaces are lenses. Message content remains
+    // opaque so text never competes with the environmental backdrop.
     button: { ...base.button, radius: radius.pill },
-    navigation: { ...base.navigation, background: color.surfaceOverlay, border: color.borderStrong, blur: true },
-    message: { ...base.message, assistantBackground: color.surface },
-    toast: { ...base.toast, radius: radius.large, maxWidth: 460, minHeight: 58, paddingHorizontal: 14, paddingVertical: 11, gap: 11, elevation: 3 },
+    field: {
+      ...base.field,
+      radius: radius.medium,
+      background: surface.interactive.background,
+      backgroundFocused: surface.active.background,
+      border: surface.interactive.border,
+    },
+    panel: { ...base.panel, radius: radius.large, blur: false },
+    navigation: { ...base.navigation, blur: true },
+    message: {
+      ...base.message,
+      userBackground: color.surfaceOverlay,
+      userForeground: color.onSurface,
+      assistantBackground: surface.conversation.background,
+      border: surface.conversation.border,
+    },
+    toast: { ...base.toast, radius: radius.large, maxWidth: 460, minHeight: 58, paddingHorizontal: 14, paddingVertical: 11, gap: 11, elevation: 2 },
   }
   return {
     ...base,
-    button: { ...base.button, radius: radius.large },
-    panel: { ...base.panel, radius: radius.large, elevatedBackground: color.surfaceElevated },
+    // Monet has a soft, editorial rhythm but still avoids a stack of cards.
+    button: { ...base.button, radius: radius.medium },
+    panel: { ...base.panel, radius: radius.large },
+    navigation: { ...base.navigation },
+    message: {
+      ...base.message,
+      userBackground: color.primaryContainer,
+      userForeground: color.onPrimaryContainer,
+      assistantBackground: 'transparent',
+      border: 'transparent',
+    },
     toast: { ...base.toast, radius: radius.large, maxWidth: 440, minHeight: 56, paddingHorizontal: 13, paddingVertical: 10, gap: 10, elevation: 2 },
   }
 }
 
 const radiusFor = (family: ThemeFamily): ThemeRadiusTokens => {
-  if (family === 'minimal') return { none: 0, small: 4, medium: 6, large: 8, extraLarge: 12, pill: 999 }
+  if (family === 'minimal') return { none: 0, small: 2, medium: 4, large: 6, extraLarge: 8, pill: 999 }
   if (family === 'material') return { none: 0, small: 4, medium: 8, large: 12, extraLarge: 16, pill: 999 }
-  if (family === 'liquid-glass') return { none: 0, small: 10, medium: 16, large: 22, extraLarge: 28, pill: 999 }
-  return { none: 0, small: 8, medium: 12, large: 18, extraLarge: 24, pill: 999 }
+  if (family === 'liquid-glass') return { none: 0, small: 8, medium: 12, large: 16, extraLarge: 22, pill: 999 }
+  return { none: 0, small: 6, medium: 10, large: 14, extraLarge: 18, pill: 999 }
+}
+
+const surfaceMaterial = (
+  background: string,
+  foreground: string,
+  border = 'transparent',
+  options: Partial<Omit<ThemeSurfaceMaterialToken, 'background' | 'foreground' | 'border'>> = {},
+): ThemeSurfaceMaterialToken => ({
+  background,
+  foreground,
+  border,
+  highlight: 'transparent',
+  blurRadius: 0,
+  saturation: 1,
+  shadowColor: 'transparent',
+  shadowOpacity: 0,
+  shadowBlur: 0,
+  shadowOffsetY: 0,
+  elevation: 0,
+  ...options,
+})
+
+function surfaceMaterialsFor(
+  family: ThemeFamily,
+  mode: ThemeTokenMode,
+  color: ThemeSemanticColorTokens,
+  elevation: ThemeElevationTokens,
+): ThemeSurfaceMaterialTokens {
+  const conversation = surfaceMaterial('transparent', color.onSurface)
+  const active = surfaceMaterial(color.primaryContainer, color.onPrimaryContainer, color.borderStrong)
+
+  if (family === 'minimal') {
+    return {
+      background: surfaceMaterial(color.canvas, color.onSurface),
+      chrome: surfaceMaterial(color.canvas, color.onSurface, color.divider),
+      conversation,
+      elevated: surfaceMaterial(color.surface, color.onSurface, color.divider),
+      floating: surfaceMaterial(color.surfaceElevated, color.onSurface, color.border, {
+        shadowColor: elevation.shadowColor,
+        shadowOpacity: 0.055,
+        shadowBlur: 8,
+        shadowOffsetY: 3,
+        elevation: elevation.level2,
+      }),
+      interactive: surfaceMaterial('transparent', color.onSurface, color.divider),
+      active,
+    }
+  }
+
+  if (family === 'material') {
+    return {
+      background: surfaceMaterial(color.canvas, color.onSurface),
+      chrome: surfaceMaterial(color.surface, color.onSurface, 'transparent'),
+      conversation,
+      elevated: surfaceMaterial(color.surfaceContainer, color.onSurface),
+      floating: surfaceMaterial(color.surfaceElevated, color.onSurface, color.divider, {
+        shadowColor: elevation.shadowColor,
+        shadowOpacity: elevation.shadowOpacity,
+        shadowBlur: elevation.shadowBlur,
+        shadowOffsetY: elevation.shadowOffsetY,
+        elevation: elevation.level3,
+      }),
+      interactive: surfaceMaterial(color.surfaceContainer, color.onSurface, 'transparent'),
+      active,
+    }
+  }
+
+  if (family === 'liquid-glass') {
+    const light = mode === 'light'
+    return {
+      background: surfaceMaterial(color.canvas, color.onSurface),
+      chrome: surfaceMaterial(
+        light ? 'rgba(248, 252, 255, 0.66)' : 'rgba(22, 39, 54, 0.7)',
+        color.onSurface,
+        color.border,
+        {
+          highlight: light ? 'rgba(255, 255, 255, 0.76)' : 'rgba(231, 247, 255, 0.3)',
+          blurRadius: 22,
+          saturation: 1.18,
+          shadowColor: elevation.shadowColor,
+          shadowOpacity: 0.08,
+          shadowBlur: 14,
+          shadowOffsetY: 5,
+          elevation: elevation.level2,
+        },
+      ),
+      conversation,
+      elevated: surfaceMaterial(color.surface, color.onSurface, color.divider, {
+        shadowColor: elevation.shadowColor,
+        shadowOpacity: 0.035,
+        shadowBlur: 7,
+        shadowOffsetY: 2,
+        elevation: elevation.level1,
+      }),
+      floating: surfaceMaterial(
+        light ? 'rgba(250, 253, 255, 0.78)' : 'rgba(25, 44, 60, 0.8)',
+        color.onSurface,
+        color.borderStrong,
+        {
+          highlight: light ? 'rgba(255, 255, 255, 0.82)' : 'rgba(231, 247, 255, 0.34)',
+          blurRadius: 24,
+          saturation: 1.2,
+          shadowColor: elevation.shadowColor,
+          shadowOpacity: 0.12,
+          shadowBlur: 18,
+          shadowOffsetY: 7,
+          elevation: elevation.level3,
+        },
+      ),
+      interactive: surfaceMaterial(
+        light ? 'rgba(255, 255, 255, 0.22)' : 'rgba(214, 237, 249, 0.08)',
+        color.onSurface,
+        color.divider,
+        { highlight: light ? 'rgba(255, 255, 255, 0.38)' : 'rgba(231, 247, 255, 0.14)' },
+      ),
+      active: surfaceMaterial(color.primaryContainer, color.onPrimaryContainer, color.borderStrong, {
+        highlight: light ? 'rgba(255, 255, 255, 0.42)' : 'rgba(231, 247, 255, 0.16)',
+      }),
+    }
+  }
+
+  return {
+    background: surfaceMaterial(color.canvas, color.onSurface),
+    chrome: surfaceMaterial(color.surface, color.onSurface, color.divider, {
+      shadowColor: elevation.shadowColor,
+      shadowOpacity: 0.025,
+      shadowBlur: 6,
+      shadowOffsetY: 2,
+      elevation: elevation.level1,
+    }),
+    conversation,
+    elevated: surfaceMaterial(color.surface, color.onSurface, color.divider),
+    floating: surfaceMaterial(color.surfaceElevated, color.onSurface, color.border, {
+      shadowColor: elevation.shadowColor,
+      shadowOpacity: 0.065,
+      shadowBlur: 10,
+      shadowOffsetY: 4,
+      elevation: elevation.level2,
+    }),
+    interactive: surfaceMaterial(color.surfaceContainer, color.onSurface, color.divider),
+    active,
+  }
 }
 
 function makeTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignTokens {
@@ -569,19 +793,28 @@ function makeTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignToken
   const isMaterial = family === 'material'
   const isMonet = family === 'monet'
   const elevation: ThemeElevationTokens = family === 'minimal'
-    ? { level0: 0, level1: 1, level2: 2, level3: 4, level4: 8, level5: 12, shadowColor: '#10201A', shadowOpacity: 0.08, shadowBlur: 8, shadowOffsetY: 2, tonalSurface: false }
+    ? { level0: 0, level1: 0, level2: 0, level3: 1, level4: 2, level5: 4, shadowColor: '#10201A', shadowOpacity: 0.03, shadowBlur: 4, shadowOffsetY: 1, tonalSurface: false }
     : isMaterial
-      ? { level0: 0, level1: 1, level2: 3, level3: 6, level4: 8, level5: 12, shadowColor: '#1D1B20', shadowOpacity: 0.18, shadowBlur: 12, shadowOffsetY: 4, tonalSurface: true }
+      ? { level0: 0, level1: 1, level2: 2, level3: 4, level4: 6, level5: 8, shadowColor: '#1D1B20', shadowOpacity: 0.1, shadowBlur: 8, shadowOffsetY: 3, tonalSurface: true }
       : isGlass
-        ? { level0: 0, level1: 1, level2: 4, level3: 8, level4: 12, level5: 16, shadowColor: '#12344A', shadowOpacity: 0.12, shadowBlur: 14, shadowOffsetY: 5, tonalSurface: false }
-        : { level0: 0, level1: 1, level2: 3, level3: 5, level4: 8, level5: 12, shadowColor: '#527B73', shadowOpacity: 0.06, shadowBlur: 10, shadowOffsetY: 3, tonalSurface: false }
+        ? { level0: 0, level1: 1, level2: 3, level3: 6, level4: 9, level5: 12, shadowColor: '#12344A', shadowOpacity: 0.1, shadowBlur: 12, shadowOffsetY: 4, tonalSurface: false }
+        : { level0: 0, level1: 1, level2: 2, level3: 4, level4: 6, level5: 9, shadowColor: '#527B73', shadowOpacity: 0.045, shadowBlur: 8, shadowOffsetY: 2, tonalSurface: false }
   const motion: ThemeMotionTokens = family === 'minimal'
     ? { instant: 0, interaction: 80, emphasis: 120, panel: 180, page: 180, easing: 'standard', stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.16 }, reducedMotion: 'opacity-only' }
     : isMaterial
       ? { instant: 0, interaction: 120, emphasis: 160, panel: 240, page: 300, easing: 'standard', stateLayerOpacity: { hover: 0.08, focus: 0.1, press: 0.1, drag: 0.16 }, reducedMotion: 'opacity-only' }
       : isGlass
-        ? { instant: 0, interaction: 140, emphasis: 220, panel: 320, page: 360, easing: 'spring', stateLayerOpacity: { hover: 0.08, focus: 0.12, press: 0.12, drag: 0.16 }, reducedMotion: 'opacity-only' }
-        : { instant: 0, interaction: 110, emphasis: 180, panel: 280, page: 320, easing: 'ease-out', stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.14 }, reducedMotion: 'opacity-only' }
+        ? { instant: 0, interaction: 130, emphasis: 200, panel: 280, page: 320, easing: 'spring', stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.14 }, reducedMotion: 'opacity-only' }
+        : { instant: 0, interaction: 110, emphasis: 180, panel: 260, page: 300, easing: 'ease-out', stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.14 }, reducedMotion: 'opacity-only' }
+  const blur: ThemeBlurTokens = {
+    enabled: isGlass,
+    radius: isGlass ? 22 : 0,
+    material: isGlass ? 'regular' : 'none',
+    maxLayersPerRegion: isGlass ? 1 : 0,
+    fallback: isGlass ? 'opaque' : isMaterial ? 'tonal' : 'opaque',
+    dimmingOpacity: isGlass ? 0.24 : 0,
+  }
+  const surface = surfaceMaterialsFor(family, mode, colors, elevation)
   return {
     family,
     mode,
@@ -599,16 +832,10 @@ function makeTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignToken
       radius,
       elevation,
       motion,
-      blur: {
-        enabled: isGlass,
-         radius: isGlass ? 12 : 0,
-        material: isGlass ? 'regular' : 'none',
-        maxLayersPerRegion: isGlass ? 1 : 0,
-        fallback: isGlass ? 'opaque' : isMaterial ? 'tonal' : 'opaque',
-         dimmingOpacity: isGlass ? 0.24 : 0,
-      },
+      blur,
+      surface,
     },
-    component: componentsFor(family, colors, radius),
+    component: componentsFor(family, colors, radius, mode, surface),
     behavior: {
       density: family === 'minimal' || isMaterial ? 'compact' : isMonet ? 'airy' : 'balanced',
       surfaceStrategy: family === 'minimal' ? 'boundary' : isMaterial ? 'tonal' : isGlass ? 'glass' : 'atmospheric',

@@ -3,7 +3,7 @@ const { createHash, randomUUID } = require('node:crypto')
 const fs = require('node:fs')
 const Module = require('node:module')
 const path = require('node:path')
-const ts = require('typescript')
+const { transformTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const LEGACY_PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY =
@@ -938,17 +938,7 @@ Module._load = function loadWithMocks(request, parent, isMain) {
 
 require.extensions['.ts'] = function compileTypeScript(module, filename) {
   const source = fs.readFileSync(filename, 'utf8')
-  const output = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      jsx: ts.JsxEmit.ReactJSX,
-      module: ts.ModuleKind.CommonJS,
-      moduleResolution: ts.ModuleResolutionKind.NodeJs,
-      target: ts.ScriptTarget.ES2021,
-    },
-    fileName: filename,
-  })
-  module._compile(output.outputText, filename)
+  module._compile(transformTypeScriptModule(source, filename), filename)
 }
 
 const {
@@ -1504,7 +1494,7 @@ const {
   toOpenAIChatToolCall,
   toOpenAIResponsesFunctionCallInput,
 } = require('../src/modules/providers/index.ts')
-const { appendRuntimeLog, clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText, redactRuntimeLogValue } = require('../src/platform/native/runtimeLog.ts')
+const { appendRuntimeLog, clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText, redactRuntimeLogValue, resolveRuntimeLogLevel } = require('../src/platform/native/runtimeLog.ts')
 const {
   RUNTIME_EVENT_HISTORY_LIMIT,
   RUNTIME_EVENT_EXPLANATORY_HISTORY_RESERVE,
@@ -4045,6 +4035,11 @@ async function assertRuntimeLogFileBehavior() {
   await appendRuntimeLog('upstream.request', {
     providerId: 'openai-main',
     model: 'gpt-5.2',
+    inputTokens: 123,
+    outputTokens: 45,
+    cachedInputTokens: 67,
+    reasoningTokens: 8,
+    accessToken: 'runtime-access-token-secret',
     authorization: 'Bearer abcdefghijklmnopqrstuvwxyz123456',
     route: {
       endpoint: `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse&key=${FAKE_KEY_A}`,
@@ -4057,6 +4052,15 @@ async function assertRuntimeLogFileBehavior() {
   const entry = JSON.parse(content.trim())
   assert.equal(entry.schema, 'islemind.runtime-log.v1', 'runtime log writes JSONL schema')
   assert.equal(entry.event, 'upstream.request', 'runtime log writes event family')
+  assert.equal(entry.level, 'debug', 'runtime log records a normalized severity level')
+  assert.equal(entry.inputTokens, 123, 'runtime log preserves non-secret input-token counters')
+  assert.equal(entry.outputTokens, 45, 'runtime log preserves non-secret output-token counters')
+  assert.equal(entry.cachedInputTokens, 67, 'runtime log preserves non-secret cache-token counters')
+  assert.equal(entry.reasoningTokens, 8, 'runtime log preserves non-secret reasoning-token counters')
+  assert.equal(entry.accessToken, '[redacted]', 'runtime log still redacts access-token credentials')
+  assert.equal(resolveRuntimeLogLevel('upstream.retry'), 'warning', 'runtime retries are warning-level diagnostics')
+  assert.equal(resolveRuntimeLogLevel('upstream.error'), 'error', 'runtime failures are error-level diagnostics')
+  assert.equal(resolveRuntimeLogLevel('upstream.response', { status: 200 }), 'info', 'successful responses are info-level diagnostics')
   assert.equal(entry.authorization, '[redacted]', 'runtime log file redacts authorization')
   assert.equal(entry.route.endpoint, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse&key=[redacted]', 'runtime log file redacts sensitive query-string API keys')
   assert.equal(entry.route.fallback, 'https://proxy.example/chat?token=[redacted]', 'runtime log file redacts sensitive query-string token parameters')
@@ -7549,7 +7553,7 @@ async function assertUpstreamGovernanceBehavior() {
     },
   }
   const nonBedrock = getBodyForTest(nonBedrockRequest)
-  assert.deepEqual(nonBedrock, buildProviderProtocolRequestBody(nonBedrockRequest), 'Bedrock optimizer does not alter non-Bedrock AWS-named providers')
+  assert.deepEqual(nonBedrock.thinking, buildProviderProtocolRequestBody(nonBedrockRequest).thinking, 'Bedrock thinking optimizer does not alter non-Bedrock AWS-named providers')
 
   assert.equal(isMiniMaxProvider({ id: 'custom', type: 'openai-compatible', name: 'Mini Max Proxy', apiKey: FAKE_KEY_A, models: [], enabled: true }), true, 'provider identity helper detects MiniMax names')
   assert.equal(isDashScopeProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['qwen3-coder'], enabled: true }), false, 'provider identity helper does not classify custom relays as DashScope from model family names')
@@ -21814,7 +21818,7 @@ async function run() {
   assert.ok(providerRuntimePipelineSource.includes('if (payloadPolicy.blocked)'), 'runtime safety policy applies payload blocking before upstream dispatch')
   assert.ok(providerRuntimeExecutorSource.includes('formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model)'), 'chat runtime formats provider HTTP failures through the shared provider error mapper')
   assert.ok(providerRuntimeExecutorSource.includes("appendRuntimeLog('upstream.error'"), 'chat runtime records upstream provider errors in runtime logs')
-  assert.ok(providerRuntimeExecutorSource.includes('const canRetryStatus = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500'), 'chat runtime treats 429 as a bounded retry candidate')
+  assert.ok(providerRuntimeExecutorSource.includes('const canRetryStatus = classifyProviderHealthCheckError({ status: response.status }).retryable'), 'chat runtime derives bounded HTTP retries from the shared provider health classification policy')
   assert.ok(providerRuntimeExecutorSource.includes('retryAfterMsFromFailure(input.status)'), 'runtime fallback records retry-after cooldowns for rate-limited routes')
   assert.ok(providerNativeSearchSource.includes("request.webSearchMode === 'native'") && providerNativeSearchSource.includes('providerNativeSearchCanBeSent('), 'target native-search policy gates tool injection on explicit mode and compatibility admission')
   assert.ok(providerNativeSearchSource.includes('createProviderNativeSearchSupportPolicy(') && providerNativeSearchSource.includes('resolveOpenAIResponsesSearchPolicy('), 'target native-search policy owns provider/model support admission behind an injected Responses decision')
@@ -23219,6 +23223,30 @@ async function run() {
     'terminal non-abort provider failures still update the circuit'
   )
   recordProviderCircuitSuccess(terminalRetryCircuitKey)
+  const clientErrorRetryReq = {
+    ...terminalRetryReq,
+    provider: { id: 'retry-provider-client-error', type: 'openai-compatible' },
+    model: `retry-client-error-${Date.now()}`,
+  }
+  const clientErrorRetryResponse = await fetchChatStreamWithRetryInjectedForTest({
+    req: clientErrorRetryReq,
+    url: 'https://retry.example/v1/chat/completions',
+    headers: {},
+    body: '{}',
+    stream: true,
+    controller: new AbortController(),
+    transport: {
+      async requestStream() {
+        return new Response('invalid request', { status: 400 })
+      },
+      readResponseText: (response) => response.text(),
+    },
+  })
+  assert.equal(clientErrorRetryResponse.status, 400, 'terminal client errors remain visible without retry')
+  assert.doesNotThrow(
+    () => assertProviderCircuitClosed(clientErrorRetryReq, providerCircuitKey(clientErrorRetryReq)),
+    'terminal client errors do not count toward the transient provider circuit'
+  )
   assert.equal(
     resolveProxyPolicyForTest({
       provider: governedProvider,
@@ -35359,22 +35387,23 @@ function assertChatTopChromeBehavior() {
   const floatingChromeSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingChrome.tsx'), 'utf8')
   const persistentHeaderSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatPersistentHeader.tsx'), 'utf8')
   assert.ok(
-    floatingChromeSource.includes('export const FLOATING_CHROME_SAFE_AREA_GAP = 4'),
-    'chat top chrome keeps a compact safe-area gap'
+    floatingChromeSource.includes('export const FLOATING_CHROME_SAFE_AREA_GAP = 0'),
+    'chat top chrome meets the parent safe area without a duplicate visual gap'
   )
   assert.ok(
     floatingChromeSource.includes('const FLOATING_CHROME_ANDROID_TOP_GAP = 0'),
     'chat top chrome removes extra Android top offset'
   )
   assert.ok(
-    chatFloatingChromeStateSource.includes('const chromeCollapsed = false') &&
-      chatFloatingChromeStateSource.includes('void keepChromeExpanded') &&
+    chatFloatingChromeStateSource.includes('useState(false)') &&
+      chatFloatingChromeStateSource.includes('collapseLocked') &&
+      chatFloatingChromeStateSource.includes('restoreChrome') &&
       !chatFloatingChromeStateSource.includes('setTimeout('),
-    'chat top chrome remains visible across idle, streaming, and compatibility collapse intents'
+    'chat top chrome collapse remains immediate, reversible, and locked during local interactions'
   )
   assert.ok(
     chatActiveComposerDockStateSource.includes('setComposerFocused(true)') && chatActiveComposerDockStateSource.includes('setChromeCollapsed(true)'),
-    'active Composer may emit the compatibility collapse intent while the persistent header state ignores it'
+    'active Composer emits the bounded collapse intent used by mobile chrome'
   )
   assert.ok(
     chatActiveWorkspaceLayoutStateSource.includes('resolveProductMobileMessageListLayout(activeWindowWidth, {') &&
@@ -35383,8 +35412,10 @@ function assertChatTopChromeBehavior() {
     'chat message list keeps a stable top inset below the persistent header'
   )
   assert.ok(
-    chatMessageListScrollStateSource.includes('const userDrivenScroll = userScrollInteractionActive.current || userDragMomentumEligible.current'),
-    'chat message list still distinguishes user-driven scrolling without hiding the persistent header'
+    chatMessageListScrollStateSource.includes('const userDrivenScroll = userScrollInteractionActive.current || userDragMomentumEligible.current') &&
+      chatMessageListScrollStateSource.includes('CHAT_CHROME_COLLAPSE_SCROLL_DISTANCE') &&
+      chatMessageListScrollStateSource.includes('CHAT_CHROME_RESTORE_SCROLL_DISTANCE'),
+    'chat message scrolling uses user-driven asymmetric hysteresis for top chrome visibility'
   )
   assert.ok(
     floatingChromeSource.includes('<ChatPersistentHeader') &&
@@ -35461,7 +35492,7 @@ function assertChatActivityStatusBehavior() {
       !messageBubbleSource.includes('messageBubble.modelStatus') &&
       !messageBubbleSource.includes('const statusIcon') &&
       messageBubbleSource.includes('<AppIcon name="back-next"') &&
-      messageBubbleSource.includes('<AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} icon={processStatusIcon} motion={motion} grammar={processGrammar} />') &&
+      /<AnimatedProcessStatusText\s+active=\{active\}\s+label=\{processStatusLabel\}\s+tone=\{tone\}\s+icon=\{processStatusIcon\}\s+motion=\{motion\}\s+grammar=\{processGrammar\}\s+statusMotionPhase=\{streamingStatusPhase\}/.test(messageBubbleSource) &&
       messageBubbleSource.includes('accessibilityLiveRegion="polite"') &&
       messageBubbleSource.includes('loop: shimmer') &&
       !messageBubbleSource.includes('<ProcessAnchor') &&

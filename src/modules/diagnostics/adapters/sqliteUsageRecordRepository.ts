@@ -6,12 +6,15 @@ import {
 } from '@/platform/storage'
 import * as v from 'valibot'
 import {
+  USAGE_PORTABLE_SNAPSHOT_SCHEMA,
   USAGE_RECORD_SCHEMA,
   type UsageDataSource,
   type UsageDailyRollup,
   type UsageMeasurementSource,
   type UsageOperationSource,
   type UsagePricingEntry,
+  type UsagePortableSnapshot,
+  type UsagePortableSnapshotRepository,
   type UsageRecord,
   type UsageRecordFilter,
   type UsageRecordRepository,
@@ -77,7 +80,7 @@ const pricingRatesSchema = v.strictObject({
   cacheReadNanodollarsPerMillionTokens: v.optional(nonNegativeIntegerSchema),
   cacheCreationNanodollarsPerMillionTokens: v.optional(nonNegativeIntegerSchema),
   reasoningNanodollarsPerMillionTokens: v.optional(nonNegativeIntegerSchema),
-  reasoningBilling: v.picklist(['included-in-output', 'separate']),
+  reasoningBilling: v.picklist(['included-in-output', 'separate', 'additional-to-output']),
 })
 const pricingSnapshotSchema = v.strictObject({
   entryId: boundedIdSchema,
@@ -100,10 +103,18 @@ const usageRecordSchema = v.strictObject({
   occurredAt: nonNegativeIntegerSchema,
   completedAt: nonNegativeIntegerSchema,
   providerId: boundedIdSchema,
+  providerType: v.optional(boundedIdSchema),
   providerName: boundedNameSchema,
   credentialGroupId: v.optional(boundedIdSchema),
   requestedModel: boundedIdSchema,
   upstreamModel: boundedIdSchema,
+  originalProviderId: v.optional(boundedIdSchema),
+  originalModel: v.optional(boundedIdSchema),
+  actualProviderId: v.optional(boundedIdSchema),
+  actualModel: v.optional(boundedIdSchema),
+  retryCount: v.optional(nonNegativeIntegerSchema),
+  failoverCount: v.optional(nonNegativeIntegerSchema),
+  attemptIdentity: v.optional(boundedIdSchema),
   pricingModel: v.optional(boundedIdSchema),
   operationSource: operationSourceSchema,
   dataSource: dataSourceSchema,
@@ -126,6 +137,7 @@ const usageRecordSchema = v.strictObject({
 })
 const pricingEntrySchema = v.strictObject({
   id: boundedIdSchema,
+  providerType: v.optional(boundedIdSchema),
   providerId: v.optional(boundedIdSchema),
   modelPattern: v.pipe(v.string(), v.minLength(1), v.maxLength(256)),
   displayName: boundedNameSchema,
@@ -144,6 +156,8 @@ const usageDailyRollupSchema = v.strictObject({
   measurementSource: measurementSourceSchema,
   status: statusSchema,
   requestCount: nonNegativeIntegerSchema,
+  retryCount: v.optional(nonNegativeIntegerSchema),
+  failoverCount: v.optional(nonNegativeIntegerSchema),
   successCount: nonNegativeIntegerSchema,
   failedCount: nonNegativeIntegerSchema,
   cancelledCount: nonNegativeIntegerSchema,
@@ -162,6 +176,12 @@ const usageDailyRollupSchema = v.strictObject({
   durationSampleCount: nonNegativeIntegerSchema,
   firstTokenMsTotal: nonNegativeNumberSchema,
   firstTokenSampleCount: nonNegativeIntegerSchema,
+})
+const usagePortableSnapshotSchema = v.strictObject({
+  schema: v.literal(USAGE_PORTABLE_SNAPSHOT_SCHEMA),
+  records: v.array(usageRecordSchema),
+  dailyRollups: v.array(usageDailyRollupSchema),
+  pricingEntries: v.array(pricingEntrySchema),
 })
 
 export class UsageRecordRepositoryDataError extends Error {
@@ -227,6 +247,8 @@ export function createSqliteUsageRecordRepository(
               measurementSource TEXT NOT NULL,
               status TEXT NOT NULL,
               requestCount INTEGER NOT NULL,
+              retryCount INTEGER NOT NULL DEFAULT 0,
+              failoverCount INTEGER NOT NULL DEFAULT 0,
               successCount INTEGER NOT NULL,
               failedCount INTEGER NOT NULL,
               cancelledCount INTEGER NOT NULL,
@@ -281,6 +303,27 @@ export function createSqliteUsageRecordRepository(
               completedAt INTEGER NOT NULL
             );
           `)
+        },
+      },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 3,
+        name: 'usage-route-attribution-rollups',
+        async up(transaction) {
+          const columns = await transaction.getAll<{ name: string }>(
+            'PRAGMA table_info(usage_daily_rollups)',
+          )
+          const names = new Set(columns.map((column) => column.name))
+          if (!names.has('retryCount')) {
+            await transaction.exec(
+              'ALTER TABLE usage_daily_rollups ADD COLUMN retryCount INTEGER NOT NULL DEFAULT 0',
+            )
+          }
+          if (!names.has('failoverCount')) {
+            await transaction.exec(
+              'ALTER TABLE usage_daily_rollups ADD COLUMN failoverCount INTEGER NOT NULL DEFAULT 0',
+            )
+          }
         },
       },
     ]).catch((error) => {
@@ -416,6 +459,141 @@ export function createSqliteUsageRecordRepository(
   }
 }
 
+export function createSqliteUsagePortableSnapshotRepository(
+  databaseProvider: SqliteDatabaseProvider,
+): UsagePortableSnapshotRepository {
+  const recordRepository = createSqliteUsageRecordRepository(databaseProvider)
+
+  async function database(signal?: AbortSignal) {
+    throwIfUsageSnapshotCancelled(signal)
+    // Initializes the shared diagnostics schema without scanning the usage history.
+    await recordRepository.listPricingEntries()
+    throwIfUsageSnapshotCancelled(signal)
+    return databaseProvider.get()
+  }
+
+  return {
+    async load(options = {}) {
+      const value = await database(options.signal)
+      return value.transaction(async (transaction) => {
+        throwIfUsageSnapshotCancelled(options.signal)
+        const records = await readFilteredRecords(transaction, { includeEstimated: true })
+        throwIfUsageSnapshotCancelled(options.signal)
+        const dailyRollups = await readFilteredRollups(transaction, { includeEstimated: true })
+        throwIfUsageSnapshotCancelled(options.signal)
+        const pricingRows = await transaction.getAll<UsagePricingEntryRow>(
+          `SELECT id, providerId, modelPattern, effectiveFrom, source, entryJson
+           FROM usage_pricing_entries
+           ORDER BY effectiveFrom DESC, id ASC`,
+        )
+        const pricingEntries = pricingRows.flatMap((row) => {
+          const entry = parsePersistedPricingEntry(row)
+          return entry?.source === 'manual' ? [entry] : []
+        })
+        throwIfUsageSnapshotCancelled(options.signal)
+        return parseUsagePortableSnapshot({
+          schema: USAGE_PORTABLE_SNAPSHOT_SCHEMA,
+          records,
+          dailyRollups,
+          pricingEntries,
+        })
+      })
+    },
+
+    async replace(snapshot, options = {}) {
+      const normalized = parseUsagePortableSnapshot(snapshot)
+      const value = await database(options.signal)
+      await value.transaction(async (transaction) => {
+        throwIfUsageSnapshotCancelled(options.signal)
+        await transaction.run('DELETE FROM usage_records')
+        await transaction.run('DELETE FROM usage_daily_rollups')
+        await transaction.run('DELETE FROM usage_pricing_entries')
+        await transaction.run('DELETE FROM usage_import_markers')
+
+        for (const record of normalized.records) {
+          throwIfUsageSnapshotCancelled(options.signal)
+          await insertUsageRecord(transaction, record)
+        }
+        for (const rollup of normalized.dailyRollups) {
+          throwIfUsageSnapshotCancelled(options.signal)
+          await upsertDailyRollup(transaction, rollup)
+        }
+        for (const entry of normalized.pricingEntries) {
+          throwIfUsageSnapshotCancelled(options.signal)
+          await transaction.run(
+            `INSERT INTO usage_pricing_entries (
+               id, providerId, modelPattern, effectiveFrom, source, entryJson
+             ) VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+              entry.id,
+              entry.providerId ?? null,
+              entry.modelPattern,
+              entry.effectiveFrom,
+              entry.source,
+              JSON.stringify(entry),
+            ],
+          )
+        }
+      })
+    },
+  }
+}
+
+export function parseUsagePortableSnapshot(value: unknown): UsagePortableSnapshot {
+  const parsed = v.safeParse(usagePortableSnapshotSchema, value)
+  if (!parsed.success) {
+    throw new UsageRecordRepositoryDataError('Usage portable snapshot is invalid.')
+  }
+  const records = parsed.output.records.map(parseUsageRecord)
+  const dailyRollups = parsed.output.dailyRollups.map((rollup) => {
+    const normalized = parseUsageDailyRollup(rollup)
+    if (!normalized) {
+      throw new UsageRecordRepositoryDataError('Usage portable snapshot is invalid.')
+    }
+    const canonical = parseUsageDailyRollup({
+      ...normalized,
+      retryCount: normalized.retryCount ?? 0,
+      failoverCount: normalized.failoverCount ?? 0,
+    })
+    if (!canonical) {
+      throw new UsageRecordRepositoryDataError('Usage portable snapshot is invalid.')
+    }
+    return canonical
+  })
+  const pricingEntries = parsed.output.pricingEntries.map((entry) => {
+    const normalized = parsePricingEntry(entry)
+    if (normalized.source !== 'manual') {
+      throw new UsageRecordRepositoryDataError(
+        'Usage portable snapshots may contain only manual pricing entries.',
+      )
+    }
+    return normalized
+  })
+
+  assertUniqueUsageSnapshotValues(records.map((record) => record.id), 'record')
+  assertUniqueUsageSnapshotValues(
+    dailyRollups.map((rollup) => JSON.stringify([
+      rollup.dayStart,
+      rollup.providerId,
+      rollup.providerName,
+      rollup.upstreamModel,
+      rollup.operationSource,
+      rollup.dataSource,
+      rollup.measurementSource,
+      rollup.status,
+    ])),
+    'daily rollup',
+  )
+  assertUniqueUsageSnapshotValues(pricingEntries.map((entry) => entry.id), 'pricing entry')
+
+  return {
+    schema: USAGE_PORTABLE_SNAPSHOT_SCHEMA,
+    records: records.sort(compareUsageRecordsForPortableSnapshot),
+    dailyRollups: dailyRollups.sort(compareUsageRollupsForPortableSnapshot),
+    pricingEntries: pricingEntries.sort(compareUsagePricingForPortableSnapshot),
+  }
+}
+
 async function readFilteredRecords(
   database: SqliteExecutor,
   filter: UsageRecordFilter | undefined,
@@ -466,7 +644,7 @@ function usageRecordSelect(): string {
 function usageDailyRollupSelect(): string {
   return `SELECT dayStart, providerId, providerName, upstreamModel,
     operationSource, dataSource, measurementSource, status, requestCount,
-    successCount, failedCount, cancelledCount, limitedCount, partialCount,
+    retryCount, failoverCount, successCount, failedCount, cancelledCount, limitedCount, partialCount,
     inputTokens, outputTokens, totalTokens, cacheCreationInputTokens,
     cacheReadInputTokens, cachedInputTokens, reasoningTokens,
     totalCostNanodollars, costSampleCount, durationMsTotal,
@@ -586,6 +764,12 @@ function parseUsageRecord(value: unknown): UsageRecord {
   if (!parsed.success || parsed.output.completedAt < parsed.output.occurredAt) {
     throw new UsageRecordRepositoryDataError('Usage record is invalid.')
   }
+  if (
+    (parsed.output.actualProviderId !== undefined && parsed.output.actualProviderId !== parsed.output.providerId) ||
+    (parsed.output.actualModel !== undefined && parsed.output.actualModel !== parsed.output.upstreamModel)
+  ) {
+    throw new UsageRecordRepositoryDataError('Usage record route attribution is inconsistent.')
+  }
   return parsed.output
 }
 
@@ -690,6 +874,8 @@ function createDailyRollup(record: UsageRecord, dayStart: number): UsageDailyRol
     measurementSource: record.measurementSource,
     status: record.status,
     requestCount: 0,
+    retryCount: 0,
+    failoverCount: 0,
     successCount: 0,
     failedCount: 0,
     cancelledCount: 0,
@@ -715,6 +901,16 @@ function createDailyRollup(record: UsageRecord, dayStart: number): UsageDailyRol
 
 function addRecordToRollup(rollup: UsageDailyRollup, record: UsageRecord): void {
   rollup.requestCount = safeAdd(rollup.requestCount, 1)
+  rollup.retryCount = safeAdd(
+    rollup.retryCount ?? 0,
+    record.attemptReason === 'retry' || record.attemptReason === 'rectification'
+      ? 1
+      : Math.min(1, record.retryCount ?? 0),
+  )
+  rollup.failoverCount = safeAdd(
+    rollup.failoverCount ?? 0,
+    record.failoverCount ?? (record.attemptReason === 'fallback' ? 1 : 0),
+  )
   rollup.successCount = safeAdd(rollup.successCount, Number(record.status === 'success'))
   rollup.failedCount = safeAdd(rollup.failedCount, Number(record.status === 'failed'))
   rollup.cancelledCount = safeAdd(rollup.cancelledCount, Number(record.status === 'cancelled'))
@@ -755,17 +951,20 @@ async function upsertDailyRollup(database: SqliteExecutor, rollup: UsageDailyRol
   await database.run(
     `INSERT INTO usage_daily_rollups (
        dayStart, providerId, providerName, upstreamModel, operationSource, dataSource,
-       measurementSource, status, requestCount, successCount, failedCount,
+       measurementSource, status, requestCount, retryCount, failoverCount,
+       successCount, failedCount,
        cancelledCount, limitedCount, partialCount, inputTokens, outputTokens,
        totalTokens, cacheCreationInputTokens, cacheReadInputTokens, cachedInputTokens,
        reasoningTokens, totalCostNanodollars, costSampleCount, durationMsTotal,
        durationSampleCount, firstTokenMsTotal, firstTokenSampleCount
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (
        dayStart, providerId, providerName, upstreamModel, operationSource,
        dataSource, measurementSource, status
      ) DO UPDATE SET
        requestCount = requestCount + excluded.requestCount,
+       retryCount = retryCount + excluded.retryCount,
+       failoverCount = failoverCount + excluded.failoverCount,
        successCount = successCount + excluded.successCount,
        failedCount = failedCount + excluded.failedCount,
        cancelledCount = cancelledCount + excluded.cancelledCount,
@@ -794,6 +993,8 @@ async function upsertDailyRollup(database: SqliteExecutor, rollup: UsageDailyRol
       rollup.measurementSource,
       rollup.status,
       rollup.requestCount,
+      rollup.retryCount ?? 0,
+      rollup.failoverCount ?? 0,
       rollup.successCount,
       rollup.failedCount,
       rollup.cancelledCount,
@@ -864,6 +1065,59 @@ function isOperationSource(value: unknown): value is UsageOperationSource {
 
 function isDataSource(value: unknown): value is UsageDataSource {
   return value === 'live-provider' || value === 'estimated' || value === 'legacy-message'
+}
+
+function assertUniqueUsageSnapshotValues(values: readonly string[], label: string): void {
+  if (new Set(values).size !== values.length) {
+    throw new UsageRecordRepositoryDataError(`Usage portable snapshot ${label} identities are duplicated.`)
+  }
+}
+
+function compareUsageRecordsForPortableSnapshot(left: UsageRecord, right: UsageRecord): number {
+  return compareNumbersDescending(left.occurredAt, right.occurredAt) ||
+    compareStringsDescending(left.id, right.id)
+}
+
+function compareUsageRollupsForPortableSnapshot(
+  left: UsageDailyRollup,
+  right: UsageDailyRollup,
+): number {
+  return compareNumbersDescending(left.dayStart, right.dayStart) ||
+    compareStringsAscending(left.providerId, right.providerId) ||
+    compareStringsAscending(left.upstreamModel, right.upstreamModel) ||
+    compareStringsAscending(left.providerName, right.providerName) ||
+    compareStringsAscending(left.operationSource, right.operationSource) ||
+    compareStringsAscending(left.dataSource, right.dataSource) ||
+    compareStringsAscending(left.measurementSource, right.measurementSource) ||
+    compareStringsAscending(left.status, right.status)
+}
+
+function compareUsagePricingForPortableSnapshot(
+  left: UsagePricingEntry,
+  right: UsagePricingEntry,
+): number {
+  return compareNumbersDescending(left.effectiveFrom, right.effectiveFrom) ||
+    compareStringsAscending(left.id, right.id)
+}
+
+function compareNumbersDescending(left: number, right: number): number {
+  return left === right ? 0 : left > right ? -1 : 1
+}
+
+function compareStringsAscending(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1
+}
+
+function compareStringsDescending(left: string, right: string): number {
+  return -compareStringsAscending(left, right)
+}
+
+function throwIfUsageSnapshotCancelled(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  if (signal.reason instanceof Error) throw signal.reason
+  const error = new Error('The usage portable snapshot operation was cancelled.')
+  error.name = 'AbortError'
+  throw error
 }
 
 function escapeLikePattern(value: string): string {

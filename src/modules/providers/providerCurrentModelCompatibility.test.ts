@@ -51,4 +51,49 @@ describe('current model request compatibility', () => {
     expect(body.thinking).toBeUndefined()
     expect((body.messages as Array<Record<string, unknown>>)[1].reasoning_content).toBe('thought')
   })
+
+  it('omits advanced fields for an unknown official model and preserves them for a catalog model', () => {
+    const provider: AIProvider = {
+      id: 'openai-capability-gate',
+      type: 'openai',
+      name: 'OpenAI',
+      apiKey: 'test-key',
+      models: ['unknown-future-model', 'gpt-5.5'],
+      enabled: true,
+    }
+    const requestShape = {
+      provider,
+      messages: [{ role: 'user' as const, content: 'Return JSON.' }],
+      providerToolDeclarations: [{
+        type: 'function',
+        function: {
+          name: 'lookup',
+          description: 'Look up a value.',
+          parameters: { type: 'object', properties: {} },
+        },
+      }],
+      structuredOutput: {
+        type: 'json_schema' as const,
+        name: 'result',
+        schema: { type: 'object' },
+        strict: true,
+      },
+      stream: false,
+      generationParameterSources: {},
+    }
+
+    const unknownBody = buildProviderProtocolRequestBody({
+      ...requestShape,
+      model: 'unknown-future-model',
+    })
+    expect(unknownBody.tools).toBeUndefined()
+    expect(unknownBody.response_format).toBeUndefined()
+
+    const catalogBody = buildProviderProtocolRequestBody({
+      ...requestShape,
+      model: 'gpt-5.5',
+    })
+    expect(catalogBody.tools).toBeDefined()
+    expect(catalogBody.text).toBeDefined()
+  })
 })

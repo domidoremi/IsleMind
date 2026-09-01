@@ -7,9 +7,8 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { ISLE_MIN_TOUCH_TARGET, IslePanel, IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { ThemeExpressionSurface } from '@/components/ui/isle/ThemeExpressionSurface'
-import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import { shouldPromotePlainDelimitedRows } from './messageContentTablePromotion'
 import {
   hasComplexDisplayFormulaStructure,
@@ -117,20 +116,27 @@ interface RichCardAction {
 }
 
 function resolveAssistantRichSurfaces(colors: ReturnType<typeof useAppTheme>['colors']) {
+  const family = colors.design?.family
+    ?? (colors.ui.glass ? 'liquid-glass' : colors.ui.limeRoad ? 'monet' : colors.ui.markdown ? 'material' : 'minimal')
+  const minimal = family === 'minimal'
+  const monet = family === 'monet'
+  const material = family === 'material'
+  const glass = family === 'liquid-glass'
   return {
-    blockSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    blockRaisedSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted,
-    blockBorder: colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
-    gutterSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    stripeSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.overlay,
-    headerActionSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    richCardSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    nestedPanelSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : 'transparent',
-    inlineMetaSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : 'transparent',
-    inlineMetaBorder: colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
-    nodeSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    nestedBorderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-    chipBorderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+    // Rich content should have one meaningful surface (code, table, or
+    // diagram). The surrounding card is a layout wrapper, not another tile.
+    richCardSurface: glass ? colors.ui.actionBar.itemBackground : 'transparent',
+    blockSurface: minimal ? 'transparent' : glass ? colors.ui.actionBar.itemBackground : material ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+    blockRaisedSurface: minimal || monet ? 'transparent' : glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
+    blockBorder: minimal || monet ? colors.ui.semantic.chrome.border : glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    gutterSurface: minimal ? 'transparent' : glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.muted,
+    stripeSurface: minimal ? 'transparent' : glass ? colors.ui.actionBar.itemActiveBackground : material ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.overlay,
+    headerActionSurface: minimal || monet ? 'transparent' : glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    inlineMetaSurface: minimal || monet ? 'transparent' : glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted,
+    inlineMetaBorder: minimal || monet ? colors.ui.semantic.chrome.border : glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    nodeSurface: minimal ? 'transparent' : glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted,
+    nestedBorderWidth: minimal || monet ? 0 : glass ? StyleSheet.hairlineWidth : StyleSheet.hairlineWidth,
+    chipBorderWidth: minimal || monet ? 0 : glass ? StyleSheet.hairlineWidth : StyleSheet.hairlineWidth,
   }
 }
 
@@ -285,14 +291,14 @@ function RichMarkdown({
         rules={markdownRules}
         style={{
           body: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 15, lineHeight: 22, includeFontPadding: !isUser },
-          heading1: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 20, lineHeight: 26, marginTop: 4, marginBottom: 8, fontWeight: '800' },
-          heading2: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 18, lineHeight: 24, marginTop: 4, marginBottom: 8, fontWeight: '800' },
-          heading3: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 16, lineHeight: 22, marginTop: 4, marginBottom: 7, fontWeight: '800' },
-          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 4 },
-          link: { color: isUser ? userMessage.userForeground : colors.ui.control.link, fontWeight: '800' },
+          heading1: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 18, lineHeight: 24, marginTop: 6, marginBottom: 5, fontWeight: '700' },
+          heading2: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 16.5, lineHeight: 23, marginTop: 5, marginBottom: 4, fontWeight: '700' },
+          heading3: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 15.5, lineHeight: 22, marginTop: 4, marginBottom: 3, fontWeight: '600' },
+          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 5, fontWeight: isUser ? undefined : '400' },
+          link: { color: isUser ? userMessage.userForeground : colors.ui.control.link, fontWeight: '600' },
           bullet_list: {
             marginTop: 2,
-            marginBottom: 6,
+            marginBottom: 5,
             paddingVertical: 0,
             paddingHorizontal: 0,
             borderLeftWidth: 0,
@@ -300,14 +306,14 @@ function RichMarkdown({
           },
           ordered_list: {
             marginTop: 2,
-            marginBottom: 6,
+            marginBottom: 5,
             paddingVertical: 0,
             paddingHorizontal: 0,
             borderLeftWidth: 0,
             borderLeftColor: 'transparent',
           },
           list_item: {
-            marginBottom: 2,
+            marginBottom: 3,
           },
           bullet_list_icon: {
             color: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
@@ -346,7 +352,7 @@ function RichMarkdown({
             marginTop: 6,
             marginBottom: 8,
           },
-          strong: { color: isUser ? userMessage.userForeground : colors.text, fontWeight: '800' },
+          strong: { color: isUser ? userMessage.userForeground : colors.text, fontWeight: '700' },
           em: { color: isUser ? userMessage.userForeground : colors.textSecondary, fontStyle: 'italic' },
           s: { color: mutedForeground, textDecorationLine: 'line-through' },
           code_inline: {
@@ -416,16 +422,17 @@ function CodeBlockCard({ content, language, isUser }: { content: string; languag
   const label = language?.trim() || 'code'
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
-  const codeSurface = isUser ? userMessage.userActionBackground : colors.ui.code.background
   const lineCount = countContentLines(content)
   const codeLines = useMemo(() => splitSourceLines(content), [content])
 
   return (
-    <RichCard isUser={isUser}>
+    <View style={{ width: '100%', minWidth: 0 }}>
       <CardHeader
         icon={<AppIcon name="code" color={isUser ? userMessage.userForeground : colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />}
         title={t('messageContent.codeBlockTitle', { language: label, count: lineCount })}
         isUser={isUser}
+        compact
+        dividerColor={isUser ? userMessage.userActionBackground : colors.ui.code.border}
         actions={isUser ? [] : [
           { label: t('common.copy'), kind: 'copy', onPress: () => Clipboard.setStringAsync(content) },
         ]}
@@ -433,20 +440,18 @@ function CodeBlockCard({ content, language, isUser }: { content: string; languag
       <SourceLineRows
         lines={codeLines}
         isUser={isUser}
-        surface={codeSurface}
         borderColor={colors.ui.code.border}
         textColor={isUser ? userMessage.userForeground : colors.ui.code.text}
         numberColor={isUser ? userMessage.userForeground : colors.textTertiary}
         gutterBackground={isUser ? userMessage.userActionBackground : assistantSurfaces.gutterSurface}
       />
-    </RichCard>
+    </View>
   )
 }
 
 function SourceLineRows({
   lines,
   isUser,
-  surface,
   borderColor,
   textColor,
   numberColor,
@@ -454,7 +459,6 @@ function SourceLineRows({
 }: {
   lines: string[]
   isUser: boolean
-  surface: string
   borderColor: string
   textColor: string
   numberColor: string
@@ -471,11 +475,8 @@ function SourceLineRows({
       style={{
         width: '100%',
         minWidth: 0,
-        borderRadius: colors.ui.radius.card,
         overflow: 'hidden',
-        backgroundColor: surface,
-        borderWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth,
-        borderColor,
+        backgroundColor: 'transparent',
       }}
     >
       {visibleLines.map((line, index) => (
@@ -647,7 +648,7 @@ function TableBlockCard({
   const headers = normalizedRows[0] ?? []
   const bodyRows = normalizedRows.slice(1)
   const tableGrid = (
-    <View style={{ minWidth: tableMinWidth, borderRadius: colors.ui.radius.card, overflow: 'hidden', borderWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth, borderColor: tableBorder }}>
+    <View style={{ minWidth: tableMinWidth, overflow: 'hidden' }}>
       {normalizedRows.map((row, rowIndex) => (
         <View key={`${rowIndex}-${row.join('|')}`} style={{ flexDirection: 'row', alignItems: 'stretch', backgroundColor: rowIndex === 0 ? tableHeaderBackground : tableRowBackground }}>
           {row.map((cell, cellIndex) => (
@@ -671,7 +672,7 @@ function TableBlockCard({
                   color: isUser ? userMessage.userForeground : rowIndex === 0 ? colors.text : colors.textSecondary,
                   fontSize: 11.5,
                   lineHeight: 16,
-                  fontWeight: rowIndex === 0 ? '900' : '700',
+                  fontWeight: rowIndex === 0 ? '700' : '400',
                 }}
               >
                 {cell || ' '}
@@ -743,7 +744,6 @@ function DiagramBlockCard({ content, language, isUser }: { content: string; lang
       <SourceLineRows
         lines={sourceLines}
         isUser={isUser}
-        surface={isUser ? userMessage.userActionBackground : assistantSurfaces.blockSurface}
         borderColor={assistantSurfaces.blockBorder}
         textColor={isUser ? userMessage.userForeground : colors.text}
         numberColor={isUser ? userMessage.userForeground : colors.textTertiary}
@@ -784,7 +784,6 @@ function DataBlockCard({ content, language, title, isUser, selectionEnabled }: {
       <SourceLineRows
         lines={dataLines}
         isUser={isUser}
-        surface={isUser ? userMessage.userActionBackground : assistantSurfaces.blockSurface}
         borderColor={assistantSurfaces.blockBorder}
         textColor={isUser ? userMessage.userForeground : colors.text}
         numberColor={isUser ? userMessage.userForeground : colors.textTertiary}
@@ -849,16 +848,14 @@ function StackedTableRows({
   const fallbackRows = rows.length ? rows : [headers]
 
   return (
-    <View style={{ gap: 8 }}>
+    <View>
       {fallbackRows.map((row, rowIndex) => (
         <View
           key={`${rowIndex}-${row.join('|')}`}
           style={{
-            borderRadius: colors.ui.radius.card,
-            padding: 9,
-            backgroundColor: isUser ? userMessage.userActionBackground : assistantSurfaces.nestedPanelSurface,
-            borderWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth,
-            borderColor: assistantSurfaces.blockBorder,
+            paddingVertical: 9,
+            borderTopWidth: rowIndex === 0 ? 0 : assistantSurfaces.nestedBorderWidth,
+            borderTopColor: isUser ? userMessage.userActionBackground : assistantSurfaces.blockBorder,
             gap: 6,
           }}
         >
@@ -870,18 +867,16 @@ function StackedTableRows({
               <View
                 key={`${rowIndex}-${cellIndex}`}
                 style={{
-                  borderRadius: colors.ui.radius.controlSmall,
-                  paddingHorizontal: 10,
+                  paddingHorizontal: 4,
                   paddingVertical: 7,
-                  backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.limeRoad ? assistantSurfaces.blockSurface : 'transparent',
                   borderTopWidth: cellIndex === 0 || isUser ? 0 : assistantSurfaces.nestedBorderWidth,
                   borderTopColor: assistantSurfaces.blockBorder,
                 }}
               >
-                <Text style={{ color: labelColor, fontSize: 11, lineHeight: 15, fontWeight: '800', marginBottom: 2 }}>
+                <Text style={{ color: labelColor, fontSize: 11, lineHeight: 15, fontWeight: '700', marginBottom: 2 }}>
                   {(headers[cellIndex] || `C${cellIndex + 1}`).trim() || `C${cellIndex + 1}`}
                 </Text>
-                <Text selectable={selectionEnabled} style={{ color: valueColor, fontSize: 12, lineHeight: 18, fontWeight: '700' }}>
+                <Text selectable={selectionEnabled} style={{ color: valueColor, fontSize: 12, lineHeight: 18, fontWeight: '400' }}>
                   {cell || ' '}
                 </Text>
               </View>
@@ -909,11 +904,8 @@ function DiagramPreviewPanel({ preview, isUser }: { preview: DiagramPreview; isU
       style={{
         gap: 8,
         marginBottom: 10,
-        padding: 10,
-        borderRadius: colors.ui.radius.card,
-        backgroundColor: isUser ? userMessage.userActionBackground : assistantSurfaces.nestedPanelSurface,
-        borderWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth,
-        borderColor: assistantSurfaces.blockBorder,
+        paddingHorizontal: 2,
+        paddingVertical: 4,
       }}
     >
       {preview.edges.length ? (
@@ -1088,33 +1080,37 @@ function RichCard({ isUser, children }: { isUser: boolean; children: ReactNode }
   const { colors, canonicalThemeId } = useAppTheme()
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
-  const expression = resolveThemeComponentExpression(canonicalThemeId, 'codeBlock')
-  const isMinimal = canonicalThemeId === 'minimal'
-  const isMonet = canonicalThemeId === 'monet'
-  const isMaterial = canonicalThemeId === 'material'
-  const radius = isMinimal ? 2 : isMonet ? 18 : isMaterial ? 12 : 20
-  const contentPadding = isMinimal ? 3 : isMonet ? 10 : isMaterial ? 8 : 9
-  const material = isMinimal ? 'transparent' : isMonet ? 'paper' : isMaterial ? 'raised' : 'chrome'
+  const material = colors.design?.semantic.surface.elevated
+  const radius = canonicalThemeId === 'minimal'
+    ? colors.design?.semantic.radius.medium ?? 4
+    : colors.design?.semantic.radius.large ?? colors.ui.radius.card
+  const contentPadding = canonicalThemeId === 'minimal' ? 6 : 8
   return (
-    <IslePanel
-      elevated={!isUser && colors.ui.limeRoad}
-      material={isUser ? 'transparent' : material}
-      contentStyle={{ padding: contentPadding, width: '100%' }}
+    <View
       style={{
         alignSelf: 'stretch',
         width: '100%',
         maxWidth: '100%',
         minWidth: 0,
         borderRadius: radius,
-        backgroundColor: isUser ? userMessage.userActionBackground : assistantSurfaces.richCardSurface,
-        borderColor: isUser ? userMessage.userActionBackground : assistantSurfaces.blockBorder,
-        borderWidth: isUser || isMinimal ? 0 : expression.border === 'edge-highlight' ? 1 : StyleSheet.hairlineWidth,
-        ...(isMonet ? { alignSelf: 'flex-start', width: '96%', marginLeft: 8, borderTopLeftRadius: 22, borderBottomRightRadius: 26 } : null),
-        ...(isMaterial ? { borderRadius: 12, paddingHorizontal: 2 } : null),
+        padding: contentPadding,
+        overflow: 'hidden',
+         backgroundColor: isUser
+           ? userMessage.userActionBackground
+           : assistantSurfaces.richCardSurface === 'transparent'
+             ? material?.background ?? colors.ui.semantic.surface.raised
+             : assistantSurfaces.richCardSurface,
+        borderColor: isUser ? userMessage.userActionBackground : material?.border ?? colors.ui.semantic.chrome.border,
+        borderWidth: isUser || material?.border === 'transparent' ? 0 : StyleSheet.hairlineWidth,
+        shadowColor: material?.shadowColor ?? colors.shadowTint,
+        shadowOpacity: isUser ? 0 : material?.shadowOpacity ?? 0,
+        shadowRadius: isUser ? 0 : material?.shadowBlur ?? 0,
+        shadowOffset: { width: 0, height: isUser ? 0 : material?.shadowOffsetY ?? 0 },
+        elevation: isUser ? 0 : material?.elevation ?? 0,
       }}
     >
       {children}
-    </IslePanel>
+    </View>
   )
 }
 
@@ -1123,11 +1119,15 @@ function CardHeader({
   title,
   actions,
   isUser,
+  compact = false,
+  dividerColor,
 }: {
   icon: ReactNode
   title: string
   actions: RichCardAction[]
   isUser: boolean
+  compact?: boolean
+  dividerColor?: string
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -1135,7 +1135,9 @@ function CardHeader({
   const [actionFeedback, setActionFeedback] = useState<{ key: string; label: string; failed: boolean } | null>(null)
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
+  const family = colors.design?.family ?? 'minimal'
   const actionSurface = isUser ? userMessage.userActionBackground : assistantSurfaces.headerActionSurface
+  const iconSurface = family === 'liquid-glass' ? actionSurface : family === 'material' ? colors.ui.semantic.surface.muted : 'transparent'
 
   useEffect(() => {
     return () => {
@@ -1168,8 +1170,17 @@ function CardHeader({
   }
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 6 }}>
-      <View style={{ width: 20, height: 20, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface }}>
+    <View style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      minHeight: compact ? 38 : undefined,
+      marginBottom: compact ? 0 : 6,
+      paddingHorizontal: compact ? 8 : 0,
+      borderBottomWidth: compact && dividerColor ? StyleSheet.hairlineWidth : 0,
+      borderBottomColor: dividerColor,
+    }}>
+      <View style={{ width: 20, height: 20, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: iconSurface }}>
         {icon}
       </View>
       <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: isUser ? userMessage.userForeground : colors.text, fontSize: 11.5, fontWeight: '800' }}>
@@ -1196,7 +1207,7 @@ function CardHeader({
               flexDirection: 'row',
               alignItems: 'center',
               gap: 4,
-              backgroundColor: feedback?.failed ? colors.ui.tone.danger.background : actionSurface,
+              backgroundColor: feedback?.failed ? colors.ui.tone.danger.background : family === 'liquid-glass' ? actionSurface : 'transparent',
               borderWidth: feedback?.failed ? 1 : 0,
               borderColor: feedback?.failed ? colors.ui.tone.danger.border : 'transparent',
             }}
@@ -1343,7 +1354,7 @@ function parsePlainTextSegments(text: string, startIndex: number, t: TFunction):
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     if (isMarkdownTableStart(lines, lineIndex)) {
       flushBuffer()
-      const tableLines = [lines[lineIndex]]
+      const tableLines = [lines[lineIndex], lines[lineIndex + 1]]
       lineIndex += 2
       while (lineIndex < lines.length && lines[lineIndex].includes('|') && lines[lineIndex].trim()) {
         tableLines.push(lines[lineIndex])

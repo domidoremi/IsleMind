@@ -1,6 +1,6 @@
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
-import { getRuntimeLogInfo, readRuntimeLogText, type RuntimeLogEntry, type RuntimeLogInfo } from '@/platform/native/runtimeLog'
+import { getRuntimeLogInfo, readRuntimeLogText, resolveRuntimeLogLevel, type RuntimeLogEntry, type RuntimeLogInfo } from '@/platform/native/runtimeLog'
 import {
   RUNTIME_EVENT_HISTORY_LIMIT,
   RUNTIME_EVENT_SCHEMA,
@@ -70,7 +70,7 @@ import {
 } from '@/services/mediaGenerationContract'
 import type { ChatMediaGenerationAdapterGateId } from '@/presentation/features/chat/chatMultimodalPolicy'
 export const RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES = 12000
-export const RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT = 120
+export const RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT = 100
 export const RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT = 120
 export const RUNTIME_DIAGNOSTICS_MEMORY_EVENT_LIMIT = RUNTIME_EVENT_HISTORY_LIMIT
 export const RUNTIME_DIAGNOSTICS_OBSERVABILITY_PREVIEW_EVENT_LIMIT = OBSERVABILITY_SINK_PREVIEW_EVENT_LIMIT
@@ -794,10 +794,12 @@ function mergeRuntimeLogEntriesWithRuntimeEventHistory(
 }
 
 function runtimeEventEnvelopeToLogEntry(envelope: RuntimeEventEnvelope): RuntimeLogEntry {
+  const event = runtimeLogEventForRuntimeEvent(envelope.event)
   return {
     schema: 'islemind.runtime-log.v1',
     ts: envelope.ts,
-    event: runtimeLogEventForRuntimeEvent(envelope.event),
+    event,
+    level: resolveRuntimeLogLevel(event, envelope.data),
     conversationId: envelope.conversationId,
     providerId: envelope.providerId,
     credentialGroupId: envelope.credentialGroupId,

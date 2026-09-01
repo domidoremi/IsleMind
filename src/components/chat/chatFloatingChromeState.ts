@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 
 export interface ChatFloatingChromeState {
   chromeCollapsed: boolean
@@ -20,16 +20,24 @@ export function useChatFloatingChromeState({
   keepChromeExpanded: boolean
   showOptions: boolean
 }): ChatFloatingChromeState {
-  void active
-  void hasProviderHealthIssue
   void isStreaming
-  void keepChromeExpanded
-  void showOptions
+  const collapseLocked = !active || hasProviderHealthIssue || keepChromeExpanded || showOptions
+  const [chromeCollapsed, setChromeCollapsedState] = useState(false)
 
-  const chromeCollapsed = false
-  const markChromeActive = useCallback(() => undefined, [])
-  const restoreChrome = useCallback(() => undefined, [])
-  const setChromeCollapsed = useCallback<Dispatch<SetStateAction<boolean>>>(() => undefined, [])
+  const restoreChrome = useCallback(() => {
+    setChromeCollapsedState(false)
+  }, [])
+  const markChromeActive = restoreChrome
+  const setChromeCollapsed = useCallback<Dispatch<SetStateAction<boolean>>>((update) => {
+    setChromeCollapsedState((current) => {
+      const next = typeof update === 'function' ? update(current) : update
+      return collapseLocked && next ? false : next
+    })
+  }, [collapseLocked])
+
+  useEffect(() => {
+    if (collapseLocked) restoreChrome()
+  }, [collapseLocked, restoreChrome])
 
   return {
     chromeCollapsed,

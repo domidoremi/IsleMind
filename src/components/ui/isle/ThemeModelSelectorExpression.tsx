@@ -28,7 +28,6 @@ interface ThemeModelSelectorExpressionProps {
 
 const decorativeAccessibility = {
   accessible: false,
-  accessibilityElementsHidden: true,
   importantForAccessibility: 'no-hide-descendants' as const,
   pointerEvents: 'none' as const,
 }

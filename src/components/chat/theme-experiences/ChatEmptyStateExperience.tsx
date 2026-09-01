@@ -43,7 +43,7 @@ function MonetEmptyStateExperience({ colors, intro, boundary, starter, action }:
     <View testID="chat-empty-experience-monet" style={styles.monetRoot}>
       {intro}
       {starter}
-      <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.monetBrushRow}>
+      <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={styles.monetBrushRow}>
         <View style={[styles.monetBrushLong, { backgroundColor: colors.primary }]} />
         <View style={[styles.monetBrushShort, { backgroundColor: colors.accent }]} />
         <View style={[styles.monetBrushMid, { backgroundColor: colors.material.strokeStrong }]} />
@@ -82,13 +82,13 @@ function LiquidGlassEmptyStateExperience({ colors, intro, boundary, starter, act
 
 const styles = {
   minimalRoot: { width: '100%', alignItems: 'center' as const, gap: 8 } as const,
-  monetRoot: { width: '100%', gap: 12 } as const,
+  monetRoot: { width: '100%', maxWidth: 820, alignSelf: 'center' as const, gap: 12 } as const,
   monetBrushRow: { height: 5, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6, paddingHorizontal: 8, opacity: 0.72 } as const,
   monetBrushLong: { height: 3, flex: 1.2, borderRadius: 2 } as const,
   monetBrushShort: { height: 3, flex: 0.42, borderRadius: 2 } as const,
   monetBrushMid: { height: 2, flex: 0.72, borderRadius: 2 } as const,
-  materialRoot: { width: '100%', gap: 12, padding: 16, borderRadius: 24, borderWidth: 1 } as const,
+  materialRoot: { width: '100%', maxWidth: 760, alignSelf: 'center' as const, gap: 12, padding: 16, borderRadius: 18, borderWidth: 0 } as const,
   materialActionRow: { alignItems: 'flex-start' as const } as const,
-  glassRoot: { width: '100%', gap: 12 } as const,
+  glassRoot: { width: '100%', maxWidth: 780, alignSelf: 'center' as const, gap: 12 } as const,
   glassActionBar: { minHeight: 54, alignItems: 'flex-start' as const, justifyContent: 'center' as const, padding: 6, borderRadius: 26, borderWidth: 1 } as const,
 }

@@ -3,6 +3,7 @@ import { View } from 'react-native'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
+import { GlassBackdropProvider, GlassBackdropTarget } from '../glass'
 
 type ChatThemeColors = ReturnType<typeof useAppTheme>['colors']
 
@@ -33,66 +34,108 @@ export function ChatActiveThemeExperience(props: ChatActiveThemeExperienceProps)
 function MinimalActiveExperience({ chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
     <View testID="chat-active-experience-minimal" style={styles.root}>
-      {chrome}
-      {status}
-      <View style={styles.contentFirst}>{messageList}</View>
+      <View style={styles.contentFirst}>{chrome}{status}{messageList}</View>
       {controls}
       {composer}
     </View>
   )
 }
 
-function MonetActiveExperience({ colors, compactViewport, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
+function MonetActiveExperience({ colors, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
     <View testID="chat-active-experience-monet" style={styles.root}>
-      {chrome}
-      {status}
-      <View style={[styles.monetCanvas, { marginHorizontal: compactViewport ? 8 : 14, backgroundColor: colors.ui.semantic.surface.canvas, borderColor: colors.ui.semantic.chrome.border }]}>
-        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.monetCloud, { backgroundColor: colors.ui.semantic.surface.muted }]} />
-        <View style={styles.monetMessageArea}>{messageList}</View>
+      <View style={styles.monetCanvas}>
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetCloud, { backgroundColor: colors.primary }]} />
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetCloudSecondary, { backgroundColor: colors.primary }]} />
+        <View style={styles.monetChromeDrift}>{chrome}</View>
+        <View style={styles.monetStatusDrift}>{status}</View>
+        <View style={styles.monetMessageArea}>
+          <View style={styles.monetMessageAreaCompact}>
+            <View style={styles.monetMessageColumn}>{messageList}</View>
+          </View>
+        </View>
       </View>
       {controls}
-      {composer}
+      <View style={styles.monetComposerDock}>{composer}</View>
     </View>
   )
 }
 
-function MaterialActiveExperience({ colors, compactViewport, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
+function MaterialActiveExperience({ colors, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
     <View testID="chat-active-experience-material" style={styles.root}>
-      {chrome}
-      {status}
-      <View style={[styles.materialCanvas, { marginHorizontal: compactViewport ? 6 : 12, backgroundColor: colors.ui.semantic.surface.muted, borderColor: colors.ui.semantic.chrome.border }]}>
-        {messageList}
+      <View style={styles.materialTopAppBar}>{chrome}</View>
+      <View style={styles.materialStatusBand}>{status}</View>
+      <View style={styles.materialCanvas}>
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.materialWorkspaceRail, { backgroundColor: colors.ui.actionBar.itemBorder }]} />
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.materialRailMarker, { backgroundColor: colors.primary }]} />
+        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.materialRailMarkerShort, { backgroundColor: colors.primary }]} />
+        <View style={styles.materialMessageColumn}>{messageList}</View>
       </View>
       {controls}
-      {composer}
+      <View style={styles.materialComposerDock}>{composer}</View>
     </View>
   )
 }
 
-function LiquidGlassActiveExperience({ colors, compactViewport, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
+function LiquidGlassActiveExperience({ colors, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
-    <View testID="chat-active-experience-liquid-glass" style={styles.root}>
-      <View style={styles.glassChromeLayer}>{chrome}</View>
-      {status}
-      <View style={[styles.glassCanvas, { marginHorizontal: compactViewport ? 5 : 10, backgroundColor: colors.ui.semantic.surface.canvas }]}>
-        {messageList}
+    <GlassBackdropProvider>
+      <View testID="chat-active-experience-liquid-glass" style={styles.root}>
+        <View style={styles.glassChromeLayer}>{chrome}</View>
+        <View style={styles.glassStatusLayer}>{status}</View>
+        <View style={styles.glassCanvas}>
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassReadingAperture, { borderColor: colors.ui.actionBar.itemBorder }]} />
+          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassReadingHighlight, { backgroundColor: colors.ui.control.primaryForeground }]} />
+          <GlassBackdropTarget style={styles.glassMessageColumnWrap}>
+            <View style={styles.glassMessageColumn}>{messageList}</View>
+          </GlassBackdropTarget>
+        </View>
+        {controls}
+        <View style={styles.glassComposerLayer}>{composer}</View>
       </View>
-      {controls}
-      <View style={styles.glassComposerLayer}>{composer}</View>
-    </View>
+    </GlassBackdropProvider>
   )
 }
 
 const styles = {
   root: { flex: 1 } as const,
   contentFirst: { flex: 1 } as const,
-  monetCanvas: { flex: 1, position: 'relative', overflow: 'hidden', borderRadius: 24, borderWidth: 1 } as const,
-  monetCloud: { position: 'absolute', top: 0, right: -18, width: 180, height: 110, borderBottomLeftRadius: 90, opacity: 0.34 } as const,
-  monetMessageArea: { flex: 1, paddingHorizontal: 6 } as const,
-  materialCanvas: { flex: 1, borderRadius: 16, borderWidth: 1, overflow: 'hidden' } as const,
+  // Keep these wrappers for layout ownership, but let message/chrome
+  // primitives carry the visual surface instead of painting another card.
+  monetCanvas: { flex: 1, position: 'relative', overflow: 'hidden' } as const,
+  monetChromeDrift: { zIndex: 2 } as const,
+  // Background scenery sits behind the message flow and stays weak enough to
+  // never compete with content opacity or fill the gutters beside the text.
+  monetCloud: { position: 'absolute', top: -8, right: -30, width: 190, height: 94, borderBottomLeftRadius: 94, opacity: 0.07 } as const,
+  monetCloudSecondary: { position: 'absolute', bottom: 18, left: -42, width: 150, height: 82, borderTopRightRadius: 82, opacity: 0.05 } as const,
+  monetCanvasPlane: { display: 'none' } as const,
+  // One shared reading column: the ambient canvas no longer borrows list width.
+  monetMessageArea: { flex: 1 } as const,
+  // Keep the FlashList constrained to the viewport. Without an explicit
+  // flexing/min-height contract this wrapper grows to the full transcript
+  // height and removes the scroll viewport in React Native Web.
+  monetMessageAreaCompact: { flex: 1, minHeight: 0 } as const,
+  monetMessageColumn: { flex: 1, minWidth: 0 } as const,
+  monetMessageColumnCompact: {} as const,
+  monetStatusDrift: {} as const,
+  monetComposerDock: {} as const,
+  materialTopAppBar: { zIndex: 2, paddingBottom: 2 } as const,
+  materialStatusBand: { paddingHorizontal: 4 } as const,
+  materialCanvas: { flex: 1, position: 'relative', overflow: 'hidden' } as const,
+  materialWorkspaceRail: { display: 'none' } as const,
+  materialRailMarker: {} as const,
+  materialRailMarkerShort: {} as const,
+  // Assistant content owns the full list width; the rail markers carried no
+  // navigation semantics and only narrowed the reading column.
+  materialMessageColumn: { flex: 1, minWidth: 0 } as const,
+  materialComposerDock: {} as const,
   glassChromeLayer: { zIndex: 2 } as const,
-  glassCanvas: { flex: 1, borderRadius: 26, overflow: 'hidden' } as const,
+  glassStatusLayer: { zIndex: 1, paddingHorizontal: 4 } as const,
+  glassCanvas: { flex: 1, position: 'relative' } as const,
+  glassMessageColumnWrap: { flex: 1 } as const,
+  glassMessageColumn: { flex: 1, minWidth: 0, marginHorizontal: 4 } as const,
+  glassReadingAperture: { display: 'none' } as const,
+  glassReadingHighlight: { display: 'none' } as const,
   glassComposerLayer: { zIndex: 2 } as const,
 }

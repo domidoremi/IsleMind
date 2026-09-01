@@ -11,7 +11,7 @@ if (process.argv.includes('--focus=pager-transition')) {
   process.exit(0)
 }
 
-const ts = require('typescript')
+const { transformTypeScriptModule } = require('./node-ts-support')
 const originalLoad = Module._load
 const originalResolve = Module._resolveFilename
 
@@ -35,17 +35,7 @@ function registerTypeScriptSupport() {
 
   const hook = function compileTypeScript(module, filename) {
     const source = fs.readFileSync(filename, 'utf8')
-    const output = ts.transpileModule(source, {
-      compilerOptions: {
-        esModuleInterop: true,
-        jsx: ts.JsxEmit.ReactJSX,
-        module: ts.ModuleKind.CommonJS,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        target: ts.ScriptTarget.ES2021,
-      },
-      fileName: filename,
-    })
-    module._compile(output.outputText, filename)
+    module._compile(transformTypeScriptModule(source, filename), filename)
   }
   hook.isReleaseReadinessCompatibilityHook = true
   require.extensions['.ts'] = hook
@@ -1075,7 +1065,11 @@ function assertSourceIntegration() {
   assert.ok(['common.backToChat', '<HistoryHeaderFrame', 'search={historySearch}', 'newConversationLabel'].every((marker) => conversationsScreenSource.includes(marker)), 'History owns Back to Chat, title/search, and new-chat actions')
   assert.ok(['common.backToChat', '<SettingsOverviewExperience', 'value={settingsSearch}'].every((marker) => settingsScreenSource.includes(marker)), 'Settings owns Back to Chat, title, and search')
   assert.ok(['<ChatAiConfigurationSheet', '<ChatPersistentHeader'].every((marker) => floatingChromeSource.includes(marker)) && ['chat.newConversation', 'settings.title', 'onModelPress'].every((marker) => persistentHeaderSource.includes(marker)) && /conversation\.title/.test(floatingChromeSource), 'Chat owns persistent history, AI configuration, new-chat, and Settings actions')
-  assert.ok(floatingChromeStateSource.includes('const chromeCollapsed = false') && !floatingChromeStateSource.includes('setTimeout('), 'Chat navigation remains visible across idle, focus, scrolling, and generation state')
+  assert.ok(
+    ['useState(false)', 'collapseLocked', 'restoreChrome'].every((marker) => floatingChromeStateSource.includes(marker)) &&
+      !floatingChromeStateSource.includes('setTimeout('),
+    'Chat navigation uses bounded scroll collapse and restores while local interactions require the header',
+  )
   assert.ok(['chat-ai-configuration-panel', '<ChatOptionsPanel', '<ProviderSettingsContent'].every((marker) => chatAiConfigurationSource.includes(marker)), 'one Chat AI sheet composes essential configuration and provider onboarding')
   assert.ok(['chat-ai-provider-connection-section', 'chat-ai-model-selection-section', 'chat-ai-reasoning-section'].every((marker) => chatOptionsPanelSource.includes(marker)), 'the AI sheet exposes provider, model, and reasoning sections from existing state')
   assert.doesNotMatch(mainPagerSource, /function PageHeaderAction/, 'the retired shared PageHeaderAction tree is not restored')

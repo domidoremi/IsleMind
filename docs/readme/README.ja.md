@@ -61,7 +61,7 @@ IsleMind は、モデルプロバイダー、会話、ナレッジとメモリ�
 
 - [Bun 1.3.14](https://bun.sh/)（依存関係の導入とスクリプト実行）
 - Node.js（一部のプロジェクトスクリプト用）
-- JDK 17
+- JDK 25
 - Android SDK
 - Android Platform Tools / ADB
 - Android エミュレーター、または USB デバッグを有効にした端末

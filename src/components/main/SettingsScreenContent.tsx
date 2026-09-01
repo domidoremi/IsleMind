@@ -30,7 +30,7 @@ import {
 } from '@/components/settings/theme-experiences/SettingsControlCatalogExperiences'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
-import type { PortableDataExportOptions, PortableDataExportResult } from '@/modules/data-management'
+import type { PortableBackupCategory, PortableDataExportOptions, PortableDataExportResult, PortableDataRestorePreview } from '@/modules/data-management'
 import {
   clearPortableApplicationData,
   exportPortableDataToJsonFile,
@@ -104,6 +104,20 @@ const THEME_ACCENT_OPTIONS = [
 ] as const
 
 const settingsChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
+const PORTABLE_BACKUP_CATEGORY_OPTIONS: readonly {
+  id: PortableBackupCategory
+  labelKey: string
+}[] = [
+  { id: 'settings', labelKey: 'settings.backupSettings' },
+  { id: 'providers', labelKey: 'settings.providers' },
+  { id: 'models', labelKey: 'settings.models' },
+  { id: 'conversations', labelKey: 'settings.backupConversations' },
+  { id: 'workspaces', labelKey: 'settings.backupWorkspaces' },
+  { id: 'knowledge', labelKey: 'settings.knowledge' },
+  { id: 'skills', labelKey: 'settings.skills' },
+  { id: 'mcp', labelKey: 'settings.mcp' },
+  { id: 'usage', labelKey: 'usage.title' },
+] as const
 const themeModeCardHeight = 58
 type ApkUpdateUiStage = 'checking' | ApkInstallProgressStage
 const APK_UPDATE_BANNER_ID = 'apk-update-progress'
@@ -326,6 +340,9 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   const [systemStatusNotificationStatus, setSystemStatusNotificationStatus] = useState<AndroidStatusNotificationPermissionStatus | null>(null)
   const [controlView, setControlView] = useState<SettingsControlView | null>('ai')
   const [settingsSearch, setSettingsSearch] = useState('')
+  const [portableBackupCategories, setPortableBackupCategories] = useState<PortableBackupCategory[]>(
+    () => PORTABLE_BACKUP_CATEGORY_OPTIONS.map((option) => option.id),
+  )
   const [expandedGroups, setExpandedGroups] = useState<Record<SettingsAdvancedGroup, boolean>>({
     appearance: false,
     data: false,
@@ -393,13 +410,20 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   const activeCustomThemeAccent = Boolean(settings.themeAccent && !THEME_ACCENT_OPTIONS.some((item) => item.color === settings.themeAccent))
   const normalizedThemeAccentDraft = normalizeThemeAccent(themeAccentDraft)
   const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const foldoutBodyStyle = { marginTop: 12, paddingHorizontal: 0, paddingVertical: 2, gap: 12 }
+  const foldoutBodyStyle = { marginTop: 10, paddingHorizontal: 0, paddingVertical: 2, gap: 10 }
   const foldoutCardStyle = (gap = 10): ViewStyle => ({
-    borderRadius: Math.min(colors.ui.radius.card, 8),
-    padding: 10,
-    backgroundColor: colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
-    borderWidth: subtleBorderWidth,
-    borderColor: colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    // Foldouts are logical groups, not another stack of cards. Material may
+    // use one tonal plane; the other families rely on spacing and rules.
+    borderRadius: canonicalThemeId === 'material' ? 8 : canonicalThemeId === 'liquid-glass' ? 12 : 0,
+    padding: canonicalThemeId === 'minimal' ? 4 : 8,
+    backgroundColor: canonicalThemeId === 'material'
+      ? colors.ui.semantic.surface.muted
+      : canonicalThemeId === 'liquid-glass'
+        ? 'transparent'
+        : 'transparent',
+    borderWidth: 0,
+    borderBottomWidth: canonicalThemeId === 'material' || canonicalThemeId === 'liquid-glass' ? subtleBorderWidth : 0,
+    borderBottomColor: colors.ui.semantic.chrome.border,
     gap,
   })
   const foldoutMotion = { type: 'timing' as const, duration: motion === 'full' ? motionTokens.duration.fast : 1 }
@@ -756,7 +780,10 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   }, [expandedGovernanceGroups.observability, expandedGroups.governance, getObservabilitySinkApiKey])
 
   async function exportJson(options: PortableDataExportOptions = {}) {
-    const result = await exportPortableDataToJsonFile(options)
+    const result = await exportPortableDataToJsonFile({
+      ...options,
+      selection: options.selection ?? { mode: 'full' },
+    })
     const tavernAudit = summarizeTavernExportAudit(result)
     const tavernAuditMessage = tavernAudit.hidden || tavernAudit.privatePending || tavernAudit.pending
       ? `\n\n${t('settings.exportTavernAuditNotice', tavernAudit)}`
@@ -776,8 +803,29 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     await exportJson({ tavern: { includeHiddenMemory: true, includePendingWritebacks: true } })
   }
 
+  function togglePortableBackupCategory(category: PortableBackupCategory) {
+    setPortableBackupCategories((current) => current.includes(category)
+      ? current.filter((item) => item !== category)
+      : [...current, category])
+  }
+
+  async function exportSelectedJson() {
+    if (!portableBackupCategories.length) return
+    await exportJson({
+      selection: { mode: 'selective', categories: portableBackupCategories },
+    })
+  }
+
   async function importJson() {
-    const result = await importPortableDataFromJsonFile()
+    const result = await importPortableDataFromJsonFile({
+      confirmRestore: (preview) => dialog.confirm({
+        title: t('settings.restorePreviewTitle'),
+        message: formatPortableRestorePreview(preview, t),
+        confirmLabel: t('settings.restorePreviewConfirm'),
+        cancelLabel: t('common.cancel'),
+        tone: 'amber',
+      }),
+    })
     if (result.ok && result.kind === 'mem0') {
       const reviewNow = await dialog.confirm({
         title: t('settings.importDone'),
@@ -1570,6 +1618,33 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
               <DataButton label={t('settings.exportTavernPrivateJson')} icon={<AppIcon name="shield" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void exportPrivateTavernJson()} />
               <DataButton label={t('settings.importJson')} icon={<AppIcon name="upload" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void importJson()} />
             </View>
+            <SettingsInlineLabel
+              title={t('settings.backupCategories')}
+              detail={t('settings.backupCategoryCount', { count: portableBackupCategories.length })}
+            />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {PORTABLE_BACKUP_CATEGORY_OPTIONS.map((option) => {
+                const active = portableBackupCategories.includes(option.id)
+                return (
+                  <IslePressable
+                    key={option.id}
+                    haptic
+                    accessibilityLabel={t(option.labelKey)}
+                    accessibilityState={{ selected: active }}
+                    onPress={() => togglePortableBackupCategory(option.id)}
+                    style={settingsChipPressableStyle}
+                  >
+                    <IsleChip active={active}>{t(option.labelKey)}</IsleChip>
+                  </IslePressable>
+                )
+              })}
+            </View>
+            <DataButton
+              label={t('settings.exportSelectedJson')}
+              icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />}
+              disabled={!portableBackupCategories.length}
+              onPress={() => void exportSelectedJson()}
+            />
             <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '700', lineHeight: 18 }}>
               {t('settings.importExportDescription')}
             </Text>
@@ -2580,10 +2655,12 @@ function ThemeFamilyCard({
           borderWidth: active ? 2 : subtleBorderWidth,
           gap: 7,
           shadowColor: colors.shadowTint,
-          shadowOpacity: radioExpression.elevation === 'layered' ? 0.12 : radioExpression.elevation === 'low' || radioExpression.elevation === 'tonal' ? 0.05 : 0,
-          shadowRadius: radioExpression.elevation === 'layered' ? 12 : radioExpression.elevation === 'none' ? 0 : 7,
-          shadowOffset: { width: 0, height: radioExpression.elevation === 'none' ? 0 : 3 },
-          elevation: radioExpression.elevation === 'layered' ? 2 : radioExpression.elevation === 'none' ? 0 : 1,
+          // Selector options should read as one control group. Keep lift only
+          // on the selected option where it communicates state.
+          shadowOpacity: active && radioExpression.elevation === 'layered' ? 0.06 : 0,
+          shadowRadius: active && radioExpression.elevation === 'layered' ? 8 : 0,
+          shadowOffset: { width: 0, height: active && radioExpression.elevation === 'layered' ? 2 : 0 },
+          elevation: active && radioExpression.elevation === 'layered' ? 1 : 0,
         }}
       >
         <ThemeFamilyPreview themeId={themeId} colors={previewColors} />
@@ -2616,13 +2693,13 @@ function ThemeFamilyPreview({ themeId, colors }: { themeId: CanonicalThemeId; co
         position: 'relative',
         borderRadius: Math.min(colors.ui.radius.panel, glass ? 8 : 6),
         backgroundColor: colors.background.canvas,
-        borderWidth: 1,
+        borderWidth: StyleSheet.hairlineWidth,
         borderColor: colors.ui.semantic.chrome.border,
       }}
     >
       {editorial ? <View style={{ position: 'absolute', top: 0, right: 0, left: 0, height: 20, backgroundColor: colors.skyWash }} /> : null}
       {material ? <View style={{ position: 'absolute', top: 7, right: 7, bottom: 7, left: 7, borderRadius: 6, backgroundColor: colors.ui.semantic.surface.muted }} /> : null}
-      {glass ? <View style={{ position: 'absolute', top: 5, right: 5, bottom: 5, left: 5, borderRadius: 8, backgroundColor: colors.ui.semantic.surface.overlay, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border }} /> : null}
+      {glass ? <View style={{ position: 'absolute', top: 5, right: 5, bottom: 5, left: 5, borderRadius: 8, backgroundColor: colors.ui.semantic.surface.overlay, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.semantic.chrome.border }} /> : null}
       <View style={{ height: 15, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ width: editorial ? 26 : 20, height: 3, backgroundColor: colors.ui.section.title }} />
         <View style={{ flexDirection: 'row', gap: 3 }}>
@@ -2931,6 +3008,31 @@ function importResultMessage(
   if (!result.ok) return t('settings.importSkippedMessage')
   if (result.kind === 'mem0') return t('settings.importMem0DoneMessage', { count: result.memories })
   return t('settings.importDoneMessage')
+}
+
+function formatPortableRestorePreview(
+  preview: PortableDataRestorePreview,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  const categories = preview.selectedCategories
+    .map((category) => {
+      const option = PORTABLE_BACKUP_CATEGORY_OPTIONS.find((candidate) => candidate.id === category)
+      return option ? t(option.labelKey) : category
+    })
+    .join(', ')
+  const records = Object.values(preview.counts).reduce((sum, count) => sum + count, 0)
+  return t('settings.restorePreviewMessage', {
+    mode: preview.selection.mode === 'full'
+      ? t('settings.restorePreviewModeFull')
+      : t('settings.restorePreviewModeSelective'),
+    categories,
+    records,
+    conflicts: preview.conflicts.length,
+    dependencies: preview.missingDependencies.length,
+    credentials: preview.preserveSecureState
+      ? t('settings.restorePreviewCredentialsPreserved')
+      : t('settings.restorePreviewCredentialsReconnect'),
+  })
 }
 
 function VersionRow({ label, value }: { label: string; value: string }) {

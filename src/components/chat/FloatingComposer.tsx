@@ -194,10 +194,33 @@ export function FloatingComposer({
       ? t('chat.quickOutputReply')
       : t('chat.quickOutputAuto')
   const outputActive = requestedOutput !== 'auto'
-  const panelChromeSurface = isGlass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const panelChromeBorder = colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const chipSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const panelChromeSurface = canonicalThemeId === 'minimal'
+    ? 'transparent'
+    : isGlass
+      ? colors.ui.semantic.chrome.background
+      : canonicalThemeId === 'material'
+        ? colors.ui.semantic.surface.muted
+        : colors.ui.semantic.surface.base
+  const panelChromeBorder = canonicalThemeId === 'minimal'
+    ? 'transparent'
+    : isGlass
+      ? colors.ui.actionBar.itemBorder
+      : canonicalThemeId === 'material'
+        ? colors.ui.semantic.chrome.border
+        : 'transparent'
+  const chipSurface = canonicalThemeId === 'minimal'
+    ? 'transparent'
+    : isGlass
+      ? 'transparent'
+      : colors.ui.semantic.surface.muted
+  const subtleBorderWidth = canonicalThemeId === 'minimal' ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const panelRadius = canonicalThemeId === 'minimal'
+    ? 0
+    : canonicalThemeId === 'liquid-glass'
+      ? colors.ui.radius.panel
+      : canonicalThemeId === 'monet'
+        ? colors.ui.radius.controlMiddle
+        : colors.ui.radius.controlLarge
   const outputModeFixed = outputModeLocked === true
   const modelStatusLabel = provider
     ? resolveChatModelDisplayName(provider, conversation.model, modelDisplayAliases)
@@ -327,7 +350,7 @@ export function FloatingComposer({
   const renderComposerToolsPanel = () => (
     <View
       testID="chat-composer-tools-panel"
-      style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 8, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder, gap: 7 }}
+      style={{ marginBottom: 5, borderRadius: panelRadius, padding: 8, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder, gap: 7 }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         {showOutputControl ? renderOutputModeButton({ compact: true }) : null}
@@ -436,7 +459,7 @@ export function FloatingComposer({
           {toolsOpen ? renderComposerToolsPanel() : null}
           {promptOpen ? (
             <View
-              style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder }}
+              style={{ marginBottom: 5, borderRadius: panelRadius, padding: 10, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder }}
             >
               <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>{t('chat.systemPrompt')}</Text>
               <TextInput
@@ -449,7 +472,7 @@ export function FloatingComposer({
                 placeholderTextColor={colors.textTertiary}
                 accessibilityLabel={t('chat.systemPrompt')}
                 accessibilityHint={t('chat.systemPromptAccessibilityHint')}
-                style={{ minHeight: 58, maxHeight: 112, borderRadius: colors.ui.radius.field, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
+                style={{ minHeight: 58, maxHeight: 112, borderRadius: colors.ui.radius.field, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                 <IslePressable
@@ -470,7 +493,7 @@ export function FloatingComposer({
                   accessibilityLabel={t('common.done')}
                   accessibilityHint={t('chat.closeQuickPanelAccessibilityHint')}
                   hitSlop={QUICK_TOOL_HIT_SLOP}
-                  style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.ui.control.primaryBackground, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.control.primaryBorder }}
+                  style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.ui.control.primaryBackground, borderWidth: subtleBorderWidth, borderColor: colors.ui.control.primaryBorder }}
                 >
                   <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 11, fontWeight: '800' }}>{t('common.done')}</Text>
                 </IslePressable>
@@ -575,15 +598,20 @@ function ReasoningPickerPopover({
   onClose: () => void
   onSelect: (value: ReasoningPickerValue) => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
+
+  const popoverSurface = canonicalThemeId === 'minimal' ? colors.ui.semantic.surface.base : colors.material.sheet.surface
+  const popoverBorderWidth = canonicalThemeId === 'minimal' ? StyleSheet.hairlineWidth : canonicalThemeId === 'monet' ? 1 : StyleSheet.hairlineWidth
+  const popoverRadius = canonicalThemeId === 'minimal' ? 4 : canonicalThemeId === 'monet' ? colors.ui.radius.controlMiddle : canonicalThemeId === 'material' ? colors.ui.radius.panel : colors.ui.radius.modal
+  const popoverShadowOpacity = canonicalThemeId === 'liquid-glass' ? 0.08 : canonicalThemeId === 'material' ? 0.06 : 0
 
   return (
     <Modal transparent visible={visible} animationType={motion === 'full' ? 'fade' : 'none'} statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <Pressable accessible={false} accessibilityRole="none" onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]} />
       <View pointerEvents="box-none" style={{ position: 'absolute', top: Math.max(insets.top, 8) + 8, left: 12, right: 12, bottom: bottomOffset, alignItems: 'center', justifyContent: 'flex-end' }}>
-        <View accessibilityViewIsModal style={{ width: '100%', maxWidth: 420, maxHeight: '100%', overflow: 'hidden', borderRadius: 8, backgroundColor: colors.material.sheet.surface, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.material.sheet.border, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.16, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 10 }}>
+        <View accessibilityViewIsModal style={{ width: '100%', maxWidth: 420, maxHeight: '100%', overflow: 'hidden', borderRadius: popoverRadius, backgroundColor: popoverSurface, borderWidth: popoverBorderWidth, borderColor: colors.material.sheet.border, shadowColor: colors.ui.control.shadow, shadowOpacity: popoverShadowOpacity, shadowRadius: popoverShadowOpacity ? 10 : 0, shadowOffset: { width: 0, height: popoverShadowOpacity ? 3 : 0 }, elevation: popoverShadowOpacity ? 2 : 0 }}>
           <View style={{ minHeight: 48, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.material.sheet.border }}>
             <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800', includeFontPadding: false }}>
               {t('chat.quickReasoning')}

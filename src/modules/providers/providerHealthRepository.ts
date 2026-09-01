@@ -1,4 +1,4 @@
-import { providerHealthKey, type ProviderHealthRecord, type ProviderHealthStatus } from './providerHealth'
+import { providerHealthKey, type ProviderHealthFailureKind, type ProviderHealthFailureTrigger, type ProviderHealthRecord, type ProviderHealthStatus } from './providerHealth'
 
 export const PROVIDER_HEALTH_STORAGE_KEY = '@islemind/provider-health'
 export const PROVIDER_HEALTH_SNAPSHOT_VERSION = 1
@@ -32,6 +32,35 @@ export interface ProviderHealthRepository {
 const DEFAULT_MAX_RECORDS = 500
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const HEALTH_STATUSES = new Set<ProviderHealthStatus>(['unknown', 'healthy', 'degraded', 'cooldown', 'circuit-open'])
+const HEALTH_FAILURE_TRIGGERS = new Set<ProviderHealthFailureTrigger>([
+  'timeout',
+  'network_error',
+  'rate_limited',
+  'server_error',
+  'model_unavailable',
+  'overloaded',
+  'credential_unhealthy',
+  'payload_error',
+  'safety_refusal',
+  'stream_started',
+  'empty_response',
+  'unknown',
+])
+const HEALTH_FAILURE_KINDS = new Set<ProviderHealthFailureKind>([
+  'network_error',
+  'dns_error',
+  'tls_error',
+  'connection_timeout',
+  'request_timeout',
+  'auth_error',
+  'invalid_endpoint',
+  'model_not_found',
+  'rate_limit',
+  'client_error',
+  'server_error',
+  'provider_unavailable',
+  'unknown',
+])
 
 export function createProviderHealthRepository(storage: ProviderHealthStoragePort): ProviderHealthRepository {
   async function load(options: ProviderHealthSnapshotOptions = {}): Promise<ProviderHealthSnapshot> {
@@ -138,7 +167,12 @@ export function sanitizeProviderHealthRecord(value: unknown): ProviderHealthReco
     consecutiveFailures: nonNegativeInteger(record.consecutiveFailures),
     lastSuccessAtMs: finiteNumberOrUndefined(record.lastSuccessAtMs),
     lastFailureAtMs: finiteNumberOrUndefined(record.lastFailureAtMs),
-    lastFailureTrigger: record.lastFailureTrigger,
+    lastFailureTrigger: HEALTH_FAILURE_TRIGGERS.has(record.lastFailureTrigger as ProviderHealthFailureTrigger)
+      ? record.lastFailureTrigger as ProviderHealthFailureTrigger
+      : undefined,
+    lastFailureKind: HEALTH_FAILURE_KINDS.has(record.lastFailureKind as ProviderHealthFailureKind)
+      ? record.lastFailureKind as ProviderHealthFailureKind
+      : undefined,
     cooldownUntilMs: finiteNumberOrUndefined(record.cooldownUntilMs),
     circuitOpenUntilMs: finiteNumberOrUndefined(record.circuitOpenUntilMs),
     averageLatencyMs: finiteNumberOrUndefined(record.averageLatencyMs),

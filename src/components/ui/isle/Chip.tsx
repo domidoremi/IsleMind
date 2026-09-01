@@ -17,6 +17,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const ornamented = colors.ui.limeRoad && colors.ui.ornamented
+  const family = colors.design?.family ?? 'minimal'
   const toneToken = tone === 'danger'
     ? colors.ui.tone.danger
     : tone === 'mint'
@@ -36,7 +37,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
         ? colors.ui.semantic.surface.base
         : colors.ui.glass
           ? colors.ui.actionBar.itemBackground
-          : colors.ui.semantic.surface.muted
+          : family === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted
       : toneToken.background
   const borderColor = active
     ? colors.ui.control.primaryBorder
@@ -45,7 +46,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
         ? colors.material.stroke
         : colors.ui.glass
           ? colors.ui.actionBar.itemBorder
-          : colors.ui.semantic.chrome.border
+          : family === 'minimal' ? 'transparent' : colors.ui.semantic.chrome.border
       : toneToken.border
   const activeShadowOpacity = 0
 
@@ -64,7 +65,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
           paddingHorizontal: 11,
           alignItems: 'center',
           justifyContent: 'center',
-          borderWidth: ornamented ? 1 : StyleSheet.hairlineWidth,
+          borderWidth: active || tone !== 'default' ? StyleSheet.hairlineWidth : ornamented ? 1 : family === 'minimal' ? 0 : StyleSheet.hairlineWidth,
           shadowColor: colors.shadowTint,
           shadowOpacity: active ? activeShadowOpacity : 0,
           shadowRadius: 0,
@@ -74,7 +75,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
         style,
       ]}
     >
-      <Text style={{ color: foreground, fontSize: 12, lineHeight: 16, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
+      <Text style={{ color: foreground, fontSize: 12, lineHeight: 16, fontWeight: family === 'material' ? '500' : '600', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
     </MotiView>
   )
 }

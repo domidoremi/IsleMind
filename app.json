@@ -2,7 +2,7 @@
   "expo": {
     "name": "IsleMind",
     "slug": "islemind",
-    "version": "1.0.21",
+    "version": "1.0.22",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -16,7 +16,7 @@
     },
     "android": {
       "package": "com.islemind.app",
-      "versionCode": 121,
+      "versionCode": 122,
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES",
         "android.permission.POST_NOTIFICATIONS",
@@ -64,7 +64,9 @@
       "./plugins/android-trusted-web-fetch/withAndroidTrustedWebFetch",
       "./plugins/android-static-launch/withAndroidStaticLaunch",
       "expo-image",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-font",
+      "expo-sqlite"
     ],
     "extra": {
       "router": {},

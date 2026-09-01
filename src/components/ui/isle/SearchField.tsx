@@ -44,9 +44,9 @@ const SEARCH_METRICS: Readonly<Record<CanonicalThemeId, Readonly<{
   radius: number
 }>>> = Object.freeze({
   minimal: { minHeight: 44, horizontalPadding: 2, gap: 9, iconSize: 16, fontSize: 14, fontWeight: '500', radius: 0 },
-  monet: { minHeight: 50, horizontalPadding: 14, gap: 11, iconSize: 18, fontSize: 15, fontWeight: '600', radius: 18 },
-  material: { minHeight: 52, horizontalPadding: 16, gap: 12, iconSize: 18, fontSize: 15, fontWeight: '500', radius: 26 },
-  'liquid-glass': { minHeight: 50, horizontalPadding: 15, gap: 11, iconSize: 18, fontSize: 15, fontWeight: '600', radius: 25 },
+  monet: { minHeight: 48, horizontalPadding: 12, gap: 10, iconSize: 17, fontSize: 15, fontWeight: '600', radius: 14 },
+  material: { minHeight: 52, horizontalPadding: 16, gap: 12, iconSize: 18, fontSize: 15, fontWeight: '500', radius: 24 },
+  'liquid-glass': { minHeight: 50, horizontalPadding: 14, gap: 10, iconSize: 18, fontSize: 15, fontWeight: '600', radius: 24 },
 })
 
 export function IsleSearchField({
@@ -139,10 +139,10 @@ export function IsleSearchField({
           borderWidth: minimal ? 0 : expression.border === 'none' ? 0 : 1,
           borderBottomWidth: minimal ? (focused ? 2 : StyleSheet.hairlineWidth) : undefined,
           shadowColor: monet || glass ? colors.shadowTint : undefined,
-          shadowOpacity: focused ? (glass ? 0.16 : monet ? 0.1 : 0) : glass ? 0.08 : monet ? 0.04 : 0,
-          shadowRadius: focused ? (glass ? 16 : monet ? 12 : 0) : glass ? 9 : monet ? 6 : 0,
-          shadowOffset: { width: 0, height: glass ? 5 : 3 },
-          elevation: glass ? (focused ? 3 : 2) : monet && focused ? 1 : 0,
+          shadowOpacity: focused ? (glass ? 0.08 : monet ? 0.03 : 0) : glass ? 0.04 : 0,
+          shadowRadius: focused ? (glass ? 10 : monet ? 6 : 0) : glass ? 6 : 0,
+          shadowOffset: { width: 0, height: glass ? 3 : 2 },
+          elevation: glass ? (focused ? 1 : 0) : 0,
           overflow: 'visible',
         },
         webGlassStyle,
@@ -170,7 +170,7 @@ export function IsleSearchField({
           accessible={false}
           importantForAccessibility="no-hide-descendants"
           pointerEvents="none"
-          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: radius, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.12 }}
+          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: radius, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.06 }}
         />
       ) : null}
       {glass ? (
@@ -256,7 +256,7 @@ export function IsleSearchField({
                 borderRadius: minimal ? 2 : glass ? 14 : material ? 14 : 10,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: minimal ? 'transparent' : colors.ui.semantic.surface.muted,
+                 backgroundColor: minimal || monet || material ? 'transparent' : colors.ui.semantic.surface.muted,
                 borderWidth: glass ? StyleSheet.hairlineWidth : 0,
                 borderColor: glass ? colors.ui.actionBar.itemBorder : 'transparent',
               }}

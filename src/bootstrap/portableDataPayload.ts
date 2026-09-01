@@ -15,6 +15,7 @@ import { logStorageOperationFailure } from '@/services/runtimeHealthLog'
 import { conversationPersistence } from './conversationPersistence'
 import { portableKnowledgeSnapshot } from './knowledgePortableSnapshot'
 import { importPortableApplicationDataWithRecovery } from './portableImportRecovery'
+import { usagePortableSnapshotRepository } from './usageStatisticsRuntime'
 import {
   exportTavernActiveScopeLinks,
   exportTavernSnapshots,
@@ -42,6 +43,7 @@ export const portableDataPayloadRuntime = createPortableDataPayloadRuntime({
     exportActiveScopeLinks: exportTavernActiveScopeLinks,
     exportSnapshots: exportTavernSnapshots,
   },
+  usage: usagePortableSnapshotRepository,
   recovery: {
     importApplication: (plan, options = {}) =>
       importPortableApplicationDataWithRecovery(plan, { signal: options.signal }),

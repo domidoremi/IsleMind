@@ -9,7 +9,7 @@ import * as Haptics from 'expo-haptics'
 import { useRouter } from 'expo-router'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { Easing, runOnJS } from 'react-native-reanimated'
-import type { Message } from '@/types/chatContracts'
+import type { Message, MessageResponseLifecycle, ResponseLifecycleStage } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
@@ -22,13 +22,11 @@ import { containsDisplayFormulaBlock } from './messageContentSpecialFormatPolicy
 import {
   collectVisibleProcessTraces,
   formatDuration,
-  formatProcessTraceForDisplay,
   metadataSummaryForTrace,
   isAgentWorkflowEnvelopeTrace,
   normalizeTraceStatuses,
   selectActiveProcessTrace,
   traceActivityStageLabel,
-  traceStageLabel,
 } from './tracePresentation'
 import { MessageBubbleThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 import { hasWideMessageContent, resolveMessageBubbleMaxWidth, resolveMessageBubbleRowAlignment } from './messageBubbleLayout'
@@ -37,7 +35,8 @@ import { useMotionPreference, type MotionIntensity } from '@/hooks/useMotionPref
 import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage, getWorkflowRecoveryActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
 import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
 import { clampTraceText, redactSensitiveText, relocalizeUserFacingError } from '@/core'
-import { extractTaggedThinkingOutputText, sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
+import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
+import { responseLifecycleElapsedMs, safeResponseLifecycleSummary } from '@/services/responseLifecycle'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
 import { getAssistantThinkingLabel } from './messageActivityPreview'
@@ -163,36 +162,23 @@ function MessageBubbleComponent({
     [renderedDisplayText]
   )
   const streamingLayoutStep = isStreamingContent ? Math.floor(displayText.length / STREAMING_LAYOUT_TEXT_STEP) : 0
-  const taggedThinkingText = useMemo(() => extractTaggedThinkingOutputText(rawDisplayText), [rawDisplayText])
-  const taggedThinkingTrace = useMemo<ProcessTrace | undefined>(() => {
-    if (!taggedThinkingText) return undefined
-    const now = Date.now()
-    return {
-      id: `tagged-thinking-output:${message.id}`,
-      type: 'reasoning',
-      title: t('providerTrace.reasoningSummary'),
-      content: taggedThinkingText,
-      status: isStreamingContent ? 'running' : 'done',
-      startedAt: message.startedAt ?? now,
-      completedAt: isStreamingContent ? undefined : message.completedAt ?? now,
-    }
-  }, [isStreamingContent, message.completedAt, message.id, message.startedAt, taggedThinkingText, t])
+  // Never turn provider <think> output into a UI trace. The response body
+  // sanitizer removes it, while the lifecycle below only renders safe
+  // summaries or fixed, high-level work descriptions.
   const processTraces = useMemo(
-    () => {
-      const traces = collectVisibleProcessTraces(displayMessage)
-      if (!taggedThinkingTrace) return traces
-      if (traces.some((trace) => trace.type === 'reasoning' && trace.content?.includes(taggedThinkingText.slice(0, 48)))) {
-        return traces
-      }
-      return [...traces, taggedThinkingTrace]
-    },
-    [displayMessage.reasoning, displayMessage.retrievalTrace, displayMessage.toolCalls, taggedThinkingText, taggedThinkingTrace]
+    () => collectVisibleProcessTraces(displayMessage),
+    [displayMessage.reasoning, displayMessage.retrievalTrace, displayMessage.toolCalls]
   )
-  const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)
+  const responseLifecycle = !isUser ? message.responseLifecycle : undefined
+  const processCanExpand = !isUser && (
+    processTraces.some(hasExpandableThinkingContent) ||
+    hasExpandableLifecycleDetails(responseLifecycle)
+  )
   const hasVisibleAssistantReply = !isUser && Boolean(renderedDisplayText.trim())
   const processNeedsAttention = !isUser && processTraces.some((trace) =>
     shouldKeepBlockingProcessTraceVisible(trace, message.status)
   )
+  const writingResponse = isStreamingContent && Boolean(renderedDisplayText.trim())
   // Live, interrupted, or actionable work stays explicit. Once a successful
   // reply is visible, redundant terminal status disappears; meaningful model
   // thinking remains available through a compact disclosure instead.
@@ -202,6 +188,7 @@ function MessageBubbleComponent({
     message.status === 'error' ||
     message.status === 'cancelled' ||
     (message.status === 'done' && !hasVisibleAssistantReply) ||
+    Boolean(responseLifecycle && responseLifecycle.stage !== 'completed') ||
     processCanExpand ||
     processTraces.some(isActiveProcessTrace) ||
     processNeedsAttention
@@ -215,10 +202,9 @@ function MessageBubbleComponent({
   const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser && processWidthClaim && (
     processLayerVisible || hasWideMessageContent(renderedDisplayText)
   ))
-  const processTextLength = useMemo(() => processTraces.reduce((total, trace) => {
-    const display = formatProcessTraceForDisplay(trace)
-    return total + display.title.length + display.content.length
-  }, 0), [processTraces])
+  const processTextLength = useMemo(() => processTraces.reduce((total, trace) =>
+    total + trace.title.length + safeTraceWorkSummary(trace, t).length,
+  0), [processTraces, t])
   const processLayoutStep = isStreamingContent ? Math.floor(processTextLength / STREAMING_LAYOUT_TEXT_STEP) : 0
   const canCopyProcessTrace = !isUser && processTraces.length > 0 && !!onCopyProcessTrace
   const processMaxHeight = Math.min(230, viewportHeight * 0.34)
@@ -349,7 +335,7 @@ function MessageBubbleComponent({
       >
         <View
           style={{
-            alignSelf: resolveMessageBubbleRowAlignment(message.role),
+            alignSelf: displayFormulaLayout ? 'center' : resolveMessageBubbleRowAlignment(message.role),
             width: bubbleUsesAvailableWidth || isUser ? bubbleMaxWidth : undefined,
             maxWidth: '100%',
             minWidth: 0,
@@ -398,6 +384,7 @@ function MessageBubbleComponent({
             {processLayerVisible ? (
               <MessageProcessLayer
                 message={message}
+                lifecycle={responseLifecycle}
                 traces={processTraces}
                 assistantDisplayName={assistantDisplayName}
                 expanded={processExpanded}
@@ -406,7 +393,7 @@ function MessageBubbleComponent({
                 onToggle={toggleProcessLayer}
                 trailingActionSpace={false}
                 motion={motion}
-                writingResponse={isStreamingContent && !!renderedDisplayText.trim()}
+                writingResponse={writingResponse}
                 compactSettled={message.status === 'done' && hasVisibleAssistantReply && !processNeedsAttention}
               />
             ) : null}
@@ -766,6 +753,7 @@ function MessageBody({
         {displayText ? (
           <MessageBodyReveal active={isStreamingContent}>
             <MessageContent content={displayText} isUser={isUser} isStreaming={isStreamingContent} onLayoutChangeRequest={onLayoutChangeRequest} selectionEnabled={false} />
+            {!isUser && isStreamingContent ? <StreamingCursor motion={motion} /> : null}
           </MessageBodyReveal>
         ) : !isUser && !isStreamingContent && message.status !== 'cancelled' ? (
           <Text style={{ color: isUser ? userMessage.userForeground : colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
@@ -777,6 +765,29 @@ function MessageBody({
       </RenderGuard>
       {!isUser && message.citations?.length ? <MessageSourceLink conversationId={conversationId} message={message} /> : null}
     </>
+  )
+}
+
+function StreamingCursor({ motion }: { motion: MotionIntensity }) {
+  const { colors } = useAppTheme()
+  return (
+    <View
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      style={{ height: 17, marginTop: 2, justifyContent: 'center' }}
+    >
+      <MotiView
+        from={{ opacity: motion === 'full' ? 0.25 : 0.78 }}
+        animate={{ opacity: 0.9 }}
+        transition={{
+          loop: motion === 'full',
+          type: 'timing',
+          duration: motion === 'full' ? 650 : 1,
+          easing: Easing.inOut(Easing.sin),
+        }}
+        style={{ width: 2, height: 15, borderRadius: 1, backgroundColor: colors.ui.icon.accentForeground }}
+      />
+    </View>
   )
 }
 
@@ -825,6 +836,7 @@ function MessageSourceLink({ conversationId, message }: { conversationId: string
 
 function MessageProcessLayer({
   message,
+  lifecycle,
   traces,
   assistantDisplayName,
   expanded,
@@ -837,6 +849,7 @@ function MessageProcessLayer({
   compactSettled,
 }: {
   message: Message
+  lifecycle?: MessageResponseLifecycle
   traces: ProcessTrace[]
   assistantDisplayName?: string
   expanded: boolean
@@ -853,21 +866,35 @@ function MessageProcessLayer({
   const processGrammar = processExpression.motion
   const actionChrome = resolveMessageActionChrome(colors, canonicalThemeId === 'liquid-glass')
   const { t } = useTranslation()
-  const active = message.status === 'streaming' || message.status === 'sending'
-  const processStatusLabel = processLayerLabel(message, traces, t, writingResponse, assistantDisplayName)
+  const lifecycleStage = lifecycle?.stage
+  const active = lifecycleStage
+    ? !isTerminalLifecycleStage(lifecycleStage)
+    : message.status === 'streaming' || message.status === 'sending'
+  const streamingStatusPhase = active
+    ? resolveStreamingStatusPhase(message, lifecycle, traces, writingResponse)
+    : undefined
+  const processStatusLabel = processLayerLabel(message, lifecycle, traces, t, writingResponse, assistantDisplayName, streamingStatusPhase)
+  const thinkingPreviewText = useMemo(
+    () => (canExpand && !expanded ? resolveThinkingPreviewText(lifecycle, traces, t) : ''),
+    [canExpand, expanded, lifecycle, t, traces]
+  )
   if (compactSettled && canExpand) {
     return (
       <SettledThinkingDisclosure
         message={message}
+        lifecycle={lifecycle}
         traces={traces}
         expanded={expanded}
         maxHeight={maxHeight}
         onToggle={onToggle}
         motion={motion}
+        previewText={thinkingPreviewText}
       />
     )
   }
-  const emphasizedStatus = message.status === 'cancelled' || traces.some(isAgentWorkflowWaitingTrace)
+  const isError = lifecycleStage === 'error' || message.status === 'error'
+  const isCancelled = lifecycleStage === 'cancelled' || message.status === 'cancelled'
+  const emphasizedStatus = isCancelled || traces.some(isAgentWorkflowWaitingTrace)
   const processAccessibilityLabel = canExpand
     ? expanded
       ? t('messageBubble.collapseThinking')
@@ -880,25 +907,25 @@ function MessageProcessLayer({
     : active
       ? { busy: true }
       : undefined
-  const processStatusIcon: AppIconName = message.status === 'error'
+  const processStatusIcon: AppIconName = isError
     ? 'warning'
-    : message.status === 'cancelled'
+    : isCancelled
       ? 'stop'
       : active
         ? 'spark'
         : 'check'
   const tone =
-    message.status === 'error'
+    isError
       ? colors.ui.tone.danger.foreground
-        : message.status === 'cancelled'
+        : isCancelled
           ? colors.ui.tone.warning.foreground
           : active
             ? colors.ui.icon.accentForeground
             : colors.textTertiary
   const statusBackground =
-    message.status === 'error'
+    isError
       ? colors.ui.tone.danger.background
-      : message.status === 'cancelled'
+      : isCancelled
         ? colors.ui.tone.warning.background
         : active
           ? processGrammar === 'precision'
@@ -912,9 +939,9 @@ function MessageProcessLayer({
               ? colors.ui.semantic.surface.raised
               : actionChrome.itemSurface
   const statusBorder =
-    message.status === 'error'
+    isError
       ? colors.ui.tone.danger.border
-      : message.status === 'cancelled'
+      : isCancelled
         ? colors.ui.tone.warning.border
       : active
         ? processGrammar === 'precision'
@@ -975,12 +1002,29 @@ function MessageProcessLayer({
         {processGrammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: active ? 0.06 : 0.025 }} /> : null}
         {processGrammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 12, right: 12, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.62 }} /> : null}
         <View style={{ flex: 1, flexShrink: 1, minWidth: 0 }}>
-          <View
-            key={writingResponse ? 'writing' : active ? 'active-process' : 'settled-process'}
+          <MotiView
+            key={streamingStatusPhase ?? 'settled-process'}
+            from={motion === 'full' ? { opacity: 0, translateY: 2 } : undefined}
+            animate={{ opacity: 1, translateY: 0 }}
+            transition={{
+              type: 'timing',
+              duration: motion === 'full' ? (processGrammar === 'precision' ? 88 : processGrammar === 'organic' ? 220 : processGrammar === 'material' ? 160 : 200) : 1,
+              easing: processGrammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.out(Easing.cubic),
+            }}
             style={{ flexDirection: 'row', alignItems: 'center', minHeight: 20 }}
           >
-            <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} icon={processStatusIcon} motion={motion} grammar={processGrammar} />
-          </View>
+            <AnimatedProcessStatusText
+              active={active}
+              label={processStatusLabel}
+              tone={tone}
+              icon={processStatusIcon}
+              motion={motion}
+              grammar={processGrammar}
+              statusMotionPhase={streamingStatusPhase}
+              stageStartedAt={active ? lifecycle?.stageStartedAt ?? findActiveReasoningStartedAt(traces) : undefined}
+              previewText={thinkingPreviewText}
+            />
+          </MotiView>
         </View>
         {canExpand ? (
           <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? (processGrammar === 'precision' ? 88 : processGrammar === 'organic' ? 220 : processGrammar === 'material' ? 160 : 200) : 1, easing: processGrammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.out(Easing.cubic) }}>
@@ -988,29 +1032,33 @@ function MessageProcessLayer({
           </MotiView>
         ) : null}
       </IslePressable>
-      {expanded && canExpand ? <MessageProcessPanel message={message} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
+      {expanded && canExpand ? <MessageProcessPanel message={message} lifecycle={lifecycle} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
     </View>
   )
 }
 
 function SettledThinkingDisclosure({
   message,
+  lifecycle,
   traces,
   expanded,
   maxHeight,
   onToggle,
   motion,
+  previewText,
 }: {
   message: Message
+  lifecycle?: MessageResponseLifecycle
   traces: ProcessTrace[]
   expanded: boolean
   maxHeight: number
   onToggle: () => void
   motion: MotionIntensity
+  previewText?: string
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
-  const label = settledThinkingDisclosureLabel(message, traces, t)
+  const label = settledThinkingDisclosureLabel(message, lifecycle, traces, t)
   const disclosureExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
   const grammar = disclosureExpression.motion
   const disclosureBackground = grammar === 'precision'
@@ -1066,29 +1114,63 @@ function SettledThinkingDisclosure({
         <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>
           {label}
         </Text>
+        {previewText ? (
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            accessible={false}
+            style={{ flexShrink: 2, minWidth: 0, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '500', opacity: 0.86 }}
+          >
+            {previewText}
+          </Text>
+        ) : null}
         <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? (grammar === 'precision' ? 88 : grammar === 'organic' ? 220 : grammar === 'material' ? 160 : 200) : 1, easing: grammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.out(Easing.cubic) }}>
           <AppIcon name="back-next" color={colors.textTertiary} size={12} strokeWidth={appIconStroke.strong} />
         </MotiView>
       </IslePressable>
-      {expanded ? <MessageProcessPanel message={message} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
+      {expanded ? <MessageProcessPanel message={message} lifecycle={lifecycle} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
     </View>
   )
 }
 
-function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar }: { active: boolean; label: string; tone: string; icon: AppIconName; motion: MotionIntensity; grammar: ThemeMotionGrammar }) {
+function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar, statusMotionPhase, stageStartedAt, previewText }: { active: boolean; label: string; tone: string; icon: AppIconName; motion: MotionIntensity; grammar: ThemeMotionGrammar; statusMotionPhase?: StreamingStatusPhase; stageStartedAt?: number; previewText?: string }) {
+  const { colors } = useAppTheme()
   const [dotCount, setDotCount] = useState(1)
-  const shimmer = active && motion === 'full' && grammar !== 'precision'
+  // Reasoning keeps the full existing status motion with a live elapsed counter;
+  // generating drops the shimmer for a lighter dots-only cadence, and a settled
+  // thinking stage goes fully static instead of looping.
+  const phaseShimmerEnabled = !statusMotionPhase ||
+    statusMotionPhase === 'thinking' ||
+    statusMotionPhase === 'active-stage' ||
+    statusMotionPhase === 'preparing' ||
+    statusMotionPhase === 'sending' ||
+    statusMotionPhase === 'waiting' ||
+    statusMotionPhase === 'working' ||
+    statusMotionPhase === 'tool_calling'
+  const shimmer = active && motion === 'full' && grammar !== 'precision' && phaseShimmerEnabled
+  const dotsEnabled = active && (
+    !statusMotionPhase ||
+    statusMotionPhase === 'generating' ||
+    statusMotionPhase === 'active-stage' ||
+    statusMotionPhase === 'preparing' ||
+    statusMotionPhase === 'sending' ||
+    statusMotionPhase === 'waiting' ||
+    statusMotionPhase === 'working' ||
+    statusMotionPhase === 'tool_calling' ||
+    statusMotionPhase === 'tool_result' ||
+    (statusMotionPhase === 'thinking' && stageStartedAt === undefined)
+  )
   const baseLabel = label.replace(/[.\u2026]+$/u, '').trimEnd()
-  const displayLabel = active
+  const displayLabel = dotsEnabled
     ? `${baseLabel}${'.'.repeat(motion === 'full' ? dotCount : 3)}`
-    : label
+    : statusMotionPhase === 'thinking' ? baseLabel : label
   const cycleMs = grammar === 'organic' ? 520 : grammar === 'fluid' ? 420 : 360
   const shimmerDuration = grammar === 'organic' ? 1800 : grammar === 'fluid' ? 1380 : 980
   const shimmerWidth = grammar === 'organic' ? 42 : grammar === 'fluid' ? 30 : 24
   const shimmerOpacity = grammar === 'organic' ? 0.1 : grammar === 'fluid' ? 0.18 : 0.12
 
   useEffect(() => {
-    if (!active || motion !== 'full') {
+    if (!dotsEnabled || motion !== 'full') {
       setDotCount(3)
       return
     }
@@ -1097,7 +1179,7 @@ function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar 
       setDotCount((current) => current >= 3 ? 1 : current + 1)
     }, cycleMs)
     return () => clearInterval(timer)
-  }, [active, cycleMs, motion])
+  }, [cycleMs, dotsEnabled, motion])
 
   return (
     <View testID={`message-thinking-status-${grammar}`} style={{ flex: 1, flexShrink: 1, minWidth: 0, minHeight: 16, justifyContent: 'center', overflow: 'hidden' }}>
@@ -1114,6 +1196,17 @@ function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar 
         >
           {displayLabel}
         </Text>
+        {stageStartedAt !== undefined ? <LifecycleElapsedText startedAt={stageStartedAt} /> : null}
+        {previewText ? (
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            accessible={false}
+            style={{ flexShrink: 2, minWidth: 0, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '500', opacity: 0.86 }}
+          >
+            {previewText}
+          </Text>
+        ) : null}
       </View>
       <MotiView
         accessible={false}
@@ -1128,13 +1221,47 @@ function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar 
   )
 }
 
-function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: Message; traces: ProcessTrace[]; maxHeight: number; motion: MotionIntensity }) {
+function LifecycleElapsedText({ startedAt }: { startedAt: number }) {
+  const { colors } = useAppTheme()
+  // The lifecycle timestamp is durable. This interval only refreshes its
+  // elapsed projection, so rerenders never invent or reset work time.
+  const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startedAt))
+
+  useEffect(() => {
+    setElapsedMs(Math.max(0, Date.now() - startedAt))
+    const timer = setInterval(() => {
+      setElapsedMs(Math.max(0, Date.now() - startedAt))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [startedAt])
+
+  return (
+    <Text
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '600', fontVariant: ['tabular-nums'], minWidth: 44 }}
+    >
+      {`· ${formatThinkingElapsed(elapsedMs)}`}
+    </Text>
+  )
+}
+
+function formatThinkingElapsed(ms: number): string {
+  if (ms < 60000) {
+    return `${Math.floor(ms / 1000)}s`
+  }
+  return formatDuration(ms)
+}
+
+function MessageProcessPanel({ message, lifecycle, traces, maxHeight, motion }: { message: Message; lifecycle?: MessageResponseLifecycle; traces: ProcessTrace[]; maxHeight: number; motion: MotionIntensity }) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const scrollRef = useRef<ScrollView>(null)
-  const thinkingSummaries = collectThinkingSummaries(traces)
+  const thinkingSummaries = collectThinkingSummaries(lifecycle, traces, t)
   const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
-  const running = message.status === 'streaming' || message.status === 'sending'
+  const running = lifecycle
+    ? !isTerminalLifecycleStage(lifecycle.stage)
+    : message.status === 'streaming' || message.status === 'sending'
   const panelExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
   const grammar = panelExpression.motion
   const panelBackground = grammar === 'precision'
@@ -1189,7 +1316,7 @@ function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: 
         </Text>
         {running ? (
           <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>
-            {t('chat.generating', { defaultValue: '生成中' })}
+            {lifecycle ? lifecycleStageLabel(lifecycle.stage, t) : t('chat.generating', { defaultValue: '生成中' })}
           </Text>
         ) : null}
       </View>
@@ -1227,34 +1354,64 @@ function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: 
   )
 }
 
+type StreamingStatusPhase = ResponseLifecycleStage | 'thinking-done' | 'active-stage'
+
+function resolveStreamingStatusPhase(
+  message: Message,
+  lifecycle: MessageResponseLifecycle | undefined,
+  traces: ProcessTrace[],
+  writingResponse: boolean,
+): StreamingStatusPhase {
+  if (lifecycle) return lifecycle.stage
+  const activeTrace = selectActiveProcessTrace(traces, message.status)
+  if (activeTrace && !isGenericModelRequestTrace(activeTrace) && activeTrace.type !== 'reasoning') return 'active-stage'
+  if (writingResponse) return 'generating'
+  if (activeTrace?.type === 'reasoning') return 'thinking'
+  if (selectLatestCompletedProcessTrace(traces, message.status)) return 'generating'
+  if (findLatestCompletedReasoningTrace(traces, message.status)) return 'thinking-done'
+  return 'preparing'
+}
+
 function processLayerLabel(
   message: Message,
+  lifecycle: MessageResponseLifecycle | undefined,
   traces: ProcessTrace[],
   t: TFunction,
   writingResponse = false,
   assistantDisplayName?: string,
+  streamingPhase?: StreamingStatusPhase,
 ): string {
   const waitingLabel = waitingProcessLayerLabel(traces, t)
   if (waitingLabel) return withProcessStageLabel(waitingLabel, traces, message.status)
 
+  if (lifecycle) return lifecycleProcessLayerLabel(lifecycle, traces, t)
+
   if (message.status === 'streaming' || message.status === 'sending') {
+    const phase = streamingPhase ?? resolveStreamingStatusPhase(message, undefined, traces, writingResponse)
     const activeTrace = selectActiveProcessTrace(traces, message.status)
-    if (activeTrace && !isGenericModelRequestTrace(activeTrace)) return activeProcessLayerLabel(activeTrace, t)
-    if (writingResponse) {
-      return t('messageBubble.responseStreaming', {
-        defaultValue: '正在生成回复',
-      })
+    switch (phase) {
+      case 'active-stage':
+        return activeTrace ? activeProcessLayerLabel(activeTrace, t) : thinkingProgressLabel(t, 'base')
+      case 'thinking':
+        return t('chat.thinking', { defaultValue: '思考中...' })
+      case 'thinking-done': {
+        const completedTrace = findLatestCompletedReasoningTrace(traces, message.status)
+        const durationMs = completedTrace ? traceDurationMs(completedTrace) : undefined
+        const label = translateMessageBubbleLabel(t, 'messageBubble.thinkingCompleted', '思考完成')
+        return durationMs ? `${label} · ${formatDuration(durationMs)}` : label
+      }
+      case 'generating':
+        return t('messageBubble.responseStreaming', {
+          defaultValue: '生成回答中',
+        })
+      case 'preparing':
+        if (activeTrace) return activeProcessLayerLabel(activeTrace, t)
+        return assistantDisplayName
+          ? getAssistantThinkingLabel(assistantDisplayName, t)
+          : thinkingProgressLabel(t, 'base')
+      default:
+        return thinkingProgressLabel(t, 'base')
     }
-    const completedTrace = selectLatestCompletedProcessTrace(traces, message.status)
-    if (completedTrace) {
-      return t('messageBubble.responseStreaming', {
-        defaultValue: '正在生成回复',
-      })
-    }
-    if (activeTrace) return activeProcessLayerLabel(activeTrace, t)
-    return assistantDisplayName
-      ? getAssistantThinkingLabel(assistantDisplayName, t)
-      : thinkingProgressLabel(t, 'base')
   }
 
   return (() => {
@@ -1267,6 +1424,165 @@ function processLayerLabel(
         return thinkingDoneLabel(message, traces, t)
     }
   })()
+}
+
+function lifecycleProcessLayerLabel(
+  lifecycle: MessageResponseLifecycle,
+  traces: ProcessTrace[],
+  t: TFunction,
+): string {
+  if (lifecycle.stage !== 'tool_calling' && lifecycle.stage !== 'tool_result') {
+    return lifecycleStageLabel(lifecycle.stage, t)
+  }
+  const trace = findLifecycleStageTrace(lifecycle, traces)
+  if (!trace || trace.type !== 'tool') return lifecycleStageLabel(lifecycle.stage, t)
+  const fallback = lifecycleStageLabel(lifecycle.stage, t)
+  const tool = processTraceOperationName(trace, '')
+  if (!tool) return fallback
+  return lifecycle.stage === 'tool_calling'
+    ? t('messageBubble.runningTool', {
+        tool,
+        defaultValue: `正在调用 ${tool}`,
+      })
+    : t('messageBubble.toolResultNamed', {
+        tool,
+        defaultValue: `${tool} 的结果已返回`,
+      })
+}
+
+function findLifecycleStageTrace(
+  lifecycle: MessageResponseLifecycle,
+  traces: ProcessTrace[],
+): ProcessTrace | undefined {
+  for (let index = lifecycle.history.length - 1; index >= 0; index -= 1) {
+    const entry = lifecycle.history[index]
+    if (entry.stage !== lifecycle.stage || !entry.traceId) continue
+    return traces.find((trace) => trace.id === entry.traceId)
+  }
+  return undefined
+}
+
+function lifecycleStageLabel(stage: ResponseLifecycleStage, t: TFunction): string {
+  switch (stage) {
+    case 'preparing':
+      return t('messageBubble.lifecycle.preparing', { defaultValue: '正在准备回复' })
+    case 'sending':
+      return t('messageBubble.lifecycle.sending', { defaultValue: '正在发送请求' })
+    case 'waiting':
+      return t('messageBubble.lifecycle.waiting', { defaultValue: '正在等待模型响应' })
+    case 'thinking':
+      return t('messageBubble.lifecycle.thinking', { defaultValue: '正在思考' })
+    case 'working':
+      return t('messageBubble.lifecycle.working', { defaultValue: '正在处理相关信息' })
+    case 'tool_calling':
+      return t('messageBubble.lifecycle.toolCalling', { defaultValue: '正在调用工具' })
+    case 'tool_result':
+      return t('messageBubble.lifecycle.toolResult', { defaultValue: '工具结果已返回' })
+    case 'generating':
+      return t('messageBubble.lifecycle.generating', { defaultValue: '正在生成回答' })
+    case 'completed':
+      return t('messageBubble.completed', { defaultValue: '已完成' })
+    case 'error':
+      return t('messageBubble.failed', { defaultValue: '失败' })
+    case 'cancelled':
+      return t('messageBubble.stopped', { defaultValue: '已停止' })
+  }
+}
+
+function isTerminalLifecycleStage(stage: ResponseLifecycleStage): boolean {
+  return stage === 'completed' || stage === 'error' || stage === 'cancelled'
+}
+
+function findLatestCompletedReasoningTrace(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace | undefined {
+  const normalized = normalizeTraceStatuses(traces, messageStatus)
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    const trace = normalized[index]
+    if (trace.type !== 'reasoning' || trace.status !== 'done') continue
+    if (!hasDisplayableThinkingContent(trace)) continue
+    return trace
+  }
+  return undefined
+}
+
+function findActiveReasoningStartedAt(traces: ProcessTrace[]): number | undefined {
+  for (let index = traces.length - 1; index >= 0; index -= 1) {
+    const trace = traces[index]
+    if (trace.type === 'reasoning' && (trace.status === 'running' || trace.status === 'pending')) {
+      return trace.startedAt
+    }
+  }
+  return undefined
+}
+
+function resolveThinkingPreviewText(
+  lifecycle: MessageResponseLifecycle | undefined,
+  traces: ProcessTrace[],
+  t: TFunction,
+): string {
+  const latest = lifecycle?.history[lifecycle.history.length - 1]
+  const explicitSummary = safeResponseLifecycleSummary(latest?.summary)
+  if (explicitSummary) return explicitSummary
+  if (lifecycle) return lifecycleStageSummary(lifecycle.stage, t)
+  const activeTrace = selectActiveProcessTrace(traces, 'streaming')
+  return activeTrace ? safeTraceWorkSummary(activeTrace, t) : ''
+}
+
+function lifecycleStageSummary(stage: ResponseLifecycleStage, t: TFunction): string {
+  switch (stage) {
+    case 'preparing':
+    case 'sending':
+    case 'waiting':
+      return t('messageBubble.lifecycleSummary.preparing', { defaultValue: '正在确认请求状态' })
+    case 'thinking':
+      return t('messageBubble.lifecycleSummary.thinking', { defaultValue: '正在分析问题中的关键约束' })
+    case 'working':
+      return t('messageBubble.lifecycleSummary.working', { defaultValue: '正在检查相关信息' })
+    case 'tool_calling':
+      return t('messageBubble.lifecycleSummary.toolCalling', { defaultValue: '正在执行必要的工具操作' })
+    case 'tool_result':
+      return t('messageBubble.lifecycleSummary.toolResult', { defaultValue: '正在核对工具返回的结果' })
+    case 'generating':
+      return t('messageBubble.lifecycleSummary.generating', { defaultValue: '正在组织最终答案' })
+    case 'completed':
+      return t('messageBubble.lifecycleSummary.completed', { defaultValue: '回复已完成' })
+    case 'error':
+      return t('messageBubble.lifecycleSummary.error', { defaultValue: '本次回复未能完成' })
+    case 'cancelled':
+      return t('messageBubble.lifecycleSummary.cancelled', { defaultValue: '已停止本次回复' })
+  }
+}
+
+function safeTraceWorkSummary(trace: ProcessTrace, t: TFunction): string {
+  const metadata = trace.metadata ?? {}
+  const explicitSummary = safeResponseLifecycleSummary(
+    typeof metadata.safeSummary === 'string'
+      ? metadata.safeSummary
+      : typeof metadata.displaySummary === 'string'
+        ? metadata.displaySummary
+        : undefined,
+  )
+  if (explicitSummary) return explicitSummary
+  if (trace.type === 'tool') {
+    return trace.status === 'done'
+      ? lifecycleStageSummary('tool_result', t)
+      : lifecycleStageSummary('tool_calling', t)
+  }
+  if (trace.type === 'reasoning') return lifecycleStageSummary('thinking', t)
+  if (trace.type === 'retrieval' || trace.type === 'search' || trace.type === 'memory' || trace.type === 'knowledge') {
+    return lifecycleStageSummary('working', t)
+  }
+  return lifecycleStageSummary('working', t)
+}
+
+function hasExpandableLifecycleDetails(lifecycle: MessageResponseLifecycle | undefined): boolean {
+  if (!lifecycle) return false
+  const latest = lifecycle.history[lifecycle.history.length - 1]
+  return lifecycle.history.length > 1 ||
+    Boolean(safeResponseLifecycleSummary(latest?.summary)) ||
+    lifecycle.stage === 'thinking' ||
+    lifecycle.stage === 'working' ||
+    lifecycle.stage === 'tool_calling' ||
+    lifecycle.stage === 'tool_result'
 }
 
 function activeProcessLayerLabel(trace: ProcessTrace, t: TFunction): string {
@@ -1302,9 +1618,16 @@ function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunctio
   return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
 }
 
-function settledThinkingDisclosureLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
+function settledThinkingDisclosureLabel(
+  message: Message,
+  lifecycle: MessageResponseLifecycle | undefined,
+  traces: ProcessTrace[],
+  t: TFunction,
+): string {
   const title = t('messageBubble.thinkingDetails', { defaultValue: '思考摘要' })
-  const durationMs = resolveThinkingDurationMs(message, traces)
+  const durationMs = lifecycle
+    ? responseLifecycleElapsedMs(lifecycle)
+    : resolveThinkingDurationMs(message, traces)
   return durationMs ? `${title} · ${formatDuration(durationMs)}` : title
 }
 
@@ -1479,14 +1802,49 @@ function pendingActionReason(value: unknown): string | undefined {
   return typeof reason === 'string' ? reason : undefined
 }
 
-function collectThinkingSummaries(traces: ProcessTrace[]): string[] {
+function collectThinkingSummaries(
+  lifecycle: MessageResponseLifecycle | undefined,
+  traces: ProcessTrace[],
+  t: TFunction,
+): string[] {
   const seen = new Set<string>()
   const summaries: string[] = []
+  const tracedIds = new Set<string>()
+  for (const entry of lifecycle?.history.slice(-8) ?? []) {
+    if (entry.traceId) tracedIds.add(entry.traceId)
+    const detail = safeResponseLifecycleSummary(entry.summary)
+      ?? lifecycleStageSummary(entry.stage, t)
+    const durationMs = entry.completedAt === undefined
+      ? undefined
+      : Math.max(0, entry.completedAt - entry.startedAt)
+    const stage = lifecycleStageLabel(entry.stage, t)
+    const summary = [
+      stage,
+      detail === stage ? '' : detail,
+      durationMs && durationMs > 0 ? formatDuration(durationMs) : '',
+    ].filter(Boolean).join(' · ')
+    const key = summary.replace(/\s+/g, ' ').trim()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    summaries.push(summary)
+  }
+  // A lifecycle entry is the authoritative, timestamped projection of a
+  // provider event. Do not append its backing traces afterward: a provider
+  // may publish its terminal trace asynchronously, which would otherwise
+  // make the compact timeline look duplicated or out of order.
+  if (lifecycle?.history.length) return summaries
+
   for (const trace of traces) {
-    if (!hasDisplayableThinkingContent(trace)) continue
-    const content = formatProcessTraceForDisplay(trace, 720).content
-    if (!content) continue
-    const summary = `${traceStageLabel(trace)} · ${content}`
+    if (tracedIds.has(trace.id)) continue
+    if (trace.type === 'system' && isGenericModelRequestTrace(trace)) continue
+    const stage = trace.type === 'tool' && trace.status === 'done'
+      ? lifecycleStageLabel('tool_result', t)
+      : trace.type === 'tool'
+        ? lifecycleStageLabel('tool_calling', t)
+        : trace.type === 'reasoning'
+          ? lifecycleStageLabel('thinking', t)
+          : lifecycleStageLabel('working', t)
+    const summary = `${stage} · ${safeTraceWorkSummary(trace, t)}`
     const key = summary.replace(/\s+/g, ' ').trim()
     if (!key || seen.has(key)) continue
     seen.add(key)
@@ -1501,8 +1859,12 @@ function processTraceOperationName(trace: ProcessTrace, fallback: string): strin
     metadata.toolName,
     metadata.providerToolName,
     metadata.failedToolName,
-    metadata.source,
+    metadata.requestedTool,
+    metadata.tool,
+    metadata.toolId,
+    metadata.operationId,
     trace.title,
+    metadata.source,
     fallback,
   ]
   for (const candidate of candidates) {
@@ -2180,6 +2542,7 @@ const areMessagesEqual = (
   if (prevMsg.responseText !== nextMsg.responseText) return false
   if (prevMsg.status !== nextMsg.status) return false
   if (prevMsg.timestamp !== nextMsg.timestamp) return false
+  if (responseLifecycleSignature(prevMsg.responseLifecycle) !== responseLifecycleSignature(nextMsg.responseLifecycle)) return false
 
   // 附件和 traces 长度比较
   if (prevMsg.attachments?.length !== nextMsg.attachments?.length) return false
@@ -2200,6 +2563,11 @@ const areMessagesEqual = (
 
 function processTraceSignature(message: Message): string {
   return createProcessTraceSignature(collectVisibleProcessTraces(message))
+}
+
+function responseLifecycleSignature(lifecycle: MessageResponseLifecycle | undefined): string {
+  if (!lifecycle) return ''
+  return JSON.stringify(lifecycle)
 }
 
 /**
