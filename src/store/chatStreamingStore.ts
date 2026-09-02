@@ -8,7 +8,7 @@ import {
   lifecycleStageForTrace,
   responseLifecycleTraceTimestamp,
   safeResponseLifecycleTraceSummary,
-} from '@/services/responseLifecycle'
+} from '@/modules/conversations'
 
 type StreamingPersistHandle = ReturnType<typeof setTimeout>
 

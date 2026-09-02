@@ -26,6 +26,7 @@ import {
   type TavernSnapshot,
 } from '@/modules/workspaces'
 import type { PortableKnowledgeSnapshot } from '@/modules/knowledge'
+import { normalizeResponseLifecycle } from '@/modules/conversations'
 import {
   redactSensitiveText,
   sanitizeTraceMetadata,
@@ -59,7 +60,6 @@ import {
 } from '@/utils/mem0Interop'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
 import { sanitizeSkillForBackup } from '@/utils/skillSafety'
-import { normalizeResponseLifecycle } from '@/services/responseLifecycle'
 import type {
   PortableBackupCategory,
   PortableBackupSelection,
