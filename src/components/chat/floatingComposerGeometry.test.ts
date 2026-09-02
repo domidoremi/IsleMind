@@ -1,13 +1,17 @@
 import {
   COMPOSER_TOOLBAR_BOTTOM_PADDING,
   resolveFloatingComposerGeometry,
+  resolveFloatingComposerWidth,
   resolveModelMenuPlacement,
 } from './floatingComposerGeometry'
+
+const READING_COLUMN_MAX_WIDTH = 880
 
 const base = {
   viewportWidth: 393,
   viewportHeight: 852,
   horizontalPadding: 12,
+  readingColumnMaxWidth: READING_COLUMN_MAX_WIDTH,
   safeAreaTop: 47,
   safeAreaBottom: 34,
   keyboardLift: 0,
@@ -105,6 +109,40 @@ describe('resolveFloatingComposerGeometry', () => {
     })
     expect(geometry.sideControlTop + geometry.sideControlSize / 2)
       .toBe(geometry.messageInputHeight / 2)
+  })
+})
+
+describe('resolveFloatingComposerWidth', () => {
+  it('keeps a wide window inside the reading column and centers the remainder', () => {
+    const wide = resolveFloatingComposerGeometry({
+      ...base,
+      viewportWidth: 1280,
+      sizeMode: 'compact',
+      activityState: 'focused',
+    })
+    expect(wide.overlayWidth).toBe(READING_COLUMN_MAX_WIDTH - base.horizontalPadding * 2)
+    expect(wide.horizontalInset).toBeCloseTo((1280 - wide.overlayWidth) / 2)
+  })
+
+  it('leaves viewports narrower than the column untouched', () => {
+    expect(resolveFloatingComposerWidth({
+      viewportWidth: 393,
+      horizontalPadding: 12,
+      readingColumnMaxWidth: READING_COLUMN_MAX_WIDTH,
+      sizeMode: 'review',
+      activityState: 'idle',
+    })).toBe(393 - 24)
+  })
+
+  it('tracks the column width it is given instead of a private constant', () => {
+    const narrowColumn = resolveFloatingComposerWidth({
+      viewportWidth: 1280,
+      horizontalPadding: 12,
+      readingColumnMaxWidth: 640,
+      sizeMode: 'review',
+      activityState: 'idle',
+    })
+    expect(narrowColumn).toBe(640 - 24)
   })
 })
 

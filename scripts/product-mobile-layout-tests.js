@@ -21,6 +21,7 @@ const {
   PRODUCT_MOBILE_CONVERSATION_NAVIGATION_BREAKPOINT,
   PRODUCT_MOBILE_CONVERSATION_NAVIGATION_DOCK_CLEARANCE,
   PRODUCT_MOBILE_LAYOUT_AUDIT_VIEWPORTS,
+  PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH,
   PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS,
   resolveProductMobileChatConfigurationSheetLayout,
   resolveProductMobileChatSetupLayout,
@@ -385,6 +386,7 @@ function assertSourceIntegration() {
   const chatActiveMessageListSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageList.tsx'), 'utf8')
   const chatActiveMessageFeedSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageFeed.tsx'), 'utf8')
   const chatActiveMessageVirtualListSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageVirtualList.tsx'), 'utf8')
+  const messageBubbleLayoutSource = fs.readFileSync(path.join(root, 'src/components/chat/messageBubbleLayout.ts'), 'utf8')
   const chatActiveMessageFeedStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveMessageFeedState.ts'), 'utf8')
   const chatMessageListScrollStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatMessageListScrollState.ts'), 'utf8')
   const chatActiveMessageEmptyStateSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageEmptyState.tsx'), 'utf8')
@@ -490,6 +492,28 @@ function assertSourceIntegration() {
   assert.ok(chatActiveWorkspaceLayoutSource.includes('resolveProductMobileMessageListLayout(activeWindowWidth'), 'chat workspace uses shared message-list top spacing metrics')
   assert.ok(chatActiveWorkspaceLayoutSource.includes('topChromeInset: Math.max(topChromeInset, visualTopInset)'), 'chat message-list top spacing includes the device safe area below persistent local chrome')
   assert.ok(chatActiveMessageVirtualListSource.includes('messageListLayout.horizontalPadding'), 'message list horizontal gutters are source-audited')
+  assert.equal(resolveProductMobileMessageListLayout(1440).readingColumnMaxWidth, PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH, 'the message-list layout publishes the shared reading column')
+  assert.ok(PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH < 1440, 'the reading column stays narrower than a desktop viewport so a wide window still reads as one column')
+  assert.ok(
+    chatActiveMessageVirtualListSource.includes('maxWidth: messageListLayout.readingColumnMaxWidth')
+      && chatActiveMessageVirtualListSource.includes("alignSelf: 'center'"),
+    'the canvas caps and centres its content box at the reading column instead of spanning the viewport',
+  )
+  assert.ok(
+    messageBubbleLayoutSource.includes('Math.min(windowWidth, listLayout.readingColumnMaxWidth)')
+      && messageBubbleLayoutSource.includes('canvasWidth - listLayout.horizontalPadding * 2'),
+    'message bubbles measure against the reading column so both roles share one conversation column',
+  )
+  assert.ok(
+    floatingComposerGeometrySource.includes('readingColumnMaxWidth: number')
+      && floatingComposerGeometrySource.includes('Math.min(viewportWidth, Math.max(0, readingColumnMaxWidth))')
+      && !floatingComposerGeometrySource.includes("from '@/presentation/layout/productMobileLayout'"),
+    'composer width tracks the reading column passed in and the geometry module stays free of layout imports on the first-paint path',
+  )
+  assert.ok(
+    floatingComposerSurfacesSource.includes('readingColumnMaxWidth: PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH'),
+    'the animated composer surface resolves width from the same shared reading column as the canvas',
+  )
   assert.ok(
     chatActiveMessageListSource.includes('messageListLayout.conversationNavigationDockClearance')
       && chatActiveMessageListSource.includes('messageListContentBottomPadding = mobileConversationNavigationEnabled')
@@ -548,6 +572,10 @@ function assertSourceIntegration() {
   const composerSource = fs.readFileSync(path.join(root, 'src/components/chat/Composer.tsx'), 'utf8')
   const chatWorkspaceReviewSheetSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspaceReviewSheet.tsx'), 'utf8')
   assert.ok(composerSource.includes('resolveProductMobileComposerToolsLayout'), 'composer imports shared expanded tool-panel layout metrics')
+  assert.ok(
+    composerSource.includes('readingColumnMaxWidth: PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH'),
+    'composer resolves its width from the shared reading column instead of the raw viewport',
+  )
   assert.ok(composerSource.includes('<MessageInput') && composerSource.includes('<SendButton'), 'composer delegates the primary input and send controls to independent surfaces')
   assert.ok(
     composerSource.includes('useComposerLongDraftEditor') &&
