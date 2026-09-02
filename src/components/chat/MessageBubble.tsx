@@ -22,6 +22,7 @@ import { containsDisplayFormulaBlock } from './messageContentSpecialFormatPolicy
 import {
   collectVisibleProcessTraces,
   formatDuration,
+  formatProcessTraceForDisplay,
   metadataSummaryForTrace,
   isAgentWorkflowEnvelopeTrace,
   normalizeTraceStatuses,
@@ -36,7 +37,7 @@ import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActi
 import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
 import { clampTraceText, redactSensitiveText, relocalizeUserFacingError } from '@/core'
 import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
-import { responseLifecycleElapsedMs, safeResponseLifecycleSummary } from '@/services/responseLifecycle'
+import { responseLifecycleElapsedMs, safeResponseLifecycleSummary } from '@/modules/conversations'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
 import { getAssistantThinkingLabel } from './messageActivityPreview'
@@ -48,6 +49,7 @@ const STREAMING_RENDER_TEXT_STEP = 32
 const STREAMING_RENDER_FAST_FORWARD_THRESHOLD = 240
 const STREAMING_RENDER_THROTTLE_MS = 16
 const AGENT_ACTION_PROMPT_VISIBILITY_LIMIT = 900
+const PROCESS_TRACE_SUMMARY_CONTENT_LIMIT = 720
 const MESSAGE_ACTION_LOCK_MS = 420
 const MESSAGE_ACTION_SHEET_MAX_WIDTH = 540
 const MESSAGE_ACTION_PRIMARY_LIMIT = 5
@@ -1562,6 +1564,13 @@ function safeTraceWorkSummary(trace: ProcessTrace, t: TFunction): string {
         : undefined,
   )
   if (explicitSummary) return explicitSummary
+  // The compact timeline shares one redaction and clamping path with the other
+  // trace surfaces. A reasoning trace resolves to empty content here unless the
+  // provider marked a display summary, so raw reasoning stays private.
+  const traceDetail = safeResponseLifecycleSummary(
+    formatProcessTraceForDisplay(trace, PROCESS_TRACE_SUMMARY_CONTENT_LIMIT).content,
+  )
+  if (traceDetail) return traceDetail
   if (trace.type === 'tool') {
     return trace.status === 'done'
       ? lifecycleStageSummary('tool_result', t)

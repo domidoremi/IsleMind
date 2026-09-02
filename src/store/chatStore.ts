@@ -26,7 +26,6 @@ import {
   sanitizeProcessTraceForBoundary,
   sanitizeProcessTracesForBoundary,
 } from '@/core'
-import { sanitizeAttachmentsForPersistence } from '@/modules/conversations'
 import { abortAllStreams, abortStream } from '@/services/chatStreamLifecycle'
 import { sanitizeMessageInternalOutput } from '@/services/chatInternalOutputGuard'
 import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/modules/providers'
@@ -45,8 +44,9 @@ import {
   responseLifecycleTraceTimestamp,
   safeResponseLifecycleSummary,
   safeResponseLifecycleTraceSummary,
+  sanitizeAttachmentsForPersistence,
   transitionResponseLifecycle,
-} from '@/services/responseLifecycle'
+} from '@/modules/conversations'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
