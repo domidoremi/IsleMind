@@ -29,6 +29,7 @@ import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { IslePressable } from '@/components/ui/isle'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import type { useAppTheme } from '@/hooks/useAppTheme'
+import { PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH } from '@/presentation/layout/productMobileLayout'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 
 import type {
@@ -132,6 +133,7 @@ export function ComposerOverlay({
   const targetWidth = resolveFloatingComposerWidth({
     viewportWidth,
     horizontalPadding,
+    readingColumnMaxWidth: PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH,
     sizeMode,
     activityState,
   })

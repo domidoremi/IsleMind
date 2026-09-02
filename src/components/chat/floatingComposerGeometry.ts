@@ -13,6 +13,13 @@ interface FloatingComposerGeometryInput {
   viewportWidth: number
   viewportHeight: number
   horizontalPadding: number
+  /**
+   * Outer width of the conversation canvas. Passed in rather than imported so
+   * this module stays pure geometry: a layout import here would place a module
+   * constant on the first-paint path, where Metro bundle splitting can evaluate
+   * it before initialization.
+   */
+  readingColumnMaxWidth: number
   safeAreaTop: number
   safeAreaBottom: number
   keyboardLift: number
@@ -42,6 +49,7 @@ export interface FloatingComposerGeometry {
 interface FloatingComposerWidthInput {
   viewportWidth: number
   horizontalPadding: number
+  readingColumnMaxWidth: number
   sizeMode: ComposerSizeMode
   activityState: ComposerActivityState
 }
@@ -50,13 +58,19 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value))
 }
 
+/**
+ * The composer shares the canvas reading column, so a wide window keeps the
+ * input aligned with the transcript instead of stretching to both screen edges.
+ */
 export function resolveFloatingComposerWidth({
   viewportWidth,
   horizontalPadding,
+  readingColumnMaxWidth,
   sizeMode,
   activityState,
 }: FloatingComposerWidthInput): number {
-  const fullWidth = Math.max(0, viewportWidth - Math.max(8, horizontalPadding) * 2)
+  const columnWidth = Math.min(viewportWidth, Math.max(0, readingColumnMaxWidth))
+  const fullWidth = Math.max(0, columnWidth - Math.max(8, horizontalPadding) * 2)
   if (sizeMode !== 'compact' || activityState !== 'idle') return fullWidth
   const idleTarget = viewportWidth < 430
     ? viewportWidth - 84

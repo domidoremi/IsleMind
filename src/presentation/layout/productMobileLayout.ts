@@ -98,6 +98,12 @@ export interface ProductMobileMessageListLayout {
    * The active message viewport uses it to stop above the dock.
    */
   conversationNavigationDockClearance: number
+  /**
+   * Outer width of the conversation canvas, including its gutters. The canvas
+   * owns the reading column so the transcript and the composer measure against
+   * the same box; on mobile it always exceeds the viewport and changes nothing.
+   */
+  readingColumnMaxWidth: number
 }
 
 export interface ProductMobilePagerTransitionInput {
@@ -168,6 +174,12 @@ const PRODUCT_MOBILE_MESSAGE_LIST_CHROME_OVERLAY = 0
 const PRODUCT_MOBILE_MESSAGE_LIST_CHROME_UNDERLAP = 0
 const PRODUCT_MOBILE_MESSAGE_LIST_TIGHT_BREAKPOINT = 340
 const PRODUCT_MOBILE_MESSAGE_LIST_MOBILE_BREAKPOINT = 600
+/**
+ * Widest the conversation canvas grows on large viewports. The transcript and
+ * the composer both align to this column, so a desktop window reads as one
+ * conversation instead of two roles drifting toward opposite screen edges.
+ */
+export const PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH = 880
 const PRODUCT_MOBILE_MESSAGE_LIST_COMPOSER_GAP = 12
 const PRODUCT_MOBILE_EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 20
 const PRODUCT_MOBILE_PAGER_PAGE_SETTLE_MS = 176
@@ -417,6 +429,7 @@ export function resolveProductMobileMessageListLayout(
       width < PRODUCT_MOBILE_CONVERSATION_NAVIGATION_BREAKPOINT
         ? PRODUCT_MOBILE_CONVERSATION_NAVIGATION_DOCK_CLEARANCE
         : 0,
+    readingColumnMaxWidth: PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH,
   }
 }
 
