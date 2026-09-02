@@ -11,7 +11,7 @@ import { ISLE_MIN_TOUCH_TARGET, IslePressable, useIsleDialog } from '@/component
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { normalizeSearchText } from '@/utils/text'
 import { type ChatMultimodalEntry, type ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
-import { PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, resolveProductMobileComposerToolsLayout } from '@/presentation/layout/productMobileLayout'
+import { PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH, resolveProductMobileComposerToolsLayout } from '@/presentation/layout/productMobileLayout'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import {
   resolveAppliedInitialDraftKeyAfterSuccessfulSend,
@@ -255,6 +255,7 @@ export function Composer({
     viewportWidth: composerWindowWidth,
     viewportHeight,
     horizontalPadding,
+    readingColumnMaxWidth: PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH,
     safeAreaTop,
     safeAreaBottom,
     keyboardLift,

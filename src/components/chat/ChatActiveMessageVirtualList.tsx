@@ -143,6 +143,11 @@ export function ChatActiveMessageVirtualList({
       contentContainerStyle={{
         width: '100%',
         minWidth: 0,
+        // The canvas owns the reading column: capping and centring the content
+        // box keeps both roles inside one conversation column on wide windows
+        // instead of letting them drift toward opposite screen edges.
+        maxWidth: messageListLayout.readingColumnMaxWidth,
+        alignSelf: 'center',
         paddingLeft: messageListLayout.horizontalPadding,
         paddingRight: messageListLayout.horizontalPadding,
         paddingTop: conversation.messages.length ? 0 : emptyConversationTopPadding,
