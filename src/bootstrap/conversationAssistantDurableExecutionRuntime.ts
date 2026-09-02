@@ -39,7 +39,6 @@ import { projectConversationAssistantFailure } from '@/bootstrap/conversationAss
 import { conversationAssistantProviderDispatchRuntime } from '@/bootstrap/conversationAssistantProviderDispatchRuntime'
 import { createAppContainer } from '@/bootstrap/createAppContainer'
 import { st } from '@/i18n/service'
-import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import type { Attachment, Message } from '@/types/chatContracts'
 import type { RetrievalSource } from '@/types/contextContracts'
 import { preserveMessageIdentity } from '@/bootstrap/plainChatMessageIdentity'
@@ -307,9 +306,6 @@ export function createConversationAssistantDurableExecutionRuntime(
                             settings: input.settings,
                             streamChat: createRichContinuationStream(input, continuationResults),
                           }).stream,
-                          onStreamEvent(event) {
-                            projectContinuationEvent(input, event)
-                          },
                         })
                         result = {
                           ...mergeProviderCompletionResults(result, continuationResults),
@@ -692,18 +688,6 @@ function mergeProviderCitations(
     seen.add(key)
     return true
   })
-}
-
-function projectContinuationEvent(
-  input: ConversationAssistantDurableDispatchInput,
-  event: StreamEvent,
-): void {
-  if (event.type !== 'text-delta') return
-  useChatStreamingStore.getState().appendContent(
-    input.conversationId,
-    input.assistantMessageId,
-    event.text,
-  )
 }
 
 function projectDurableStartFailure(
