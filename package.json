@@ -240,6 +240,10 @@
     "setupFilesAfterEnv": [
       "<rootDir>/jest.setup.js"
     ],
+    "roots": [
+      "<rootDir>/src",
+      "<rootDir>/scripts"
+    ],
     "testMatch": [
       "**/__tests__/**/*.(test|spec).[jt]s?(x)",
       "**/?(*.)+(test|spec).[jt]s?(x)"
