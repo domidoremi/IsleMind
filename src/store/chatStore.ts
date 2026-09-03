@@ -81,6 +81,17 @@ function resolveConversationDefaultMaxTokens(
   return resolveConversationGenerationParameterDefault('maxTokens', ranges, { maxTokens: settings.defaultMaxTokens }) ?? ranges.maxTokens.max
 }
 
+// A configured global preference is a user decision, so the seeded value must reach the
+// provider request instead of being dropped as an unset provider default.
+function resolveConfiguredGenerationParameterOverrides(
+  settings: ReturnType<typeof useSettingsStore.getState>['settings']
+): ConversationGenerationParameterOverrides {
+  const overrides: ConversationGenerationParameterOverrides = {}
+  if (typeof settings.defaultTemperature === 'number' && Number.isFinite(settings.defaultTemperature)) overrides.temperature = true
+  if (typeof settings.defaultMaxTokens === 'number' && Number.isFinite(settings.defaultMaxTokens)) overrides.maxTokens = true
+  return overrides
+}
+
 function hasOwnProperty(value: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, key)
 }
@@ -200,7 +211,7 @@ function buildConversationRecord(providerId: string, model: string): Conversatio
     topP: resolveConversationGenerationParameterDefault('topP', parameterRanges) ?? 1,
     reasoningEffort: defaultReasoningEffort,
     maxTokens: resolveConversationDefaultMaxTokens(settings, parameterRanges),
-    generationParameterOverrides: {},
+    generationParameterOverrides: resolveConfiguredGenerationParameterOverrides(settings),
     messages: [],
     createdAt: now,
     updatedAt: now,
