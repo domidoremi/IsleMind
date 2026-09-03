@@ -1,4 +1,14 @@
+# Contract tests read source files with fs.readFileSync and match multi-line literals
+# containing \n (for example src/components/settings/__tests__/ApiKeyPanel.contract.test.ts).
+# core.autocrlf=true rewrites every text file to CRLF on Windows checkouts, which makes
+# those matches fail. The working tree must stay LF on all platforms.
+* text=auto eol=lf
+
+# cmd.exe parses batch files line by line. Multi-line parenthesized blocks and ^ escapes
+# in scripts/setup-hot-reload.bat require CRLF.
+*.bat text eol=crlf
+
 # Local model fixtures are pinned by byte size and SHA-256 in assets/models/catalog.json.
-# EOL conversion rewrites those bytes on Windows checkouts (core.autocrlf=true), which
-# breaks the integrity contract that verifyConfiguredLocalEmbeddingModel enforces.
+# EOL conversion rewrites those bytes, which breaks the integrity contract that
+# verifyConfiguredLocalEmbeddingModel enforces.
 assets/models/** -text
