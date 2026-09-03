@@ -40,17 +40,22 @@ The following operations access the network:
 
 ## Current release
 
-- Stable release: `v1.0.21`
-- Android: `versionCode 121`
+- Current version: `v1.0.22`
+- Android: `versionCode 122`
+- [Read the v1.0.22 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.22)
 - [Download v1.0.21 APKs and checksums](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
 - [View all Releases and localized version history](https://github.com/domidoremi/IsleMind/releases)
 
-### v1.0.21 highlights
+The `v1.0.22` Release ships no APK assets, so `v1.0.21` remains the latest installable build.
 
-- Unified in-app notification delivery to prevent duplicate provider-import and status messages.
-- Improved message bubbles, model generation status, thinking-summary interaction, provider icons, and mobile layout.
-- Improved bulk provider import with endpoint-based provider naming while preserving each credential's original label.
-- Published `no-model` and `with-model-small` APK variants for `universal-64`, `arm64-v8a`, `armeabi-v7a-legacy`, and `x86_64`.
+### v1.0.22 highlights
+
+- Reworked the chat workspace and mobile navigation for better message-list scrolling, keyboard interaction, floating composition, and continuous conversation flow.
+- Expanded themed surfaces and glass presentation components for more consistent readability across chat, settings, and feedback states.
+- Error messages follow the application's selected language.
+- Strengthened provider runtime behavior with better model capability detection, request parameter mapping, request optimization, health checks, failover, and local routing.
+- Improved portable backup and recovery flows, and expanded usage statistics, pricing catalog, and usage attribution diagnostics.
+- Updated the Expo / React Native dependency baseline and Android build tooling, including continued 16 KB page compatibility and ARM64 build validation.
 
 ### APK selection
 

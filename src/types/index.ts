@@ -100,7 +100,6 @@ export type {
 export const DEFAULT_PROVIDERS: AIProvider[] = []
 export {
   DEFAULT_MODELS,
-  getDefaultProviderModelIds,
   getModelConfig,
   getModelName,
   getProviderModels,
