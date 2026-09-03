@@ -23545,11 +23545,7 @@ async function run() {
   assert.ok(messageContentSource.includes('looksLikeToolCallMarkupLine(trimmed)'), 'message content formula detection excludes provider text tool-call markup lines')
   assert.ok(messageContentSource.includes('tool_call|function|parameter'), 'message content keeps provider tool-call markup out of formula cards')
   assert.ok(
-    /contentStyle=\{\{[^}]*width: '100%'/.test(messageContentSource) &&
-      messageContentSource.includes("alignSelf: 'stretch'") &&
-      messageContentSource.includes("width: '100%'") &&
-      messageContentSource.includes("maxWidth: '100%'") &&
-      messageContentSource.includes('minWidth: 0'),
+    /<View\s+style=\{\{\s*alignSelf: 'stretch',\s*width: '100%',\s*maxWidth: '100%',\s*minWidth: 0,[\s\S]{0,240}?padding: contentPadding,/.test(messageContentSource),
     'message content rich cards keep a stable full bubble width while copy feedback changes header text'
   )
 
