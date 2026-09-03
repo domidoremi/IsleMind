@@ -87,6 +87,7 @@ export interface ContextPlanningModelManifest {
 export interface ContextPlanningSettings {
   remoteCompactMode?: ContextPlanningRemoteCompactMode;
   remoteCompactThreshold?: number;
+  modelContextCompressionEnabled?: boolean;
   runtimeLogEnabled?: boolean;
   runtimeLogMaxBytes?: number;
 }
@@ -348,6 +349,7 @@ export interface ContextPlannerInput {
     ContextPlanningSettings,
     | "remoteCompactMode"
     | "remoteCompactThreshold"
+    | "modelContextCompressionEnabled"
     | "runtimeLogEnabled"
     | "runtimeLogMaxBytes"
   >;
