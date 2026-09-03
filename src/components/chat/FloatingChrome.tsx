@@ -17,6 +17,7 @@ import { getProviderHeaderState } from './conversationHeaderState'
 import type { ConversationHealth } from './conversationHealth'
 import { ChatAiConfigurationSheet } from './ChatAiConfigurationSheet'
 import { ChatPersistentHeader } from './ChatPersistentHeader'
+import { ContextCapacitySheet } from './ContextCapacitySheet'
 
 type ChatOptionsPlacement = 'popover' | 'sheet'
 
@@ -87,6 +88,7 @@ export function FloatingChrome({
   const { canonicalThemeId, isDark } = useAppTheme()
   const { t } = useTranslation()
   const [headerHeight, setHeaderHeight] = useState(0)
+  const [contextCapacityOpen, setContextCapacityOpen] = useState(false)
   const header = getProviderHeaderState(conversation, t)
   const modelTitle = getProviderDisplayModel(provider, conversation.model)
   const chromeTopPadding = visualTopInset + topChromeInset + FLOATING_CHROME_SAFE_AREA_GAP
@@ -148,6 +150,7 @@ export function FloatingChrome({
             modelAccessibilityHint={t('chat.quickModelAccessibilityHint')}
             onNewConversation={onNewConversation}
             onSettings={onSettings}
+            onContextCapacity={() => setContextCapacityOpen(true)}
             settingsTransitionActive={settingsTransitionActive}
             alertBorder={providerHealth?.code ? providerHealthTone.border : undefined}
             onLayout={handleLayout}
@@ -164,6 +167,11 @@ export function FloatingChrome({
         onCopyLink={onCopyLink}
         onClose={onCloseOptions}
         onDraftChange={onDraftChange}
+      />
+      <ContextCapacitySheet
+        visible={contextCapacityOpen}
+        conversationId={conversation.id}
+        onClose={() => setContextCapacityOpen(false)}
       />
     </View>
   )

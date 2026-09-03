@@ -84,6 +84,25 @@ export function createInMemoryRunStore(): InMemoryRunStore {
       return snapshot ? cloneRequestSnapshot(snapshot) : undefined
     },
 
+    async getLatestContextReceipt(conversationId) {
+      if (!conversationId.trim()) return undefined
+      let latest: { runId: AssistantRunId; capturedAt: number; receipt: unknown } | undefined
+      for (const snapshot of requestSnapshots.values()) {
+        const run = runs.get(snapshot.runId)
+        if (!run || run.conversationId !== conversationId) continue
+        const receipt = 'contextReceipt' in snapshot ? snapshot.contextReceipt : undefined
+        if (!receipt) continue
+        if (latest && latest.capturedAt >= snapshot.capturedAt) continue
+        latest = { runId: snapshot.runId, capturedAt: snapshot.capturedAt, receipt }
+      }
+      if (!latest || !isAssistantContextPlanReceipt(latest.receipt)) return undefined
+      return {
+        runId: latest.runId,
+        capturedAt: latest.capturedAt,
+        receipt: cloneAssistantContextPlanReceipt(latest.receipt),
+      }
+    },
+
     async clear() {
       runs.clear()
       entriesByRun.clear()
