@@ -138,7 +138,7 @@ function run() {
   assert.ok(messageBubbleSource.includes('Gesture.LongPress()') && messageBubbleSource.includes('openActionBarFromLongPress'), 'message actions remain available from a message long press')
   assert.equal(messageBubbleSource.includes('AppIcon name="more"'), false, 'message bubbles do not expose a persistent top-right overflow button')
   assert.ok(
-    /function AnimatedProcessStatusText\(\{ active, label, tone, icon, motion, grammar, statusMotionPhase, thinkingStartedAt, previewText \}[\s\S]*?const shimmer = active && motion === 'full' && grammar !== 'precision'[\s\S]*?setInterval\(\(\) =>[\s\S]*?<AppIcon name=\{icon\}[\s\S]*?loop: shimmer/.test(messageBubbleSource) &&
+    /function AnimatedProcessStatusText\(\{ active, label, tone, icon, motion, grammar, statusMotionPhase, stageStartedAt, previewText \}[\s\S]*?const shimmer = active && motion === 'full' && grammar !== 'precision'[\s\S]*?setInterval\(\(\) =>[\s\S]*?<AppIcon name=\{icon\}[\s\S]*?loop: shimmer/.test(messageBubbleSource) &&
       messageBubbleSource.includes("grammar === 'precision'") &&
       messageBubbleSource.includes("grammar === 'material'") &&
       messageBubbleSource.includes("'.'.repeat(motion === 'full' ? dotCount : 3)") &&
