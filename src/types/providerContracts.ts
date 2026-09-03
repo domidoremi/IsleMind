@@ -176,6 +176,7 @@ export interface AIModel {
   name: string
   provider: ProviderType
   contextWindow: number
+  /** Legacy alias for contextWindow; retained by provider-intelligence contract tests. */
   maxTokens: number
   maxOutputTokens: number
   defaultMaxTokens: number
