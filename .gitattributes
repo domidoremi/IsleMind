@@ -1,0 +1,4 @@
+# Local model fixtures are pinned by byte size and SHA-256 in assets/models/catalog.json.
+# EOL conversion rewrites those bytes on Windows checkouts (core.autocrlf=true), which
+# breaks the integrity contract that verifyConfiguredLocalEmbeddingModel enforces.
+assets/models/** -text
