@@ -19,10 +19,13 @@ function main() {
   const webStyles = read('src/theme/webGlobalStyles.web.ts')
   const globalCss = read('src/global.css')
   const tsconfig = read('tsconfig.json')
+  const glassSurface = read('src/components/chat/glass/GlassSurface.tsx')
 
-  for (const dependency of ['nativewind', 'expo-blur', '@expo/vector-icons']) {
+  for (const dependency of ['nativewind', '@expo/vector-icons']) {
     assert.equal(dependencies[dependency], undefined, `${dependency} must not return as an unused production dependency`)
   }
+  assert.ok(dependencies['expo-blur'], 'the glass surface requires expo-blur as a production dependency')
+  assert.match(glassSurface, /from ['"]expo-blur['"]/, 'expo-blur stays declared only while the glass surface consumes it')
   assert.equal(devDependencies.tailwindcss, undefined, 'Tailwind must not return without a class-based styling consumer')
 
   assert.doesNotMatch(babelConfig, /nativewind|jsxImportSource/, 'all JSX must use the standard Expo runtime')
