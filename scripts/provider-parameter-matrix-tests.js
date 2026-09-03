@@ -17,6 +17,26 @@ const {
   getProviderParameterEntry,
   providerParameterCanBeSent,
 } = require('../src/bootstrap/providerParameterMatrix.ts')
+const { buildProviderProtocolRequestBody } = require('../src/bootstrap/providerRequestBinding.ts')
+const { resolveGenerationParameterSources } = require('../src/core/assistantProtocol.ts')
+const { DEFAULT_MODELS, getModelConfig } = require('../src/types/modelCatalog.ts')
+
+// Each catalog reasoning mode needs a provider shaped like the vendor it belongs to, because the
+// runtime gates vendor thinking fields on provider identity as well as model metadata.
+const REASONING_MODE_WIRE_CONTRACT = {
+  'openai-effort': { provider: { type: 'openai', presetId: 'openai', baseUrl: 'https://api.openai.com/v1' }, path: ['reasoning', 'effort'], maxTokensPath: ['max_output_tokens'] },
+  'anthropic-thinking': { provider: { type: 'anthropic', presetId: 'anthropic', baseUrl: 'https://api.anthropic.com/v1' }, path: ['output_config', 'effort'], maxTokensPath: ['max_tokens'] },
+  'gemini-thinking-level': { provider: { type: 'google', presetId: 'google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' }, path: ['generationConfig', 'thinkingConfig', 'thinkingLevel'], maxTokensPath: ['generationConfig', 'maxOutputTokens'] },
+  'gemini-thinking-budget': { provider: { type: 'google', presetId: 'google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' }, path: ['generationConfig', 'thinkingConfig', 'thinkingBudget'], maxTokensPath: ['generationConfig', 'maxOutputTokens'] },
+  'deepseek-thinking': { provider: { type: 'openai-compatible', presetId: 'deepseek', baseUrl: 'https://api.deepseek.com/v1' }, path: ['thinking', 'type'], maxTokensPath: ['max_tokens'] },
+  'dashscope-thinking': { provider: { type: 'openai-compatible', presetId: 'dashscope', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }, path: ['enable_thinking'], maxTokensPath: ['max_tokens'] },
+  'kimi-thinking': { provider: { type: 'openai-compatible', presetId: 'moonshot', baseUrl: 'https://api.moonshot.ai/v1' }, path: ['thinking', 'type'], maxTokensPath: ['max_completion_tokens'] },
+  'minimax-thinking': { provider: { type: 'openai-compatible', presetId: 'minimax', baseUrl: 'https://api.minimax.io/v1' }, path: ['thinking', 'type'], maxTokensPath: ['max_completion_tokens'] },
+  'xai-reasoning-effort': { provider: { type: 'openai-compatible', presetId: 'xai', baseUrl: 'https://api.x.ai/v1' }, path: ['reasoning', 'effort'], maxTokensPath: ['max_output_tokens'] },
+  'cerebras-reasoning-effort': { provider: { type: 'openai-compatible', presetId: 'cerebras', baseUrl: 'https://api.cerebras.ai/v1' }, path: ['reasoning_effort'], maxTokensPath: ['max_completion_tokens'] },
+  'cohere-reasoning-effort': { provider: { type: 'openai-compatible', presetId: 'cohere', baseUrl: 'https://api.cohere.ai/compatibility/v1' }, path: ['reasoning_effort'], maxTokensPath: ['max_tokens'] },
+  'perplexity-reasoning-effort': { provider: { type: 'openai-compatible', presetId: 'perplexity', baseUrl: 'https://api.perplexity.ai' }, path: ['reasoning_effort'], maxTokensPath: ['max_tokens'] },
+}
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderParameterMatrixHook) return
@@ -84,6 +104,125 @@ function assertEvidence(item, source, urlPart, label) {
 
 function assertRuntime(item, marker, label) {
   assert.ok(item.runtimeEvidence.includes(marker), label)
+}
+
+function wireValue(body, path) {
+  let current = body
+  for (const key of path) {
+    if (current === undefined || current === null) return undefined
+    current = current[key]
+  }
+  return current
+}
+
+function reasoningProvider(mode, modelId) {
+  const contract = REASONING_MODE_WIRE_CONTRACT[mode]
+  return {
+    id: `wire-${mode}`,
+    name: mode,
+    apiKey: 'sk-parameter-matrix-000000000000000000',
+    models: [modelId],
+    enabled: true,
+    ...contract.provider,
+  }
+}
+
+function buildReasoningBody(mode, modelId, overrides = {}) {
+  return buildProviderProtocolRequestBody({
+    provider: reasoningProvider(mode, modelId),
+    model: modelId,
+    messages: [{ role: 'user', content: 'ping' }],
+    stream: true,
+    ...overrides,
+  })
+}
+
+// Every reasoning mode declared in the catalog must reach the wire. Without this the catalog can
+// declare a thinking capability that the request builder silently drops.
+function assertReasoningModesReachTheWire() {
+  const representative = new Map()
+  for (const model of DEFAULT_MODELS) {
+    if (!model.reasoningMode || model.deprecated) continue
+    if (!representative.has(model.reasoningMode)) representative.set(model.reasoningMode, model)
+  }
+  assert.ok(representative.size > 0, 'catalog declares at least one reasoning mode')
+
+  for (const [mode, model] of representative) {
+    const contract = REASONING_MODE_WIRE_CONTRACT[mode]
+    assert.ok(contract, `reasoning mode ${mode} has a documented wire contract`)
+    const effort = model.reasoningEfforts?.find((item) => item !== 'none') ?? 'high'
+    const body = buildReasoningBody(mode, model.id, { reasoningEffort: effort })
+    const value = wireValue(body, contract.path)
+    assert.notEqual(value, undefined, `${mode} sends ${contract.path.join('.')} for ${model.id}`)
+    if (typeof value === 'string' && model.reasoningEfforts?.includes(value)) {
+      assert.equal(value, effort, `${mode} forwards the selected reasoning effort for ${model.id}`)
+    }
+  }
+}
+
+// A user-selected output budget must win over the catalog default, and a configured global
+// preference must not be downgraded to an omitted provider default.
+function assertMaxTokensPrecedence() {
+  for (const [mode, model] of Object.entries(REASONING_MODE_WIRE_CONTRACT).map(([key]) => [key, DEFAULT_MODELS.find((item) => item.reasoningMode === key && !item.deprecated)]).filter(([, item]) => item)) {
+    const contract = REASONING_MODE_WIRE_CONTRACT[mode]
+    const config = getModelConfig(model.id, contract.provider.type)
+    const userValue = Math.max(1, Math.floor(config.defaultMaxTokens / 2))
+    assert.notEqual(userValue, config.defaultMaxTokens, `${mode} fixture uses a user budget distinct from the catalog default`)
+
+    const explicitBody = buildReasoningBody(mode, model.id, {
+      maxTokens: userValue,
+      generationParameterSources: { maxTokens: 'explicit' },
+    })
+    assert.equal(
+      wireValue(explicitBody, contract.maxTokensPath),
+      userValue,
+      `${mode} sends the user output budget instead of the catalog default for ${model.id}`
+    )
+
+    const overCapBody = buildReasoningBody(mode, model.id, {
+      maxTokens: config.maxOutputTokens + 100000,
+      generationParameterSources: { maxTokens: 'explicit' },
+    })
+    assert.equal(
+      wireValue(overCapBody, contract.maxTokensPath),
+      config.maxOutputTokens,
+      `${mode} clamps an over-cap user budget to the model output limit for ${model.id}`
+    )
+
+    const defaultBody = buildReasoningBody(mode, model.id, {
+      generationParameterSources: { maxTokens: 'internal-policy' },
+    })
+    assert.equal(
+      wireValue(defaultBody, contract.maxTokensPath),
+      Math.min(config.defaultMaxTokens, config.maxOutputTokens),
+      `${mode} falls back to the catalog default output budget for ${model.id}`
+    )
+  }
+}
+
+// The conversation store seeds a configured global preference as an explicit override, so the
+// resolved source must stay explicit rather than collapsing to provider-default.
+function assertConfiguredPreferenceStaysExplicit() {
+  const seeded = resolveGenerationParameterSources({
+    values: { temperature: 0.4, maxTokens: 2048 },
+    overrides: { temperature: true, maxTokens: true },
+  })
+  assert.equal(seeded.maxTokens, 'explicit', 'a configured global max-token preference is sent as an explicit value')
+  assert.equal(seeded.temperature, 'explicit', 'a configured global temperature preference is sent as an explicit value')
+
+  const untouched = resolveGenerationParameterSources({ values: { temperature: 1, maxTokens: 8192 }, overrides: {} })
+  assert.equal(untouched.maxTokens, 'provider-default', 'an unconfigured output budget stays a provider default')
+
+  const storeSource = fs.readFileSync(path.join(root, 'src/store/chatStore.ts'), 'utf8')
+  assert.ok(
+    storeSource.includes('resolveConfiguredGenerationParameterOverrides(settings)'),
+    'new conversations seed override flags from configured global preferences'
+  )
+  const selectionSource = fs.readFileSync(path.join(root, 'src/components/chat/chatModelSelection.ts'), 'utf8')
+  assert.ok(
+    selectionSource.includes("resolveConversationGenerationParameterDefault('maxTokens', parameterRanges, { maxTokens })"),
+    'the setup shell resolves the output budget from the configured global preference'
+  )
 }
 
 function run() {
@@ -316,6 +455,10 @@ function run() {
       assert.equal(typeof resource.apiKeyPanel.parameterStatus[status], 'string', `${locale} parameterStatus.${status} key exists`)
     }
   }
+
+  assertReasoningModesReachTheWire()
+  assertMaxTokensPrecedence()
+  assertConfiguredPreferenceStaysExplicit()
 
   console.log('Provider parameter matrix tests passed')
 }
