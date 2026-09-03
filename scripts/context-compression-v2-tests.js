@@ -3,8 +3,94 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { runArchitectureContractSmoke } = require('./architecture-contract-smoke')
 const { packChatMessages } = require('../src/bootstrap/contextPacking.ts')
+const { decideRemoteCompact } = require('../src/bootstrap/providerRemoteCompact.ts')
+const { completeTrace, sanitizeTrace } = require('../src/services/chatTraceUtils.ts')
 const { createContextPackingPolicy } = require('../src/modules/assistant-runtime/index.ts')
 const { estimateMessageTokens, estimateTextTokens } = require('../src/services/tokenUsage.ts')
+
+const MODEL_SUMMARY_PROVIDER = {
+  id: 'relay-no-native-compaction',
+  type: 'openai-compatible',
+  name: 'Relay',
+  baseUrl: 'https://relay.example/v1',
+  apiKey: 'sk-context-compression-00000000000000',
+  models: ['relay-model'],
+  enabled: true,
+}
+
+function pressuredMessages() {
+  return Array.from({ length: 40 }, (_, index) => ({
+    role: index % 2 ? 'assistant' : 'user',
+    content: 'x'.repeat(4000),
+  }))
+}
+
+function compactDecisionFor(settings) {
+  return decideRemoteCompact({
+    provider: MODEL_SUMMARY_PROVIDER,
+    model: 'relay-model',
+    messages: pressuredMessages(),
+    budgetTokens: 8000,
+    estimatedInputTokens: 40000,
+    settings: { remoteCompactMode: 'auto', remoteCompactThreshold: 0.5, ...settings },
+  })
+}
+
+// The selected-model summary path is opt-in. Without the switch a provider that has no
+// native compaction must keep local structured packing and must not spend an extra request.
+function assertModelSummaryStrategyIsOptIn() {
+  for (const settings of [{}, { modelContextCompressionEnabled: false }]) {
+    const decision = compactDecisionFor(settings)
+    assert.equal(decision.enabled, true, 'context pressure still admits compaction without the switch')
+    assert.equal(decision.strategy, 'local-structured-v2', 'local structured packing stays the default strategy')
+  }
+
+  const optedIn = compactDecisionFor({ modelContextCompressionEnabled: true })
+  assert.equal(optedIn.enabled, true, 'opting in keeps compaction admitted')
+  assert.equal(optedIn.strategy, 'application-model-summary', 'opting in selects the selected-model summary strategy')
+  assert.equal(optedIn.reason, 'application_model_summary', 'the decision reason records the selected-model summary')
+  assert.equal(optedIn.nativeServerCompact, false, 'the selected-model summary pre-shrinks client-side')
+}
+
+// A compaction step whose request is still in flight must render as running, otherwise the
+// user sees a finished zero-duration step while the summary is still being generated.
+function assertRunningCompactionTraceSurvivesSanitization() {
+  const startedAt = 1_700_000_000_000
+  const running = sanitizeTrace({
+    id: 'compact-1',
+    type: 'system',
+    title: 'compact',
+    status: 'running',
+    startedAt,
+  })
+  assert.equal(running.status, 'running', 'an in-flight compaction step stays running')
+  assert.equal(running.completedAt, undefined, 'an in-flight compaction step has no completion time')
+
+  const settled = sanitizeTrace(completeTrace({
+    id: 'compact-1',
+    type: 'system',
+    title: 'compact',
+    status: 'running',
+    startedAt,
+  }))
+  assert.equal(settled.status, 'done', 'a settled compaction step reports done')
+  assert.ok(settled.completedAt, 'a settled compaction step carries a completion time')
+
+  const planningSource = fs.readFileSync(
+    path.join(__dirname, '../src/modules/assistant-runtime/application/assistantConversationRequestPlanningRuntime.ts'),
+    'utf8',
+  )
+  assert.match(
+    planningSource,
+    /recordRunning\(input, \{\s*id: summaryTraceId,/,
+    'the compaction step is recorded as running before the summary request starts',
+  )
+  assert.doesNotMatch(
+    planningSource,
+    /id: `\$\{summaryTraceId\}-(done|fallback)`/,
+    'the terminal compaction record reuses the running step id instead of opening a second step',
+  )
+}
 
 function run() {
   const semanticMessages = [
@@ -147,6 +233,9 @@ function run() {
     label: 'Context compression v2',
     checkIds: ['context-pipeline-boundary'],
   })
+
+  assertModelSummaryStrategyIsOptIn()
+  assertRunningCompactionTraceSurvivesSanitization()
 
   console.log('Context compression v2 tests passed')
 }
