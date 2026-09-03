@@ -259,6 +259,12 @@ async function main() {
       (await persistence.list(handle.runId))[0].occurredAt,
       'the request snapshot and run.created journal entry share one captured timestamp',
     )
+    assert.equal(requestSnapshot.contextReceipt, undefined)
+    assert.equal(
+      await persistence.getLatestContextReceipt('conversation-walking-skeleton'),
+      undefined,
+      'a run whose frozen request captured no receipt is skipped by the conversation-scoped read',
+    )
     const contextSnapshot = await contextSnapshots.get(completed.value.contextSnapshotId)
     assert.equal(contextSnapshot?.conversationId, 'conversation-walking-skeleton')
     assert.equal(contextSnapshot?.providerContext, 'Use the approved local context when relevant.')
@@ -670,6 +676,20 @@ async function assertPreparedModelOperationRequestSnapshot(
   assert.deepEqual(snapshot.request, dispatchedRequest)
   assert.deepEqual(snapshot.contextReceipt, contextReceipt)
   assert.equal(Object.isFrozen(snapshot.contextReceipt), true)
+  const latestContextReceipt = await persistence.getLatestContextReceipt('conversation-prepared-request')
+  assert.ok(
+    latestContextReceipt,
+    'the conversation-scoped read finds the receipt captured beside the frozen request',
+  )
+  assert.equal(latestContextReceipt.runId, runId)
+  assert.equal(latestContextReceipt.capturedAt, snapshot.capturedAt)
+  assert.deepEqual(latestContextReceipt.receipt, contextReceipt)
+  assert.equal(Object.isFrozen(latestContextReceipt.receipt), true, 'the receipt read is immutable')
+  assert.equal(
+    await persistence.getLatestContextReceipt('conversation-prepared-request-absent'),
+    undefined,
+    'a conversation with no captured receipt reports no context capacity data',
+  )
   assert.equal(snapshot.request.toolDefinitions?.[0]?.operationId, 'builtin:fixture:read')
   assert.deepEqual(
     events.slice(0, 3),
