@@ -816,26 +816,36 @@ async function runAssistantMcpToolTurnRuntimeTests() {
     },
     async synthesize() {
       emptySynthesisCount += 1
-      return { text: 'should not run' }
+      return { text: ' synthesized from raw observation ' }
     },
   })
   assert.deepEqual(
     await empty.runtime.execute(empty.input),
-    { text: 'raw empty fallback' },
-    'empty formatted blocks fall back to the task observation output',
+    { text: 'synthesized from raw observation', usage: undefined },
+    'empty formatted blocks synthesize an answer instead of projecting the raw task observation output',
   )
   assert.equal(originalBlocks[0].text, 'original block', 'block truncation cannot mutate the task observation input')
-  assert.equal(emptySynthesisCount, 0, 'empty formatted output does not trigger synthesis')
+  assert.equal(emptySynthesisCount, 1, 'empty formatted output still reaches synthesis through the raw task observation output')
+  assert.equal(
+    empty.state.revisionMessageRequests.at(-1).toolOutput,
+    'raw empty fallback',
+    'the raw task observation output is synthesis input only',
+  )
 
   const synthesisFailure = createAssistantMcpTurnHarness({
     async synthesize() {
       throw new Error('provider synthesis failed')
     },
   })
+  const synthesisFailureRevision = await synthesisFailure.runtime.execute(synthesisFailure.input)
   assert.deepEqual(
-    await synthesisFailure.runtime.execute(synthesisFailure.input),
-    { text: 'MCP result\n\nvisible tool output' },
-    'synthesis failure keeps the MCP tool output visible',
+    synthesisFailureRevision,
+    { text: 'chatRunner.error.providerToolSynthesisFailed' },
+    'synthesis failure reports a recoverable error instead of projecting the MCP tool output',
+  )
+  assert.ok(
+    !synthesisFailureRevision.text.includes('visible tool output'),
+    'synthesis failure never projects raw MCP tool output as chat content',
   )
   const synthesisFailureTrace = synthesisFailure.state.traces.at(-1)
   assert.equal(synthesisFailureTrace.status, 'error', 'synthesis failure emits an error trace')
