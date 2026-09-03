@@ -249,6 +249,7 @@ export type AssistantConversationRequestPlanningTextKey =
   | 'chatRunner.trace.nativeSearchDisabled'
   | 'chatRunner.trace.compactPolicyTitle'
   | 'chatRunner.trace.compactRemoteEligible'
+  | 'chatRunner.trace.compactApplicationSummaryRunning'
   | 'chatRunner.trace.compactApplicationSummaryApplied'
   | 'chatRunner.trace.compactApplicationSummaryFallback'
   | 'chatRunner.error.remoteCompactRequiredFailed'
@@ -686,17 +687,19 @@ export function createAssistantConversationRequestPlanningRuntime<
     ) {
       const summaryTraceId = dependencies.traceId('compact')
       const summaryStartedAt = dependencies.now()
-      recordCompleted(input, {
+      recordRunning(input, {
         id: summaryTraceId,
         type: 'system',
         title: dependencies.translate('chatRunner.trace.compactPolicyTitle'),
-        content: 'application-model-summary',
+        content: dependencies.translate('chatRunner.trace.compactApplicationSummaryRunning'),
         status: 'running',
         startedAt: summaryStartedAt,
         metadata: {
           compactMode: 'application',
           strategy: 'application-model-summary',
           pressureRatio: compactDecision.pressureRatio,
+          model: input.upstreamModel,
+          sourceMessageCount: remoteCompactProbe.messages.length,
         },
       })
 
@@ -751,7 +754,7 @@ export function createAssistantConversationRequestPlanningRuntime<
           },
         } as TActivePrompt
         recordCompleted(input, {
-          id: `${summaryTraceId}-done`,
+          id: summaryTraceId,
           type: 'system',
           title: dependencies.translate('chatRunner.trace.compactPolicyTitle'),
           content: dependencies.translate('chatRunner.trace.compactApplicationSummaryApplied'),
@@ -760,6 +763,7 @@ export function createAssistantConversationRequestPlanningRuntime<
           metadata: {
             compactMode: 'application',
             strategy: 'application-model-summary',
+            model: input.upstreamModel,
             durationMs: summaryResult.durationMs,
             timeoutMs: summaryResult.timeoutMs,
             olderMessageCount: summaryResult.olderMessageCount,
@@ -775,7 +779,7 @@ export function createAssistantConversationRequestPlanningRuntime<
         applicationSummaryFailureCode = summaryResult.failureCode ?? 'provider_error'
         // Keep structured-v2 packed activePrompt from contextPlan.
         recordCompleted(input, {
-          id: `${summaryTraceId}-fallback`,
+          id: summaryTraceId,
           type: 'system',
           title: dependencies.translate('chatRunner.trace.compactPolicyTitle'),
           content: dependencies.translate('chatRunner.trace.compactApplicationSummaryFallback'),
@@ -1079,6 +1083,19 @@ export function createAssistantConversationRequestPlanningRuntime<
       conversationId: input.conversationId,
       assistantMessageId: input.assistantMessageId,
       trace: dependencies.completeTrace(dependencies.buildTrace(trace)),
+    })
+  }
+
+  // A step whose work is still in flight must stay running. Completing it up front
+  // renders a finished zero-duration step while the request is still waiting.
+  function recordRunning(
+    input: { readonly conversationId: string; readonly assistantMessageId: string },
+    trace: AssistantConversationRequestPlanningTraceInput,
+  ): void {
+    dependencies.recordTrace({
+      conversationId: input.conversationId,
+      assistantMessageId: input.assistantMessageId,
+      trace: dependencies.buildTrace(trace),
     })
   }
 
