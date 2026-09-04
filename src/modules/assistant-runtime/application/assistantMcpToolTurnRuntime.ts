@@ -333,9 +333,11 @@ export function createAssistantMcpToolTurnRuntime<
     }
 
     const copiedBlocks = observation.blocks.map((block) => ({ ...block }))
-    const toolOutput = dependencies.formatBlocks(dependencies.truncateBlocks(copiedBlocks))
+    // Observation text is still an internal tool result. It may be used as
+    // synthesis input, but must never be projected directly as chat content.
+    const toolOutput = dependencies.formatBlocks(dependencies.truncateBlocks(copiedBlocks)) || observation.output?.trim() || ''
     if (!toolOutput.trim()) {
-      return { text: observation.output || dependencies.translate('mcpRuntime.emptyOutput') }
+      return { text: dependencies.translate('chatRunner.error.providerToolSynthesisFailed') }
     }
 
     try {
@@ -406,13 +408,7 @@ export function createAssistantMcpToolTurnRuntime<
       }))
     }
 
-    return {
-      text: [
-        dependencies.translate('chatRunner.trace.mcpToolResultTitle'),
-        '',
-        toolOutput,
-      ].join('\n'),
-    }
+    return { text: dependencies.translate('chatRunner.error.providerToolSynthesisFailed') }
   }
 
   return { execute }

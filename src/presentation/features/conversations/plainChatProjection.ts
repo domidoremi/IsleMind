@@ -27,15 +27,34 @@ export function createPlainChatProjection(
     conversationId: input.conversation.id,
     messageId: input.assistantMessageId,
     citations: [],
+    suppressTextUntilContinuation: false,
   }
   return async (event) => {
     projectContextCitations(state, event.contextCitations)
     if (event.journalEntry?.type === 'stream.event') projectStreamEvent(state, event)
     if (event.journalEntry?.type === 'model-operation.selected') {
+      state.suppressTextUntilContinuation = true
       useChatStreamingStore.getState().resetContent(
         state.conversationId,
         state.messageId,
-        event.run.checkpoint?.outputText ?? '',
+        '',
+      )
+      if (!isTerminalStatus(event.run.status) && event.run.status !== 'awaiting-confirmation') {
+        useChatStore.getState().transitionMessageLifecycle(
+          state.conversationId,
+          state.messageId,
+          'tool_result',
+          { at: event.journalEntry.occurredAt },
+        )
+      }
+    }
+    if (event.journalEntry?.type === 'provider-continuation.started') {
+      state.suppressTextUntilContinuation = false
+      useChatStore.getState().transitionMessageLifecycle(
+        state.conversationId,
+        state.messageId,
+        'working',
+        { at: event.journalEntry.occurredAt },
       )
     }
     if (event.journalEntry?.type === 'run.confirmation-resolved') {
@@ -64,7 +83,7 @@ async function projectPendingModelOperation(
     : pending.operationId.startsWith('android:')
       ? 'android'
       : 'builtin'
-  const summary = `The model selected ${pending.operationId}. Confirm this destructive operation to continue.`
+  const summary = st('messageBubble.agentPermissionRequired', undefined, '需要确认后继续')
   useChatStreamingStore.getState().resetContent(state.conversationId, state.messageId, '')
   useChatStreamingStore.getState().upsertTrace(state.conversationId, state.messageId, {
     id: `pending-model-operation:${pending.runId}:${pending.callId}`,
@@ -136,6 +155,7 @@ export async function recoverChatProjection(run: AssistantRun): Promise<void> {
     conversationId: run.conversationId,
     messageId,
     citations: [],
+    suppressTextUntilContinuation: false,
     usage: undefined,
   }, run)
 }
@@ -148,6 +168,7 @@ interface ProjectionState {
   conversationId: string
   messageId: string
   citations: MessageCitation[]
+  suppressTextUntilContinuation: boolean
   usage?: MessageUsage
 }
 
@@ -155,7 +176,25 @@ function projectStreamEvent(state: ProjectionState, event: ConversationRunProjec
   if (currentMessageStatus(state.conversationId, state.messageId) !== 'streaming') return
   const data = event.journalEntry?.data
   const eventType = typeof data?.eventType === 'string' ? data.eventType : undefined
+  if (eventType === 'tool-call') {
+    // Any provider tool call means the preceding assistant text is narration,
+    // not the final answer. Clear it before the tool phase becomes visible.
+    state.suppressTextUntilContinuation = true
+    useChatStreamingStore.getState().resetContent(
+      state.conversationId,
+      state.messageId,
+      '',
+    )
+    useChatStore.getState().transitionMessageLifecycle(
+      state.conversationId,
+      state.messageId,
+      'tool_calling',
+      { at: event.journalEntry?.occurredAt },
+    )
+    return
+  }
   if (eventType === 'text-delta' && typeof data?.text === 'string' && data.text) {
+    if (state.suppressTextUntilContinuation) return
     useChatStreamingStore.getState().appendContent(state.conversationId, state.messageId, data.text)
     return
   }

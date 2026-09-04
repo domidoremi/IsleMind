@@ -922,13 +922,9 @@ function permissionMetaSummary(metadata: Record<string, unknown>): string {
 
 function nativeProviderToolMetaSummary(metadata: Record<string, unknown>): string {
   if (metadata.toolCallMode !== 'native-provider') return ''
-  const toolName = typeof metadata.toolName === 'string' && metadata.toolName.trim()
-    ? safeTraceMetadataText(metadata.toolName, 72)
-    : ''
-  const providerToolName = typeof metadata.providerToolName === 'string' && metadata.providerToolName.trim()
-    ? safeTraceMetadataText(metadata.providerToolName, 72)
-    : ''
-  const value = toolName || providerToolName || st('trace.meta.providerNativeToolFallback')
+  // Provider and server operation names are implementation details. The
+  // process reader can identify this as a tool step without echoing them.
+  const value = st('trace.meta.providerNativeToolFallback')
   return isRawProviderNativeToolTrace(metadata)
     ? st('trace.meta.providerNativeToolRequested', { value })
     : st('trace.meta.providerNativeToolControlled', { value })

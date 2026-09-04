@@ -135,14 +135,24 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const [dialogQueue, setDialogQueue] = useState<DialogState[]>([])
   const [toastQueue, setToastQueue] = useState(EMPTY_APP_TOAST_QUEUE)
   const [banners, setBanners] = useState<BannerState[]>([])
+  const toastTopOffset = 18 + insets.top
   const toastBottomOffset = 18 + insets.bottom + (banners.length ? Math.min(banners.length, 2) * 104 : 0)
   const idRef = useRef(0)
   const lastUpdateNotice = useRef<string | null>(null)
   const dialogQueueRef = useRef(dialogQueue)
   const dialogSettlementsRef = useRef(createAppConfirmSettlementRegistry())
   const dialog = dialogQueue[0] ?? null
+  const toastPosition = toastQueue.active?.position ?? 'top'
+  // A preview stack has one anchor. Keep queued notifications for the other
+  // anchor in order, but do not render a bottom toast at the top (or vice
+  // versa) while it is still pending.
   const toastStack = toastQueue.active
-    ? [toastQueue.active, ...toastQueue.pending.slice(0, 2)]
+    ? [
+        toastQueue.active,
+        ...toastQueue.pending
+          .filter((item) => (item.position ?? 'top') === toastPosition)
+          .slice(0, 2),
+      ]
     : []
 
   useEffect(() => {
@@ -289,7 +299,9 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
             position: 'absolute',
             left: 0,
             right: 0,
-            bottom: toastStack[0]?.bottomOffset ?? toastBottomOffset,
+            ...(toastPosition === 'top'
+              ? { top: toastStack[0]?.topOffset ?? toastTopOffset }
+              : { bottom: toastStack[0]?.bottomOffset ?? toastBottomOffset }),
             zIndex: 999,
             alignItems: 'center',
             paddingHorizontal: 16,
@@ -300,7 +312,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
             <MotiView
               key={item.id}
               from={index === 0 && motion === 'full'
-                ? { opacity: 0, translateY: toastTravel, scale: toastScale }
+                ? { opacity: 0, translateY: toastPosition === 'top' ? -toastTravel : toastTravel, scale: toastScale }
                 : { opacity: index === 0 ? 1 : 0.72, translateY: 0, scale: index === 0 ? 1 : 0.98 }}
               animate={{ opacity: index === 0 ? 1 : 0.72, translateY: 0, scale: index === 0 ? 1 : 0.98 }}
               transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.emphasis : 1 }}
