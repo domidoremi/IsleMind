@@ -278,6 +278,17 @@ export type AssistantRunCapturedRequestSnapshot =
   | AssistantRunRequestSnapshot
   | AssistantRunActivityRequestSnapshot
 
+/**
+ * Most recent durable context receipt captured for a conversation. This is a
+ * read-only diagnostic projection input; it never grants replay authority and
+ * never carries raw prompt or context text.
+ */
+export interface AssistantConversationContextReceipt {
+  readonly runId: AssistantRunId
+  readonly capturedAt: number
+  readonly receipt: AssistantContextPlanReceipt
+}
+
 export interface AssistantRunRepository {
   get(runId: AssistantRunId): Promise<AssistantRun | undefined>
   listRecoverable(): Promise<readonly AssistantRun[]>
@@ -291,6 +302,13 @@ export interface RunJournal {
 
 export interface AssistantRunPersistence extends AssistantRunRepository, RunJournal {
   getRequestSnapshot(runId: AssistantRunId): Promise<AssistantRunCapturedRequestSnapshot | undefined>
+  /**
+   * Latest captured context receipt for a conversation, newest first. Returns
+   * undefined when the conversation has no run that captured one.
+   */
+  getLatestContextReceipt(
+    conversationId: string,
+  ): Promise<AssistantConversationContextReceipt | undefined>
   clear(): Promise<void>
   appendAndSave(
     entry: RunJournalEntry,

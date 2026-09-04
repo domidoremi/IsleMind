@@ -749,6 +749,7 @@ export function createContextPlanningPolicy(
           capped: false,
           trace: {
             attachmentCount: input.attachmentCount,
+            sourceCount: input.attachmentCount,
           },
         }),
       );
@@ -767,6 +768,7 @@ export function createContextPlanningPolicy(
           capped: false,
           trace: {
             toolOutputCount: input.toolOutputCount,
+            sourceCount: input.toolOutputCount,
           },
         }),
       );

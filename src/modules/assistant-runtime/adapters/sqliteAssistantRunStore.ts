@@ -96,6 +96,12 @@ interface AssistantRunRequestSnapshotRow {
   schema: string
 }
 
+interface AssistantConversationContextReceiptRow {
+  runId: string
+  capturedAt: number
+  contextReceiptJson: string | null
+}
+
 interface JournalSequenceRow {
   sequence: number
 }
@@ -298,6 +304,30 @@ export function createSqliteAssistantRunPersistence(
         [runId],
       )
       return row ? parseRequestSnapshotRow(row) : undefined
+    },
+
+    async getLatestContextReceipt(conversationId) {
+      if (!isNonEmptyString(conversationId)) return undefined
+      const row = await (await database()).getFirst<AssistantConversationContextReceiptRow>(
+        `SELECT snapshot.runId, snapshot.capturedAt, snapshot.contextReceiptJson
+         FROM assistant_run_request_snapshots AS snapshot
+         INNER JOIN assistant_runs AS run ON run.id = snapshot.runId
+         WHERE run.conversationId = ? AND snapshot.contextReceiptJson IS NOT NULL
+         ORDER BY snapshot.capturedAt DESC, snapshot.runId DESC
+         LIMIT 1`,
+        [conversationId],
+      )
+      if (!row) return undefined
+      if (!isNonEmptyString(row.runId) || !isNonNegativeInteger(row.capturedAt)) {
+        throw new AssistantRunPersistenceDataError('An assistant context plan receipt is invalid.')
+      }
+      const receipt = parseContextReceipt(parseJson(row.contextReceiptJson ?? null))
+      if (!receipt) return undefined
+      return Object.freeze({
+        runId: asAssistantRunId(row.runId),
+        capturedAt: row.capturedAt,
+        receipt: freezeJson(receipt),
+      })
     },
 
     async clear() {
