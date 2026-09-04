@@ -15,6 +15,7 @@ export interface BuildApplicationContextSummaryPromptInput {
   contextPrompt?: string
   /** Soft character budget for the summary text (not model max_tokens). */
   summaryCharBudget?: number
+  maxTokens?: number
 }
 
 export interface ApplicationContextSummaryPrompt {
@@ -33,6 +34,21 @@ export interface SplitHistoryForApplicationSummaryInput {
 export interface SplitHistoryForApplicationSummaryResult {
   olderMessages: ApplicationContextSummaryMessage[]
   recentMessages: ApplicationContextSummaryMessage[]
+}
+
+export interface FitApplicationContextSummaryMessagesInput {
+  olderMessages: readonly ApplicationContextSummaryMessage[]
+  recentMessages: readonly ApplicationContextSummaryMessage[]
+  contextPrompt?: string
+  maxInputTokens: number
+  estimateTextTokens: (text: string) => number
+}
+
+export interface FitApplicationContextSummaryMessagesResult {
+  olderMessages: ApplicationContextSummaryMessage[]
+  recentMessages: ApplicationContextSummaryMessage[]
+  estimatedInputTokens: number
+  truncatedMessageCount: number
 }
 
 export interface ApplicationContextSummaryBudget {
@@ -142,8 +158,89 @@ export function buildApplicationContextSummaryPrompt(
   return {
     systemPrompt,
     userPrompt,
-    maxTokens: DEFAULT_SUMMARY_MAX_TOKENS,
+    maxTokens: Math.max(256, Math.floor(input.maxTokens ?? DEFAULT_SUMMARY_MAX_TOKENS)),
     estimatedInputChars: systemPrompt.length + userPrompt.length,
+  }
+}
+
+/**
+ * Bounds the summary request itself. The application summary is a separate
+ * model turn, so its transcript must fit the selected model before the main
+ * request is considered. Older turns receive most of the budget while the
+ * latest turns remain available for continuity.
+ */
+export function fitApplicationContextSummaryMessages(
+  input: FitApplicationContextSummaryMessagesInput,
+): FitApplicationContextSummaryMessagesResult {
+  const maxInputTokens = Math.max(256, Math.floor(input.maxInputTokens))
+  let olderMessages = normalizeSummaryMessages(input.olderMessages)
+  let recentMessages = normalizeSummaryMessages(input.recentMessages)
+  const originalLength = olderMessages.length + recentMessages.length
+  const estimatePrompt = () => {
+    const prompt = buildApplicationContextSummaryPrompt({
+      olderMessages,
+      recentMessages,
+      contextPrompt: input.contextPrompt,
+    })
+    return input.estimateTextTokens(`${prompt.systemPrompt}\n${prompt.userPrompt}`)
+  }
+
+  const emptyPrompt = buildApplicationContextSummaryPrompt({
+    olderMessages: [],
+    recentMessages: [],
+    contextPrompt: input.contextPrompt,
+  })
+  const emptyPromptTokens = input.estimateTextTokens(`${emptyPrompt.systemPrompt}\n${emptyPrompt.userPrompt}`)
+  const transcriptBudget = Math.max(64, maxInputTokens - emptyPromptTokens)
+  const recentBudget = Math.max(32, Math.floor(transcriptBudget * 0.4))
+  const olderBudget = Math.max(32, transcriptBudget - recentBudget)
+  olderMessages = fitSummaryMessageList(olderMessages, olderBudget, input.estimateTextTokens)
+  recentMessages = fitSummaryMessageList(recentMessages, recentBudget, input.estimateTextTokens)
+
+  let estimatedInputTokens = estimatePrompt()
+  let guard = 0
+  while (estimatedInputTokens > maxInputTokens && guard < 96) {
+    guard += 1
+    const olderIndex = longestSummaryMessageIndex(olderMessages)
+    const recentIndex = longestSummaryMessageIndex(recentMessages)
+    const olderLength = olderIndex >= 0 ? olderMessages[olderIndex].content.length : 0
+    const recentLength = recentIndex >= 0 ? recentMessages[recentIndex].content.length : 0
+    if (olderLength >= recentLength && olderIndex >= 0 && olderLength > 32) {
+      olderMessages = shrinkSummaryMessageAt(olderMessages, olderIndex, input.estimateTextTokens)
+    } else if (recentIndex >= 0 && recentLength > 32) {
+      recentMessages = shrinkSummaryMessageAt(recentMessages, recentIndex, input.estimateTextTokens)
+    } else if (olderMessages.length > 1) {
+      olderMessages = olderMessages.slice(1)
+    } else if (recentMessages.length > 2) {
+      recentMessages = recentMessages.slice(1)
+    } else {
+      break
+    }
+    estimatedInputTokens = estimatePrompt()
+  }
+
+  const originalMessages = [...normalizeSummaryMessages(input.olderMessages), ...normalizeSummaryMessages(input.recentMessages)]
+  const fittedMessages = [...olderMessages, ...recentMessages]
+  const originalCounts = new Map<string, number>()
+  originalMessages.forEach((message) => {
+    const key = `${message.role}\u0000${message.content}`
+    originalCounts.set(key, (originalCounts.get(key) ?? 0) + 1)
+  })
+  let unchangedCount = 0
+  fittedMessages.forEach((message) => {
+    const key = `${message.role}\u0000${message.content}`
+    const count = originalCounts.get(key) ?? 0
+    if (count > 0) {
+      unchangedCount += 1
+      originalCounts.set(key, count - 1)
+    }
+  })
+
+  return {
+    olderMessages,
+    recentMessages,
+    estimatedInputTokens,
+    truncatedMessageCount: Math.max(0, originalLength - unchangedCount),
   }
 }
 
@@ -192,6 +289,84 @@ function formatTranscript(messages: readonly ApplicationContextSummaryMessage[])
   return messages
     .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${clamp(message.content, 2_000)}`)
     .join('\n\n')
+}
+
+function normalizeSummaryMessages(messages: readonly ApplicationContextSummaryMessage[]): ApplicationContextSummaryMessage[] {
+  return messages
+    .map((message) => ({
+      role: message.role,
+      content: String(message.content ?? '').trim(),
+    }))
+    .filter((message) => message.content.length > 0)
+}
+
+function fitSummaryMessageList(
+  messages: ApplicationContextSummaryMessage[],
+  tokenBudget: number,
+  estimateTextTokens: (text: string) => number,
+): ApplicationContextSummaryMessage[] {
+  if (!messages.length) return []
+  const perMessageBudget = Math.max(24, Math.floor(tokenBudget / messages.length))
+  return messages.map((message) => ({
+    ...message,
+    content: truncateSummaryTextToTokens(message.content, perMessageBudget, estimateTextTokens),
+  }))
+}
+
+function longestSummaryMessageIndex(messages: readonly ApplicationContextSummaryMessage[]): number {
+  let index = -1
+  let length = 0
+  messages.forEach((message, candidateIndex) => {
+    if (message.content.length > length) {
+      length = message.content.length
+      index = candidateIndex
+    }
+  })
+  return index
+}
+
+function shrinkSummaryMessageAt(
+  messages: ApplicationContextSummaryMessage[],
+  index: number,
+  estimateTextTokens: (text: string) => number,
+): ApplicationContextSummaryMessage[] {
+  const message = messages[index]
+  const currentTokens = estimateTextTokens(message.content)
+  const targetTokens = Math.max(16, Math.floor(currentTokens * 0.78))
+  return messages.map((candidate, candidateIndex) => candidateIndex === index
+    ? { ...candidate, content: truncateSummaryTextToTokens(candidate.content, targetTokens, estimateTextTokens) }
+    : candidate)
+}
+
+function truncateSummaryTextToTokens(
+  text: string,
+  tokenBudget: number,
+  estimateTextTokens: (text: string) => number,
+): string {
+  const source = text.trim()
+  if (!source || estimateTextTokens(source) <= tokenBudget) return source
+  let low = 1
+  let high = source.length
+  let best = source.slice(0, Math.max(1, Math.floor(source.length * 0.1)))
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const candidate = preserveSummaryHeadTail(source, mid)
+    if (estimateTextTokens(candidate) <= tokenBudget) {
+      best = candidate
+      low = mid + 1
+    } else {
+      high = mid - 1
+    }
+  }
+  return best
+}
+
+function preserveSummaryHeadTail(text: string, keepChars: number): string {
+  if (text.length <= keepChars) return text
+  const marker = '\n...\n'
+  const available = Math.max(8, keepChars - marker.length)
+  const head = Math.max(4, Math.floor(available * 0.55))
+  return `${text.slice(0, head).trimEnd()}${marker}${text.slice(Math.max(head, text.length - (available - head))).trimStart()}`
 }
 
 function clamp(text: string, max: number): string {

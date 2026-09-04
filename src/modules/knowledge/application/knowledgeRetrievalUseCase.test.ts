@@ -145,4 +145,31 @@ describe('knowledge retrieval diagnostics', () => {
     expect(retrievalModes.every((mode) => mode === 'advanced')).toBe(true)
     expect(agenticCalls).toBe(1)
   })
+
+  it('surfaces embedding fallback reasons in RAG quality evidence', async () => {
+    const settings = {
+      language: 'en',
+      ragMode: 'hybrid',
+      ragProfile: 'fast',
+    } as Settings
+
+    const result = await runAgenticRag({
+      query: 'find the local note',
+      settings,
+      retrieveKnowledge: async (_query, _limit, options) => {
+        options?.onEmbeddingResolved?.({ source: 'local-hash', reason: 'provider_embedding_failed' })
+        return [{
+          id: 'fallback-source',
+          type: 'knowledge',
+          title: 'Fallback note',
+          content: 'A local hash fallback result.',
+        }]
+      },
+    })
+
+    expect(result.quality.fallbackReasons).toEqual([
+      'embedding-local-hash',
+      'embedding-provider-failed',
+    ])
+  })
 })

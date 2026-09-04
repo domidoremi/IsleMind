@@ -20,6 +20,7 @@ export interface ConversationRagRuntimeOptions {
   signal?: AbortSignal
   /** Context-plan admission for the concrete retrieval adapter. */
   mode?: 'baseline' | 'advanced'
+  onEmbeddingResolved?: (notice: { source: 'onnx' | 'provider' | 'local-hash'; reason?: string }) => void
 }
 
 export interface ConversationRagRuntime {
@@ -64,6 +65,7 @@ export function createConversationRagRuntime(input: CreateConversationRagRuntime
       tokenBudget: request.tokenBudget,
       maxContextItems: request.maxContextItems,
       signal: options?.signal,
+      onEmbeddingResolved: options?.onEmbeddingResolved,
     }),
   }
 }

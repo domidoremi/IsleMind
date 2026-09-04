@@ -6,6 +6,10 @@ import {
 
 export type KnowledgeRagMode = 'fts' | 'hybrid'
 export type KnowledgeEmbeddingMode = 'provider' | 'local' | 'hybrid'
+export type KnowledgeEmbeddingResolvedNotice = {
+  source: 'onnx' | 'provider' | 'local-hash'
+  reason?: string
+}
 
 export interface KnowledgeHybridSearchRequest<Provider = unknown> {
   query: string
@@ -15,6 +19,7 @@ export interface KnowledgeHybridSearchRequest<Provider = unknown> {
   localEmbeddingModelId?: string
   localEmbeddingModelSource?: 'bundled' | 'downloaded' | 'none'
   provider?: Provider
+  onEmbeddingResolved?: (notice: KnowledgeEmbeddingResolvedNotice) => void
 }
 
 export interface KnowledgeSearchWithFallbackInput<Provider = unknown> {
@@ -27,6 +32,7 @@ export interface KnowledgeSearchWithFallbackInput<Provider = unknown> {
   provider?: Provider
   knowledgeScope?: KnowledgeScope
   signal?: AbortSignal
+  onEmbeddingResolved?: (notice: KnowledgeEmbeddingResolvedNotice) => void
 }
 
 export interface KnowledgeAgenticSearchInput<Plan = unknown, Technique = unknown> {
@@ -36,6 +42,7 @@ export interface KnowledgeAgenticSearchInput<Plan = unknown, Technique = unknown
   plan?: Plan
   techniques?: readonly Technique[]
   signal?: AbortSignal
+  onEmbeddingResolved?: (notice: KnowledgeEmbeddingResolvedNotice) => void
 }
 
 export interface KnowledgeAgenticSearchRequest<Plan = unknown, Technique = unknown> {
@@ -44,6 +51,7 @@ export interface KnowledgeAgenticSearchRequest<Plan = unknown, Technique = unkno
   plan?: Plan
   techniques?: readonly Technique[]
   signal?: AbortSignal
+  onEmbeddingResolved?: (notice: KnowledgeEmbeddingResolvedNotice) => void
 }
 
 /**
@@ -115,6 +123,7 @@ export function createKnowledgeRetrievalUseCase<
               ...(input.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: input.localEmbeddingModelSource }),
               ...(input.provider ? { provider: input.provider } : {}),
               ...(input.signal === undefined ? {} : { signal: input.signal }),
+              ...(input.onEmbeddingResolved === undefined ? {} : { onEmbeddingResolved: input.onEmbeddingResolved }),
             })
           : await dependencies.searchFts(input.query, scopedLimit, { signal: input.signal })
         throwIfAborted(input.signal)
@@ -159,6 +168,7 @@ export function createKnowledgeRetrievalUseCase<
           ...(input.plan === undefined ? {} : { plan: input.plan }),
           ...(input.techniques ? { techniques: input.techniques } : {}),
           ...(input.signal === undefined ? {} : { signal: input.signal }),
+          ...(input.onEmbeddingResolved === undefined ? {} : { onEmbeddingResolved: input.onEmbeddingResolved }),
         })
         throwIfAborted(input.signal)
         return filterKnowledgeSources(sources, input.knowledgeScope).slice(0, input.limit)

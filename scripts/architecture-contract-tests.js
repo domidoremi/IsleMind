@@ -5249,7 +5249,10 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
   assert.equal(capturedRequest.provider, provider, 'provider credentials remain inside bootstrap composition')
   assert.equal(capturedRequest.settings.runtimeLogEnabled, true)
   assert.deepEqual(capturedRequest.messages, [{ role: 'user', content: 'Hello' }])
-  assert.deepEqual(events, [
+  // Bun 1.4 preserves the null-prototype JSON boundary objects in deep
+  // comparisons; compare the serialized contract so the test checks values,
+  // while the following assertions still verify the copy boundary itself.
+  assert.deepEqual(JSON.parse(JSON.stringify(events)), [
     { type: 'text-delta', text: 'Runtime ' },
     { type: 'citation', citationId: 'citation-1', title: 'Source', url: 'https://example.test/source' },
     { type: 'text-delta', text: 'normalized.' },

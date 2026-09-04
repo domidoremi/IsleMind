@@ -88,6 +88,7 @@ async function loadIndexedKnowledgeSearchDriver(): Promise<AppIndexedKnowledgeSe
         ...(options.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: options.localEmbeddingModelSource }),
         ...(options.provider === undefined ? {} : { provider: options.provider }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.onEmbeddingResolved === undefined ? {} : { onEmbeddingResolved: options.onEmbeddingResolved }),
       })
       return hits.map(hybridHitToRetrievalSource)
     },
@@ -102,6 +103,7 @@ async function loadIndexedKnowledgeSearchDriver(): Promise<AppIndexedKnowledgeSe
           limit: options.limit,
           techniques: [...techniques].filter((technique): technique is 'raptor' | 'graphrag' => technique === 'raptor' || technique === 'graphrag'),
           signal: options.signal,
+          onEmbeddingResolved: options.onEmbeddingResolved,
         }),
       ])
       return rerankKnowledgeSources(query, [

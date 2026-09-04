@@ -1,4 +1,5 @@
 import { FloatingComposer } from './FloatingComposer'
+import { useConversationLock } from '@/hooks/useConversationLock'
 import {
   useChatActiveComposerDockState,
 } from './chatActiveComposerDockState'
@@ -57,6 +58,7 @@ export function ChatActiveComposerDock({
   safeStopMessage,
   scrollToLatestMessage,
 }: ChatActiveComposerDockProps) {
+  const conversationLocked = useConversationLock(activeConversation.id)
   const {
     applyRuntimeRepairIntentDraft,
     applyStreamingIntent,
@@ -150,7 +152,7 @@ export function ChatActiveComposerDock({
         onRuntimeRepairSubmit={sendRuntimeRepairIntent}
         onRuntimeRepairApplyDraft={applyRuntimeRepairIntentDraft}
         onRuntimeRepairDismiss={dismissRuntimeRepairIntent}
-        disabled={!provider && activeConversation.providerId !== 'local-setup'}
+        disabled={conversationLocked || (!provider && activeConversation.providerId !== 'local-setup')}
         onStop={handleStop}
         onReferenceSelected={rememberCommandReference}
         onSend={handleSend}

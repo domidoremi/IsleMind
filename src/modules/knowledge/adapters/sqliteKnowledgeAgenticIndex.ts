@@ -90,6 +90,7 @@ export interface SqliteKnowledgeAgenticSearchInput extends KnowledgeRepositoryOp
   query: string
   limit: number
   techniques: readonly KnowledgeAgenticTechnique[]
+  onEmbeddingResolved?: (notice: { source: 'onnx' | 'provider' | 'local-hash'; reason?: string }) => void
 }
 
 export interface KnowledgeAgenticSearchHit {
@@ -320,7 +321,7 @@ export function createSqliteKnowledgeAgenticIndex(
     for (const technique of techniques) {
       throwIfAborted(input.signal)
       batches.push(technique === 'raptor'
-        ? await searchRaptor(value, query, limit, input.signal)
+        ? await searchRaptor(value, query, limit, input.signal, input.onEmbeddingResolved)
         : await searchGraph(value, query, limit, input.signal))
     }
     const results = rerankKnowledgeSources(query, mergeAgenticKnowledgeCandidates(batches), limit)
@@ -548,6 +549,7 @@ async function searchRaptor(
   query: string,
   limit: number,
   signal?: AbortSignal,
+  onEmbeddingResolved?: (notice: { source: 'onnx' | 'provider' | 'local-hash'; reason?: string }) => void,
 ): Promise<KnowledgeAgenticSearchHit[]> {
   const rows = await getAll(
     database,
@@ -561,6 +563,7 @@ async function searchRaptor(
     signal,
   )
   const queryEmbedding = createLocalKnowledgeEmbedding(query)
+  onEmbeddingResolved?.({ source: 'local-hash', reason: 'agentic_local_hash' })
   return rows
     .map((row) => normalizeRaptorRow(row, query, queryEmbedding))
     .filter((source) => source.score > 0.02)

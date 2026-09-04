@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react'
 
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { Attachment, Conversation } from '@/types/chatContracts'
+import { isConversationLocked } from '@/services/conversationLock'
 
 import type { StreamingInputIntent } from './StreamingIntentSheet'
 
@@ -84,6 +85,7 @@ export async function sendActiveChatMessage({
   scrollToLatestMessage: ScrollToLatestMessage
   sendMessage: SendStreamingMessage
 }): Promise<void> {
+  if (isConversationLocked(conversation.id)) return
   scrollToLatestMessage(false, 0, { force: true, replacePending: true })
   await sendMessage({ conversation, content, attachments, requestedOutput })
 }
@@ -227,6 +229,7 @@ export function applyStreamingIntentDraft({
   interruptReplayDelayMs?: number
 }): boolean {
   if (!draft) return false
+  if (isConversationLocked(conversation.id)) return false
 
   setIntentDraft(null)
   if (intent === 'interrupt') {

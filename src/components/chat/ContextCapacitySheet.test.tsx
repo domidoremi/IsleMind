@@ -58,8 +58,8 @@ function view(overrides: { modelContextWindow?: number } = {}) {
     capturedAt: 1_700_000_000_000,
     receipt: {
       schema: ASSISTANT_CONTEXT_PLAN_RECEIPT_SCHEMA,
-      providerId: 'openai-primary',
-      model: 'gpt-5.2',
+      providerId: 'fixture-provider',
+      model: 'fixture-model',
       budget: {
         modelContextWindow: overrides.modelContextWindow ?? 128_000,
         requestBudgetTokens: 80_000,

@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next'
 import { resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { useSettingsStore } from '@/store/settingsStore'
+import { isConversationLocked } from '@/services/conversationLock'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 
@@ -34,6 +35,7 @@ export function confirmConversationModelSwitch({
   switchConversationModel: (id: string, providerId: string, model: string) => boolean
   t: TFunction
 }): boolean {
+  if (isConversationLocked(activeConversation.id)) return false
   if (nextProvider.id === activeConversation.providerId && nextModel === activeConversation.model) return false
   const access = resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings: modelAccessSettings })
   if (!access.allowed) return false

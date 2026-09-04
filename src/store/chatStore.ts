@@ -27,6 +27,7 @@ import {
   sanitizeProcessTracesForBoundary,
 } from '@/core'
 import { abortAllStreams, abortStream } from '@/services/chatStreamLifecycle'
+import { isConversationLocked } from '@/services/conversationLock'
 import { sanitizeMessageInternalOutput } from '@/services/chatInternalOutputGuard'
 import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/modules/providers'
 import {
@@ -425,6 +426,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   delete: (id: string) => {
+    if (isConversationLocked(id)) return
     cancelConversationAssistantDetachedWork(id)
     abortStream(id)
     set((state) => {
@@ -443,6 +445,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   rename: (id: string, title: string) => {
+    if (isConversationLocked(id)) return
     set((state) => {
       const updated = state.conversations.map((c) =>
         c.id === id ? { ...c, title, updatedAt: Date.now() } : c
@@ -453,6 +456,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   updateConversation: (id: string, updates: Partial<Conversation>) => {
+    if (isConversationLocked(id)) return
     const shouldMergeParameterOverrides = updateContainsGenerationParameterPatch(updates)
     set((state) => {
       const updated = state.conversations.map((c) => {
@@ -474,6 +478,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   switchConversationModel: (id: string, providerId: string, model: string) => {
+    if (isConversationLocked(id)) return false
     const nextModel = model.trim()
     if (!nextModel) return false
     const { providers, settings } = useSettingsStore.getState()
@@ -562,6 +567,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   removeMessage: (convId: string, msgId: string) => {
+    if (isConversationLocked(convId)) return
     set((state) => {
       const updated = state.conversations.map((c) => {
         if (c.id !== convId) return c
@@ -577,6 +583,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   trimAfterMessage: (convId: string, msgId: string) => {
+    if (isConversationLocked(convId)) return
     set((state) => {
       const updated = state.conversations.map((c) => {
         if (c.id !== convId) return c
@@ -597,6 +604,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     message: Message,
     options: { readonly persist?: boolean } = {},
   ) => {
+    if (isConversationLocked(convId)) return Promise.resolve()
     let durability = Promise.resolve()
     set((state) => {
       const draftConversationIds = new Set(state.draftConversationIds)

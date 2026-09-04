@@ -4,12 +4,14 @@ import {
   mergeApplicationSummaryIntoContextPrompt,
   parseApplicationContextSummaryText,
   resolveApplicationContextSummaryBudget,
+  fitApplicationContextSummaryMessages,
   splitHistoryForApplicationSummary,
   type ApplicationContextSummaryFailureCode,
   type ApplicationContextSummaryMessage,
   APPLICATION_CONTEXT_SUMMARY_MAX_CONCURRENT,
 } from '@/modules/providers'
 import { generateProviderText } from '@/bootstrap/providerRuntime'
+import { estimateTextTokens } from '@/services/tokenUsage'
 import type { ProviderRuntimeChatRequest } from '@/modules/providers'
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
@@ -26,6 +28,14 @@ export interface RunApplicationContextSummaryInput {
   temperature?: number
   /** Override timeout (ms); otherwise derived from settings with a hard cap. */
   timeoutMs?: number
+  /** Selected model context window used to bound this dedicated summary turn. */
+  modelContextWindow?: number
+  /** Explicit summary input budget; otherwise derived from modelContextWindow. */
+  maxInputTokens?: number
+  /** Main-turn system prompt, retained for composition-contract symmetry. */
+  systemPrompt?: string
+  /** Main-turn output budget, retained for composition-contract symmetry. */
+  maxOutputTokens?: number
 }
 
 export interface RunApplicationContextSummaryResult {
@@ -39,8 +49,10 @@ export interface RunApplicationContextSummaryResult {
   durationMs: number
   timeoutMs: number
   estimatedInputChars: number
+  estimatedInputTokens: number
   summaryChars: number
   estimatedSavedChars: number
+  truncatedMessageCount: number
 }
 
 let activeSummaryCount = 0
@@ -68,19 +80,32 @@ export async function runApplicationContextSummary(
     messages: input.messages,
     recentCount: budget.recentCount,
   })
-  if (!split.olderMessages.length) {
-    return emptySuccess(input, split.recentMessages, startedAt, timeoutMs, 'no_older_messages')
+  const maxInputTokens = input.maxInputTokens
+    ?? Math.max(512, Math.floor((input.modelContextWindow ?? 8192) * 0.62) - budget.maxTokens)
+  const fitted = fitApplicationContextSummaryMessages({
+    olderMessages: split.olderMessages,
+    recentMessages: split.recentMessages,
+    contextPrompt: input.contextPrompt,
+    maxInputTokens,
+    estimateTextTokens,
+  })
+  const boundedSplit = {
+    olderMessages: fitted.olderMessages,
+    recentMessages: fitted.recentMessages,
+  }
+  if (!boundedSplit.olderMessages.length) {
+    return emptySuccess(input, boundedSplit.recentMessages, startedAt, timeoutMs, 'no_older_messages', fitted.estimatedInputTokens, fitted.truncatedMessageCount)
   }
 
   if (input.signal?.aborted) {
-    return fail(input, split, startedAt, timeoutMs, 'aborted', 'summary_aborted')
+    return fail(input, boundedSplit, startedAt, timeoutMs, 'aborted', 'summary_aborted', 0, fitted.estimatedInputTokens, fitted.truncatedMessageCount)
   }
 
   const lease = await acquireSummaryLease(input.signal)
   if (!lease.acquired) {
     return fail(
       input,
-      split,
+      boundedSplit,
       startedAt,
       timeoutMs,
       lease.reason === 'aborted' ? 'aborted' : 'concurrency_saturated',
@@ -94,10 +119,11 @@ export async function runApplicationContextSummary(
   const timer = setTimeout(() => timeoutController.abort(), timeoutMs)
 
   const prompt = buildApplicationContextSummaryPrompt({
-    olderMessages: split.olderMessages,
-    recentMessages: split.recentMessages,
+    olderMessages: boundedSplit.olderMessages,
+    recentMessages: boundedSplit.recentMessages,
     contextPrompt: input.contextPrompt,
     summaryCharBudget: budget.summaryCharBudget,
+    maxTokens: budget.maxTokens,
   })
 
   const request: ProviderRuntimeChatRequest = {
@@ -133,10 +159,10 @@ export async function runApplicationContextSummary(
     const raw = await generateProviderText(request)
     const summary = parseApplicationContextSummaryText(raw)
     if (!summary) {
-      return fail(input, split, startedAt, timeoutMs, 'empty_summary', 'empty_summary', prompt.estimatedInputChars)
+      return fail(input, boundedSplit, startedAt, timeoutMs, 'empty_summary', 'empty_summary', prompt.estimatedInputChars, fitted.estimatedInputTokens, fitted.truncatedMessageCount)
     }
     const durationMs = Date.now() - startedAt
-    const sourceChars = estimateTranscriptChars(split.olderMessages) + estimateTranscriptChars(split.recentMessages)
+    const sourceChars = estimateTranscriptChars(boundedSplit.olderMessages) + estimateTranscriptChars(boundedSplit.recentMessages)
     return {
       ok: true,
       summary,
@@ -144,13 +170,15 @@ export async function runApplicationContextSummary(
         baseContextPrompt: input.contextPrompt,
         summary,
       }),
-      recentMessages: split.recentMessages,
-      olderMessageCount: split.olderMessages.length,
+      recentMessages: boundedSplit.recentMessages,
+      olderMessageCount: boundedSplit.olderMessages.length,
       durationMs,
       timeoutMs,
       estimatedInputChars: prompt.estimatedInputChars,
+      estimatedInputTokens: fitted.estimatedInputTokens,
       summaryChars: summary.length,
-      estimatedSavedChars: Math.max(0, sourceChars - summary.length - estimateTranscriptChars(split.recentMessages)),
+      estimatedSavedChars: Math.max(0, sourceChars - summary.length - estimateTranscriptChars(boundedSplit.recentMessages)),
+      truncatedMessageCount: fitted.truncatedMessageCount,
     }
   } catch (error) {
     const classified = classifyApplicationContextSummaryFailure(error)
@@ -160,12 +188,14 @@ export async function runApplicationContextSummary(
       : classified.code
     return fail(
       input,
-      split,
+      boundedSplit,
       startedAt,
       timeoutMs,
       code,
       code === 'timeout' ? `summary_timeout_${timeoutMs}ms` : classified.message,
       prompt.estimatedInputChars,
+      fitted.estimatedInputTokens,
+      fitted.truncatedMessageCount,
     )
   } finally {
     clearTimeout(timer)
@@ -209,6 +239,8 @@ function emptySuccess(
   startedAt: number,
   timeoutMs: number,
   _code: ApplicationContextSummaryFailureCode,
+  estimatedInputTokens: number,
+  truncatedMessageCount: number,
 ): RunApplicationContextSummaryResult {
   return {
     ok: true,
@@ -219,8 +251,10 @@ function emptySuccess(
     durationMs: Date.now() - startedAt,
     timeoutMs,
     estimatedInputChars: 0,
+    estimatedInputTokens,
     summaryChars: 0,
     estimatedSavedChars: 0,
+    truncatedMessageCount,
   }
 }
 
@@ -232,6 +266,8 @@ function fail(
   code: ApplicationContextSummaryFailureCode,
   message: string,
   estimatedInputChars = 0,
+  estimatedInputTokens = 0,
+  truncatedMessageCount = 0,
 ): RunApplicationContextSummaryResult {
   return {
     ok: false,
@@ -244,8 +280,10 @@ function fail(
     durationMs: Date.now() - startedAt,
     timeoutMs,
     estimatedInputChars,
+    estimatedInputTokens,
     summaryChars: 0,
     estimatedSavedChars: 0,
+    truncatedMessageCount,
   }
 }
 

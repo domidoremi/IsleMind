@@ -6701,8 +6701,8 @@ function assertProviderEmbeddingOwnership() {
   )
   assert.equal(
     resolveProviderEmbeddingModel({ id: 'mimo-embed', type: 'xiaomi-mimo', name: 'Mimo Embed', apiKey: FAKE_KEY_A, models: ['mimo-v2.5-pro'], enabled: true }),
-    'text-embedding',
-    'target provider embedding policy preserves Xiaomi Mimo embedding fallback',
+    undefined,
+    'target provider embedding policy requires an explicit embedding model',
   )
 }
 

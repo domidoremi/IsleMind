@@ -20,6 +20,7 @@ export interface RagRetrievalOptions {
    * on the canonical FTS path; advanced permits the optional hybrid/index path.
    */
   mode?: 'baseline' | 'advanced'
+  onEmbeddingResolved?: (notice: { source: 'onnx' | 'provider' | 'local-hash'; reason?: string }) => void
 }
 
 export interface AgenticRagOptions {
@@ -36,6 +37,7 @@ export interface AgenticRagOptions {
   tokenBudget?: number
   maxContextItems?: number
   signal?: AbortSignal
+  onEmbeddingResolved?: RagRetrievalOptions['onEmbeddingResolved']
 }
 
 const TARGET_CHUNK_LENGTH = 1200
@@ -136,7 +138,7 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
     quality: {
       ...packed.quality,
       candidateCount: retrieved.candidates.length,
-      fallbackReasons: collectFallbackReasons(plan, reranked.strategy),
+      fallbackReasons: collectFallbackReasons(plan, reranked.strategy, retrieved.embeddingFallbackReasons),
       latencyMs: Math.max(0, (options.now?.() ?? Date.now()) - planStarted),
       tokenBudget: plan.tokenBudget,
       estimatedContextTokens: estimateTokens(packed.contextPrompt),
@@ -611,7 +613,7 @@ function buildHydePrompt(query: string, language: Language | 'mixed', intent: Ra
   return `${prefix}: ${query}\nIntent: ${intent}. Include likely terminology, entities, and expected evidence.`
 }
 
-async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOptions): Promise<{ candidates: RagRetrievalCandidate[]; trace: RagTraceStep; stats: NonNullable<RagContextPack['retrievalStats']> }> {
+async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOptions): Promise<{ candidates: RagRetrievalCandidate[]; trace: RagTraceStep; stats: NonNullable<RagContextPack['retrievalStats']>; embeddingSources: string[]; embeddingFallbackReasons: string[] }> {
   const startedAt = options.now?.() ?? Date.now()
   throwIfAgenticRagCancelled(options.signal)
   const variants = [
@@ -622,9 +624,20 @@ async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOpti
   const perQueryLimit = Math.max(4, Math.ceil(plan.retrievalBudget / Math.max(1, variants.length)))
   const memoryCandidates = (options.memorySources ?? []).map((source, index) => toCandidate(source, 'memory', plan.query, index))
   const retrievalMode = shouldUseAdvancedIndexes(plan) ? 'advanced' as const : 'baseline' as const
+  const embeddingSources = new Set<string>()
+  const embeddingFallbackReasons = new Set<string>()
+  const onEmbeddingResolved = (notice: { source: 'onnx' | 'provider' | 'local-hash'; reason?: string }) => {
+    embeddingSources.add(`embedding-${notice.source}`)
+    if (notice.source === 'local-hash') {
+      embeddingFallbackReasons.add('embedding-local-hash')
+      const reason = normalizeEmbeddingFallbackReason(notice.reason)
+      if (reason) embeddingFallbackReasons.add(`embedding-${reason}`)
+    }
+    options.onEmbeddingResolved?.(notice)
+  }
   const retrievalOptions = options.signal || retrievalMode === 'advanced'
-    ? { mode: retrievalMode, ...(options.signal ? { signal: options.signal } : {}) }
-    : { mode: retrievalMode }
+    ? { mode: retrievalMode, onEmbeddingResolved, ...(options.signal ? { signal: options.signal } : {}) }
+    : { mode: retrievalMode, onEmbeddingResolved }
   const batches = await Promise.all(variants.map(async (variant) => {
     throwIfAgenticRagCancelled(options.signal)
     const hits = await options.retrieveKnowledge(variant, perQueryLimit, retrievalOptions)
@@ -658,6 +671,8 @@ async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOpti
   return {
     candidates,
     stats,
+    embeddingSources: [...embeddingSources],
+    embeddingFallbackReasons: [...embeddingFallbackReasons],
     trace: completeRagTrace({
       id: `${plan.id}-retrieve`,
       stage: 'retrieve',
@@ -668,6 +683,8 @@ async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOpti
       metadata: {
         ...stats,
         hyde: !!plan.hydePrompt,
+        embeddingSources: [...embeddingSources],
+        embeddingFallbackReasons: [...embeddingFallbackReasons],
       },
     }, options.now?.() ?? Date.now()),
   }
@@ -689,12 +706,27 @@ function resolveRerankStrategy(plan: RagQueryPlan): RagRerankResult['strategy'] 
   return 'local-statistical'
 }
 
-function collectFallbackReasons(plan: RagQueryPlan, strategy: RagRerankResult['strategy']): string[] {
+function collectFallbackReasons(plan: RagQueryPlan, strategy: RagRerankResult['strategy'], embeddingFallbackReasons: readonly string[] = []): string[] {
   const reasons: string[] = []
   if (strategy === 'cross-encoder-fallback') reasons.push('cross-encoder-model-unavailable')
   if (strategy === 'colbert-lite') reasons.push('colbert-model-unavailable')
   if (plan.enabledTechniques.includes('llmlingua')) reasons.push('llmlingua-model-unavailable')
-  return reasons
+  return Array.from(new Set([...reasons, ...embeddingFallbackReasons]))
+}
+
+function normalizeEmbeddingFallbackReason(reason: string | undefined): string | undefined {
+  switch (reason) {
+    case 'onnx_embedding_unavailable': return 'onnx-unavailable'
+    case 'onnx_embedding_failed': return 'onnx-failed'
+    case 'provider_embedding_unavailable': return 'provider-unavailable'
+    case 'provider_embedding_empty': return 'provider-empty'
+    case 'provider_embedding_failed': return 'provider-failed'
+    case 'local_embedding_requested': return 'local-requested'
+    case 'no_model_embedding_available': return 'no-model-available'
+    case 'agentic_local_hash': return 'agentic-local-hash'
+    default:
+      return undefined
+  }
 }
 
 function toCandidate(source: RetrievalSource, origin: RagRetrievalOrigin, queryVariant: string, index: number): RagRetrievalCandidate {

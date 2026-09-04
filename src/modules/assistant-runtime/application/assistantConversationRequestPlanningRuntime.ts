@@ -404,6 +404,19 @@ export interface AssistantConversationRequestPlanningRuntimeDependencies<
     readonly previousResponseId?: string
     readonly previousFragments?: readonly TPreviousFragment[]
   }): TContextPlan
+  /** Re-pack a post-summary prompt against the selected model's hard budget. */
+  packChatMessages?(input: {
+    readonly messages: readonly TSourceMessage[]
+    readonly contextPrompt?: string
+    readonly modelContextWindow: number
+    readonly maxOutputTokens: number
+    readonly systemPrompt?: string
+    readonly reasoningEffort?: unknown
+    readonly provider?: TProvider
+    readonly providerType?: TProvider['type']
+    readonly model?: string
+    readonly localCompression?: boolean
+  }): TActivePrompt
   /**
    * Optional: selected-model application summary for non-native providers.
    * On failure return ok:false; planning keeps structured-v2 packed messages.
@@ -416,6 +429,10 @@ export interface AssistantConversationRequestPlanningRuntimeDependencies<
     readonly settings: TSettings
     readonly signal?: AbortSignal
     readonly conversationId: string
+    readonly modelContextWindow?: number
+    readonly maxInputTokens?: number
+    readonly systemPrompt?: string
+    readonly maxOutputTokens?: number
   }): Promise<{
     readonly ok: boolean
     readonly summary: string
@@ -427,9 +444,13 @@ export interface AssistantConversationRequestPlanningRuntimeDependencies<
     readonly durationMs?: number
     readonly timeoutMs?: number
     readonly estimatedInputChars?: number
+    readonly estimatedInputTokens?: number
     readonly summaryChars?: number
     readonly estimatedSavedChars?: number
+    readonly truncatedMessageCount?: number
   }>
+  /** Locks the conversation while a model-backed summary turn is in flight. */
+  lockConversation?(conversationId: string): () => void
   emitRuntimeEvent(input: AssistantConversationRequestPlanningRuntimeEvent): Promise<unknown>
   recordCompactUsage(input: AssistantConversationCompactUsageInput<TCompactMode>): TCompactRecord
   traceId(prefix: 'native-search' | 'compact' | 'context-pack'): string
@@ -685,6 +706,8 @@ export function createAssistantConversationRequestPlanningRuntime<
       && !compactDecision.nativeServerCompact
       && dependencies.runApplicationContextSummary
     ) {
+      const releaseConversationLock = dependencies.lockConversation?.(input.conversationId) ?? (() => undefined)
+      try {
       const summaryTraceId = dependencies.traceId('compact')
       const summaryStartedAt = dependencies.now()
       recordRunning(input, {
@@ -710,9 +733,12 @@ export function createAssistantConversationRequestPlanningRuntime<
         messages: transcript,
         contextPrompt: remoteCompactProbe.contextPrompt,
         settings: input.settings,
-        signal: input.signal,
-        conversationId: input.conversationId,
-      })
+          signal: input.signal,
+          conversationId: input.conversationId,
+          modelContextWindow: input.modelConfig.contextWindow,
+          maxOutputTokens: input.runtimeConversation.maxTokens,
+          systemPrompt,
+        })
       applicationSummaryDurationMs = summaryResult.durationMs
       applicationSummaryTimeoutMs = summaryResult.timeoutMs
       applicationSummaryInputChars = summaryResult.estimatedInputChars
@@ -720,16 +746,35 @@ export function createAssistantConversationRequestPlanningRuntime<
 
       if (summaryResult.ok && summaryResult.summary) {
         applicationSummaryApplied = true
-        const estimatedInputTokens = estimatePromptTokens(summaryResult)
+        const repacked = dependencies.packChatMessages?.({
+          messages: summaryResult.recentMessages as unknown as TSourceMessage[],
+          contextPrompt: summaryResult.contextPrompt,
+          modelContextWindow: input.modelConfig.contextWindow,
+          maxOutputTokens: input.runtimeConversation.maxTokens,
+          systemPrompt,
+          reasoningEffort: input.runtimeConversation.reasoningEffort,
+          provider: input.provider,
+          providerType: input.provider.type,
+          model: input.upstreamModel,
+          localCompression: true,
+        })
+        const estimatedInputTokens = repacked
+          ? repacked.estimatedInputTokens
+          : estimatePromptTokens(summaryResult)
         const summaryTokens = Math.ceil((summaryResult.summaryChars ?? summaryResult.summary.length) / 4)
+        const repackedPrompt = repacked ?? activePrompt
         activePrompt = {
-          ...activePrompt,
-          messages: summaryResult.recentMessages.map((message) => ({
+          ...repackedPrompt,
+          messages: (repacked?.messages ?? summaryResult.recentMessages.map((message) => ({
             role: message.role,
             content: message.content,
-          })) as unknown as TActivePrompt['messages'],
-          contextPrompt: summaryResult.contextPrompt,
+          }))) as unknown as TActivePrompt['messages'],
+          contextPrompt: repacked?.contextPrompt ?? summaryResult.contextPrompt,
           estimatedInputTokens,
+          fixedTokens: repacked?.fixedTokens ?? activePrompt.fixedTokens,
+          messageTokens: repacked?.messageTokens ?? activePrompt.messageTokens,
+          trimmedCount: repacked?.trimmedCount ?? 0,
+          truncatedSingleMessage: repacked?.truncatedSingleMessage ?? false,
           compressionTriggered: true,
           compressionMetadata: {
             ...activePrompt.compressionMetadata,
@@ -796,6 +841,9 @@ export function createAssistantConversationRequestPlanningRuntime<
             fallbackLocal: true,
           },
         })
+      }
+      } finally {
+        releaseConversationLock()
       }
     }
 
@@ -935,37 +983,41 @@ export function createAssistantConversationRequestPlanningRuntime<
           ? dependencies.translate('chatRunner.trace.compactApplicationSummaryFallback')
           : compactDecision.reason
 
-    recordCompleted(input, {
-      id: dependencies.traceId('compact'),
-      type: 'system',
-      title: dependencies.translate('chatRunner.trace.compactPolicyTitle'),
-      content: compactContent,
-      status: compactDecision.required && !compactDecision.supported ? 'error' : 'done',
-      startedAt: dependencies.now(),
-      metadata: {
-        compactMode: compactModeLabel,
-        remoteCompactMode: compactDecision.mode,
-        strategy: compactDecision.strategy,
-        nativeServerCompact: compactDecision.nativeServerCompact === true,
-        supported: compactDecision.supported,
-        reason: compactDecision.reason,
-        pressureRatio: compactDecision.pressureRatio,
-        inputTokens: compactRecord.inputTokens,
-        outputTokens: compactRecord.outputTokens,
-        estimatedSavedTokens: compactRecord.estimatedSavedTokens ?? compactRecord.localEstimatedSavedTokens,
-        failureCode: compactRecord.failureCode,
-        fallbackLocal: compactRecord.fallbackLocal,
-        applicationSummaryApplied,
-        applicationSummaryDurationMs,
-        applicationSummaryTimeoutMs,
-        applicationSummaryChars,
-        applicationSummaryInputChars,
-        ...(applicationSummaryFailure ? { applicationSummaryFailure } : {}),
-        contextRuntime: contextRuntime.trace,
-        contextPlanner: contextPlan.trace,
-        contextFragments: contextPlan.fragments.map(projectContextFragment),
-      },
-    })
+    const applicationSummaryTraceRecorded = compactDecision.strategy === 'application-model-summary'
+      && Boolean(dependencies.runApplicationContextSummary)
+    if (!applicationSummaryTraceRecorded) {
+      recordCompleted(input, {
+        id: dependencies.traceId('compact'),
+        type: 'system',
+        title: dependencies.translate('chatRunner.trace.compactPolicyTitle'),
+        content: compactContent,
+        status: compactDecision.required && !compactDecision.supported ? 'error' : 'done',
+        startedAt: dependencies.now(),
+        metadata: {
+          compactMode: compactModeLabel,
+          remoteCompactMode: compactDecision.mode,
+          strategy: compactDecision.strategy,
+          nativeServerCompact: compactDecision.nativeServerCompact === true,
+          supported: compactDecision.supported,
+          reason: compactDecision.reason,
+          pressureRatio: compactDecision.pressureRatio,
+          inputTokens: compactRecord.inputTokens,
+          outputTokens: compactRecord.outputTokens,
+          estimatedSavedTokens: compactRecord.estimatedSavedTokens ?? compactRecord.localEstimatedSavedTokens,
+          failureCode: compactRecord.failureCode,
+          fallbackLocal: compactRecord.fallbackLocal,
+          applicationSummaryApplied,
+          applicationSummaryDurationMs,
+          applicationSummaryTimeoutMs,
+          applicationSummaryChars,
+          applicationSummaryInputChars,
+          ...(applicationSummaryFailure ? { applicationSummaryFailure } : {}),
+          contextRuntime: contextRuntime.trace,
+          contextPlanner: contextPlan.trace,
+          contextFragments: contextPlan.fragments.map(projectContextFragment),
+        },
+      })
+    }
     if (compactDecision.required && !compactDecision.supported) {
       dependencies.projectTerminalFailure({
         conversationId: input.conversationId,

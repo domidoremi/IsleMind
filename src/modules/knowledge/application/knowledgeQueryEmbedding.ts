@@ -29,6 +29,13 @@ export interface KnowledgeUnsupportedProviderEmbeddingNotice<Provider> {
   signal?: AbortSignal
 }
 
+export type KnowledgeQueryEmbeddingSource = 'onnx' | 'provider' | 'local-hash'
+
+export interface KnowledgeQueryEmbeddingResolutionNotice {
+  source: KnowledgeQueryEmbeddingSource
+  reason?: string
+}
+
 export interface KnowledgeQueryEmbeddingUseCaseDependencies<Provider> {
   embedWithOnnx(input: KnowledgeOnnxQueryEmbeddingRequest): Promise<number[] | null | undefined>
   embedWithProvider(input: KnowledgeProviderQueryEmbeddingRequest<Provider>): Promise<number[]>
@@ -40,6 +47,7 @@ export interface ResolveKnowledgeQueryEmbeddingInput<Provider> extends Knowledge
   provider?: Provider
   providerConfigured: boolean
   providerSupportsEmbeddings: boolean
+  onResolved?: (notice: KnowledgeQueryEmbeddingResolutionNotice) => void
 }
 
 export interface KnowledgeQueryEmbeddingUseCase<Provider> {
@@ -63,6 +71,7 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
   return {
     async resolve(input) {
       throwIfAborted(input.signal)
+      let fallbackReason: string | undefined
       const onnxVectorExists = input.chunks.some((chunk) => (
         chunk.source === 'onnx'
         && typeof chunk.embeddingJson === 'string'
@@ -82,9 +91,14 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
             input.signal,
           )
           throwIfAborted(input.signal)
-          if (embedding?.length) return embedding
+          if (embedding?.length) {
+            reportResolution(input, { source: 'onnx' })
+            return embedding
+          }
+          fallbackReason = 'onnx_embedding_unavailable'
         } catch (error) {
           throwIfAborted(input.signal)
+          fallbackReason = 'onnx_embedding_failed'
           // Provider and deterministic local vectors remain available.
         }
       }
@@ -106,6 +120,7 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
         && input.providerConfigured
         && (input.embeddingMode === 'provider' || providerVectorExists)
       ) {
+        fallbackReason ??= 'provider_embedding_unavailable'
         await raceWithAbort(
           Promise.resolve(dependencies.notifyProviderUnsupported({
             provider: input.provider,
@@ -126,16 +141,36 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
             input.signal,
           )
           throwIfAborted(input.signal)
-          if (embedding.length) return embedding
+          if (embedding.length) {
+            reportResolution(input, { source: 'provider' })
+            return embedding
+          }
+          fallbackReason = 'provider_embedding_empty'
         } catch (error) {
           throwIfAborted(input.signal)
+          fallbackReason = 'provider_embedding_failed'
           // Deterministic local vectors keep retrieval available offline.
         }
       }
 
       throwIfAborted(input.signal)
+      reportResolution(input, {
+        source: 'local-hash',
+        reason: fallbackReason ?? (input.embeddingMode === 'local' ? 'local_embedding_requested' : 'no_model_embedding_available'),
+      })
       return createLocalKnowledgeEmbedding(input.query)
     },
+  }
+}
+
+function reportResolution<Provider>(
+  input: ResolveKnowledgeQueryEmbeddingInput<Provider>,
+  notice: KnowledgeQueryEmbeddingResolutionNotice,
+): void {
+  try {
+    input.onResolved?.(notice)
+  } catch {
+    // Diagnostics must never change retrieval behavior.
   }
 }
 
