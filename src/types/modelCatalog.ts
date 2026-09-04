@@ -162,10 +162,6 @@ export function getProviderModels(providerType: ProviderType): AIModel[] {
   return DEFAULT_MODELS.filter((model) => model.provider === providerType)
 }
 
-export function getDefaultProviderModelIds(_providerType: ProviderType): string[] {
-  return []
-}
-
 export function getModelConfig(modelId: string, providerType?: ProviderType, modelConfigs: AIModel[] = [], modelName?: string): AIModel {
   const remoteExact = modelConfigs.find((item) => item.id === modelId)
   if (remoteExact) return mergeKnownModelDefaults(modelId, providerType, remoteExact)

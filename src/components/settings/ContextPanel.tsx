@@ -795,6 +795,15 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
           />
         ) : null}
+        {showContext ? (
+          <IsleToggle
+            icon={<AppIcon name="reasoning" color={colors.text} size={18} />}
+            title={t('settings.modelContextCompression')}
+            description={t('settings.modelContextCompressionHint')}
+            active={!!settings.modelContextCompressionEnabled}
+            onPress={() => updateSettings({ modelContextCompressionEnabled: !settings.modelContextCompressionEnabled })}
+          />
+        ) : null}
       </View>
   )
   const Lead = canonicalThemeId === 'monet'

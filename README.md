@@ -40,17 +40,22 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 ## 当前版本
 
-- 稳定版本：`v1.0.21`
-- Android：`versionCode 121`
+- 当前版本：`v1.0.22`
+- Android：`versionCode 122`
+- [查看 v1.0.22 Release 说明](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.22)
 - [下载 v1.0.21 APK 与校验文件](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
 - [查看全部 Releases 与中英文版本记录](https://github.com/domidoremi/IsleMind/releases)
 
-### v1.0.21 更新
+`v1.0.22` Release 暂不附带 APK 构建资产，可安装的最新构建仍为 `v1.0.21`。
 
-- 统一应用内通知出口，避免服务商导入和状态操作重复提示。
-- 优化消息气泡、模型生成状态、思考摘要交互、模型图标和移动端布局。
-- 改进服务商批量导入，支持从端点识别服务商名称，并保留每个密钥原有的命名标签。
-- 发布 `no-model` 与 `with-model-small` 两种 APK，覆盖 `universal-64`、`arm64-v8a`、`armeabi-v7a-legacy` 和 `x86_64`。
+### v1.0.22 更新
+
+- 重构聊天工作区与移动端导航，改善消息列表滚动、键盘交互、浮动输入框和连续会话画布体验。
+- 完善主题表达与玻璃表面组件，统一聊天、设置和反馈状态在不同主题下的视觉与可读性。
+- 错误提示跟随当前选择的应用语言显示。
+- 增强服务商运行时：改进模型能力识别、请求参数映射、请求优化、健康检查、故障转移和本地路由。
+- 完善便携数据备份与恢复流程，并扩展用量统计、价格目录和用量归因诊断能力。
+- 更新 Expo / React Native 依赖与 Android 构建工具链，继续覆盖 16 KB 页面兼容性和 ARM64 构建验证。
 
 ### APK 选择
 

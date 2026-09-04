@@ -118,7 +118,8 @@ export function useChatSetupWorkspaceState({
     ? setupSelectedModel!
     : homeProvider ? getPolicyPreferredProviderModel(homeProvider, modelAccessSettings) ?? homeProviderModels[0] ?? 'setup-model' : 'setup-model'
   const setupTemperature = settings.defaultTemperature
-  const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider ?? null, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides])
+  const setupMaxTokens = settings.defaultMaxTokens
+  const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider ?? null, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides])
   const setupReasoningModel = homeProvider ? resolveProviderModelAlias(homeProvider, setupModel) : setupModel
   const supportsSetupReasoningQuick = !!homeProvider && providerSupportsReasoning(homeProvider, setupReasoningModel)
   const setupMultimodalPolicy = useMemo(
@@ -200,7 +201,7 @@ export function useChatSetupWorkspaceState({
       showNoAvailableModelsFeedback()
       return
     }
-    const nextSetupConversation = createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides)
+    const nextSetupConversation = createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides)
     const id = createConversation(readyProvider.id, model)
     updateConversation(id, {
       systemPrompt: setupSystemPrompt,

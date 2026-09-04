@@ -66,5 +66,14 @@ jobs:
       - name: Provider stream parsing gate
         run: bun run test:provider-stream-parsing
 
+      - name: Provider parameter transmission gate
+        run: bun run test:provider-parameter-matrix
+
+      - name: Reasoning runtime compatibility gate
+        run: bun run test:reasoning-runtime-compatibility
+
+      - name: Diagnostics usage SQLite gate
+        run: bun run test:diagnostics-usage-sqlite
+
       - name: Toolchain catalog composition gate
         run: bun run test:toolchain-catalog
