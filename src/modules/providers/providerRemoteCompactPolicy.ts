@@ -21,6 +21,8 @@ export interface RemoteCompactDecisionInput {
   settings?: {
     remoteCompactMode?: RemoteCompactMode
     remoteCompactThreshold?: number
+    /** Opt-in to model-summary compaction instead of local structured packing. */
+    modelContextCompressionEnabled?: boolean
   } & ProviderLocalCompressionPrivacySettings
   /** Explicit route evidence; undefined fails closed for native OpenAI compaction. */
   usesOpenAIResponses?: boolean
@@ -185,19 +187,22 @@ export function createProviderRemoteCompactPolicy(
     }
 
     if (localAdmission.allowed) {
+      // A model summary costs one extra request, so it is selected only on explicit opt-in.
+      // Local structured packing stays the default for an unconfigured user.
+      const useModelSummary = input.settings?.modelContextCompressionEnabled === true
       return {
         mode,
         enabled: true,
         required,
         supported: false,
-        strategy: 'local-structured-v2',
+        strategy: useModelSummary ? 'application-model-summary' : 'local-structured-v2',
         nativeServerCompact: false,
         capabilityKind: resolution.capabilityKind,
         remoteClassification: 'remote-unavailable',
         localFallbackAllowed: true,
         privacyAllowsLocalCompression: true,
         localFallbackReason: localAdmission.reason,
-        reason: 'provider_capability_missing',
+        reason: useModelSummary ? 'application_model_summary' : 'provider_capability_missing',
         pressureRatio,
       }
     }

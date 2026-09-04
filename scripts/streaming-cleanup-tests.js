@@ -12,6 +12,7 @@ const persistedSnapshots = []
 const committedContent = []
 const committedTraces = []
 const flushedMessages = []
+const lifecycleTransitions = []
 
 registerTypeScriptSupport()
 
@@ -55,6 +56,7 @@ function registerTypeScriptSupport() {
         useChatStore: {
           getState: () => ({
             conversations: [],
+            transitionMessageLifecycle: (convId, msgId, stage) => lifecycleTransitions.push({ convId, msgId, stage }),
             persistStreamingContentSnapshot: (convId, msgId, text) => persistedSnapshots.push({ convId, msgId, text }),
             commitStreamingContent: (convId, msgId, text) => committedContent.push({ convId, msgId, text }),
             commitStreamingTraceSnapshot: (convId, msgId, traces) => committedTraces.push({ convId, msgId, traces }),
@@ -216,7 +218,7 @@ function run() {
   )
   assert.match(
     assistantStreamLifecycleRuntimeSource,
-    /async complete\(result, lifecycle\) \{[\s\S]*?await dependencies\.finalize\(\{[\s\S]*?requestController: lifecycle\.requestController,[\s\S]*?chunkFlush: lifecycle\.flush,/,
+    /async complete\(result, lifecycle\) \{[\s\S]*?(?:await|return) dependencies\.finalize\(\{[\s\S]*?requestController: lifecycle\.requestController,[\s\S]*?chunkFlush: lifecycle\.flush,/,
     'Assistant Runtime forwards the exact provider-stream controller and flush lifecycle to finalization',
   )
   assert.match(assistantReplyStartRuntimeSource, /dependencies\.streamLifecycleRuntime\.build\(\{/, 'Assistant Runtime owns provider stream lifecycle construction in the reply-start sequence')

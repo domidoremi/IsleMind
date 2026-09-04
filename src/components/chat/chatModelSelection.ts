@@ -151,6 +151,7 @@ export function createSetupConversationShell(
   reasoningEffort: Conversation['reasoningEffort'],
   systemPrompt: string,
   temperature?: number,
+  maxTokens?: number,
   overrides: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'maxTokens'>> = {}
 ): Conversation {
   const upstreamModel = provider ? resolveProviderModelAlias(provider, model) : model
@@ -160,6 +161,7 @@ export function createSetupConversationShell(
     model: upstreamModel,
     reasoningEffort,
     temperature,
+    maxTokens,
     modelConfig: config,
   })
   const conversation: Conversation = {
@@ -172,7 +174,7 @@ export function createSetupConversationShell(
     temperature: resolveConversationGenerationParameterDefault('temperature', parameterRanges, { temperature }) ?? DEFAULT_SETUP_TEMPERATURE,
     topP: resolveConversationGenerationParameterDefault('topP', parameterRanges) ?? 1,
     reasoningEffort,
-    maxTokens: resolveConversationGenerationParameterDefault('maxTokens', parameterRanges) ?? config.defaultMaxTokens,
+    maxTokens: resolveConversationGenerationParameterDefault('maxTokens', parameterRanges, { maxTokens }) ?? config.defaultMaxTokens,
     messages: [],
     createdAt: 0,
     updatedAt: 0,
@@ -191,7 +193,7 @@ export function createSetupConversationShell(
   if (typeof overrides.maxTokens === 'number') {
     conversation.maxTokens = clampConversationGenerationParameter('maxTokens', overrides.maxTokens, parameterRanges) ?? conversation.maxTokens
   }
-  const generationParameterOverrides = buildSetupGenerationParameterOverrides(conversation, overrides)
+  const generationParameterOverrides = buildSetupGenerationParameterOverrides(conversation, overrides, { temperature, maxTokens })
   conversation.generationParameterOverrides = generationParameterOverrides ?? {}
   return conversation
 }
@@ -228,8 +230,17 @@ export function resolveRuntimeTarget(
 function buildSetupGenerationParameterOverrides(
   conversation: Conversation,
   overrides: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'maxTokens'>>,
+  configuredDefaults: { temperature?: number; maxTokens?: number } = {},
 ): Conversation['generationParameterOverrides'] {
   const overrideFlags: Conversation['generationParameterOverrides'] = {}
+  // A configured global preference is a user decision, so the seeded value must reach the
+  // provider request instead of being dropped as an unset provider default.
+  if (typeof configuredDefaults.temperature === 'number' && Number.isFinite(configuredDefaults.temperature)) {
+    overrideFlags.temperature = true
+  }
+  if (typeof configuredDefaults.maxTokens === 'number' && Number.isFinite(configuredDefaults.maxTokens)) {
+    overrideFlags.maxTokens = true
+  }
   if (Object.prototype.hasOwnProperty.call(overrides, 'temperature') && Number.isFinite(conversation.temperature)) {
     overrideFlags.temperature = true
   }

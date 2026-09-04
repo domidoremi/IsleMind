@@ -5049,7 +5049,7 @@ async function run() {
   const portableDataTransferSource = fs.readFileSync(path.join(root, 'src/platform/native/expoPortableDataTransfer.ts'), 'utf8')
   assert.ok(portableDataApplicationSource.includes('dependencies.payload.exportJson(options)'), 'Data Management forwards explicit Tavern export options to payload assembly')
   assert.ok(portableDataBootstrapSource.includes('portableDataPayloadRuntime.exportJson(options)'), 'bootstrap forwards explicit Tavern export options to the target payload runtime')
-  assert.ok(portablePayloadSource.includes('json: JSON.stringify(payload, null, 2)'), 'Data Management serializes the assembled payload exactly once')
+  assert.ok(portablePayloadSource.includes('json: JSON.stringify(serialized, null, 2)'), 'Data Management serializes the assembled payload exactly once')
   assert.equal(portableDataBootstrapSource.includes('JSON.parse(json)'), false, 'portable export does not reparse large JSON only to recover Tavern audit metadata')
   assert.equal(fs.existsSync(path.join(root, 'src/services/storage.ts')), false, 'the legacy storage alias is deleted')
   assert.ok(portableDataTransferSource.includes('exportJsonFile(json: string)'), 'the platform native transfer owns retained portable JSON publication')

@@ -145,6 +145,7 @@ const defaultSettings: Settings = {
   remoteCompactMode: 'auto',
   remoteCompactThreshold: 0.8,
   remoteCompactThresholdTokens: 200000,
+  modelContextCompressionEnabled: false,
   payloadPolicyMode: 'warn',
   proxyMode: 'off',
   proxyBaseUrl: '',

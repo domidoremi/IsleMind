@@ -74,6 +74,12 @@ export interface Settings {
   remoteCompactMode?: RemoteCompactMode
   remoteCompactThreshold?: number
   remoteCompactThresholdTokens?: number
+  /**
+   * Opt-in to summarizing older turns with the conversation's own model when the
+   * provider exposes no native compaction. Costs one extra non-streaming request
+   * per compaction, so it stays off until the user enables it.
+   */
+  modelContextCompressionEnabled?: boolean
   payloadPolicyMode?: PayloadPolicyMode
   proxyMode?: ProxyMode
   proxyBaseUrl?: string

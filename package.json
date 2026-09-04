@@ -96,6 +96,7 @@
     "test:provider-activation": "node scripts/provider-intelligence-tests.js --focus=provider-activation",
     "test:provider-stream-parsing": "node scripts/provider-intelligence-tests.js --focus=provider-stream-parsing",
     "test:provider-parameter-matrix": "node scripts/provider-parameter-matrix-tests.js",
+    "test:diagnostics-usage-sqlite": "bun test src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts",
     "test:provider-streaming-policy": "node scripts/provider-streaming-policy-tests.js",
     "test:provider-live-smoke:plan": "node scripts/provider-compatibility-live-smoke-plan.js",
     "test:provider-live-smoke:plan:self": "node scripts/provider-compatibility-live-smoke-plan.js --self-test",
