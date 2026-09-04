@@ -37,7 +37,11 @@ import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActi
 import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
 import { clampTraceText, redactSensitiveText, relocalizeUserFacingError } from '@/core'
 import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
-import { responseLifecycleElapsedMs, safeResponseLifecycleSummary } from '@/modules/conversations'
+import {
+  responseLifecycleElapsedMs,
+  safeResponseLifecycleSummary,
+  safeResponseLifecycleTraceSummary,
+} from '@/modules/conversations'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
 import { getAssistantThinkingLabel } from './messageActivityPreview'
@@ -205,8 +209,8 @@ function MessageBubbleComponent({
     processLayerVisible || hasWideMessageContent(renderedDisplayText)
   ))
   const processTextLength = useMemo(() => processTraces.reduce((total, trace) =>
-    total + trace.title.length + safeTraceWorkSummary(trace, t).length,
-  0), [processTraces, t])
+    total + trace.title.length + (safeResponseLifecycleTraceSummary(trace)?.length ?? 0),
+  0), [processTraces])
   const processLayoutStep = isStreamingContent ? Math.floor(processTextLength / STREAMING_LAYOUT_TEXT_STEP) : 0
   const canCopyProcessTrace = !isUser && processTraces.length > 0 && !!onCopyProcessTrace
   const processMaxHeight = Math.min(230, viewportHeight * 0.34)
@@ -877,8 +881,8 @@ function MessageProcessLayer({
     : undefined
   const processStatusLabel = processLayerLabel(message, lifecycle, traces, t, writingResponse, assistantDisplayName, streamingStatusPhase)
   const thinkingPreviewText = useMemo(
-    () => (canExpand && !expanded ? resolveThinkingPreviewText(lifecycle, traces, t) : ''),
-    [canExpand, expanded, lifecycle, t, traces]
+    () => (canExpand && !expanded ? resolveThinkingPreviewText(lifecycle, traces) : ''),
+    [canExpand, expanded, lifecycle, traces]
   )
   if (compactSettled && canExpand) {
     return (
@@ -1259,7 +1263,7 @@ function MessageProcessPanel({ message, lifecycle, traces, maxHeight, motion }: 
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const scrollRef = useRef<ScrollView>(null)
-  const thinkingSummaries = collectThinkingSummaries(lifecycle, traces, t)
+  const thinkingSummaries = collectThinkingSummaries(lifecycle, traces)
   const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
   const running = lifecycle
     ? !isTerminalLifecycleStage(lifecycle.stage)
@@ -1316,11 +1320,7 @@ function MessageProcessPanel({ message, lifecycle, traces, maxHeight, motion }: 
         <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
           {t('messageBubble.thinkingDetails', { defaultValue: '思考摘要' })}
         </Text>
-        {running ? (
-          <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>
-            {lifecycle ? lifecycleStageLabel(lifecycle.stage, t) : t('chat.generating', { defaultValue: '生成中' })}
-          </Text>
-        ) : null}
+        {running && lifecycle?.stage === 'thinking' ? <LifecycleElapsedText startedAt={lifecycle.stageStartedAt} /> : null}
       </View>
       <ScrollView ref={scrollRef} nestedScrollEnabled showsVerticalScrollIndicator={contentLength > 360 || thinkingSummaries.length > 2} style={{ maxHeight }}>
         {thinkingSummaries.length ? (
@@ -1386,7 +1386,7 @@ function processLayerLabel(
   const waitingLabel = waitingProcessLayerLabel(traces, t)
   if (waitingLabel) return withProcessStageLabel(waitingLabel, traces, message.status)
 
-  if (lifecycle) return lifecycleProcessLayerLabel(lifecycle, traces, t)
+  if (lifecycle) return lifecycleProcessLayerLabel(lifecycle, t)
 
   if (message.status === 'streaming' || message.status === 'sending') {
     const phase = streamingPhase ?? resolveStreamingStatusPhase(message, undefined, traces, writingResponse)
@@ -1430,38 +1430,11 @@ function processLayerLabel(
 
 function lifecycleProcessLayerLabel(
   lifecycle: MessageResponseLifecycle,
-  traces: ProcessTrace[],
   t: TFunction,
 ): string {
-  if (lifecycle.stage !== 'tool_calling' && lifecycle.stage !== 'tool_result') {
-    return lifecycleStageLabel(lifecycle.stage, t)
-  }
-  const trace = findLifecycleStageTrace(lifecycle, traces)
-  if (!trace || trace.type !== 'tool') return lifecycleStageLabel(lifecycle.stage, t)
-  const fallback = lifecycleStageLabel(lifecycle.stage, t)
-  const tool = processTraceOperationName(trace, '')
-  if (!tool) return fallback
-  return lifecycle.stage === 'tool_calling'
-    ? t('messageBubble.runningTool', {
-        tool,
-        defaultValue: `正在调用 ${tool}`,
-      })
-    : t('messageBubble.toolResultNamed', {
-        tool,
-        defaultValue: `${tool} 的结果已返回`,
-      })
-}
-
-function findLifecycleStageTrace(
-  lifecycle: MessageResponseLifecycle,
-  traces: ProcessTrace[],
-): ProcessTrace | undefined {
-  for (let index = lifecycle.history.length - 1; index >= 0; index -= 1) {
-    const entry = lifecycle.history[index]
-    if (entry.stage !== lifecycle.stage || !entry.traceId) continue
-    return traces.find((trace) => trace.id === entry.traceId)
-  }
-  return undefined
+  // Tool identity is an implementation detail. Keep the current work state
+  // visible without exposing provider, server, or operation names.
+  return lifecycleStageLabel(lifecycle.stage, t)
 }
 
 function lifecycleStageLabel(stage: ResponseLifecycleStage, t: TFunction): string {
@@ -1519,88 +1492,41 @@ function findActiveReasoningStartedAt(traces: ProcessTrace[]): number | undefine
 function resolveThinkingPreviewText(
   lifecycle: MessageResponseLifecycle | undefined,
   traces: ProcessTrace[],
-  t: TFunction,
 ): string {
-  const latest = lifecycle?.history[lifecycle.history.length - 1]
-  const explicitSummary = safeResponseLifecycleSummary(latest?.summary)
-  if (explicitSummary) return explicitSummary
-  if (lifecycle) return lifecycleStageSummary(lifecycle.stage, t)
-  const activeTrace = selectActiveProcessTrace(traces, 'streaming')
-  return activeTrace ? safeTraceWorkSummary(activeTrace, t) : ''
-}
-
-function lifecycleStageSummary(stage: ResponseLifecycleStage, t: TFunction): string {
-  switch (stage) {
-    case 'preparing':
-    case 'sending':
-    case 'waiting':
-      return t('messageBubble.lifecycleSummary.preparing', { defaultValue: '正在确认请求状态' })
-    case 'thinking':
-      return t('messageBubble.lifecycleSummary.thinking', { defaultValue: '正在分析问题中的关键约束' })
-    case 'working':
-      return t('messageBubble.lifecycleSummary.working', { defaultValue: '正在检查相关信息' })
-    case 'tool_calling':
-      return t('messageBubble.lifecycleSummary.toolCalling', { defaultValue: '正在执行必要的工具操作' })
-    case 'tool_result':
-      return t('messageBubble.lifecycleSummary.toolResult', { defaultValue: '正在核对工具返回的结果' })
-    case 'generating':
-      return t('messageBubble.lifecycleSummary.generating', { defaultValue: '正在组织最终答案' })
-    case 'completed':
-      return t('messageBubble.lifecycleSummary.completed', { defaultValue: '回复已完成' })
-    case 'error':
-      return t('messageBubble.lifecycleSummary.error', { defaultValue: '本次回复未能完成' })
-    case 'cancelled':
-      return t('messageBubble.lifecycleSummary.cancelled', { defaultValue: '已停止本次回复' })
+  // The preview belongs to the thinking-summary layer only. Work states such
+  // as waiting, tool calls, and generation remain in the status row below.
+  if (lifecycle?.stage === 'thinking') {
+    const latest = lifecycle.history[lifecycle.history.length - 1]
+    const explicitSummary = safeResponseLifecycleSummary(latest?.summary)
+    if (explicitSummary) return explicitSummary
   }
+  const activeTrace = selectActiveProcessTrace(traces, 'streaming')
+  if (activeTrace?.type !== 'reasoning') return ''
+  return safeReasoningTraceSummary(activeTrace) ?? ''
 }
 
-function safeTraceWorkSummary(trace: ProcessTrace, t: TFunction): string {
-  const metadata = trace.metadata ?? {}
-  const explicitSummary = safeResponseLifecycleSummary(
-    typeof metadata.safeSummary === 'string'
-      ? metadata.safeSummary
-      : typeof metadata.displaySummary === 'string'
-        ? metadata.displaySummary
-        : undefined,
-  )
-  if (explicitSummary) return explicitSummary
-  // The compact timeline shares one redaction and clamping path with the other
-  // trace surfaces. A reasoning trace resolves to empty content here unless the
-  // provider marked a display summary, so raw reasoning stays private.
-  const traceDetail = safeResponseLifecycleSummary(
+// The compact timeline shares one redaction and clamping path with the other trace
+// surfaces. formatProcessTraceForDisplay resolves a reasoning trace to empty content
+// unless the provider marked a display summary, so raw reasoning stays private here
+// as well.
+function safeReasoningTraceSummary(trace: ProcessTrace): string | undefined {
+  return safeResponseLifecycleSummary(
     formatProcessTraceForDisplay(trace, PROCESS_TRACE_SUMMARY_CONTENT_LIMIT).content,
   )
-  if (traceDetail) return traceDetail
-  if (trace.type === 'tool') {
-    return trace.status === 'done'
-      ? lifecycleStageSummary('tool_result', t)
-      : lifecycleStageSummary('tool_calling', t)
-  }
-  if (trace.type === 'reasoning') return lifecycleStageSummary('thinking', t)
-  if (trace.type === 'retrieval' || trace.type === 'search' || trace.type === 'memory' || trace.type === 'knowledge') {
-    return lifecycleStageSummary('working', t)
-  }
-  return lifecycleStageSummary('working', t)
+
 }
 
 function hasExpandableLifecycleDetails(lifecycle: MessageResponseLifecycle | undefined): boolean {
   if (!lifecycle) return false
-  const latest = lifecycle.history[lifecycle.history.length - 1]
-  return lifecycle.history.length > 1 ||
-    Boolean(safeResponseLifecycleSummary(latest?.summary)) ||
-    lifecycle.stage === 'thinking' ||
-    lifecycle.stage === 'working' ||
-    lifecycle.stage === 'tool_calling' ||
-    lifecycle.stage === 'tool_result'
+  return lifecycle.history.some((entry) =>
+    entry.stage === 'thinking' && Boolean(safeResponseLifecycleSummary(entry.summary)),
+  )
 }
 
 function activeProcessLayerLabel(trace: ProcessTrace, t: TFunction): string {
   const stage = traceActivityStageLabel(trace)
   if (trace.type === 'tool') {
-    return t('messageBubble.runningTool', {
-      tool: processTraceOperationName(trace, stage),
-      defaultValue: `正在调用 ${processTraceOperationName(trace, stage)}`,
-    })
+    return t('messageBubble.lifecycle.toolCalling', { defaultValue: '正在调用工具' })
   }
   if (trace.type === 'search') {
     return t('messageBubble.runningSearch', { defaultValue: '正在搜索' })
@@ -1635,9 +1561,19 @@ function settledThinkingDisclosureLabel(
 ): string {
   const title = t('messageBubble.thinkingDetails', { defaultValue: '思考摘要' })
   const durationMs = lifecycle
-    ? responseLifecycleElapsedMs(lifecycle)
+    ? resolveLifecycleThinkingDurationMs(lifecycle) ?? resolveThinkingDurationMs(message, traces)
     : resolveThinkingDurationMs(message, traces)
   return durationMs ? `${title} · ${formatDuration(durationMs)}` : title
+}
+
+function resolveLifecycleThinkingDurationMs(lifecycle: MessageResponseLifecycle): number | undefined {
+  let total = 0
+  for (const entry of lifecycle.history) {
+    if (entry.stage !== 'thinking' || entry.completedAt === undefined) continue
+    total += Math.max(0, entry.completedAt - entry.startedAt)
+  }
+  if (total > 0) return total
+  return lifecycle.stage === 'thinking' ? responseLifecycleElapsedMs(lifecycle) : undefined
 }
 
 function settledProcessStageLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
@@ -1654,7 +1590,7 @@ function resolveThinkingDurationMs(message: Message, traces: ProcessTrace[]): nu
     if (duration && duration > maxTraceDuration) maxTraceDuration = duration
   }
   if (maxTraceDuration > 0) return maxTraceDuration
-  return message.durationMs && message.durationMs > 0 ? message.durationMs : traceDurationMs(message)
+  return undefined
 }
 
 function traceDurationMs(trace: Pick<ProcessTrace, 'durationMs' | 'startedAt' | 'completedAt'>): number | undefined {
@@ -1814,73 +1750,48 @@ function pendingActionReason(value: unknown): string | undefined {
 function collectThinkingSummaries(
   lifecycle: MessageResponseLifecycle | undefined,
   traces: ProcessTrace[],
-  t: TFunction,
 ): string[] {
   const seen = new Set<string>()
   const summaries: string[] = []
-  const tracedIds = new Set<string>()
-  for (const entry of lifecycle?.history.slice(-8) ?? []) {
-    if (entry.traceId) tracedIds.add(entry.traceId)
+  const summaryTraceIds = new Set<string>()
+  const addSummary = (value: string | undefined, durationMs?: number) => {
+    const detail = safeResponseLifecycleSummary(value)
+    if (!detail) return
+    if (summaries.length >= 4) return
+    const summary = [detail, durationMs && durationMs > 0 ? formatDuration(durationMs) : '']
+      .filter(Boolean)
+      .join(' · ')
+    const key = detail.replace(/\s+/g, ' ').trim()
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    summaries.push(summary)
+  }
+
+  const lifecycleThinkingEntries = lifecycle?.history
+    .filter((entry) => entry.stage === 'thinking')
+    .slice(-4) ?? []
+  for (const entry of lifecycleThinkingEntries) {
+    const trace = entry.traceId ? traces.find((candidate) => candidate.id === entry.traceId) : undefined
     const detail = safeResponseLifecycleSummary(entry.summary)
-      ?? lifecycleStageSummary(entry.stage, t)
+      ?? (trace ? safeResponseLifecycleTraceSummary(trace) : undefined)
+    if (!detail) continue
+    if (entry.traceId) summaryTraceIds.add(entry.traceId)
     const durationMs = entry.completedAt === undefined
       ? undefined
       : Math.max(0, entry.completedAt - entry.startedAt)
-    const stage = lifecycleStageLabel(entry.stage, t)
-    const summary = [
-      stage,
-      detail === stage ? '' : detail,
-      durationMs && durationMs > 0 ? formatDuration(durationMs) : '',
-    ].filter(Boolean).join(' · ')
-    const key = summary.replace(/\s+/g, ' ').trim()
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    summaries.push(summary)
+    addSummary(detail, durationMs)
   }
-  // A lifecycle entry is the authoritative, timestamped projection of a
-  // provider event. Do not append its backing traces afterward: a provider
-  // may publish its terminal trace asynchronously, which would otherwise
-  // make the compact timeline look duplicated or out of order.
-  if (lifecycle?.history.length) return summaries
 
+  // Traces are a compatibility fallback for providers that do not persist a
+  // lifecycle entry. Only reasoning traces with an explicit safe summary are
+  // eligible; raw reasoning and all work/tool traces stay out of this layer.
   for (const trace of traces) {
-    if (tracedIds.has(trace.id)) continue
-    if (trace.type === 'system' && isGenericModelRequestTrace(trace)) continue
-    const stage = trace.type === 'tool' && trace.status === 'done'
-      ? lifecycleStageLabel('tool_result', t)
-      : trace.type === 'tool'
-        ? lifecycleStageLabel('tool_calling', t)
-        : trace.type === 'reasoning'
-          ? lifecycleStageLabel('thinking', t)
-          : lifecycleStageLabel('working', t)
-    const summary = `${stage} · ${safeTraceWorkSummary(trace, t)}`
-    const key = summary.replace(/\s+/g, ' ').trim()
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    summaries.push(summary)
+    if (trace.type !== 'reasoning' || summaryTraceIds.has(trace.id)) continue
+    const detail = safeResponseLifecycleTraceSummary(trace)
+    if (!detail) continue
+    addSummary(detail, traceDurationMs(trace))
   }
   return summaries
-}
-
-function processTraceOperationName(trace: ProcessTrace, fallback: string): string {
-  const metadata = trace.metadata ?? {}
-  const candidates = [
-    metadata.toolName,
-    metadata.providerToolName,
-    metadata.failedToolName,
-    metadata.requestedTool,
-    metadata.tool,
-    metadata.toolId,
-    metadata.operationId,
-    trace.title,
-    metadata.source,
-    fallback,
-  ]
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string' || !candidate.trim()) continue
-    return clampTraceText(redactSensitiveText(candidate.trim()), 48).replace(/\s+/g, ' ')
-  }
-  return fallback
 }
 
 function hasAndroidUndoFollowUp(traces: ProcessTrace[]): boolean {
@@ -2414,18 +2325,12 @@ function hasThinkingContent(trace: ProcessTrace): boolean {
 }
 
 function hasExpandableThinkingContent(trace: ProcessTrace): boolean {
-  if (trace.metadata?.hiddenSignature || trace.type !== 'reasoning') return false
-  return isActiveProcessTrace(trace) || hasDisplayableThinkingContent(trace)
+  return hasDisplayableThinkingContent(trace)
 }
 
 function hasDisplayableThinkingContent(trace: ProcessTrace): boolean {
   if (trace.metadata?.hiddenSignature || trace.type !== 'reasoning') return false
-  const content = trace.content?.trim()
-  return Boolean(content && !isInternalThinkingStatusContent(content))
-}
-
-function isInternalThinkingStatusContent(content: string): boolean {
-  return /^(disabled|enabled|adaptive)$/i.test(content.trim())
+  return Boolean(safeResponseLifecycleTraceSummary(trace))
 }
 
 function hasVisibleProcessContent(trace: ProcessTrace): boolean {
