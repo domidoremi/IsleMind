@@ -19,6 +19,7 @@ function main() {
   const webStyles = read('src/theme/webGlobalStyles.web.ts')
   const globalCss = read('src/global.css')
   const tsconfig = read('tsconfig.json')
+  const glassSurface = read('src/components/chat/glass/GlassSurface.tsx')
 
   for (const dependency of ['nativewind', '@expo/vector-icons']) {
     assert.equal(dependencies[dependency], undefined, `${dependency} must not return as an unused production dependency`)
@@ -27,7 +28,7 @@ function main() {
   assert.notEqual(dependencies['expo-blur'], undefined, 'expo-blur remains declared while the glass surface consumes it')
   assert.match(
     read('src/components/chat/glass/GlassSurface.tsx'),
-    /from ['"]expo-blur['"]/,
+    /from ['"]expo-blur['"]/, 
     'the glass surface is the declared expo-blur consumer'
   )
   assert.equal(devDependencies.tailwindcss, undefined, 'Tailwind must not return without a class-based styling consumer')
