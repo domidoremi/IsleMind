@@ -30,6 +30,8 @@ export interface ChatPersistentHeaderProps {
   onModelPress: () => void
   onNewConversation: () => void
   onSettings: () => void
+  /** Opens the context capacity card. Omitted when there is no context to report. */
+  onContextCapacity?: () => void
   settingsTransitionActive?: boolean
   alertBorder?: string
   onLayout?: (event: LayoutChangeEvent) => void
@@ -54,6 +56,7 @@ export function ChatPersistentHeader({
   onModelPress,
   onNewConversation,
   onSettings,
+  onContextCapacity,
   settingsTransitionActive = false,
   alertBorder,
   onLayout,
@@ -197,7 +200,18 @@ export function ChatPersistentHeader({
       <AppIcon name="settings" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
     </IsleOverlayPressable>
   )
-  const actions = <>{trailingContent}{newConversationAction}{settingsAction}</>
+  const contextCapacityAction = onContextCapacity ? (
+    <IsleOverlayPressable
+      onPress={onContextCapacity}
+      accessibilityRole="button"
+      accessibilityLabel={t('chat.contextCapacity.openLabel')}
+      accessibilityHint={t('chat.contextCapacity.openHint')}
+      style={actionStyle}
+    >
+      <AppIcon name="layers" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
+    </IsleOverlayPressable>
+  ) : null
+  const actions = <>{trailingContent}{contextCapacityAction}{newConversationAction}{settingsAction}</>
 
   return (
     <ChatChromeThemeSurface themeId={themeId} colors={colors} alertBorder={alertBorder} onLayout={onLayout}>
