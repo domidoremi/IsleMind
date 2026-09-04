@@ -140,6 +140,7 @@ export async function retrieveConversationKnowledgeContext(
         localEmbeddingModelSource: settings.localEmbeddingModelSource,
         provider: provider ?? undefined,
         knowledgeScope,
+        onEmbeddingResolved: options?.onEmbeddingResolved,
         signal: options?.signal,
       }),
       retrieveAgentic: (variant, plan, limit, options) => searchAgenticKnowledgeWithScope({
@@ -147,6 +148,7 @@ export async function retrieveConversationKnowledgeContext(
         plan,
         limit,
         knowledgeScope,
+        onEmbeddingResolved: options?.onEmbeddingResolved,
         signal: options?.signal,
       }),
       signal,

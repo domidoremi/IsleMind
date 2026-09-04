@@ -21,6 +21,7 @@ import {
   type ChatContextRuntimeArtifact,
 } from '@/bootstrap/contextContributionRuntime'
 import { planChatContext } from '@/bootstrap/contextPlanning'
+import { packChatMessages } from '@/bootstrap/contextPacking'
 import { conversationProviderNativeSearchAdmission } from '@/bootstrap/conversationProviderNativeSearchAdmission'
 import { runApplicationContextSummary } from '@/bootstrap/providerApplicationContextSummary'
 import { usesOpenAIResponses } from '@/bootstrap/providerRequestPolicies'
@@ -31,6 +32,7 @@ import { st } from '@/i18n/service'
 import { buildSystemPrompt } from '@/services/promptEngineering'
 import { completeTrace, sanitizeTrace } from '@/services/chatTraceUtils'
 import { emitRuntimeEvent } from '@/services/runtimeEvents'
+import { lockConversation } from '@/services/conversationLock'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import type { Attachment, Conversation, Message } from '@/types/chatContracts'
@@ -107,6 +109,8 @@ export const conversationAssistantRequestPlanningRuntime =
       })
     },
     planContext: planChatContext,
+    packChatMessages,
+    lockConversation,
     runApplicationContextSummary(input) {
       return runApplicationContextSummary({
         provider: input.provider,
@@ -116,6 +120,10 @@ export const conversationAssistantRequestPlanningRuntime =
         settings: input.settings,
         conversationId: input.conversationId,
         signal: input.signal,
+        modelContextWindow: input.modelContextWindow,
+        maxInputTokens: undefined,
+        systemPrompt: input.systemPrompt,
+        maxOutputTokens: input.maxOutputTokens,
       })
     },
     emitRuntimeEvent,

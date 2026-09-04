@@ -644,6 +644,7 @@ export function MessageInput({
 
 export function SendButton({
   visible,
+  disabled = false,
   canSend,
   sending,
   streaming,
@@ -657,6 +658,7 @@ export function SendButton({
   accessibilityHint,
 }: {
   visible: boolean
+  disabled?: boolean
   canSend: boolean
   sending: boolean
   streaming: boolean
@@ -669,7 +671,7 @@ export function SendButton({
   accessibilityLabel: string
   accessibilityHint: string
 }) {
-  const state = sending ? 'sending' : streaming && !hasSendableDraft ? 'stop' : canSend ? 'send' : 'disabled'
+  const state = disabled ? 'disabled' : sending ? 'sending' : streaming && !hasSendableDraft ? 'stop' : canSend ? 'send' : 'disabled'
   const transition = useSharedValue(1)
   const sizeProgress = useSharedValue(activityState === 'idle' ? 0 : 1)
   const stateColorProgress = useSharedValue(
@@ -725,7 +727,7 @@ export function SendButton({
   if (!visible) return null
 
   const stopMode = state === 'stop'
-  const enabled = stopMode || canSend
+  const enabled = !disabled && (stopMode || canSend)
   return (
     <AnimatedView
       style={[

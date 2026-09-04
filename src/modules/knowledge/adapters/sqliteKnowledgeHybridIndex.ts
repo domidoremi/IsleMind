@@ -679,7 +679,7 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
           ? undefined
           : createCacheKey(input, query, limit, providerKey)
 
-        if (cacheKey && cacheTtlMs > 0) {
+        if (cacheKey && cacheTtlMs > 0 && !input.onEmbeddingResolved) {
           const cached = await readCache(cacheKey, query, input.signal)
           if (cached) {
             await dependencies.repository.markFtsHits(cached.map((hit) => hit.id), { signal: input.signal })
@@ -779,6 +779,7 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
       ...(input.signal === undefined ? {} : { signal: input.signal }),
       providerConfigured: providerState.configured,
       providerSupportsEmbeddings: providerState.supportsEmbeddings,
+      ...(input.onEmbeddingResolved === undefined ? {} : { onResolved: input.onEmbeddingResolved }),
     }))
     throwIfAborted(input.signal)
 

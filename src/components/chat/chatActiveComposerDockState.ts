@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { sendConversationMessage as sendMessage } from '@/presentation/features/conversations/conversationMessageCommand'
 import { useChatStore } from '@/store/chatStore'
+import { isConversationLocked } from '@/services/conversationLock'
 
 import type { ChatActiveWorkspaceActions } from './chatActiveWorkspaceActions'
 import type { ChatActiveWorkspaceProps } from './chatActiveWorkspaceTypes'
@@ -193,11 +194,13 @@ export function useChatActiveComposerDockState({
     if (!showOptions && !composerPanel && !keyboardVisible) setPagerGestureLocked?.(false)
   }, [composerPanel, keyboardVisible, setPagerGestureLocked, showOptions])
   const handleOpenModelPicker = useCallback(() => {
+    if (isConversationLocked(activeConversation.id)) return
     markChromeActive()
     setComposerPanel(null)
     setShowOptions(true)
   }, [markChromeActive, setComposerPanel, setShowOptions])
   const handleReasoningChange = useCallback((reasoningEffort: ChatActiveWorkspaceProps['conversation']['reasoningEffort']) => {
+    if (isConversationLocked(activeConversation.id)) return
     updateConversation(activeConversation.id, { reasoningEffort })
   }, [activeConversation.id, updateConversation])
   const handleSend = useCallback((...args: Parameters<typeof submit>) => {
@@ -212,6 +215,7 @@ export function useChatActiveComposerDockState({
   }, [collapseQuickTools, flushSystemPrompt, submitWhileStreaming])
   const handleStop = useCallback(() => safeStopMessage(activeConversation.id), [activeConversation.id, safeStopMessage])
   const handleSystemPromptChange = useCallback((systemPrompt: string) => {
+    if (isConversationLocked(activeConversation.id)) return
     systemPromptDraftRef.current = { conversationId: activeConversation.id, value: systemPrompt }
     setSystemPromptDraft(systemPrompt)
     if (systemPromptPersistTimerRef.current) clearTimeout(systemPromptPersistTimerRef.current)

@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next'
 
 import { stopConversationMessage } from '@/presentation/features/conversations/conversationControlCommand'
 import { useChatStore } from '@/store/chatStore'
+import { isConversationLocked } from '@/services/conversationLock'
 import type { Attachment, CommandReference, Conversation, Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 
@@ -47,6 +48,7 @@ export function useChatActiveWorkspaceActions({
   updateConversation,
 }: ChatActiveWorkspaceActionOptions): ChatActiveWorkspaceActions {
   const safeStopMessage = useCallback((conversationId: string) => {
+    if (isConversationLocked(conversationId)) return false
     try {
       stopConversationMessage(conversationId)
       return true

@@ -1,5 +1,6 @@
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { Attachment, Conversation, Message, MessageUsage } from '@/types/chatContracts'
+import { assertConversationUnlocked } from '@/services/conversationLock'
 
 export interface ConversationMessageInput {
   conversation: Conversation
@@ -41,6 +42,7 @@ export function createConversationMessageController(
 ): ConversationMessageController {
   return {
     async send(input) {
+      assertConversationUnlocked(input.conversation.id)
       const attachments = input.attachments ?? []
       const content = dependencies.normalizeContent(input.content)
       if (!content && attachments.length === 0) return

@@ -23,6 +23,7 @@ import type {
 import {
   createProviderCredentialSynchronization,
   createProviderEmbeddingAdapter,
+  resolveProviderEmbeddingModel,
   createProviderMediaAdapter,
   createProviderModelList,
   createProviderModelDiscoveryAdapter,
@@ -408,7 +409,7 @@ export async function embedProviderText(
   text: string,
   options: ProviderEmbeddingOptions = {},
 ): Promise<ProviderEmbeddingResult> {
-  const model = provider.models.find((candidate) => /embed|embedding/i.test(candidate)) ?? 'text-embedding-3-small'
+  const model = resolveProviderEmbeddingModel(provider) ?? 'embedding-model-unconfigured'
   return observeDirectProviderOperation(
     provider,
     model,

@@ -12,6 +12,7 @@ export interface IndexedKnowledgeHybridOptions<Provider = unknown> {
   localEmbeddingModelId?: string
   localEmbeddingModelSource?: 'bundled' | 'downloaded' | 'none'
   provider?: Provider
+  onEmbeddingResolved?: KnowledgeHybridSearchRequest<Provider>['onEmbeddingResolved']
 }
 
 export interface IndexedKnowledgeAgenticOptions<Plan = unknown, Technique = unknown> {
@@ -19,6 +20,7 @@ export interface IndexedKnowledgeAgenticOptions<Plan = unknown, Technique = unkn
   signal?: AbortSignal
   plan?: Plan
   techniques?: Technique[]
+  onEmbeddingResolved?: KnowledgeAgenticSearchRequest<Plan, Technique>['onEmbeddingResolved']
 }
 
 export interface IndexedKnowledgeSearchDriver<
@@ -72,6 +74,7 @@ export function createIndexedKnowledgeSearchAdapter<
           ...(input.localEmbeddingModelId === undefined ? {} : { localEmbeddingModelId: input.localEmbeddingModelId }),
           ...(input.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: input.localEmbeddingModelSource }),
           ...(input.provider === undefined ? {} : { provider: input.provider }),
+          ...(input.onEmbeddingResolved === undefined ? {} : { onEmbeddingResolved: input.onEmbeddingResolved }),
         })),
         input.signal,
       )
@@ -87,6 +90,7 @@ export function createIndexedKnowledgeSearchAdapter<
           ...(input.signal === undefined ? {} : { signal: input.signal }),
           ...(input.plan === undefined ? {} : { plan: input.plan }),
           ...(input.techniques === undefined ? {} : { techniques: [...input.techniques] }),
+          ...(input.onEmbeddingResolved === undefined ? {} : { onEmbeddingResolved: input.onEmbeddingResolved }),
         })),
         input.signal,
       )

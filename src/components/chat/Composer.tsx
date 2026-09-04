@@ -802,6 +802,7 @@ export function Composer({
         {trailingAccessory ? <View style={{ flexShrink: 0 }}>{trailingAccessory}</View> : null}
         <SendButton
           visible={showSendAction}
+          disabled={disabled}
           canSend={canSend}
           sending={sending}
           streaming={streaming}

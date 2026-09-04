@@ -11,6 +11,7 @@ import {
   settleMessageTraces,
 } from '@/services/chatTraceUtils'
 import { buildEstimatedUsage, estimateTextTokens } from '@/services/tokenUsage'
+import { isConversationLocked } from '@/services/conversationLock'
 import { useChatStore } from '@/store/chatStore'
 import {
   mergeMessageWithStreamingTraceSnapshot,
@@ -130,7 +131,16 @@ const controller = createConversationControlController({
   upsertTrace: upsertConversationTrace,
 })
 
-export const stopConversationMessage = controller.stop
+export const stopConversationMessage = (conversationId: string): void => {
+  if (isConversationLocked(conversationId)) return
+  controller.stop(conversationId)
+}
 export const recoverStaleConversationMessages = controller.recoverStale
-export const retryConversationMessage = controller.retry
-export const regenerateLastConversationAssistant = controller.regenerateLastAssistant
+export const retryConversationMessage = async (conversationId: string, assistantMessageId: string): Promise<void> => {
+  if (isConversationLocked(conversationId)) return
+  await controller.retry(conversationId, assistantMessageId)
+}
+export const regenerateLastConversationAssistant = async (conversationId: string): Promise<void> => {
+  if (isConversationLocked(conversationId)) return
+  await controller.regenerateLastAssistant(conversationId)
+}

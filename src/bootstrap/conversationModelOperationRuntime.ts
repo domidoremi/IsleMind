@@ -708,6 +708,7 @@ async function createModelOperationConversationRagRuntime(input: ConversationMod
         localEmbeddingModelSource: input.settings.localEmbeddingModelSource,
         provider: input.provider,
         knowledgeScope,
+        onEmbeddingResolved: options?.onEmbeddingResolved,
         signal: options?.signal,
       })
     },
@@ -716,6 +717,7 @@ async function createModelOperationConversationRagRuntime(input: ConversationMod
       plan,
       limit,
       knowledgeScope,
+      onEmbeddingResolved: options?.onEmbeddingResolved,
       signal: options?.signal,
     }),
   })
