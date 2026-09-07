@@ -13,7 +13,7 @@ import { buildWorkflowToolCallTraceMetadata } from '@/bootstrap/workflowToolCall
 import { shouldExposeLocalSearchTool } from '@/bootstrap/workflowSearchToolAdmission'
 import { executeExternalTaskBoundTool } from '@/bootstrap/taskBoundToolRuntime'
 import { buildPendingAction, formatPendingActionOutput } from '@/bootstrap/workflowPendingAction'
-import { truncateToolBlocks } from '@/bootstrap/mcpExecutionRuntime'
+import { truncateToolBlocksWithArtifacts } from '@/bootstrap/mcpExecutionRuntime'
 import { resolveConversationGenerationParameterRequest } from '@/bootstrap/providerConversationGeneration'
 import { streamProviderChat } from '@/bootstrap/providerRuntime'
 import { createRichStreamEventReporter } from '@/bootstrap/conversationProviderStreamingRuntime'
@@ -99,8 +99,8 @@ export function createConversationMcpToolTurnRuntime(input: {
         ),
       }
     },
-    truncateBlocks(blocks) {
-      return truncateToolBlocks(blocks)
+    truncateBlocks(blocks, options) {
+      return truncateToolBlocksWithArtifacts(blocks, 1200, options)
     },
     formatBlocks(blocks) {
       return formatToolBlocks([...blocks])

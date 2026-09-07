@@ -222,9 +222,10 @@ export function createConversationAssistantDurableExecutionRuntime(
             : 'The provider stream did not complete successfully.',
           })
         }
-        // Provider callbacks are synchronous; serialize async journal writes and
-        // wait for their barrier before allowing Rich terminal completion.
+        // Runtime owns the bounded/coalescing checkpoint buffer. Keep only its
+        // latest ordered receipt, not a second promise chain retaining every event.
         const queueStreamEvent = (event: StreamEvent): void => {
+          if (activitySettled || checkpointFailure || signal.aborted || input.requestController.signal.aborted) return
           if (event.type === 'tool-call') {
             firstCalls.push({
               callId: event.toolCallId,
@@ -236,20 +237,13 @@ export function createConversationAssistantDurableExecutionRuntime(
             firstReasoningReplay = event.reasoningReplay ?? Object.freeze([])
           }
           if (typeof checkpointStreamEvent !== 'function' || checkpointFailure) return
-          const next = checkpointTail.then(async () => {
-            if (checkpointFailure) return
-            try {
-              await checkpointStreamEvent(event)
-            } catch (error) {
-              checkpointFailure = error
-              input.requestController.abort(error)
-              throw error
-            }
+          const next = checkpointStreamEvent(event)
+          if (next === checkpointTail) return
+          checkpointTail = next
+          void next.catch((error) => {
+            checkpointFailure = error
+            input.requestController.abort(error)
           })
-          checkpointTail = next.then(
-            () => undefined,
-            () => undefined,
-          )
         }
         const settleFailureAfterCheckpoint = (
           error: unknown,

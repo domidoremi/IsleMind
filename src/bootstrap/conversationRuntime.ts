@@ -6,6 +6,7 @@ import {
 import {
   buildAssistantContextPlanReceipt,
   createSqliteAssistantRunPersistence,
+  planUnifiedConversationCapabilities,
 } from '@/modules/assistant-runtime'
 import {
   createConversationRunUseCase,
@@ -71,6 +72,11 @@ export interface PlainChatRuntimeInput {
   conversation: Conversation
   provider: AIProvider
   settings: Settings
+}
+
+/** Read-only reconstruction; looking up a terminal run never resumes its effects. */
+export function getLatestConversationResponseRun(conversationId: string, responseMessageId: string) {
+  return runPersistence.getLatestForResponseMessage(conversationId, responseMessageId)
 }
 
 export function createConversationRuntime(
@@ -218,6 +224,21 @@ function createPlainChatRequestPreparation(input: {
       })
       throwIfAborted(preparation.cancellationSignal)
 
+      const capabilityPlan = planUnifiedConversationCapabilities({
+        conversationId: preparation.request.conversationId,
+        text: latestUserMessage?.content ?? '',
+        hasAttachments: false,
+        retrievalEnabled: contextRuntime.counts.memory + contextRuntime.counts.knowledge > 0,
+        webEnabled: false,
+        workspaceAvailable: false,
+        readOnlyToolsAvailable: preparation.request.toolDefinitions?.some(
+          (tool) => tool.permission === 'read-only',
+        ) === true,
+        mobile: true,
+        estimatedInputTokens: plan.packed.estimatedInputTokens,
+        tokenBudget: plan.packed.budgetTokens,
+      })
+
       const plannedMessages = preserveMessageIdentity(
         plan.messages,
         preparation.request.messages,
@@ -235,6 +256,9 @@ function createPlainChatRequestPreparation(input: {
         contextReceipt: buildAssistantContextPlanReceipt({
           providerId: preparation.request.providerId,
           model: upstreamModel,
+          conversationId: preparation.request.conversationId,
+          sourceMessageIds: preparation.request.messages.map((message) => message.id),
+          capabilityPlan,
           plan,
           activePrompt: plan.packed,
         }),

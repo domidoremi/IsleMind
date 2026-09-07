@@ -112,6 +112,8 @@ export interface RagEvaluationResult {
   latencyMs?: number
   tokenBudget?: number
   estimatedContextTokens?: number
+  /** Identifier for the heuristic used to estimate packed context tokens. */
+  tokenEstimatorVersion?: string
 }
 
 export interface RagRetrievalStats {

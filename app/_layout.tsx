@@ -39,7 +39,7 @@ const SETTINGS_PROVIDER_SCREEN_OPTIONS: NativeStackNavigationOptions = {
 
 export default function RootLayout() {
   const boot = useBootstrap()
-  const { canonicalThemeId, colors, design, mode, themeAccent } = useAppTheme()
+  const { canonicalThemeId, colors, design, mode, themeAccent, backgroundEnvironment } = useAppTheme()
   const { t } = useTranslation()
   const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()
   const qaUpdateVersion = firstQueryParam(params.qaUpdateNotice)
@@ -52,6 +52,7 @@ export default function RootLayout() {
     mode,
     ready: boot.status !== 'loading',
     themeAccent,
+    backgroundEnvironment,
   })
 
   const networkRecovery = useAndroidNetworkRecoveryBridge()
@@ -291,7 +292,8 @@ function useWebThemeBridge({
   mode,
   ready,
   themeAccent,
-}: Pick<ReturnType<typeof useAppTheme>, 'canonicalThemeId' | 'colors' | 'design' | 'mode' | 'themeAccent'> & { ready: boolean }) {
+  backgroundEnvironment,
+}: Pick<ReturnType<typeof useAppTheme>, 'canonicalThemeId' | 'colors' | 'design' | 'mode' | 'themeAccent' | 'backgroundEnvironment'> & { ready: boolean }) {
   useEffect(() => {
     if (Platform.OS !== 'web' || !ready) return
     const documentRef = (globalThis as typeof globalThis & { document?: WebDocumentLike }).document
@@ -301,19 +303,13 @@ function useWebThemeBridge({
     root.setAttribute('data-theme-id', canonicalThemeId)
     root.setAttribute('data-theme-mode', mode)
     root.setAttribute('data-theme-family', canonicalThemeId)
-    // Canonical identity drives Web selectors; the legacy projection remains
-    // available to untouched native composition dispatchers.
-    root.setAttribute('data-theme-presentation-id', canonicalThemeId)
-    root.setAttribute('data-theme-legacy-presentation-id', colors.ui.family)
-    root.setAttribute('data-theme-monet', canonicalThemeId === 'monet' ? 'true' : 'false')
-    root.setAttribute('data-theme-material', canonicalThemeId === 'material' ? 'true' : 'false')
-    root.setAttribute('data-theme-liquid-glass', canonicalThemeId === 'liquid-glass' ? 'true' : 'false')
-    root.setAttribute('data-theme-markdown', colors.ui.markdown ? 'true' : 'false')
-    root.setAttribute('data-theme-glass', colors.ui.glass ? 'true' : 'false')
-    root.setAttribute('data-theme-lime-road', colors.ui.limeRoad ? 'true' : 'false')
     root.setAttribute('data-theme-custom-accent', themeAccent ? 'true' : 'false')
     root.setAttribute('data-theme-ambient', colors.ui.ambient)
     root.setAttribute('data-theme-background', colors.background.defaultMode)
+    root.setAttribute('data-background-environment', backgroundEnvironment.kind)
+    root.setAttribute('data-background-variation', backgroundEnvironment.variation)
+    root.setAttribute('data-background-motion', backgroundEnvironment.motion)
+    root.setAttribute('data-background-intensity', backgroundEnvironment.intensity)
 
     const variables: [string, string][] = [
       ['--color-surface', colors.surface],
@@ -322,7 +318,10 @@ function useWebThemeBridge({
       ['--color-primary', colors.primary],
       ['--color-primaryForeground', colors.primaryForeground],
       ['--color-secondary', colors.secondary],
-      ['--color-accent', colors.accent],
+      ['--color-brand', colors.brand],
+      ['--color-brandForeground', colors.brandForeground],
+      ['--color-tertiary', colors.tertiary],
+      ['--color-tertiaryForeground', colors.tertiaryForeground],
       ['--color-border', colors.border],
       ['--color-borderStrong', colors.borderStrong],
       ['--color-text', colors.text],
@@ -332,17 +331,6 @@ function useWebThemeBridge({
       ['--color-warning', colors.warning],
       ['--color-error', colors.error],
       ['--color-backdrop', colors.backdrop],
-      ['--color-island', colors.island],
-      ['--color-islandRaised', colors.islandRaised],
-      ['--color-islandMuted', colors.islandMuted],
-      ['--color-mintSoft', colors.mintSoft],
-      ['--color-amberSoft', colors.amberSoft],
-      ['--color-skySoft', colors.skySoft],
-      ['--color-paper', colors.paper],
-      ['--color-paperDeep', colors.paperDeep],
-      ['--color-paperWarm', colors.paperWarm],
-      ['--color-pressed', colors.pressed],
-      ['--color-highlight', colors.highlight],
       ['--color-materialCanvas', colors.material.canvas],
       ['--color-materialPaper', colors.material.paper],
       ['--color-materialPaperRaised', colors.material.paperRaised],
@@ -433,11 +421,6 @@ function useWebThemeBridge({
       ['--color-semanticControlBorder', colors.ui.semantic.control.border],
       ['--color-semanticControlFocus', colors.ui.semantic.control.focus],
       ['--theme-family', canonicalThemeId],
-      ['--theme-legacy-family', colors.ui.family],
-      ['--theme-canonical-family', canonicalThemeId],
-      ['--theme-markdown-enabled', colors.ui.markdown ? '1' : '0'],
-      ['--theme-glass-enabled', colors.ui.glass ? '1' : '0'],
-      ['--theme-lime-road-enabled', colors.ui.limeRoad ? '1' : '0'],
       ['--background-canvas', colors.background.canvas],
       ['--background-focusCanvas', colors.background.focusCanvas],
       ['--background-surfaceCanvas', colors.background.surfaceCanvas],
@@ -513,7 +496,7 @@ function useWebThemeBridge({
       root.style.setProperty(name, value)
     }
     root.setAttribute('data-theme-ready', 'true')
-  }, [canonicalThemeId, colors, design, mode, ready, themeAccent])
+  }, [backgroundEnvironment, canonicalThemeId, colors, design, mode, ready, themeAccent])
 }
 
 function firstQueryParam(value?: string | string[]): string | undefined {
@@ -538,7 +521,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
       <IsleScreen padded={false} background="surface" backgroundState="error">
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
           <IslePanel elevated radius={colors.ui.radius.card} contentStyle={{ padding: 18 }}>
-            <View style={{ width: 48, height: 48, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.coralWash }}>
+            <View style={{ width: 48, height: 48, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background }}>
               <AppIcon name="warning" color={colors.error} size={22} strokeWidth={appIconStroke.strong} />
             </View>
             <Text style={{ color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: '800', marginTop: 14 }}>

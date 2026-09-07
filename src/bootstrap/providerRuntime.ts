@@ -30,6 +30,7 @@ import {
   createProviderModelTest,
   createProviderProbe,
   createProviderStreamRuntime,
+  ProviderStreamEventBuffer,
   type ProviderAdapter,
   type ProviderEmbeddingAdapter,
   type ProviderEmbeddingOptions,
@@ -93,7 +94,10 @@ async function* streamProviderRuntimeEvents(
   gatewayOptions: Parameters<ProviderAdapter['stream']>[1],
 ): AsyncIterable<StreamEvent> {
   if (gatewayOptions.signal.aborted) return
-  const queue = new ProviderRuntimeEventQueue<StreamEvent>()
+  const queue = new ProviderRuntimeEventQueue(() => {
+    upstreamRequestController.abort(new Error('The provider event buffer is full.'))
+    handle?.controller.abort()
+  })
   let handle: ProviderRuntimeStreamHandle | undefined
   let producerSettled = false
   let emittedText = ''
@@ -200,14 +204,22 @@ async function* streamProviderRuntimeEvents(
   }
 }
 
-class ProviderRuntimeEventQueue<Value> implements AsyncIterable<Value> {
-  private readonly values: Value[] = []
+class ProviderRuntimeEventQueue implements AsyncIterable<StreamEvent> {
+  private readonly values = new ProviderStreamEventBuffer()
   private completion: { error?: unknown } | undefined
   private wake?: () => void
 
-  push(value: Value): void {
+  constructor(private readonly onOverflow: () => void) {}
+
+  push(value: StreamEvent): void {
     if (this.completion) return
-    this.values.push(value)
+    try {
+      this.values.push(value, () => undefined)
+    } catch (error) {
+      this.fail(error)
+      this.onOverflow()
+      return
+    }
     this.wake?.()
     this.wake = undefined
   }
@@ -226,11 +238,11 @@ class ProviderRuntimeEventQueue<Value> implements AsyncIterable<Value> {
     this.wake = undefined
   }
 
-  async *[Symbol.asyncIterator](): AsyncIterator<Value> {
+  async *[Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
     while (true) {
       const value = this.values.shift()
       if (value !== undefined) {
-        yield value
+        yield value.event
         continue
       }
       if (this.completion) {

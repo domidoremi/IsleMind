@@ -15,6 +15,8 @@ import { st } from '@/i18n/service'
 import { logContextOperation } from '@/services/runtimeHealthLog'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { Conversation, Message } from '@/types/chatContracts'
+import { getModelConfig } from '@/types/modelCatalog'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
 import type { Settings } from '@/types/settingsContracts'
 import type {
   RagEvaluationResult,
@@ -118,6 +120,11 @@ export async function retrieveConversationKnowledgeContext(
 
   const provider = await useSettingsStore.getState().hydrateProviderKey(conversation.providerId)
   throwIfCancelled(signal)
+  const modelConfig = getModelConfig(
+    provider ? resolveProviderModelAlias(provider, conversation.model) : conversation.model,
+    provider?.type,
+    provider?.modelConfigs,
+  )
 
   try {
     const rag = await runAgenticRag({
@@ -126,6 +133,8 @@ export async function retrieveConversationKnowledgeContext(
       systemPrompt: conversation.systemPrompt,
       settings,
       memorySources,
+      modelContextWindow: modelConfig.contextWindow,
+      maxOutputTokens: Math.min(conversation.maxTokens, modelConfig.maxOutputTokens),
       maxContextItems: Math.max(
         settings.knowledgeTopK ?? 4,
         settings.memoryTopK ?? 4,
@@ -170,7 +179,13 @@ export async function retrieveConversationKnowledgeContext(
     const sources = rag.sources.slice(0, MAX_CONTEXT_ITEMS)
     return {
       sources,
-      prompt: rag.contextPrompt || formatConversationContextPrompt(sources),
+      // Keep ranked labels and source ids one-to-one. A caller-configured topK
+      // can make the RAG pack larger than the mobile Chat projection; reusing
+      // that larger prompt would leave invisible/unaccounted blocks after the
+      // source list is capped.
+      prompt: sources.length === rag.sources.length
+        ? rag.contextPrompt || formatConversationContextPrompt(sources)
+        : formatConversationContextPrompt(sources),
       plan: rag.plan,
       trace: rag.trace,
       quality: rag.quality,

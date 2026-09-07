@@ -1,17 +1,37 @@
 import { useColorScheme } from 'react-native'
-import { getColors, normalizeThemeId, resolveThemeMode, resolveThemePresentationId } from '@/theme/colors'
+import { getColors, normalizeThemeAccent, normalizeThemeId, resolveThemeMode } from '@/theme/colors'
 import { resolveThemeDesignTokens } from '@/theme/themeTokens'
+import { resolveBackgroundEnvironment } from '@/theme/backgroundEnvironment'
 import { useSettingsStore } from '@/store/settingsStore'
+
+const BACKGROUND_STARTUP_SEED = Date.now() >>> 0
+
 export function useAppTheme() {
   const systemScheme = useColorScheme()
   const themeMode = useSettingsStore((state) => state.settings.theme)
   const storedThemeId = useSettingsStore((state) => state.settings.themeId)
-  const themeAccent = useSettingsStore((state) => state.settings.themeAccent)
+  const storedThemeAccent = useSettingsStore((state) => state.settings.themeAccent)
+  const backgroundVariation = useSettingsStore((state) => state.settings.backgroundVariation)
+  const backgroundMotion = useSettingsStore((state) => state.settings.backgroundMotion)
+  const backgroundIntensity = useSettingsStore((state) => state.settings.backgroundIntensity)
+  const backgroundPreset = useSettingsStore((state) => state.settings.backgroundPreset)
+  // Keep the bridge and native projection on the same normalized value while
+  // a corrupt snapshot is being hydrated.
+  const themeAccent = normalizeThemeAccent(storedThemeAccent)
   const resolvedTheme = resolveThemeMode(themeMode, systemScheme === 'unspecified' ? null : systemScheme)
   const canonicalThemeId = normalizeThemeId(storedThemeId)
-  const themeId = resolveThemePresentationId(canonicalThemeId)
   const palette = getColors(resolvedTheme, canonicalThemeId, undefined, themeAccent)
   const design = palette.design ?? resolveThemeDesignTokens(canonicalThemeId, resolvedTheme)
+  const backgroundEnvironment = resolveBackgroundEnvironment({
+    family: canonicalThemeId,
+    mode: resolvedTheme,
+    accent: themeAccent,
+    variation: backgroundVariation,
+    motion: backgroundMotion,
+    intensity: backgroundIntensity,
+    preset: backgroundPreset,
+    startupSeed: BACKGROUND_STARTUP_SEED,
+  })
 
   return {
     colors: palette,
@@ -20,15 +40,11 @@ export function useAppTheme() {
     mode: resolvedTheme,
     themeMode,
     canonicalThemeId,
-    // Compatibility projection for untouched theme composition dispatchers.
-    themeId,
     themeAccent,
+    backgroundEnvironment,
     isMinimal: canonicalThemeId === 'minimal',
     isMonet: canonicalThemeId === 'monet',
     isMaterial: canonicalThemeId === 'material',
     isLiquidGlass: canonicalThemeId === 'liquid-glass',
-    isMarkdown: canonicalThemeId === 'material',
-    isGlass: canonicalThemeId === 'liquid-glass',
-    isLimeRoad: canonicalThemeId === 'monet',
   }
 }

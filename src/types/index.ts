@@ -31,7 +31,6 @@ export type {
   BedrockCacheTtl,
   CanonicalThemeId,
   Language,
-  LegacyThemeId,
   ObservabilitySinkHighFrequencyExportMode,
   ObservabilitySinkMode,
   ObservabilitySinkTarget,
@@ -45,6 +44,15 @@ export type {
   ThemeMode,
   UpstreamTransportMode,
   WebSearchMode,
+} from './settingsContracts'
+export {
+  CANONICAL_THEME_IDS,
+  THEME_MODE_VALUES,
+  THEME_TOKEN_MODE_VALUES,
+  isThemeAccentResetValue,
+  normalizeThemeAccentValue,
+  normalizeThemeFamilyValue,
+  normalizeThemeModeValue,
 } from './settingsContracts'
 export type {
   AIModel,

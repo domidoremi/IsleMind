@@ -1,8 +1,8 @@
 import * as FileSystem from 'expo-file-system/legacy'
 import type { Settings } from '@/types/settingsContracts'
-import { resolveActiveLocalEmbeddingModel, type LocalEmbeddingModel, type LocalEmbeddingTokenizer } from '@/bootstrap/localModelRuntime'
+import { resolveConfiguredLocalEmbeddingModel } from '@/bootstrap/localModelCatalog'
 import { logContextOperation } from '@/services/runtimeHealthLog'
-import type { EmbeddingProvider } from '@/modules/knowledge'
+import type { EmbeddingProvider, LocalEmbeddingModel, LocalEmbeddingTokenizer } from '@/modules/knowledge'
 
 export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'localEmbeddingModelId' | 'localEmbeddingModelSource'>): Promise<EmbeddingProvider | null> {
   if (settings.localEmbeddingModelSource === 'none') return null
@@ -15,7 +15,7 @@ export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'loca
   const loadModelOnDemand = async () => {
     if (cachedModel) return cachedModel
 
-    const active = await resolveActiveLocalEmbeddingModel(settings as Settings)
+    const active = await resolveConfiguredLocalEmbeddingModel(settings)
     if (!active) throw new Error('No embedding model available')
 
     cachedModel = active
@@ -24,7 +24,12 @@ export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'loca
 
   return {
     id: 'onnx',
-    dimension: 384, // 默认维度，实际会从模型中获取
+    get dimension() { return cachedModel?.model.dimension },
+    get model() {
+      if (!cachedModel) return undefined
+      const model = cachedModel.model
+      return `${model.id}@${model.version}:onnx-pipeline-v2:${model.pooling ?? 'mean'}`
+    },
     available: async () => {
       try {
         const active = await loadModelOnDemand()
@@ -45,14 +50,16 @@ export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'loca
         return false
       }
     },
-    embed: async (text: string) => {
+    embed: async (text: string, options = {}) => {
+      throwIfAborted(options.signal)
       const active = await loadModelOnDemand()
+      throwIfAborted(options.signal)
 
       if (!supportsTokenizer(active.model.tokenizer)) {
         throw new Error(`Tokenizer ${active.model.tokenizer} is not supported in this build.`)
       }
 
-      const vector = await embedWithOnnx(active.model, active.directoryUri, text)
+      const vector = await embedWithOnnx(active.model, active.directoryUri, text, options.signal)
       return vector
     },
   }
@@ -72,47 +79,71 @@ interface TokenizerState {
   unkId: number
 }
 
-const sessionCache = new Map<string, Promise<OrtSession>>()
+interface SessionEntry { promise: Promise<OrtSession>; users: number; retired?: boolean }
+const sessionCache = new Map<string, SessionEntry>()
 const tokenizerCache = new Map<string, Promise<TokenizerState>>()
 
 async function getOnnxRuntime(): Promise<OrtModule> {
   return import('onnxruntime-react-native')
 }
 
-async function embedWithOnnx(model: LocalEmbeddingModel, directoryUri: string, text: string): Promise<number[]> {
-  const [ort, tokenizer, session] = await Promise.all([
-    getOnnxRuntime(),
-    loadTokenizer(model, directoryUri),
-    loadSession(model, directoryUri),
-  ])
-  const tokens = encodeText(tokenizer, text, model.maxTokens)
-  const dims = [1, tokens.inputIds.length]
-  const feeds: Record<string, unknown> = {
-    input_ids: new ort.Tensor('int64', BigInt64Array.from(tokens.inputIds.map(BigInt)), dims),
-    attention_mask: new ort.Tensor('int64', BigInt64Array.from(tokens.attentionMask.map(BigInt)), dims),
+async function embedWithOnnx(model: LocalEmbeddingModel, directoryUri: string, text: string, signal?: AbortSignal): Promise<number[]> {
+  throwIfAborted(signal)
+  const entry = acquireSession(model, directoryUri)
+  const feeds: Record<string, InstanceType<OrtModule['Tensor']>> = {}
+  let results: Awaited<ReturnType<OrtSession['run']>> | undefined
+  try {
+    const [ort, tokenizer, session] = await Promise.all([
+      getOnnxRuntime(),
+      loadTokenizer(model, directoryUri),
+      entry.promise,
+    ])
+    throwIfAborted(signal)
+    const tokens = encodeText(tokenizer, text, model.maxTokens)
+    const dims = [1, tokens.inputIds.length]
+    feeds.input_ids = new ort.Tensor('int64', BigInt64Array.from(tokens.inputIds.map(BigInt)), dims)
+    feeds.attention_mask = new ort.Tensor('int64', BigInt64Array.from(tokens.attentionMask.map(BigInt)), dims)
+    if (session.inputNames.includes('token_type_ids')) {
+      feeds.token_type_ids = new ort.Tensor('int64', BigInt64Array.from(tokens.tokenTypeIds.map(BigInt)), dims)
+    }
+    results = await session.run(feeds)
+    // RN's ONNX binding has no per-run AbortSignal. Do not release an active
+    // native session; discard late results and dispose tensors after it settles.
+    throwIfAborted(signal)
+    const outputName = chooseEmbeddingOutputName(session.outputNames, results)
+    const output = results[outputName]
+    const data = Array.from(output.data as Float32Array)
+    const outputDims = Array.from(output.dims)
+    if (outputDims[0] !== 1 || outputDims.at(-1) !== model.dimension
+      || outputDims.some((size) => !Number.isInteger(size) || size <= 0)
+      || outputDims.reduce((total, size) => total * size, 1) !== data.length
+      || data.some((value) => !Number.isFinite(value))) {
+      throw new Error('Invalid ONNX embedding dimensions or values.')
+    }
+    if (outputDims.length === 3) {
+      if (outputDims[1] !== tokens.inputIds.length) throw new Error('ONNX embedding sequence length mismatch.')
+      if (model.pooling === 'cls') return normalizeVector(data.slice(0, model.dimension))
+      return meanPool(data, outputDims[1], outputDims[2], tokens.attentionMask)
+    }
+    if (outputDims.length === 2) {
+      return normalizeVector(data.slice(0, outputDims[1]))
+    }
+    throw new Error('Unexpected ONNX embedding output shape.')
+  } finally {
+    try {
+      for (const tensor of new Set([...Object.values(results ?? {}), ...Object.values(feeds)])) tensor.dispose()
+    } finally {
+      entry.users -= 1
+      await pruneSessions()
+    }
   }
-  if (session.inputNames.includes('token_type_ids')) {
-    feeds.token_type_ids = new ort.Tensor('int64', BigInt64Array.from(tokens.tokenTypeIds.map(BigInt)), dims)
-  }
-  const results = await session.run(feeds as never)
-  const outputName = chooseEmbeddingOutputName(session.outputNames, results)
-  const output = results[outputName]
-  const data = Array.from(output.data as Float32Array)
-  const outputDims = Array.from(output.dims)
-  if (outputDims.length === 3) {
-    return meanPool(data, outputDims[1], outputDims[2], tokens.attentionMask)
-  }
-  if (outputDims.length === 2) {
-    return normalizeVector(data.slice(0, outputDims[1]))
-  }
-  throw new Error('Unexpected ONNX embedding output shape.')
 }
 
-async function loadSession(model: LocalEmbeddingModel, directoryUri: string): Promise<OrtSession> {
-  const key = `${model.id}:${directoryUri}`
-  let pending = sessionCache.get(key)
-  if (!pending) {
-    pending = (async () => {
+function acquireSession(model: LocalEmbeddingModel, directoryUri: string): SessionEntry {
+  const key = `${model.id}:${model.version}:${directoryUri}`
+  let entry = sessionCache.get(key)
+  if (!entry) {
+    const promise = (async () => {
       const ort = await getOnnxRuntime()
       const modelUri = `${directoryUri}onnx/model_quantized.onnx`
       return ort.InferenceSession.create(modelUri, {
@@ -121,14 +152,41 @@ async function loadSession(model: LocalEmbeddingModel, directoryUri: string): Pr
         intraOpNumThreads: 1,
         interOpNumThreads: 1,
       })
-    })()
-    sessionCache.set(key, pending)
+    })().catch((error) => {
+      // Share initialization in flight, but allow the next request to retry a failure.
+      if (sessionCache.get(key)?.promise === promise) sessionCache.delete(key)
+      throw error
+    })
+    entry = { promise, users: 0 }
   }
-  return pending
+  entry.users += 1
+  sessionCache.delete(key)
+  sessionCache.set(key, entry)
+  return entry
+}
+
+async function pruneSessions(): Promise<void> {
+  for (const [key, entry] of sessionCache) {
+    if (entry.users || (!entry.retired && sessionCache.size <= 1)) continue
+    sessionCache.delete(key)
+    const session = await entry.promise.catch(() => undefined)
+    if (!session) continue
+    try { await session.release() } catch (error) {
+      // Cleanup diagnostics must not change the outcome of a completed run.
+      await logContextOperation({ phase: 'knowledge_embedding', status: 'error', detail: 'onnx_session_release_failed', sourceType: 'text', error }).catch(() => undefined)
+    }
+  }
+}
+
+/** Retire idle native resources; in-flight sessions release only after completion. */
+export async function releaseOnnxEmbeddingResources(): Promise<void> {
+  tokenizerCache.clear()
+  for (const entry of sessionCache.values()) entry.retired = true
+  await pruneSessions()
 }
 
 async function loadTokenizer(model: LocalEmbeddingModel, directoryUri: string): Promise<TokenizerState> {
-  const key = `${model.id}:${directoryUri}`
+  const key = `${model.id}:${model.version}:${directoryUri}`
   let pending = tokenizerCache.get(key)
   if (!pending) {
     pending = (async () => {
@@ -150,17 +208,19 @@ async function loadTokenizer(model: LocalEmbeddingModel, directoryUri: string): 
         padId: vocab['[PAD]'] ?? vocab['<pad>'] ?? 0,
         unkId: vocab['[UNK]'] ?? vocab['<unk>'] ?? 100,
       }
-    })()
+    })().catch((error) => {
+      if (tokenizerCache.get(key) === pending) tokenizerCache.delete(key)
+      throw error
+    })
     tokenizerCache.set(key, pending)
+    while (tokenizerCache.size > 2) tokenizerCache.delete(tokenizerCache.keys().next().value!)
   }
   return pending
 }
 
 function encodeText(tokenizer: TokenizerState, text: string, maxTokens: number): { inputIds: number[]; attentionMask: number[]; tokenTypeIds: number[] } {
-  const tokenBudget = Math.max(8, maxTokens - 2)
-  const rawTokens = tokenizer.tokenizer === 'wordpiece'
-    ? tokenizeWordPiece(text, tokenizer)
-    : tokenizeSentencePieceLite(text, tokenizer)
+  const tokenBudget = Math.max(0, maxTokens - 2)
+  const rawTokens = tokenizeWordPiece(text, tokenizer)
   const contentIds = rawTokens.slice(0, tokenBudget)
   const inputIds = [tokenizer.clsId, ...contentIds, tokenizer.sepId]
   const attentionMask = inputIds.map(() => 1)
@@ -206,26 +266,8 @@ function wordPieceTokenize(word: string, vocab: Record<string, number>): string[
   return pieces
 }
 
-function tokenizeSentencePieceLite(text: string, tokenizer: TokenizerState): number[] {
-  const normalized = tokenizer.lowercase ? text.toLowerCase() : text
-  const parts = normalized.match(/[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]|[^\s]+/g) ?? []
-  const ids: number[] = []
-  for (const part of parts) {
-    const candidates = [`▁${part}`, part]
-    const direct = candidates.find((candidate) => tokenizer.vocab[candidate] !== undefined)
-    if (direct) {
-      ids.push(tokenizer.vocab[direct])
-      continue
-    }
-    for (const char of Array.from(part)) {
-      ids.push(tokenizer.vocab[`▁${char}`] ?? tokenizer.vocab[char] ?? tokenizer.unkId)
-    }
-  }
-  return ids
-}
-
 function chooseEmbeddingOutputName(outputNames: readonly string[], results: Record<string, { dims: readonly number[]; data: unknown }>): string {
-  const preferred = ['last_hidden_state', 'token_embeddings', 'sentence_embedding', 'pooler_output']
+  const preferred = ['sentence_embedding', 'last_hidden_state', 'token_embeddings']
   for (const name of preferred) {
     if (results[name]) return name
   }
@@ -255,10 +297,19 @@ function meanPool(data: number[], sequenceLength: number, dimension: number, mas
 
 function normalizeVector(vector: number[]): number[] {
   const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0))
-  if (!magnitude) return vector
+  if (!magnitude || !Number.isFinite(magnitude)) throw new Error('ONNX embedding has no finite nonzero norm.')
   return vector.map((value) => Number((value / magnitude).toFixed(6)))
 }
 
 function supportsTokenizer(tokenizer: LocalEmbeddingTokenizer): boolean {
-  return tokenizer === 'wordpiece' || tokenizer === 'unigram'
+  // Character fallback is not a Unigram/SentencePiece tokenizer. Fail closed
+  // to the explicitly labelled lexical/hash path until a faithful adapter exists.
+  return tokenizer === 'wordpiece'
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const error = new Error('ONNX embedding was cancelled.')
+  error.name = 'AbortError'
+  throw error
 }

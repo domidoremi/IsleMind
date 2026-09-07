@@ -78,8 +78,8 @@ export default function ConversationDeepLinkScreen() {
       onBack={returnToPreviousSurface}
       backLabel={t('common.back')}
     >
-      {colors.ui.family === 'lime-road' ? (
-        <View testID="missing-chat-lime-road" style={{ flex: 1, paddingHorizontal: 24, justifyContent: 'center', alignItems: 'flex-start' }}>
+      {colors.ui.family === 'monet' ? (
+        <View testID="missing-chat-monet" style={{ flex: 1, paddingHorizontal: 24, justifyContent: 'center', alignItems: 'flex-start' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <View style={{ width: 48, height: 48, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
               <AppIcon name="conversation" color={colors.ui.icon.accentForeground} size={25} strokeWidth={appIconStroke.strong} />
@@ -88,8 +88,8 @@ export default function ConversationDeepLinkScreen() {
           </View>
           <IsleButton label={t('conversation.viewHistory')} tone="primary" onPress={() => router.push('/conversations')} style={{ marginTop: 24 }} />
         </View>
-      ) : colors.ui.family === 'markdown' ? (
-        <View testID="missing-chat-markdown" style={{ flex: 1, marginHorizontal: 24, marginTop: 42, paddingLeft: 18, borderLeftWidth: 2, borderLeftColor: colors.ui.section.divider }}>
+      ) : colors.ui.family === 'material' ? (
+        <View testID="missing-chat-material" style={{ flex: 1, marginHorizontal: 24, marginTop: 42, paddingLeft: 18, borderLeftWidth: 2, borderLeftColor: colors.ui.section.divider }}>
           <View style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted }}>
             <AppIcon name="conversation" color={colors.ui.control.link} size={22} strokeWidth={appIconStroke.strong} />
           </View>

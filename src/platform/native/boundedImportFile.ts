@@ -28,8 +28,16 @@ export async function readUtf8ImportFile(
   options: {
     size?: number
     limitBytes: number
+    /** Web pickers provide a File; Expo's native filesystem cannot read blob URLs. */
+    file?: Pick<Blob, 'size' | 'text'>
   },
 ): Promise<string> {
+  if (options.file) {
+    assertImportFileSize(options.file.size, options.limitBytes)
+    const text = await options.file.text()
+    assertUtf8TextSize(text, options.limitBytes)
+    return text
+  }
   const size = await assertImportFileSizeByUri(uri, options)
   try {
     const text = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 })
@@ -53,6 +61,10 @@ export async function deleteTemporaryImportCopy(
 ): Promise<void> {
   if (!uri) return
   if (!options.assumeTemporaryCopy && !isTemporaryImportCopyUri(uri)) return
+  if (uri.startsWith('blob:') && typeof URL.revokeObjectURL === 'function') {
+    URL.revokeObjectURL(uri)
+    return
+  }
   await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)
 }
 

@@ -16,6 +16,7 @@ import {
 } from '@/modules/providers'
 import type { AIProvider } from '@/types/providerContracts'
 import type { KnowledgeChunk } from '@/types/contextContracts'
+import { sha256Hex } from '@/core'
 
 export interface KnowledgeIndexingOptions {
   provider?: AIProvider
@@ -49,11 +50,13 @@ const knowledgeQueryEmbedding = createKnowledgeQueryEmbeddingUseCase<AIProvider>
       ...(input.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: input.localEmbeddingModelSource }),
     })
     if (!provider || !await provider.available()) return null
-    return provider.embed(input.query)
+    const embedding = await provider.embed(input.query, { signal: input.signal })
+    return { embedding, model: provider.model! }
   },
   async embedWithProvider(input) {
     const { embedProviderText } = await import('./providerRuntime')
-    return (await embedProviderText(input.provider, input.query, { signal: input.signal })).embedding
+    const result = await embedProviderText(input.provider, input.query, { signal: input.signal })
+    return { ...result, model: providerVectorSpace(input.provider, result.model) }
   },
   async notifyProviderUnsupported(input) {
     const evidence = getProviderCompatibilityEvidenceForProvider(input.provider)
@@ -84,7 +87,8 @@ export const knowledgeHybridIndex = createSqliteKnowledgeHybridIndex<AIProvider>
       ),
     }
   },
-  providerCacheKey: (provider) => provider.id,
+  // A profile id alone cannot identify mutable routes/models/credentials.
+  // Leave provider-backed queries uncached until a non-secret config revision exists.
   async resolveOnnxEmbeddingPort(input) {
     const { createOnnxEmbeddingProvider } = await import('./knowledgeEmbeddingProvider')
     const provider = await createOnnxEmbeddingProvider({
@@ -93,13 +97,14 @@ export const knowledgeHybridIndex = createSqliteKnowledgeHybridIndex<AIProvider>
     })
     if (!provider || !await provider.available()) return undefined
     return {
-      model: input.localEmbeddingModelId ?? 'onnx-local',
-      embed: (text) => provider.embed(text),
+      model: provider.model!,
+      embed: (text, options) => provider.embed(text, options),
     }
   },
   async embedWithProvider(input) {
     const { embedProviderText } = await import('./providerRuntime')
-    return embedProviderText(input.provider, input.text, { signal: input.signal })
+    const result = await embedProviderText(input.provider, input.text, { signal: input.signal })
+    return { ...result, model: providerVectorSpace(input.provider, result.model) }
   },
   async notifyProviderEmbeddingUnsupported(input) {
     const evidence = getProviderCompatibilityEvidenceForProvider(input.provider)
@@ -115,6 +120,12 @@ export const knowledgeHybridIndex = createSqliteKnowledgeHybridIndex<AIProvider>
     })
   },
 })
+
+function providerVectorSpace(provider: AIProvider, model: string): string {
+  // Namespace ambiguous model aliases by profile and route without persisting
+  // endpoint strings (which may contain credentials). No API keys are hashed.
+  return `provider-space-v1:${sha256Hex(JSON.stringify([provider.id, provider.type, provider.baseUrl ?? '', model]))}`
+}
 
 export const knowledgeColbertIndex = createSqliteKnowledgeColbertIndex(databaseProvider, {
   repository: knowledgeRepository,

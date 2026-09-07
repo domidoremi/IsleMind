@@ -5,6 +5,7 @@ import {
   type IndexedKnowledgeSearchDriver,
   type KnowledgeAgenticSearchInput,
   type KnowledgeHybridSearchHit,
+  type KnowledgeScope,
   type KnowledgeSearchWithFallbackInput,
 } from '@/modules/knowledge'
 import { logContextOperation } from '@/services/runtimeHealthLog'
@@ -44,9 +45,9 @@ const knowledgeRetrieval = createKnowledgeRetrievalUseCase<
 export async function searchKnowledgeFts(
   query: string,
   limit: number,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; knowledgeScope?: KnowledgeScope },
 ): Promise<RetrievalSource[]> {
-  const ftsCandidates = await knowledgeRepository.searchFts({ query, limit, signal: options?.signal })
+  const ftsCandidates = await knowledgeRepository.searchFts({ query, limit, signal: options?.signal, knowledgeScope: options?.knowledgeScope })
   const candidates: RetrievalSource[] = ftsCandidates.map((candidate) => ({
     id: candidate.id,
     type: 'knowledge',
@@ -56,7 +57,6 @@ export async function searchKnowledgeFts(
     documentId: candidate.documentId,
     chunkId: candidate.id,
     chunkIndex: candidate.chunkIndex ?? candidate.ordinal,
-    score: candidate.score,
     ftsScore: candidate.score,
     sourceUri: candidate.sourceUri ?? candidate.rawPath,
   }))
@@ -84,6 +84,7 @@ async function loadIndexedKnowledgeSearchDriver(): Promise<AppIndexedKnowledgeSe
         query,
         limit: options.limit,
         embeddingMode: options.embeddingMode,
+        ...(options.knowledgeScope === undefined ? {} : { knowledgeScope: options.knowledgeScope }),
         ...(options.localEmbeddingModelId === undefined ? {} : { localEmbeddingModelId: options.localEmbeddingModelId }),
         ...(options.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: options.localEmbeddingModelSource }),
         ...(options.provider === undefined ? {} : { provider: options.provider }),

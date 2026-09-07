@@ -26,7 +26,7 @@ import { st } from '@/i18n/service'
 import { getSystemLanguage, setServiceLanguage } from '@/i18n/service'
 import { clearLanguagePreferenceSource, loadLanguagePreferenceSource, resolveEffectiveLanguage, saveLanguagePreferenceSource } from '@/i18n/languagePreference'
 import { normalizeThemeId } from '@/theme/colors'
-import { normalizeSettingsIdentityPreferences, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, sanitizeSettingsUrlFields } from '@/modules/settings'
+import { normalizeSettingsBackgroundIntensity, normalizeSettingsBackgroundMotion, normalizeSettingsBackgroundVariation, normalizeSettingsIdentityPreferences, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, sanitizeSettingsUrlFields } from '@/modules/settings'
 import { removeProviderHealthRecordsByProviderId, clearProviderHealthSnapshot } from '@/bootstrap/providerHealthRepository'
 import { invalidateAllCompactStates, invalidateCompactStatesByProvider } from '@/bootstrap/providerCompactStateRepository'
 
@@ -98,6 +98,10 @@ const defaultSettings: Settings = {
   theme: 'light',
   themeId: 'minimal',
   themeAccent: undefined,
+  backgroundVariation: undefined,
+  backgroundMotion: undefined,
+  backgroundIntensity: undefined,
+  backgroundPreset: undefined,
   assistantDisplayName: undefined,
   modelDisplayAliases: undefined,
   language: 'zh-CN',
@@ -144,7 +148,12 @@ const defaultSettings: Settings = {
   transportMode: 'auto',
   remoteCompactMode: 'auto',
   remoteCompactThreshold: 0.8,
-  remoteCompactThresholdTokens: 200000,
+  // Undefined lets fresh installs use provider defaults (Anthropic 150k,
+  // OpenAI Responses 200k). Persisted legacy values remain explicit
+  // compatibility overrides for both providers.
+  remoteCompactThresholdTokens: undefined,
+  anthropicRemoteCompactThresholdTokens: undefined,
+  openAIRemoteCompactThresholdTokens: undefined,
   modelContextCompressionEnabled: false,
   payloadPolicyMode: 'warn',
   proxyMode: 'off',
@@ -295,6 +304,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const normalizedThemeId = normalizeThemeId(rawSettings.themeId)
     const normalizedThemeMode = normalizeSettingsThemeMode(rawSettings.theme) ?? defaultSettings.theme
     const normalizedThemeAccent = normalizeSettingsThemeAccent(rawSettings.themeAccent)
+    const normalizedBackgroundVariation = normalizeSettingsBackgroundVariation(rawSettings.backgroundVariation)
+    const normalizedBackgroundMotion = normalizeSettingsBackgroundMotion(rawSettings.backgroundMotion)
+    const normalizedBackgroundIntensity = normalizeSettingsBackgroundIntensity(rawSettings.backgroundIntensity)
+    const normalizedBackgroundPreset = typeof rawSettings.backgroundPreset === 'number' && Number.isFinite(rawSettings.backgroundPreset)
+      ? Math.max(0, Math.min(3, Math.round(rawSettings.backgroundPreset)))
+      : undefined
     const observabilitySinkApiKeyConfigured = !!observabilitySinkApiKey?.trim()
     const mergedSettings = sanitizeSettingsUrlFields({
       ...rawSettings,
@@ -302,6 +317,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       language: effectiveLanguage,
       themeId: normalizedThemeId,
       themeAccent: normalizedThemeAccent,
+      backgroundVariation: normalizedBackgroundVariation,
+      backgroundMotion: normalizedBackgroundMotion,
+      backgroundIntensity: normalizedBackgroundIntensity,
+      backgroundPreset: normalizedBackgroundPreset,
       providerCatalogVersion: PROVIDER_CATALOG_VERSION,
       defaultProvider: resetCatalog ? null : rawSettings.defaultProvider,
       observabilitySinkApiKeyConfigured,
@@ -327,10 +346,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const themeIdMigrated = rawSettings.themeId !== normalizedThemeId
     const themeModeMigrated = rawSettings.theme !== normalizedThemeMode
     const themeAccentMigrated = rawSettings.themeAccent !== normalizedThemeAccent
+    const backgroundEnvironmentMigrated = rawSettings.backgroundVariation !== normalizedBackgroundVariation
+      || rawSettings.backgroundMotion !== normalizedBackgroundMotion
+      || rawSettings.backgroundIntensity !== normalizedBackgroundIntensity
+      || rawSettings.backgroundPreset !== normalizedBackgroundPreset
     const settingsUrlMigrated = urlSettings !== storedSettings
     const settingsIdentityMigrated = rawSettings !== urlSettings
     const observabilitySecretStateMigrated = rawSettings.observabilitySinkApiKeyConfigured !== observabilitySinkApiKeyConfigured
-    if (resetCatalog || themeModeMigrated || themeIdMigrated || themeAccentMigrated || settingsUrlMigrated || settingsIdentityMigrated || observabilitySecretStateMigrated) {
+    if (resetCatalog || themeModeMigrated || themeIdMigrated || themeAccentMigrated || backgroundEnvironmentMigrated || settingsUrlMigrated || settingsIdentityMigrated || observabilitySecretStateMigrated) {
       persistSettingsSnapshot({ ...mergedSettings, defaultProvider: resetCatalog ? null : defaultProvider })
     }
     if (resetCatalog) {
@@ -345,12 +368,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const hasThemeAccentUpdate = Object.prototype.hasOwnProperty.call(updates, 'themeAccent')
       const hasThemeModeUpdate = Object.prototype.hasOwnProperty.call(updates, 'theme')
       const hasThemeFamilyUpdate = Object.prototype.hasOwnProperty.call(updates, 'themeId')
+      const hasBackgroundVariationUpdate = Object.prototype.hasOwnProperty.call(updates, 'backgroundVariation')
+      const hasBackgroundMotionUpdate = Object.prototype.hasOwnProperty.call(updates, 'backgroundMotion')
+      const hasBackgroundIntensityUpdate = Object.prototype.hasOwnProperty.call(updates, 'backgroundIntensity')
+      const hasBackgroundPresetUpdate = Object.prototype.hasOwnProperty.call(updates, 'backgroundPreset')
       const draft = normalizeSettingsIdentityPreferences({
         ...state.settings,
         ...updates,
-        ...(hasThemeModeUpdate ? { theme: normalizeSettingsThemeMode(updates.theme) ?? state.settings.theme } : {}),
-        ...(hasThemeFamilyUpdate ? { themeId: normalizeSettingsThemeFamily(updates.themeId) ?? state.settings.themeId } : {}),
+        ...(hasThemeModeUpdate ? { theme: normalizeSettingsThemeMode(updates.theme) ?? normalizeSettingsThemeMode(state.settings.theme) ?? defaultSettings.theme } : {}),
+        ...(hasThemeFamilyUpdate ? { themeId: normalizeSettingsThemeFamily(updates.themeId) ?? normalizeThemeId(state.settings.themeId) } : {}),
         ...(hasThemeAccentUpdate ? { themeAccent: normalizeSettingsThemeAccent(updates.themeAccent) } : {}),
+        ...(hasBackgroundVariationUpdate ? { backgroundVariation: normalizeSettingsBackgroundVariation(updates.backgroundVariation) ?? state.settings.backgroundVariation } : {}),
+        ...(hasBackgroundMotionUpdate ? { backgroundMotion: normalizeSettingsBackgroundMotion(updates.backgroundMotion) ?? state.settings.backgroundMotion } : {}),
+        ...(hasBackgroundIntensityUpdate ? { backgroundIntensity: normalizeSettingsBackgroundIntensity(updates.backgroundIntensity) ?? state.settings.backgroundIntensity } : {}),
+        ...(hasBackgroundPresetUpdate ? { backgroundPreset: typeof updates.backgroundPreset === 'number' && Number.isFinite(updates.backgroundPreset) ? Math.max(0, Math.min(3, Math.round(updates.backgroundPreset))) : state.settings.backgroundPreset } : {}),
       })
       const resolved = updates.searchProvider ?? (
         updates.webSearchMode || updates.webSearchEnabled !== undefined

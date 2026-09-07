@@ -100,7 +100,6 @@ export async function applySqliteMigrations(
 }
 
 async function openDatabase(name: string): Promise<SqliteDatabase> {
-  const supportsExclusiveTransactions = typeof document === 'undefined'
   return enqueueDatabaseOperation(name, async () => {
     const SQLite = require('expo-sqlite') as typeof import('expo-sqlite')
     // Each provider owns its connection. The adapter exposes no raw prepared
@@ -109,12 +108,18 @@ async function openDatabase(name: string): Promise<SqliteDatabase> {
       useNewConnection: true,
       finalizeUnusedStatementsBeforeClosing: false,
     })
-    await database.execAsync(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA foreign_keys = ON;
-      PRAGMA synchronous = NORMAL;
-    `)
-    return createSqliteDatabase(database, name, supportsExclusiveTransactions)
+    try {
+      await database.execAsync(`
+        PRAGMA journal_mode = WAL;
+        PRAGMA foreign_keys = ON;
+        PRAGMA synchronous = FULL;
+      `)
+      return createSqliteDatabase(database, name)
+    } catch (error) {
+      // A retry must not leave the failed connection holding native resources.
+      await database.closeAsync().catch(() => undefined)
+      throw error
+    }
   })
 }
 
@@ -129,19 +134,10 @@ export function scheduleSqliteDatabaseOperation<Value>(
   return enqueueDatabaseOperation(databaseName, operation)
 }
 
-type TransactionCapableDatabase = SQLite.SQLiteDatabase & {
-  withExclusiveTransactionAsync?: <Value>(
-    work: (transaction: SQLite.SQLiteDatabase) => Promise<Value>,
-  ) => Promise<Value>
-  withTransactionAsync?: <Value>(work: () => Promise<Value>) => Promise<Value>
-}
-
 function createSqliteDatabase(
   database: SQLite.SQLiteDatabase,
   databaseName: string,
-  supportsExclusiveTransactions: boolean,
 ): SqliteDatabase {
-  const transactionCapable = database as TransactionCapableDatabase
   const executor = createExecutor(database)
   return {
     exec(source) {
@@ -163,20 +159,13 @@ function createSqliteDatabase(
     async transaction<Value>(work: (transaction: SqliteExecutor) => Promise<Value>): Promise<Value> {
       return enqueueDatabaseOperation(databaseName, async () => {
         let value: Value | undefined
-        if (
-          supportsExclusiveTransactions &&
-          typeof transactionCapable.withExclusiveTransactionAsync === 'function'
-        ) {
-          await transactionCapable.withExclusiveTransactionAsync(async (transaction) => {
-            value = await work(createExecutor(transaction))
-          })
-        } else if (typeof transactionCapable.withTransactionAsync === 'function') {
-          await transactionCapable.withTransactionAsync(async () => {
-            value = await work(executor)
-          })
-        } else {
+        // The file queue excludes other adapter operations until commit/rollback,
+        // and this provider never exposes its raw connection. Keep the configured
+        // connection: Expo's exclusive helper opens another one without our
+        // foreign_keys/synchronous PRAGMAs (foreign_keys cannot change after BEGIN).
+        await database.withTransactionAsync(async () => {
           value = await work(executor)
-        }
+        })
         return value as Value
       })
     },

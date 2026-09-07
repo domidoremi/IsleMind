@@ -80,12 +80,16 @@ export async function deleteDownloadedLocalEmbeddingModel(
   modelId: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  const { releaseOnnxEmbeddingResources } = await import('./knowledgeEmbeddingProvider')
+  await releaseOnnxEmbeddingResources()
   await deleteInstalledLocalModelArtifacts(modelId, signal)
   await localModelStateRepository.removeModel(modelId, { signal })
 }
 
-export function clearLocalEmbeddingModelState(signal?: AbortSignal): Promise<void> {
-  return localModelStateRepository.clear({ signal })
+export async function clearLocalEmbeddingModelState(signal?: AbortSignal): Promise<void> {
+  const { releaseOnnxEmbeddingResources } = await import('./knowledgeEmbeddingProvider')
+  await releaseOnnxEmbeddingResources()
+  await localModelStateRepository.clear({ signal })
 }
 
 export function resolveActiveLocalEmbeddingModel(

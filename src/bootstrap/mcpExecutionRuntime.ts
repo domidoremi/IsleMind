@@ -23,6 +23,13 @@ import {
   mcpClient,
   resolveBuiltInCapabilityAdapter,
 } from '@/bootstrap/mcpCatalog'
+import {
+  createToolOutputContextPolicy,
+  type ToolOutputContextOptions,
+  type ToolOutputContextResult,
+} from '@/modules/assistant-runtime'
+import { contextArtifactRuntime } from '@/bootstrap/contextArtifactRuntime'
+import { estimateTextTokens } from '@/services/tokenUsage'
 
 const BUILTIN_SERVER_ID = BUILT_IN_CAPABILITY_SERVER_ID
 
@@ -30,6 +37,12 @@ const applicationActionTaskLookup = createTaskRuntime({
   async evaluate() {
     return { outcome: 'denied', reasonCode: 'application_action_lookup_only' }
   },
+})
+
+const toolOutputContextPolicy = createToolOutputContextPolicy({
+  artifacts: contextArtifactRuntime,
+  estimateTextTokens,
+  outputTruncatedLabel: () => st('mcpRuntime.outputTruncated'),
 })
 
 export type McpCallResult = ExternalToolExecutionResult
@@ -368,21 +381,24 @@ async function admitApplicationBuiltInTask(input: {
   return { ok: true }
 }
 
-export function truncateToolBlocks(blocks: ToolContentBlock[], tokenBudget = 1200): ToolContentBlock[] {
+export type TruncateToolBlocksOptions = ToolOutputContextOptions
+export type TruncatedToolBlocksResult = ToolOutputContextResult
+
+export function truncateToolBlocks(
+  blocks: ToolContentBlock[],
+  tokenBudget = 1200,
+  options: TruncateToolBlocksOptions = {},
+): ToolContentBlock[] {
+  return truncateToolBlocksWithArtifacts(blocks, tokenBudget, options).blocks
+}
+
+export function truncateToolBlocksWithArtifacts(
+  blocks: ToolContentBlock[],
+  tokenBudget = 1200,
+  options: TruncateToolBlocksOptions = {},
+): TruncatedToolBlocksResult {
   const safeBlocks = normalizeMcpToolContent(blocks)
-  const charBudget = Math.max(200, tokenBudget * 4)
-  let used = 0
-  return safeBlocks.map((block) => {
-    if (block.type !== 'text' || !block.text) return block
-    const remaining = Math.max(0, charBudget - used)
-    used += Math.min(block.text.length, remaining)
-    return {
-      ...block,
-      text: block.text.length > remaining
-        ? `${block.text.slice(0, remaining)}\n${st('mcpRuntime.outputTruncated')}`
-        : block.text,
-    }
-  })
+  return toolOutputContextPolicy.truncate(safeBlocks, tokenBudget, options)
 }
 
 function normalizeApplicationBuiltInMcpResult(

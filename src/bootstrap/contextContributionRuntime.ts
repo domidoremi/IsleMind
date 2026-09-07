@@ -65,6 +65,7 @@ export function buildChatContextRuntime(input: ChatContextRuntimeInput): ChatCon
       evidence: {
         memoryCount: sourceCounts.memory,
         knowledgeCount: sourceCounts.knowledge,
+        sourceIds: retrievedSources.map((source) => source.id).slice(0, 256),
         ragPlanId: input.retrievedContext.plan?.id,
         ragProfile: input.retrievedContext.plan?.profile,
         ragConfidence: input.retrievedContext.quality?.confidence,
@@ -85,7 +86,10 @@ export function buildChatContextRuntime(input: ChatContextRuntimeInput): ChatCon
       authority: 'external-public',
       text: webSources.length ? formatWebPrompt(webSources) : undefined,
       sourceCount: webSources.length,
-      evidence: { webCount: webSources.length },
+      evidence: {
+        webCount: webSources.length,
+        sourceIds: webSources.map((source) => source.id).slice(0, 256),
+      },
       trace: {
         source: 'web',
         contextRuntimeSchema: CONTEXT_RUNTIME_SCHEMA,
@@ -121,6 +125,11 @@ export function buildChatContextRuntime(input: ChatContextRuntimeInput): ChatCon
         tavernSummaryCount: input.tavernContext?.narrativeSummaries.length ?? 0,
         tavernEvidenceCount: input.tavernContext?.evidence.length ?? 0,
         tavernScopeId: input.tavernContext?.scopeId,
+        conversationId: input.tavernContext?.conversationId,
+        conversationScopeId: input.tavernContext?.conversationScopeId,
+        authority: input.tavernContext?.authority ?? 'local-state',
+        visibility: input.tavernContext?.visibility ?? 'conversation',
+        unifiedChat: input.tavernContext?.unifiedChat === true,
       },
       trace: {
         source: 'tavern',
@@ -176,8 +185,8 @@ function formatTavernPrompt(context: TavernContextPack | undefined): string | un
   const sections = context?.promptSections.map((section) => section.trim()).filter(Boolean) ?? []
   if (!sections.length) return undefined
   return [
-    'Active Chat workspace context: local role, scene, lore, relationship, and narrative continuity state.',
-    'Use this workspace only for the current conversation. Treat durable updates as pending review unless the application reports that they were committed.',
+    'Active Chat workspace context (local-state lane in the same conversation): role, scene, lore, relationship, and narrative continuity state.',
+    'Use this workspace only for the current conversation. Do not create a separate mode, window, or conversation. Treat durable updates as pending review unless the application reports that they were committed.',
     TAVERN_REVIEW_READY_LABEL_INSTRUCTION,
     ...sections,
   ].join('\n\n')

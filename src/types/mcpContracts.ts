@@ -36,6 +36,7 @@ export interface McpServerConfig {
   version?: string
   manifestTtlMs: number
   manifestCachedAt?: number
+  manifestExpiresAt?: number
   tools: McpToolManifest[]
   resources: McpResourceManifest[]
   prompts: McpPromptManifest[]

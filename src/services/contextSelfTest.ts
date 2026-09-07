@@ -16,6 +16,7 @@ import {
 import { listRagEmbeddingJobs } from '@/bootstrap/knowledgeRagEvaluation'
 import { SEARCH_DIAGNOSTIC_QUERY, resolveSearchProvider } from '@/modules/integrations'
 import { getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
+import { LOCAL_USER_MEMORY_SCOPE_ID } from '@/modules/knowledge'
 export interface ContextSelfTestStep {
   name: string
   status: 'ok' | 'warn' | 'fail'
@@ -44,7 +45,10 @@ async function searchSelfTestMemories(
   statuses: Array<'pending' | 'active'> = ['active'],
   signal?: AbortSignal,
 ) {
-  const hits = await knowledgeRepository.searchMemories({ query, limit, statuses, signal })
+  const hits = await knowledgeRepository.searchMemories({
+    query, limit, statuses, signal,
+    scopes: [{ kind: 'user', id: LOCAL_USER_MEMORY_SCOPE_ID }],
+  })
   return hits.map((hit) => ({ ...hit, excerpt: hit.content }))
 }
 

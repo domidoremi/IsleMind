@@ -99,7 +99,7 @@ export interface ChatRequest {
 }
 
 export type StreamEvent =
-  | { type: 'text-delta'; text: string }
+  | { type: 'text-delta'; text: string; /** Original fragments in a coalesced callback batch. */ sourceEventCount?: number }
   | { type: 'citation'; citationId: string; title?: string; url?: string }
   | {
       type: 'tool-call'

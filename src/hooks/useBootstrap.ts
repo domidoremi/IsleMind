@@ -75,7 +75,7 @@ export function useBootstrap() {
       }))
     }
 
-    async function recoverDeferredRuntimeState(): Promise<void> {
+    async function recoverStartupRuntimeState(): Promise<void> {
       try {
         const [
           { recoverChatRuns },
@@ -94,17 +94,18 @@ export function useBootstrap() {
 
         let deferredErrors = 0
         const recoveredRuns = await recoverChatRuns(createConversationRuntime())
+        if (!mounted || recoveryController.signal.aborted) return
         const workflowCheckpointRecovery = await recoverWorkflowCheckpoints(
           recoveredRuns.map((run) => run.id),
           { signal: recoveryController.signal },
         )
-        if (workflowCheckpointRecovery.completion === 'cancelled') return
+        if (workflowCheckpointRecovery.completion === 'cancelled') throw new Error('Startup checkpoint recovery was cancelled.')
         if (workflowCheckpointRecovery.failedCount > 0) deferredErrors += 1
         const workspaceReceiptRecovery = await recoverConversationWorkspaceWritebackReceipts(
           recoveredRuns,
           { signal: recoveryController.signal },
         )
-        if (workspaceReceiptRecovery.status === 'cancelled') return
+        if (workspaceReceiptRecovery.status === 'cancelled') throw new Error('Startup workspace recovery was cancelled.')
         if (
           workspaceReceiptRecovery.ambiguousReceiptCount > 0
           || workspaceReceiptRecovery.failedReceiptCount > 0
@@ -112,13 +113,13 @@ export function useBootstrap() {
           deferredErrors += 1
         }
         const taskRecovery = await recoverInterruptedTasks()
-        if (!taskRecovery.ok) deferredErrors += 1
+        if (!taskRecovery.ok) throw new Error(taskRecovery.error.message)
         if (deferredErrors > 0 && mounted && !recoveryController.signal.aborted) {
           setState((current) => ({ ...current, errorCount: current.errorCount + deferredErrors }))
         }
-      } catch {
+      } catch (error) {
         if (!mounted || recoveryController.signal.aborted) return
-        setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
+        throw error
       }
     }
 
@@ -147,6 +148,11 @@ export function useBootstrap() {
         const initialErrors = results.filter((result) => result.status === 'rejected').length
         initI18n(useSettingsStore.getState().settings.language)
 
+        // Recovery-only runtime instances cannot distinguish a new live run
+        // owned by another instance from an interrupted row. Keep Chat (and its
+        // stale-message recovery hook) closed until durable startup recovery has
+        // finished; otherwise it can terminalize new work or cancel its projection.
+        await recoverStartupRuntimeState()
         if (!mounted || recoveryController.signal.aborted) return
         setState((current) => ({
           ...current,
@@ -155,7 +161,6 @@ export function useBootstrap() {
           errorCount: current.errorCount + initialErrors,
           failure: null,
         }))
-        void recoverDeferredRuntimeState()
         void safeBootstrap(st('bootstrap.stagedApkCleanup'), async () => {
           const { clearStagedApkDownloads } = await import('@/services/apkInstallCache')
           await clearStagedApkDownloads()

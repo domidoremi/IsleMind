@@ -1,6 +1,7 @@
 import type { ProcessTrace } from '@/core'
 import {
   createAssistantConversationRequestPlanningRuntime,
+  planUnifiedConversationCapabilities,
   type ContextFragment,
   type ContextPlan,
   type ContextPlanningMessage,
@@ -107,6 +108,13 @@ export const conversationAssistantRequestPlanningRuntime =
         capabilityKind: contextManagement.capabilityKind,
         remoteClassification: contextManagement.remoteClassification,
       })
+    },
+    getCompactionGuardState(conversationId) {
+      return providerRemoteCompactLifecycle.getCompactionGuardState(conversationId)
+    },
+    planCapabilities: planUnifiedConversationCapabilities,
+    recordApplicationCompactionResult(input) {
+      return providerRemoteCompactLifecycle.recordApplicationCompactionResult(input)
     },
     planContext: planChatContext,
     packChatMessages,

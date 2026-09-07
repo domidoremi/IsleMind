@@ -21,7 +21,7 @@ import {
   releaseChatWorkspaceReviewRuntime,
 } from '@/presentation/features/conversations/chatWorkspaceReviewCommand'
 import { startConversationAssistantReplyAfterHistoryProjection } from '@/bootstrap/conversationAssistantReplyStartRuntime'
-import { resumeConversationModelOperation } from '@/bootstrap/conversationRuntime'
+import { getLatestConversationResponseRun, resumeConversationModelOperation } from '@/bootstrap/conversationRuntime'
 import { createPlainChatProjection } from '@/presentation/features/conversations/plainChatProjection'
 import {
   extractWorkflowDefinitionsFromSkillSnapshot,
@@ -158,6 +158,7 @@ const conversationMessageRuntime: ConversationMessageRuntime = {
   dispatchAfterUserProjection: conversationReplyDispatchController.dispatch,
   startAfterHistoryProjection: startConversationAssistantReplyAfterHistoryProjection,
   startConfirmedWorkflowReply: startConversationChatWorkflowReply,
+  getLatestResponseRun: getLatestConversationResponseRun,
   async resumePendingModelOperation(conversationId, assistantMessageId, runId, approved) {
     const conversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
     if (!conversation) return false
