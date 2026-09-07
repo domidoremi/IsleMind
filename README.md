@@ -40,22 +40,22 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 ## 当前版本
 
-- 当前版本：`v1.0.22`
-- Android：`versionCode 122`
-- [查看 v1.0.22 Release 说明](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.22)
+- 当前版本：`v1.0.23`
+- Android：`versionCode 123`
+- [查看 v1.0.23 Release 说明](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.23)
 - [下载 v1.0.21 APK 与校验文件](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
 - [查看全部 Releases 与中英文版本记录](https://github.com/domidoremi/IsleMind/releases)
 
-`v1.0.22` Release 暂不附带 APK 构建资产，可安装的最新构建仍为 `v1.0.21`。
+`v1.0.22`、`v1.0.23` Release 均不附带 APK 构建资产，可安装的最新构建仍为 `v1.0.21`。
 
-### v1.0.22 更新
+### v1.0.23 更新
 
-- 重构聊天工作区与移动端导航，改善消息列表滚动、键盘交互、浮动输入框和连续会话画布体验。
-- 完善主题表达与玻璃表面组件，统一聊天、设置和反馈状态在不同主题下的视觉与可读性。
-- 错误提示跟随当前选择的应用语言显示。
-- 增强服务商运行时：改进模型能力识别、请求参数映射、请求优化、健康检查、故障转移和本地路由。
-- 完善便携数据备份与恢复流程，并扩展用量统计、价格目录和用量归因诊断能力。
-- 更新 Expo / React Native 依赖与 Android 构建工具链，继续覆盖 16 KB 页面兼容性和 ARM64 构建验证。
+- 压缩并精简主题令牌表，新增背景环境系统，统一不同主题下的视觉表达。
+- 完善上下文编排与压缩守护链路，引入 token 估算、内容摘要与压缩守卫核心模块。
+- 统一助手运行时会话能力策略，新增上下文文物、工具输出与压缩守护策略。
+- 强化知识检索链路：扩展 SQLite 知识作用域、检索重排与 RAG 编排能力。
+- 完善聊天、设置、服务商与 MCP 界面的主题体验组件，同步简化三语界面文案。
+- 扩充架构、聊天上下文编排、知识检索运行时等验证与回归脚本。
 
 ### APK 选择
 

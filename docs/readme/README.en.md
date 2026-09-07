@@ -40,22 +40,22 @@ The following operations access the network:
 
 ## Current release
 
-- Current version: `v1.0.22`
-- Android: `versionCode 122`
-- [Read the v1.0.22 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.22)
+- Current version: `v1.0.23`
+- Android: `versionCode 123`
+- [Read the v1.0.23 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.23)
 - [Download v1.0.21 APKs and checksums](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
 - [View all Releases and localized version history](https://github.com/domidoremi/IsleMind/releases)
 
-The `v1.0.22` Release ships no APK assets, so `v1.0.21` remains the latest installable build.
+Neither `v1.0.22` nor `v1.0.23` ships APK assets, so `v1.0.21` remains the latest installable build.
 
-### v1.0.22 highlights
+### v1.0.23 highlights
 
-- Reworked the chat workspace and mobile navigation for better message-list scrolling, keyboard interaction, floating composition, and continuous conversation flow.
-- Expanded themed surfaces and glass presentation components for more consistent readability across chat, settings, and feedback states.
-- Error messages follow the application's selected language.
-- Strengthened provider runtime behavior with better model capability detection, request parameter mapping, request optimization, health checks, failover, and local routing.
-- Improved portable backup and recovery flows, and expanded usage statistics, pricing catalog, and usage attribution diagnostics.
-- Updated the Expo / React Native dependency baseline and Android build tooling, including continued 16 KB page compatibility and ARM64 build validation.
+- Compacted the theme token tables and introduced a background-environment system for consistent styling across themes.
+- Completed the context orchestration and compaction-guard pipeline with new token estimation, content digest, and guard core modules.
+- Unified the assistant-runtime conversation capability policy with new context-artifact, tool-output, and compaction-guard policies.
+- Strengthened knowledge retrieval with a new SQLite scope, richer reranking, and an expanded RAG orchestration layer.
+- Refined theme experiences across chat, settings, providers, and MCP screens, with simplified localized copy.
+- Expanded architecture, chat-context orchestration, and knowledge-retrieval runtime verification scripts.
 
 ### APK selection
 
