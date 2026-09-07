@@ -65,7 +65,7 @@ The `v1.0.22` Release ships no APK assets, so `v1.0.21` remains the latest insta
 
 ## Development environment
 
-- [Bun 1.3.14](https://bun.sh/) for dependency installation and scripts
+- [Bun 1.4.2](https://bun.sh/) for dependency installation and scripts
 - Node.js for selected project scripts
 - JDK 25
 - Android SDK

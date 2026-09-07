@@ -1,5 +1,8 @@
 [tools]
-java = "25"
+java = "25.0.2"
+bun = "1.4.2"
+node = "24.20.0"
+python = "3.14.7"
 
 [env]
 # JDK 24+ 打印 restricted-method 警告，AGP 的 CMake/Prefab 任务会把它当作致命错误；

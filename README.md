@@ -65,9 +65,9 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 ## 开发环境
 
-- [Bun 1.3.14](https://bun.sh/)（依赖安装与脚本运行）
+- [Bun 1.4.2](https://bun.sh/)（依赖安装与脚本运行）
 - Node.js（部分项目脚本的运行时）
-- JDK 17
+- JDK 25
 - Android SDK
 - Android Platform Tools / ADB
 - Android 模拟器或启用 USB 调试的真机

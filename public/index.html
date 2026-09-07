@@ -10,19 +10,9 @@
         var root = document.documentElement;
         var family = 'minimal';
         var preference = 'light';
-        var aliases = {
-          'lime-road': 'monet',
-          cartoon: 'monet',
-          island: 'monet',
-          markdown: 'material',
-          'material-3': 'material',
-          material3: 'material',
-          glass: 'liquid-glass',
-          liquid: 'liquid-glass'
-        };
         try {
           var persisted = JSON.parse(window.localStorage.getItem('@islemind/settings') || '{}');
-          var candidateFamily = aliases[persisted.themeId] || persisted.themeId;
+          var candidateFamily = persisted.themeId;
           if (candidateFamily === 'minimal' || candidateFamily === 'monet' || candidateFamily === 'material' || candidateFamily === 'liquid-glass') {
             family = candidateFamily;
           }
