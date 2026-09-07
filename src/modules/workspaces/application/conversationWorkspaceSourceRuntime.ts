@@ -186,6 +186,7 @@ export function createConversationWorkspaceSourceRuntime(
       let context: TavernContextPack
       try {
         context = deepFreeze(buildTavernContextPack(workspaceSnapshot, {
+          conversationId: input.conversationId,
           query: input.latestUserInput,
           scopeId: workspaceId,
         }))
@@ -193,7 +194,10 @@ export function createConversationWorkspaceSourceRuntime(
         return signal.aborted ? CANCELLED : failed('context_capture_failed')
       }
       if (signal.aborted) return CANCELLED
-      if (!isValidConversationWorkspaceContext(context, { workspaceId })) {
+      if (!isValidConversationWorkspaceContext(context, {
+        workspaceId,
+        conversationId: input.conversationId,
+      })) {
         return failed('context_capture_failed')
       }
 
@@ -243,7 +247,7 @@ export function createConversationWorkspaceSourceRuntime(
 
 export function isValidConversationWorkspaceContext(
   value: unknown,
-  expected: { readonly workspaceId: string },
+  expected: { readonly workspaceId: string; readonly conversationId?: string },
 ): value is TavernContextPack {
   try {
     if (
@@ -257,6 +261,11 @@ export function isValidConversationWorkspaceContext(
           'isolated',
           'shareWithChat',
           'shareWithAgent',
+          'conversationId',
+          'conversationScopeId',
+          'authority',
+          'visibility',
+          'unifiedChat',
           'scopeId',
           'characters',
           'lorebook',
@@ -271,6 +280,15 @@ export function isValidConversationWorkspaceContext(
       || value.isolated !== true
       || value.shareWithChat !== false
       || value.shareWithAgent !== false
+      || (expected.conversationId !== undefined
+        && (value.conversationId !== expected.conversationId
+          || value.unifiedChat !== true
+          || value.authority !== 'local-state'
+          || value.visibility !== 'conversation'))
+      || (value.conversationScopeId !== undefined && value.conversationScopeId !== expected.workspaceId)
+      || (value.authority !== undefined && value.authority !== 'local-state')
+      || (value.visibility !== undefined && value.visibility !== 'conversation')
+      || (value.unifiedChat !== undefined && value.unifiedChat !== true)
       || value.scopeId !== expected.workspaceId
       || normalizeTavernWorkspaceScopeId(value.scopeId) !== value.scopeId
       || !isOptionalScene(value.scene)

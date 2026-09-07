@@ -9,6 +9,7 @@ export interface IndexedKnowledgeHybridOptions<Provider = unknown> {
   mode: 'hybrid'
   embeddingMode: KnowledgeHybridSearchRequest<Provider>['embeddingMode']
   signal?: AbortSignal
+  knowledgeScope?: KnowledgeHybridSearchRequest<Provider>['knowledgeScope']
   localEmbeddingModelId?: string
   localEmbeddingModelSource?: 'bundled' | 'downloaded' | 'none'
   provider?: Provider
@@ -70,6 +71,7 @@ export function createIndexedKnowledgeSearchAdapter<
           limit: input.limit,
           mode: 'hybrid',
           embeddingMode: input.embeddingMode,
+          ...(input.knowledgeScope === undefined ? {} : { knowledgeScope: input.knowledgeScope }),
           ...(input.signal === undefined ? {} : { signal: input.signal }),
           ...(input.localEmbeddingModelId === undefined ? {} : { localEmbeddingModelId: input.localEmbeddingModelId }),
           ...(input.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: input.localEmbeddingModelSource }),

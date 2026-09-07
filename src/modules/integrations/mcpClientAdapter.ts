@@ -123,10 +123,39 @@ export function createMcpClientAdapter(): McpClientAdapter {
     server: McpClientServer,
     method: 'tools/list' | 'resources/list' | 'prompts/list',
     signal?: AbortSignal,
-  ): Promise<unknown[]> => {
-    const response = await request(server, method, {}, signal)
-    const value = response.result[method.split('/')[0]]
-    return Array.isArray(value) ? value : []
+  ): Promise<{ items: unknown[]; ttlMs?: number }> => {
+    const items: unknown[] = []
+    const cursors = new Set<string>()
+    let cursor: string | undefined
+    let ttlMs: number | undefined
+    let characters = 0
+    for (let page = 0; page < 16; page += 1) {
+      const response = await request(server, method, cursor === undefined ? {} : { cursor }, signal)
+      const value = response.result[method.split('/')[0]]
+      if (!Array.isArray(value)) throw new Error(`MCP ${method} returned an invalid list.`)
+      characters += JSON.stringify(value).length
+      if (items.length + value.length > 2048 || characters > 1024 * 1024) {
+        throw new Error(`MCP ${method} exceeded the discovery size limit.`)
+      }
+      items.push(...value)
+      if (getClient(server).getNegotiatedProtocolVersion() === '2026-07-28') {
+        const hint = response.result.ttlMs
+        const scope = response.result.cacheScope
+        // A missing/invalid freshness hint is usable now, but not cacheable.
+        // Even public results remain private to this configured server locally.
+        const pageTtl = typeof hint === 'number' && Number.isFinite(hint) && hint >= 0
+          && (scope === 'public' || scope === 'private') ? hint : 0
+        ttlMs = Math.min(ttlMs ?? pageTtl, pageTtl)
+      }
+      const next = response.result.nextCursor
+      if (next === undefined) return { items, ttlMs }
+      if (typeof next !== 'string' || !next || next.length > 4096 || cursors.has(next)) {
+        throw new Error(`MCP ${method} returned an invalid or repeated pagination cursor.`)
+      }
+      cursors.add(next)
+      cursor = next
+    }
+    throw new Error(`MCP ${method} exceeded the discovery page limit.`)
   }
 
   return {
@@ -137,11 +166,13 @@ export function createMcpClientAdapter(): McpClientAdapter {
       const shouldList = (capability: 'tools' | 'resources' | 'prompts') => (
         negotiation.capabilities === undefined || capability in negotiation.capabilities
       )
-      const [tools, resources, prompts] = await Promise.all([
-        shouldList('tools') ? list(server, 'tools/list', options.signal) : [],
-        shouldList('resources') ? list(server, 'resources/list', options.signal) : [],
-        shouldList('prompts') ? list(server, 'prompts/list', options.signal) : [],
+      const lists = await Promise.all([
+        shouldList('tools') ? list(server, 'tools/list', options.signal) : { items: [] },
+        shouldList('resources') ? list(server, 'resources/list', options.signal) : { items: [] },
+        shouldList('prompts') ? list(server, 'prompts/list', options.signal) : { items: [] },
       ])
+      const [tools, resources, prompts] = lists.map(result => result.items)
+      const freshnessHints = lists.flatMap(result => 'ttlMs' in result && result.ttlMs !== undefined ? [result.ttlMs] : [])
       throwIfAborted(options.signal)
       let compatibleTools = tools
       if (negotiation.protocolVersion === '2026-07-28') {
@@ -158,6 +189,7 @@ export function createMcpClientAdapter(): McpClientAdapter {
       return {
         version: negotiation.version,
         protocolVersion: negotiation.protocolVersion,
+        ...(freshnessHints.length ? { ttlMs: Math.min(...freshnessHints) } : {}),
         tools: compatibleTools,
         resources,
         prompts,

@@ -86,11 +86,11 @@ const APP_ACTION_TOOLS: readonly AppActionToolDescriptor[] = [
   },
   {
     name: 'set_theme_family',
-    description: 'Set theme family to minimal, monet, material, or liquid-glass. Legacy Lime Road, Markdown, cartoon, island, and glass values are migrated to the matching canonical family.',
+    description: 'Set theme family to minimal, monet, material, or liquid-glass.',
     permission: 'read-write',
     inputSchema: {
       type: 'object',
-      properties: { themeId: { type: 'string', enum: ['minimal', 'monet', 'material', 'liquid-glass', 'lime-road', 'markdown', 'cartoon', 'island', 'glass', 'material-3', 'material3', 'liquid'] } },
+      properties: { themeId: { type: 'string', enum: ['minimal', 'monet', 'material', 'liquid-glass'] } },
       required: ['themeId'],
     },
   },

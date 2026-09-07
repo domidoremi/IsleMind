@@ -121,6 +121,13 @@ export interface TavernContextPack {
   isolated: true
   shareWithChat: false
   shareWithAgent: false
+  /** Canonical Chat ledger identity; optional for legacy persisted fixtures. */
+  conversationId?: string
+  conversationScopeId?: string
+  /** Internal lane metadata; this is not a user-facing product mode. */
+  authority?: 'local-state'
+  visibility?: 'conversation'
+  unifiedChat?: true
   scopeId?: string
   scene?: TavernScene
   characters: TavernCharacterCard[]
@@ -206,6 +213,11 @@ export interface TavernTurnWritebackProposal {
   schema: typeof TAVERN_TURN_WRITEBACK_SCHEMA
   mode: 'companion'
   isolated: true
+  conversationId?: string
+  conversationScopeId?: string
+  authority?: 'local-state'
+  visibility?: 'conversation'
+  unifiedChat?: true
   summaryDraft?: TavernTurnWritebackSummaryDraft
   characterDraftProposal?: TavernCharacterDraftProposal
   additionalCharacterDraftProposals?: TavernCharacterDraftProposal[]
@@ -268,6 +280,7 @@ export interface TavernTurnWritebackApplyResult {
 }
 
 export interface TavernContextOptions {
+  conversationId?: string
   query?: string
   scopeId?: string
   sceneId?: string

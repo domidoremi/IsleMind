@@ -10,11 +10,7 @@ import {
   type Result,
 } from '@/core'
 import type { AssistantRun, ContextSnapshot } from '@/modules/assistant-runtime'
-import {
-  appendProviderContext,
-  type AssembledContext,
-  type ContextCitation,
-} from '@/modules/knowledge'
+import { appendProviderContext, type AssembledContext, type ContextCitation } from '@/modules/knowledge'
 import type {
   ConversationRunErrorCode,
   ConversationRunPreparedRequest,

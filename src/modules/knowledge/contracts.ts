@@ -1,5 +1,6 @@
 import type { Clock, ContextSnapshotId, IdGenerator, Result } from '@/core'
 import type { ContextSnapshot } from '@/modules/assistant-runtime'
+import type { KnowledgeScope } from './domain/knowledgeScope'
 
 export const KNOWLEDGE_CONTEXT_SNAPSHOT_RECORD_SCHEMA = 'islemind.knowledge-context-snapshot-record.v1'
 
@@ -172,7 +173,8 @@ export interface KnowledgeMemorySearchInput extends KnowledgeRepositoryOperation
   query: string
   limit: number
   statuses: readonly KnowledgeMemoryStatus[]
-  scopes?: readonly KnowledgeMemoryScope[]
+  /** Explicit retrieval authority; an empty selection returns no memories. */
+  scopes: readonly KnowledgeMemoryScope[]
 }
 
 export interface KnowledgeRepositorySnapshot {
@@ -267,6 +269,7 @@ export interface KnowledgeFtsSearchHit {
 export interface KnowledgeFtsSearchInput extends KnowledgeRepositoryOperationOptions {
   query: string
   limit: number
+  knowledgeScope?: KnowledgeScope
 }
 
 /**

@@ -41,6 +41,7 @@ export interface McpCatalogServer {
   version?: string
   manifestTtlMs: number
   manifestCachedAt?: number
+  manifestExpiresAt?: number
   tools: McpCatalogTool[]
   resources: McpCatalogResource[]
   prompts: McpCatalogPrompt[]
@@ -55,6 +56,7 @@ export interface McpCatalogDiscovery {
   tools: unknown[]
   resources: unknown[]
   prompts: unknown[]
+  ttlMs?: number
 }
 
 export interface McpCatalogOperationOptions {
@@ -131,6 +133,9 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
         : MCP_CATALOG_DEFAULT_TTL_MS,
       manifestCachedAt: typeof item.manifestCachedAt === 'number' && Number.isFinite(item.manifestCachedAt)
         ? item.manifestCachedAt
+        : undefined,
+      manifestExpiresAt: typeof item.manifestExpiresAt === 'number' && Number.isFinite(item.manifestExpiresAt)
+        ? item.manifestExpiresAt
         : undefined,
       tools: [...normalizeMcpTools(rawTools, { serverId: item.id, enabledToolNames }).items],
       resources: normalizeResources(Array.isArray(item.resources) ? item.resources : [], item.id),
@@ -261,6 +266,8 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
         status: 'connected',
         lastError: undefined,
         manifestCachedAt: dependencies.now(),
+        manifestExpiresAt: discovery.ttlMs === undefined ? undefined
+          : dependencies.now() + Math.max(0, Math.min(discovery.ttlMs, server.manifestTtlMs || MCP_CATALOG_DEFAULT_TTL_MS)),
         tools: [...normalizeMcpTools(discovery.tools, { serverId: server.id, enabledToolNames }).items],
         resources: normalizeResources(discovery.resources, server.id),
         prompts: normalizePrompts(discovery.prompts, server.id),
@@ -308,7 +315,8 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
     needsManifestRefresh(server) {
       if (server.id === dependencies.builtinServerId) return false
       if (!server.manifestCachedAt) return true
-      return dependencies.now() - server.manifestCachedAt > (
+      if (server.manifestExpiresAt !== undefined && dependencies.now() >= server.manifestExpiresAt) return true
+      return dependencies.now() - server.manifestCachedAt >= (
         server.manifestTtlMs || MCP_CATALOG_DEFAULT_TTL_MS
       )
     },

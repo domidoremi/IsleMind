@@ -13,6 +13,10 @@ import {
   type ProviderRemoteCompactClassification,
 } from './providerContextManagementPolicy'
 import { estimateRemoteCompactSavedTokens } from './providerRemoteCompactPolicy'
+import {
+  createContextCompactionGuardPolicy,
+  type ContextCompactionGuardState,
+} from '@/core'
 
 export type ProviderRemoteCompactMode = 'off' | 'auto' | 'required'
 
@@ -130,9 +134,12 @@ export interface RecordFailedProviderRemoteCompactInput extends ProviderRemoteCo
 export function createProviderRemoteCompactLifecycle(
   dependencies: ProviderRemoteCompactLifecycleDependencies,
 ) {
+  const compactionGuard = createContextCompactionGuardPolicy()
   async function resolvePreviousState(
     input: ResolveProviderRemoteCompactPreviousStateInput,
   ): Promise<ProviderRemoteCompactPreviousState> {
+    const guardState = compactionGuard.beginTurn(input.conversationId)
+    if (guardState.autoDisabled && (input.settings.remoteCompactMode ?? 'auto') !== 'required') return {}
     if ((input.settings.remoteCompactMode ?? 'auto') === 'off' || input.signal?.aborted) return {}
     if (!allowsPreviousStateReuse(input)) return {}
 
@@ -174,6 +181,7 @@ export function createProviderRemoteCompactLifecycle(
 
   function recordCompleted(input: RecordCompletedProviderRemoteCompactInput): void {
     if (input.signal?.aborted) return
+    compactionGuard.recordAttempt({ conversationId: input.conversationId, succeeded: true })
     const record = dependencies.recordCompactUsage(buildCompletedUsageInput(input))
     const data = buildCompletedLogPayload(input, record)
     void dependencies.emitRuntimeEvent({
@@ -194,6 +202,7 @@ export function createProviderRemoteCompactLifecycle(
 
   function recordFailed(input: RecordFailedProviderRemoteCompactInput): void {
     if (input.signal?.aborted) return
+    compactionGuard.recordAttempt({ conversationId: input.conversationId, succeeded: false })
     const record = dependencies.recordCompactUsage(buildFailedUsageInput(input))
     const data = buildFailedLogPayload(input, record)
     void dependencies.emitRuntimeEvent({
@@ -212,7 +221,24 @@ export function createProviderRemoteCompactLifecycle(
     void dependencies.saveCompactState(state).catch(() => undefined)
   }
 
-  return { resolvePreviousState, recordCompleted, recordFailed }
+  function recordApplicationCompactionResult(input: {
+    readonly conversationId: string
+    readonly succeeded: boolean
+  }): ContextCompactionGuardState {
+    return compactionGuard.recordAttempt(input)
+  }
+
+  function getCompactionGuardState(conversationId: string): ContextCompactionGuardState {
+    return compactionGuard.getState(conversationId)
+  }
+
+  return {
+    resolvePreviousState,
+    recordCompleted,
+    recordFailed,
+    recordApplicationCompactionResult,
+    getCompactionGuardState,
+  }
 }
 
 function buildCompletedUsageInput(

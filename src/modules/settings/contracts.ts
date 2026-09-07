@@ -1,4 +1,8 @@
 import type { Result } from '@/core'
+import {
+  CANONICAL_THEME_IDS,
+  THEME_MODE_VALUES,
+} from '@/types/settingsContracts'
 
 export const SETTINGS_ACTION_NAMES = [
   'get_settings',
@@ -11,11 +15,14 @@ export const SETTINGS_ACTION_NAMES = [
 
 export type SettingsActionName = typeof SETTINGS_ACTION_NAMES[number]
 
-export const SETTINGS_THEME_MODES = ['light', 'dark', 'system'] as const
+// Keep the settings action surface aligned with the persisted contract.  Do
+// not maintain a second hand-written list here: adding/removing a family must
+// update the canonical boundary first.
+export const SETTINGS_THEME_MODES = THEME_MODE_VALUES
 
 export type SettingsThemeMode = typeof SETTINGS_THEME_MODES[number]
 
-export const SETTINGS_THEME_FAMILIES = ['minimal', 'monet', 'material', 'liquid-glass'] as const
+export const SETTINGS_THEME_FAMILIES = CANONICAL_THEME_IDS
 
 export type SettingsThemeFamily = typeof SETTINGS_THEME_FAMILIES[number]
 

@@ -122,13 +122,18 @@ export function createMcpToolAdapter(
         toolName: tool.name,
         arguments: request.arguments,
       }, options)
+      // HTTP success and JSON-RPC success can still contain a tool execution
+      // error. Keep that status alongside the bounded, redacted content.
+      const envelope = isRecord(payload) ? payload : undefined
+      const ok = envelope?.isError !== true
       return normalizeMcpToolExecutionResult({
         tool,
         source: 'mcp',
         connectionStatus: context.connectionStatus,
-        ok: true,
-        status: 'done',
-        blocks: payload,
+        ok,
+        status: ok ? 'done' : 'error',
+        ...(ok ? {} : { errorCode: 'execution_failed' }),
+        blocks: envelope ? envelope.content : payload,
         startedAt,
         completedAt: Date.now(),
       })

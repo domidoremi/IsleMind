@@ -277,28 +277,44 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
       }
       const recovered: Task[] = []
       for (const task of tasks) {
-        if (task.status === 'awaiting-confirmation' && !activeTasks.has(task.id)) {
-          try {
+        if (activeTasks.has(task.id)) continue
+        try {
+          // An acknowledged cancellation must survive death between its journal
+          // commit and the executor's eventual terminal callback, including the
+          // queued/confirmation cancellation path.
+          if (task.cancellationRequestedAt !== undefined) {
+            recovered.push(await finishCancelled(createPassiveTask(task), dependencies))
+          } else if (task.status === 'awaiting-confirmation') {
             recovered.push(await record(createPassiveTask(task), dependencies, 'task.expired', {
               reason: 'confirmation_expired_after_restart',
             }, {
               status: 'expired',
               completedAt: dependencies.clock.now(),
             }))
-          } catch {
-            return err('persistence_failed', 'An unresolved confirmation task could not be safely expired.', { retryable: true })
+          } else if (task.status === 'running') {
+            recovered.push(await finishFailed(
+              createPassiveTask(task),
+              dependencies,
+              'interrupted',
+              'The task was interrupted before completion and was safely recovered.',
+            ))
           }
-          continue
-        }
-        if (task.status !== 'running' || activeTasks.has(task.id)) continue
-        try {
-          recovered.push(await finishFailed(
-            createPassiveTask(task),
-            dependencies,
-            'interrupted',
-            'The task was interrupted before completion and was safely recovered.',
-          ))
         } catch {
+          // A competing startup/retry can win the journal sequence. Re-read its
+          // disposition; never overwrite newer state or turn an already-safe
+          // recovery into a persistence failure. A still-pending row is retryable.
+          try {
+            const current = await dependencies.persistence.get(task.id)
+            if (!current) continue
+            if (current.status === 'cancelled' || current.status === 'expired'
+              || (current.status === 'failed' && current.failure?.code === 'interrupted')) {
+              recovered.push(current)
+              continue
+            }
+            if (current.status !== 'queued' && current.status !== 'running' && current.status !== 'awaiting-confirmation') continue
+          } catch {
+            // Retain a failure unless the current durable disposition is known.
+          }
           return err('persistence_failed', 'An interrupted task could not be safely recovered.', { retryable: true })
         }
       }

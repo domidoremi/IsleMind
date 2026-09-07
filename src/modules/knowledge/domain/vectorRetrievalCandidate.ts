@@ -2,11 +2,14 @@ import { knowledgeCosineSimilarity } from './localVectorIndex'
 import {
   resolveKnowledgeSearchEmbedding,
   type KnowledgeEmbeddingRepairReason,
+  type KnowledgeResolvedEmbedding,
 } from './embeddingPersistencePolicy'
 
 export interface KnowledgeVectorCandidateRow {
   content: string
   embeddingJson?: string
+  source?: string
+  model?: string
 }
 
 export interface KnowledgeVectorCandidateProjection {
@@ -23,14 +26,15 @@ export interface KnowledgeVectorCandidateDecision {
 
 export function resolveKnowledgeVectorCandidate(
   row: KnowledgeVectorCandidateRow,
-  queryEmbedding: number[],
+  queryEmbedding: KnowledgeResolvedEmbedding,
 ): KnowledgeVectorCandidateDecision {
   const resolved = resolveKnowledgeSearchEmbedding(
     row.embeddingJson,
-    queryEmbedding.length,
+    queryEmbedding,
     row.content,
+    row,
   )
-  const vectorScore = knowledgeCosineSimilarity(queryEmbedding, resolved.embedding)
+  const vectorScore = resolved.embedding ? knowledgeCosineSimilarity(queryEmbedding.embedding, resolved.embedding) : 0
   return {
     repairRequired: resolved.repairRequired,
     ...(resolved.repairReason ? { repairReason: resolved.repairReason } : {}),

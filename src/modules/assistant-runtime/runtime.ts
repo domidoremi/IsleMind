@@ -20,6 +20,7 @@ import {
   buildAssistantRequestHash,
   isAssistantRequestHash,
 } from './application/requestIdentity'
+import { ProviderStreamEventBuffer, streamEventCount } from '@/modules/providers'
 import type {
   AssistantActivityContinuationIdentity,
   AssistantContextPlanReceipt,
@@ -57,7 +58,7 @@ interface ActiveRun {
   streamEventCount: number
   cancellationRequested: boolean
   failure?: {
-    code: Extract<AssistantRuntimeErrorCode, 'output_limit_exceeded'>
+    code: Extract<AssistantRuntimeErrorCode, 'output_limit_exceeded' | 'activity_failed'>
     message: string
   }
   onPersisted?: AssistantRunProjection
@@ -257,29 +258,71 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           startedAt: dependencies.clock.now(),
         })
 
-        let checkpointStreamEventTail = Promise.resolve()
+        type CheckpointReceipt = { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void }
+        const checkpoints = new ProviderStreamEventBuffer<CheckpointReceipt>()
+        let checkpointWorker: Promise<void> | undefined
+        let checkpointsClosed = false
         let checkpointStreamEventFailure: unknown
-        const checkpointStreamEvent = (event: StreamEvent): Promise<void> => {
-          const next = checkpointStreamEventTail.then(async () => {
-            if (checkpointStreamEventFailure || active.cancellationRequested || active.controller.signal.aborted) {
-              return
+        const failCheckpoints = (error: unknown) => {
+          checkpointStreamEventFailure ??= error
+          if (!(error instanceof PersistenceFailure)) {
+            active.failure ??= { code: 'activity_failed', message: 'The provider stream exceeded its checkpoint buffer or returned an invalid event.' }
+          }
+          active.controller.abort(error)
+        }
+        const drainCheckpoints = async () => {
+          let item: ReturnType<typeof checkpoints.shift>
+          while ((item = checkpoints.shift())) {
+            if (checkpointStreamEventFailure) {
+              item.receipt.reject(checkpointStreamEventFailure)
+              continue
             }
-            applyStreamEvent(active, event, maxOutputChars)
-            await record(active, 'stream.event', journalDataForStreamEvent(event), {
-              checkpoint: {
-                outputText: active.outputText,
-                streamEventCount: active.streamEventCount,
-              },
-            })
-          }).catch((error) => {
-            checkpointStreamEventFailure = error
-            throw error
+            if (active.cancellationRequested || active.controller.signal.aborted) {
+              item.receipt.resolve()
+              continue
+            }
+            try {
+              applyStreamEvent(active, item.event, maxOutputChars)
+              await record(active, 'stream.event', journalDataForStreamEvent(item.event), {
+                checkpoint: { outputText: active.outputText, streamEventCount: active.streamEventCount },
+              })
+              item.receipt.resolve()
+            } catch (error) {
+              failCheckpoints(error)
+              item.receipt.reject(error)
+            }
+          }
+        }
+        const flushCheckpoints = async () => {
+          while (checkpointWorker) await checkpointWorker
+          if (checkpointStreamEventFailure) throw checkpointStreamEventFailure
+        }
+        const startCheckpointWorker = () => {
+          checkpointWorker ??= Promise.resolve().then(drainCheckpoints).finally(() => {
+            checkpointWorker = undefined
+            // A receipt can wake its caller before this finally executes.
+            if (checkpoints.length) startCheckpointWorker()
           })
-          checkpointStreamEventTail = next.then(
-            () => undefined,
-            () => undefined,
-          )
-          return next
+        }
+        const checkpointStreamEvent = (event: StreamEvent): Promise<void> => {
+          if (checkpointsClosed) return Promise.reject(new Error('The activity checkpoint stream is closed.'))
+          if (checkpointStreamEventFailure || active.controller.signal.aborted) return flushCheckpoints()
+          try {
+            const receipt = checkpoints.push(event, () => {
+              let resolve!: () => void
+              let reject!: (error: unknown) => void
+              const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no })
+              // Legacy callbacks can ignore the receipt. Preserve rejection for
+              // awaited callers without creating unhandled background failures.
+              void promise.catch(() => undefined)
+              return { promise, resolve, reject }
+            })
+            startCheckpointWorker()
+            return receipt.promise
+          } catch (error) {
+            failCheckpoints(error)
+            return flushCheckpoints()
+          }
         }
         const checkpointTextDelta = (text: string): Promise<void> => {
           if (typeof text !== 'string' || !text) return Promise.resolve()
@@ -288,31 +331,37 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
 
         let execution: AssistantActivityExecutionResult
         try {
-          execution = await input.executor.execute({
-            run: active.run,
-            signal: active.controller.signal,
-            checkpointStreamEvent,
-            checkpointTextDelta,
-            async continueProviderTurns(continuation) {
-              const initialEventCount = active.streamEventCount
-              const outcome = await continueActivityProviderTurns(
-                active,
-                continuation.request,
-                continuation.session,
-                continuation.calls,
-                continuation.reasoningReplay,
-                continuation.outputText,
-                continuation.stream,
-                continuation.onStreamEvent,
-              )
-              return {
-                outputText: outcome,
-                eventCount: active.streamEventCount - initialEventCount,
-              }
-            },
-          })
-          await checkpointStreamEventTail
-          if (checkpointStreamEventFailure) throw checkpointStreamEventFailure
+          try {
+            execution = await input.executor.execute({
+              run: active.run,
+              signal: active.controller.signal,
+              checkpointStreamEvent,
+              checkpointTextDelta,
+              async continueProviderTurns(continuation) {
+                await flushCheckpoints()
+                const initialEventCount = active.streamEventCount
+                const outcome = await continueActivityProviderTurns(
+                  active,
+                  continuation.request,
+                  continuation.session,
+                  continuation.calls,
+                  continuation.reasoningReplay,
+                  continuation.outputText,
+                  continuation.stream,
+                  continuation.onStreamEvent,
+                )
+                return {
+                  outputText: outcome,
+                  eventCount: active.streamEventCount - initialEventCount,
+                }
+              },
+            })
+          } finally {
+            checkpointsClosed = true
+            // Executor rejection/cancellation also fences in-flight writes:
+            // no checkpoint may land after a terminal failure or cancellation.
+            await flushCheckpoints()
+          }
         } catch (error) {
           if (error instanceof PersistenceFailure) {
             return err('persistence_failed', 'The assistant run could not be checkpointed.', { retryable: true })
@@ -605,6 +654,13 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           writeTail: Promise.resolve(),
         }
         try {
+          // Cancellation is durable authority, not merely an in-memory abort.
+          // The process may die after acknowledging it but before the executor
+          // returns and records its terminal state.
+          if (run.cancellationRequestedAt !== undefined) {
+            recovered.push(await finishCancelled(active))
+            continue
+          }
           recovered.push(await record(active, 'run.failed', {
             recovery: 'interrupted_after_restart',
             outputLength: active.outputText.length,
@@ -630,6 +686,29 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             },
           }))
         } catch {
+          // Recovery may race another startup/retry caller. If that caller
+          // already terminalized this run, surface its durable disposition
+          // instead of reporting a misleading persistence failure. A still
+          // recoverable row means the write failed for a real reason and must
+          // remain retryable.
+          try {
+            const current = await dependencies.persistence.get(run.id)
+            if (!current) continue
+            if (current.status === 'failed' && current.failure?.code === 'interrupted') {
+              recovered.push(current)
+              continue
+            }
+            if (current.status === 'cancelled') {
+              recovered.push(current)
+              continue
+            }
+            if (current.status !== 'queued' && current.status !== 'running' && current.status !== 'awaiting-confirmation') {
+              continue
+            }
+          } catch {
+            // Preserve the original persistence failure when the verification
+            // read cannot establish the concurrent writer's disposition.
+          }
           return err('persistence_failed', 'An interrupted assistant run could not be safely recovered.', { retryable: true })
         }
       }
@@ -898,7 +977,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         const requestSnapshot = capturedRequest
           ? createCapturedRequestSnapshot(next.id, entry.occurredAt, capturedRequest, contextReceipt)
           : undefined
-        await dependencies.persistence.appendAndSave(entry, next, requestSnapshot)
+        await dependencies.persistence.appendAndSave(entry, next, requestSnapshot, active.run)
         active.run = next
         await projectPersistedRun(active, next, entry)
         return next
@@ -1063,7 +1142,8 @@ function enqueue<Value>(active: ActiveRun, work: () => Promise<Value>): Promise<
 }
 
 function applyStreamEvent(active: ActiveRun, event: StreamEvent, maxOutputChars: number): void {
-  active.streamEventCount += 1
+  active.streamEventCount += streamEventCount(event)
+  if (!Number.isSafeInteger(active.streamEventCount)) throw new Error('The stream event count exceeded its limit.')
   if (event.type !== 'text-delta') return
 
   const remaining = maxOutputChars - active.outputText.length
@@ -1088,7 +1168,10 @@ function applyStreamEvent(active: ActiveRun, event: StreamEvent, maxOutputChars:
 
 function journalDataForStreamEvent(event: StreamEvent): JsonRecord {
   if (event.type === 'text-delta') {
-    return { eventType: event.type, text: truncate(event.text, JOURNAL_TEXT_LIMIT) }
+    return {
+      eventType: event.type, text: truncate(event.text, JOURNAL_TEXT_LIMIT),
+      ...(event.sourceEventCount === undefined ? {} : { sourceEventCount: streamEventCount(event) }),
+    }
   }
   if (event.type === 'citation') {
     return {

@@ -5,6 +5,7 @@ import { providerNativeRemoteCompactEvidenceMatchesProvider } from './providerCo
 import { buildAnthropicNativeContextManagement } from './providerContextManagementPolicy'
 import { sanitizeAnthropicReplayContentBlocks } from './providerReplay'
 import { mergeProviderToolDeclarations } from './providerToolDeclarations'
+import { resolveProviderRemoteCompactThresholdTokens } from './providerRemoteCompactThresholdPolicy'
 
 export interface AnthropicRequestMessage {
   role: 'user' | 'assistant' | 'tool'
@@ -22,6 +23,8 @@ export interface AnthropicRequestShape {
   remoteCompactEligible?: boolean
   settings?: {
     remoteCompactThresholdTokens?: number
+    anthropicRemoteCompactThresholdTokens?: number
+    openAIRemoteCompactThresholdTokens?: number
   }
 }
 
@@ -131,7 +134,10 @@ export function createAnthropicRequestBodyBuilder<
       // Official server-side compaction (beta compact-2026-01-12). Header is added in providerHeaders.
       if (anthropicNativeRemoteCompactAllowed(request)) {
         body.context_management = buildAnthropicNativeContextManagement({
-          thresholdTokens: request.settings?.remoteCompactThresholdTokens ?? 150_000,
+          thresholdTokens: resolveProviderRemoteCompactThresholdTokens({
+            provider: request.provider,
+            settings: request.settings,
+          }),
         })
       }
       return body

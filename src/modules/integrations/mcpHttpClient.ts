@@ -36,6 +36,7 @@ export interface McpHttpClientOptions {
 }
 
 const MCP_SESSION_ID_MAX_LENGTH = 512
+const MCP_RESPONSE_BYTE_LIMIT = 4 * 1024 * 1024
 const MCP_LATEST_PROTOCOL_VERSION = '2026-07-28' as const
 const MCP_LEGACY_PROTOCOL_VERSION = '2025-03-26' as const
 const MCP_CLIENT_INFO = { name: 'IsleMind', version: '1' } as const
@@ -118,29 +119,36 @@ export function createMcpHttpClient(server: McpHttpServer, options: McpHttpClien
     const safeSessionId = sanitizeMcpSessionId(input.sessionId)
     if (safeSessionId) headers['Mcp-Session-Id'] = safeSessionId
     const requestParams = input.protocol === 'latest' ? withLatestMcpMetadata(params) : params
+    const requestId = input.notification ? undefined : options.requestId?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const response = await fetchImplementation(server.url, {
       method: 'POST',
+      // A redirect can forward sensitive arguments or repeat a side effect at
+      // an endpoint that was not the user's admitted MCP server.
+      redirect: 'error',
       headers,
       body: JSON.stringify({
         jsonrpc: '2.0',
-        ...(input.notification ? {} : { id: options.requestId?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }),
+        ...(input.notification ? {} : { id: requestId }),
         method,
         params: requestParams,
       }),
       signal: input.signal,
     })
     throwIfAborted(input.signal)
-    const text = await response.text()
+    const text = await readBoundedMcpResponse(response, input.signal)
     throwIfAborted(input.signal)
-    const parsed = tryParseMcpResponse(text)
+    const parsed = tryParseMcpResponse(text, requestId)
+    if (!input.notification && parsed.recognizedPayload && !isMcpResponseForRequest(parsed.payload, requestId)) {
+      throw new Error(`MCP ${method} returned an invalid response.`)
+    }
     if (!response.ok) throw createMcpHttpRequestError(method, response.status, parsed)
-    if (input.notification || !text.trim()) {
+    if (input.notification) {
       return {
         result: {},
         sessionId: input.protocol === 'legacy' ? readMcpResponseSessionId(response) : undefined,
       }
     }
-    if (!parsed.payload) throw new Error(`MCP ${method} returned an invalid response.`)
+    if (!isMcpResponseForRequest(parsed.payload, requestId)) throw new Error(`MCP ${method} returned an invalid response.`)
     const payload = parsed.payload
     if (payload.error) {
       throw createMcpHttpRequestError(method, response.status, parsed)
@@ -296,7 +304,10 @@ export function createMcpHttpToolClient(
       ) {
         throw new Error(`MCP tool returned unsupported result type ${response.result.resultType}.`)
       }
-      return response.result.content
+      if (response.result.isError !== undefined && typeof response.result.isError !== 'boolean') {
+        throw new Error('MCP tool returned an invalid error flag.')
+      }
+      return response.result
     },
   }
 }
@@ -335,14 +346,50 @@ function readMcpResponseSessionId(response: Pick<Response, 'headers'>): string |
   return sessionId
 }
 
-function parseMcpResponse(text: string): Record<string, unknown> {
+async function readBoundedMcpResponse(response: Response, signal?: AbortSignal): Promise<string> {
+  const tooLarge = () => new Error('MCP response exceeds the byte limit.')
+  const declaredLength = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declaredLength) && declaredLength > MCP_RESPONSE_BYTE_LIMIT) {
+    await response.body?.cancel().catch(() => undefined)
+    throw tooLarge()
+  }
+  const reader = response.body?.getReader?.()
+  if (!reader) {
+    const text = await response.text()
+    throwIfAborted(signal)
+    if (new TextEncoder().encode(text).byteLength > MCP_RESPONSE_BYTE_LIMIT) throw tooLarge()
+    return text
+  }
+  const decoder = new TextDecoder()
+  let bytes = 0
+  let text = ''
+  try {
+    while (true) {
+      throwIfAborted(signal)
+      const chunk = await reader.read()
+      throwIfAborted(signal)
+      if (chunk.done) break
+      bytes += chunk.value.byteLength
+      if (bytes > MCP_RESPONSE_BYTE_LIMIT) throw tooLarge()
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    return text + decoder.decode()
+  } catch (error) {
+    await reader.cancel().catch(() => undefined)
+    throw error
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function parseMcpResponse(text: string, requestId: string | undefined): Record<string, unknown> {
   const trimmed = text.trim()
   if (!trimmed) return {}
   if (trimmed.startsWith('data:') || trimmed.startsWith('event:') || trimmed.startsWith(':')) {
     const messages = parseMcpSseMessages(trimmed)
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index]
-      if (message && ('result' in message || 'error' in message)) return message
+      if (message.id === requestId && ('result' in message || 'error' in message)) return message
     }
     return {}
   }
@@ -364,13 +411,13 @@ function parseMcpSseMessages(text: string): Record<string, unknown>[] {
   return messages
 }
 
-function tryParseMcpResponse(text: string): {
+function tryParseMcpResponse(text: string, requestId: string | undefined): {
   payload?: Record<string, unknown>
   recognizedPayload: boolean
 } {
   if (!text.trim()) return { recognizedPayload: false }
   try {
-    const payload = parseMcpResponse(text)
+    const payload = parseMcpResponse(text, requestId)
     return {
       payload,
       recognizedPayload: typeof payload.jsonrpc === 'string' || 'result' in payload || 'error' in payload,
@@ -378,6 +425,24 @@ function tryParseMcpResponse(text: string): {
   } catch {
     return { recognizedPayload: false }
   }
+}
+
+function isMcpResponseForRequest(
+  payload: Record<string, unknown> | undefined,
+  requestId: string | undefined,
+): payload is Record<string, unknown> {
+  if (!payload || payload.jsonrpc !== '2.0') return false
+  const hasResult = Object.prototype.hasOwnProperty.call(payload, 'result')
+  const hasError = Object.prototype.hasOwnProperty.call(payload, 'error')
+  if (hasResult === hasError) return false
+  if (hasResult) return payload.id === requestId && isRecord(payload.result)
+  if (!isRecord(payload.error) || !Number.isInteger(payload.error.code) || typeof payload.error.message !== 'string') return false
+  // JSON-RPC permits an unknown ID only when the request itself could not be
+  // parsed. An unrelated response must never trigger negotiation or success.
+  return payload.id === requestId || (
+    (payload.id === null || payload.id === undefined)
+    && (payload.error.code === -32700 || payload.error.code === -32600)
+  )
 }
 
 function createMcpHttpRequestError(

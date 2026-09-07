@@ -66,9 +66,12 @@ export function createProviderEmbeddingAdapter(
       }
       const json = await response.json() as { data?: Array<{ embedding?: unknown }> }
       const embedding = json.data?.[0]?.embedding
-      if (!Array.isArray(embedding)) throw new Error('empty_embedding')
+      if (!Array.isArray(embedding) || !embedding.length || embedding.length > 8192
+        || !embedding.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+        throw new Error('invalid_embedding')
+      }
       return {
-        embedding: embedding.filter((value): value is number => typeof value === 'number'),
+        embedding,
         source: 'provider',
         model,
       }

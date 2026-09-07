@@ -1,3 +1,8 @@
+import type {
+  UnifiedConversationCapabilityInput,
+  UnifiedConversationCapabilityPlan,
+} from './unifiedConversationCapabilityPolicy'
+
 export interface AssistantConversationRequestPlanningProviderLike {
   readonly id: string
   readonly type: unknown
@@ -21,6 +26,15 @@ export interface AssistantConversationRequestPlanningSettingsLike {
   readonly language: unknown
   readonly runtimeLogEnabled?: boolean
   readonly runtimeLogMaxBytes?: number
+  readonly remoteCompactMode?: string
+}
+
+export interface AssistantConversationCompactionGuardStateLike {
+  readonly compressionEpoch: number
+  readonly consecutiveFailures: number
+  readonly rapidRetriggerCount: number
+  readonly autoDisabled: boolean
+  readonly disabledReason?: string
 }
 
 export interface AssistantConversationContextRuntimeLike<
@@ -380,6 +394,19 @@ export interface AssistantConversationRequestPlanningRuntimeDependencies<
     readonly usesOpenAIResponses?: boolean
     readonly settings: TSettings
   }): Promise<TPreviousState>
+  /**
+   * Optional compatibility seam for the single-chat lane planner. The plan is
+   * diagnostic/admission metadata only; existing tool policies remain the
+   * authority for mutations and destructive actions.
+   */
+  planCapabilities?(
+    input: UnifiedConversationCapabilityInput,
+  ): UnifiedConversationCapabilityPlan
+  getCompactionGuardState?(conversationId: string): AssistantConversationCompactionGuardStateLike
+  recordApplicationCompactionResult?(input: {
+    readonly conversationId: string
+    readonly succeeded: boolean
+  }): AssistantConversationCompactionGuardStateLike
   planContext(input: {
     readonly messages: readonly TSourceMessage[]
     readonly contextSources: TContextSources
@@ -403,6 +430,7 @@ export interface AssistantConversationRequestPlanningRuntimeDependencies<
     readonly toolOutputCount: number
     readonly previousResponseId?: string
     readonly previousFragments?: readonly TPreviousFragment[]
+    readonly autoCompactAllowed?: boolean
   }): TContextPlan
   /** Re-pack a post-summary prompt against the selected model's hard budget. */
   packChatMessages?(input: {
@@ -491,6 +519,7 @@ export type AssistantConversationRequestPlanningOutcome<
       readonly reason: 'remote_compact_required_unsupported'
       readonly nativeSearchTraceId: string
       readonly providerWebSearchMode: TWebSearchMode
+      readonly capabilityPlan?: UnifiedConversationCapabilityPlan
     }
   | {
       readonly kind: 'planned'
@@ -506,6 +535,8 @@ export type AssistantConversationRequestPlanningOutcome<
       readonly compactRecord: TCompactRecord
       readonly contextPlan: TContextPlan
       readonly contextRuntime: TContextRuntime
+      readonly compactionGuardState?: AssistantConversationCompactionGuardStateLike
+      readonly capabilityPlan?: UnifiedConversationCapabilityPlan
     }
 
 /**
@@ -665,6 +696,7 @@ export function createAssistantConversationRequestPlanningRuntime<
       ...(usesOpenAIResponses === undefined ? {} : { usesOpenAIResponses }),
       settings: input.settings,
     })
+    const compactionGuardState = dependencies.getCompactionGuardState?.(input.conversationId)
     const contextPlan = dependencies.planContext({
       messages: input.sourceMessages,
       contextSources: contextRuntime.contextSources,
@@ -688,6 +720,7 @@ export function createAssistantConversationRequestPlanningRuntime<
       toolOutputCount: contextRuntime.counts.tools + input.providerToolCount,
       previousResponseId: previousCompactState.previousResponseId,
       previousFragments: previousCompactState.previousFragments,
+      autoCompactAllowed: compactionGuardState?.autoDisabled === true ? false : true,
     })
     const remoteCompactProbe = contextPlan.remoteCompactProbe
     const compactDecision = contextPlan.compactDecision
@@ -746,6 +779,10 @@ export function createAssistantConversationRequestPlanningRuntime<
 
       if (summaryResult.ok && summaryResult.summary) {
         applicationSummaryApplied = true
+        dependencies.recordApplicationCompactionResult?.({
+          conversationId: input.conversationId,
+          succeeded: true,
+        })
         const repacked = dependencies.packChatMessages?.({
           messages: summaryResult.recentMessages as unknown as TSourceMessage[],
           contextPrompt: summaryResult.contextPrompt,
@@ -822,6 +859,10 @@ export function createAssistantConversationRequestPlanningRuntime<
       } else {
         applicationSummaryFailure = summaryResult.failureReason ?? 'application_summary_failed'
         applicationSummaryFailureCode = summaryResult.failureCode ?? 'provider_error'
+        dependencies.recordApplicationCompactionResult?.({
+          conversationId: input.conversationId,
+          succeeded: false,
+        })
         // Keep structured-v2 packed activePrompt from contextPlan.
         recordCompleted(input, {
           id: summaryTraceId,
@@ -847,6 +888,20 @@ export function createAssistantConversationRequestPlanningRuntime<
       }
     }
 
+    const capabilityPlan = dependencies.planCapabilities?.({
+      conversationId: input.conversationId,
+      text: input.lastUserMessage?.content ?? '',
+      hasAttachments: input.sendableAttachments.length > 0,
+      retrievalEnabled: contextRuntime.counts.memory + contextRuntime.counts.knowledge > 0,
+      webEnabled: contextRuntime.counts.web > 0 || nativeSearchAdmission.kind === 'admitted',
+      webRequested: contextRuntime.counts.web > 0 || nativeSearchAdmission.kind === 'admitted',
+      workspaceAvailable: input.workspaceContext !== undefined,
+      readOnlyToolsAvailable: input.mcpToolCount + input.providerToolCount > 0,
+      mobile: true,
+      estimatedInputTokens: activePrompt.estimatedInputTokens,
+      tokenBudget: activePrompt.budgetTokens,
+    })
+
     const compactRequestLogData = {
       conversationId: input.conversationId,
       providerId: input.provider.id,
@@ -860,9 +915,12 @@ export function createAssistantConversationRequestPlanningRuntime<
       pressureRatio: compactDecision.pressureRatio,
       strategy: compactDecision.strategy,
       nativeServerCompact: compactDecision.nativeServerCompact === true,
+      guardBlocked: (compactDecision as { guardBlocked?: boolean }).guardBlocked === true,
       applicationSummaryApplied,
       ...(applicationSummaryFailure ? { applicationSummaryFailure } : {}),
       ...(applicationSummaryFailureCode ? { applicationSummaryFailureCode } : {}),
+      compactionGuard: dependencies.getCompactionGuardState?.(input.conversationId),
+      ...(capabilityPlan ? { capabilityPlan: projectCapabilityPlan(capabilityPlan) } : {}),
       ...(applicationSummaryDurationMs !== undefined ? { applicationSummaryDurationMs } : {}),
       ...(applicationSummaryTimeoutMs !== undefined ? { applicationSummaryTimeoutMs } : {}),
     }
@@ -998,6 +1056,8 @@ export function createAssistantConversationRequestPlanningRuntime<
           remoteCompactMode: compactDecision.mode,
           strategy: compactDecision.strategy,
           nativeServerCompact: compactDecision.nativeServerCompact === true,
+          guardBlocked: (compactDecision as { guardBlocked?: boolean }).guardBlocked === true,
+          compactionGuard: dependencies.getCompactionGuardState?.(input.conversationId),
           supported: compactDecision.supported,
           reason: compactDecision.reason,
           pressureRatio: compactDecision.pressureRatio,
@@ -1015,6 +1075,7 @@ export function createAssistantConversationRequestPlanningRuntime<
           contextRuntime: contextRuntime.trace,
           contextPlanner: contextPlan.trace,
           contextFragments: contextPlan.fragments.map(projectContextFragment),
+          ...(capabilityPlan ? { capabilityPlan: projectCapabilityPlan(capabilityPlan) } : {}),
         },
       })
     }
@@ -1031,6 +1092,7 @@ export function createAssistantConversationRequestPlanningRuntime<
         reason: 'remote_compact_required_unsupported',
         nativeSearchTraceId,
         providerWebSearchMode,
+        capabilityPlan,
       }
     }
 
@@ -1095,6 +1157,29 @@ export function createAssistantConversationRequestPlanningRuntime<
       compactRecord,
       contextPlan,
       contextRuntime,
+      compactionGuardState: dependencies.getCompactionGuardState?.(input.conversationId),
+      capabilityPlan,
+    }
+  }
+
+  function projectCapabilityPlan(
+    plan: UnifiedConversationCapabilityPlan,
+  ): Readonly<Record<string, unknown>> {
+    return {
+      schema: plan.schema,
+      conversationId: plan.conversationId,
+      createsConversation: plan.createsConversation,
+      exposesMode: plan.exposesMode,
+      lanes: plan.lanes.slice(0, 8),
+      retrieval: plan.retrieval,
+      web: plan.web,
+      readOnlyTools: plan.readOnlyTools,
+      workflow: plan.workflow,
+      localState: plan.localState,
+      requiresConfirmation: plan.requiresConfirmation,
+      estimatedInputTokens: plan.estimatedInputTokens,
+      tokenBudget: plan.tokenBudget,
+      reasons: plan.reasons.slice(0, 16),
     }
   }
 

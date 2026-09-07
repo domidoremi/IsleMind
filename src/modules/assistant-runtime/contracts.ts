@@ -185,7 +185,40 @@ export interface AssistantContextPlanReceiptSource {
   readonly reliability?: string
   readonly budgetShare?: number
   readonly sourceCount?: number
+  /** Ranked evidence blocks that remain in the model-visible fragment. */
+  readonly includedSourceIds?: readonly string[]
+  /** Ranked evidence blocks omitted while enforcing the fragment token cap. */
+  readonly excludedSourceIds?: readonly string[]
   readonly reason?: string
+}
+
+export interface AssistantContextArtifactPointerReceipt {
+  readonly schema: string
+  readonly artifactId: string
+  readonly authority: string
+  readonly contentHash: string
+  readonly uri: string
+  readonly expiresAt: number
+}
+
+export interface AssistantContextCacheDiagnosticsReceipt {
+  readonly prefixHash?: string
+  readonly changedSourceCount?: number
+  readonly diagnosticCount?: number
+}
+
+export interface AssistantContextCapabilityPlanReceipt {
+  readonly schema: string
+  readonly createsConversation: false
+  readonly exposesMode: false
+  readonly lanes: readonly string[]
+  readonly retrieval: boolean
+  readonly web: boolean
+  readonly readOnlyTools: boolean
+  readonly workflow: boolean
+  readonly localState: boolean
+  readonly requiresConfirmation: boolean
+  readonly reasons: readonly string[]
 }
 
 export interface AssistantContextPlanReceipt {
@@ -221,6 +254,15 @@ export interface AssistantContextPlanReceipt {
   }
   readonly sourceManifest: readonly AssistantContextPlanReceiptSource[]
   readonly failureCodes: readonly string[]
+  readonly conversationId?: string
+  readonly sourceMessageIds?: readonly string[]
+  readonly excludedSourceIds?: readonly string[]
+  readonly artifactPointers?: readonly AssistantContextArtifactPointerReceipt[]
+  readonly compressionEpoch?: number
+  readonly continuationId?: string
+  readonly prefixHash?: string
+  readonly cacheDiagnostics?: AssistantContextCacheDiagnosticsReceipt
+  readonly capabilityPlan?: AssistantContextCapabilityPlanReceipt
 }
 
 /**
@@ -238,7 +280,18 @@ export function isAssistantContextPlanReceipt(
     'compression',
     'sourceManifest',
     'failureCodes',
-  ], ['manifestId']) || value.schema !== ASSISTANT_CONTEXT_PLAN_RECEIPT_SCHEMA) return false
+  ], [
+    'manifestId',
+    'conversationId',
+    'sourceMessageIds',
+    'excludedSourceIds',
+    'artifactPointers',
+    'compressionEpoch',
+    'continuationId',
+    'prefixHash',
+    'cacheDiagnostics',
+    'capabilityPlan',
+  ]) || value.schema !== ASSISTANT_CONTEXT_PLAN_RECEIPT_SCHEMA) return false
   if (!isBoundedReceiptString(value.providerId, 320) || !isBoundedReceiptString(value.model, 320)) return false
   if (value.manifestId !== undefined && !isBoundedReceiptString(value.manifestId, 512)) return false
   if (!isReceiptBudget(value.budget) || !isReceiptCompression(value.compression)) return false
@@ -246,6 +299,19 @@ export function isAssistantContextPlanReceipt(
     !value.sourceManifest.every(isReceiptSource)) return false
   if (!Array.isArray(value.failureCodes) || value.failureCodes.length > 64 ||
     !value.failureCodes.every((code) => isBoundedReceiptString(code, 160))) return false
+  if (value.conversationId !== undefined && !isBoundedReceiptString(value.conversationId, 512)) return false
+  if (!isOptionalReceiptStringArray(value.sourceMessageIds, 256, 512)) return false
+  if (!isOptionalReceiptStringArray(value.excludedSourceIds, 256, 512)) return false
+  if (value.artifactPointers !== undefined && (
+    !Array.isArray(value.artifactPointers)
+    || value.artifactPointers.length > 32
+    || !value.artifactPointers.every(isReceiptArtifactPointer)
+  )) return false
+  if (value.compressionEpoch !== undefined && !isBoundedReceiptNumber(value.compressionEpoch, 1_000_000)) return false
+  if (value.continuationId !== undefined && !isBoundedReceiptString(value.continuationId, 512)) return false
+  if (value.prefixHash !== undefined && !isBoundedReceiptString(value.prefixHash, 512)) return false
+  if (value.cacheDiagnostics !== undefined && !isReceiptCacheDiagnostics(value.cacheDiagnostics)) return false
+  if (value.capabilityPlan !== undefined && !isReceiptCapabilityPlan(value.capabilityPlan)) return false
   try {
     return JSON.stringify(value).length <= 512 * 1024
   } catch {
@@ -291,6 +357,8 @@ export interface AssistantConversationContextReceipt {
 
 export interface AssistantRunRepository {
   get(runId: AssistantRunId): Promise<AssistantRun | undefined>
+  /** Includes terminal runs so a lost disposable message projection can be rebuilt. */
+  getLatestForResponseMessage(conversationId: string, responseMessageId: string): Promise<AssistantRun | undefined>
   listRecoverable(): Promise<readonly AssistantRun[]>
   save(run: AssistantRun): Promise<void>
 }
@@ -314,6 +382,8 @@ export interface AssistantRunPersistence extends AssistantRunRepository, RunJour
     entry: RunJournalEntry,
     run: AssistantRun,
     requestSnapshot?: AssistantRunCapturedRequestSnapshot,
+    /** Optional predecessor for incremental checkpoint storage; sequence-checked by the adapter. */
+    previousRun?: AssistantRun,
   ): Promise<void>
 }
 
@@ -567,7 +637,15 @@ function isReceiptSource(value: unknown): value is AssistantContextPlanReceiptSo
       'tokenCap',
       'estimatedTokens',
       'originalEstimatedTokens',
-    ], ['authority', 'reliability', 'budgetShare', 'sourceCount', 'reason'])
+    ], [
+      'authority',
+      'reliability',
+      'budgetShare',
+      'sourceCount',
+      'includedSourceIds',
+      'excludedSourceIds',
+      'reason',
+    ])
     || !isBoundedReceiptString(value.fragmentId, 512)
     || !isBoundedReceiptString(value.type, 160)
     || !isBoundedReceiptString(value.priority, 80)
@@ -582,7 +660,79 @@ function isReceiptSource(value: unknown): value is AssistantContextPlanReceiptSo
     && (value.reliability === undefined || isBoundedReceiptString(value.reliability, 160))
     && (value.budgetShare === undefined || isBoundedReceiptFiniteNumber(value.budgetShare, 10_000_000))
     && (value.sourceCount === undefined || isBoundedReceiptNumber(value.sourceCount, 1_000_000))
+    && isOptionalReceiptStringArray(value.includedSourceIds, 256, 512)
+    && isOptionalReceiptStringArray(value.excludedSourceIds, 256, 512)
     && (value.reason === undefined || isBoundedReceiptString(value.reason, 160))
+}
+
+function isOptionalReceiptStringArray(
+  value: unknown,
+  maxEntries: number,
+  maxLength: number,
+): boolean {
+  return value === undefined || (
+    Array.isArray(value)
+    && value.length <= maxEntries
+    && value.every((item) => isBoundedReceiptString(item, maxLength))
+  )
+}
+
+function isReceiptArtifactPointer(value: unknown): value is AssistantContextArtifactPointerReceipt {
+  return isRecord(value)
+    && hasReceiptKeys(value, [
+      'schema',
+      'artifactId',
+      'authority',
+      'contentHash',
+      'uri',
+      'expiresAt',
+    ])
+    && isBoundedReceiptString(value.schema, 160)
+    && isBoundedReceiptString(value.artifactId, 512)
+    && isBoundedReceiptString(value.authority, 160)
+    && isBoundedReceiptString(value.contentHash, 512)
+    && isBoundedReceiptString(value.uri, 1_024)
+    && isBoundedReceiptNumber(value.expiresAt, Number.MAX_SAFE_INTEGER)
+}
+
+function isReceiptCacheDiagnostics(value: unknown): boolean {
+  if (!isRecord(value) || !hasReceiptKeys(
+    value,
+    [],
+    ['prefixHash', 'changedSourceCount', 'diagnosticCount'],
+  )) return false
+  return (value.prefixHash === undefined || isBoundedReceiptString(value.prefixHash, 512))
+    && (value.changedSourceCount === undefined || isBoundedReceiptNumber(value.changedSourceCount, 1_000_000))
+    && (value.diagnosticCount === undefined || isBoundedReceiptNumber(value.diagnosticCount, 1_000_000))
+}
+
+function isReceiptCapabilityPlan(value: unknown): value is AssistantContextCapabilityPlanReceipt {
+  if (!isRecord(value) || !hasReceiptKeys(value, [
+    'schema',
+    'createsConversation',
+    'exposesMode',
+    'lanes',
+    'retrieval',
+    'web',
+    'readOnlyTools',
+    'workflow',
+    'localState',
+    'requiresConfirmation',
+    'reasons',
+  ])) return false
+  return isBoundedReceiptString(value.schema, 160)
+    && value.createsConversation === false
+    && value.exposesMode === false
+    && isOptionalReceiptStringArray(value.lanes, 8, 80)
+    && Array.isArray(value.lanes)
+    && typeof value.retrieval === 'boolean'
+    && typeof value.web === 'boolean'
+    && typeof value.readOnlyTools === 'boolean'
+    && typeof value.workflow === 'boolean'
+    && typeof value.localState === 'boolean'
+    && typeof value.requiresConfirmation === 'boolean'
+    && isOptionalReceiptStringArray(value.reasons, 16, 160)
+    && Array.isArray(value.reasons)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

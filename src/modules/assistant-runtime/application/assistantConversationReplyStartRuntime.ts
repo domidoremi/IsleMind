@@ -212,6 +212,10 @@ export interface AssistantConversationReplyStartRequestPlanned<
   }
   readonly remoteCompactProbe: TRemoteCompactProbe
   readonly previousResponseId?: string
+  readonly compactionGuardState?: {
+    readonly compressionEpoch: number
+  }
+  readonly capabilityPlan?: unknown
 }
 
 export type AssistantConversationReplyStartRequestPlanningOutcome<
@@ -1005,6 +1009,14 @@ export function createAssistantConversationReplyStartRuntime<
     const contextReceipt = buildAssistantContextPlanReceipt({
       providerId: provider.id,
       model: upstreamModel,
+      conversationId: input.conversationId,
+      sourceMessageIds: sourceMessages
+        .map((message) => (message as { id?: unknown }).id)
+        .filter((id): id is string => typeof id === 'string'),
+      artifactPointers: collectContextArtifactPointers(sourceMessages),
+      compressionEpoch: requestPlanningOutcome.compactionGuardState?.compressionEpoch,
+      continuationId: requestPlanningOutcome.previousResponseId,
+      capabilityPlan: requestPlanningOutcome.capabilityPlan,
       plan: contextPlan,
       activePrompt,
     })
@@ -1120,6 +1132,38 @@ export function createAssistantConversationReplyStartRuntime<
       if (message?.role === 'user') return message
     }
     return undefined
+  }
+
+  function collectContextArtifactPointers(messages: readonly unknown[]): readonly unknown[] {
+    const pointers: unknown[] = []
+    const seen = new Set<string>()
+    for (const candidate of messages.slice(-256)) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+      const message = candidate as Readonly<Record<string, unknown>>
+      for (const key of ['reasoning', 'toolCalls', 'retrievalTrace'] as const) {
+        const traces = message[key]
+        if (!Array.isArray(traces)) continue
+        for (const trace of traces.slice(-64)) {
+          if (!trace || typeof trace !== 'object' || Array.isArray(trace)) continue
+          const metadata = (trace as Readonly<Record<string, unknown>>).metadata
+          if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) continue
+          const candidates = (metadata as Readonly<Record<string, unknown>>).artifactPointers
+          if (!Array.isArray(candidates)) continue
+          for (const pointer of candidates.slice(0, 8)) {
+            if (!pointer || typeof pointer !== 'object' || Array.isArray(pointer)) continue
+            const record = pointer as Readonly<Record<string, unknown>>
+            const identity = typeof record.artifactId === 'string'
+              ? record.artifactId.trim()
+              : ''
+            if (!identity || seen.has(identity)) continue
+            seen.add(identity)
+            pointers.push(pointer)
+            if (pointers.length >= 32) return pointers
+          }
+        }
+      }
+    }
+    return pointers
   }
 
   function getWorkspaceWritebackHandoffStatus(

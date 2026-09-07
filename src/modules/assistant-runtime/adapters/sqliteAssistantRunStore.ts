@@ -46,6 +46,9 @@ import {
 
 const MIGRATION_SCOPE = 'assistant-runtime'
 const RUN_SCHEMA = 'islemind.assistant-run.v1'
+// Old readers reject this in-flight representation instead of recovering an
+// incomplete prefix. Lifecycle barriers still materialize the v1 snapshot.
+const STREAM_RUN_SCHEMA = 'islemind.assistant-run.v2'
 const WORKSPACE_WRITEBACK_IDENTITY_MAX_CHARACTERS = 256
 const WORKSPACE_WRITEBACK_INPUT_MAX_CHARACTERS = 262_144
 const WORKSPACE_WRITEBACK_MAX_SELECTED_CHARACTERS = 64
@@ -104,6 +107,11 @@ interface AssistantConversationContextReceiptRow {
 
 interface JournalSequenceRow {
   sequence: number
+}
+
+interface CheckpointSegmentRow {
+  sequence: number
+  outputJson: string
 }
 
 export class AssistantRunPersistenceDataError extends Error {
@@ -241,14 +249,45 @@ export function createSqliteAssistantRunPersistence(
           `)
         },
       },
-    ])
+      {
+        scope: MIGRATION_SCOPE,
+        version: 9,
+        name: 'incremental-stream-checkpoints',
+        async up(transaction) {
+          await transaction.exec(`
+            CREATE TABLE assistant_run_checkpoint_segments (
+              runId TEXT NOT NULL,
+              sequence INTEGER NOT NULL,
+              outputJson TEXT NOT NULL,
+              PRIMARY KEY (runId, sequence),
+              FOREIGN KEY (runId) REFERENCES assistant_runs(id) ON DELETE CASCADE
+            );
+          `)
+        },
+      },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 10,
+        name: 'response-message-reconstruction',
+        async up(transaction) {
+          await transaction.exec(`
+            CREATE INDEX assistant_runs_response_message_idx
+              ON assistant_runs (conversationId, responseMessageId, createdAt DESC, id DESC);
+          `)
+        },
+      },
+    ]).catch((error) => {
+      initialized = undefined
+      throw error
+    })
     await initialized
     return value
   }
 
   return {
     async get(runId) {
-      const row = await (await database()).getFirst<AssistantRunRow>(
+      return (await database()).transaction(async (transaction) => {
+      const row = await transaction.getFirst<AssistantRunRow>(
         `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
                 providerId, model, contextSnapshotId, status, createdAt,
                 startedAt, cancellationRequestedAt, completedAt, journalSequence,
@@ -256,11 +295,29 @@ export function createSqliteAssistantRunPersistence(
          FROM assistant_runs WHERE id = ?`,
         [runId],
       )
-      return row ? parseRun(row) : undefined
+      return row ? readRun(transaction, row) : undefined
+      })
+    },
+
+    async getLatestForResponseMessage(conversationId, responseMessageId) {
+      return (await database()).transaction(async (transaction) => {
+        const row = await transaction.getFirst<AssistantRunRow>(
+          `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
+                  providerId, model, contextSnapshotId, status, createdAt,
+                  startedAt, cancellationRequestedAt, completedAt, journalSequence,
+                  checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema
+           FROM assistant_runs
+           WHERE conversationId = ? AND responseMessageId = ?
+           ORDER BY createdAt DESC, id DESC LIMIT 1`,
+          [conversationId, responseMessageId],
+        )
+        return row ? readRun(transaction, row) : undefined
+      })
     },
 
     async listRecoverable() {
-      const rows = await (await database()).getAll<AssistantRunRow>(
+      return (await database()).transaction(async (transaction) => {
+      const rows = await transaction.getAll<AssistantRunRow>(
         `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
                 providerId, model, contextSnapshotId, status, createdAt,
                 startedAt, cancellationRequestedAt, completedAt, journalSequence,
@@ -269,13 +326,19 @@ export function createSqliteAssistantRunPersistence(
          WHERE status IN ('queued', 'running', 'awaiting-confirmation')
          ORDER BY createdAt ASC`,
       )
-      return rows.map(parseRun)
+      const runs: AssistantRun[] = []
+      for (const row of rows) runs.push(await readRun(transaction, row))
+      return runs
+      })
     },
 
     async save(run) {
       assertChatRunKind(run)
       const value = await database()
-      await saveRun(value, run)
+      await value.transaction(async (transaction) => {
+        await saveRun(transaction, run)
+        await clearCheckpointSegments(transaction, run.id)
+      })
     },
 
     async append(entry) {
@@ -335,7 +398,7 @@ export function createSqliteAssistantRunPersistence(
       await value.run('DELETE FROM assistant_runs')
     },
 
-    async appendAndSave(entry, run, requestSnapshot) {
+    async appendAndSave(entry, run, requestSnapshot, previousRun) {
       if (entry.runId !== run.id || entry.sequence !== run.journalSequence) {
         throw new AssistantRunPersistenceDataError('Assistant run journal state is not contiguous.')
       }
@@ -345,16 +408,19 @@ export function createSqliteAssistantRunPersistence(
         : undefined
       const value = await database()
       await value.transaction(async (transaction) => {
-        await saveRun(transaction, run)
-        if (normalizedRequestSnapshot) {
-          await insertRequestSnapshot(transaction, normalizedRequestSnapshot)
-        }
         const previous = await transaction.getFirst<JournalSequenceRow>(
           'SELECT sequence FROM assistant_run_journal WHERE runId = ? ORDER BY sequence DESC LIMIT 1',
           [entry.runId],
         )
         if (entry.sequence !== (previous?.sequence ?? 0) + 1) {
           throw new AssistantRunPersistenceDataError('Assistant run journal sequence is not contiguous.')
+        }
+        if (!await saveStreamCheckpoint(transaction, entry, run, previousRun)) {
+          await saveRun(transaction, run)
+          await clearCheckpointSegments(transaction, run.id)
+        }
+        if (normalizedRequestSnapshot) {
+          await insertRequestSnapshot(transaction, normalizedRequestSnapshot)
         }
         await appendJournalEntry(transaction, entry)
       })
@@ -384,6 +450,120 @@ async function insertRequestSnapshot(
       snapshot.schema,
     ],
   )
+}
+
+async function clearCheckpointSegments(database: SqliteExecutor, runId: string): Promise<void> {
+  await database.run('DELETE FROM assistant_run_checkpoint_segments WHERE runId = ?', [runId])
+}
+
+async function saveStreamCheckpoint(
+  database: SqliteExecutor,
+  entry: RunJournalEntry,
+  run: AssistantRun,
+  previousRun: AssistantRun | undefined,
+): Promise<boolean> {
+  const checkpoint = run.checkpoint
+  if (entry.type !== 'stream.event' || run.status !== 'running' || !checkpoint
+    || !previousRun || previousRun.id !== run.id
+    || previousRun.journalSequence !== entry.sequence - 1
+    || Object.keys(run).some((key) => key !== 'checkpoint' && key !== 'journalSequence'
+      && run[key as keyof AssistantRun] !== previousRun[key as keyof AssistantRun])) return false
+
+  const previous = previousRun.checkpoint ?? { outputText: '', streamEventCount: 0 }
+  if (checkpoint.streamEventCount <= previous.streamEventCount
+    || !checkpoint.outputText.startsWith(previous.outputText)) return false
+
+  const row = await database.getFirst<Pick<AssistantRunRow, 'journalSequence' | 'checkpointJson' | 'schema'>>(
+    'SELECT journalSequence, checkpointJson, schema FROM assistant_runs WHERE id = ?', [run.id],
+  )
+  if (!row || row.journalSequence !== previousRun.journalSequence) {
+    throw new AssistantRunPersistenceDataError('An assistant checkpoint predecessor is stale.')
+  }
+  if (row.schema === STREAM_RUN_SCHEMA) {
+    const header = parseStreamCheckpointHeader(row.checkpointJson)
+    if (header.outputLength !== previous.outputText.length
+      || header.streamEventCount !== previous.streamEventCount) {
+      throw new AssistantRunPersistenceDataError('An assistant checkpoint predecessor is invalid.')
+    }
+  } else if (row.schema === RUN_SCHEMA) {
+    const saved = parseCheckpoint(row.checkpointJson) ?? { outputText: '', streamEventCount: 0 }
+    // Standalone save() deliberately resets the incremental representation.
+    // An independently replaced predecessor must not be used as a delta base.
+    if (saved.outputText !== previous.outputText || saved.streamEventCount !== previous.streamEventCount) return false
+    await clearCheckpointSegments(database, run.id)
+    if (previous.outputText) {
+      await insertCheckpointSegment(database, run.id, previousRun.journalSequence, previous.outputText)
+    }
+  } else {
+    throw new AssistantRunPersistenceDataError('An assistant run schema is unsupported.')
+  }
+
+  const delta = checkpoint.outputText.slice(previous.outputText.length)
+  if (delta) await insertCheckpointSegment(database, run.id, entry.sequence, delta)
+  const updated = await database.run(
+    `UPDATE assistant_runs SET journalSequence = ?, checkpointJson = ?, schema = ?
+     WHERE id = ? AND journalSequence = ?`,
+    [entry.sequence, JSON.stringify({
+      outputText: '',
+      streamEventCount: checkpoint.streamEventCount,
+      outputLength: checkpoint.outputText.length,
+    }), STREAM_RUN_SCHEMA, run.id, previousRun.journalSequence],
+  )
+  if (updated.changes !== 1) throw new AssistantRunPersistenceDataError('An assistant checkpoint predecessor is stale.')
+  return true
+}
+
+async function insertCheckpointSegment(
+  database: SqliteExecutor, runId: string, sequence: number, text: string,
+): Promise<void> {
+  // JSON preserves UTF-16 fragments, including a surrogate pair split between
+  // provider events. Binding the raw half-surrogate as SQLite TEXT would not.
+  await database.run(
+    'INSERT INTO assistant_run_checkpoint_segments (runId, sequence, outputJson) VALUES (?, ?, ?)',
+    [runId, sequence, JSON.stringify(text)],
+  )
+}
+
+function parseStreamCheckpointHeader(value: string | null): { outputLength: number; streamEventCount: number } {
+  const parsed = parseJson(value)
+  if (!isRecord(parsed) || parsed.outputText !== ''
+    || !isNonNegativeInteger(parsed.outputLength) || !isNonNegativeInteger(parsed.streamEventCount)) {
+    throw new AssistantRunPersistenceDataError('An incremental assistant checkpoint is invalid.')
+  }
+  return { outputLength: parsed.outputLength, streamEventCount: parsed.streamEventCount }
+}
+
+async function readRun(database: SqliteExecutor, row: AssistantRunRow): Promise<AssistantRun> {
+  if (row.schema !== STREAM_RUN_SCHEMA) return parseRun(row)
+  const header = parseStreamCheckpointHeader(row.checkpointJson)
+  // Validate the envelope before reading segments; keep all reads on the same
+  // transaction snapshot so a concurrent terminal/materialization cannot tear it.
+  const run = parseRun({ ...row, schema: RUN_SCHEMA })
+  if (run.status !== 'running') throw new AssistantRunPersistenceDataError('An incremental assistant run is not running.')
+  let outputText = ''
+  let after = -1
+  while (true) {
+    const segments = await database.getAll<CheckpointSegmentRow>(
+      `SELECT sequence, outputJson FROM assistant_run_checkpoint_segments
+       WHERE runId = ? AND sequence > ? ORDER BY sequence LIMIT 128`,
+      [run.id, after],
+    )
+    for (const segment of segments) {
+      const text = parseJson(segment.outputJson)
+      if (!isNonNegativeInteger(segment.sequence) || segment.sequence <= after
+        || segment.sequence > run.journalSequence || typeof text !== 'string' || !text
+        || text.length > header.outputLength - outputText.length) {
+        throw new AssistantRunPersistenceDataError('An assistant checkpoint segment is invalid.')
+      }
+      outputText += text
+      after = segment.sequence
+    }
+    if (segments.length < 128) break
+  }
+  if (outputText.length !== header.outputLength) {
+    throw new AssistantRunPersistenceDataError('An assistant checkpoint is incomplete.')
+  }
+  return { ...run, checkpoint: { outputText, streamEventCount: header.streamEventCount } }
 }
 
 async function saveRun(database: SqliteExecutor, run: AssistantRun): Promise<void> {

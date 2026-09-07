@@ -7,20 +7,21 @@ describe('knowledge query embedding fallback diagnostics', () => {
     const resolved: unknown[] = []
     const useCase = createKnowledgeQueryEmbeddingUseCase({
       async embedWithOnnx() { return null },
-      async embedWithProvider() { return [1, 0] },
+      async embedWithProvider() { return { embedding: [1, 0], model: 'test-model' } },
       async notifyProviderUnsupported() {},
     })
 
     const embedding = await useCase.resolve({
       query: 'local query',
-      chunks: [],
+      availableSources: [],
       embeddingMode: 'local',
       providerConfigured: false,
       providerSupportsEmbeddings: false,
       onResolved: (notice) => resolved.push(notice),
     })
 
-    expect(embedding.length).toBeGreaterThan(0)
+    expect(embedding.embedding.length).toBeGreaterThan(0)
+    expect(embedding.source).toBe('local')
     expect(resolved).toEqual([{ source: 'local-hash', reason: 'local_embedding_requested' }])
   })
 
@@ -34,7 +35,7 @@ describe('knowledge query embedding fallback diagnostics', () => {
 
     await useCase.resolve({
       query: 'provider query',
-      chunks: [{ source: 'provider', embeddingJson: '[1, 0]' }],
+      availableSources: ['provider'],
       embeddingMode: 'hybrid',
       provider: { id: 'provider-1' },
       providerConfigured: true,
@@ -49,20 +50,31 @@ describe('knowledge query embedding fallback diagnostics', () => {
     const resolved: unknown[] = []
     const useCase = createKnowledgeQueryEmbeddingUseCase({
       async embedWithOnnx() { return null },
-      async embedWithProvider() { return [0.25, 0.75] },
+      async embedWithProvider() { return { embedding: [0.25, 0.75], model: 'test-model' } },
       async notifyProviderUnsupported() {},
     })
 
     await expect(useCase.resolve({
       query: 'provider query',
-      chunks: [{ source: 'provider', embeddingJson: '[1, 0]' }],
+      availableSources: ['provider'],
       embeddingMode: 'provider',
       provider: { id: 'provider-1' },
       providerConfigured: true,
       providerSupportsEmbeddings: true,
       onResolved: (notice) => resolved.push(notice),
-    })).resolves.toEqual([0.25, 0.75])
+    })).resolves.toEqual({ embedding: [0.25, 0.75], model: 'test-model', source: 'provider' })
 
     expect(resolved).toEqual([{ source: 'provider' }])
+  })
+
+  it.each([{ embedding: [] }, { embedding: [NaN] }, { embedding: [Infinity] }])('rejects invalid provider values: %j', async ({ embedding }) => {
+    const useCase = createKnowledgeQueryEmbeddingUseCase({
+      async embedWithOnnx() { return null },
+      async embedWithProvider() { return { embedding, model: 'test-model' } },
+      async notifyProviderUnsupported() {},
+    })
+    const result = await useCase.resolve({ query: 'test', availableSources: ['provider'],
+      provider: {}, providerConfigured: true, providerSupportsEmbeddings: true })
+    expect(result.source).toBe('local')
   })
 })

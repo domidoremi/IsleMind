@@ -1,14 +1,9 @@
-import { createLocalKnowledgeEmbedding } from '../domain/localVectorIndex'
+import { createLocalKnowledgeEmbedding, isKnowledgeEmbedding } from '../domain/localVectorIndex'
+import { KNOWLEDGE_LOCAL_HASH_MODEL_ID, type KnowledgeResolvedEmbedding } from '../domain/embeddingPersistencePolicy'
 
 export type KnowledgeQueryEmbeddingMode = 'provider' | 'local' | 'hybrid'
 
 export const KNOWLEDGE_DEFAULT_LOCAL_EMBEDDING_MODEL_ID = 'auto-local-onnx'
-
-export interface KnowledgeStoredEmbeddingDescriptor {
-  source?: string
-  embeddingJson?: unknown
-  model?: string
-}
 
 export interface KnowledgeOnnxQueryEmbeddingRequest {
   query: string
@@ -37,13 +32,14 @@ export interface KnowledgeQueryEmbeddingResolutionNotice {
 }
 
 export interface KnowledgeQueryEmbeddingUseCaseDependencies<Provider> {
-  embedWithOnnx(input: KnowledgeOnnxQueryEmbeddingRequest): Promise<number[] | null | undefined>
-  embedWithProvider(input: KnowledgeProviderQueryEmbeddingRequest<Provider>): Promise<number[]>
+  embedWithOnnx(input: KnowledgeOnnxQueryEmbeddingRequest): Promise<{ embedding: number[]; model: string } | null | undefined>
+  embedWithProvider(input: KnowledgeProviderQueryEmbeddingRequest<Provider>): Promise<{ embedding: number[]; model: string }>
   notifyProviderUnsupported(input: KnowledgeUnsupportedProviderEmbeddingNotice<Provider>): void | Promise<void>
 }
 
 export interface ResolveKnowledgeQueryEmbeddingInput<Provider> extends KnowledgeOnnxQueryEmbeddingRequest {
-  chunks: readonly KnowledgeStoredEmbeddingDescriptor[]
+  /** Sources present in the selected corpus, not a recency-limited row sample. */
+  availableSources: readonly ('onnx' | 'provider')[]
   provider?: Provider
   providerConfigured: boolean
   providerSupportsEmbeddings: boolean
@@ -51,7 +47,7 @@ export interface ResolveKnowledgeQueryEmbeddingInput<Provider> extends Knowledge
 }
 
 export interface KnowledgeQueryEmbeddingUseCase<Provider> {
-  resolve(input: ResolveKnowledgeQueryEmbeddingInput<Provider>): Promise<number[]>
+  resolve(input: ResolveKnowledgeQueryEmbeddingInput<Provider>): Promise<KnowledgeResolvedEmbedding>
 }
 
 export class KnowledgeQueryEmbeddingCancelledError extends Error {
@@ -72,13 +68,9 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
     async resolve(input) {
       throwIfAborted(input.signal)
       let fallbackReason: string | undefined
-      const onnxVectorExists = input.chunks.some((chunk) => (
-        chunk.source === 'onnx'
-        && typeof chunk.embeddingJson === 'string'
-        && chunk.model === resolveKnowledgeActiveLocalModelId(input.localEmbeddingModelId)
-      ))
+      const onnxVectorExists = input.availableSources.includes('onnx')
 
-      if (input.embeddingMode !== 'provider' && onnxVectorExists) {
+      if (input.embeddingMode !== 'provider' && input.localEmbeddingModelSource !== 'none' && onnxVectorExists) {
         try {
           const embedding = await raceWithAbort(
             dependencies.embedWithOnnx({
@@ -91,9 +83,9 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
             input.signal,
           )
           throwIfAborted(input.signal)
-          if (embedding?.length) {
+          if (embedding && isKnowledgeEmbedding(embedding.embedding) && embedding.model.trim()) {
             reportResolution(input, { source: 'onnx' })
-            return embedding
+            return { ...embedding, source: 'onnx' }
           }
           fallbackReason = 'onnx_embedding_unavailable'
         } catch (error) {
@@ -103,9 +95,7 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
         }
       }
 
-      const providerVectorExists = input.chunks.some((chunk) => (
-        chunk.source === 'provider' && typeof chunk.embeddingJson === 'string'
-      ))
+      const providerVectorExists = input.availableSources.includes('provider')
       const providerReady = Boolean(
         input.embeddingMode !== 'local'
         && input.provider !== undefined
@@ -141,9 +131,9 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
             input.signal,
           )
           throwIfAborted(input.signal)
-          if (embedding.length) {
+          if (isKnowledgeEmbedding(embedding.embedding) && embedding.model.trim()) {
             reportResolution(input, { source: 'provider' })
-            return embedding
+            return { ...embedding, source: 'provider' }
           }
           fallbackReason = 'provider_embedding_empty'
         } catch (error) {
@@ -158,7 +148,7 @@ export function createKnowledgeQueryEmbeddingUseCase<Provider>(
         source: 'local-hash',
         reason: fallbackReason ?? (input.embeddingMode === 'local' ? 'local_embedding_requested' : 'no_model_embedding_available'),
       })
-      return createLocalKnowledgeEmbedding(input.query)
+      return { embedding: createLocalKnowledgeEmbedding(input.query), source: 'local', model: KNOWLEDGE_LOCAL_HASH_MODEL_ID }
     },
   }
 }

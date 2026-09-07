@@ -56,6 +56,7 @@ export interface LocalEmbeddingModel {
   useCase: string
   dimension: number
   tokenizer: LocalEmbeddingTokenizer
+  pooling?: 'mean' | 'cls'
   maxTokens: number
   sizeBytes: number
   downloadBaseUrl: string
@@ -184,6 +185,7 @@ const modelSchema = v.object({
   useCase: boundedDescriptionSchema,
   dimension: nonNegativeIntegerSchema(MAX_MODEL_DIMENSION),
   tokenizer: v.picklist(['wordpiece', 'unigram', 'sentencepiece']),
+  pooling: v.optional(v.picklist(['mean', 'cls'])),
   maxTokens: nonNegativeIntegerSchema(MAX_MODEL_TOKENS),
   sizeBytes: nonNegativeIntegerSchema(MAX_MODEL_BYTES),
   downloadBaseUrl: urlSchema,

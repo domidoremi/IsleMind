@@ -5,6 +5,16 @@ import {
 
 export const KNOWLEDGE_LOCAL_HASH_MODEL_ID = 'local-hash-bow-v1'
 
+/** Source and model identify a vector space; dimension alone never does. */
+export interface KnowledgeEmbeddingIdentity {
+  source: 'local' | 'onnx' | 'provider'
+  model: string
+}
+
+export interface KnowledgeResolvedEmbedding extends KnowledgeEmbeddingIdentity {
+  embedding: number[]
+}
+
 export interface KnowledgeEmbeddingWriteDecision {
   embedding: number[]
   source: 'local' | 'onnx'
@@ -46,36 +56,30 @@ export function resolveKnowledgeEmbeddingWrite(
   }
 }
 
-export type KnowledgeEmbeddingRepairReason = 'missing_or_malformed' | 'dimension_mismatch'
+export type KnowledgeEmbeddingRepairReason = 'missing_or_malformed'
 
 export interface KnowledgeSearchEmbeddingResolution {
-  embedding: number[]
+  embedding?: number[]
   repairRequired: boolean
   repairReason?: KnowledgeEmbeddingRepairReason
 }
 
 export function resolveKnowledgeSearchEmbedding(
   rawEmbedding: string | undefined,
-  expectedDimension: number,
+  query: KnowledgeResolvedEmbedding,
   content: string,
+  identity: { source?: string; model?: string },
 ): KnowledgeSearchEmbeddingResolution {
   const persisted = parseKnowledgeEmbedding(rawEmbedding)
-  if (!persisted) {
-    return {
-      embedding: createLocalKnowledgeEmbedding(content),
-      repairRequired: true,
-      repairReason: 'missing_or_malformed',
-    }
-  }
-  if (persisted.length !== expectedDimension) {
-    return {
-      embedding: createLocalKnowledgeEmbedding(content),
-      repairRequired: true,
-      repairReason: 'dimension_mismatch',
-    }
-  }
+  const compatible = persisted && persisted.length === query.embedding.length
+    && identity.source === query.source && identity.model === query.model
   return {
-    embedding: persisted,
-    repairRequired: false,
+    // Offline hash comparisons use a transient projection, not a destructive
+    // conversion of valid model vectors. Neural queries skip unknown spaces.
+    embedding: compatible ? persisted
+      : query.source === 'local' && query.model === KNOWLEDGE_LOCAL_HASH_MODEL_ID
+        ? createLocalKnowledgeEmbedding(content) : undefined,
+    repairRequired: !persisted,
+    ...(!persisted ? { repairReason: 'missing_or_malformed' as const } : {}),
   }
 }

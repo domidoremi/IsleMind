@@ -16,11 +16,18 @@ export function fuseHybridKnowledgeCandidates<Source extends KnowledgeFusionCand
   mode: Extract<KnowledgeCandidateRetrievalMode, 'fts' | 'hybrid'>,
 ): Source[] {
   const merged = new Map<string, Source>()
+  const maxFtsMagnitude = ftsRows.reduce((max, row) => {
+    const raw = row.ftsScore ?? row.score ?? 0
+    return Number.isFinite(raw) ? Math.max(max, -raw) : max
+  }, 0)
   for (const row of ftsRows) {
-    const ftsScore = normalizeFtsScore(row.score ?? 0)
+    const ftsScore = row.ftsScore ?? row.score ?? 0
+    const relevance = Number.isFinite(ftsScore) && maxFtsMagnitude > 0
+      ? Math.max(0, -ftsScore) / maxFtsMagnitude
+      : 0
     merged.set(row.id, {
       ...row,
-      score: ftsScore,
+      score: relevance,
       ftsScore,
       retrievalMode: 'fts',
     })
@@ -28,10 +35,10 @@ export function fuseHybridKnowledgeCandidates<Source extends KnowledgeFusionCand
   for (const row of vectorRows) {
     const existing = merged.get(row.id)
     const vectorScore = row.vectorScore ?? row.score ?? 0
-    const ftsScore = existing?.ftsScore ?? 0
+    const ftsRelevance = existing?.score ?? 0
     merged.set(row.id, {
       ...(existing ?? row),
-      score: mode === 'hybrid' ? vectorScore * 0.62 + ftsScore * 0.38 : vectorScore,
+      score: mode === 'hybrid' ? vectorScore * 0.62 + ftsRelevance * 0.38 : vectorScore,
       vectorScore,
       ftsScore: existing?.ftsScore,
       retrievalMode: existing ? 'hybrid' : 'vector',
@@ -54,10 +61,6 @@ export function mergeAgenticKnowledgeCandidates<Source extends KnowledgeFusionCa
     }
   }
   return Array.from(merged.values())
-}
-
-function normalizeFtsScore(score: number): number {
-  return 1 / (1 + Math.abs(score))
 }
 
 function mergeSourceReason(left?: string, right?: string): string | undefined {

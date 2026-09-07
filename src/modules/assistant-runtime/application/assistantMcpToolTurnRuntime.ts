@@ -4,6 +4,10 @@
  */
 
 import type { ProcessTrace, StreamEvent, ToolContentBlock } from '@/core'
+import type {
+  ContextArtifactAuthority,
+  ContextArtifactPointer,
+} from './contextArtifactPolicy'
 
 export type AssistantMcpToolPermission = 'read-only' | 'read-write' | 'destructive'
 
@@ -148,7 +152,17 @@ export interface AssistantMcpToolTurnRuntimeDependencies<
   buildPendingActionProjection?(
     input: AssistantMcpPendingActionProjectionInput,
   ): AssistantMcpPendingActionProjection | undefined
-  truncateBlocks(blocks: ToolContentBlock[]): readonly ToolContentBlock[]
+  truncateBlocks(
+    blocks: ToolContentBlock[],
+    options?: {
+      readonly conversationId: string
+      readonly sourceMessageId: string
+      readonly authority: ContextArtifactAuthority
+    },
+  ): readonly ToolContentBlock[] | {
+    readonly blocks: readonly ToolContentBlock[]
+    readonly artifactPointers?: readonly ContextArtifactPointer[]
+  }
   formatBlocks(blocks: readonly ToolContentBlock[]): string
   buildRevisionSystemPrompt(systemPrompt: string): string
   buildRevisionMessages(input: {
@@ -332,10 +346,44 @@ export function createAssistantMcpToolTurnRuntime<
       return { text: pendingActionProjection.output }
     }
 
-    const copiedBlocks = observation.blocks.map((block) => ({ ...block }))
+    const copiedBlocks = observation.blocks.length
+      ? observation.blocks.map((block) => ({ ...block }))
+      : observation.output?.trim()
+        ? [{ type: 'text' as const, text: observation.output.trim() }]
+        : []
     // Observation text is still an internal tool result. It may be used as
     // synthesis input, but must never be projected directly as chat content.
-    const toolOutput = dependencies.formatBlocks(dependencies.truncateBlocks(copiedBlocks)) || observation.output?.trim() || ''
+    const truncated = dependencies.truncateBlocks(copiedBlocks, {
+      conversationId: input.conversationId,
+      sourceMessageId: input.assistantMessageId,
+      authority: 'permissioned-tool',
+    })
+    let truncatedBlocks: readonly ToolContentBlock[]
+    let artifactPointers: readonly ContextArtifactPointer[]
+    if (isTruncatedToolBlocksResult(truncated)) {
+      truncatedBlocks = truncated.blocks
+      artifactPointers = truncated.artifactPointers ?? []
+    } else {
+      truncatedBlocks = truncated
+      artifactPointers = []
+    }
+    if (artifactPointers.length) {
+      dependencies.recordTrace(dependencies.completeTrace({
+        id: dependencies.traceId('mcp-artifact'),
+        type: 'tool',
+        title: dependencies.translate('chatRunner.trace.mcpToolResultTitle'),
+        content: `Stored ${artifactPointers.length} oversized tool result artifact.`,
+        status: 'done',
+        startedAt: dependencies.now(),
+        metadata: {
+          source: manifest.source,
+          serverId: manifest.serverId,
+          toolName: manifest.name,
+          artifactPointers: artifactPointers.slice(0, 8).map(projectArtifactPointer),
+        },
+      }))
+    }
+    const toolOutput = dependencies.formatBlocks(truncatedBlocks) || ''
     if (!toolOutput.trim()) {
       return { text: dependencies.translate('chatRunner.error.providerToolSynthesisFailed') }
     }
@@ -412,6 +460,32 @@ export function createAssistantMcpToolTurnRuntime<
   }
 
   return { execute }
+}
+
+function projectArtifactPointer(pointer: ContextArtifactPointer): Readonly<Record<string, unknown>> {
+  return {
+    schema: pointer.schema,
+    artifactId: pointer.artifactId,
+    authority: pointer.authority,
+    contentHash: pointer.contentHash,
+    uri: pointer.uri,
+    expiresAt: pointer.expiresAt,
+  }
+}
+
+function isTruncatedToolBlocksResult(
+  value: readonly ToolContentBlock[] | {
+    readonly blocks: readonly ToolContentBlock[]
+    readonly artifactPointers?: readonly ContextArtifactPointer[]
+  },
+): value is {
+  readonly blocks: readonly ToolContentBlock[]
+  readonly artifactPointers?: readonly ContextArtifactPointer[]
+} {
+  return !Array.isArray(value)
+    && Boolean(value)
+    && typeof value === 'object'
+    && Array.isArray((value as { blocks?: unknown }).blocks)
 }
 
 function buildPendingActionProjection<

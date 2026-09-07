@@ -6,6 +6,7 @@ import {
   type SqliteValue,
 } from '@/platform/storage'
 import * as v from 'valibot'
+import { sqliteKnowledgeScope } from './sqliteKnowledgeScope'
 import {
   LOCAL_USER_MEMORY_SCOPE_ID,
   KNOWLEDGE_CHUNK_RECORD_SCHEMA,
@@ -257,6 +258,12 @@ export function createSqliteKnowledgeRepository(
             await ensureKnowledgeSearchTables(transaction, searchMode)
           },
         },
+        {
+          scope: MIGRATION_SCOPE,
+          version: 4,
+          name: 'multilingual-fts-projections',
+          up: rebuildMultilingualSearchIndexes,
+        },
       ])
     })()
     try {
@@ -369,6 +376,9 @@ export function createSqliteKnowledgeRepository(
   async function searchMemories(
     input: KnowledgeMemorySearchInput,
   ): Promise<readonly KnowledgeMemorySearchHit[]> {
+    throwIfAborted(input.signal)
+    const scopes = normalizeMemoryScopes(input.scopes)
+    if (!scopes.length) return []
     const query = normalizeFtsSearchQuery(input.query)
     if (!query || input.limit <= 0 || !input.statuses.length) {
       throwIfAborted(input.signal)
@@ -377,10 +387,7 @@ export function createSqliteKnowledgeRepository(
     const limit = assertPositiveInteger(input.limit, 'memory search limit')
     const statuses = Array.from(new Set(input.statuses.map(normalizeMemoryStatus)))
     const placeholders = statuses.map(() => '?').join(', ')
-    const scopes = normalizeMemoryScopes(input.scopes)
-    const scopeClause = scopes.length
-      ? ` AND (${scopes.map(() => '(memory.scopeKind = ? AND memory.scopeId = ?)').join(' OR ')})`
-      : ''
+    const scopeClause = ` AND (${scopes.map(() => '(memory.scopeKind = ? AND memory.scopeId = ?)').join(' OR ')})`
     const scopeParameters = scopes.flatMap((scope) => [scope.kind, scope.id])
     const searchTerms = tokenizeFtsQuery(query).slice(0, 16)
     const ftsQuery = buildFtsQuery(query)
@@ -398,6 +405,7 @@ export function createSqliteKnowledgeRepository(
            AND (memory.validFrom IS NULL OR memory.validFrom <= ?)
            AND (memory.validUntil IS NULL OR memory.validUntil > ?)
            ${scopeClause}
+         ORDER BY score ASC
          LIMIT ?`,
         [ftsQuery, ...statuses, now, now, ...scopeParameters, candidateLimit],
       )
@@ -450,6 +458,12 @@ export function createSqliteKnowledgeRepository(
           normalizeMemoryWrite(input, clock, ids),
           assertTimestamp(clock.now(), 'clock timestamp'),
         )
+        // Collection resolution changes the old fact in memory. Persist that
+        // transition before the replacement to preserve the active-key index.
+        const superseded = incoming.status === 'active' && incoming.supersedesId
+          ? records.find((record) => record.id === incoming.supersedesId && record.status === 'superseded')
+          : undefined
+        if (superseded) await writeMemoryRecord(transaction, superseded, operation.signal)
         const duplicateIndex = findMemoryDuplicateIndex(records, incoming)
         const next = duplicateIndex < 0
           ? incoming
@@ -546,7 +560,7 @@ export function createSqliteKnowledgeRepository(
         )
         await run(transaction,
           'INSERT INTO knowledge_fts (id, documentId, title, content) VALUES (?, ?, ?, ?)',
-          [chunk.id, chunk.documentId, chunk.title, chunk.content],
+          [chunk.id, chunk.documentId, chunk.title, toFtsIndexText(`${chunk.title}\n${chunk.content}`)],
           operation.signal,
         )
       }
@@ -627,6 +641,7 @@ export function createSqliteKnowledgeRepository(
 
     const value = await database(input.signal)
     const candidateLimit = Math.max(limit * 4, 20)
+    const scope = sqliteKnowledgeScope(input.knowledgeScope)
     const rows = searchMode === 'fts5'
       ? await value.getAll<Record<string, unknown>>(
         `SELECT c.id, c.documentId, c.title, c.content, c.ordinal, c.chunkIndex,
@@ -634,10 +649,10 @@ export function createSqliteKnowledgeRepository(
          FROM knowledge_fts
          JOIN knowledge_chunks AS c ON c.id = knowledge_fts.id
          LEFT JOIN knowledge_documents AS d ON d.id = c.documentId
-         WHERE knowledge_fts MATCH ?
+         WHERE knowledge_fts MATCH ? AND ${scope.sql}
          ORDER BY score
          LIMIT ?`,
-        [ftsQuery, candidateLimit],
+        [ftsQuery, ...scope.parameters, candidateLimit],
       )
       : await value.getAll<Record<string, unknown>>(
         `SELECT c.id, c.documentId, c.title, c.content, c.ordinal, c.chunkIndex,
@@ -645,10 +660,10 @@ export function createSqliteKnowledgeRepository(
          FROM knowledge_fts
          JOIN knowledge_chunks AS c ON c.id = knowledge_fts.id
          LEFT JOIN knowledge_documents AS d ON d.id = c.documentId
-         WHERE (${searchTerms.map(() => '(LOWER(knowledge_fts.title) LIKE ? OR LOWER(knowledge_fts.content) LIKE ?)').join(' OR ')})
+         WHERE (${searchTerms.map(() => '(LOWER(knowledge_fts.title) LIKE ? OR LOWER(knowledge_fts.content) LIKE ?)').join(' OR ')}) AND ${scope.sql}
          ORDER BY c.ordinal ASC
          LIMIT ?`,
-        [...searchTerms.flatMap((term) => [likeSearchPattern(term), likeSearchPattern(term)]), candidateLimit],
+        [...searchTerms.flatMap((term) => [likeSearchPattern(term), likeSearchPattern(term)]), ...scope.parameters, candidateLimit],
       )
     throwIfAborted(input.signal)
     return rows.map(normalizeFtsSearchRow)
@@ -974,7 +989,7 @@ async function writeMemoryRecord(
   await run(
     database,
     'INSERT INTO memory_fts (id, content) VALUES (?, ?)',
-    [record.id, memorySearchText(record)],
+    [record.id, toFtsIndexText(memorySearchText(record))],
     signal,
   )
 }
@@ -1050,7 +1065,7 @@ async function writeChunkRecord(
   await run(
     database,
     'INSERT INTO knowledge_fts (id, documentId, title, content) VALUES (?, ?, ?, ?)',
-    [chunk.id, chunk.documentId, chunk.title, chunk.content],
+    [chunk.id, chunk.documentId, chunk.title, toFtsIndexText(`${chunk.title}\n${chunk.content}`)],
     signal,
   )
 }
@@ -1097,9 +1112,17 @@ function normalizeMemoryScopeInput(
     : { kind: 'user', id: LOCAL_USER_MEMORY_SCOPE_ID }
 }
 
-function normalizeMemoryScopes(scopes: readonly KnowledgeMemoryScope[] | undefined): KnowledgeMemoryScope[] {
+function normalizeMemoryScopes(scopes: readonly KnowledgeMemoryScope[]): KnowledgeMemoryScope[] {
+  if (!Array.isArray(scopes)) {
+    throw new KnowledgeRepositoryDataError('Memory retrieval requires explicit scopes.')
+  }
   const byIdentity = new Map<string, KnowledgeMemoryScope>()
-  for (const scope of scopes ?? []) {
+  for (const scope of scopes) {
+    // Legacy row decoding may supply a default scope; a retrieval request must
+    // never acquire that authority from missing or malformed input.
+    if (!scope || (scope.kind !== 'user' && scope.kind !== 'conversation') || typeof scope.id !== 'string') {
+      throw new KnowledgeRepositoryDataError('A memory retrieval scope is invalid.')
+    }
     const normalized = normalizeMemoryScope(scope.kind, scope.id, undefined)
     byIdentity.set(`${normalized.kind}:${normalized.id}`, normalized)
   }
@@ -1297,6 +1320,7 @@ function resolveMemoryCollectionWrite(
     ? memories.findIndex((memory) =>
       memory.status === 'active' &&
       memory.id !== incoming.id &&
+      memory.subject !== undefined && memory.key !== undefined &&
       memory.scope.kind === incoming.scope.kind &&
       memory.scope.id === incoming.scope.id &&
       normalizeMemoryLogicalKey(memory.subject ?? '', 'memory subject') === normalizeMemoryLogicalKey(incoming.subject!, 'memory subject') &&
@@ -1362,7 +1386,9 @@ function memoryRankScore(memory: KnowledgeMemorySearchHit, now: number): number 
   const recencyBoost = Math.exp(-ageDays / 30)
   const confidence = memory.confidence ?? defaultMemoryConfidence(memory.sourceKind)
   const confidencePenalty = 1 + (1 - confidence) * 0.3
-  return (Math.abs(memory.score) * confidencePenalty) / Math.max(recencyBoost, 0.05)
+  // FTS5 BM25 is negative: smaller values are stronger matches. Preserve that
+  // ordering while reducing the weight of older or less-confident memories.
+  return (memory.score * Math.max(recencyBoost, 0.05)) / confidencePenalty
 }
 
 function findMemoryDuplicateIndex(
@@ -1370,10 +1396,17 @@ function findMemoryDuplicateIndex(
   incoming: KnowledgeMemoryRecord,
 ): number {
   const byId = memories.findIndex((memory) => memory.id === incoming.id)
-  if (byId >= 0) return byId
+  if (byId >= 0) {
+    const existing = memories[byId]
+    if (existing.scope.kind !== incoming.scope.kind || existing.scope.id !== incoming.scope.id) {
+      throw new KnowledgeRepositoryDataError('A memory import ID conflicts with a different scope.')
+    }
+    return byId
+  }
   let match = -1
   for (let index = 0; index < memories.length; index += 1) {
     const existing = memories[index]
+    if (existing.scope.kind !== incoming.scope.kind || existing.scope.id !== incoming.scope.id) continue
     if (!sameMemoryLogicalValue(existing, incoming)) {
       if (existing.subject !== undefined || incoming.subject !== undefined || existing.key !== undefined || incoming.key !== undefined) continue
       if (existing.content !== incoming.content) continue
@@ -1826,7 +1859,7 @@ function tokenizeFtsQuery(query: string): string[] {
       if (match.length >= 2) tokens.add(match)
       continue
     }
-    if (match.length <= 4) {
+    if (match.length <= 2) {
       tokens.add(match)
       continue
     }
@@ -1835,6 +1868,45 @@ function tokenizeFtsQuery(query: string): string[] {
     }
   }
   return [...tokens].filter((token) => token.length >= 2)
+}
+
+// unicode61 treats uninterrupted CJK as a whole token. Keep that token, but
+// add matching bigrams to the disposable FTS projection; canonical text stays exact.
+function toFtsIndexText(text: string): string {
+  return text.replace(/[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]{3,}/g, run => {
+    const pairs: string[] = []
+    for (let i = 0; i < run.length - 1; i += 1) pairs.push(run.slice(i, i + 2))
+    return `${run} ${pairs.join(' ')}`
+  })
+}
+
+async function rebuildMultilingualSearchIndexes(database: SqliteExecutor): Promise<void> {
+  // Bounded batches inside the migration transaction: failure rolls back both
+  // projections and the version marker, without changing a user's source records.
+  await database.exec('DELETE FROM memory_fts; DELETE FROM knowledge_fts;')
+  let cursor = ''
+  while (true) {
+    const rows = await database.getAll<{ id: string; content: string }>(
+      `SELECT id, content || char(10) || coalesce(subject, '') || char(10) ||
+         coalesce(factKey, '') || char(10) || coalesce(factValue, '') AS content
+       FROM memories WHERE id > ? ORDER BY id LIMIT 128`, [cursor],
+    )
+    if (!rows.length) break
+    for (const row of rows) await database.run('INSERT INTO memory_fts (id, content) VALUES (?, ?)', [row.id, toFtsIndexText(row.content)])
+    cursor = rows[rows.length - 1].id
+  }
+  cursor = ''
+  while (true) {
+    const rows = await database.getAll<{ id: string; documentId: string; title: string; content: string }>(
+      'SELECT id, documentId, title, content FROM knowledge_chunks WHERE id > ? ORDER BY id LIMIT 128', [cursor],
+    )
+    if (!rows.length) break
+    for (const row of rows) await database.run(
+      'INSERT INTO knowledge_fts (id, documentId, title, content) VALUES (?, ?, ?, ?)',
+      [row.id, row.documentId, row.title, toFtsIndexText(`${row.title}\n${row.content}`)],
+    )
+    cursor = rows[rows.length - 1].id
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

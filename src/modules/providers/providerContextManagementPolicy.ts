@@ -244,7 +244,8 @@ export function buildAnthropicNativeContextManagement(input: {
   thresholdTokens?: number
   instructions?: string
 }): Record<string, unknown> {
-  const threshold = Math.max(1_000, Math.floor(input.thresholdTokens ?? 150_000))
+  // Anthropic's compact_20260112 input-token trigger documents a 50k floor.
+  const threshold = Math.max(50_000, Math.floor(input.thresholdTokens ?? 150_000))
   const edit: Record<string, unknown> = {
     type: ANTHROPIC_COMPACTION_EDIT_TYPE,
     trigger: { type: 'input_tokens', value: threshold },

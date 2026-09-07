@@ -1,7 +1,9 @@
 export interface KnowledgeRerankableSource {
   title: string
   content: string
+  /** Already-normalized, higher-is-better retrieval relevance (vector/fused). */
   score?: number
+  /** Raw SQLite FTS5 BM25: lower/more negative is better. */
   ftsScore?: number
   chunkIndex?: number
   createdAt?: number
@@ -24,18 +26,24 @@ export function rerankKnowledgeSources<Source extends KnowledgeRerankableSource>
 ): Array<Source & KnowledgeRerankedSource> {
   const queryTokens = tokenizeForRerank(query)
   const now = Date.now()
-  const bm25Values = sources.map((source) => Math.abs(source.ftsScore ?? source.score ?? 0))
-  const maxBm25 = Math.max(1, ...bm25Values)
+  // BM25 magnitudes are often far below one. A floor of one destroys their
+  // discrimination; missing matches must contribute zero, not perfect relevance.
+  const maxBm25 = sources.reduce((max, source) =>
+    Number.isFinite(source.ftsScore) ? Math.max(max, -(source.ftsScore ?? 0)) : max, 0)
   return sources
     .map((source) => {
-      const bm25Normalized = 1 - Math.min(Math.abs(source.ftsScore ?? source.score ?? 0) / maxBm25, 1)
+      const relevance = Number.isFinite(source.score) && source.score !== undefined && source.score >= 0
+        ? Math.min(source.score, 1)
+        : maxBm25 > 0 && Number.isFinite(source.ftsScore)
+          ? Math.max(0, -(source.ftsScore ?? 0)) / maxBm25
+          : 0
       const overlap = jaccard(queryTokens, tokenizeForRerank(`${source.title} ${source.content}`))
       const position = 1 / (1 + Math.max(0, source.chunkIndex ?? 0))
       const ageDays = Math.max(0, (now - inferCreatedAt(source)) / 86400000)
       const recency = Math.exp(-ageDays / 30)
       const length = lengthFitness(source.content.length)
       const score =
-        0.4 * bm25Normalized +
+        0.4 * relevance +
         0.25 * overlap +
         0.15 * position +
         0.1 * recency +

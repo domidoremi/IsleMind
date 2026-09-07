@@ -35,6 +35,13 @@ export function createInMemoryRunStore(): InMemoryRunStore {
       return run ? cloneRun(run) : undefined
     },
 
+    async getLatestForResponseMessage(conversationId, responseMessageId) {
+      const run = Array.from(runs.values())
+        .filter((candidate) => candidate.conversationId === conversationId && candidate.responseMessageId === responseMessageId)
+        .sort((left, right) => right.createdAt - left.createdAt || (left.id < right.id ? 1 : left.id > right.id ? -1 : 0))[0]
+      return run ? cloneRun(run) : undefined
+    },
+
     async listRecoverable() {
       return Array.from(runs.values())
         .filter((run) => run.status === 'queued' || run.status === 'running' || run.status === 'awaiting-confirmation')

@@ -16,6 +16,7 @@ export interface KnowledgeHybridSearchRequest<Provider = unknown> {
   limit: number
   embeddingMode: KnowledgeEmbeddingMode
   signal?: AbortSignal
+  knowledgeScope?: KnowledgeScope
   localEmbeddingModelId?: string
   localEmbeddingModelSource?: 'bundled' | 'downloaded' | 'none'
   provider?: Provider
@@ -82,7 +83,7 @@ export interface KnowledgeRetrievalUseCaseDependencies<
   Plan = unknown,
   Technique = unknown,
 > {
-  searchFts(query: string, limit: number, options?: { signal?: AbortSignal }): Promise<readonly Source[]>
+  searchFts(query: string, limit: number, options?: { signal?: AbortSignal; knowledgeScope?: KnowledgeScope }): Promise<readonly Source[]>
   indexedSearch: KnowledgeIndexedSearchPort<Source, Provider, Plan, Technique>
   report?(event: KnowledgeRetrievalDiagnosticEvent): void | Promise<void>
 }
@@ -119,13 +120,14 @@ export function createKnowledgeRetrievalUseCase<
               query: input.query,
               limit: scopedLimit,
               embeddingMode: input.embeddingMode,
+              ...(input.knowledgeScope === undefined ? {} : { knowledgeScope: input.knowledgeScope }),
               ...(input.localEmbeddingModelId === undefined ? {} : { localEmbeddingModelId: input.localEmbeddingModelId }),
               ...(input.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: input.localEmbeddingModelSource }),
               ...(input.provider ? { provider: input.provider } : {}),
               ...(input.signal === undefined ? {} : { signal: input.signal }),
               ...(input.onEmbeddingResolved === undefined ? {} : { onEmbeddingResolved: input.onEmbeddingResolved }),
             })
-          : await dependencies.searchFts(input.query, scopedLimit, { signal: input.signal })
+          : await dependencies.searchFts(input.query, scopedLimit, { signal: input.signal, knowledgeScope: input.knowledgeScope })
         throwIfAborted(input.signal)
         return filterKnowledgeSources(results, input.knowledgeScope).slice(0, input.limit)
       } catch (error) {
@@ -138,7 +140,7 @@ export function createKnowledgeRetrievalUseCase<
           error,
         })
         try {
-          const fallback = await dependencies.searchFts(input.query, scopedLimit, { signal: input.signal })
+          const fallback = await dependencies.searchFts(input.query, scopedLimit, { signal: input.signal, knowledgeScope: input.knowledgeScope })
           throwIfAborted(input.signal)
           await reportBestEffort(dependencies.report, {
             status: 'done',

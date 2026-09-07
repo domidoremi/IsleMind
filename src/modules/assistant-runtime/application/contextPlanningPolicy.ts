@@ -231,6 +231,8 @@ export interface ContextAssemblyManifestFragment {
   originalEstimatedTokens: number;
   budgetShare: number;
   sourceCount?: number;
+  includedSourceIds?: string[];
+  excludedSourceIds?: string[];
   reason?: ContextFragmentExclusionReason | "included" | "capped";
   cacheReuseHint: ContextFragmentReuseHint;
   traceSource?: string;
@@ -359,6 +361,8 @@ export interface ContextPlannerInput {
   toolOutputCount?: number;
   previousResponseId?: string;
   previousFragments?: readonly PreviousContextFragmentIdentity[];
+  /** Session-level circuit breaker for automatic compaction. */
+  autoCompactAllowed?: boolean;
 }
 
 interface PlannedContextSource extends ContextPlannerSource {
@@ -371,6 +375,8 @@ interface PlannedContextSource extends ContextPlannerSource {
   included: boolean;
   capped: boolean;
   exclusionReason?: ContextFragmentExclusionReason;
+  includedSourceIds?: string[];
+  excludedSourceIds?: string[];
 }
 
 export function buildContextPlannerPrompt(
@@ -429,6 +435,9 @@ export function createContextPlanningPolicy(
       ...(input.usesOpenAIResponses === undefined
         ? {}
         : { usesOpenAIResponses: input.usesOpenAIResponses }),
+      ...(input.autoCompactAllowed === undefined
+        ? {}
+        : { autoCompactAllowed: input.autoCompactAllowed }),
     });
     const localFallback = pack(plannerInput, true);
     const blocksForMissingRequiredRemote =
@@ -668,6 +677,8 @@ export function createContextPlanningPolicy(
                 : undefined),
             capped: source.capped,
             originalEstimatedTokens: source.originalEstimatedTokens,
+            includedSourceIds: source.includedSourceIds,
+            excludedSourceIds: source.excludedSourceIds,
             ...source.trace,
           },
         }),
@@ -1314,6 +1325,8 @@ export function createContextPlanningPolicy(
         requestBudgetTokens,
       ),
       sourceCount: contextManifestSourceCount(fragment),
+      includedSourceIds: contextManifestSourceIds(fragment, "includedSourceIds"),
+      excludedSourceIds: contextManifestSourceIds(fragment, "excludedSourceIds"),
       reason:
         fragment.exclusionReason ?? (fragment.capped ? "capped" : "included"),
       cacheReuseHint: fragment.cache.reuseHint,
@@ -1475,6 +1488,19 @@ export function createContextPlanningPolicy(
       : undefined;
   }
 
+  function contextManifestSourceIds(
+    fragment: ContextFragment,
+    key: "includedSourceIds" | "excludedSourceIds",
+  ): string[] | undefined {
+    const sourceIds = fragment.trace[key];
+    if (!Array.isArray(sourceIds)) return undefined;
+    const normalized = sourceIds
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      .map((item) => item.trim().slice(0, 512))
+      .slice(0, 256);
+    return normalized.length ? normalized : undefined;
+  }
+
   function contextManifestTraceSource(
     fragment: ContextFragment,
   ): string | undefined {
@@ -1533,6 +1559,7 @@ export function createContextPlanningPolicy(
         : [];
     return sources.map((source) => {
       const originalText = source.text?.trim() ?? "";
+      const sourceIds = contextPlannerSourceIds(source);
       const sourceHash = stableContextSourceHash(
         `${source.type}:${originalText}`,
       );
@@ -1551,6 +1578,9 @@ export function createContextPlanningPolicy(
           included: false,
           capped: false,
           exclusionReason: "unbounded_fragment_blocked",
+          sourceCount: sourceIds.length ? 0 : source.sourceCount,
+          includedSourceIds: [],
+          excludedSourceIds: sourceIds,
         };
       }
       if (!originalText) {
@@ -1565,15 +1595,23 @@ export function createContextPlanningPolicy(
           included: false,
           capped: false,
           exclusionReason: "empty",
+          sourceCount: sourceIds.length ? 0 : source.sourceCount,
+          includedSourceIds: [],
+          excludedSourceIds: sourceIds,
         };
       }
-      const cappedText =
-        originalEstimatedTokens > tokenCap
-          ? clampContextSourceText(originalText, tokenCap)
-          : originalText;
+      const structuredCap = originalEstimatedTokens > tokenCap && sourceIds.length
+        ? clampRankedContextSourceText(originalText, tokenCap, sourceIds)
+        : undefined;
+      const cappedText = originalEstimatedTokens > tokenCap
+        ? structuredCap?.text ?? clampContextSourceText(originalText, tokenCap)
+        : originalText;
       const estimatedTokens = dependencies.estimateTextTokens(cappedText);
+      const includedSourceIds = structuredCap?.includedSourceIds ?? sourceIds;
+      const excludedSourceIds = structuredCap?.excludedSourceIds ?? [];
       return {
         ...source,
+        sourceCount: sourceIds.length ? includedSourceIds.length : source.sourceCount,
         text: cappedText,
         originalText,
         sourceHash,
@@ -1584,8 +1622,64 @@ export function createContextPlanningPolicy(
         capped: cappedText !== originalText,
         exclusionReason:
           cappedText !== originalText ? "token_cap_exceeded" : undefined,
+        includedSourceIds,
+        excludedSourceIds,
       };
     });
+  }
+
+  function contextPlannerSourceIds(source: ContextPlannerSource): string[] {
+    const runtime = source.trace?.contextRuntime;
+    if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) return [];
+    const evidence = (runtime as { evidence?: unknown }).evidence;
+    if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return [];
+    const sourceIds = (evidence as { sourceIds?: unknown }).sourceIds;
+    return Array.isArray(sourceIds)
+      ? sourceIds
+        .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+        .map((item) => item.trim().slice(0, 512))
+        .slice(0, 256)
+      : [];
+  }
+
+  function clampRankedContextSourceText(
+    text: string,
+    tokenCap: number,
+    sourceIds: string[],
+  ): { text: string; includedSourceIds: string[]; excludedSourceIds: string[] } | undefined {
+    const matches = [...text.matchAll(/^\[(?:W)?\d+\]\s/gm)];
+    if (!matches.length) return undefined;
+    const prefix = text.slice(0, matches[0].index ?? 0).trim();
+    const blocks = matches.map((match, index) => {
+      const start = match.index ?? 0;
+      const end = matches[index + 1]?.index ?? text.length;
+      return text.slice(start, end).trim();
+    });
+    const includedSourceIds: string[] = [];
+    const selectedBlocks: string[] = [];
+    for (let index = 0; index < Math.min(blocks.length, sourceIds.length); index += 1) {
+      const candidate = [prefix, ...selectedBlocks, blocks[index]].filter(Boolean).join("\n\n");
+      if (dependencies.estimateTextTokens(candidate) > tokenCap) {
+        break;
+      }
+      selectedBlocks.push(blocks[index]);
+      includedSourceIds.push(sourceIds[index]);
+    }
+    // Ranked evidence is atomic. If even the highest-ranked block does not
+    // fit, exclude the fragment rather than manufacturing a head/tail splice
+    // that can separate a claim from its citation or source id.
+    if (!selectedBlocks.length) {
+      return {
+        text: "",
+        includedSourceIds,
+        excludedSourceIds: sourceIds,
+      };
+    }
+    return {
+      text: [prefix, ...selectedBlocks].filter(Boolean).join("\n\n"),
+      includedSourceIds,
+      excludedSourceIds: sourceIds.slice(includedSourceIds.length),
+    };
   }
 
   function buildPromptFromPlannedSources(
@@ -1666,12 +1760,12 @@ export function createContextPlanningPolicy(
   }
 
   function stableContextSourceHash(value: string): string {
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < value.length; index += 1) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return `fnv1a32-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+    // Fragment identities are persisted in receipts and used to decide
+    // whether a provider prefix can be reused.  A 32-bit FNV digest made
+    // unrelated sources collide surprisingly easily once a conversation had
+    // many tool/RAG fragments.  Keep the planner synchronous and platform
+    // neutral, but use the shared versioned SHA-256 implementation instead.
+    return stableContentHash(value, "context-fragment");
   }
 
   return {
@@ -1683,3 +1777,4 @@ import type {
   RemoteCompactDecision,
   RemoteCompactDecisionInput,
 } from "@/modules/providers";
+import { stableContentHash } from "@/core";

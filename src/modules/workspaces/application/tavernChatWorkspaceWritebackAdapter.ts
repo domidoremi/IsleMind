@@ -229,6 +229,7 @@ function applyChangeSet(
 ): TavernChatWorkspaceWritebackMutationResult<TavernSnapshot> {
   assertSelectedWorkspaceState(snapshot, changeSet)
   const proposal = buildTavernTurnWritebackProposal(snapshot, {
+    conversationId: changeSet.conversationId,
     userInput: changeSet.latestUserInput,
     assistantOutput: changeSet.finalOutput,
     assistantMessageId: changeSet.assistantMessageId,

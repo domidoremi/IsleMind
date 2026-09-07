@@ -3,6 +3,10 @@ import {
   type AssistantContextPlanReceipt,
   type AssistantContextPlanReceiptSource,
 } from '../contracts'
+import {
+  CONTEXT_ARTIFACT_POINTER_SCHEMA,
+  type ContextArtifactAuthority,
+} from './contextArtifactPolicy'
 
 /**
  * Builds the small, provider-neutral diagnostic record persisted beside a
@@ -13,6 +17,12 @@ import {
 export function buildAssistantContextPlanReceipt(input: {
   readonly providerId: string
   readonly model: string
+  readonly conversationId?: string
+  readonly sourceMessageIds?: readonly string[]
+  readonly continuationId?: string
+  readonly artifactPointers?: readonly unknown[]
+  readonly compressionEpoch?: number
+  readonly capabilityPlan?: unknown
   readonly plan?: unknown
   readonly activePrompt?: unknown
   readonly failureCodes?: readonly string[]
@@ -23,6 +33,8 @@ export function buildAssistantContextPlanReceipt(input: {
   const windowState = asRecord(plan?.windowState)
   const activePrompt = asRecord(input.activePrompt)
   const compression = asRecord(activePrompt?.compressionMetadata)
+  const cacheDiagnostics = Array.isArray(plan?.cacheDiagnostics) ? plan.cacheDiagnostics : []
+  const capabilityPlan = readCapabilityPlan(input.capabilityPlan)
 
   const sourceManifest = readSources(manifest?.fragments ?? plan?.fragments)
   const failureCodes = uniqueStrings([
@@ -80,7 +92,128 @@ export function buildAssistantContextPlanReceipt(input: {
     },
     sourceManifest,
     failureCodes,
+    ...(stringValue(input.conversationId)
+      ? { conversationId: bounded(stringValue(input.conversationId)!, 512) }
+      : {}),
+    ...(input.sourceMessageIds?.length
+      ? { sourceMessageIds: uniqueBoundedStrings(input.sourceMessageIds, 256, 512) }
+      : {}),
+    ...(sourceManifest.some((source) => (
+      source.decision === 'excluded' || Boolean(source.excludedSourceIds?.length)
+    ))
+      ? {
+          excludedSourceIds: uniqueBoundedStrings(
+            sourceManifest.flatMap((source) => [
+              ...(source.decision === 'excluded' && !source.excludedSourceIds?.length
+                ? [source.sourceId]
+                : []),
+              ...(source.excludedSourceIds ?? []),
+            ]),
+            256,
+            512,
+          ),
+        }
+      : {}),
+    ...(input.artifactPointers?.length
+      ? { artifactPointers: readArtifactPointers(input.artifactPointers) }
+      : {}),
+    ...(input.compressionEpoch !== undefined
+      ? { compressionEpoch: integer(input.compressionEpoch) }
+      : {}),
+    ...(stringValue(input.continuationId)
+      ? { continuationId: bounded(stringValue(input.continuationId)!, 512) }
+      : {}),
+    ...(stringValue(manifest?.id)
+      ? { prefixHash: bounded(stringValue(manifest?.id)!, 512) }
+      : {}),
+    ...(cacheDiagnostics.length || stringValue(manifest?.id)
+      ? {
+          cacheDiagnostics: {
+            ...(stringValue(manifest?.id) ? { prefixHash: bounded(stringValue(manifest?.id)!, 512) } : {}),
+            changedSourceCount: cacheDiagnostics.filter((item) => asRecord(item)?.kind === 'source_hash_changed').length,
+            diagnosticCount: Math.min(1_000_000, cacheDiagnostics.length),
+          },
+        }
+      : {}),
+    ...(capabilityPlan ? { capabilityPlan } : {}),
   }
+}
+
+function readCapabilityPlan(
+  value: unknown,
+): AssistantContextPlanReceipt['capabilityPlan'] {
+  const plan = asRecord(value)
+  if (!plan || plan.createsConversation !== false || plan.exposesMode !== false) return undefined
+  const schema = stringValue(plan.schema)
+  if (!schema) return undefined
+  return {
+    schema: bounded(schema, 160),
+    createsConversation: false,
+    exposesMode: false,
+    lanes: uniqueBoundedStrings(readStringArray(plan.lanes), 8, 80),
+    retrieval: plan.retrieval === true,
+    web: plan.web === true,
+    readOnlyTools: plan.readOnlyTools === true,
+    workflow: plan.workflow === true,
+    localState: plan.localState === true,
+    requiresConfirmation: plan.requiresConfirmation === true,
+    reasons: uniqueBoundedStrings(readStringArray(plan.reasons), 16, 160),
+  }
+}
+
+function readArtifactPointers(value: readonly unknown[]): AssistantContextPlanReceipt['artifactPointers'] {
+  const pointers: NonNullable<AssistantContextPlanReceipt['artifactPointers']>[number][] = []
+  const seen = new Set<string>()
+  for (const candidate of value) {
+    const pointer = asRecord(candidate)
+    if (!pointer) continue
+    const schema = stringValue(pointer.schema)
+    const artifactId = stringValue(pointer.artifactId)
+    const authority = stringValue(pointer.authority)
+    const contentHash = stringValue(pointer.contentHash)
+    const uri = stringValue(pointer.uri)
+    const expiresAt = positiveInteger(pointer.expiresAt)
+    if (
+      schema !== CONTEXT_ARTIFACT_POINTER_SCHEMA
+      || !artifactId
+      || !isContextArtifactAuthority(authority)
+      || !contentHash
+      || !uri
+      || expiresAt === undefined
+      || seen.has(artifactId)
+    ) continue
+    seen.add(artifactId)
+    pointers.push({
+      schema: bounded(schema, 160),
+      artifactId: bounded(artifactId, 512),
+      authority: bounded(authority, 160),
+      contentHash: bounded(contentHash, 512),
+      uri: bounded(uri, 1_024),
+      expiresAt,
+    })
+    if (pointers.length >= 32) break
+  }
+  return pointers
+}
+
+function isContextArtifactAuthority(value: string | undefined): value is ContextArtifactAuthority {
+  return value === 'user-private'
+    || value === 'external-public'
+    || value === 'permissioned-tool'
+    || value === 'conversation'
+    || value === 'local-state'
+}
+
+function uniqueBoundedStrings(
+  values: readonly string[],
+  limit: number,
+  maxLength: number,
+): readonly string[] {
+  return Array.from(new Set(values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => bounded(value, maxLength))))
+    .slice(0, limit)
 }
 
 function readSources(value: unknown): readonly AssistantContextPlanReceiptSource[] {
@@ -108,6 +241,12 @@ function readSources(value: unknown): readonly AssistantContextPlanReceiptSource
       ...(stringValue(item.reliability) ? { reliability: bounded(stringValue(item.reliability)!, 160) } : {}),
       ...(item.budgetShare !== undefined ? { budgetShare: finiteNumber(item.budgetShare) } : {}),
       ...(item.sourceCount !== undefined ? { sourceCount: integer(item.sourceCount) } : {}),
+      ...(readStringArray(item.includedSourceIds).length
+        ? { includedSourceIds: uniqueBoundedStrings(readStringArray(item.includedSourceIds), 256, 512) }
+        : {}),
+      ...(readStringArray(item.excludedSourceIds).length
+        ? { excludedSourceIds: uniqueBoundedStrings(readStringArray(item.excludedSourceIds), 256, 512) }
+        : {}),
       ...(stringValue(item.reason) ? { reason: bounded(stringValue(item.reason)!, 160) } : {}),
     })
   }
@@ -166,6 +305,12 @@ function integer(...values: unknown[]): number {
     }
   }
   return 0
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : undefined
 }
 
 function finiteNumber(value: unknown, fallback = 0): number {

@@ -8,6 +8,7 @@ import {
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { SkillDefinition, SkillSnapshot } from '@/types/skillContracts'
+import { parseAgentSkillMarkdown } from './agentSkillMarkdown'
 
 export interface SkillImportResult {
   ok: boolean
@@ -196,7 +197,18 @@ export function createConversationSkillPolicy(
   }
 
   function importSkill(raw: string): SkillImportResult {
+    const markdown = /^\uFEFF?---[ \t]*\r?\n/.test(raw)
     try {
+      if (markdown) {
+        const instructions = parseAgentSkillMarkdown(raw)
+        const skill = createBaseSkill({ ...instructions, tags: ['format:agentskills'] })
+        return {
+          ok: true,
+          skill,
+          manifest: buildPortableSkillManifest(skill),
+          message: dependencies.translate('skills.importedInstructionsOnly', { name: skill.name }),
+        }
+      }
       const parsed = JSON.parse(raw)
       const envelope = parsePortableSkillEnvelope(parsed)
       const skill = normalizeSkill(envelope?.skill ?? parsed)
@@ -216,7 +228,7 @@ export function createConversationSkillPolicy(
     } catch {
       return {
         ok: false,
-        message: dependencies.translate('skills.importJsonFailed'),
+        message: dependencies.translate(markdown ? 'skills.importInvalidFormat' : 'skills.importJsonFailed'),
       }
     }
   }
@@ -235,7 +247,9 @@ export function createConversationSkillPolicy(
     let expectedReplyFormat: string | undefined
 
     for (const skill of ordered) {
-      const renderedPrompt = renderSkillTemplate(skill.systemPrompt, variables).trim()
+      // Standard SKILL.md can contain code/templates; do not rewrite its {{...}}.
+      const renderedPrompt = (skill.tags.includes('format:agentskills')
+        ? skill.systemPrompt : renderSkillTemplate(skill.systemPrompt, variables)).trim()
       if (renderedPrompt) {
         if (skill.stackPolicy === 'override') {
           promptParts.splice(0, promptParts.length, renderedPrompt)
@@ -339,6 +353,7 @@ export function createConversationSkillPolicy(
   }
 
   function extractSkillVariables(skill: SkillDefinition): string[] {
+    if (skill.tags.includes('format:agentskills')) return []
     const explicit = skill.variables?.map((item) => item.name) ?? []
     const templateNames = [...`${skill.systemPrompt}\n${skill.firstUserMessage ?? ''}\n${skill.expectedReplyFormat ?? ''}`.matchAll(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g)]
       .map((match) => match[1])

@@ -1,4 +1,10 @@
 export const KNOWLEDGE_LOCAL_VECTOR_DIMENSION = 128
+export const KNOWLEDGE_MAX_VECTOR_DIMENSION = 8192
+
+export function isKnowledgeEmbedding(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= KNOWLEDGE_MAX_VECTOR_DIMENSION
+    && value.every((item) => typeof item === 'number' && Number.isFinite(item))
+}
 
 export function createLocalKnowledgeEmbedding(text: string): number[] {
   const vector = Array.from({ length: KNOWLEDGE_LOCAL_VECTOR_DIMENSION }, () => 0)
@@ -26,19 +32,29 @@ export function normalizeKnowledgeVector(vector: number[]): number[] {
 }
 
 export function knowledgeCosineSimilarity(left: number[], right: number[]): number {
-  const length = Math.min(left.length, right.length)
+  if (!isKnowledgeEmbedding(left) || !isKnowledgeEmbedding(right) || left.length !== right.length) return 0
+  // Providers need not return unit vectors. Scale first to avoid overflow.
+  const leftScale = Math.max(...left.map(Math.abs))
+  const rightScale = Math.max(...right.map(Math.abs))
+  if (!leftScale || !rightScale) return 0
   let sum = 0
-  for (let index = 0; index < length; index += 1) {
-    sum += left[index] * right[index]
+  let leftNorm = 0
+  let rightNorm = 0
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index] / leftScale
+    const b = right[index] / rightScale
+    sum += a * b
+    leftNorm += a * a
+    rightNorm += b * b
   }
-  return Math.max(0, Math.min(1, sum))
+  return Math.max(0, Math.min(1, sum / Math.sqrt(leftNorm * rightNorm)))
 }
 
 export function parseKnowledgeEmbedding(raw?: string): number[] | null {
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) && parsed.every((value) => typeof value === 'number') ? parsed : null
+    return isKnowledgeEmbedding(parsed) ? parsed : null
   } catch {
     return null
   }

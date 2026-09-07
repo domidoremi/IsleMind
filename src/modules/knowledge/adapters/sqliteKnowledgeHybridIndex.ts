@@ -21,7 +21,6 @@ import type {
 import type {
   KnowledgeQueryEmbeddingUseCase,
   KnowledgeQueryEmbeddingMode,
-  KnowledgeStoredEmbeddingDescriptor,
 } from '../application/knowledgeQueryEmbedding'
 import {
   KNOWLEDGE_LOCAL_HASH_MODEL_ID,
@@ -29,8 +28,8 @@ import {
 } from '../domain/embeddingPersistencePolicy'
 import {
   createLocalKnowledgeEmbedding,
-  hashKnowledgeText,
 } from '../domain/localVectorIndex'
+import { sqliteKnowledgeScope } from './sqliteKnowledgeScope'
 import { fuseHybridKnowledgeCandidates } from '../domain/retrievalCandidateFusion'
 import { rerankKnowledgeSources } from '../domain/retrievalReranking'
 import { resolveKnowledgeVectorCandidate } from '../domain/vectorRetrievalCandidate'
@@ -47,8 +46,9 @@ import {
 const MIGRATION_SCOPE = 'knowledge-hybrid-index'
 const VECTOR_MIGRATION_VERSION = 1
 const PROVIDER_JOB_MIGRATION_VERSION = 2
+const SOURCE_LIFECYCLE_MIGRATION_VERSION = 3
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000
-const DEFAULT_MAX_VECTOR_CANDIDATES = 420
+const VECTOR_SCAN_PAGE_SIZE = 128
 const MAX_QUERY_LENGTH = 16_384
 const MAX_EMBEDDING_DIMENSION = 8_192
 
@@ -142,7 +142,7 @@ interface ValidatedEmbeddingChunk {
 }
 
 interface PendingEmbeddingWrite {
-  chunkId: string
+  chunk: ValidatedEmbeddingChunk
   embedding: number[]
   source: 'local' | 'onnx'
   model: string
@@ -209,6 +209,7 @@ export interface KnowledgeEmbeddingSynchronizationResult {
   chunkCount: number
   localCount: number
   onnxCount: number
+  discarded: number
 }
 
 export interface KnowledgeProviderEmbeddingBatchResult {
@@ -217,6 +218,8 @@ export interface KnowledgeProviderEmbeddingBatchResult {
   succeeded: number
   failed: number
   cancelled: number
+  /** Source removed/changed or a newer admitted attempt owns the result. */
+  discarded: number
   skippedReason?: 'provider_not_configured' | 'provider_unsupported' | 'provider_adapter_unavailable'
 }
 
@@ -238,7 +241,6 @@ export interface SqliteKnowledgeHybridIndexDependencies<Provider> {
   providerCacheKey?(provider: Provider): string | undefined
   clock?: Clock
   cacheTtlMs?: number
-  maxVectorCandidates?: number
 }
 
 export interface KnowledgeHybridIndex<Provider> extends KnowledgeDocumentIndexPort {
@@ -290,10 +292,6 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
   const cacheTtlMs = normalizeNonNegativeInteger(
     dependencies.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS,
     'cache TTL',
-  )
-  const maxVectorCandidates = normalizePositiveInteger(
-    dependencies.maxVectorCandidates ?? DEFAULT_MAX_VECTOR_CANDIDATES,
-    'vector candidate limit',
   )
   let initialized: Promise<SqliteDatabase> | undefined
 
@@ -354,6 +352,50 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
               );
               CREATE INDEX IF NOT EXISTS idx_embedding_jobs_updated_at
                 ON embedding_jobs(updatedAt DESC);
+            `)
+          },
+        },
+        {
+          scope: MIGRATION_SCOPE,
+          version: SOURCE_LIFECYCLE_MIGRATION_VERSION,
+          name: 'source-bound-embedding-and-cache-lifecycle',
+          async up(transaction) {
+            // Secondary data follows canonical rows even when a different owner
+            // performs replacement/restore. Source changes and invalidation share
+            // one SQLite commit; no provider calls or canonical data are removed.
+            await transaction.exec(`
+              CREATE INDEX IF NOT EXISTS idx_embedding_jobs_chunk_id ON embedding_jobs(chunkId);
+              DELETE FROM chunk_embeddings
+                WHERE NOT EXISTS (SELECT 1 FROM knowledge_chunks WHERE id = chunk_embeddings.chunkId);
+              DELETE FROM embedding_jobs
+                WHERE NOT EXISTS (SELECT 1 FROM knowledge_chunks WHERE id = embedding_jobs.chunkId);
+              DELETE FROM rag_query_cache;
+              CREATE TRIGGER IF NOT EXISTS knowledge_hybrid_source_delete
+                AFTER DELETE ON knowledge_chunks BEGIN
+                  DELETE FROM chunk_embeddings WHERE chunkId = OLD.id;
+                  DELETE FROM embedding_jobs WHERE chunkId = OLD.id;
+                  DELETE FROM rag_query_cache;
+                END;
+              CREATE TRIGGER IF NOT EXISTS knowledge_hybrid_source_update
+                AFTER UPDATE OF id, documentId, content ON knowledge_chunks
+                WHEN OLD.id IS NOT NEW.id OR OLD.documentId IS NOT NEW.documentId OR OLD.content IS NOT NEW.content
+                BEGIN
+                  DELETE FROM chunk_embeddings WHERE chunkId IN (OLD.id, NEW.id);
+                  DELETE FROM embedding_jobs WHERE chunkId IN (OLD.id, NEW.id);
+                  DELETE FROM rag_query_cache;
+                END;
+              CREATE TRIGGER IF NOT EXISTS knowledge_hybrid_source_insert
+                AFTER INSERT ON knowledge_chunks BEGIN
+                  DELETE FROM rag_query_cache;
+                END;
+              CREATE TRIGGER IF NOT EXISTS knowledge_hybrid_source_metadata
+                AFTER UPDATE OF title, ordinal, chunkIndex, createdAt ON knowledge_chunks BEGIN
+                  DELETE FROM rag_query_cache;
+                END;
+              CREATE TRIGGER IF NOT EXISTS knowledge_hybrid_document_provenance
+                AFTER UPDATE OF sourceUri, rawPath ON knowledge_documents BEGIN
+                  DELETE FROM rag_query_cache;
+                END;
             `)
           },
         },
@@ -437,13 +479,20 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
       })
       if (decision.source === 'onnx') onnxCount += 1
       else localCount += 1
-      writes.push({ chunkId: chunk.id, ...decision })
+      writes.push({ chunk, ...decision })
     }
 
     const value = await database(options.signal)
     const now = normalizeTimestamp(clock.now())
+    let discarded = 0
     await value.transaction(async (transaction) => {
       for (const write of writes) {
+        if (!await isCurrentChunk(transaction, write.chunk, options.signal)) {
+          discarded += 1
+          if (write.source === 'onnx') onnxCount -= 1
+          else localCount -= 1
+          continue
+        }
         await run(
           transaction,
           `INSERT INTO chunk_embeddings
@@ -460,7 +509,7 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
            WHERE chunk_embeddings.source NOT IN ('provider', 'onnx')
               OR (excluded.source = 'onnx' AND chunk_embeddings.source <> 'provider')`,
           [
-            write.chunkId,
+            write.chunk.id,
             JSON.stringify(write.embedding),
             write.embedding.length,
             write.source,
@@ -471,12 +520,12 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
           ],
           options.signal,
         )
-        await updateChunkEmbeddingProvider(transaction, write.chunkId, options.signal)
+        await updateChunkEmbeddingProvider(transaction, write.chunk.id, options.signal)
       }
       await run(transaction, 'DELETE FROM rag_query_cache', [], options.signal)
     })
     throwIfAborted(options.signal)
-    return { chunkCount: writes.length, localCount, onnxCount }
+    return { chunkCount: writes.length, localCount, onnxCount, discarded }
   }
 
   async function upgradeProviderEmbeddings(
@@ -489,6 +538,7 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
       succeeded: 0,
       failed: 0,
       cancelled: 0,
+      discarded: 0,
     }
     if (options.signal.aborted) return { ...result, status: 'cancelled' }
     const providerState = dependencies.resolveProviderEmbeddingState?.(options.provider)
@@ -521,9 +571,25 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
     const value = await database(options.signal)
     for (const chunk of candidates) {
       if (options.signal.aborted) return { ...result, status: 'cancelled' }
+      const runningJob = await value.transaction(async (transaction) => {
+        if (!await isCurrentChunk(transaction, chunk, options.signal)) return undefined
+        // An attempt is not a chunk id or timestamp: two index instances can
+        // dispatch different model requests for the same chunk in one millisecond.
+        const identity = await transaction.getFirst<{ id: string }>('SELECT lower(hex(randomblob(16))) AS id')
+        if (!identity) throw new KnowledgeHybridIndexDataError('Embedding attempt identity is unavailable.')
+        const job = {
+          ...createKnowledgeProviderEmbeddingRunningJob(chunk.id, normalizeTimestamp(clock.now())),
+          id: `embed-${identity.id}`,
+        }
+        await run(transaction, 'DELETE FROM embedding_jobs WHERE chunkId = ?', [chunk.id], options.signal)
+        await persistProviderJob(transaction, job, options.signal)
+        return job
+      })
+      if (!runningJob) {
+        result.discarded += 1
+        continue
+      }
       result.attempted += 1
-      const runningJob = createKnowledgeProviderEmbeddingRunningJob(chunk.id, normalizeTimestamp(clock.now()))
-      await persistProviderJob(value, runningJob, options.signal)
       try {
         const embedded = normalizeProviderEmbeddingResult(await raceWithAbort(
           dependencies.embedWithProvider({
@@ -541,8 +607,9 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
           source: 'provider',
           model: embedded.model,
         }, now)
-        const doneJob = createKnowledgeProviderEmbeddingDoneJob(chunk.id, now)
-        await value.transaction(async (transaction) => {
+        const doneJob = { ...createKnowledgeProviderEmbeddingDoneJob(chunk.id, now), id: runningJob.id }
+        const committed = await value.transaction(async (transaction) => {
+          if (!await ownsProviderJob(transaction, chunk, runningJob.id, options.signal)) return false
           await run(
             transaction,
             `INSERT OR REPLACE INTO chunk_embeddings
@@ -568,29 +635,77 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
           )
           await persistProviderJob(transaction, doneJob, options.signal)
           await run(transaction, 'DELETE FROM rag_query_cache', [], options.signal)
+          return true
         })
-        result.succeeded += 1
+        if (committed) result.succeeded += 1
+        else result.discarded += 1
       } catch (error) {
         if (options.signal.aborted || error instanceof KnowledgeHybridIndexCancelledError) {
-          const cancelledJob = createKnowledgeProviderEmbeddingCancelledJob(
-            chunk.id,
-            normalizeTimestamp(clock.now()),
-          )
-          // Terminal cancellation evidence must outlive the cancelled request.
-          await persistProviderJob(value, cancelledJob)
+          const cancelledJob = {
+            ...createKnowledgeProviderEmbeddingCancelledJob(chunk.id, normalizeTimestamp(clock.now())),
+            id: runningJob.id,
+          }
+          // Record cancellation independently of the aborted signal, but never
+          // resurrect a cleared job or cancel a newer attempt for this chunk.
+          await value.transaction(async (transaction) => {
+            if (await ownsProviderJob(transaction, chunk, runningJob.id)) {
+              await persistProviderJob(transaction, cancelledJob)
+            }
+          })
           result.cancelled += 1
           return { ...result, status: 'cancelled' }
         }
-        const failedJob = createKnowledgeProviderEmbeddingErrorJob(
-          chunk.id,
-          new Error(normalizeEmbeddingError(error, 'Provider embedding failed')),
-          normalizeTimestamp(clock.now()),
-        )
-        await persistProviderJob(value, failedJob, options.signal)
-        result.failed += 1
+        const failedJob = {
+          ...createKnowledgeProviderEmbeddingErrorJob(
+            chunk.id,
+            new Error(normalizeEmbeddingError(error, 'Provider embedding failed')),
+            normalizeTimestamp(clock.now()),
+          ),
+          id: runningJob.id,
+        }
+        const recorded = await value.transaction(async (transaction) => {
+          if (!await ownsProviderJob(transaction, chunk, runningJob.id, options.signal)) return false
+          await persistProviderJob(transaction, failedJob, options.signal)
+          return true
+        })
+        if (recorded) result.failed += 1
+        else result.discarded += 1
       }
     }
     return result
+  }
+
+  async function isCurrentChunk(
+    executor: SqliteExecutor,
+    chunk: ValidatedEmbeddingChunk,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const current = await executor.getFirst<{ id: string }>(
+      'SELECT id FROM knowledge_chunks WHERE id = ? AND documentId = ? AND content = ?',
+      [chunk.id, chunk.documentId, chunk.content],
+    )
+    throwIfAborted(signal)
+    return Boolean(current)
+  }
+
+  async function ownsProviderJob(
+    executor: SqliteExecutor,
+    chunk: ValidatedEmbeddingChunk,
+    jobId: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const current = await executor.getFirst<{ id: string }>(
+      `SELECT job.id FROM embedding_jobs AS job
+       JOIN knowledge_chunks AS chunk ON chunk.id = job.chunkId
+       WHERE job.id = ? AND job.status = 'running'
+         AND chunk.id = ? AND chunk.documentId = ? AND chunk.content = ?`,
+      [jobId, chunk.id, chunk.documentId, chunk.content],
+    )
+    throwIfAborted(signal)
+    if (current) return true
+    // This only removes the superseded attempt, never the current job's receipt.
+    await run(executor, 'DELETE FROM embedding_jobs WHERE id = ?', [jobId], signal)
+    return false
   }
 
   async function persistProviderJob(
@@ -689,7 +804,7 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
         }
 
         const [ftsRows, vectorRows] = await Promise.all([
-          dependencies.repository.searchFts({ query, limit, signal: input.signal }),
+          dependencies.repository.searchFts({ query, limit, signal: input.signal, knowledgeScope: input.knowledgeScope }),
           searchVector(input, query, limit),
         ])
         throwIfAborted(input.signal)
@@ -698,7 +813,10 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
           vectorRows,
           'hybrid',
         )
-        const results = rerankKnowledgeSources(query, fused, limit).map(normalizeHybridHit)
+        // Pages are not one long transaction: discard sources changed/deleted
+        // while scanning before they become fresh context or cached evidence.
+        const current = await filterCurrentSources(await database(input.signal), fused, input.signal)
+        const results = rerankKnowledgeSources(query, current, limit).map(normalizeHybridHit)
         await dependencies.repository.markFtsHits(results.map((hit) => hit.id), { signal: input.signal })
         throwIfAborted(input.signal)
         if (cacheKey && cacheTtlMs > 0) {
@@ -751,27 +869,37 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
     limit: number,
   ): Promise<HybridCandidate[]> {
     const value = await database(input.signal)
-    const rawRows = await value.getAll<Record<string, unknown>>(
-      `SELECT c.id, c.documentId, c.title, c.content, c.ordinal, c.chunkIndex, c.createdAt,
-              d.sourceUri, d.rawPath, e.embeddingJson, e.source, e.model
+    const scope = sqliteKnowledgeScope(input.knowledgeScope)
+    // Discover query-vector sources across the whole selected corpus without
+    // transferring its vectors to JS. Capture a key boundary before model work
+    // so newly appended keys do not indefinitely extend this search.
+    const inventory = await value.getFirst<{
+      upperId: string | null
+      hasOnnx: number | null
+      hasProvider: number | null
+    }>(
+      `SELECT MAX(c.id) AS upperId,
+              MAX(CASE WHEN e.source = 'onnx' AND typeof(e.embeddingJson) = 'text' THEN 1 ELSE 0 END) AS hasOnnx,
+              MAX(CASE WHEN e.source = 'provider' AND typeof(e.embeddingJson) = 'text' THEN 1 ELSE 0 END) AS hasProvider
        FROM knowledge_chunks AS c
-       LEFT JOIN knowledge_documents AS d ON d.id = c.documentId
        LEFT JOIN chunk_embeddings AS e ON e.chunkId = c.id
-       ORDER BY c.createdAt DESC
-       LIMIT ?`,
-      [maxVectorCandidates],
+       WHERE ${scope.sql}`,
+      scope.parameters,
     )
     throwIfAborted(input.signal)
-    const rows = rawRows.map(normalizeVectorRow)
-    if (!rows.length) return []
+    if (inventory?.upperId == null) return []
+    const upperId = normalizeVectorScanId(inventory.upperId)
+    const availableSources: Array<'onnx' | 'provider'> = []
+    if (inventory.hasOnnx === 1) availableSources.push('onnx')
+    if (inventory.hasProvider === 1) availableSources.push('provider')
 
     const providerState = input.provider === undefined
       ? { configured: false, supportsEmbeddings: false }
       : dependencies.resolveProviderEmbeddingState?.(input.provider)
         ?? { configured: false, supportsEmbeddings: false }
-    const queryEmbedding = normalizeEmbedding(await dependencies.queryEmbedding.resolve({
+    const resolvedQuery = await dependencies.queryEmbedding.resolve({
       query,
-      chunks: rows.map(toEmbeddingDescriptor),
+      availableSources,
       embeddingMode: input.embeddingMode,
       ...(input.localEmbeddingModelId === undefined ? {} : { localEmbeddingModelId: input.localEmbeddingModelId }),
       ...(input.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: input.localEmbeddingModelSource }),
@@ -780,57 +908,91 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
       providerConfigured: providerState.configured,
       providerSupportsEmbeddings: providerState.supportsEmbeddings,
       ...(input.onEmbeddingResolved === undefined ? {} : { onResolved: input.onEmbeddingResolved }),
-    }))
+    })
+    const queryEmbedding = { ...resolvedQuery, embedding: normalizeEmbedding(resolvedQuery.embedding) }
     throwIfAborted(input.signal)
 
     const candidates: HybridCandidate[] = []
-    const repairs: Array<{ chunkId: string; embedding: number[]; reason: string }> = []
-    for (const row of rows) {
+    const candidateLimit = Math.max(limit * 4, 20)
+    let afterId: string | undefined
+    for (;;) {
       throwIfAborted(input.signal)
-      const decision = resolveKnowledgeVectorCandidate(row, queryEmbedding)
-      if (decision.repairRequired) {
-        repairs.push({
-          chunkId: row.id,
-          embedding: createLocalKnowledgeEmbedding(row.content),
-          reason: decision.repairReason ?? 'missing_or_malformed',
+      const rawRows = await value.getAll<Record<string, unknown>>(
+        `SELECT c.id, c.documentId, c.title, c.content, c.ordinal, c.chunkIndex, c.createdAt,
+                d.sourceUri, d.rawPath, e.embeddingJson, e.source, e.model
+         FROM knowledge_chunks AS c
+         LEFT JOIN knowledge_documents AS d ON d.id = c.documentId
+         LEFT JOIN chunk_embeddings AS e ON e.chunkId = c.id
+         WHERE ${scope.sql} AND c.id <= ?${afterId === undefined ? '' : ' AND c.id > ?'}
+         ORDER BY c.id
+         LIMIT ?`,
+        [...scope.parameters, upperId, ...(afterId === undefined ? [] : [afterId]), VECTOR_SCAN_PAGE_SIZE],
+      )
+      throwIfAborted(input.signal)
+      const rows = rawRows.map(normalizeVectorRow)
+      if (!rows.length) break
+      const repairs: Array<{ chunk: ValidatedEmbeddingChunk; embedding: number[]; reason: string; previousEmbedding?: string }> = []
+      for (const row of rows) {
+        throwIfAborted(input.signal)
+        const decision = resolveKnowledgeVectorCandidate(row, queryEmbedding)
+        if (decision.repairRequired) {
+          repairs.push({
+            chunk: row,
+            embedding: createLocalKnowledgeEmbedding(row.content),
+            reason: decision.repairReason ?? 'missing_or_malformed',
+            previousEmbedding: row.embeddingJson,
+          })
+        }
+        if (!decision.candidate) continue
+        candidates.push({
+          id: row.id,
+          documentId: row.documentId,
+          title: row.title,
+          content: row.content,
+          ordinal: row.ordinal,
+          ...(row.chunkIndex === undefined ? {} : { chunkIndex: row.chunkIndex }),
+          createdAt: row.createdAt,
+          ...(row.sourceUri === undefined ? {} : { sourceUri: row.sourceUri }),
+          ...(row.rawPath === undefined ? {} : { rawPath: row.rawPath }),
+          ...decision.candidate,
         })
       }
-      if (!decision.candidate) continue
-      candidates.push({
-        id: row.id,
-        documentId: row.documentId,
-        title: row.title,
-        content: row.content,
-        ordinal: row.ordinal,
-        ...(row.chunkIndex === undefined ? {} : { chunkIndex: row.chunkIndex }),
-        createdAt: row.createdAt,
-        ...(row.sourceUri === undefined ? {} : { sourceUri: row.sourceUri }),
-        ...(row.rawPath === undefined ? {} : { rawPath: row.rawPath }),
-        ...decision.candidate,
-      })
-    }
 
-    if (repairs.length) await persistRepairs(value, repairs, input.signal)
+      // Keep at most one page plus the best candidates, not all N vectors or
+      // repairs. Equal-score ordering is independent of page/insertion order.
+      candidates.sort(compareVectorCandidates).splice(candidateLimit)
+      if (repairs.length) await persistRepairs(value, repairs, input.signal)
+      afterId = rows[rows.length - 1].id
+      if (rows.length < VECTOR_SCAN_PAGE_SIZE || afterId === upperId) break
+      // Native SQLite is async, but cached/test adapters may only yield a
+      // microtask. Give input, rendering and cancellation an event-loop turn.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+    throwIfAborted(input.signal)
     return candidates
-      .sort((left, right) => (right.vectorScore ?? 0) - (left.vectorScore ?? 0))
-      .slice(0, Math.max(limit * 4, 20))
   }
 
   async function persistRepairs(
     value: SqliteDatabase,
-    repairs: readonly { chunkId: string; embedding: number[]; reason: string }[],
+    repairs: readonly { chunk: ValidatedEmbeddingChunk; embedding: number[]; reason: string; previousEmbedding?: string }[],
     signal?: AbortSignal,
   ): Promise<void> {
     const now = normalizeTimestamp(clock.now())
     await value.transaction(async (transaction) => {
       for (const repair of repairs) {
+        if (!await isCurrentChunk(transaction, repair.chunk, signal)) continue
         await run(
           transaction,
-          `INSERT OR REPLACE INTO chunk_embeddings
+          `INSERT INTO chunk_embeddings
              (chunkId, embeddingJson, dimension, source, model, updatedAt, status, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(chunkId) DO UPDATE SET
+             embeddingJson = excluded.embeddingJson, dimension = excluded.dimension,
+             source = excluded.source, model = excluded.model, updatedAt = excluded.updatedAt,
+             status = excluded.status, error = excluded.error
+           WHERE chunk_embeddings.embeddingJson IS ?`,
           [
-            repair.chunkId,
+            repair.chunk.id,
             JSON.stringify(repair.embedding),
             repair.embedding.length,
             'local',
@@ -838,15 +1000,11 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
             now,
             'fallback',
             repair.reason,
+            repair.previousEmbedding ?? null,
           ],
           signal,
         )
-        await run(
-          transaction,
-          'UPDATE knowledge_chunks SET embeddingProvider = ? WHERE id = ?',
-          ['hash', repair.chunkId],
-          signal,
-        )
+        await updateChunkEmbeddingProvider(transaction, repair.chunk.id, signal)
       }
     })
   }
@@ -872,15 +1030,21 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
       await run(value, 'DELETE FROM rag_query_cache WHERE key = ?', [key], signal)
       return undefined
     }
+    let hits: KnowledgeHybridSearchHit[]
     try {
       const parsedJson: unknown = JSON.parse(parsedRow.output.resultJson)
       const parsedHits = v.safeParse(v.array(cachedHitSchema), parsedJson)
       if (!parsedHits.success) throw new Error('invalid cache result')
-      return parsedHits.output.map(normalizeHybridHit)
+      hits = parsedHits.output.map(normalizeHybridHit)
     } catch {
       await run(value, 'DELETE FROM rag_query_cache WHERE key = ?', [key], signal)
       return undefined
     }
+    return value.transaction(async (transaction) => {
+      if (hits.length && (await filterCurrentSources(transaction, hits, signal)).length === hits.length) return hits
+      await run(transaction, 'DELETE FROM rag_query_cache WHERE key = ?', [key], signal)
+      return undefined
+    })
   }
 
   async function writeCache(
@@ -889,16 +1053,53 @@ export function createSqliteKnowledgeHybridIndex<Provider = unknown>(
     results: readonly KnowledgeHybridSearchHit[],
     signal?: AbortSignal,
   ): Promise<void> {
+    if (!results.length) return
     const value = await database(signal)
     const now = normalizeTimestamp(clock.now())
-    await run(
-      value,
-      `INSERT OR REPLACE INTO rag_query_cache
-         (key, query, resultJson, expiresAt, createdAt)
-       VALUES (?, ?, ?, ?, ?)`,
-      [key, query, JSON.stringify(results), now + cacheTtlMs, now],
-      signal,
-    )
+    await value.transaction(async (transaction) => {
+      // A request may finish after deletion/import invalidates the cache. Never
+      // persist its old source text again, even when its in-flight snapshot exists.
+      if ((await filterCurrentSources(transaction, results, signal)).length !== results.length) return
+      await run(
+        transaction,
+        `INSERT OR REPLACE INTO rag_query_cache
+           (key, query, resultJson, expiresAt, createdAt)
+         VALUES (?, ?, ?, ?, ?)`,
+        [key, query, JSON.stringify(results), now + cacheTtlMs, now],
+        signal,
+      )
+    })
+  }
+
+  async function filterCurrentSources<Source extends HybridCandidate>(
+    executor: SqliteExecutor,
+    sources: readonly Source[],
+    signal?: AbortSignal,
+  ): Promise<Source[]> {
+    const retained: Source[] = []
+    // Bound SQL parameters and avoid a native bridge round-trip for every hit.
+    for (let offset = 0; offset < sources.length; offset += 128) {
+      const batch = sources.slice(offset, offset + 128)
+      const rows = await executor.getAll<Record<string, unknown>>(
+        `SELECT c.id, c.documentId, c.title, c.content, c.ordinal, c.chunkIndex, c.createdAt, d.sourceUri, d.rawPath
+         FROM knowledge_chunks AS c JOIN knowledge_documents AS d ON d.id = c.documentId
+         WHERE c.id IN (${batch.map(() => '?').join(', ')})`,
+        batch.map((source) => source.id),
+      )
+      throwIfAborted(signal)
+      const currentById = new Map(rows.map((row) => [row.id, row]))
+      for (const source of batch) {
+        const current = currentById.get(source.id)
+        if (!current || current.documentId !== source.documentId || current.title !== source.title
+          || current.content !== source.content || current.ordinal !== source.ordinal
+          || (current.chunkIndex ?? undefined) !== source.chunkIndex
+          || (source.createdAt !== undefined && current.createdAt !== source.createdAt)
+          || (current.sourceUri ?? undefined) !== source.sourceUri
+          || (current.rawPath ?? undefined) !== source.rawPath) continue
+        retained.push(source)
+      }
+    }
+    return retained
   }
 }
 
@@ -907,7 +1108,7 @@ function normalizeVectorRow(raw: Record<string, unknown>): PersistedVectorRow {
   if (!parsed.success) throw new KnowledgeHybridIndexDataError()
   const row = parsed.output
   return {
-    id: normalizeIdentifier(row.id, 'persisted chunk id'),
+    id: normalizeVectorScanId(row.id),
     documentId: normalizeIdentifier(row.documentId, 'persisted document id'),
     title: normalizeText(row.title, 'persisted chunk title'),
     content: normalizeContent(row.content),
@@ -971,12 +1172,18 @@ function normalizeHybridHit(input: HybridCandidate & { score: number; similarity
   }
 }
 
-function toEmbeddingDescriptor(row: PersistedVectorRow): KnowledgeStoredEmbeddingDescriptor {
-  return {
-    ...(row.source === undefined ? {} : { source: row.source }),
-    ...(row.embeddingJson === undefined ? {} : { embeddingJson: row.embeddingJson }),
-    ...(row.model === undefined ? {} : { model: row.model }),
-  }
+function compareVectorCandidates(left: HybridCandidate, right: HybridCandidate): number {
+  return (right.vectorScore ?? 0) - (left.vectorScore ?? 0)
+    || (right.createdAt ?? 0) - (left.createdAt ?? 0)
+    || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+}
+
+function normalizeVectorScanId(value: string): string {
+  const id = normalizeIdentifier(value, 'vector scan id')
+  // A normalized cursor must equal its SQLite key; trimming could repeat or
+  // skip a page. Canonical repository writes already normalize these IDs.
+  if (id !== value) throw new KnowledgeHybridIndexDataError('A persisted vector scan id is not canonical.')
+  return id
 }
 
 function createCacheKey<Provider>(
@@ -986,15 +1193,17 @@ function createCacheKey<Provider>(
   providerKey: string,
 ): string {
   const identity = [
-    'knowledge-hybrid-v1',
+    'knowledge-hybrid-v4',
     input.embeddingMode,
     input.localEmbeddingModelId ?? 'auto-local-onnx',
     input.localEmbeddingModelSource ?? 'none',
     providerKey,
     String(limit),
     query,
-  ].join('\u0000')
-  return `knowledge-hybrid:${(hashKnowledgeText(identity) >>> 0).toString(36)}`
+    input.knowledgeScope ? [[...input.knowledgeScope.ids].sort(), [...input.knowledgeScope.terms].sort()] : null,
+  ]
+  // Exact identity prevents small-hash collisions from crossing a selected scope.
+  return `knowledge-hybrid:${JSON.stringify(identity)}`
 }
 
 function resolveProviderCacheKey<Provider>(

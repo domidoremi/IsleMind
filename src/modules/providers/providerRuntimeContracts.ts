@@ -42,6 +42,8 @@ export interface ProviderRuntimeChatSettings {
   remoteCompactMode?: 'off' | 'auto' | 'required'
   remoteCompactThreshold?: number
   remoteCompactThresholdTokens?: number
+  anthropicRemoteCompactThresholdTokens?: number
+  openAIRemoteCompactThresholdTokens?: number
   upstreamRequestTimeoutMs?: number
   upstreamMaxRetries?: number
   upstreamCircuitBreakerEnabled?: boolean

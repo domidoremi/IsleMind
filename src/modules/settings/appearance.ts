@@ -1,31 +1,52 @@
 import type { SettingsThemeFamily, SettingsThemeMode } from './contracts'
-
-const THEME_ACCENT_PATTERN = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i
-const THEME_ACCENT_RESET_VALUES = new Set(['', 'auto', 'default', 'none', 'reset'])
+import type { ThemeBackgroundIntensity, ThemeBackgroundMotion, ThemeBackgroundVariation } from '@/types/settingsContracts'
+import {
+  isThemeAccentResetValue,
+  normalizeThemeAccentValue,
+  normalizeThemeFamilyValue,
+  normalizeThemeModeValue,
+} from '@/types/settingsContracts'
 
 export function normalizeSettingsThemeMode(value: unknown): SettingsThemeMode | undefined {
-  return value === 'light' || value === 'dark' || value === 'system' ? value : undefined
+  return normalizeThemeModeValue(value)
 }
 
 export function normalizeSettingsThemeFamily(value: unknown): SettingsThemeFamily | undefined {
-  if (value === 'lime-road' || value === 'cartoon' || value === 'island') return 'monet'
-  if (value === 'markdown' || value === 'material-3' || value === 'material3') return 'material'
-  if (value === 'glass' || value === 'liquid') return 'liquid-glass'
-  return value === 'minimal' || value === 'monet' || value === 'material' || value === 'liquid-glass' ? value : undefined
+  return normalizeThemeFamilyValue(value)
 }
 
 export function normalizeSettingsThemeAccent(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim()
-  const match = normalized.match(THEME_ACCENT_PATTERN)
-  if (!match) return undefined
-  const hex = match[1]
-  const expanded = hex.length === 3
-    ? hex.split('').map((part) => `${part}${part}`).join('')
-    : hex
-  return `#${expanded.toUpperCase()}`
+  return normalizeThemeAccentValue(value)
 }
 
 export function isSettingsThemeAccentReset(value: unknown): boolean {
-  return typeof value === 'string' && THEME_ACCENT_RESET_VALUES.has(value.trim().toLowerCase())
+  return isThemeAccentResetValue(value)
+}
+
+const BACKGROUND_VARIATIONS = ['fixed', 'random', 'startup', 'daily', 'preset'] as const
+const BACKGROUND_MOTIONS = ['static', 'subtle', 'dynamic', 'immersive'] as const
+const BACKGROUND_INTENSITIES = ['low', 'medium', 'high'] as const
+
+export function normalizeSettingsBackgroundVariation(value: unknown): ThemeBackgroundVariation | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase() === 'rotate' ? 'random' : value.trim().toLowerCase()
+  return (BACKGROUND_VARIATIONS as readonly string[]).includes(normalized)
+    ? normalized as ThemeBackgroundVariation
+    : undefined
+}
+
+export function normalizeSettingsBackgroundMotion(value: unknown): ThemeBackgroundMotion | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  return (BACKGROUND_MOTIONS as readonly string[]).includes(normalized)
+    ? normalized as ThemeBackgroundMotion
+    : undefined
+}
+
+export function normalizeSettingsBackgroundIntensity(value: unknown): ThemeBackgroundIntensity | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  return (BACKGROUND_INTENSITIES as readonly string[]).includes(normalized)
+    ? normalized as ThemeBackgroundIntensity
+    : undefined
 }

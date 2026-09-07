@@ -1,5 +1,7 @@
 import type { KnowledgeChunk, RagContextPack, RagEvaluationResult, RagGenerationVerification, RagQueryComplexity, RagQueryIntent, RagQueryPlan, RagRetrievalCandidate, RagRetrievalOrigin, RagRerankResult, RagRiskLevel, RagTechnique, RagTraceStep, RetrievalSource } from '@/types/contextContracts'
 import type { Language, RagProfile, Settings } from '@/types/settingsContracts'
+import { estimateTextTokens, TOKEN_ESTIMATOR_VERSION } from '@/core'
+import { stableContentHash } from '@/core'
 export interface SentenceChunk {
   content: string
   sentenceStart: number
@@ -8,8 +10,10 @@ export interface SentenceChunk {
 
 export interface EmbeddingProvider {
   id: 'hash' | 'provider' | 'onnx'
-  dimension: number
-  embed: (text: string) => Promise<number[]>
+  /** Unknown until the lazy model descriptor has been resolved. */
+  readonly dimension?: number
+  readonly model?: string
+  embed: (text: string, options?: { signal?: AbortSignal }) => Promise<number[]>
   available: () => Promise<boolean>
 }
 
@@ -21,6 +25,21 @@ export interface RagRetrievalOptions {
    */
   mode?: 'baseline' | 'advanced'
   onEmbeddingResolved?: (notice: { source: 'onnx' | 'provider' | 'local-hash'; reason?: string }) => void
+}
+
+export interface RagContextBudgetInput {
+  /** Preferred caller budget, still bounded by the window and hard cap. */
+  requestedTokenBudget?: number
+  /** Model input window, when the caller has a model manifest available. */
+  modelContextWindow?: number
+  /** Reserved generation capacity. */
+  maxOutputTokens?: number
+  /** Additional hidden/reasoning capacity reserved by the provider. */
+  reasoningReserveTokens?: number
+  /** Hard mobile-safe cap for retrieved context. */
+  maxTokenBudget?: number
+  /** Preferred floor; never exceeds the usable model window or hard cap. */
+  minTokenBudget?: number
 }
 
 export interface AgenticRagOptions {
@@ -35,6 +54,9 @@ export interface AgenticRagOptions {
   retrieveAgentic?: (query: string, plan: RagQueryPlan, limit: number, options?: RagRetrievalOptions) => Promise<RetrievalSource[]>
   now?: () => number
   tokenBudget?: number
+  modelContextWindow?: number
+  maxOutputTokens?: number
+  reasoningReserveTokens?: number
   maxContextItems?: number
   signal?: AbortSignal
   onEmbeddingResolved?: RagRetrievalOptions['onEmbeddingResolved']
@@ -43,12 +65,49 @@ export interface AgenticRagOptions {
 const TARGET_CHUNK_LENGTH = 1200
 const MAX_CHUNK_LENGTH = 1600
 const OVERLAP_SENTENCES = 2
-const DEFAULT_CONTEXT_TOKEN_BUDGET = 2800
+export const DEFAULT_CONTEXT_TOKEN_BUDGET = 2800
+export const RAG_CONTEXT_BUDGET_POLICY_VERSION = 'window-scaled-v2'
+const DEFAULT_MAX_RAG_CONTEXT_TOKENS = 12_000
+const DEFAULT_RAG_CONTEXT_RATIO = 0.1
 const DEFAULT_MAX_CONTEXT_ITEMS = 8
+
+/**
+ * Resolve one bounded retrieval budget for every RAG caller.  A fixed 2,800
+ * token budget silently starves Chinese context on small windows and wastes
+ * almost all available capacity on large windows.  Scale from usable input
+ * space, while retaining a conservative mobile cap and a backwards-compatible
+ * fallback for callers that do not have a model manifest yet.
+ */
+export function resolveRagContextTokenBudget(input: RagContextBudgetInput = {}): number {
+  const explicit = finiteNonNegativeInteger(input.requestedTokenBudget)
+  const minBudget = finiteNonNegativeInteger(input.minTokenBudget) ?? DEFAULT_CONTEXT_TOKEN_BUDGET
+  const maxBudget = finiteNonNegativeInteger(input.maxTokenBudget) ?? DEFAULT_MAX_RAG_CONTEXT_TOKENS
+  const window = finitePositiveInteger(input.modelContextWindow)
+  if (window === undefined) return Math.min(explicit ?? minBudget, maxBudget)
+  const output = Math.max(0, finitePositiveInteger(input.maxOutputTokens) ?? 0)
+  const reasoning = Math.max(0, finitePositiveInteger(input.reasoningReserveTokens) ?? 0)
+  const usable = Math.max(0, window - output - reasoning)
+  const preferred = explicit ?? Math.max(minBudget, Math.floor(usable * DEFAULT_RAG_CONTEXT_RATIO))
+  return Math.min(preferred, maxBudget, usable)
+}
+
+function finiteNonNegativeInteger(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
+}
+
+function finitePositiveInteger(value: number | undefined): number | undefined {
+  return Number.isFinite(value) && value !== undefined && value > 0 ? Math.floor(value) : undefined
+}
 
 export async function runAgenticRag(options: AgenticRagOptions): Promise<RagContextPack> {
   throwIfAgenticRagCancelled(options.signal)
   const now = options.now?.() ?? Date.now()
+  const tokenBudget = resolveRagContextTokenBudget({
+    requestedTokenBudget: options.tokenBudget,
+    modelContextWindow: options.modelContextWindow,
+    maxOutputTokens: options.maxOutputTokens,
+    reasoningReserveTokens: options.reasoningReserveTokens,
+  })
   const trace: RagTraceStep[] = []
   const planStarted = now
   const plan = createRagQueryPlan({
@@ -59,7 +118,7 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
     profile: options.profile,
     profileReason: options.profileReason,
     now,
-    tokenBudget: options.tokenBudget ?? DEFAULT_CONTEXT_TOKEN_BUDGET,
+    tokenBudget,
     maxContextItems: options.maxContextItems ?? DEFAULT_MAX_CONTEXT_ITEMS,
   })
   trace.push(completeRagTrace({
@@ -102,7 +161,7 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
     },
   }, options.now?.() ?? Date.now()))
 
-  const packed = packRagContext(plan, reranked.after, options.tokenBudget ?? DEFAULT_CONTEXT_TOKEN_BUDGET)
+  const packed = packRagContext(plan, reranked.after, tokenBudget)
   throwIfAgenticRagCancelled(options.signal)
   trace.push(completeRagTrace({
     id: `${plan.id}-pack`,
@@ -141,7 +200,8 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
       fallbackReasons: collectFallbackReasons(plan, reranked.strategy, retrieved.embeddingFallbackReasons),
       latencyMs: Math.max(0, (options.now?.() ?? Date.now()) - planStarted),
       tokenBudget: plan.tokenBudget,
-      estimatedContextTokens: estimateTokens(packed.contextPrompt),
+      estimatedContextTokens: estimateTextTokens(packed.contextPrompt),
+      tokenEstimatorVersion: TOKEN_ESTIMATOR_VERSION,
     },
   }
 }
@@ -162,6 +222,9 @@ export function createRagQueryPlan(input: {
   profileReason?: string
   now?: number
   tokenBudget?: number
+  modelContextWindow?: number
+  maxOutputTokens?: number
+  reasoningReserveTokens?: number
   maxContextItems?: number
 }): RagQueryPlan {
   const query = input.query.trim()
@@ -196,7 +259,12 @@ export function createRagQueryPlan(input: {
     enabledTechniques,
     retrievalBudget: profile === 'deep' ? 24 : complexity === 'complex' ? 18 : 12,
     contextItemBudget: input.maxContextItems ?? DEFAULT_MAX_CONTEXT_ITEMS,
-    tokenBudget: input.tokenBudget ?? DEFAULT_CONTEXT_TOKEN_BUDGET,
+    tokenBudget: resolveRagContextTokenBudget({
+      requestedTokenBudget: input.tokenBudget,
+      modelContextWindow: input.modelContextWindow,
+      maxOutputTokens: input.maxOutputTokens,
+      reasoningReserveTokens: input.reasoningReserveTokens,
+    }),
     createdAt: input.now ?? Date.now(),
   }
 }
@@ -242,13 +310,13 @@ export function rerankAgenticCandidates(plan: RagQueryPlan, candidates: RagRetri
 
 export function packRagContext(plan: RagQueryPlan, candidates: RagRetrievalCandidate[], tokenBudget = DEFAULT_CONTEXT_TOKEN_BUDGET): RagContextPack {
   const selected: RagRetrievalCandidate[] = []
-  let usedTokens = 0
+  const budget = finiteNonNegativeInteger(tokenBudget) ?? 0
   for (const candidate of candidates) {
-    const compressed = compressCandidate(candidate, plan, Math.max(180, Math.floor(tokenBudget / Math.max(1, plan.contextItemBudget)) * 4))
-    const estimated = estimateTokens(`${compressed.title}\n${compressed.content}`)
-    if (selected.length && usedTokens + estimated > tokenBudget) continue
+    const compressed = compressCandidate(candidate, plan, Math.max(180, Math.floor(budget / Math.max(1, plan.contextItemBudget)) * 4))
+    // Include instructions, labels and provenance in the same hard budget.
+    // Even the first candidate may be too large; never silently overflow.
+    if (estimateTextTokens(renderRagContextPrompt(plan, [...selected, compressed])) > budget) continue
     selected.push(compressed)
-    usedTokens += estimated
     if (selected.length >= plan.contextItemBudget) break
   }
   const citations = selected.map((source, index) => ({
@@ -276,21 +344,7 @@ export function packRagContext(plan: RagQueryPlan, candidates: RagRetrievalCandi
     retrievalStage: source.origin,
     label: `[${index + 1}]`,
   }))
-  const contextPrompt = selected.length
-    ? [
-        '以下是 IsleMind Agentic RAG 选择的本机上下文。请优先依据带编号的证据回答；如果证据不足，请说明不确定。',
-        `RAG profile: ${plan.profile}; intent: ${plan.intent}; complexity: ${plan.complexity}.`,
-        ...selected.map((source, index) => {
-          const meta = [
-            source.retrievalMode ? `mode=${source.retrievalMode}` : '',
-            source.origin ? `origin=${source.origin}` : '',
-            source.rerankScore !== undefined ? `rerank=${source.rerankScore.toFixed(2)}` : '',
-            source.sourceReason ? `reason=${source.sourceReason}` : '',
-          ].filter(Boolean).join(' · ')
-          return `[${index + 1}] ${source.title}${meta ? `\n${meta}` : ''}\n${source.content}`
-        }),
-      ].join('\n\n')
-    : ''
+  const contextPrompt = renderRagContextPrompt(plan, selected)
   const quality = evaluateRagContext(plan, candidates, selected)
   return {
     plan,
@@ -308,6 +362,23 @@ export function packRagContext(plan: RagQueryPlan, candidates: RagRetrievalCandi
     }, Date.now())],
     quality,
   }
+}
+
+function renderRagContextPrompt(plan: RagQueryPlan, selected: RagRetrievalCandidate[]): string {
+  if (!selected.length) return ''
+  return [
+    '以下是 IsleMind Agentic RAG 选择的本机上下文。请优先依据带编号的证据回答；如果证据不足，请说明不确定。',
+    `RAG profile: ${plan.profile}; intent: ${plan.intent}; complexity: ${plan.complexity}.`,
+    ...selected.map((source, index) => {
+      const meta = [
+        source.retrievalMode ? `mode=${source.retrievalMode}` : '',
+        source.origin ? `origin=${source.origin}` : '',
+        source.rerankScore !== undefined ? `rerank=${source.rerankScore.toFixed(2)}` : '',
+        source.sourceReason ? `reason=${source.sourceReason}` : '',
+      ].filter(Boolean).join(' · ')
+      return `[${index + 1}] ${source.title}${meta ? `\n${meta}` : ''}\n${source.content}`
+    }),
+  ].join('\n\n')
 }
 
 export function verifyRagGeneration(input: {
@@ -710,7 +781,10 @@ function collectFallbackReasons(plan: RagQueryPlan, strategy: RagRerankResult['s
   const reasons: string[] = []
   if (strategy === 'cross-encoder-fallback') reasons.push('cross-encoder-model-unavailable')
   if (strategy === 'colbert-lite') reasons.push('colbert-model-unavailable')
-  if (plan.enabledTechniques.includes('llmlingua')) reasons.push('llmlingua-model-unavailable')
+  // `llmlingua` currently names the deterministic extractive cap in this
+  // pipeline; no downloadable model is attempted here. Reporting a model
+  // failure on every deep query was permanent noise rather than an observed
+  // fallback. Keep real embedding/reranker failures only.
   return Array.from(new Set([...reasons, ...embeddingFallbackReasons]))
 }
 
@@ -751,7 +825,26 @@ function dedupeCandidates(candidates: RagRetrievalCandidate[]): RagRetrievalCand
       byKey.set(key, existing ? { ...candidate, origin: mergeOrigin(existing.origin, candidate.origin) } : candidate)
     }
   }
-  return Array.from(byKey.values())
+  // Retrieval backends can return the same body under different chunk ids or
+  // URLs. Remove exact canonical duplicates before they enter the stable
+  // request prefix; keep the strongest score and merge provenance without an
+  // LLM call or fuzzy false-positive risk.
+  const byContent = new Map<string, RagRetrievalCandidate>()
+  for (const candidate of byKey.values()) {
+    const contentKey = stableContentHash(candidate.content, 'rag-candidate-content')
+    const existing = byContent.get(contentKey)
+    if (!existing) {
+      byContent.set(contentKey, candidate)
+      continue
+    }
+    const mergedOrigin = mergeOrigin(existing.origin, candidate.origin)
+    if ((candidate.score ?? 0) > (existing.score ?? 0)) {
+      byContent.set(contentKey, { ...candidate, origin: mergedOrigin })
+    } else if (existing.origin !== mergedOrigin) {
+      byContent.set(contentKey, { ...existing, origin: mergedOrigin })
+    }
+  }
+  return Array.from(byContent.values())
 }
 
 function mergeOrigin(left: RagRetrievalOrigin, right: RagRetrievalOrigin): RagRetrievalOrigin {
@@ -860,7 +953,7 @@ function evaluateRagContext(plan: RagQueryPlan, candidates: RagRetrievalCandidat
     warnings,
     fallbackReasons: collectFallbackReasons(plan, plan.enabledTechniques.includes('cross-encoder') ? 'cross-encoder-fallback' : plan.enabledTechniques.includes('colbert') ? 'colbert-lite' : 'local-statistical'),
     tokenBudget: plan.tokenBudget,
-    estimatedContextTokens: selected.reduce((sum, source) => sum + estimateTokens(source.content), 0),
+    estimatedContextTokens: selected.reduce((sum, source) => sum + estimateTextTokens(source.content), 0),
   }
 }
 
@@ -902,10 +995,6 @@ function completeRagTrace(step: RagTraceStep, completedAt: number): RagTraceStep
     completedAt,
     durationMs: Math.max(0, completedAt - step.startedAt),
   }
-}
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3.6)
 }
 
 function estimateChunkQuality(content: string): number {

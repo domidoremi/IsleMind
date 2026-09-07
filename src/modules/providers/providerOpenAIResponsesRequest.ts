@@ -9,6 +9,7 @@ import {
   toOpenAIResponsesFunctionCallInput,
 } from './providerToolReplay'
 import { mergeProviderToolDeclarations } from './providerToolDeclarations'
+import { resolveProviderRemoteCompactThresholdTokens } from './providerRemoteCompactThresholdPolicy'
 
 export interface OpenAIResponsesRequestMessage {
   role: 'user' | 'assistant' | 'tool'
@@ -29,6 +30,8 @@ export interface OpenAIResponsesRequestShape {
   remoteCompactEligible?: boolean
   settings?: {
     remoteCompactThresholdTokens?: number
+    anthropicRemoteCompactThresholdTokens?: number
+    openAIRemoteCompactThresholdTokens?: number
   }
 }
 
@@ -122,10 +125,11 @@ export function createOpenAIResponsesRequestBodyBuilder<
         optionalTool(dependencies.resolveNativeSearchTool(request)),
       )
       const nativeRemoteCompactAllowed = openAIResponsesNativeRemoteCompactAllowed(request)
+      const atomicInput = retainCompleteOpenAIResponsesToolPairs(input)
 
       return {
         model: request.model,
-        input,
+        input: atomicInput,
         ...(requestParameters.temperature !== undefined ? { temperature: requestParameters.temperature } : {}),
         ...(requestParameters.topP !== undefined ? { top_p: requestParameters.topP } : {}),
         ...(textConfig ? { text: textConfig } : {}),
@@ -138,7 +142,10 @@ export function createOpenAIResponsesRequestBodyBuilder<
         ...(nativeRemoteCompactAllowed
           ? {
             context_management: buildOpenAIResponsesNativeContextManagement({
-              thresholdTokens: request.settings?.remoteCompactThresholdTokens ?? 200_000,
+              thresholdTokens: resolveProviderRemoteCompactThresholdTokens({
+                provider: request.provider,
+                settings: request.settings,
+              }),
             }),
           }
           : {}),
@@ -146,6 +153,52 @@ export function createOpenAIResponsesRequestBodyBuilder<
       }
     },
   }
+}
+
+/**
+ * Responses rejects orphaned function outputs, while trimming only the output
+ * silently changes the meaning of an earlier call. Treat each call/output
+ * pair as one atomic replay group and keep unrelated reasoning/text items.
+ */
+export function retainCompleteOpenAIResponsesToolPairs(
+  input: readonly Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const calls = new Map<string, number[]>()
+  const outputs = new Map<string, number[]>()
+  input.forEach((item, index) => {
+    const id = openAIResponsesToolItemId(item)
+    if (!id) return
+    const target = item.type === 'function_call'
+      ? calls
+      : item.type === 'function_call_output'
+        ? outputs
+        : undefined
+    if (!target) return
+    const indexes = target.get(id) ?? []
+    indexes.push(index)
+    target.set(id, indexes)
+  })
+  const complete = new Set<string>()
+  for (const [id, callIndexes] of calls) {
+    const outputIndexes = outputs.get(id)
+    if (
+      callIndexes.length === 1
+      && outputIndexes?.length === 1
+      && callIndexes[0] < outputIndexes[0]
+    ) complete.add(id)
+  }
+  return input.flatMap((item) => {
+    if (item.type !== 'function_call' && item.type !== 'function_call_output') {
+      return [{ ...item }]
+    }
+    const id = openAIResponsesToolItemId(item)
+    return id && complete.has(id) ? [{ ...item }] : []
+  })
+}
+
+function openAIResponsesToolItemId(item: Record<string, unknown>): string | undefined {
+  const value = item.call_id ?? item.id
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
 export function openAIResponsesNativeRemoteCompactAllowed(

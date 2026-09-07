@@ -26,6 +26,8 @@ export interface RemoteCompactDecisionInput {
   } & ProviderLocalCompressionPrivacySettings
   /** Explicit route evidence; undefined fails closed for native OpenAI compaction. */
   usesOpenAIResponses?: boolean
+  /** Session guard can disable automatic compaction after repeated failures. */
+  autoCompactAllowed?: boolean
 }
 
 export interface RemoteCompactDecision {
@@ -58,6 +60,8 @@ export interface RemoteCompactDecision {
     | 'native_openai_responses'
     | 'native_anthropic_messages'
   pressureRatio: number
+  /** Diagnostic-only guard state; does not create a new user-facing mode. */
+  guardBlocked?: boolean
 }
 
 export interface ProviderRemoteCompactPolicyDependencies {
@@ -105,6 +109,47 @@ export function createProviderRemoteCompactPolicy(
         localFallbackReason: localAdmission.reason,
         reason: 'disabled',
         pressureRatio,
+      }
+    }
+
+    // A guard block applies only to automatic compaction.  Keep an explicit
+    // `required` request fail-closed below rather than silently overriding a
+    // user policy.  Local structured packing remains the deterministic safety
+    // valve and uses the same conversation ledger.
+    if (mode === 'auto' && input.autoCompactAllowed === false) {
+      if (privacy.allowed) {
+        return {
+          mode,
+          enabled: true,
+          required,
+          supported: false,
+          strategy: 'local-structured-v2',
+          nativeServerCompact: false,
+          capabilityKind: resolution.capabilityKind,
+          remoteClassification: 'remote-unavailable',
+          localFallbackAllowed: true,
+          privacyAllowsLocalCompression: true,
+          localFallbackReason: localAdmission.reason,
+          reason: 'provider_capability_missing',
+          pressureRatio,
+          guardBlocked: true,
+        }
+      }
+      return {
+        mode,
+        enabled: false,
+        required,
+        supported: false,
+        strategy: 'none',
+        nativeServerCompact: false,
+        capabilityKind: resolution.capabilityKind,
+        remoteClassification: 'remote-unavailable',
+        localFallbackAllowed: false,
+        privacyAllowsLocalCompression: false,
+        localFallbackReason: 'privacy-blocked',
+        reason: 'disabled',
+        pressureRatio,
+        guardBlocked: true,
       }
     }
 
