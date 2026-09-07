@@ -25,12 +25,58 @@ import { createContext } from 'react'
 
 export interface GlassBackdropContextValue {
   blurTargetRef: RefObject<View | null>
-  /** Whether BlurView instances currently exist (informs target-tree safety). */
+  /** Explicit platform/material capability contract used by every glass surface. */
+  capability: GlassCapabilityContract
+  /** Compatibility shorthand for older consumers. */
   realtimeBlurSupported: boolean
+}
+
+export interface GlassCapabilityContract {
+  platform: string
+  /** Whether a realtime BlurView may be mounted safely. */
+  realtimeBlurSupported: boolean
+  /** Whether a BlurTargetView can be used as the sampled backdrop. */
+  targetedBackdropSupported: boolean
+  /** Hard budget for concurrent blur layers in one region. */
+  maxLayersPerRegion: number
+  /** Stable visual fallback when realtime blur is unavailable. */
+  fallback: 'opaque' | 'tonal'
+}
+
+/**
+ * Resolve capabilities in one place instead of letting each component infer
+ * platform/version support. Unknown platforms fail closed; iOS and Web use
+ * window sampling, while Android requires the SDK 31 target pipeline.
+ */
+export function resolveGlassCapability(platform: string, version?: unknown): GlassCapabilityContract {
+  const normalizedPlatform = typeof platform === 'string' ? platform.toLowerCase() : 'unknown'
+  const androidApi = typeof version === 'number'
+    ? version
+    : typeof version === 'string' && /^\d+$/.test(version)
+      ? Number.parseInt(version, 10)
+      : 0
+  const isAndroid = normalizedPlatform === 'android'
+  const isKnownWindowSamplingPlatform = normalizedPlatform === 'ios' || normalizedPlatform === 'web'
+  const targetedBackdropSupported = isAndroid && androidApi >= 31
+  const realtimeBlurSupported = targetedBackdropSupported || isKnownWindowSamplingPlatform
+  return {
+    platform: normalizedPlatform,
+    realtimeBlurSupported,
+    targetedBackdropSupported,
+    maxLayersPerRegion: realtimeBlurSupported ? 1 : 0,
+    fallback: 'opaque',
+  }
 }
 
 const GlassBackdropContext = createContext<GlassBackdropContextValue>({
   blurTargetRef: { current: null },
+  capability: {
+    platform: 'unknown',
+    realtimeBlurSupported: false,
+    targetedBackdropSupported: false,
+    maxLayersPerRegion: 0,
+    fallback: 'opaque',
+  },
   realtimeBlurSupported: false,
 })
 
@@ -39,14 +85,13 @@ export function useGlassBackdrop(): GlassBackdropContextValue {
 }
 
 const IS_ANDROID = Platform.OS === 'android'
-const API_LEVEL = IS_ANDROID && typeof Platform.Version === 'number' ? Platform.Version : 0
-const SDK31_PLUS = IS_ANDROID && API_LEVEL >= 31
+const GLASS_CAPABILITY = resolveGlassCapability(Platform.OS, Platform.Version)
 
 export function GlassBackdropProvider({ children }: { children: ReactNode }) {
   const blurTargetRef = useRef<View>(null)
-  const realtimeBlurSupported = !IS_ANDROID || SDK31_PLUS
+  const { realtimeBlurSupported } = GLASS_CAPABILITY
   return (
-    <GlassBackdropContext.Provider value={{ blurTargetRef, realtimeBlurSupported }}>
+    <GlassBackdropContext.Provider value={{ capability: GLASS_CAPABILITY, blurTargetRef, realtimeBlurSupported }}>
       {children}
     </GlassBackdropContext.Provider>
   )
@@ -63,8 +108,8 @@ interface GlassBackdropTargetProps {
  * Must contain NO GlassSurface/BlurView descendants.
  */
 export function GlassBackdropTarget({ children, style }: GlassBackdropTargetProps) {
-  const { blurTargetRef } = useGlassBackdrop()
-  if (!SDK31_PLUS) {
+  const { blurTargetRef, capability } = useGlassBackdrop()
+  if (!capability.targetedBackdropSupported) {
     return <View style={style}>{children}</View>
   }
   return (
@@ -77,12 +122,24 @@ export function GlassBackdropTarget({ children, style }: GlassBackdropTargetProp
 interface GlassSurfaceProps {
   children?: ReactNode
   style?: StyleProp<ViewStyle>
-  /** Blur strength 1-100 (expo-blur intensity). */
+  /** Blur strength 1-100 (expo-blur intensity). Overrides `variant` when set. */
   intensity?: number
   tint?: 'light' | 'dark' | 'default'
   borderRadius?: number
   /** When false, renders the stable wrapper without any BlurView. */
   enabled?: boolean
+  /**
+   * Tiered material variant. `chrome` (default) covers header/composer lens
+   * strength; `navigation` is lighter so transient rails never read as cards;
+   * `floating` is the strongest tier for popovers/sheets needing separation.
+   */
+  variant?: 'chrome' | 'navigation' | 'floating'
+}
+
+const VARIANT_INTENSITY: Record<NonNullable<GlassSurfaceProps['variant']>, number> = {
+  chrome: 46,
+  navigation: 30,
+  floating: 64,
 }
 
 /**
@@ -91,18 +148,19 @@ interface GlassSurfaceProps {
  * blur-related when disabled so non-glass themes never touch the pipeline.
  */
 export const GlassSurface = forwardRef<View, GlassSurfaceProps>(function GlassSurface(
-  { children, style, intensity = 30, tint = 'default', borderRadius = 22, enabled = true },
+  { children, style, intensity, tint = 'default', borderRadius = 22, enabled = true, variant },
   ref,
 ) {
-  const { blurTargetRef, realtimeBlurSupported } = useGlassBackdrop()
-  const blurActive = enabled && realtimeBlurSupported
+  const { blurTargetRef, capability } = useGlassBackdrop()
+  const blurActive = enabled && capability.realtimeBlurSupported
+  const resolvedIntensity = intensity ?? (variant ? VARIANT_INTENSITY[variant] : 30)
   return (
     <View ref={ref} style={[enabled ? { borderRadius } : null, style]}>
       {blurActive ? (
         <View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius, overflow: 'hidden' }]}>
           <BlurView
             pointerEvents="none"
-            intensity={intensity}
+            intensity={resolvedIntensity}
             tint={tint}
             {...(IS_ANDROID
               ? {

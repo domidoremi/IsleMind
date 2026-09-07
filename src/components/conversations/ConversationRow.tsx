@@ -94,7 +94,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
     () => ({ text: title.trim() || t('conversation.untitled') }),
     [t, title]
   )
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const iconActionSurface = colors.ui.semantic.surface.muted
   const iconActionBorder = colors.ui.semantic.chrome.border
   const historyVisualTokens = useMemo<HistoryVisualTokens>(() => ({

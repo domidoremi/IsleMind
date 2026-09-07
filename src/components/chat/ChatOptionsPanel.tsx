@@ -74,7 +74,7 @@ export function ChatOptionsPanel({
   scope?: 'essential' | 'full'
 }) {
   const { t } = useTranslation()
-  const { isGlass, isLimeRoad, canonicalThemeId } = useAppTheme()
+  const { isLiquidGlass, isMonet, canonicalThemeId } = useAppTheme()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
   const updateConversation = useChatStore((state) => state.updateConversation)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
@@ -217,14 +217,14 @@ export function ChatOptionsPanel({
   const fieldRadius = colors.ui.radius.field
   const controlRadius = colors.ui.radius.controlLarge
   const sheetMaterial = colors.material.sheet
-  const panelSurface = sheetMode ? sheetMaterial.surface : isGlass ? colors.ui.semantic.chrome.background : isLimeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const panelBody = sheetMode ? sheetMaterial.body : isGlass ? colors.ui.actionBar.itemBackground : isLimeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const panelChrome = sheetMode ? sheetMaterial.chrome : isGlass ? colors.ui.semantic.chrome.toolbar : isLimeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base
-  const panelBorder = sheetMode ? sheetMaterial.border : isLimeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const panelSurface = sheetMode ? sheetMaterial.surface : isLiquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
+  const panelBody = sheetMode ? sheetMaterial.body : isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.base
+  const panelChrome = sheetMode ? sheetMaterial.chrome : isLiquidGlass ? colors.ui.semantic.chrome.toolbar : isMonet ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base
+  const panelBorder = sheetMode ? sheetMaterial.border : isMonet ? colors.material.stroke : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const panelDivider = sheetMode ? sheetMaterial.divider : colors.ui.section.divider
-  const actionSurface = isGlass ? colors.ui.actionBar.itemBackground : isLimeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const actionBorder = isLimeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const subtleBorderWidth = isLimeRoad ? 1 : StyleSheet.hairlineWidth
+  const actionSurface = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const actionBorder = isMonet ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = isMonet ? 1 : StyleSheet.hairlineWidth
 
   useEffect(() => {
     setSelectedProviderId(provider?.id ?? conversation.providerId)
@@ -276,8 +276,8 @@ export function ChatOptionsPanel({
 
   return (
     <IslePanel
-      material={sheetMode || isGlass ? 'chrome' : 'paper'}
-      intensity={isGlass ? 44 : 30}
+      material={sheetMode || isLiquidGlass ? 'chrome' : 'paper'}
+      intensity={isLiquidGlass ? 44 : 30}
       elevated={false}
       style={{ alignSelf: 'center', width: embedded ? '100%' : panelWidth, height: embedded ? '100%' : undefined, maxWidth: '100%', marginTop: embedded || sheetMode ? 0 : 10, maxHeight: embedded ? undefined : maxHeight, borderWidth: embedded ? 0 : subtleBorderWidth, borderColor: panelBorder, backgroundColor: panelSurface }}
       radius={embedded ? 0 : panelRadius}
@@ -762,11 +762,11 @@ function clampListHeight(count: number, minHeight: number, maxHeight: number, co
 }
 
 function PickerEmptyState({ title, description, minHeight }: { title: string; description: string; minHeight: number }) {
-  const { colors, isGlass, isLimeRoad } = useAppTheme()
-  const surface = isGlass ? colors.ui.actionBar.itemBackground : isLimeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const borderColor = isLimeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const { colors, isLiquidGlass, isMonet } = useAppTheme()
+  const surface = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const borderColor = isMonet ? colors.material.stroke : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
-    <View style={{ minHeight, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'center', backgroundColor: surface, borderWidth: isLimeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}>
+    <View style={{ minHeight, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'center', backgroundColor: surface, borderWidth: isMonet ? 1 : StyleSheet.hairlineWidth, borderColor }}>
       <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
       <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>{description}</Text>
     </View>
@@ -774,9 +774,9 @@ function PickerEmptyState({ title, description, minHeight }: { title: string; de
 }
 
 function ModelCapabilityStrip({ badges }: { badges: ModelCapabilityBadge[] }) {
-  const { colors, isGlass, isLimeRoad } = useAppTheme()
-  const surface = isGlass ? colors.ui.actionBar.itemBackground : isLimeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const borderColor = isLimeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const { colors, isLiquidGlass, isMonet } = useAppTheme()
+  const surface = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const borderColor = isMonet ? colors.material.stroke : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
     <View style={{ minHeight: 36, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       {badges.map((badge) => (
@@ -793,7 +793,7 @@ function ModelCapabilityStrip({ badges }: { badges: ModelCapabilityBadge[] }) {
             alignItems: 'center',
             gap: 5,
             backgroundColor: surface,
-            borderWidth: isLimeRoad ? 1 : StyleSheet.hairlineWidth,
+            borderWidth: isMonet ? 1 : StyleSheet.hairlineWidth,
             borderColor,
           }}
         >
@@ -919,7 +919,7 @@ function ParamInput({
   onCommit: (value: number) => void
   onReset: () => void
 }) {
-  const { colors, isLimeRoad } = useAppTheme()
+  const { colors, isMonet } = useAppTheme()
   const externalDraft = automatic || value === undefined ? '' : String(value)
   const [draft, setDraft] = useState(externalDraft)
   const commitPending = useRef(false)
@@ -981,7 +981,7 @@ function ParamInput({
         accessibilityHint={accessibilityHint}
         placeholder={automaticLabel}
         placeholderTextColor={colors.textTertiary}
-        style={{ minHeight: 46, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: isLimeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 14, fontWeight: '700' }}
+        style={{ minHeight: 46, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: isMonet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 14, fontWeight: '700' }}
       />
     </View>
   )

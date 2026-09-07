@@ -79,26 +79,26 @@ const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
 ]
 
 function panelCardStyle(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.material.stroke) {
-  const resolvedBorderColor = colors.ui.limeRoad
+  const resolvedBorderColor = colors.ui.monet
     ? borderColor
     : borderColor === colors.material.stroke
-      ? colors.ui.glass
+      ? colors.ui.liquidGlass
         ? colors.ui.actionBar.itemBorder
         : colors.ui.semantic.chrome.border
       : borderColor
   return {
     borderRadius: Math.min(colors.ui.radius.card, 8),
-    backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
-    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+    backgroundColor: colors.ui.liquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
+    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
     borderColor: resolvedBorderColor,
   }
 }
 
 function ApiKeyEmptyRow({ icon, label }: { icon: ReactNode; label: string }) {
   const { colors } = useAppTheme()
-  const borderColor = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const borderColor = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
-    <View style={{ minHeight: 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}>
+    <View style={{ minHeight: 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor }}>
       {icon}
       <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
         {label}
@@ -109,9 +109,9 @@ function ApiKeyEmptyRow({ icon, label }: { icon: ReactNode; label: string }) {
 
 function ApiKeyInlineEmpty({ label }: { label: string }) {
   const { colors } = useAppTheme()
-  const borderColor = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const borderColor = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
-    <View style={{ minHeight: 34, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 9, paddingVertical: 6, justifyContent: 'center', backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}>
+    <View style={{ minHeight: 34, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 9, paddingVertical: 6, justifyContent: 'center', backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor }}>
       <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>
         {label}
       </Text>
@@ -123,17 +123,17 @@ function quietControlSurface(colors: ReturnType<typeof useAppTheme>['colors'], a
   return {
     backgroundColor: active
       ? colors.ui.control.primaryBackground
-      : colors.ui.glass
+      : colors.ui.liquidGlass
       ? colors.ui.actionBar.itemBackground
-      : colors.ui.limeRoad
+      : colors.ui.monet
           ? colors.ui.semantic.surface.muted
           : colors.ui.semantic.surface.muted,
-    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
     borderColor: active
       ? colors.ui.control.primaryBorder
-      : colors.ui.glass
+      : colors.ui.liquidGlass
         ? colors.ui.actionBar.itemBorder
-        : colors.ui.limeRoad
+        : colors.ui.monet
           ? colors.material.stroke
           : colors.ui.semantic.chrome.border,
   }
@@ -561,9 +561,9 @@ export function ApiKeyPanel({
       style={[{
         borderRadius: Math.min(colors.ui.radius.panel, 8),
         padding: compact ? 8 : 10,
-        backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-        borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-        borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border,
+        backgroundColor: colors.ui.liquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.muted,
+        borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
+        borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border,
         marginBottom: hideHeader ? 0 : 8,
       }, style]}
     >
@@ -776,7 +776,7 @@ export function ApiKeyPanel({
               accessibilityLabel={t('apiKeyPanel.addTokens')}
               accessibilityState={{ expanded: credentialEditorExpanded }}
               onPress={() => setCredentialEditorOpen((value) => !value)}
-              style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border }}
+              style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border }}
             >
               <AppIcon name="add" color={colors.textTertiary} size={15} />
               <View style={{ flex: 1, minWidth: 0 }}>
@@ -870,7 +870,7 @@ export function ApiKeyPanel({
                       accessibilityLabel={modelEvidenceOpen ? t('apiKeyPanel.hideCompatibilityDetails') : t('apiKeyPanel.showCompatibilityDetails')}
                       accessibilityState={{ expanded: modelEvidenceOpen }}
                       onPress={() => setModelEvidenceOpen((value) => !value)}
-                      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border }}
+                      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border }}
                     >
                       <AppIcon name="list-check" color={colors.textTertiary} size={15} />
                       <View style={{ flex: 1, minWidth: 0 }}>
@@ -977,7 +977,7 @@ function MiniBadge({ label, tone }: { label: string; tone: TokenModelGroupTone }
         ? colors.ui.tone.danger
         : colors.ui.tone.neutral
   return (
-    <View style={{ minHeight: 22, borderRadius: colors.ui.radius.chip, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
+    <View style={{ minHeight: 22, borderRadius: colors.ui.radius.chip, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
       <Text style={{ color: toneToken.foreground, fontSize: 10, fontWeight: '800' }}>{label}</Text>
     </View>
   )
@@ -1004,9 +1004,9 @@ function ProviderWorkspaceTabs({
         padding: 3,
         gap: 3,
         borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
-        backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.base,
+        backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.base,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+        borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
       }}
     >
       {tabs.map((tab) => {
@@ -1080,8 +1080,8 @@ function CompactDisclosureRow({
 }) {
   const { colors } = useAppTheme()
   const toneToken = tone === 'danger' ? colors.ui.tone.danger : undefined
-  const backgroundColor = toneToken?.background ?? (colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted)
-  const borderColor = toneToken?.border ?? (colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border)
+  const backgroundColor = toneToken?.background ?? (colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted)
+  const borderColor = toneToken?.border ?? (colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border)
   const titleColor = toneToken?.foreground ?? colors.textSecondary
   return (
     <IslePressable
@@ -1090,7 +1090,7 @@ function CompactDisclosureRow({
       accessibilityLabel={`${title}. ${detail}`}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor }}
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -1199,7 +1199,7 @@ function CredentialGroupRow({
             paddingHorizontal: 12,
             color: colors.text,
             backgroundColor: colors.ui.input.background,
-            borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+            borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
             borderColor: colors.ui.input.border,
             fontSize: 13,
             fontWeight: '800',
@@ -1263,7 +1263,7 @@ function ModelAliasEditor({ aliases, models, onChange }: { aliases: ModelAlias[]
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
-            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.field, 8), paddingHorizontal: 11, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 12.5, fontWeight: '700' }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.field, 8), paddingHorizontal: 11, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 12.5, fontWeight: '700' }}
           />
           <TextInput
             value={entry.model}
@@ -1272,7 +1272,7 @@ function ModelAliasEditor({ aliases, models, onChange }: { aliases: ModelAlias[]
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
-            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.field, 8), paddingHorizontal: 11, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 12.5, fontWeight: '700' }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.field, 8), paddingHorizontal: 11, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 12.5, fontWeight: '700' }}
           />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 7 }}>
             {models.slice(0, 5).map((model) => (
@@ -1479,7 +1479,7 @@ function ModelChip({ label }: { label: string }) {
   const { width } = useWindowDimensions()
   const labelMaxWidth = Math.max(112, Math.min(180, width * 0.46))
   return (
-    <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border }}>
+    <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.monet ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border }}>
       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700', maxWidth: labelMaxWidth, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
     </View>
   )
@@ -1524,7 +1524,7 @@ function ModelCapabilityEvidenceBadge({ label, supported }: { label: string; sup
     <View
       accessible
       accessibilityLabel={`${label}, ${t(`apiKeyPanel.modelCapabilityAvailability.${supported ? 'available' : 'unavailable'}`)}`}
-      style={{ minHeight: 28, maxWidth: 176, borderRadius: Math.min(colors.ui.radius.chip, 8), paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: tone.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: tone.border }}
+      style={{ minHeight: 28, maxWidth: 176, borderRadius: Math.min(colors.ui.radius.chip, 8), paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: tone.background, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: tone.border }}
     >
       <AppIcon name={supported ? 'check' : 'close'} color={tone.foreground} size={12} />
       <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82} style={{ color: tone.foreground, fontSize: 10, lineHeight: 13, fontWeight: '800', includeFontPadding: false }}>
@@ -1586,7 +1586,7 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
   const { colors } = useAppTheme()
   const toneToken = tone === 'mint' ? colors.ui.tone.success : tone === 'danger' ? colors.ui.tone.danger : colors.ui.tone.neutral
   return (
-    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : toneToken.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : toneToken.border }}>
+    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : toneToken.background, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : toneToken.border }}>
       {children}
     </IslePressable>
   )

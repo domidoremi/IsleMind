@@ -37,18 +37,18 @@ export function RuntimeRepairIntentCard({
   onApplyDraft?: () => void
   onDismiss?: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const { t } = useTranslation()
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   return (
     <View
       style={{
         marginBottom: 5,
         borderRadius: colors.ui.radius.panel,
         padding: 10,
-        backgroundColor: isGlass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
+        backgroundColor: isLiquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
         borderWidth: subtleBorderWidth,
-        borderColor: colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+        borderColor: colors.ui.monet ? colors.material.stroke : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
         gap: 8,
       }}
     >
@@ -98,7 +98,7 @@ function RuntimeRepairIntentButton({
   onPress?: () => void
 }) {
   const { colors } = useAppTheme()
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   return (
     <IslePressable
       haptic

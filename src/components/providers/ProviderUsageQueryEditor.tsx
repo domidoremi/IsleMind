@@ -229,7 +229,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
 
       {enabled ? (
         <View style={{ gap: 8 }}>
-          <View style={{ minHeight: 210, overflow: 'hidden', borderRadius: 8, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: validation.valid ? colors.ui.input.border : colors.ui.tone.danger.border }}>
+          <View style={{ minHeight: 210, overflow: 'hidden', borderRadius: 8, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: validation.valid ? colors.ui.input.border : colors.ui.tone.danger.border }}>
             <TextInput
               testID="provider-usage-query-json-input"
               value={editorText}

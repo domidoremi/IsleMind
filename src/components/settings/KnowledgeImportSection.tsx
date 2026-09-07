@@ -28,13 +28,13 @@ export function KnowledgeImportSection({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const [pasteOpen, setPasteOpen] = useState(false)
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const foldoutPanelStyle = {
     borderRadius: Math.min(colors.ui.radius.card, 8),
     padding: 10,
-    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
     borderWidth: subtleBorderWidth,
-    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
   } as const
 
   return (
@@ -80,9 +80,9 @@ export function KnowledgeImportSection({
           flexDirection: 'row',
           alignItems: 'center',
           gap: 8,
-          backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+          backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
           borderWidth: subtleBorderWidth,
-          borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+          borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
         }}
       >
         <AppIcon name="edit" color={colors.textTertiary} size={16} />

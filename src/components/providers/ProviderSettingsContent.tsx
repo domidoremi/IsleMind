@@ -103,11 +103,11 @@ function createProviderNotificationOwner(kind: string): string {
 }
 
 function resolveProviderChrome(colors: AppThemeColors) {
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const chromeSurface = colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
-  const chromeBorder = colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const mutedSurface = colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const raisedSurface = colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
+  const chromeSurface = colors.ui.monet ? colors.ui.semantic.surface.base : colors.ui.liquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
+  const chromeBorder = colors.ui.monet ? colors.material.stroke : colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const mutedSurface = colors.ui.monet ? colors.ui.semantic.surface.muted : colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const raisedSurface = colors.ui.monet ? colors.ui.semantic.surface.base : colors.ui.liquidGlass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
   return { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface }
 }
 
@@ -691,7 +691,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
         provider={provider}
         usageSnapshot={providerUsageSnapshots.get(provider.id)}
         position={providerIndex + 1}
-        featured={colors.ui.family === 'lime-road' && provider.id === featuredProviderId}
+        featured={colors.ui.family === 'monet' && provider.id === featuredProviderId}
         selected={selectedIds.has(provider.id)}
         batchMode={batchMode}
         expanded={expandedProviderId === provider.id}
@@ -857,10 +857,10 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
             style={{
               width: '100%',
               overflow: 'hidden',
-              borderRadius: colors.ui.family === 'markdown' ? 0 : Math.min(colors.ui.radius.card, 8),
+              borderRadius: colors.ui.family === 'material' ? 0 : Math.min(colors.ui.radius.card, 8),
               backgroundColor: colors.ui.family === 'minimal' ? 'transparent' : raisedSurface,
               borderWidth: colors.ui.family === 'minimal' ? StyleSheet.hairlineWidth : 1,
-              borderColor: groupFeatured ? colors.ui.control.primaryBorder : colors.ui.family === 'lime-road' ? colors.material.stroke : colors.ui.section.divider,
+              borderColor: groupFeatured ? colors.ui.control.primaryBorder : colors.ui.family === 'monet' ? colors.material.stroke : colors.ui.section.divider,
             }}
           >
             <IslePressable
@@ -922,7 +922,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
               )}
             </IslePressable>
             {disclosure.showConfigurations ? (
-              <View accessibilityRole="list" testID={`provider-supplier-configurations-${group.id}`} style={{ borderTopWidth: colors.ui.family === 'lime-road' ? 1 : StyleSheet.hairlineWidth, borderTopColor: colors.ui.family === 'lime-road' ? colors.material.stroke : colors.ui.section.divider }}>
+              <View accessibilityRole="list" testID={`provider-supplier-configurations-${group.id}`} style={{ borderTopWidth: colors.ui.family === 'monet' ? 1 : StyleSheet.hairlineWidth, borderTopColor: colors.ui.family === 'monet' ? colors.material.stroke : colors.ui.section.divider }}>
                 {group.providers.map((provider, index) => (
                   <View key={provider.id} role="listitem" style={{ borderBottomWidth: index === group.providers.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
                     {renderProviderItem({ item: provider, index: providerOrderById.get(provider.id) ?? 0 })}
@@ -934,13 +934,13 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
         )
       })}
     </View>
-  ) : colors.ui.family === 'markdown' ? (
-    <View testID="provider-empty-markdown" style={{ minHeight: 84, paddingHorizontal: 12, paddingVertical: 10, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider, backgroundColor: colors.ui.semantic.surface.muted }}>
+  ) : colors.ui.family === 'material' ? (
+    <View testID="provider-empty-material" style={{ minHeight: 84, paddingHorizontal: 12, paddingVertical: 10, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider, backgroundColor: colors.ui.semantic.surface.muted }}>
       <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
       {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
     </View>
-  ) : colors.ui.family === 'lime-road' ? (
-    <View testID="provider-empty-lime-road" style={{ minHeight: 96, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: colors.material.stroke }}>
+  ) : colors.ui.family === 'monet' ? (
+    <View testID="provider-empty-monet" style={{ minHeight: 96, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: colors.material.stroke }}>
       <View style={{ width: 34, alignItems: 'center' }}>
         <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: colors.ui.control.primaryBackground, borderWidth: 3, borderColor: colors.ui.semantic.surface.base }} />
         <View style={{ width: 2, height: 30, backgroundColor: colors.material.stroke }} />
@@ -1080,7 +1080,7 @@ function ProviderConfigurationSheet({
       <View accessibilityViewIsModal style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Pressable accessible={false} accessibilityRole="none" onPress={() => void requestSheetClose()} style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={{ height: sheetHeight, overflow: 'hidden', borderTopLeftRadius: 8, borderTopRightRadius: 8, backgroundColor: colors.material.sheet.surface, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderBottomWidth: 0, borderColor: colors.material.sheet.border }}>
+          <View style={{ height: sheetHeight, overflow: 'hidden', borderTopLeftRadius: 8, borderTopRightRadius: 8, backgroundColor: colors.material.sheet.surface, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderBottomWidth: 0, borderColor: colors.material.sheet.border }}>
             <View style={{ alignItems: 'center', paddingTop: 6 }}>
               <View style={{ width: 34, height: 3, borderRadius: 2, backgroundColor: colors.textTertiary, opacity: 0.34 }} />
             </View>
@@ -1121,8 +1121,8 @@ function ProviderConfigurationSheet({
 
 function ProviderToolbarDisclosureRow({ title, detail, icon, open, tone, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; tone?: 'amber'; onPress: () => void }) {
   const { colors } = useAppTheme()
-  const borderColor = tone === 'amber' ? colors.ui.tone.warning.border : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const backgroundColor = tone === 'amber' ? colors.ui.tone.warning.background : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const borderColor = tone === 'amber' ? colors.ui.tone.warning.border : colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const backgroundColor = tone === 'amber' ? colors.ui.tone.warning.background : colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const textColor = tone === 'amber' ? colors.ui.tone.warning.foreground : colors.textSecondary
   return (
     <IslePressable
@@ -1131,7 +1131,7 @@ function ProviderToolbarDisclosureRow({ title, detail, icon, open, tone, onPress
       accessibilityLabel={`${title}. ${detail}`}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={{ minHeight: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}
+      style={{ minHeight: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor }}
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -1391,7 +1391,7 @@ function ProviderListRow({
       accessibilityRole="checkbox"
       accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')}
       accessibilityState={{ checked: selected }}
-      style={{ position: 'absolute', top: colors.ui.family === 'lime-road' ? 4 : 10, right: 4, width: 44, height: 44, borderRadius: colors.ui.family === 'markdown' ? 0 : 8, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base, borderWidth: subtleBorderWidth, borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}
+      style={{ position: 'absolute', top: colors.ui.family === 'monet' ? 4 : 10, right: 4, width: 44, height: 44, borderRadius: colors.ui.family === 'material' ? 0 : 8, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base, borderWidth: subtleBorderWidth, borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}
     >
       {selected ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={17} /> : <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.textTertiary }} />}
     </IslePressable>
@@ -1452,7 +1452,7 @@ function ProviderListRow({
     )
   }
 
-  if (colors.ui.family === 'markdown') {
+  if (colors.ui.family === 'material') {
     return (
       <View style={{ minHeight: 66, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider, backgroundColor: expanded ? colors.ui.semantic.surface.muted : 'transparent' }}>
         <IslePressable
@@ -2513,7 +2513,7 @@ function ProviderImportModal({
   const inputScrollEnabled = targetInputHeight > maxInputHeight
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (keyboardVisible ? 0.82 : compact ? 0.96 : 0.9))
   const sheetMaterial = colors.material.sheet
-  const footerSurface = colors.ui.limeRoad ? sheetMaterial.chrome : colors.ui.glass ? colors.ui.semantic.chrome.background : sheetMaterial.chrome
+  const footerSurface = colors.ui.monet ? sheetMaterial.chrome : colors.ui.liquidGlass ? colors.ui.semantic.chrome.background : sheetMaterial.chrome
   const { subtleBorderWidth } = resolveProviderChrome(colors)
   const footerCompact = width < 380
   const modalPadding = compactWidth ? 12 : 16
@@ -2740,7 +2740,7 @@ function ProviderImportModal({
                     borderRadius: Math.min(colors.ui.radius.panel, 8),
                     paddingHorizontal: 12,
                     backgroundColor: colors.ui.input.background,
-                    borderWidth: colors.ui.limeRoad ? 1 : subtleBorderWidth,
+                    borderWidth: colors.ui.monet ? 1 : subtleBorderWidth,
                     borderColor: colors.ui.input.border,
                     overflow: 'hidden',
                     shadowColor: colors.shadow.color,

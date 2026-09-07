@@ -591,7 +591,6 @@ function ConversationNavigationPresentation({
 
   return (
     <View testID="conversation-navigation-presentation-liquid-glass" style={compact ? styles.glassNavigationCompact : styles.glassNavigationRail}>
-      <View pointerEvents="none" style={[styles.glassNavigationHighlight, { backgroundColor: activeForeground }]} />
       {!compact ? (
         <View style={styles.glassNavigationHeading}>
           <View style={[styles.glassNavigationIconLens, { backgroundColor: surface }]}><AppIcon name="conversation" color={foreground} size={14} strokeWidth={appIconStroke.strong} /></View>
@@ -1050,14 +1049,6 @@ const styles = StyleSheet.create({
     padding: 5,
     overflow: 'hidden',
     borderRadius: 30,
-  },
-  glassNavigationHighlight: {
-    position: 'absolute',
-    top: 3,
-    right: 20,
-    left: 20,
-    height: StyleSheet.hairlineWidth,
-    opacity: 0.48,
   },
   glassNavigationHeading: {
     minHeight: 28,

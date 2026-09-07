@@ -256,7 +256,6 @@ const styles = StyleSheet.create({
   monetModelBrushLong: { flex: 1, borderRadius: 2 },
   monetModelBrushShort: { width: 18, borderRadius: 2 },
   materialModelIndicator: { position: 'absolute', right: 24, bottom: -5, left: 24, height: 3, borderRadius: 2 },
-  glassModelHighlight: { position: 'absolute', top: 2, right: 22, left: 22, height: StyleSheet.hairlineWidth, opacity: 0.46 },
   minimalHeader: { paddingHorizontal: 8 },
   minimalHeaderIndex: { width: 2, height: 24, marginLeft: 5, opacity: 0.72 },
   minimalActions: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 0 },
@@ -270,16 +269,6 @@ const styles = StyleSheet.create({
   // The GlassSurface wrapper supplies borderRadius + clip; drop the opaque
   // margin-based shell so the realtime blur reads cleanly at the edges.
   glassHeaderShell: { margin: 3 },
-  glassHeaderTint: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  glassHeaderInnerPlane: { position: 'absolute', top: 2, right: 2, bottom: 2, left: 2, borderWidth: StyleSheet.hairlineWidth, borderRadius: 24, opacity: 0.38 },
-  glassHeaderSpecular: { position: 'absolute', top: 2, right: 52, left: 52, height: StyleSheet.hairlineWidth, opacity: 0.52 },
   glassLeadingLens: { zIndex: 1 },
   glassActions: { zIndex: 1, marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5 },
 })

@@ -271,11 +271,16 @@ export function Composer({
   const fieldRadius = colors.ui.radius.field
   const chipRadius = colors.ui.radius.controlLarge
   const compactControlRadius = colors.ui.radius.controlMiddle
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const raisedSurface = colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const raisedBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const chipSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const chipBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
+  // Inner panels embedded in the glass composer must use the translucent
+  // floating material, never the chrome tint — a solid tint inside the lens
+  // reads as a white rectangle.
+  const raisedSurface = colors.ui.liquidGlass
+    ? colors.design?.semantic.surface.floating.background ?? colors.ui.semantic.chrome.background
+    : colors.ui.semantic.surface.base
+  const raisedBorder = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const chipSurface = colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.base
+  const chipBorder = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
   const attachmentExpression = resolveThemeComponentExpression(canonicalThemeId, 'attachment')
   const attachmentGrammar = attachmentExpression.motion
   const compactComposer = composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT
@@ -531,7 +536,6 @@ export function Composer({
               >
                 {attachmentGrammar === 'organic' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', width: 30, height: 18, borderRadius: 15, right: -5, top: -5, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.26 }} /> : null}
                 {attachmentGrammar === 'material' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.1 }} /> : null}
-                {attachmentGrammar === 'fluid' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 1, right: 8, left: 8, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.5 }} /> : null}
                 <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: attachmentLabelMaxWidth }}>
                   {item.name}
                 </Text>
@@ -1049,11 +1053,11 @@ function ComposerPickRow({
   accessibilityHint?: string
   onPress: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const rowRadius = colors.ui.radius.field
-  const rowBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const rowBorderColor = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const iconBackground = isGlass ? colors.ui.actionBar.itemActiveBackground : colors.ui.icon.accentBackground
+  const rowBackground = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const rowBorderColor = isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const iconBackground = isLiquidGlass ? colors.ui.actionBar.itemActiveBackground : colors.ui.icon.accentBackground
   return (
     <IslePressable
       haptic
@@ -1063,7 +1067,7 @@ function ComposerPickRow({
       accessibilityHint={accessibilityHint}
       accessibilityValue={description ? { text: description } : undefined}
       hitSlop={COMPOSER_CONTROL_HIT_SLOP}
-      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: rowBackground, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: rowBorderColor }}
+      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: rowBackground, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: rowBorderColor }}
     >
       <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: iconBackground }}>
         {icon}
@@ -1134,11 +1138,11 @@ interface IconButtonProps {
 }
 
 function AttachmentChip({ label, accessibilityHint, active = false, disabled = false, minWidth, maxWidth, children, onPress }: IconButtonProps) {
-  const { colors, isGlass, canonicalThemeId } = useAppTheme()
+  const { colors, isLiquidGlass, canonicalThemeId } = useAppTheme()
   const expression = resolveThemeComponentExpression(canonicalThemeId, 'attachment')
   const grammar = expression.motion
-  const idleBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const idleBorder = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const idleBackground = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.base
+  const idleBorder = isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
     <IslePressable
       haptic
@@ -1173,7 +1177,6 @@ function AttachmentChip({ label, accessibilityHint, active = false, disabled = f
     >
       {grammar === 'organic' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', width: 34, height: 20, borderRadius: 17, right: -6, top: -5, backgroundColor: colors.ui.icon.accentBackground, opacity: active ? 0.36 : 0.2 }} /> : null}
       {grammar === 'material' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.ui.icon.accentBackground, opacity: active ? 0.2 : 0.08 }} /> : null}
-      {grammar === 'fluid' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 1, right: 10, left: 10, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: active ? 0.72 : 0.42 }} /> : null}
       {children}
       <Text numberOfLines={1} style={{ color: disabled ? colors.ui.control.disabledForeground : active ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 11, fontWeight: '800', flexShrink: 1 }}>{label}</Text>
     </IslePressable>

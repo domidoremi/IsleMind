@@ -14,7 +14,7 @@ interface ScreenProps extends PropsWithChildren {
 }
 
 export function IsleScreen({ children, padded = true, style, background = 'default', backgroundState = 'idle', backgroundIntensity = 1, edges }: ScreenProps) {
-  const { colors, isDark } = useAppTheme()
+  const { colors, isDark, backgroundEnvironment } = useAppTheme()
   const canvas = resolveBackgroundCanvas(colors, background)
 
   return (
@@ -33,7 +33,7 @@ export function IsleScreen({ children, padded = true, style, background = 'defau
           style,
         ]}
       >
-        <IsleBackground colors={colors} mode={background} state={backgroundState} intensity={backgroundIntensity} />
+        <IsleBackground colors={colors} environment={backgroundEnvironment} mode={background} state={backgroundState} intensity={backgroundIntensity} />
         {children}
       </View>
     </SafeAreaView>

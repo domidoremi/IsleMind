@@ -124,12 +124,12 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
   const listSafeBottomPadding = Math.max(insets.bottom, 10) + 18
   const scrollTopListBottomPadding = scrollTopActionBottom + SCROLL_TOP_ACTION_SIZE + SCROLL_TOP_ACTION_CLEARANCE
   const primaryActionSize = compact ? 46 : 50
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const floatingSecondarySurface = colors.ui.semantic.surface.muted
-  const floatingSecondaryBorder = colors.ui.limeRoad ? colors.material.strokeStrong : colors.ui.semantic.chrome.border
-  const floatingSecondaryShadowOpacity = colors.ui.limeRoad ? Math.min(colors.ui.card.shadowOpacity, 0.08) : 0
-  const floatingSecondaryShadowRadius = colors.ui.limeRoad ? Math.max(2, colors.ui.card.shadowRadius - 4) : 0
-  const floatingSecondaryShadowOffset = colors.ui.limeRoad ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0
+  const floatingSecondaryBorder = colors.ui.monet ? colors.material.strokeStrong : colors.ui.semantic.chrome.border
+  const floatingSecondaryShadowOpacity = colors.ui.monet ? Math.min(colors.ui.card.shadowOpacity, 0.08) : 0
+  const floatingSecondaryShadowRadius = colors.ui.monet ? Math.max(2, colors.ui.card.shadowRadius - 4) : 0
+  const floatingSecondaryShadowOffset = colors.ui.monet ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0
   const historyVisualTokens = useMemo<HistoryVisualTokens>(() => ({
     text: colors.text,
     textSecondary: colors.textSecondary,
@@ -1137,9 +1137,9 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
             borderColor: colors.ui.control.primaryBorder,
             shadowColor: colors.ui.control.shadow,
             shadowOpacity: 0,
-            shadowRadius: colors.ui.limeRoad ? colors.ui.control.primaryShadowRadius : 0,
-            shadowOffset: { width: 0, height: colors.ui.limeRoad ? colors.ui.control.primaryShadowOffset : 0 },
-            elevation: colors.ui.limeRoad ? 1 : 0,
+            shadowRadius: colors.ui.monet ? colors.ui.control.primaryShadowRadius : 0,
+            shadowOffset: { width: 0, height: colors.ui.monet ? colors.ui.control.primaryShadowOffset : 0 },
+            elevation: colors.ui.monet ? 1 : 0,
           }}
         />
       }
@@ -1331,7 +1331,7 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
               shadowOpacity: floatingSecondaryShadowOpacity,
               shadowRadius: floatingSecondaryShadowRadius,
               shadowOffset: { width: 0, height: floatingSecondaryShadowOffset },
-              elevation: colors.ui.limeRoad && floatingSecondaryShadowOpacity > 0 ? 1 : 0,
+              elevation: colors.ui.monet && floatingSecondaryShadowOpacity > 0 ? 1 : 0,
               opacity: scrollTopActionLocked ? 0.64 : 1,
             }}
           >

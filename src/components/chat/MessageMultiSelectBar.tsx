@@ -20,10 +20,10 @@ export function MessageMultiSelectBar({
   onExport: () => void
   onDelete: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const { t } = useTranslation()
-  const surface = isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
-  const border = isGlass ? colors.ui.actionBar.border : colors.ui.semantic.chrome.border
+  const surface = isLiquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
+  const border = isLiquidGlass ? colors.ui.actionBar.border : colors.ui.semantic.chrome.border
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: bottomOffset, zIndex: 48, paddingHorizontal: 14 }}>
       <View
@@ -61,10 +61,10 @@ export function MessageMultiSelectBar({
 }
 
 function MessageSelectionAction({ label, icon, danger = false, onPress }: { label: string; icon: AppIconName; danger?: boolean; onPress: () => void }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const foreground = danger ? colors.ui.tone.danger.foreground : colors.textSecondary
-  const background = danger ? colors.ui.tone.danger.background : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const border = danger ? colors.ui.tone.danger.border : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const background = danger ? colors.ui.tone.danger.background : isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const border = danger ? colors.ui.tone.danger.border : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
     <IslePressable
       haptic

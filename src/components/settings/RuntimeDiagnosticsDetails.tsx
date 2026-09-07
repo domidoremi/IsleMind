@@ -95,8 +95,8 @@ export function RuntimeDiagnosticsDetails({
             justifyContent: 'space-between',
             paddingHorizontal: 12,
             borderRadius: Math.min(colors.ui.radius.card, 8),
-            borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-            borderColor: colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border,
+            borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
+            borderColor: colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border,
             backgroundColor: colors.ui.semantic.surface.muted,
           }}
         >
@@ -679,7 +679,7 @@ function DiagnosticPill({
       ? colors.ui.tone.danger
       : colors.ui.tone.neutral
   return (
-    <View style={{ minHeight: 58, minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', borderRadius: Math.min(colors.ui.radius.card, 8), padding: 9, backgroundColor: toneToken.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
+    <View style={{ minHeight: 58, minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', borderRadius: Math.min(colors.ui.radius.card, 8), padding: 9, backgroundColor: toneToken.background, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: toneToken.foreground }} />
         <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>

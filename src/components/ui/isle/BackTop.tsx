@@ -76,7 +76,7 @@ export function IsleBackTop({
               borderWidth: 1,
               borderColor: colors.ui.semantic.chrome.border,
               shadowColor: colors.shadowTint,
-              shadowOpacity: colors.ui.glass ? 0 : colors.shadow.mediumOpacity,
+              shadowOpacity: colors.ui.liquidGlass ? 0 : colors.shadow.mediumOpacity,
               shadowRadius: 6,
               shadowOffset: { width: 0, height: 2 },
               elevation: 3,

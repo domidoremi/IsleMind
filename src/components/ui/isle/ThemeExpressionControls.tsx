@@ -76,7 +76,6 @@ export function ThemeButtonExpressionBody({ family, colors, icon, content, prima
   return (
     <View testID="theme-button-body-liquid-glass" style={styles.row}>
       <View {...decorativeAccessibility} style={[styles.glassPlane, { borderColor: colors.ui.actionBar.itemBorder }]} />
-      <View {...decorativeAccessibility} style={[styles.glassHighlight, { backgroundColor: colors.ui.semantic.content.inverse }]} />
       {icon ? <View style={styles.icon}>{icon}</View> : null}
       {content ? <View style={styles.label}>{content}</View> : null}
     </View>
@@ -126,7 +125,6 @@ export function ThemeInputExpressionBody({ family, colors, prefix, input, suffix
   return (
     <View testID="theme-input-body-liquid-glass" style={styles.inputBody}>
       <View {...decorativeAccessibility} style={[styles.glassInputPlane, { borderColor: colors.ui.actionBar.itemBorder }]} />
-      <View {...decorativeAccessibility} style={[styles.glassInputHighlight, { backgroundColor: colors.ui.semantic.content.inverse, opacity: focused ? 0.34 : 0.18 }]} />
       {content}
     </View>
   )
@@ -166,7 +164,6 @@ const styles = StyleSheet.create({
   materialStateLayer: { ...StyleSheet.absoluteFill, opacity: 0.06 },
   materialIndicator: { position: 'absolute', top: 4, bottom: 4, left: 0, width: 2, opacity: 0.72 },
   glassPlane: { ...StyleSheet.absoluteFill, borderWidth: StyleSheet.hairlineWidth, borderRadius: 999, opacity: 0.42 },
-  glassHighlight: { position: 'absolute', top: 0, left: 14, right: 14, height: 1, opacity: 0.24 },
   inputBody: { position: 'relative', flex: 1, alignSelf: 'stretch', minWidth: 0, justifyContent: 'center' },
   inputRow: { position: 'relative', flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
   inputRowMultiline: { alignItems: 'flex-start' },
@@ -175,7 +172,6 @@ const styles = StyleSheet.create({
   monetInputEdge: { position: 'absolute', top: 2, right: 4, bottom: 2, left: 4, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderTopRightRadius: 20, borderBottomLeftRadius: 20 },
   materialInputIndicator: { position: 'absolute', left: 0, bottom: -1, width: 44, height: 2 },
   glassInputPlane: { ...StyleSheet.absoluteFill, borderWidth: StyleSheet.hairlineWidth, borderRadius: 999, opacity: 0.42 },
-  glassInputHighlight: { position: 'absolute', top: 0, left: 18, right: 18, height: 1 },
   minimalCardRule: { position: 'absolute', top: 0, left: 0, right: 0, height: StyleSheet.hairlineWidth },
   minimalCardIndex: { position: 'absolute', top: 10, bottom: 10, left: 0, width: StyleSheet.hairlineWidth },
   monetCardWash: { position: 'absolute', top: -26, right: -16, width: 108, height: 58, borderRadius: 40, opacity: 0.08 },

@@ -173,14 +173,6 @@ export function IsleSearchField({
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: radius, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.06 }}
         />
       ) : null}
-      {glass ? (
-        <View
-          accessible={false}
-          importantForAccessibility="no-hide-descendants"
-          pointerEvents="none"
-          style={{ position: 'absolute', top: 1, right: 18, left: 18, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: focused ? 0.64 : 0.38 }}
-        />
-      ) : null}
       <View style={{ width: metrics.iconSize + 2, height: minHeight, alignItems: 'center', justifyContent: 'center' }}>
         <AppIcon
           name="search"

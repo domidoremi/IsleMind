@@ -98,7 +98,7 @@ export function ChatWorkspaceReviewSheet({
   onRequestConfirmation,
   onCancelConfirmation,
 }: ChatWorkspaceReviewSheetProps) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const motion = useMotionPreference()
   const insets = useSafeAreaInsets()
   const { height, width } = useWindowDimensions()
@@ -109,7 +109,7 @@ export function ChatWorkspaceReviewSheet({
   const sheetWidth = Math.min(640, width)
   const listMaxHeight = Math.min(360, Math.max(152, height - 430))
   const sheetMaterial = colors.material.sheet
-  const borderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const borderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const confirmationAvailable = confirmation
     ? error
       ? false
@@ -435,8 +435,8 @@ function IconAction({
   busy?: boolean
   onPress: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
-  const surface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const { colors, isLiquidGlass } = useAppTheme()
+  const surface = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   return (
     <IslePressable
       haptic
@@ -452,8 +452,8 @@ function IconAction({
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: surface,
-        borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-        borderColor: isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+        borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
+        borderColor: isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
       }}
     >
       {busy
@@ -480,14 +480,14 @@ function ActionButton({
   busy?: boolean
   onPress: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const primary = tone === 'primary'
   const danger = tone === 'danger'
   const backgroundColor = primary
     ? colors.ui.control.primaryBackground
     : danger
       ? colors.ui.tone.danger.background
-      : isGlass
+      : isLiquidGlass
         ? colors.ui.actionBar.itemBackground
         : colors.ui.semantic.surface.muted
   const foreground = primary
@@ -499,7 +499,7 @@ function ActionButton({
     ? colors.ui.control.primaryBorder
     : danger
       ? colors.ui.tone.danger.border
-      : isGlass
+      : isLiquidGlass
         ? colors.ui.actionBar.itemBorder
         : colors.ui.semantic.chrome.border
 
@@ -521,7 +521,7 @@ function ActionButton({
         justifyContent: 'center',
         gap: 7,
         backgroundColor,
-        borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+        borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
         borderColor,
       }}
     >

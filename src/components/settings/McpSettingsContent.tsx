@@ -55,13 +55,13 @@ export function McpSettingsContent() {
   ))), [remotePresets, userServers])
   const builtInServer = servers.find((server) => server.id === 'islemind-builtins')
   const selectedServer = servers.find((server) => server.id === selectedServerId)
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const foldoutPanelStyle = {
     borderRadius: Math.min(colors.ui.radius.card, 8),
     padding: compact ? 10 : 11,
-    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
     borderWidth: subtleBorderWidth,
-    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
   } as const
 
   useEffect(() => {
@@ -330,9 +330,9 @@ function McpFoldoutHeader({ title, description }: { title: string; description?:
 
 function McpEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string; detail?: string }) {
   const { colors } = useAppTheme()
-  const borderColor = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const borderColor = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
-    <View style={{ minHeight: detail ? 60 : 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}>
+    <View style={{ minHeight: detail ? 60 : 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor }}>
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
@@ -371,10 +371,10 @@ function McpServerDetails({
   const [toolsOpen, setToolsOpen] = useState(false)
   const [resourcesOpen, setResourcesOpen] = useState(false)
   const [promptsOpen, setPromptsOpen] = useState(false)
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const cardSurface = colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
-  const cardBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const mutedSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
+  const cardSurface = colors.ui.liquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
+  const cardBorder = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const mutedSurface = colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const resourceItems = server.resources.map((resource) => ({
     key: resource.uri,
     title: resource.name ?? resource.uri,
@@ -507,7 +507,7 @@ function McpDisclosureRow({ title, detail, icon, open, onPress }: { title: strin
       accessibilityLabel={`${title}. ${detail}`}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border }}
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>

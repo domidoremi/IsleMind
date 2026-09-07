@@ -80,7 +80,7 @@ import Table2 from 'lucide-react-native/icons/table-2'
 import Terminal from 'lucide-react-native/icons/terminal'
 import ToggleLeft from 'lucide-react-native/icons/toggle-left'
 import ToggleRight from 'lucide-react-native/icons/toggle-right'
-import Trash2 from 'lucide-react-native/icons/trash-2'
+import Trash2 from 'lucide-react-native/icons/trash'
 import TriangleAlert from 'lucide-react-native/icons/triangle-alert'
 import Undo2 from 'lucide-react-native/icons/undo-2'
 import Upload from 'lucide-react-native/icons/upload'
@@ -345,9 +345,9 @@ const iconRoles: Partial<Record<AppIconName, IconRole>> = {
   'toggle-on': 'success',
 }
 
-function resolveIconColor(name: AppIconName, requestedColor: string, limeRoad: boolean, colors: ReturnType<typeof useAppTheme>['colors']) {
+function resolveIconColor(name: AppIconName, requestedColor: string, monet: boolean, colors: ReturnType<typeof useAppTheme>['colors']) {
   const role = iconRoles[name] ?? 'default'
-  if (!limeRoad || role === 'default') return requestedColor
+  if (!monet || role === 'default') return requestedColor
   if (isExplicitIconColor(requestedColor, colors)) return requestedColor
   if (role === 'danger') return colors.ui.tone.danger.foreground
   if (role === 'success') return colors.ui.tone.success.foreground
@@ -383,9 +383,9 @@ export function AppIcon({
   fill?: string
   style?: StyleProp<TextStyle>
 }) {
-  const { colors, isLimeRoad } = useAppTheme()
+  const { colors, isMonet } = useAppTheme()
   const IconComponent = appIconRegistry[name]
-  const iconColor = resolveIconColor(name, color, isLimeRoad, colors)
+  const iconColor = resolveIconColor(name, color, isMonet, colors)
   const resolvedStrokeWidth = strokeWidth ?? opticalStrokeWidth(size)
 
   return (

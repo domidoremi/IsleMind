@@ -38,7 +38,7 @@ const colors = {
   textTertiary: '#777',
   shadowTint: '#000',
   ui: {
-    limeRoad: false,
+    monet: false,
     semantic: {
       surface: {
         base: '#fff',

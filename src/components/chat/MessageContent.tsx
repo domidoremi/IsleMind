@@ -117,7 +117,7 @@ interface RichCardAction {
 
 function resolveAssistantRichSurfaces(colors: ReturnType<typeof useAppTheme>['colors']) {
   const family = colors.design?.family
-    ?? (colors.ui.glass ? 'liquid-glass' : colors.ui.limeRoad ? 'monet' : colors.ui.markdown ? 'material' : 'minimal')
+    ?? (colors.ui.liquidGlass ? 'liquid-glass' : colors.ui.monet ? 'monet' : colors.ui.material ? 'material' : 'minimal')
   const minimal = family === 'minimal'
   const monet = family === 'monet'
   const material = family === 'material'
@@ -339,7 +339,7 @@ function RichMarkdown({
           },
           blockquote: {
             backgroundColor: blockSurface,
-            borderLeftWidth: isUser ? 0 : colors.ui.limeRoad ? 2 : 1,
+            borderLeftWidth: isUser ? 0 : colors.ui.monet ? 2 : 1,
             borderLeftColor: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
             borderRadius: colors.ui.radius.controlSmall,
             paddingHorizontal: 8,
@@ -368,7 +368,7 @@ function RichMarkdown({
             color: isUser ? userMessage.userForeground : colors.ui.code.text,
             backgroundColor: codeSurface,
             borderColor: isUser ? 'transparent' : colors.ui.code.border,
-            borderWidth: isUser ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+            borderWidth: isUser ? 0 : colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
             borderRadius: colors.ui.radius.card,
             padding: 8,
           },
@@ -376,11 +376,11 @@ function RichMarkdown({
             color: isUser ? userMessage.userForeground : colors.ui.code.text,
             backgroundColor: codeSurface,
             borderColor: isUser ? 'transparent' : colors.ui.code.border,
-            borderWidth: isUser ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+            borderWidth: isUser ? 0 : colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
             borderRadius: colors.ui.radius.card,
             padding: 8,
           },
-          table: { borderColor: blockBorder, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderRadius: colors.ui.radius.card, backgroundColor: blockSurface },
+          table: { borderColor: blockBorder, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderRadius: colors.ui.radius.card, backgroundColor: blockSurface },
           thead: { backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.table.headerBackground },
           tbody: { backgroundColor: blockSurface },
           th: { borderColor: blockBorder, backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.table.headerBackground },
@@ -634,7 +634,7 @@ function TableBlockCard({
   const tableBorder = isUser ? userDivider : assistantSurfaces.blockBorder
   const tableHeaderBackground = isUser ? userMessage.userActionBackground : colors.ui.table.headerBackground
   const tableRowBackground = isUser ? 'transparent' : assistantSurfaces.blockSurface
-  const tableStripeBackground = isUser ? undefined : colors.ui.glass ? assistantSurfaces.stripeSurface : colors.ui.limeRoad ? assistantSurfaces.blockRaisedSurface : undefined
+  const tableStripeBackground = isUser ? undefined : colors.ui.liquidGlass ? assistantSurfaces.stripeSurface : colors.ui.monet ? assistantSurfaces.blockRaisedSurface : undefined
   const cellMetrics = tableCellMetrics(width)
   const columnWidths = Array.from({ length: columnCount }, (_, columnIndex) => {
     const maxCellLength = Math.max(...normalizedRows.map((row) => visualTextLength(row[columnIndex] ?? '')))
@@ -897,7 +897,7 @@ function DiagramPreviewPanel({ preview, isUser }: { preview: DiagramPreview; isU
   const nodeForeground = isUser ? userMessage.userForeground : colors.text
   const nodeSurface = isUser ? userMessage.userActionBackground : assistantSurfaces.nodeSurface
   const connectorColor = isUser ? userMessage.userForeground : colors.ui.icon.accentForeground
-  const nodeBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const nodeBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
 
   return (
     <View

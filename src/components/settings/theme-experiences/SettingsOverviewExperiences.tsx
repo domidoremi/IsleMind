@@ -49,75 +49,6 @@ export function MinimalSettingsOverviewExperience({
   )
 }
 
-export function LimeRoadSettingsOverviewExperience({
-  title,
-  leading,
-  status,
-  attention,
-  search,
-  tabs,
-  catalog,
-  emptyState,
-  searchLabel: _searchLabel,
-  controlLabel: _controlLabel,
-  embedded,
-}: SettingsOverviewExperienceProps) {
-  const { colors } = useAppTheme()
-  return (
-    <View testID="settings-overview-experience-lime-road">
-      {!embedded ? <View style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2, borderBottomWidth: 1, borderBottomColor: colors.material.stroke }}>
-          {leading}
-          <Text accessibilityRole="header" numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: '900', includeFontPadding: false }}>{title}</Text>
-        </View> : null}
-      <View testID="settings-lime-road-itinerary" style={{ marginTop: embedded ? 0 : 10, paddingLeft: 12, borderLeftWidth: 3, borderLeftColor: colors.ui.control.link }}>
-        {status}
-        {attention ? <View style={{ marginTop: 8 }}>{attention}</View> : null}
-        <View style={{ marginTop: 12, gap: 9 }}>
-          {search}
-          {tabs}
-          <View style={{ paddingTop: 1 }}>{catalog}</View>
-          {emptyState}
-        </View>
-      </View>
-    </View>
-  )
-}
-
-export function MarkdownSettingsOverviewExperience({
-  title,
-  leading,
-  status,
-  attention,
-  search,
-  tabs,
-  catalog,
-  emptyState,
-  searchLabel: _searchLabel,
-  controlLabel: _controlLabel,
-  compact: _compact,
-  embedded,
-}: SettingsOverviewExperienceProps) {
-  const { colors } = useAppTheme()
-  return (
-    <View testID="settings-overview-experience-markdown">
-      {!embedded ? <View testID="settings-markdown-breadcrumb" style={{ minHeight: 50, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
-        {leading}
-        <Text accessibilityRole="header" numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 17, lineHeight: 22, fontWeight: '800' }}>{title}</Text>
-      </View> : null}
-      <View style={{ marginTop: embedded ? 0 : 10, paddingLeft: 11, borderLeftWidth: 2, borderLeftColor: colors.ui.section.divider }}>
-        {status}
-        {attention ? <View style={{ marginTop: 8 }}>{attention}</View> : null}
-        <View style={{ marginTop: 12, gap: 9 }}>
-          {search}
-          {tabs}
-          {catalog}
-          {emptyState}
-        </View>
-      </View>
-    </View>
-  )
-}
-
 export function MonetSettingsOverviewExperience({
   title,
   leading,
@@ -139,7 +70,7 @@ export function MonetSettingsOverviewExperience({
             <Text accessibilityRole="header" numberOfLines={1} style={{ color: colors.text, fontSize: 22, lineHeight: 29, fontWeight: '600', includeFontPadding: false }}>{title}</Text>
             <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ flexDirection: 'row', gap: 5, marginTop: 5, height: 3 }}>
               <View style={{ flex: 1.1, borderRadius: 2, backgroundColor: colors.primary }} />
-              <View style={{ flex: 0.38, borderRadius: 2, backgroundColor: colors.accent }} />
+              <View style={{ flex: 0.38, borderRadius: 2, backgroundColor: colors.tertiary }} />
             </View>
           </View>
         </View>

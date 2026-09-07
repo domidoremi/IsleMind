@@ -8,7 +8,7 @@ import { GlassBackdropProvider, GlassBackdropTarget } from '../glass'
 type ChatThemeColors = ReturnType<typeof useAppTheme>['colors']
 
 export interface ChatActiveThemeExperienceProps {
-  /** Canonical family avoids the legacy presentation projection. */
+  /** Canonical family shared by settings, tokens, and presentation. */
   themeId: CanonicalThemeId
   colors: ChatThemeColors
   compactViewport: boolean
@@ -41,12 +41,10 @@ function MinimalActiveExperience({ chrome, status, messageList, controls, compos
   )
 }
 
-function MonetActiveExperience({ colors, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
+function MonetActiveExperience({ chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
     <View testID="chat-active-experience-monet" style={styles.root}>
       <View style={styles.monetCanvas}>
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetCloud, { backgroundColor: colors.primary }]} />
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetCloudSecondary, { backgroundColor: colors.primary }]} />
         <View style={styles.monetChromeDrift}>{chrome}</View>
         <View style={styles.monetStatusDrift}>{status}</View>
         <View style={styles.monetMessageArea}>
@@ -78,15 +76,13 @@ function MaterialActiveExperience({ colors, chrome, status, messageList, control
   )
 }
 
-function LiquidGlassActiveExperience({ colors, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
+function LiquidGlassActiveExperience({ chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
     <GlassBackdropProvider>
       <View testID="chat-active-experience-liquid-glass" style={styles.root}>
         <View style={styles.glassChromeLayer}>{chrome}</View>
         <View style={styles.glassStatusLayer}>{status}</View>
         <View style={styles.glassCanvas}>
-          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassReadingAperture, { borderColor: colors.ui.actionBar.itemBorder }]} />
-          <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassReadingHighlight, { backgroundColor: colors.ui.control.primaryForeground }]} />
           <GlassBackdropTarget style={styles.glassMessageColumnWrap}>
             <View style={styles.glassMessageColumn}>{messageList}</View>
           </GlassBackdropTarget>
@@ -107,8 +103,6 @@ const styles = {
   monetChromeDrift: { zIndex: 2 } as const,
   // Background scenery sits behind the message flow and stays weak enough to
   // never compete with content opacity or fill the gutters beside the text.
-  monetCloud: { position: 'absolute', top: -8, right: -30, width: 190, height: 94, borderBottomLeftRadius: 94, opacity: 0.07 } as const,
-  monetCloudSecondary: { position: 'absolute', bottom: 18, left: -42, width: 150, height: 82, borderTopRightRadius: 82, opacity: 0.05 } as const,
   monetCanvasPlane: { display: 'none' } as const,
   // One shared reading column: the ambient canvas no longer borrows list width.
   monetMessageArea: { flex: 1 } as const,
@@ -135,7 +129,5 @@ const styles = {
   glassCanvas: { flex: 1, position: 'relative' } as const,
   glassMessageColumnWrap: { flex: 1 } as const,
   glassMessageColumn: { flex: 1, minWidth: 0, marginHorizontal: 4 } as const,
-  glassReadingAperture: { display: 'none' } as const,
-  glassReadingHighlight: { display: 'none' } as const,
   glassComposerLayer: { zIndex: 2 } as const,
 }

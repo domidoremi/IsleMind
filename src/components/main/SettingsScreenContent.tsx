@@ -56,7 +56,7 @@ import { resolveProviderDisplayName } from '@/presentation/features/settings/pro
 import type { RuntimeDiagnosticsSummary } from '@/bootstrap/runtimeDiagnostics'
 import type { PluginManifestCatalogSnapshot } from '@/bootstrap/pluginManifest'
 import { changeAppLanguage } from '@/i18n'
-import type { BedrockCacheTtl, CanonicalThemeId, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeMode, UpstreamTransportMode } from '@/types/settingsContracts'
+import type { BedrockCacheTtl, CanonicalThemeId, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeBackgroundIntensity, ThemeBackgroundMotion, ThemeBackgroundVariation, ThemeMode, UpstreamTransportMode } from '@/types/settingsContracts'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
@@ -102,6 +102,27 @@ const THEME_ACCENT_OPTIONS = [
   { id: 'coral', color: '#B94B3F', labelKey: 'settings.themeAccentCoral' },
   { id: 'amber', color: '#A96A12', labelKey: 'settings.themeAccentAmber' },
 ] as const
+
+const BACKGROUND_VARIATION_OPTIONS: readonly { id: ThemeBackgroundVariation; labelKey: string }[] = [
+  { id: 'fixed', labelKey: 'settings.backgroundVariationFixed' },
+  { id: 'random', labelKey: 'settings.backgroundVariationRotate' },
+  { id: 'startup', labelKey: 'settings.backgroundVariationStartup' },
+  { id: 'daily', labelKey: 'settings.backgroundVariationDaily' },
+  { id: 'preset', labelKey: 'settings.backgroundVariationPreset' },
+]
+
+const BACKGROUND_MOTION_OPTIONS: readonly { id: ThemeBackgroundMotion; labelKey: string }[] = [
+  { id: 'static', labelKey: 'settings.backgroundMotionStatic' },
+  { id: 'subtle', labelKey: 'settings.backgroundMotionSubtle' },
+  { id: 'dynamic', labelKey: 'settings.backgroundMotionDynamic' },
+  { id: 'immersive', labelKey: 'settings.backgroundMotionImmersive' },
+]
+
+const BACKGROUND_INTENSITY_OPTIONS: readonly { id: ThemeBackgroundIntensity; labelKey: string }[] = [
+  { id: 'low', labelKey: 'settings.backgroundIntensityLow' },
+  { id: 'medium', labelKey: 'settings.backgroundIntensityMedium' },
+  { id: 'high', labelKey: 'settings.backgroundIntensityHigh' },
+]
 
 const settingsChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
 const PORTABLE_BACKUP_CATEGORY_OPTIONS: readonly {
@@ -289,15 +310,15 @@ function pushSettingsChildRoute(pathname: SettingsChildRoute, params?: Record<st
   })
 }
 
-function resolveSettingsFoldoutSurface(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean, variant: 'base' | 'muted' = 'base') {
+function resolveSettingsFoldoutSurface(colors: ReturnType<typeof useAppTheme>['colors'], isLiquidGlass: boolean, variant: 'base' | 'muted' = 'base') {
   if (variant === 'muted') {
-    return colors.ui.limeRoad ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+    return colors.ui.monet ? colors.ui.semantic.surface.muted : isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   }
-  return colors.ui.limeRoad ? colors.ui.semantic.surface.base : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.muted
+  return colors.ui.monet ? colors.ui.semantic.surface.base : isLiquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.muted
 }
 
-function resolveSettingsFoldoutBorder(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
-  return colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+function resolveSettingsFoldoutBorder(colors: ReturnType<typeof useAppTheme>['colors'], isLiquidGlass: boolean) {
+  return colors.ui.monet ? colors.material.stroke : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
 }
 
 export const SettingsScreenContent = memo(function SettingsScreenContent({ shellNavigation = false, onHome }: { shellNavigation?: boolean; onHome?: () => void } = {}) {
@@ -409,7 +430,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   const activeThemeId = canonicalThemeId
   const activeCustomThemeAccent = Boolean(settings.themeAccent && !THEME_ACCENT_OPTIONS.some((item) => item.color === settings.themeAccent))
   const normalizedThemeAccentDraft = normalizeThemeAccent(themeAccentDraft)
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const foldoutBodyStyle = { marginTop: 10, paddingHorizontal: 0, paddingVertical: 2, gap: 10 }
   const foldoutCardStyle = (gap = 10): ViewStyle => ({
     // Foldouts are logical groups, not another stack of cards. Material may
@@ -462,6 +483,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     t(THEME_FAMILY_OPTIONS.find((item) => item.id === activeThemeId)?.labelKey ?? 'settings.themeMinimal'),
     settings.theme === 'system' ? t('settings.themeSystem') : settings.theme === 'dark' ? t('settings.themeDark') : t('settings.themeLight'),
     settings.themeAccent ? settings.themeAccent : t('settings.themeAccentDefault'),
+    t(BACKGROUND_MOTION_OPTIONS.find((item) => item.id === (settings.backgroundMotion ?? (activeThemeId === 'minimal' || activeThemeId === 'material' ? 'static' : 'subtle')))?.labelKey ?? 'settings.backgroundMotionSubtle'),
     LANGUAGE_OPTIONS.find((item) => item.id === settings.language)?.label ?? settings.language,
   ].join(' · ')
 
@@ -1586,6 +1608,49 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
             />
           </View>
           <SettingsInlineLabel
+            title={t('settings.backgroundEnvironment')}
+            detail={t('settings.backgroundEnvironmentDetail')}
+          />
+          <View testID="settings-background-variation-group" accessibilityRole="radiogroup" accessibilityLabel={t('settings.backgroundVariation')} style={{ gap: 6 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>{t('settings.backgroundVariation')}</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {BACKGROUND_VARIATION_OPTIONS.map((item) => (
+                <IslePressable key={item.id} haptic accessibilityRole="radio" accessibilityState={{ checked: (settings.backgroundVariation ?? 'daily') === item.id }} aria-checked={(settings.backgroundVariation ?? 'daily') === item.id} onPress={() => updateSettings({ backgroundVariation: item.id })} style={settingsChipPressableStyle}>
+                  <IsleChip active={(settings.backgroundVariation ?? 'daily') === item.id}>{t(item.labelKey)}</IsleChip>
+                </IslePressable>
+              ))}
+            </View>
+          </View>
+          {(settings.backgroundVariation ?? 'daily') === 'preset' ? (
+            <View testID="settings-background-preset-group" accessibilityRole="radiogroup" accessibilityLabel={t('settings.backgroundVariationPreset')} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {[0, 1, 2, 3].map((preset) => (
+                <IslePressable key={preset} haptic accessibilityRole="radio" accessibilityState={{ checked: (settings.backgroundPreset ?? 0) === preset }} aria-checked={(settings.backgroundPreset ?? 0) === preset} onPress={() => updateSettings({ backgroundPreset: preset })} style={settingsChipPressableStyle}>
+                  <IsleChip active={(settings.backgroundPreset ?? 0) === preset}>{String(preset + 1)}</IsleChip>
+                </IslePressable>
+              ))}
+            </View>
+          ) : null}
+          <View testID="settings-background-motion-group" accessibilityRole="radiogroup" accessibilityLabel={t('settings.backgroundMotion')} style={{ gap: 6 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>{t('settings.backgroundMotion')}</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {BACKGROUND_MOTION_OPTIONS.map((item) => (
+                <IslePressable key={item.id} haptic accessibilityRole="radio" accessibilityState={{ checked: (settings.backgroundMotion ?? 'subtle') === item.id }} aria-checked={(settings.backgroundMotion ?? 'subtle') === item.id} onPress={() => updateSettings({ backgroundMotion: item.id })} style={settingsChipPressableStyle}>
+                  <IsleChip active={(settings.backgroundMotion ?? 'subtle') === item.id}>{t(item.labelKey)}</IsleChip>
+                </IslePressable>
+              ))}
+            </View>
+          </View>
+          <View testID="settings-background-intensity-group" accessibilityRole="radiogroup" accessibilityLabel={t('settings.backgroundIntensity')} style={{ gap: 6 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>{t('settings.backgroundIntensity')}</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {BACKGROUND_INTENSITY_OPTIONS.map((item) => (
+                <IslePressable key={item.id} haptic accessibilityRole="radio" accessibilityState={{ checked: (settings.backgroundIntensity ?? 'low') === item.id }} aria-checked={(settings.backgroundIntensity ?? 'low') === item.id} onPress={() => updateSettings({ backgroundIntensity: item.id })} style={settingsChipPressableStyle}>
+                  <IsleChip active={(settings.backgroundIntensity ?? 'low') === item.id}>{t(item.labelKey)}</IsleChip>
+                </IslePressable>
+              ))}
+            </View>
+          </View>
+          <SettingsInlineLabel
             title={t('settings.language')}
             detail={t('settings.languageCurrent', { value: LANGUAGE_OPTIONS.find((item) => item.id === settings.language)?.label ?? settings.language })}
           />
@@ -2288,7 +2353,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
-            <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
+            <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.liquidGlass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.liquidGlass) }}>
               <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
               <VersionRow label={t('settings.lastCheck')} value={formatSettingsUpdateCheckTime(settings.lastApkUpdateCheckAt, t)} />
             </View>
@@ -2311,7 +2376,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
               </View>
             </View>
             {updateProgressDetail ? (
-              <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
+              <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.liquidGlass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.liquidGlass) }}>
                 <Text style={{ color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>{updateActionLabel}</Text>
                 <IsleProgress
                   percent={updateProgressPercent}
@@ -2388,7 +2453,7 @@ function RuntimeRepairTaskActions({
   const actionCompact = width < 360
   const visibleTasks = repairPlan.tasks.slice(0, 4)
   return (
-    <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border, gap: 9 }}>
+    <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: colors.ui.monet ? colors.ui.semantic.surface.muted : colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.monet ? colors.material.stroke : colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border, gap: 9 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <AppIcon name="tools" color={colors.textSecondary} size={16} />
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -2440,7 +2505,7 @@ function SettingsToggleRow({
 }) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
-  const dividerColor = colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const dividerColor = colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
     <IslePressable haptic accessibilityRole="switch" accessibilityLabel={description ? `${title}. ${description}` : title} accessibilityState={{ checked: active }} onPress={onPress} style={{ borderRadius: Math.min(colors.ui.radius.controlMiddle, 8) }}>
       <MotiView
@@ -2505,7 +2570,7 @@ function SettingsMiniSwitch({ active }: { active: boolean }) {
           borderColor: active ? switchTokens.trackOnBorder : switchTokens.trackOffBorder,
         }}
         transition={motion === 'full' ? { type: 'timing', duration: motionTokens.duration.fast } : { type: 'timing', duration: 1 }}
-        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: height / 2, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth }}
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: height / 2, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth }}
       />
       <MotiView
         animate={{ translateX: active ? thumbTravel : 0 }}
@@ -2697,7 +2762,7 @@ function ThemeFamilyPreview({ themeId, colors }: { themeId: CanonicalThemeId; co
         borderColor: colors.ui.semantic.chrome.border,
       }}
     >
-      {editorial ? <View style={{ position: 'absolute', top: 0, right: 0, left: 0, height: 20, backgroundColor: colors.skyWash }} /> : null}
+      {editorial ? <View style={{ position: 'absolute', top: 0, right: 0, left: 0, height: 20, backgroundColor: colors.ui.tone.info.background }} /> : null}
       {material ? <View style={{ position: 'absolute', top: 7, right: 7, bottom: 7, left: 7, borderRadius: 6, backgroundColor: colors.ui.semantic.surface.muted }} /> : null}
       {glass ? <View style={{ position: 'absolute', top: 5, right: 5, bottom: 5, left: 5, borderRadius: 8, backgroundColor: colors.ui.semantic.surface.overlay, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.semantic.chrome.border }} /> : null}
       <View style={{ height: 15, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2714,7 +2779,7 @@ function ThemeFamilyPreview({ themeId, colors }: { themeId: CanonicalThemeId; co
       </View>
       {editorial ? (
         <View style={{ position: 'absolute', right: 8, bottom: 8, left: 8, height: 2, backgroundColor: colors.primary }}>
-          <View style={{ position: 'absolute', right: 18, top: -4, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent, borderWidth: 2, borderColor: colors.primary }} />
+          <View style={{ position: 'absolute', right: 18, top: -4, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.tertiary, borderWidth: 2, borderColor: colors.primary }} />
         </View>
       ) : null}
       <View style={{ position: 'absolute', right: 7, bottom: 6, width: material ? 26 : 32, height: 9, borderRadius: material ? 5 : glass ? 7 : 4, backgroundColor: colors.ui.control.primaryBackground }} />
@@ -2773,7 +2838,7 @@ function ThemeModeCard({ label, active, onPress, testID }: { label: string; acti
         <View style={{ width: 38, height: 16, borderRadius: 8, overflow: 'hidden', borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
           <View style={{ flex: 1, flexDirection: 'row' }}>
             <View style={{ flex: 1, backgroundColor: active ? colors.ui.control.primaryForeground : colors.ui.input.background }} />
-            <View style={{ flex: 1, backgroundColor: active ? colors.highlight : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.muted }} />
+            <View style={{ flex: 1, backgroundColor: active ? colors.design?.semantic.color.selection ?? colors.ui.semantic.surface.muted : colors.ui.liquidGlass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.muted }} />
           </View>
         </View>
         <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>

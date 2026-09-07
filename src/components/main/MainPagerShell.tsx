@@ -60,7 +60,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
   const showHistory = useCallback(() => switchToRef.current('history'), [])
   const showSettings = useCallback(() => switchToRef.current('settings'), [])
   const backgroundMode: IsleBackgroundMode = colors.ui.experience.background === 'plain'
-    ? 'none'
+    ? 'ambient'
     : colors.ui.experience.background === 'tonal'
       ? 'surface'
       : colors.ui.experience.background === 'document'

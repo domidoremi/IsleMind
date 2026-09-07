@@ -19,7 +19,7 @@ export function ProgramErrorBanner({
   compact: boolean
   onDismiss: () => void
 }) {
-  const { colors, isGlass, canonicalThemeId, design } = useAppTheme()
+  const { colors, isLiquidGlass, canonicalThemeId, design } = useAppTheme()
   const { t } = useTranslation()
   const tone = colors.ui.tone.danger
   const expression = resolveThemeComponentExpression(canonicalThemeId, 'errorState')
@@ -44,7 +44,7 @@ export function ProgramErrorBanner({
           borderBottomWidth: minimal ? StyleSheet.hairlineWidth : undefined,
           borderColor: tone.border,
           borderLeftColor: minimal ? tone.foreground : tone.border,
-          backgroundColor: glass ? colors.ui.semantic.chrome.background : material ? colors.ui.semantic.surface.muted : monet || isGlass ? tone.background : colors.ui.semantic.surface.base,
+          backgroundColor: glass ? colors.ui.semantic.chrome.background : material ? colors.ui.semantic.surface.muted : monet || isLiquidGlass ? tone.background : colors.ui.semantic.surface.base,
           paddingHorizontal: minimal ? 10 : material ? 14 : 12,
           paddingVertical: minimal ? 8 : material ? 12 : 10,
           flexDirection: 'row',
@@ -60,7 +60,6 @@ export function ProgramErrorBanner({
       >
         {monet ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', width: 72, height: 42, borderRadius: 36, right: -12, top: -18, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.24 }} /> : null}
         {material ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: tone.background, opacity: 0.34 }} /> : null}
-        {glass ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 1, right: 18, left: 18, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.58 }} /> : null}
         <View style={{ width: minimal ? 20 : material ? 34 : 28, height: minimal ? 28 : material ? 34 : 28, borderRadius: minimal ? 0 : material ? 10 : 14, alignItems: 'center', justifyContent: 'center', backgroundColor: minimal ? 'transparent' : tone.background, borderWidth: minimal ? 0 : StyleSheet.hairlineWidth, borderColor: tone.border }}>
           <AppIcon name="warning" color={tone.foreground} size={16} strokeWidth={appIconStroke.strong} />
         </View>
@@ -83,7 +82,6 @@ export function ProgramErrorBanner({
             borderColor: colors.ui.semantic.chrome.border,
           }}
         >
-          {grammar === 'fluid' ? <View accessible={false} pointerEvents="none" style={{ position: 'absolute', top: 2, right: 10, left: 10, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.48 }} /> : null}
           <AppIcon name="close" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
         </IslePressable>
       </View>

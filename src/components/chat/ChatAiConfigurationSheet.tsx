@@ -58,7 +58,7 @@ export function ChatAiConfigurationSheet({
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
   const [view, setView] = useState<'configuration' | 'providers'>(initialView)
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const sheetLayout = resolveProductMobileChatConfigurationSheetLayout(height, {
     safeAreaTop: insets.top,
   })

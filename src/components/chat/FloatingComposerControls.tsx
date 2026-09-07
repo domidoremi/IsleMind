@@ -47,14 +47,14 @@ export function ComposerToolButton({
   disabled?: boolean
   onPress: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const motion = useMotionPreference()
   const accessibilityLabel = stateLabel ? `${label}: ${stateLabel}` : label
   // Glass panels already own the lens; wide tool controls stay transparent
   // with a hairline instead of opaque item cards inside them.
-  const itemSurface = isGlass ? 'transparent' : colors.design?.semantic.surface.interactive.background ?? colors.ui.semantic.surface.muted
-  const itemBorder = colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.design?.semantic.surface.interactive.border ?? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const itemSurface = isLiquidGlass ? 'transparent' : colors.design?.semantic.surface.interactive.background ?? colors.ui.semantic.surface.muted
+  const itemBorder = colors.ui.monet ? colors.material.stroke : isLiquidGlass ? colors.design?.semantic.surface.interactive.border ?? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const controlSize = 44
   const activeBackground = activeSurface === 'quiet' ? colors.ui.actionBar.itemActiveBackground : colors.ui.control.primaryBackground
   const activeForeground = activeSurface === 'quiet' ? colors.ui.icon.accentForeground : colors.ui.control.primaryForeground
@@ -110,7 +110,7 @@ export function ComposerToolButton({
 }
 
 export function ReasoningToolIcon({ effort, active, available }: { effort: NonNullable<Conversation['reasoningEffort']>; active: boolean; available: boolean }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const level = getReasoningVisualLevel(effort)
   const color = !available ? colors.textTertiary : active ? colors.ui.control.primaryForeground : level >= 4 ? colors.ui.icon.accentForeground : colors.textSecondary
   const heights = [5, 8, 11, 14, 17]
@@ -128,7 +128,7 @@ export function ReasoningToolIcon({ effort, active, available }: { effort: NonNu
               height,
               borderRadius: 2,
               backgroundColor: color,
-              opacity: filled ? (active || level >= 4 ? 0.96 : 0.82) : isGlass ? 0.28 : 0.22,
+              opacity: filled ? (active || level >= 4 ? 0.96 : 0.82) : isLiquidGlass ? 0.28 : 0.22,
             }}
           />
         )
@@ -157,13 +157,13 @@ function getReasoningVisualLevel(effort: NonNullable<Conversation['reasoningEffo
 }
 
 export function QuickChoiceButton({ label, active, accessibilityHint, maxWidth, onPress }: { label: string; active: boolean; accessibilityHint?: string; maxWidth?: number; onPress: () => void }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const motion = useMotionPreference()
   const textMaxWidth = maxWidth ? Math.max(24, maxWidth - 24) : undefined
   const activeForeground = colors.ui.control.primaryForeground
-  const inactiveBackground = resolveChatControlSurface(colors, isGlass, false, 'muted')
-  const inactiveBorder = resolveChatControlBorder(colors, isGlass, false)
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const inactiveBackground = resolveChatControlSurface(colors, isLiquidGlass, false, 'muted')
+  const inactiveBorder = resolveChatControlBorder(colors, isLiquidGlass, false)
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   return (
     <IslePressable
       haptic

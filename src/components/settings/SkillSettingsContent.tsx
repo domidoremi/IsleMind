@@ -86,7 +86,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   const { width } = useWindowDimensions()
   const compact = width < 430
   const actionCompact = width < 360
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const fieldRowStyle = { flexDirection: compact ? 'column' : 'row', gap: 10 } as const
   const fieldFlexStyle = compact ? undefined : { flex: 1, minWidth: 0 }
   const actionButtonStyle = actionCompact ? { alignSelf: 'stretch' as const } : { flexGrow: 1, flexShrink: 1, flexBasis: '47%' as const, minWidth: 0 }
@@ -269,19 +269,20 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
     let importUri: string | undefined
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/json', 'text/json', 'text/plain', '*/*'],
+        type: ['application/json', 'text/json', 'text/plain', 'text/markdown', '*/*'],
         copyToCacheDirectory: true,
       })
       if (result.canceled || !result.assets[0]) return
       const asset = result.assets[0]
       importUri = asset.uri
-      const supported = /\.isleskill$/i.test(asset.name) || /\.(json|txt)$/i.test(asset.name) || ['application/json', 'text/json', 'text/plain'].includes(asset.mimeType ?? '')
+      const supported = /\.isleskill$/i.test(asset.name) || /\.(json|txt|md)$/i.test(asset.name) || ['application/json', 'text/json', 'text/plain', 'text/markdown'].includes(asset.mimeType ?? '')
       if (!supported) {
-        dialog.toast({ title: t('skills.unsupportedFile'), message: '.isleskill / .json / .txt', tone: 'amber' })
+        dialog.toast({ title: t('skills.unsupportedFile'), message: 'SKILL.md / .isleskill / .json / .txt', tone: 'amber' })
         return
       }
       const raw = await readUtf8ImportFile(importUri, {
         size: asset.size,
+        file: asset.file,
         limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
       })
       await importRaw(raw)
@@ -310,7 +311,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       title: t(workflowReviewRequired ? 'skills.workflowImportedReviewRequired' : 'skills.imported'),
       message: workflowReviewRequired
         ? [t('skills.workflowImportedReviewRequiredMessage', { name: result.skill.name }), pluginReviewSummary].filter(Boolean).join('\n')
-        : result.skill.name,
+        : result.message,
       tone: workflowReviewRequired ? 'amber' : 'mint',
     })
   }

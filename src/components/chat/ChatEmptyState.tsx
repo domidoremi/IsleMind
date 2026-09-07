@@ -7,7 +7,7 @@ import {
 } from '@/components/navigation/AnimatedNavigationIcon'
 import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { IsleImage, IslePressable, useIsleDialog } from '@/components/ui/isle'
+import { IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import {
   CHAT_PRESENTATION_CATALOG,
@@ -101,8 +101,6 @@ const CHAT_STARTERS = CHAT_PRESENTATION_CATALOG.starters
 const CHAT_ENTRY_STARTER_LIMIT = 1
 const CHAT_SHOW_ENTRY_DESCRIPTION = false
 const QUICK_START_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
-const LIME_ROAD_COMPANION_SOURCE = require('../../../assets/brand/generated/isle-pet-icon-transparent.png')
-
 export const CHAT_EMPTY_STATE_MIN_TOUCH_TARGET = 44
 
 export function resolveChatEmptyStateProjection({
@@ -251,7 +249,7 @@ function ChatEmptyStateIntro({
           </View>
           {showDecoration ? (
             <View>
-              <LimeRoadCompanionMark />
+              <MonetCompanionMark />
             </View>
           ) : null}
         </View>
@@ -281,8 +279,8 @@ function ChatEmptyStateIntro({
     >
       {showDecoration ? (
         <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          {colors.ui.limeRoad ? (
-            <LimeRoadCompanionMark />
+          {colors.ui.monet ? (
+            <MonetCompanionMark />
           ) : (
             <AppIcon
               name={CHAT_BOUNDARY.glyph}
@@ -326,59 +324,59 @@ function ChatEmptyStateIntro({
   )
 }
 
-function LimeRoadCompanionMark() {
+function MonetCompanionMark() {
   const { colors } = useAppTheme()
 
   return (
     <View
       style={{
-        width: 94,
-        height: 76,
+        width: 86,
+        height: 64,
         position: 'relative',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
       }}
     >
       <View
         style={{
           position: 'absolute',
-          top: 7,
-          left: 6,
-          width: 62,
-          height: 28,
-          borderLeftWidth: 2,
-          borderTopWidth: 2,
-          borderColor: colors.primary,
-          transform: [{ rotate: '-5deg' }],
-        }}
-      />
-      <IsleImage
-        source={LIME_ROAD_COMPANION_SOURCE}
-        alt=""
-        width={68}
-        height={68}
-        preview={false}
-        contentFit="contain"
-        style={{
-          minHeight: 0,
-          borderWidth: 0,
-          borderRadius: 0,
-          backgroundColor: 'transparent',
+          top: 9,
+          right: 4,
+          width: 60,
+          height: 36,
+          borderTopLeftRadius: 30,
+          borderBottomRightRadius: 24,
+          backgroundColor: colors.background.mist.primary,
+          opacity: 0.72,
+          transform: [{ rotate: '-8deg' }],
         }}
       />
       <View
         style={{
           position: 'absolute',
-          right: 1,
-          bottom: 6,
-          width: 14,
-          height: 14,
-          borderRadius: 7,
-          borderWidth: 3,
-          borderColor: colors.accent,
-          backgroundColor: colors.paper,
+          top: 0,
+          left: 4,
+          width: 50,
+          height: 42,
+          borderTopRightRadius: 30,
+          borderBottomLeftRadius: 26,
+          backgroundColor: colors.background.mist.secondary,
+          opacity: 0.64,
+          transform: [{ rotate: '7deg' }],
         }}
       />
+      <View
+        style={{
+          position: 'absolute',
+          right: 6,
+          bottom: 5,
+          width: 13,
+          height: 13,
+          borderRadius: 7,
+          borderWidth: 2,
+          borderColor: colors.tertiary,
+          backgroundColor: colors.ui.semantic.surface.base,
+        }}
+      />
+      <View style={{ position: 'absolute', right: 18, bottom: 14, width: 48, height: 2, borderRadius: 1, backgroundColor: colors.primary, opacity: 0.72 }} />
     </View>
   )
 }
@@ -474,7 +472,7 @@ export function ChatSetupEmptyState({
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: colors.ui.control.primaryBackground,
-            borderWidth: colors.ui.limeRoad ? 1 : 0,
+            borderWidth: colors.ui.monet ? 1 : 0,
             borderColor: colors.ui.control.primaryBorder,
           }}
         >
@@ -671,7 +669,7 @@ function ChatBoundaryStatusAction({
         justifyContent: 'center',
         gap: 7,
         backgroundColor: colors.ui.semantic.surface.muted,
-        borderWidth: colors.ui.limeRoad ? 1 : 0,
+        borderWidth: colors.ui.monet ? 1 : 0,
         borderColor: colors.ui.semantic.chrome.border,
       }}
     >

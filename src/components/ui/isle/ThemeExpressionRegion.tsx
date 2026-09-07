@@ -83,9 +83,6 @@ export function ThemeExpressionRegion({ componentId, children, style, testID }: 
       {material ? (
         <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: 3, backgroundColor: colors.ui.icon.accentForeground, opacity: 0.68 }} />
       ) : null}
-      {glass ? (
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', top: 1, right: contentRegion ? 0 : 18, left: contentRegion ? 8 : 18, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: contentRegion ? 0.28 : 0.52 }} />
-      ) : null}
       {children}
     </View>
   )

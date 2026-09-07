@@ -27,8 +27,8 @@ export function ConversationTaskStatusCard(props: {
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
   if (canonicalThemeId !== 'minimal' && props.compact) return <CanonicalTaskStatusCard {...props} family={canonicalThemeId} />
-  if (props.compact && colors.ui.family === 'lime-road') return <LimeRoadTaskStatusCard {...props} />
-  if (props.compact && colors.ui.family === 'markdown') return <MarkdownTaskStatusCard {...props} />
+  if (props.compact && colors.ui.family === 'monet') return <MonetTaskStatusCard {...props} />
+  if (props.compact && colors.ui.family === 'material') return <MaterialTaskStatusCard {...props} />
   if (props.compact) return <MinimalTaskStatusCard {...props} />
   return <SharedTaskStatusCard {...props} family={canonicalThemeId} />
 }
@@ -82,7 +82,7 @@ function SharedTaskStatusCard({
   onConfirmAction?: (message: Message) => void
   family?: CanonicalThemeId
 }) {
-  const { colors, isGlass, design } = useAppTheme()
+  const { colors, isLiquidGlass, design } = useAppTheme()
   const { t } = useTranslation()
   const traces = message ? collectVisibleProcessTraces(message) : []
   const activeTraceTitle = message ? getActiveTraceTitle(traces, message.status) : ''
@@ -110,7 +110,7 @@ function SharedTaskStatusCard({
     || evidenceSummary.artifactReady
     || !!evidenceRepairAction
     || !!pendingWorkflowAction
-  const backgroundColor = family === 'liquid-glass' ? colors.ui.semantic.chrome.background : family === 'material' ? colors.ui.semantic.surface.muted : family === 'monet' ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
+  const backgroundColor = family === 'liquid-glass' ? colors.ui.semantic.chrome.background : family === 'material' ? colors.ui.semantic.surface.muted : family === 'monet' ? colors.ui.semantic.surface.muted : isLiquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
   const borderColor = family === 'liquid-glass' ? colors.ui.semantic.chrome.border : colors.ui.semantic.chrome.border
   const tone = colors.ui.tone.warning
   return (
@@ -126,10 +126,10 @@ function SharedTaskStatusCard({
             paddingHorizontal: compact ? 9 : 10,
             paddingVertical: compact ? 7 : 8,
             backgroundColor,
-            borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+            borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
             borderColor,
             shadowColor: colors.shadowTint,
-            shadowOpacity: colors.ui.limeRoad ? 0.06 : 0,
+            shadowOpacity: colors.ui.monet ? 0.06 : 0,
             shadowRadius: 10,
             shadowOffset: { width: 0, height: 4 },
           }}
@@ -269,7 +269,7 @@ function useTaskStatusProjection({ task, taskCount, message, onRepairAgentEviden
 }
 
 function MinimalTaskStatusCard(props: TaskStatusCardProps) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const projection = useTaskStatusProjection(props)
   const tone = colors.ui.tone.warning
   return (
@@ -278,7 +278,7 @@ function MinimalTaskStatusCard(props: TaskStatusCardProps) {
         testID="chat-task-experience-minimal"
         style={{ width: '100%', maxWidth: 520, alignSelf: 'center' }}
       >
-        <View accessibilityRole="summary" accessibilityLabel={projection.t('chat.taskCardAccessibilityLabel')} style={{ minHeight: 57, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 9, borderLeftWidth: 3, borderLeftColor: tone.foreground, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: tone.border, backgroundColor: isGlass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base }}>
+        <View accessibilityRole="summary" accessibilityLabel={projection.t('chat.taskCardAccessibilityLabel')} style={{ minHeight: 57, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 9, borderLeftWidth: 3, borderLeftColor: tone.foreground, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: tone.border, backgroundColor: isLiquidGlass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base }}>
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone.foreground }} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -295,18 +295,18 @@ function MinimalTaskStatusCard(props: TaskStatusCardProps) {
   )
 }
 
-function LimeRoadTaskStatusCard(props: TaskStatusCardProps) {
+function MonetTaskStatusCard(props: TaskStatusCardProps) {
   const { colors } = useAppTheme()
   const projection = useTaskStatusProjection(props)
   const tone = colors.ui.tone.warning
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', top: props.topOffset, left: 14, right: 14, zIndex: 44, elevation: 6 }}>
       <View
-        testID="chat-task-experience-lime-road"
+        testID="chat-task-experience-monet"
         style={{ width: '100%', maxWidth: 520, alignSelf: 'center' }}
       >
         <View accessibilityRole="summary" accessibilityLabel={projection.t('chat.taskCardAccessibilityLabel')} style={{ minHeight: 60, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 9, borderLeftWidth: 3, borderLeftColor: tone.foreground, borderBottomWidth: 1, borderBottomColor: colors.material.stroke, backgroundColor: colors.ui.semantic.surface.base }}>
-          <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 3, borderColor: tone.foreground, backgroundColor: colors.paper }} />
+          <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 3, borderColor: tone.foreground, backgroundColor: colors.ui.semantic.surface.base }} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.text, fontSize: 13, lineHeight: 16, fontWeight: '900' }}>{projection.title}</Text>
@@ -322,14 +322,14 @@ function LimeRoadTaskStatusCard(props: TaskStatusCardProps) {
   )
 }
 
-function MarkdownTaskStatusCard(props: TaskStatusCardProps) {
+function MaterialTaskStatusCard(props: TaskStatusCardProps) {
   const { colors } = useAppTheme()
   const projection = useTaskStatusProjection(props)
   const tone = colors.ui.tone.warning
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', top: props.topOffset, left: 14, right: 14, zIndex: 44, elevation: 6 }}>
       <View
-        testID="chat-task-experience-markdown"
+        testID="chat-task-experience-material"
         style={{ width: '100%', maxWidth: 520, alignSelf: 'center' }}
       >
         <View accessibilityRole="summary" accessibilityLabel={projection.t('chat.taskCardAccessibilityLabel')} style={{ minHeight: 60, paddingHorizontal: 11, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, borderLeftWidth: 2, borderLeftColor: tone.foreground, borderBottomWidth: 1, borderBottomColor: colors.material.stroke, backgroundColor: colors.ui.semantic.surface.base }}>
@@ -399,10 +399,10 @@ function WorkflowTaskEvidenceChip({
   accessibilityHint?: string
   onPress?: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const foreground = danger ? colors.ui.tone.warning.foreground : colors.textSecondary
-  const background = danger ? colors.ui.tone.warning.background : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const border = danger ? colors.ui.tone.warning.border : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const background = danger ? colors.ui.tone.warning.background : isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const border = danger ? colors.ui.tone.warning.border : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const chipStyle = {
     maxWidth: compact ? 96 : 124,
     minHeight: compact ? 22 : 24,

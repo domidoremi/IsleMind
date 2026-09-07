@@ -93,7 +93,7 @@ function PreferenceSectionBand({
           elevation: design.semantic.elevation.level2,
         }}
       >
-        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: 3, width: 42, marginBottom: design.semantic.spacing.sm, borderRadius: design.semantic.radius.pill, backgroundColor: index % 2 === 0 ? colors.primary : colors.accent }} />
+        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: 3, width: 42, marginBottom: design.semantic.spacing.sm, borderRadius: design.semantic.radius.pill, backgroundColor: index % 2 === 0 ? colors.primary : colors.tertiary }} />
         <Text style={{ marginBottom: design.semantic.spacing.sm, color: colors.textSecondary, fontSize: design.semantic.typography.label.fontSize, lineHeight: design.semantic.typography.label.lineHeight, fontWeight: '600' }}>{label}</Text>
         {node}
       </View>
@@ -103,52 +103,6 @@ function PreferenceSectionBand({
     <View style={{ minWidth: 0, paddingVertical: design.semantic.spacing.md, paddingHorizontal: design.semantic.spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
       <Text style={{ marginBottom: design.semantic.spacing.sm, color: colors.textTertiary, fontSize: design.semantic.typography.caption.fontSize, lineHeight: design.semantic.typography.caption.lineHeight, fontWeight: '600' }}>{label}</Text>
       {node}
-    </View>
-  )
-}
-
-export function MonetPreferenceSettingsExperience({
-  identity,
-  generation,
-  interaction,
-  workflow,
-  labels,
-  compact,
-}: PreferenceSettingsExperienceProps) {
-  const sections = [
-    { key: 'identity', label: labels.identity, node: identity },
-    { key: 'generation', label: labels.generation, node: generation },
-    { key: 'interaction', label: labels.interaction, node: interaction },
-    { key: 'workflow', label: labels.workflow, node: workflow },
-  ]
-  return (
-    <View testID="preference-settings-experience-monet" style={{ gap: compact ? 10 : 14 }}>
-      <View testID="preference-settings-layout-monet" style={{ flexDirection: compact ? 'column' : 'row', flexWrap: compact ? 'nowrap' : 'wrap', gap: compact ? 4 : 10 }}>
-        {sections.map((section, index) => <PreferenceSectionBand key={section.key} label={section.label} node={section.node} family="monet" index={index} compact={compact} />)}
-      </View>
-    </View>
-  )
-}
-
-export function MaterialPreferenceSettingsExperience({
-  identity,
-  generation,
-  interaction,
-  workflow,
-  labels,
-  compact,
-}: PreferenceSettingsExperienceProps) {
-  const sections = [
-    { key: 'generation', label: labels.generation, node: generation },
-    { key: 'identity', label: labels.identity, node: identity },
-    { key: 'interaction', label: labels.interaction, node: interaction },
-    { key: 'workflow', label: labels.workflow, node: workflow },
-  ]
-  return (
-    <View testID="preference-settings-experience-material" style={{ gap: 12 }}>
-      <View testID="preference-settings-layout-material" style={{ flexDirection: compact ? 'column' : 'row', flexWrap: compact ? 'nowrap' : 'wrap', gap: 12 }}>
-        {sections.map((section, index) => <PreferenceSectionBand key={section.key} label={section.label} node={section.node} family="material" index={index} compact={compact} />)}
-      </View>
     </View>
   )
 }
@@ -176,7 +130,7 @@ export function LiquidGlassPreferenceSettingsExperience({
   )
 }
 
-export function LimeRoadPreferenceSettingsExperience({
+export function MonetPreferenceSettingsExperience({
   identity,
   generation,
   interaction,
@@ -191,8 +145,8 @@ export function LimeRoadPreferenceSettingsExperience({
     { key: 'workflow', label: labels.workflow, node: workflow },
   ]
   return (
-    <View testID="preference-settings-experience-lime-road">
-      <View testID="preference-settings-layout-lime-road" style={{ gap: 18 }}>
+    <View testID="preference-settings-experience-monet">
+      <View testID="preference-settings-layout-monet" style={{ gap: 18 }}>
         {stops.map((stop, index) => (
           <View key={stop.key} style={{ minWidth: 0, paddingBottom: index === stops.length - 1 ? 0 : 18, borderBottomWidth: index === stops.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: colors.material.stroke }}>
             <Text numberOfLines={1} style={{ marginBottom: 8, color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '900', letterSpacing: 0.55, textTransform: 'uppercase' }}>{stop.label}</Text>
@@ -204,7 +158,7 @@ export function LimeRoadPreferenceSettingsExperience({
   )
 }
 
-export function MarkdownPreferenceSettingsExperience({
+export function MaterialPreferenceSettingsExperience({
   identity,
   generation,
   interaction,
@@ -212,8 +166,8 @@ export function MarkdownPreferenceSettingsExperience({
   compact,
 }: PreferenceSettingsExperienceProps) {
   return (
-    <View testID="preference-settings-experience-markdown">
-      <View testID="preference-settings-layout-markdown" style={{ minWidth: 0, gap: compact ? 18 : 22 }}>
+    <View testID="preference-settings-experience-material">
+      <View testID="preference-settings-layout-material" style={{ minWidth: 0, gap: compact ? 18 : 22 }}>
         {generation}
         {identity}
         {workflow}

@@ -102,7 +102,7 @@ const clearKnowledge = () => clearKnowledgeRecords()
 function primaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
     backgroundColor: colors.ui.control.primaryBackground,
-    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
     borderColor: colors.ui.control.primaryBorder,
     borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
   }
@@ -110,34 +110,34 @@ function primaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) 
 
 function secondaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border,
+    backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
+    borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border,
     borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
   }
 }
 
 function rowActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base,
-    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border,
+    backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.monet ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base,
+    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
+    borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border,
     borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
   }
 }
 
 function assetCardSurface(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.material.stroke) {
-  const resolvedBorderColor = colors.ui.limeRoad
+  const resolvedBorderColor = colors.ui.monet
     ? borderColor
     : borderColor === colors.material.stroke
-      ? colors.ui.glass
+      ? colors.ui.liquidGlass
         ? colors.ui.actionBar.itemBorder
         : colors.ui.semantic.chrome.border
       : borderColor
   return {
     borderRadius: Math.min(colors.ui.radius.card, 8),
-    backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
-    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+    backgroundColor: colors.ui.liquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
+    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
     borderColor: resolvedBorderColor,
     shadowColor: colors.ui.control.shadow,
     shadowOpacity: 0,

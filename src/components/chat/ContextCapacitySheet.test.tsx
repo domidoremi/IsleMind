@@ -18,7 +18,7 @@ jest.mock('@/hooks/useAppTheme', () => ({
     colors: jest.requireActual('@/theme/colors').getColors('light', 'minimal'),
     canonicalThemeId: 'minimal',
     isDark: false,
-    isGlass: false,
+    isLiquidGlass: false,
   }),
 }))
 

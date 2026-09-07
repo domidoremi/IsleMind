@@ -19,25 +19,6 @@ export function MinimalContextSettingsLead({ summary, toggles }: ContextSettings
   )
 }
 
-export function LimeRoadContextSettingsLead({ summary, toggles }: ContextSettingsLeadProps) {
-  const { colors } = useAppTheme()
-  return (
-    <View testID="context-settings-experience-lime-road">
-      {summary ? <View style={{ paddingBottom: 10 }}>{summary}</View> : null}
-      <View style={{ borderTopWidth: 1, borderTopColor: colors.material.stroke }}>{toggles}</View>
-    </View>
-  )
-}
-
-export function MarkdownContextSettingsLead({ summary, toggles }: ContextSettingsLeadProps) {
-  return (
-    <View testID="context-settings-experience-markdown">
-      <View>{toggles}</View>
-      {summary ? <View style={{ marginTop: 10 }}>{summary}</View> : null}
-    </View>
-  )
-}
-
 export function MonetContextSettingsLead({ summary, toggles }: ContextSettingsLeadProps) {
   const { colors, design } = useAppTheme()
   return (

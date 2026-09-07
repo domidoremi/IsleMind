@@ -495,7 +495,7 @@ function ReaderSkeleton({ label }: { label: string }) {
   const { colors } = useAppTheme()
   const { width } = useWindowDimensions()
   const sheetMaterial = colors.material.sheet
-  const skeletonSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const skeletonSurface = colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const skeletonBlockHeight = Math.max(140, Math.min(260, Math.round(width * (width < 430 ? 0.48 : 0.36))))
   return (
     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5, padding: 18, backgroundColor: sheetMaterial.body }}>

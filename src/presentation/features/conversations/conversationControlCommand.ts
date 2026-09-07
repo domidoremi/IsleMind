@@ -23,7 +23,8 @@ import { describeUserFacingError, type ProcessTrace } from '@/core'
 import {
   createConversationControlController,
 } from './conversationControlController'
-import { startConversationReplyAfterHistoryProjectionRuntime } from './conversationMessageRuntimeBinding'
+import { getLatestConversationResponseRunRuntime, startConversationReplyAfterHistoryProjectionRuntime } from './conversationMessageRuntimeBinding'
+import { recoverChatProjection } from './plainChatProjection'
 
 function createControlTraceId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -106,7 +107,9 @@ const controller = createConversationControlController({
     return useChatStore.getState().conversations.find((conversation) => conversation.id === conversationId)
   },
   getMessage: getConversationMessage,
+  getLatestResponseRun: getLatestConversationResponseRunRuntime,
   hasActiveStream,
+  recoverProjection: recoverChatProjection,
   now: Date.now,
   removeMessage(conversationId, messageId) {
     useChatStore.getState().removeMessage(conversationId, messageId)

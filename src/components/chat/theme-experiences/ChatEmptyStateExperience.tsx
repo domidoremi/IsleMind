@@ -45,7 +45,7 @@ function MonetEmptyStateExperience({ colors, intro, boundary, starter, action }:
       {starter}
       <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={styles.monetBrushRow}>
         <View style={[styles.monetBrushLong, { backgroundColor: colors.primary }]} />
-        <View style={[styles.monetBrushShort, { backgroundColor: colors.accent }]} />
+        <View style={[styles.monetBrushShort, { backgroundColor: colors.tertiary }]} />
         <View style={[styles.monetBrushMid, { backgroundColor: colors.material.strokeStrong }]} />
       </View>
       {boundary}

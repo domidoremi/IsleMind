@@ -1,3 +1,4 @@
+import type { AssistantRun } from '@/modules/assistant-runtime'
 import type { ConversationToolCatalogManifest } from '@/modules/integrations'
 import type {
   WorkflowRunLimits,
@@ -44,6 +45,7 @@ export interface ConversationMessageRuntime {
   dispatchAfterUserProjection: ConversationMessageRuntimeDispatch
   startAfterHistoryProjection: ConversationReplyRuntimeStart
   startConfirmedWorkflowReply: ConversationConfirmedWorkflowReplyRuntimeStart
+  getLatestResponseRun(conversationId: string, responseMessageId: string): Promise<AssistantRun | undefined>
   resumePendingModelOperation?: (
     conversationId: string,
     assistantMessageId: string,
@@ -75,6 +77,7 @@ export function bindConversationMessageRuntime(
       dispatchAfterUserProjection: nextRuntime.dispatchAfterUserProjection,
       startAfterHistoryProjection: nextRuntime.startAfterHistoryProjection,
       startConfirmedWorkflowReply: nextRuntime.startConfirmedWorkflowReply,
+      getLatestResponseRun: nextRuntime.getLatestResponseRun,
       resumePendingModelOperation: nextRuntime.resumePendingModelOperation,
       listConversationToolManifests: nextRuntime.listConversationToolManifests,
       resolveConversationTool: nextRuntime.resolveConversationTool,
@@ -177,6 +180,16 @@ export async function resumePendingConversationModelOperationRuntime(
   return resume(conversationId, assistantMessageId, runId, approved)
 }
 
+export async function getLatestConversationResponseRunRuntime(
+  conversationId: string,
+  responseMessageId: string,
+): Promise<AssistantRun | undefined> {
+  const read = runtime?.getLatestResponseRun
+  // Unavailable persistence is not evidence that a stale message has no owner.
+  if (!read) throw new Error(CONVERSATION_MESSAGE_RUNTIME_UNINITIALIZED_ERROR)
+  return read(conversationId, responseMessageId)
+}
+
 function hasSameRuntimeMethods(
   currentRuntime: ConversationMessageRuntime,
   nextRuntime: ConversationMessageRuntime,
@@ -184,6 +197,7 @@ function hasSameRuntimeMethods(
   return currentRuntime.dispatchAfterUserProjection === nextRuntime.dispatchAfterUserProjection
     && currentRuntime.startAfterHistoryProjection === nextRuntime.startAfterHistoryProjection
     && currentRuntime.startConfirmedWorkflowReply === nextRuntime.startConfirmedWorkflowReply
+    && currentRuntime.getLatestResponseRun === nextRuntime.getLatestResponseRun
     && currentRuntime.resumePendingModelOperation === nextRuntime.resumePendingModelOperation
     && currentRuntime.listConversationToolManifests === nextRuntime.listConversationToolManifests
     && currentRuntime.resolveConversationTool === nextRuntime.resolveConversationTool

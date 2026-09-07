@@ -58,12 +58,12 @@ const MESSAGE_ACTION_LOCK_MS = 420
 const MESSAGE_ACTION_SHEET_MAX_WIDTH = 540
 const MESSAGE_ACTION_PRIMARY_LIMIT = 5
 
-function resolveMessageActionChrome(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
+function resolveMessageActionChrome(colors: ReturnType<typeof useAppTheme>['colors'], isLiquidGlass: boolean) {
   return {
-    barSurface: colors.ui.limeRoad ? colors.ui.actionBar.background : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
-    barBorder: colors.ui.limeRoad ? colors.ui.actionBar.border : colors.ui.semantic.chrome.border,
-    itemSurface: colors.ui.limeRoad ? colors.ui.actionBar.itemBackground : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
-    itemBorder: colors.ui.limeRoad ? colors.ui.actionBar.itemBorder : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    barSurface: colors.ui.monet ? colors.ui.actionBar.background : isLiquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
+    barBorder: colors.ui.monet ? colors.ui.actionBar.border : colors.ui.semantic.chrome.border,
+    itemSurface: colors.ui.monet ? colors.ui.actionBar.itemBackground : isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    itemBorder: colors.ui.monet ? colors.ui.actionBar.itemBorder : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
   }
 }
 
@@ -134,7 +134,7 @@ function MessageBubbleComponent({
   multiSelectActive = false,
   selected = false,
 }: MessageBubbleProps) {
-  const { colors, isGlass, canonicalThemeId } = useAppTheme()
+  const { colors, isLiquidGlass, canonicalThemeId } = useAppTheme()
   const { t, i18n } = useTranslation()
   const { width: windowWidth } = useWindowDimensions()
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
@@ -799,7 +799,7 @@ function StreamingCursor({ motion }: { motion: MotionIntensity }) {
 
 function MessageSourceLink({ conversationId, message }: { conversationId: string; message: Message }) {
   const router = useRouter()
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const { t } = useTranslation()
   const firstCitation = message.citations?.[0]
   const count = message.citations?.length ?? 0
@@ -827,9 +827,9 @@ function MessageSourceLink({ conversationId, message }: { conversationId: string
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,
-        backgroundColor: isGlass ? colors.ui.actionBar.itemBackground : colors.ui.icon.accentBackground,
+        backgroundColor: isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.icon.accentBackground,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: isGlass ? colors.ui.actionBar.itemBorder : colors.material.stroke,
+        borderColor: isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.material.stroke,
       }}
     >
       <AppIcon name="knowledge" color={colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />
@@ -1006,7 +1006,6 @@ function MessageProcessLayer({
       >
         {processGrammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 18, right: 18, height: 2, borderRadius: 2, backgroundColor: colors.ui.control.focus, opacity: 0.24 }} /> : null}
         {processGrammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: active ? 0.06 : 0.025 }} /> : null}
-        {processGrammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 12, right: 12, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.62 }} /> : null}
         <View style={{ flex: 1, flexShrink: 1, minWidth: 0 }}>
           <MotiView
             key={streamingStatusPhase ?? 'settled-process'}
@@ -1115,7 +1114,6 @@ function SettledThinkingDisclosure({
       >
         {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 14, right: 14, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.2 }} /> : null}
         {grammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: expanded ? 0.08 : 0.03 }} /> : null}
-        {grammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 10, right: 10, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.56 }} /> : null}
         <AppIcon name="reasoning" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
         <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>
           {label}
@@ -1314,7 +1312,6 @@ function MessageProcessPanel({ message, lifecycle, traces, maxHeight, motion }: 
     >
       {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 18, right: 18, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.22 }} /> : null}
       {grammar === 'material' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 3, bottom: 0, backgroundColor: colors.primary, opacity: 0.72 }} /> : null}
-      {grammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 12, right: 12, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.58 }} /> : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
         <AppIcon name="reasoning" color={colors.ui.icon.accentForeground} size={13} strokeWidth={appIconStroke.strong} />
         <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
@@ -1886,12 +1883,12 @@ function MessageActionSheet({
   onEdit?: () => void
   onStartMultiSelect?: () => void
 }) {
-  const { colors, isGlass, canonicalThemeId } = useAppTheme()
+  const { colors, isLiquidGlass, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
-  const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  const actionChrome = resolveMessageActionChrome(colors, isLiquidGlass)
   const menuExpression = resolveThemeComponentExpression(canonicalThemeId, 'menu')
   const themeExpression = resolveThemeExpression(canonicalThemeId)
   const menuRadius = menuExpression.shape === 'angular'
@@ -2093,8 +2090,8 @@ function MessageActionSheet({
 }
 
 function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheetAction; onPress: () => void }) {
-  const { colors, isGlass, canonicalThemeId } = useAppTheme()
-  const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  const { colors, isLiquidGlass, canonicalThemeId } = useAppTheme()
+  const actionChrome = resolveMessageActionChrome(colors, isLiquidGlass)
   const menuExpression = resolveThemeComponentExpression(canonicalThemeId, 'menu')
   const foreground = action.danger
     ? colors.ui.tone.danger.foreground
@@ -2170,9 +2167,9 @@ function WorkArtifactQuickActions({
   onCopy?: () => void
   onContinue?: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const { t } = useTranslation()
-  const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  const actionChrome = resolveMessageActionChrome(colors, isLiquidGlass)
   if (!onCopy && !onContinue) return null
 
   function run(action?: () => void) {
@@ -2412,7 +2409,6 @@ function TypingDots({ motion }: { motion: MotionIntensity }) {
   if (grammar === 'fluid') {
     return (
       <View testID={`message-streaming-indicator-${canonicalThemeId}`} style={{ width: 42, height: 12, marginVertical: 5, borderRadius: 8, overflow: 'hidden', backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.actionBar.itemBorder }}>
-        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 7, right: 7, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.56 }} />
         <MotiView
           from={{ translateX: motion === 'full' ? -18 : 13, opacity: 0.32, scaleX: 0.72 }}
           animate={{ translateX: motion === 'full' ? 42 : 13, opacity: 0.92, scaleX: 1 }}

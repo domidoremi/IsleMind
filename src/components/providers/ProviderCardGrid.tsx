@@ -65,7 +65,7 @@ export function ProviderCardGrid({
   viewportWidth,
   horizontalPadding,
   items,
-  experience = 'lime-road',
+  experience = 'monet',
   featuredFallback = true,
 }: {
   viewportWidth: number
@@ -74,15 +74,15 @@ export function ProviderCardGrid({
   experience?: ThemeId
   featuredFallback?: boolean
 }) {
-  if (experience !== 'lime-road') {
-    const markdown = experience === 'markdown'
+  if (experience !== 'monet') {
+    const structured = experience === 'material'
     return (
       <View
         accessibilityRole="list"
         testID={`provider-card-grid-${experience}`}
         style={{
           width: '100%',
-          maxWidth: markdown ? 920 : PROVIDER_CARD_DETAIL_MAX_WIDTH,
+          maxWidth: structured ? 920 : PROVIDER_CARD_DETAIL_MAX_WIDTH,
           alignSelf: 'center',
         }}
       >
@@ -94,7 +94,7 @@ export function ProviderCardGrid({
               style={{
                 width: '100%',
                 minWidth: 0,
-                minHeight: markdown ? 66 : 74,
+                minHeight: structured ? 66 : 74,
                 overflow: 'hidden',
               }}
             >

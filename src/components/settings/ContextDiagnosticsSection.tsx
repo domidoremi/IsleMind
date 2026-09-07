@@ -267,14 +267,14 @@ function DebugStat({ label, value }: { label: string; value: string }) {
   const { colors } = useAppTheme()
   const { width } = useWindowDimensions()
   const statMinWidth = width < 390 ? 64 : 74
-  const backgroundColor = colors.ui.glass
+  const backgroundColor = colors.ui.liquidGlass
     ? colors.ui.actionBar.itemBackground
-    : colors.ui.limeRoad
+    : colors.ui.monet
       ? colors.ui.semantic.surface.muted
       : colors.ui.semantic.surface.base
-  const borderColor = colors.ui.glass
+  const borderColor = colors.ui.liquidGlass
     ? colors.ui.actionBar.itemBorder
-    : colors.ui.limeRoad
+    : colors.ui.monet
       ? colors.material.stroke
       : colors.ui.semantic.chrome.border
   return (

@@ -96,9 +96,6 @@ export function IsleSkeleton({
           overflow: 'hidden',
         }}
       >
-        {grammar === 'fluid' ? (
-          <View style={{ position: 'absolute', top: 1, right: 10, left: 10, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.36 }} />
-        ) : null}
       </MotiView>
     </View>
   )

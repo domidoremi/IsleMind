@@ -38,9 +38,9 @@ export function PreferenceSettingsContent() {
     marginTop: 8,
     borderRadius: Math.min(colors.ui.radius.card, 8),
     padding: compact ? 10 : 11,
-    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
-    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
-    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
+    borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
   } as const
   const workflowMaxSteps = settings.agentWorkflowMaxSteps ?? 3
   const workflowMaxToolCalls = settings.agentWorkflowMaxToolCallsPerStep ?? 1
@@ -139,7 +139,7 @@ export function PreferenceSettingsContent() {
           backgroundColor: canonicalThemeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted,
           borderWidth: canonicalThemeId === 'minimal' ? 0 : canonicalThemeId === 'monet' ? 1 : StyleSheet.hairlineWidth,
           borderBottomWidth: canonicalThemeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
-          borderColor: colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border,
+          borderColor: colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border,
         }}
       >
         <AppIcon name="workflow" color={colors.textTertiary} size={16} />

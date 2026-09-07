@@ -296,10 +296,10 @@ function LiquidGlassModelSelector({
         styles.glassPressable,
         iconOnly ? styles.iconOnlySize : styles.labelledSize,
         {
-           maxWidth,
-           backgroundColor: selected ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.overlay,
-           borderColor: colors.ui.actionBar.itemBorder,
-           borderWidth: 0,
+          maxWidth,
+          backgroundColor: 'transparent',
+          borderColor: 'transparent',
+          borderWidth: 0,
          },
       ]}
     >
@@ -309,7 +309,7 @@ function LiquidGlassModelSelector({
             styles.glassInnerPlane,
             iconOnly ? styles.glassInnerPlaneIconOnly : null,
             {
-              backgroundColor: colors.ui.actionBar.itemBackground,
+              backgroundColor: selected ? colors.ui.actionBar.itemActiveBackground : colors.ui.actionBar.itemBackground,
               borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder,
               borderWidth: expression.border === 'none' ? 0 : StyleSheet.hairlineWidth,
             },

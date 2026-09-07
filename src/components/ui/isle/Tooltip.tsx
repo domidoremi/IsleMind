@@ -125,9 +125,6 @@ export function IsleTooltip({
             {material ? (
               <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.ui.icon.accentBackground, opacity: 0.16 }} />
             ) : null}
-            {glass ? (
-              <View style={{ position: 'absolute', top: 1, right: 9, left: 9, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.5 }} />
-            ) : null}
             <Text
               numberOfLines={3}
               style={{

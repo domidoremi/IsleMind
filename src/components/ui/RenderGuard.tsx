@@ -67,7 +67,7 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
     if (!this.state.error) return this.props.children
 
     const { colors, strings } = this.props
-    const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+    const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
     const title = this.props.compact ? strings.compactTitle : `${this.props.label ?? strings.content}${strings.titleSuffix}`
     return (
       <IslePanel elevated={false} style={{ borderRadius: this.props.compact ? colors.ui.radius.card : colors.ui.radius.panel }} contentStyle={{ padding: this.props.compact ? 10 : 14 }}>

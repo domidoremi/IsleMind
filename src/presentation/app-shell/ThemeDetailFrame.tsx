@@ -42,10 +42,10 @@ export function ThemeDetailFrame({
     return <LiquidGlassDetailFrame {...{ kind, title, subtitle, onBack, backLabel, leadingIcon, actions, backgroundState, headerMode, children }} />
   }
 
-  if (colors.ui.family === 'lime-road') {
+  if (colors.ui.family === 'monet') {
     return (
       <IsleScreen padded={false} background={kind === 'source' ? 'focus' : 'surface'} backgroundState={backgroundState}>
-        <View style={styles.routeFrame} testID={`theme-detail-lime-road-${kind}`}>
+        <View style={styles.routeFrame} testID={`theme-detail-monet-${kind}`}>
           {headerMode === 'full' ? <View style={[styles.routeHeader, { backgroundColor: colors.ui.composer.shellBackground, borderBottomColor: colors.ui.composer.toolbarBorder }]}>
             <IslePressable accessibilityRole="button" accessibilityLabel={backLabel} onPress={onBack} style={styles.routeBack}>
               <AppIcon name={leadingIcon} color={colors.text} size={18} strokeWidth={appIconStroke.strong} />
@@ -55,17 +55,17 @@ export function ThemeDetailFrame({
               {subtitle ? <Text numberOfLines={1} style={[styles.routeSubtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
             </View>
             {actions}
-          </View> : <View pointerEvents="none" style={[styles.routeCanvasMarker, { backgroundColor: colors.accent }]} />}
+          </View> : <View pointerEvents="none" style={[styles.routeCanvasMarker, { backgroundColor: colors.tertiary }]} />}
           <View style={styles.routeContent}>{children}</View>
         </View>
       </IsleScreen>
     )
   }
 
-  if (colors.ui.family === 'markdown') {
+  if (colors.ui.family === 'material') {
     return (
       <IsleScreen padded={false} background={kind === 'source' ? 'focus' : 'surface'} backgroundState={backgroundState}>
-        <View style={[styles.documentFrame, { backgroundColor: colors.background.surfaceCanvas }]} testID={`theme-detail-markdown-${kind}`}>
+        <View style={[styles.documentFrame, { backgroundColor: colors.background.surfaceCanvas }]} testID={`theme-detail-material-${kind}`}>
           {headerMode === 'full' ? <View style={[styles.documentHeader, { borderBottomColor: colors.ui.semantic.chrome.border, backgroundColor: colors.ui.semantic.chrome.background }]}>
             <IslePressable accessibilityRole="button" accessibilityLabel={backLabel} onPress={onBack} style={styles.documentBack}>
               <AppIcon name={leadingIcon} color={colors.textSecondary} size={17} strokeWidth={appIconStroke.strong} />

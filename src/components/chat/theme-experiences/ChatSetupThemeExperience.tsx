@@ -3,11 +3,12 @@ import { StyleSheet, View } from 'react-native'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
+import { GlassBackdropProvider, GlassBackdropTarget } from '../glass'
 
 type ChatThemeColors = ReturnType<typeof useAppTheme>['colors']
 
 export interface ChatSetupThemeExperienceProps {
-  /** Canonical family avoids the legacy presentation projection. */
+  /** Canonical family shared by settings, tokens, and presentation. */
   themeId: CanonicalThemeId
   colors: ChatThemeColors
   compactViewport: boolean
@@ -40,14 +41,11 @@ function MinimalSetupExperience({ chrome, status, content, controls, composer }:
   )
 }
 
-function MonetSetupExperience({ colors, chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
+function MonetSetupExperience({ chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
   return (
     <View testID="chat-setup-experience-monet" style={styles.root}>
       <View style={styles.monetChromeDrift}>{chrome}</View>
       <View style={styles.monetSetupCanvas}>
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetSetupGlow, { backgroundColor: colors.ui.semantic.surface.muted }]} />
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetSetupGlowSecondary, { backgroundColor: colors.ui.icon.accentBackground }]} />
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetSetupPlane, { backgroundColor: colors.ui.semantic.surface.base }]} />
         <View style={styles.monetSetupContent}>
           <View style={styles.monetStatusDrift}>{status}</View>
           <View style={styles.contentFirst}>{content}</View>
@@ -80,19 +78,19 @@ function MaterialSetupExperience({ colors, chrome, status, content, controls, co
   )
 }
 
-function LiquidGlassSetupExperience({ colors, chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
+function LiquidGlassSetupExperience({ chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
   return (
-    <View testID="chat-setup-experience-liquid-glass" style={styles.root}>
-      <View style={styles.glassLayer}>{chrome}</View>
-      <View style={styles.glassStatusLayer}>{status}</View>
-      <View style={styles.glassSetupCanvas}>
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassSetupAperture, { borderColor: colors.ui.actionBar.itemBorder }]} />
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.glassSetupHighlight, { backgroundColor: colors.ui.control.primaryForeground }]} />
-        <View style={styles.glassSetupColumn}>{content}</View>
+    <GlassBackdropProvider>
+      <View testID="chat-setup-experience-liquid-glass" style={styles.root}>
+        <View style={styles.glassLayer}>{chrome}</View>
+        <View style={styles.glassStatusLayer}>{status}</View>
+        <View style={styles.glassSetupCanvas}>
+          <GlassBackdropTarget style={styles.glassSetupColumn}>{content}</GlassBackdropTarget>
+        </View>
+        {controls}
+        <View style={styles.glassLayer}>{composer}</View>
       </View>
-      {controls}
-      <View style={styles.glassLayer}>{composer}</View>
-    </View>
+    </GlassBackdropProvider>
   )
 }
 
@@ -101,9 +99,6 @@ const styles = StyleSheet.create({
   contentFirst: { flex: 1 },
   monetChromeDrift: { marginHorizontal: 2 },
   monetSetupCanvas: { flex: 1, position: 'relative', overflow: 'hidden' },
-  monetSetupGlow: { position: 'absolute', top: -30, right: -34, width: 210, height: 124, borderBottomLeftRadius: 108, opacity: 0.16 },
-  monetSetupGlowSecondary: { position: 'absolute', bottom: 18, left: -42, width: 180, height: 98, borderTopRightRadius: 96, opacity: 0.12 },
-  monetSetupPlane: { position: 'absolute', top: '25%', right: '5%', bottom: '30%', left: '5%', borderTopLeftRadius: 38, borderBottomRightRadius: 56, opacity: 0.16, transform: [{ rotate: '1deg' }] },
   monetSetupContent: { flex: 1, marginLeft: 8 },
   monetStatusDrift: { marginLeft: -6, marginRight: 12 },
   monetComposerDock: { marginHorizontal: 3 },
@@ -119,6 +114,4 @@ const styles = StyleSheet.create({
   glassStatusLayer: { zIndex: 1, paddingHorizontal: 4 },
   glassSetupCanvas: { flex: 1, position: 'relative', overflow: 'hidden', paddingHorizontal: 3 },
   glassSetupColumn: { flex: 1, minWidth: 0, marginHorizontal: 8, paddingHorizontal: 4, borderLeftWidth: 1, borderRightWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
-  glassSetupAperture: { position: 'absolute', top: 4, right: 2, bottom: 4, left: 2, borderWidth: 1, borderRadius: 22, opacity: 0.22 },
-  glassSetupHighlight: { position: 'absolute', top: 5, right: 44, left: 44, height: 1, opacity: 0.34 },
 })

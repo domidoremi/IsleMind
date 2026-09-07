@@ -376,9 +376,9 @@ export function UsageStatisticsContent({
   const [filterSheet, setFilterSheet] = useState<FilterKey | null>(null)
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
   const [pricingDraft, setPricingDraft] = useState<PricingDraftState | null>(null)
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const borderColor = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const mutedSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
+  const borderColor = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const mutedSurface = colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const listHeight = Math.max(340, Math.min(compact ? 470 : 540, height * (compact ? 0.56 : 0.62)))
 
   const filterDefinitions: Array<{ key: FilterKey; label: string; options: UsageFilterOption[]; icon: AppIconName }> = [
@@ -808,7 +808,7 @@ function TrendItem({ trend, compact }: { trend: UsageTrendSeries; compact: boole
 
 function FilterButton({ label, value, icon, onPress }: { label: string; value: string; icon: AppIconName; onPress: () => void }) {
   const { colors } = useAppTheme()
-  const borderColor = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const borderColor = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
     <IslePressable
       accessibilityLabel={`${label}. ${value}`}

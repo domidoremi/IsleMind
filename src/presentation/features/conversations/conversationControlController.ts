@@ -1,5 +1,6 @@
 import type { Conversation, Message, MessageUsage } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
+import type { AssistantRun } from '@/modules/assistant-runtime'
 
 export interface ConversationControlActiveStream {
   controller: AbortController
@@ -20,7 +21,9 @@ export interface ConversationControlDependencies {
   getActiveStream(conversationId: string): ConversationControlActiveStream | undefined
   getConversation(conversationId: string): Conversation | undefined
   getMessage(conversationId: string, messageId: string): Message | undefined
+  getLatestResponseRun(conversationId: string, messageId: string): Promise<AssistantRun | undefined>
   hasActiveStream(conversationId: string): boolean
+  recoverProjection(run: AssistantRun): Promise<void>
   removeMessage(conversationId: string, messageId: string): void
   reportReplyStartFailure(kind: 'regenerate' | 'retry', error: unknown): void
   settleRunningTraces(
@@ -92,6 +95,22 @@ export function createConversationControlController(
     for (const messageId of staleMessageIds) {
       // A newly registered live stream always wins over restart recovery.
       if (dependencies.hasActiveStream(conversationId)) return
+
+      // The journal can commit terminal output before its disposable message
+      // projection. Consult its owner even for lazily loaded conversations;
+      // absence from listRecoverable is not evidence of cancellation.
+      const run = await dependencies.getLatestResponseRun(conversationId, messageId)
+      if (dependencies.hasActiveStream(conversationId)) return
+      const latest = dependencies.getMessage(conversationId, messageId)
+      if (!latest || (latest.status !== 'streaming' && latest.status !== 'sending')) continue
+      if (run) {
+        if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled') {
+          await dependencies.recoverProjection(run)
+        }
+        // A nonterminal durable owner, including pending confirmation, is not
+        // an orphan. Startup recovery (not presentation) owns its disposition.
+        continue
+      }
 
       // Commit buffered text and traces first, then re-read the message so the
       // cancelled projection and usage include every recovered partial chunk.

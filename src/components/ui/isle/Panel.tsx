@@ -41,7 +41,9 @@ export function IslePanel({
     : functionalMaterial
     ? webBlurEnabled
       ? design.semantic.color.surfaceOverlay
-      : design.semantic.color.surfaceElevated
+      : reduceTransparency
+        ? design.semantic.color.surfaceElevated
+        : design.semantic.surface.floating.background
     : tokenBackground
   const borderColor = panelBorder(resolvedMaterial, colors)
   const shouldElevate = elevated && resolvedMaterial !== 'transparent' && (resolvedMaterial === 'raised' || resolvedMaterial === 'glass' || resolvedMaterial === 'chrome')
@@ -100,9 +102,9 @@ const styles = StyleSheet.create({
 function panelBackground(material: IsleMaterial, colors: ReturnType<typeof useAppTheme>['colors']) {
   switch (material) {
     case 'raised':
-      return colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+      return colors.ui.semantic.surface.base
     case 'muted':
-      return colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+      return colors.ui.semantic.surface.muted
     case 'glass':
       return colors.ui.semantic.surface.overlay
     case 'chrome':
@@ -113,7 +115,7 @@ function panelBackground(material: IsleMaterial, colors: ReturnType<typeof useAp
       return 'transparent'
     case 'paper':
     default:
-      return colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+      return colors.ui.semantic.surface.base
   }
 }
 
@@ -124,7 +126,7 @@ function supportsBackdropFilter(): boolean {
 
 function panelBorder(material: IsleMaterial, colors: ReturnType<typeof useAppTheme>['colors']) {
   if (material === 'transparent') return 'transparent'
-  if (colors.ui.limeRoad) {
+  if (colors.ui.monet) {
     return material === 'paper' || material === 'raised' ? colors.material.stroke : colors.material.strokeStrong
   }
   if (material === 'field') return colors.ui.input.border

@@ -314,6 +314,7 @@ export function MessageInput({
 }) {
   const interactiveMaterial = colors.design?.semantic.surface.interactive
   const activeMaterial = colors.design?.semantic.surface.active
+  const isLiquidGlass = colors.design?.family === 'liquid-glass'
   const [toolMode, setToolMode] = useState<'formatting' | 'more'>('formatting')
   const animatedSurfaceHeight = useSharedValue(surfaceHeight)
   const largeProgress = useSharedValue(sizeMode === 'large' ? 1 : 0)
@@ -361,12 +362,16 @@ export function MessageInput({
       backgroundColor: interpolateColor(
         focusProgress.value,
         [0, 1],
-        [interactiveMaterial?.background ?? colors.ui.input.background, activeMaterial?.background ?? colors.ui.input.backgroundFocused],
+        isLiquidGlass
+          ? ['transparent', 'transparent']
+          : [interactiveMaterial?.background ?? colors.ui.input.background, activeMaterial?.background ?? colors.ui.input.backgroundFocused],
       ),
       borderColor: interpolateColor(
         focusProgress.value,
         [0, 1],
-        [interactiveMaterial?.border ?? colors.ui.input.border, colors.ui.input.focus],
+        isLiquidGlass
+          ? ['transparent', colors.ui.input.focus]
+          : [interactiveMaterial?.border ?? colors.ui.input.border, colors.ui.input.focus],
       ),
     }
   })
@@ -762,7 +767,7 @@ export function SendButton({
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: 'transparent',
-          borderWidth: enabled ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+          borderWidth: enabled ? 0 : colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
           borderColor: enabled ? 'transparent' : colors.ui.control.disabledBorder,
         }}
       >
@@ -933,7 +938,7 @@ export function ModelMenu({
                     alignItems: 'center',
                     gap: 9,
                     backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted,
-                    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+                    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
                     borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
                   }}
                 >
@@ -960,7 +965,7 @@ export function ModelMenu({
               }}
               accessibilityRole="button"
               accessibilityLabel={t('chat.aiConfiguration')}
-              style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.control.primaryBackground, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.control.primaryBorder }}
+              style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.control.primaryBackground, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.control.primaryBorder }}
             >
               <AppIcon name="settings-sliders" color={colors.ui.control.primaryForeground} size={15} strokeWidth={appIconStroke.strong} />
               <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 11, fontWeight: '900' }}>{t('chat.aiConfiguration')}</Text>

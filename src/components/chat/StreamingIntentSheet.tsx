@@ -25,13 +25,13 @@ export function StreamingIntentSheet({
   onCancel: () => void
   onChoose: (intent: StreamingInputIntent) => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const { t } = useTranslation()
   const { width } = useWindowDimensions()
   const preview = previewPendingText(draft.content, draft.attachments, t)
   const compact = width < 390
-  const dismissSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const dismissBorder = colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const dismissSurface = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const dismissBorder = colors.ui.monet ? colors.material.stroke : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const bottomOffset = Math.max(0, keyboardLift) + Math.max(insets.bottom, 10) + 106
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: bottomOffset, zIndex: 55, paddingHorizontal: 14 }}>
@@ -48,7 +48,7 @@ export function StreamingIntentSheet({
               onPress={onCancel}
               accessibilityRole="button"
               accessibilityLabel={t('chat.cancelStreamingIntent')}
-              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: dismissSurface, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: dismissBorder }}
+              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: dismissSurface, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: dismissBorder }}
             >
               <AppIcon name="close" color={colors.textTertiary} size={16} strokeWidth={appIconStroke.strong} />
             </IslePressable>
@@ -82,11 +82,11 @@ function IntentAction({
   children: ReactNode
   onPress: () => void
 }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const actionRadius = colors.ui.radius.field
-  const surface = danger ? colors.ui.tone.danger.background : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
-  const borderColor = danger ? colors.ui.tone.danger.border : colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const surface = danger ? colors.ui.tone.danger.background : isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.monet ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
+  const borderColor = danger ? colors.ui.tone.danger.border : colors.ui.monet ? colors.material.stroke : isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   return (
     <IslePressable
       haptic

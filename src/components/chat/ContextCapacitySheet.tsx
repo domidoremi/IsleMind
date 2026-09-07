@@ -62,7 +62,7 @@ export function ContextCapacitySheet({
   if (!visible) return null
 
   const sheetMaterial = colors.material.sheet
-  const borderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const borderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
 
   return (
     <Modal

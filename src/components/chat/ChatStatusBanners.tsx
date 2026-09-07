@@ -23,11 +23,11 @@ export function ConversationHealthBanner({
   onSwitch: () => void
   compact?: boolean
 }) {
-  const { colors, isGlass, canonicalThemeId } = useAppTheme()
+  const { colors, isLiquidGlass, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const healthTone = health.inheritedExpired || health.code === 'provider_missing' ? colors.ui.tone.danger : colors.ui.tone.warning
   const borderColor = healthTone.border
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   if (compact) {
     const shouldSwitchProvider = health.code === 'provider_missing' || health.code === 'model_unavailable'
     const primaryAction = shouldSwitchProvider ? onSwitch : onConfigure
@@ -42,8 +42,8 @@ export function ConversationHealthBanner({
       primaryLabel,
     }
     if (canonicalThemeId === 'monet' || canonicalThemeId === 'material' || canonicalThemeId === 'liquid-glass') return <CanonicalCompactHealthBanner {...compactProps} family={canonicalThemeId} />
-    if (colors.ui.family === 'lime-road') return <LimeRoadCompactHealthBanner {...compactProps} />
-    if (colors.ui.family === 'markdown') return <MarkdownCompactHealthBanner {...compactProps} />
+    if (colors.ui.family === 'monet') return <MonetCompactHealthBanner {...compactProps} />
+    if (colors.ui.family === 'material') return <MaterialCompactHealthBanner {...compactProps} />
     return <MinimalCompactHealthBanner {...compactProps} />
   }
   if (canonicalThemeId !== 'minimal') return <CanonicalHealthBanner health={health} onConfigure={onConfigure} onSwitch={onSwitch} compact={compact} family={canonicalThemeId} />
@@ -54,7 +54,7 @@ export function ConversationHealthBanner({
         marginBottom: 8,
         borderRadius: colors.ui.radius.card,
         padding: 13,
-        backgroundColor: resolveChatChromeSurface(colors, isGlass),
+        backgroundColor: resolveChatChromeSurface(colors, isLiquidGlass),
         borderWidth: subtleBorderWidth,
         borderColor,
       }}
@@ -89,7 +89,7 @@ interface CompactHealthBannerProps {
 }
 
 function MinimalCompactHealthBanner({ health, primaryAction, primaryGlyph, primaryLabel }: CompactHealthBannerProps) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const tone = health.inheritedExpired || health.code === 'provider_missing' ? colors.ui.tone.danger : colors.ui.tone.warning
   return (
     <View
@@ -114,7 +114,7 @@ function MinimalCompactHealthBanner({ health, primaryAction, primaryGlyph, prima
           borderTopWidth: StyleSheet.hairlineWidth,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderColor: tone.border,
-          backgroundColor: isGlass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base,
+          backgroundColor: isLiquidGlass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base,
         }}
       >
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone.foreground }} />
@@ -131,12 +131,12 @@ function MinimalCompactHealthBanner({ health, primaryAction, primaryGlyph, prima
   )
 }
 
-function LimeRoadCompactHealthBanner({ health, primaryAction, primaryGlyph, primaryLabel }: CompactHealthBannerProps) {
+function MonetCompactHealthBanner({ health, primaryAction, primaryGlyph, primaryLabel }: CompactHealthBannerProps) {
   const { colors } = useAppTheme()
   const tone = health.inheritedExpired || health.code === 'provider_missing' ? colors.ui.tone.danger : colors.ui.tone.warning
   return (
     <View
-      testID="chat-health-experience-lime-road"
+      testID="chat-health-experience-monet"
       style={{ alignSelf: 'stretch' }}
     >
       <IslePressable
@@ -159,7 +159,7 @@ function LimeRoadCompactHealthBanner({ health, primaryAction, primaryGlyph, prim
           backgroundColor: colors.ui.semantic.surface.base,
         }}
       >
-        <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 3, borderColor: tone.foreground, backgroundColor: colors.paper }} />
+        <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 3, borderColor: tone.foreground, backgroundColor: colors.ui.semantic.surface.base }} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 16, fontWeight: '900' }}>{health.title}</Text>
           <Text numberOfLines={1} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 9.5, lineHeight: 12, fontWeight: '700' }}>{health.description}</Text>
@@ -173,12 +173,12 @@ function LimeRoadCompactHealthBanner({ health, primaryAction, primaryGlyph, prim
   )
 }
 
-function MarkdownCompactHealthBanner({ health, primaryAction, primaryGlyph, primaryLabel }: CompactHealthBannerProps) {
+function MaterialCompactHealthBanner({ health, primaryAction, primaryGlyph, primaryLabel }: CompactHealthBannerProps) {
   const { colors } = useAppTheme()
   const tone = health.inheritedExpired || health.code === 'provider_missing' ? colors.ui.tone.danger : colors.ui.tone.warning
   return (
     <View
-      testID="chat-health-experience-markdown"
+      testID="chat-health-experience-material"
       style={{ alignSelf: 'stretch' }}
     >
       <IslePressable
@@ -262,13 +262,13 @@ function CanonicalHealthBanner({ health, onConfigure, onSwitch, family }: { heal
 }
 
 function BannerAction({ label, glyph, compact = false, disabled = false, onPress }: { label: string; glyph?: NavigationGlyph; compact?: boolean; disabled?: boolean; onPress: () => void }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const navigation = useNavigationTrigger(onPress)
   const press = glyph ? navigation.trigger : onPress
-  const surface = compact ? resolveChatControlSurface(colors, isGlass, false) : resolveChatChromeSurface(colors, isGlass)
-  const borderColor = resolveChatChromeBorder(colors, isGlass)
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const foreground = compact && isGlass ? colors.textSecondary : colors.text
+  const surface = compact ? resolveChatControlSurface(colors, isLiquidGlass, false) : resolveChatChromeSurface(colors, isLiquidGlass)
+  const borderColor = resolveChatChromeBorder(colors, isLiquidGlass)
+  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
+  const foreground = compact && isLiquidGlass ? colors.textSecondary : colors.text
   return (
     <IslePressable
       haptic
@@ -305,13 +305,13 @@ export function CompressionBanner({
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
   if (canonicalThemeId !== 'minimal') return <CanonicalCompressionBanner compression={compression} onOpenDetails={onOpenDetails} compact={compact} family={canonicalThemeId} />
-  if (colors.ui.family === 'lime-road') return <LimeRoadCompressionBanner compression={compression} onOpenDetails={onOpenDetails} compact={compact} />
-  if (colors.ui.family === 'markdown') return <MarkdownCompressionBanner compression={compression} onOpenDetails={onOpenDetails} compact={compact} />
+  if (colors.ui.family === 'monet') return <MonetCompressionBanner compression={compression} onOpenDetails={onOpenDetails} compact={compact} />
+  if (colors.ui.family === 'material') return <MaterialCompressionBanner compression={compression} onOpenDetails={onOpenDetails} compact={compact} />
   return <MinimalCompressionBanner compression={compression} onOpenDetails={onOpenDetails} compact={compact} />
 }
 
 function MinimalCompressionBanner({ compression, onOpenDetails, compact }: { compression: CompressionSummary; onOpenDetails: () => void; compact: boolean }) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const { t } = useTranslation()
   const tone = compression.mode === 'remote' ? colors.ui.tone.success : colors.ui.tone.warning
   const ratio = Math.round(compression.ratio * 100)
@@ -335,7 +335,7 @@ function MinimalCompressionBanner({ compression, onOpenDetails, compact }: { com
           flexDirection: 'row',
           alignItems: 'center',
           gap: 10,
-          backgroundColor: isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
+          backgroundColor: isLiquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: tone.border,
         }}
@@ -364,7 +364,7 @@ function MinimalCompressionBanner({ compression, onOpenDetails, compact }: { com
   )
 }
 
-function LimeRoadCompressionBanner({ compression, onOpenDetails, compact }: { compression: CompressionSummary; onOpenDetails: () => void; compact: boolean }) {
+function MonetCompressionBanner({ compression, onOpenDetails, compact }: { compression: CompressionSummary; onOpenDetails: () => void; compact: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const tone = compression.mode === 'remote' ? colors.ui.tone.success : colors.ui.tone.warning
@@ -372,7 +372,7 @@ function LimeRoadCompressionBanner({ compression, onOpenDetails, compact }: { co
   const savedTokens = Math.max(0, Math.round(compression.savedTokens))
   return (
     <View
-      testID="chat-compression-experience-lime-road"
+      testID="chat-compression-experience-monet"
       style={{ alignSelf: 'stretch' }}
     >
       <IslePressable
@@ -392,7 +392,7 @@ function LimeRoadCompressionBanner({ compression, onOpenDetails, compact }: { co
       >
         <View style={{ width: 34, alignItems: 'center', justifyContent: 'center', borderRightWidth: 1, borderRightColor: colors.material.stroke }}>
           <Text style={{ color: colors.textTertiary, fontSize: 8, lineHeight: 10, fontWeight: '900' }}>AI</Text>
-          <View style={{ width: 11, height: 11, marginTop: 4, borderRadius: 6, borderWidth: 3, borderColor: tone.foreground, backgroundColor: colors.paper }} />
+          <View style={{ width: 11, height: 11, marginTop: 4, borderRadius: 6, borderWidth: 3, borderColor: tone.foreground, backgroundColor: colors.ui.semantic.surface.base }} />
         </View>
         <View style={{ flex: 1, minWidth: 0, paddingHorizontal: 9, paddingVertical: 8 }}>
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: compact ? 10.5 : 12, lineHeight: compact ? 13 : 15, fontWeight: '900' }}>{t(compression.titleKey)}</Text>
@@ -407,7 +407,7 @@ function LimeRoadCompressionBanner({ compression, onOpenDetails, compact }: { co
   )
 }
 
-function MarkdownCompressionBanner({ compression, onOpenDetails, compact }: { compression: CompressionSummary; onOpenDetails: () => void; compact: boolean }) {
+function MaterialCompressionBanner({ compression, onOpenDetails, compact }: { compression: CompressionSummary; onOpenDetails: () => void; compact: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const tone = compression.mode === 'remote' ? colors.ui.tone.success : colors.ui.tone.warning
@@ -415,7 +415,7 @@ function MarkdownCompressionBanner({ compression, onOpenDetails, compact }: { co
   const savedTokens = Math.max(0, Math.round(compression.savedTokens))
   return (
     <View
-      testID="chat-compression-experience-markdown"
+      testID="chat-compression-experience-material"
       style={{ alignSelf: 'stretch' }}
     >
       <IslePressable

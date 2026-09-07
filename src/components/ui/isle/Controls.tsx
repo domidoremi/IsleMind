@@ -54,14 +54,14 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
 
 export function IsleMetric({ label }: { label: string }) {
   const { colors } = useAppTheme()
-  const backgroundColor = colors.ui.limeRoad
+  const backgroundColor = colors.ui.monet
     ? colors.ui.semantic.surface.base
-    : colors.ui.glass
+    : colors.ui.liquidGlass
       ? colors.ui.actionBar.itemBackground
       : colors.ui.semantic.surface.muted
-  const borderColor = colors.ui.limeRoad
+  const borderColor = colors.ui.monet
     ? colors.material.stroke
-    : colors.ui.glass
+    : colors.ui.liquidGlass
       ? colors.ui.actionBar.itemBorder
       : colors.ui.semantic.chrome.border
   return (
@@ -74,7 +74,7 @@ export function IsleMetric({ label }: { label: string }) {
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor,
-        borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+        borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
         borderColor,
       }}
     >

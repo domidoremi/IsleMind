@@ -3,6 +3,7 @@ import type { ConversationRunProjection, ConversationRunProjectionEvent } from '
 import type { ContextCitation } from '@/modules/knowledge'
 import { finishConversationTaskActivityForMessage } from '@/modules/tasks'
 import { buildEstimatedUsage, estimateTextTokens } from '@/services/tokenUsage'
+import { hasActiveStream } from '@/services/chatStreamLifecycle'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import type { MessageUsage } from '@/types/chatContracts'
@@ -150,14 +151,14 @@ export async function recoverChatProjection(run: AssistantRun): Promise<void> {
   // Historical Agent records are terminally reconciled through the same Chat
   // projection; the persisted discriminator remains read compatibility only.
   const messageId = resolveChatRecoveryMessageId(run)
-  if (!messageId) return
+  if (!messageId || !isTerminalStatus(run.status)) return
   await finalizeProjection({
     conversationId: run.conversationId,
     messageId,
     citations: [],
     suppressTextUntilContinuation: false,
     usage: undefined,
-  }, run)
+  }, run, true)
 }
 
 export function isPlainChatMessageCancelled(conversationId: string, messageId: string): boolean {
@@ -255,9 +256,10 @@ function projectContextCitations(
   if (changed) useChatStore.getState().updateMessage(state.conversationId, state.messageId, { citations: state.citations })
 }
 
-async function finalizeProjection(state: ProjectionState, run: AssistantRun): Promise<void> {
+async function finalizeProjection(state: ProjectionState, run: AssistantRun, recovering = false): Promise<void> {
   const status = currentMessageStatus(state.conversationId, state.messageId)
   if (!status || status === 'cancelled') return
+  if (recovering && (hasActiveStream(state.conversationId) || (status !== 'streaming' && status !== 'sending'))) return
 
   // Flush the out-of-band streaming buffer before reading terminal content.
   // The provider runtime can deliver its terminal event while the last text
@@ -266,8 +268,12 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun): Pr
   await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
 
   const current = getMessage(state.conversationId, state.messageId)
+  // Cancellation or a newer live/terminal projection may win during the flush.
+  // Duplicate recovery must not project or finish the same task a second time.
+  if (!current || current.status === 'cancelled') return
+  if (recovering && (hasActiveStream(state.conversationId) || (current.status !== 'streaming' && current.status !== 'sending'))) return
   const conversation = useChatStore.getState().conversations.find((item) => item.id === state.conversationId)
-  const completedAt = Date.now()
+  const completedAt = run.completedAt ?? Date.now()
   const outputText = run.result?.outputText ?? run.checkpoint?.outputText ?? current?.responseText ?? current?.content ?? ''
   const inputMessages = conversation?.messages.filter((message) => message.id !== state.messageId && message.status !== 'error') ?? []
   const estimatedUsage = buildEstimatedUsage(inputMessages, outputText)
@@ -288,6 +294,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun): Pr
     finishConversationTaskActivityForMessage(state.conversationId, state.messageId, 'done', {
       metadata: { providerId: run.providerId, model: run.model, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens },
     })
+    if (recovering) await useChatStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
     return
   }
 
@@ -305,6 +312,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun): Pr
     finishConversationTaskActivityForMessage(state.conversationId, state.messageId, 'cancelled', {
       metadata: { reason: 'assistant_run_cancelled' },
     })
+    if (recovering) await useChatStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
     return
   }
 
@@ -326,6 +334,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun): Pr
     error: st('chatRunner.error.sendFailed'),
     metadata: { errorCode, providerId: run.providerId, runFailure: run.failure?.code },
   })
+  if (recovering) await useChatStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
 }
 
 function isTerminalStatus(status: AssistantRun['status']): boolean {

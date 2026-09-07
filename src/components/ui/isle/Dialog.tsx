@@ -104,7 +104,7 @@ const fallbackDialogApi: IsleDialogApi = {
 }
 
 function dialogBorderWidth(colors: ReturnType<typeof useAppTheme>['colors']) {
-  return colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  return colors.ui.monet ? 1 : StyleSheet.hairlineWidth
 }
 
 export function IsleDialogProvider({ children, updateNotice }: { children: ReactNode; updateNotice?: string | null }) {
@@ -388,7 +388,6 @@ function AppToastSurface({
       {grammar === 'precision' ? <View style={{ height: 1, backgroundColor: toneToken.foreground }} /> : null}
       {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.26 }} /> : null}
       {grammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: toneToken.foreground, opacity: 0.035 }} /> : null}
-      {grammar === 'fluid' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 20, right: 20, height: 1, backgroundColor: colors.ui.semantic.content.inverse, opacity: 0.64 }} /> : null}
       <View
         accessible={interactive}
         pointerEvents={interactive ? 'auto' : 'none'}
@@ -539,8 +538,8 @@ export function useIsleDialog(): IsleDialogApi {
 function ThemeDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
   const { canonicalThemeId } = useAppTheme()
   switch (canonicalThemeId) {
-    case 'monet': return <LimeRoadDialogSurface dialog={dialog} onClose={onClose} />
-    case 'material': return <MarkdownDialogSurface dialog={dialog} onClose={onClose} />
+    case 'monet': return <MonetDialogSurface dialog={dialog} onClose={onClose} />
+    case 'material': return <MaterialDialogSurface dialog={dialog} onClose={onClose} />
     case 'liquid-glass': return <LiquidGlassDialogSurface dialog={dialog} onClose={onClose} />
     case 'minimal':
     default: return <MinimalDialogSurface dialog={dialog} onClose={onClose} />
@@ -607,7 +606,7 @@ function MinimalDialogSurface({ dialog, onClose }: { dialog: DialogState; onClos
   )
 }
 
-function LimeRoadDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
+function MonetDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const material = colors.material.sheet
@@ -623,7 +622,7 @@ function LimeRoadDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
       >
       <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: 5, flexDirection: 'row', gap: 5, paddingHorizontal: 14, paddingTop: 2 }}>
         <View style={{ flex: 1.2, height: 2, borderRadius: 2, backgroundColor: colors.primary }} />
-        <View style={{ flex: 0.46, height: 2, borderRadius: 2, backgroundColor: colors.accent }} />
+        <View style={{ flex: 0.46, height: 2, borderRadius: 2, backgroundColor: colors.tertiary }} />
         <View style={{ flex: 0.74, height: 2, borderRadius: 2, backgroundColor: tone.foreground }} />
       </View>
       <DialogScrollableContent contentStyle={{ padding: 18, borderLeftWidth: 2, borderLeftColor: tone.foreground }}>
@@ -662,7 +661,7 @@ function LimeRoadDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
   )
 }
 
-function MarkdownDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
+function MaterialDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const material = colors.material.sheet
@@ -775,7 +774,7 @@ function DialogCloseButton({ onPress, compact = false }: { onPress: () => void; 
       label={t('dialog.close')}
       icon={<AppIcon name="close" color={colors.textTertiary} size={compact ? 16 : 18} strokeWidth={appIconStroke.strong} />}
       onPress={onPress}
-      style={{ width: 44, height: 44, minHeight: 44, borderRadius: colors.ui.family === 'markdown' ? 0 : Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 0 }}
+      style={{ width: 44, height: 44, minHeight: 44, borderRadius: colors.ui.family === 'material' ? 0 : Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 0 }}
       textStyle={{ display: 'none' }}
     />
   )
@@ -819,10 +818,10 @@ function DialogChip({ chip }: { chip: IsleDialogChip }) {
   const { colors } = useAppTheme()
   const tone = chip.tone ?? 'default'
   const toneToken = dialogToneToken(colors, tone)
-  const isGlass = colors.ui.glass
-  const backgroundColor = tone === 'default' && isGlass ? colors.ui.actionBar.itemBackground : toneToken.background
-  const borderColor = tone === 'default' && isGlass ? colors.ui.actionBar.itemBorder : toneToken.border
-  const foreground = tone === 'default' && isGlass ? colors.textSecondary : toneToken.foreground
+  const isLiquidGlass = colors.ui.liquidGlass
+  const backgroundColor = tone === 'default' && isLiquidGlass ? colors.ui.actionBar.itemBackground : toneToken.background
+  const borderColor = tone === 'default' && isLiquidGlass ? colors.ui.actionBar.itemBorder : toneToken.border
+  const foreground = tone === 'default' && isLiquidGlass ? colors.textSecondary : toneToken.foreground
   const borderWidth = dialogBorderWidth(colors)
   return (
     <View style={{
@@ -842,7 +841,7 @@ function DialogChip({ chip }: { chip: IsleDialogChip }) {
 
 function DialogMetricRow({ metric }: { metric: IsleDialogMetric }) {
   const { colors } = useAppTheme()
-  const backgroundColor = colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
+  const backgroundColor = colors.ui.liquidGlass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
   const borderWidth = dialogBorderWidth(colors)
   return (
     <View style={{

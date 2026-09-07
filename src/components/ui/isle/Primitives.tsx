@@ -185,18 +185,18 @@ export function IsleToggle({
 }) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
-  const playful = colors.ui.limeRoad && colors.ui.ornamented
+  const playful = colors.ui.monet && colors.ui.ornamented
   const family = colors.design?.family ?? 'minimal'
   const toggleSurface = active
-    ? colors.ui.glass
+    ? colors.ui.liquidGlass
       ? colors.ui.semantic.chrome.background
       : colors.ui.semantic.surface.muted
-    : colors.ui.glass || playful
+    : colors.ui.liquidGlass || playful
       ? colors.ui.actionBar.itemBackground
       : 'transparent'
   const toggleBorder = active
     ? colors.ui.control.primaryBorder
-    : colors.ui.glass || playful
+    : colors.ui.liquidGlass || playful
       ? colors.ui.actionBar.itemBorder
       : 'transparent'
   const toggleShadowOpacity = active
@@ -206,7 +206,7 @@ export function IsleToggle({
     : 0
   const iconBackground = active
     ? colors.ui.control.primaryBackground
-    : colors.ui.glass
+    : colors.ui.liquidGlass
       ? colors.ui.actionBar.itemActiveBackground
       : colors.ui.icon.accentBackground
   return (
@@ -272,7 +272,7 @@ export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: (
   if (onChange) return <IsleStyledSwitch checked={active} onChange={() => onChange()} />
   const width = 52
   const height = 28
-  const borderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const borderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const thumbInset = 3
   const knob = height - thumbInset * 2
   const thumbTravel = width - knob - thumbInset * 2
@@ -341,18 +341,18 @@ export function IsleListItem({
   const compact = width < 430
   const stackTrailing = compact && !!trailing
   const family = colors.design?.family ?? 'minimal'
-  const borderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const borderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const itemBackground = danger
     ? colors.ui.tone.danger.background
-    : colors.ui.limeRoad
+    : colors.ui.monet
       ? colors.ui.semantic.surface.base
-      : colors.ui.glass
+      : colors.ui.liquidGlass
         ? colors.ui.actionBar.itemBackground
         : colors.ui.semantic.surface.base
   const listBackground = family === 'minimal' || family === 'monet' ? 'transparent' : itemBackground
   const itemBorderColor = danger
     ? colors.ui.tone.danger.border
-    : colors.ui.glass
+    : colors.ui.liquidGlass
       ? colors.ui.actionBar.itemBorder
       : colors.ui.semantic.chrome.border
   const itemShadowOpacity = 0
@@ -560,20 +560,20 @@ export function IsleDisclosure({
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const { t } = useTranslation()
-  const playful = colors.ui.limeRoad && colors.ui.ornamented
+  const playful = colors.ui.monet && colors.ui.ornamented
   const collapsedBackground = danger
     ? colors.ui.tone.danger.background
-    : colors.ui.glass || playful
+    : colors.ui.liquidGlass || playful
       ? colors.ui.actionBar.itemBackground
       : 'transparent'
   const expandedBackground = danger
     ? colors.ui.tone.danger.background
-    : colors.ui.glass
+    : colors.ui.liquidGlass
       ? colors.ui.semantic.chrome.background
       : colors.ui.semantic.surface.muted
   const collapsedBorderColor = danger
     ? colors.ui.tone.danger.border
-    : colors.ui.glass || playful
+    : colors.ui.liquidGlass || playful
       ? colors.ui.actionBar.itemBorder
       : 'transparent'
   return (

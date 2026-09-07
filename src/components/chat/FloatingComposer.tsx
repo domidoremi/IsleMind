@@ -154,7 +154,7 @@ export function FloatingComposer({
   onLayoutHeight: (height: number) => void
   motion: MotionIntensity
 }) {
-  const { colors, isGlass, canonicalThemeId, isDark } = useAppTheme()
+  const { colors, isLiquidGlass, canonicalThemeId, isDark } = useAppTheme()
   const { t } = useTranslation()
   const [reasoningPickerOpen, setReasoningPickerOpen] = useState(false)
   const [composerPresentation, setComposerPresentation] =
@@ -194,26 +194,29 @@ export function FloatingComposer({
       ? t('chat.quickOutputReply')
       : t('chat.quickOutputAuto')
   const outputActive = requestedOutput !== 'auto'
+  // Inner panels embedded in the glass composer must use the translucent
+  // floating material, never the chrome tint — a solid tint inside the lens
+  // reads as a white rectangle.
   const panelChromeSurface = canonicalThemeId === 'minimal'
     ? 'transparent'
-    : isGlass
-      ? colors.ui.semantic.chrome.background
+    : isLiquidGlass
+      ? colors.design?.semantic.surface.floating.background ?? colors.ui.semantic.chrome.background
       : canonicalThemeId === 'material'
         ? colors.ui.semantic.surface.muted
         : colors.ui.semantic.surface.base
   const panelChromeBorder = canonicalThemeId === 'minimal'
     ? 'transparent'
-    : isGlass
+    : isLiquidGlass
       ? colors.ui.actionBar.itemBorder
       : canonicalThemeId === 'material'
         ? colors.ui.semantic.chrome.border
         : 'transparent'
   const chipSurface = canonicalThemeId === 'minimal'
     ? 'transparent'
-    : isGlass
+    : isLiquidGlass
       ? 'transparent'
       : colors.ui.semantic.surface.muted
-  const subtleBorderWidth = canonicalThemeId === 'minimal' ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const subtleBorderWidth = canonicalThemeId === 'minimal' ? 0 : colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const panelRadius = canonicalThemeId === 'minimal'
     ? 0
     : canonicalThemeId === 'liquid-glass'
@@ -526,7 +529,7 @@ export function FloatingComposer({
             showInlineVoice={false}
             showCommandAction={false}
             leadingAccessory={renderComposerContextRail()}
-            trailingAccessory={undefined}
+            trailingAccessory={renderComposerToolsTrigger()}
             onStop={onStop}
             placeholder={inputPlaceholder}
             onClearPending={onClearPending}

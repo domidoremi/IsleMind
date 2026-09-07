@@ -16,7 +16,7 @@ export interface IsleChipProps {
 export function IsleChip({ children, active = false, tone = 'default', style }: IsleChipProps) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
-  const ornamented = colors.ui.limeRoad && colors.ui.ornamented
+  const ornamented = colors.ui.monet && colors.ui.ornamented
   const family = colors.design?.family ?? 'minimal'
   const toneToken = tone === 'danger'
     ? colors.ui.tone.danger
@@ -27,7 +27,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
         : colors.ui.tone.neutral
   const foreground = active
     ? colors.ui.control.primaryForeground
-    : tone === 'default' && colors.ui.glass
+    : tone === 'default' && colors.ui.liquidGlass
       ? colors.textSecondary
       : toneToken.foreground
   const background = active
@@ -35,7 +35,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
     : tone === 'default'
       ? ornamented
         ? colors.ui.semantic.surface.base
-        : colors.ui.glass
+        : colors.ui.liquidGlass
           ? colors.ui.actionBar.itemBackground
           : family === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted
       : toneToken.background
@@ -44,7 +44,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
     : tone === 'default'
       ? ornamented
         ? colors.material.stroke
-        : colors.ui.glass
+        : colors.ui.liquidGlass
           ? colors.ui.actionBar.itemBorder
           : family === 'minimal' ? 'transparent' : colors.ui.semantic.chrome.border
       : toneToken.border
