@@ -24,6 +24,8 @@ const {
 const {
   createMcpClientAdapter,
   createMcpHttpClient,
+  createMcpHttpToolClient,
+  createMcpToolAdapter,
   createMcpToolRequestHeaders,
 } = require('../src/modules/integrations/index.ts')
 
@@ -124,7 +126,7 @@ function inspectTool(serverId) {
   }
 }
 
-function jsonResponse(result, { error, rawText, sessionId, status = 200 } = {}) {
+function jsonRpcResponse(result, { id = 'response', error, rawText, sessionId, status = 200 } = {}) {
   return {
     ok: status >= 200 && status < 300,
     status,
@@ -135,13 +137,95 @@ function jsonResponse(result, { error, rawText, sessionId, status = 200 } = {}) 
         ? ''
         : JSON.stringify({
             jsonrpc: '2.0',
-            id: 'response',
+            id,
             ...(error === undefined ? { result } : { error }),
           }),
   }
 }
 
+async function testMcpResponseBoundaries() {
+  const server = { id: 'response-boundary', url: 'https://mcp.example.test/tools', transport: 'sse' }
+  const options = { signal: new AbortController().signal }
+  const clientFor = (fetch) => createMcpHttpClient(server, { requestId: () => 'expected-id', fetch })
+  for (const payload of [
+    { jsonrpc: '2.0', id: 'other-id', result: {} },
+    { jsonrpc: '1.0', id: 'expected-id', result: {} },
+    { jsonrpc: '2.0', id: 'expected-id', result: [], },
+    { jsonrpc: '2.0', id: 'expected-id', result: {}, error: { code: -32603, message: 'invalid combination' } },
+    { jsonrpc: '2.0', id: 'expected-id' },
+  ]) {
+    const client = clientFor(async () => jsonRpcResponse(undefined, { rawText: JSON.stringify(payload) }))
+    await assert.rejects(client.request('tools/list', {}, options), /invalid response/i,
+      'unmatched or malformed JSON-RPC messages cannot become successful MCP results')
+  }
+  const event = (id, result) => `data: ${JSON.stringify({ jsonrpc: '2.0', id, result })}\n\n`
+  const interleaved = clientFor(async () => jsonRpcResponse(undefined, { rawText:
+    'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress","params":{}}\n\n'
+    + event('expected-id', { tools: [{ name: 'matched' }] })
+    + event('another-id', { tools: [{ name: 'must-not-be-used' }] }),
+  }))
+  assert.deepEqual((await interleaved.request('tools/list', {}, options)).result.tools, [{ name: 'matched' }],
+    'SSE response selection correlates IDs rather than taking the final message')
+
+  const failedTool = createMcpToolAdapter(inspectTool(server.id), createMcpHttpToolClient(server,
+    clientFor(async () => jsonRpcResponse({
+      isError: true, content: [{ type: 'text', text: 'The requested file was not found.' }],
+    }, { id: 'expected-id' }))))
+  const failed = await failedTool.execute({ taskId: 'task-error-result', tool: failedTool.definition, arguments: {} }, options)
+  assert.equal(failed.observation.ok, false, 'an MCP isError result remains a failed tool execution')
+  assert.equal(failed.observation.errorCode, 'execution_failed')
+  assert.equal(failed.observation.status, 'error')
+  assert.match(failed.observation.output, /file was not found/, 'bounded error content remains available for diagnosis')
+
+  let cancelled = 0
+  const oversized = clientFor(async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(3 * 1024 * 1024))
+      controller.enqueue(new Uint8Array(3 * 1024 * 1024))
+    },
+    cancel() { cancelled += 1 },
+  })))
+  await assert.rejects(oversized.request('tools/list', {}, options), /byte limit/i)
+  assert.equal(cancelled, 1, 'oversized streaming bodies are cancelled instead of buffered without a bound')
+  const oversizedText = clientFor(async () => jsonRpcResponse(undefined, { rawText: 'x'.repeat(4 * 1024 * 1024 + 1) }))
+  await assert.rejects(oversizedText.request('tools/list', {}, options), /byte limit/i,
+    'the non-streaming fallback rejects oversized text before JSON parsing')
+
+  const encoded = new TextEncoder().encode(JSON.stringify({ jsonrpc: '2.0', id: 'expected-id', result: { text: '你好' } }))
+  const splitUtf8 = clientFor(async () => new Response(new ReadableStream({
+    start(controller) {
+      for (const byte of encoded) controller.enqueue(new Uint8Array([byte]))
+      controller.close()
+    },
+  })))
+  assert.equal((await splitUtf8.request('tools/list', {}, options)).result.text, '你好',
+    'bounded streaming preserves multibyte text split across chunks')
+
+  const http = require('node:http')
+  let redirectedRequests = 0
+  const listener = http.createServer((request, response) => {
+    if (request.url === '/redirect') {
+      response.writeHead(307, { Location: '/target' })
+    } else {
+      redirectedRequests += 1
+      response.writeHead(200)
+    }
+    response.end()
+  })
+  try {
+    await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve))
+    const redirectClient = createMcpHttpClient({ ...server, url: `http://127.0.0.1:${listener.address().port}/redirect` }, { fetch: originalFetch })
+    await assert.rejects(redirectClient.request('tools/call', { name: 'inspect', arguments: {} }, options))
+    assert.equal(redirectedRequests, 0, 'a POST redirect must not forward arguments or repeat a tool call at another endpoint')
+  } finally {
+    listener.closeAllConnections()
+    await new Promise((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()))
+  }
+}
+
 async function run() {
+  await testMcpResponseBoundaries()
+  await testPagedDiscoveryAndBrokenStream()
   const requests = []
   const sessionsByServerId = new Map()
   const parallelListResolvers = new Map()
@@ -149,6 +233,7 @@ async function run() {
   let cancelEstablishedSessionList = false
   global.fetch = async (url, init) => {
     const body = JSON.parse(init.body)
+    const jsonResponse = (result, options = {}) => jsonRpcResponse(result, { ...options, id: body.id })
     const headers = init.headers ?? {}
     const sessionId = headers['Mcp-Session-Id']
     const serverId = String(url).split('/').at(-1)
@@ -343,7 +428,7 @@ async function run() {
             'data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":0.5}}',
             '',
             'event: message',
-            'data: {"jsonrpc":"2.0","id":"response","result":{"resultType":"complete","content":[{"type":"text","text":"ready after progress"}]}}',
+            `data: ${JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { resultType: 'complete', content: [{ type: 'text', text: 'ready after progress' }] } })}`,
             '',
           ].join('\n'),
         })
@@ -825,6 +910,76 @@ async function run() {
     console.log('MCP client transport tests passed')
   } finally {
     global.fetch = originalFetch
+  }
+}
+
+async function testPagedDiscoveryAndBrokenStream() {
+  const { createServer } = require('node:http')
+  const calls = []
+  let effects = 0
+  const server = createServer(async (request, response) => {
+    let raw = ''
+    for await (const part of request) raw += part
+    const body = JSON.parse(raw)
+    calls.push({ path: request.url, method: body.method, cursor: body.params.cursor })
+    assert.equal(request.headers['mcp-method'], body.method)
+    assert.equal(request.headers['mcp-session-id'], undefined, 'stateless discovery must not acquire session authority')
+    if (body.method === 'tools/call') {
+      effects += 1
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      response.write('data: {"jsonrpc":"2.0",')
+      response.destroy()
+      return
+    }
+    let result
+    if (body.method === 'server/discover') {
+      result = { supportedVersions: ['2026-07-28'], capabilities: { tools: {}, resources: {}, prompts: {} } }
+    } else {
+      const kind = body.method.split('/')[0]
+      const next = body.params.cursor === undefined
+      result = {
+        [kind]: kind === 'tools' ? [{ name: next ? 'inspect' : 'search', inputSchema: { type: 'object' } }]
+          : kind === 'resources' ? [{ uri: `mcp://test/${request.url}/${next ? 'first' : 'second'}` }]
+            : [{ name: 'summary' }],
+        ttlMs: next ? 1000 : 50, cacheScope: 'private',
+        ...(next && kind !== 'prompts' ? { nextCursor: 'second-page' } : {}),
+      }
+      if (request.url === '/cycle') result.nextCursor = 'same'
+      if (request.url === '/malformed') result[kind] = {}
+      if (request.url === '/endless') result.nextCursor = `page-${calls.length}`
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const previousFetch = global.fetch
+  global.fetch = originalFetch
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`
+    const adapter = createMcpClientAdapter()
+    const configured = path => ({ ...streamableServer(path.slice(1)), url: `${base}${path}` })
+    const discovery = await adapter.discover(configured('/valid'))
+    assert.deepEqual(discovery.tools.map(tool => tool.name), ['inspect', 'search'])
+    assert.equal(discovery.resources.length, 2)
+    assert.equal(discovery.ttlMs, 50, 'the shortest page freshness controls the catalog lifetime')
+    const other = await adapter.discover({ ...configured('/other'), id: 'valid' })
+    assert.ok(other.resources.every(resource => resource.uri.includes('/other/')), 'a changed endpoint cannot reuse a catalog from another endpoint')
+    await assert.rejects(adapter.discover(configured('/cycle')), /repeated pagination cursor/)
+    await assert.rejects(adapter.discover(configured('/malformed')), /invalid list/)
+    await assert.rejects(adapter.discover(configured('/endless')), /page limit/)
+    assert.ok(calls.filter(call => call.path === '/endless' && call.method === 'tools/list').length <= 16)
+    const client = createMcpHttpClient(configured('/broken'))
+    await assert.rejects(client.request('tools/call', { name: 'write', arguments: {} }))
+    assert.equal(effects, 1, 'a broken response stream never automatically repeats an external effect')
+    const aborted = new AbortController()
+    aborted.abort()
+    const count = calls.length
+    await assert.rejects(adapter.discover(configured('/cancelled'), { signal: aborted.signal }))
+    assert.equal(calls.length, count, 'pre-cancelled discovery opens no network request')
+  } finally {
+    global.fetch = previousFetch
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
   }
 }
 

@@ -33,6 +33,7 @@ function collectRepoSource(relativeDir) {
 
 const releaseGate = collectThemeSystemReleaseGateReport({ repoRoot: root })
 const colors = read('src/theme/colors.ts')
+const themeTokens = read('src/theme/themeTokens.ts')
 const themeHook = read('src/hooks/useAppTheme.ts')
 const settingsStore = read('src/store/settingsStore.ts')
 const preferencesRoute = read('app/settings/preferences.tsx')
@@ -90,21 +91,21 @@ check(
   releaseGate.issues.join('; ') || 'theme release gate should pass package/file checks',
 )
 check(
-  'four canonical tokens normalize legacy families safely',
-  /canonicalFamily: family/.test(colors)
-    && /value === 'glass' \|\| value === 'liquid'\) return 'liquid-glass'/.test(settingsAppearance)
-    && /value === 'lime-road' \|\| value === 'cartoon' \|\| value === 'island'\) return 'monet'/.test(settingsAppearance)
-    && /value === 'markdown' \|\| value === 'material-3' \|\| value === 'material3'\) return 'material'/.test(settingsAppearance)
-    && /normalizeSettingsThemeFamily\(value\) \?\? DEFAULT_THEME_ID/.test(colors)
+  'four canonical tokens reject retired families safely',
+  /family,\s*minimal,\s*monet,\s*material,\s*liquidGlass/.test(colors)
+    && !/THEME_ID_ALIASES|LegacyThemeId/.test(settingsAppearance + read('src/types/settingsContracts.ts'))
+    && /normalizeThemeFamilyValue\(value\)/.test(settingsAppearance)
+    && /normalizeThemeFamilyValue\(value\) \?\? DEFAULT_THEME_ID/.test(colors)
     && /DEFAULT_THEME_ID: CanonicalThemeId = 'minimal'/.test(colors),
-  'minimal, Monet, Material, and Liquid Glass are the runtime families while legacy values remain load-compatible',
+  'Minimal, Monet, Material, and Liquid Glass must be the only runtime families; stale values fall back to Minimal',
 )
 check(
-  'lime-road control tokens keep tactile depth restrained',
-  /primaryShadowOpacity: dark \? 0\.08 : 0\.04/.test(colors)
-    && /secondaryShadowOpacity: dark \? 0\.025 : 0\.015/.test(colors)
-    && /shadowOpacity: dark \? 0\.04 : 0\.025/.test(colors),
-  'lime-road controls should stay tactile without restoring the old heavy shadow stack',
+  'Monet control tokens keep tactile depth restrained',
+  /shadowOpacity: 0\.045/.test(themeTokens)
+    && /const softShadowOpacity = elevation\.shadowOpacity \* 0\.55/.test(colors)
+    && /primaryShadowOpacity: elevation\.shadowOpacity/.test(colors)
+    && /secondaryShadowOpacity: softShadowOpacity/.test(colors),
+  'Monet controls should derive restrained depth from the canonical elevation tokens',
 )
 check(
   'theme families own materially different experience grammars',
@@ -144,20 +145,20 @@ check(
   /disabledForeground: string/.test(colors)
     && /placeholderForeground: string/.test(colors)
     && /disabledOpacity: number/.test(colors)
-    && /disabledForeground: dark \? '#8C959F' : '#59636E'/.test(colors)
-    && /placeholderForeground: dark \? '#8C959F' : '#6E7781'/.test(colors)
+    && /disabledForeground: component\.button\.disabledForeground/.test(colors)
+    && /placeholderForeground: component\.field\.placeholder/.test(colors)
     && /disabledOpacity: 1/.test(colors),
-  'disabled and placeholder states should stay readable through semantic tokens, especially in Markdown light mode',
+  'disabled and placeholder states should stay readable through canonical component tokens, especially in Material light mode',
 )
 check(
-  'legacy island normalization still survives in runtime settings',
-  /value === 'lime-road' \|\| value === 'cartoon' \|\| value === 'island'\) return 'monet'/.test(settingsAppearance) && /normalizeThemeId\(rawSettings\.themeId\)/.test(settingsStore),
-  'persisted legacy Monet aliases must keep normalizing to Monet',
+  'retired family ids fail closed during settings hydration',
+  !/THEME_ID_ALIASES/.test(read('src/types/settingsContracts.ts')) && /normalizeThemeId\(rawSettings\.themeId\)/.test(settingsStore) && /themeIdMigrated/.test(settingsStore),
+  'persisted retired family ids must be rewritten to Minimal instead of reviving aliases',
 )
 check(
   'useAppTheme keeps family booleans for high-flow consumers',
   /isMonet: canonicalThemeId === 'monet'/.test(themeHook) && /isMaterial: canonicalThemeId === 'material'/.test(themeHook) && /isLiquidGlass: canonicalThemeId === 'liquid-glass'/.test(themeHook) && /isMinimal: canonicalThemeId === 'minimal'/.test(themeHook),
-  'canonical families stay explicit while legacy presentation projections remain separate',
+  'canonical families stay explicit without a second presentation-id projection',
 )
 check(
   'preferences route still mounts the preference settings surface',
@@ -166,13 +167,13 @@ check(
 )
 check(
   'theme app actions recognize the four canonical families',
-  /SETTINGS_THEME_FAMILIES = \['minimal', 'monet', 'material', 'liquid-glass'\] as const/.test(settingsActionContracts),
+  /SETTINGS_THEME_FAMILIES = CANONICAL_THEME_IDS/.test(settingsActionContracts),
   'structured Settings actions should stay aligned with the canonical theme families',
 )
 check(
-  'builtin tools keep compatibility aliases while exposing the new families',
-  /enum: \['minimal', 'monet', 'material', 'liquid-glass', 'lime-road', 'markdown', 'cartoon', 'island', 'glass', 'material-3', 'material3', 'liquid'\]/.test(applicationBuiltinCatalog) && /Legacy .*migrated to the matching canonical family/.test(applicationBuiltinCatalog),
-  'builtins should remain compatible with old values without reviving them as runtime themes',
+  'builtin tools expose canonical families only',
+  /enum: \['minimal', 'monet', 'material', 'liquid-glass'\]/.test(applicationBuiltinCatalog) && !/lime-road|material-3|material3|Legacy .*migrated/.test(applicationBuiltinCatalog),
+  'builtins should reject retired values at the schema boundary',
 )
 check(
   'chat workspace uses one theme-owned persistent header',
@@ -190,14 +191,12 @@ check(
   'active and setup Chat should share persistent controls while each theme retains its own surface composition',
 )
 check(
-  'chat quick panels and health banner use glass chrome containers',
-  /panelChromeSurface = canonicalThemeId === 'minimal'[\s\S]*?: isGlass[\s\S]*?\? colors\.ui\.semantic\.chrome\.background/.test(floatingComposer)
-    && (/backgroundColor: isGlass \? colors\.ui\.semantic\.chrome\.background/.test(chatWorkspace)
-      || /backgroundColor: isGlass \? colors\.ui\.semantic\.chrome\.background/.test(chatStatusBanners)
-      || /backgroundColor: resolveChatChromeSurface\(colors, isGlass\)/.test(chatStatusBanners))
-    && /const chipSurface[\s\S]*?isGlass[\s\S]*?'transparent'/.test(floatingComposer)
-    && /resolveChatChromeSurface[\s\S]*?colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(chatChromeSurfaces),
-  'quick panels and health banner should avoid heavy card styling in glass mode',
+  'chat quick panels and health banner use Liquid Glass chrome containers',
+  /panelChromeSurface = canonicalThemeId === 'minimal'[\s\S]*?: isLiquidGlass[\s\S]*?semantic\.surface\.floating\.background/.test(floatingComposer)
+    && /backgroundColor: resolveChatChromeSurface\(colors, isLiquidGlass\)/.test(chatStatusBanners)
+    && /const chipSurface[\s\S]*?isLiquidGlass[\s\S]*?'transparent'/.test(floatingComposer)
+    && /resolveChatChromeSurface[\s\S]*?isLiquidGlass \? design\?\.semantic\?\.surface\?\.chrome\?\.background/.test(chatChromeSurfaces),
+  'quick panels and health banners should avoid heavy card styling in Liquid Glass mode',
 )
  check(
    'conversation search shell and persistent controls use theme-owned chrome',
@@ -224,7 +223,7 @@ check(
   'chips and dialogs should share the same glass control language',
 )
 check(
-  'lime-road icon roles preserve neutral utility affordances',
+  'Monet icon roles preserve neutral utility affordances',
   /delete: 'danger'/.test(appIcon)
     && !/close: 'danger'/.test(appIcon)
     && !/power: 'danger'/.test(appIcon)
@@ -235,7 +234,7 @@ check(
   'only truly destructive icons should be force-colored; neutral utility icons should keep their caller-provided contrast color',
 )
 check(
-  'lime-road icon role coloring respects explicit contrast colors',
+  'Monet icon role coloring respects explicit contrast colors',
   /function isExplicitIconColor/.test(appIcon)
     && /requestedColor === colors\.text/.test(appIcon)
     && /requestedColor === colors\.textSecondary/.test(appIcon)
@@ -247,7 +246,7 @@ check(
     && /name="shield" color=\{colors\.text\}/.test(preferenceSettings)
     && /name="shield" color=\{colors\.text\}/.test(mcpSettings)
     && /name="toggle-on" color=\{colors\.textSecondary\}/.test(read('src/components/settings/SkillSettingsContent.tsx')),
-  'inactive or explicitly semantic icons should not be recolored by lime-road role defaults',
+  'inactive or explicitly semantic icons should not be recolored by Monet role defaults',
 )
 check(
   'AppIcon forwards caller fill for selected and stop states',
@@ -259,17 +258,18 @@ check(
 )
 check(
   'IsleKit demo surfaces stay plain-content first',
-  /const tableBackground = palette\.glass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
-    && /const frameBackground = palette\.glass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
-    && /const phoneSurface = palette\.glass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
-    && /const ornamentedTitle = palette\.limeRoad && palette\.ui\.ornamented/.test(isleKit)
+  /const tableBackground = palette\.liquidGlass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
+    && /const frameBackground = palette\.liquidGlass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
+    && /const phoneSurface = palette\.liquidGlass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
+    && /const ornamentedTitle = palette\.monet && palette\.ui\.ornamented/.test(isleKit)
     && /const titleShadowOpacity = ornamentedTitle \? \(palette\.isDark \? 0\.08 : 0\.05\) : 0/.test(isleKit),
   'table, time, phone, and title chrome should stay quieter than the primary content layer',
 )
 check(
-  'web fallback keeps only the documented legacy family selectors',
-  /data-theme-id='glass'/.test(globalCss) && /data-theme-id='cartoon'/.test(globalCss) && /data-theme-id='island'/.test(globalCss),
-  'web fallback should cover all runtime families plus the island alias',
+  'web fallback contains canonical family selectors only',
+  ['minimal', 'monet', 'material', 'liquid-glass'].every((family) => globalCss.includes(`data-theme-id='${family}'`))
+    && !/data-theme-id='(?:lime-road|cartoon|island|markdown|glass|material-3|material3|liquid)'/.test(globalCss),
+  'web fallback should cover all canonical runtime families without retired aliases',
 )
 check(
   'repo source does not fake native Liquid Glass APIs',
@@ -282,17 +282,17 @@ check(
   'without repo-owned Xcode targets this implementation must stay on the RN fallback path',
 )
 check(
-  'chat options panel stays aligned with glass chrome tokens',
-  /panelSurface = sheetMode \? sheetMaterial\.surface : isGlass \? colors\.ui\.semantic\.chrome\.background/.test(optionsPanel) && /panelChrome = sheetMode \? sheetMaterial\.chrome : isGlass \? colors\.ui\.semantic\.chrome\.toolbar/.test(optionsPanel) && /actionSurface = isGlass \? colors\.ui\.actionBar\.itemBackground/.test(optionsPanel) && /isLimeRoad \? colors\.ui\.semantic\.surface\.base/.test(optionsPanel),
+  'chat options panel stays aligned with Liquid Glass and Monet chrome tokens',
+  /panelSurface = sheetMode \? sheetMaterial\.surface : isLiquidGlass \? colors\.ui\.semantic\.chrome\.background/.test(optionsPanel) && /panelChrome = sheetMode \? sheetMaterial\.chrome : isLiquidGlass \? colors\.ui\.semantic\.chrome\.toolbar : isMonet \? colors\.ui\.semantic\.surface\.muted/.test(optionsPanel) && /actionSurface = isLiquidGlass \? colors\.ui\.actionBar\.itemBackground/.test(optionsPanel) && /panelBorder = sheetMode \? sheetMaterial\.border : isMonet \? colors\.material\.stroke/.test(optionsPanel),
   'popover/sheet chrome should keep sharing the same control language',
 )
 check(
-  'chat composer uses semantic surfaces instead of lime-road default cards',
-  /raisedSurface = colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(composer)
-    && /chipSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(composer)
+  'chat composer uses canonical semantic surfaces instead of legacy cards',
+  /raisedSurface = colors\.ui\.liquidGlass\s*\n\s*\? colors\.design\?\.semantic\.surface\.floating\.background \?\? colors\.ui\.semantic\.chrome\.background\s*\n\s*: colors\.ui\.semantic\.surface\.base/.test(composer)
+    && /chipSurface = colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.base/.test(composer)
     && /backgroundColor: attachmentsOpen \? colors\.ui\.actionBar\.itemActiveBackground : 'transparent'/.test(composer)
     && /backgroundColor: recording \? colors\.ui\.tone\.danger\.background : 'transparent'/.test(composer),
-  'composer shell and chips should keep semantic surfaces while idle utilities stay transparent and active states remain explicit',
+  'composer shell and chips should keep semantic surfaces while idle utilities stay transparent and active states remain explicit; the glass shell resolves through the translucent floating material so the inner panel never reads as a white rectangle',
 )
 check(
   'composer and shared controls keep weak states light but readable',
@@ -344,13 +344,13 @@ check(
   'status shimmer, typing, cursor, source skeleton, and source loading loops must render stable reduced-motion states',
 )
 check(
-  'shared Isle primitives keep lime-road surfaces soft by default',
-  /case 'raised':[\s\S]*?return colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : colors\.ui\.semantic\.surface\.base/.test(panel)
-    && /ornamented[\s\S]*?colors\.ui\.semantic\.surface\.base[\s\S]*?colors\.ui\.semantic\.surface\.muted/.test(chip)
-    && /const backgroundColor = colors\.ui\.limeRoad\s*\?\s*colors\.ui\.semantic\.surface\.base/.test(controls)
-    && /const toggleSurface = active[\s\S]*?colors\.ui\.limeRoad[\s\S]*?colors\.ui\.semantic\.surface\.base/.test(primitives)
-    && /const itemBackground = danger[\s\S]*?colors\.ui\.limeRoad[\s\S]*?colors\.ui\.semantic\.surface\.base/.test(primitives),
-  'shared panels, chips, metrics, and list items should use semantic base/muted surfaces in Lime Road mode',
+  'shared Isle primitives keep Monet surfaces soft by default',
+  /case 'raised':[\s\S]*?return colors\.ui\.semantic\.surface\.base/.test(panel)
+    && /ornamented = colors\.ui\.monet && colors\.ui\.ornamented/.test(chip)
+    && /const backgroundColor = colors\.ui\.monet[\s\S]*?colors\.ui\.semantic\.surface\.base/.test(controls)
+    && /const playful = colors\.ui\.monet && colors\.ui\.ornamented[\s\S]*?const toggleSurface = active/.test(primitives)
+    && /const itemBackground = danger[\s\S]*?colors\.ui\.monet[\s\S]*?colors\.ui\.semantic\.surface\.base/.test(primitives),
+  'shared panels, chips, metrics, and list items should use canonical semantic surfaces in Monet mode',
 )
 check(
   'page-owned navigation preserves family composition without a global shell',
@@ -360,10 +360,12 @@ check(
     && /colors\.ui\.experience\.background === 'glass'/.test(mainPagerShell)
      && /backgroundIntensity=\{0\.96\}/.test(mainPagerShell)
      && /colors\.ui\.experience\.background === 'plain' \? colors\.background\.canvas : 'transparent'/.test(mainPagerShell)
-     && /testID="theme-background-road"/.test(isleBackground)
-     && /testID="theme-background-tonal"/.test(isleBackground)
-     && /testID="theme-background-glass"/.test(isleBackground)
-     && /motion === 'full'[\s\S]*?colors\.background\.motion !== 'none'[\s\S]*?state === 'idle' \|\| state === 'active'/.test(isleBackground)
+     && /testID=\{`theme-background-\$\{experienceBackground\}-\$\{environment\.kind\}`\}/.test(isleBackground)
+     && /environment\.kind === 'minimal'/.test(isleBackground)
+     && /environment\.kind === 'tonal'/.test(isleBackground)
+     && /environment\.kind === 'fluid'/.test(isleBackground)
+     && /motionPreference === 'full'[\s\S]*?environment\.motion !== 'static'[\s\S]*?state === 'idle' \|\| state === 'active'/.test(isleBackground)
+     && /AppState\.addEventListener\('change'/.test(isleBackground)
      && /chat-setup-experience-minimal/.test(chatSetupExperience)
      && /chat-setup-experience-monet/.test(chatSetupExperience)
      && /chat-setup-experience-material/.test(chatSetupExperience)
@@ -399,28 +401,28 @@ check(
 )
 check(
   'api key settings surfaces stay on muted secondary layers',
-  /backgroundColor: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel)
+  /backgroundColor: colors\.ui\.liquidGlass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel)
     && /function quietControlSurface[\s\S]*?colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel)
-    && /backgroundColor: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel)
-    && /const backgroundColor = toneToken\?\.background \?\? \(colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted\)/.test(apiKeyPanel),
+    && /backgroundColor: colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel)
+    && /colors\.ui\.liquidGlass[\s\S]*?colors\.ui\.actionBar\.itemBorder/.test(apiKeyPanel),
   'provider configuration should avoid reverting to default card surfaces for secondary settings chrome',
 )
 check(
   'context assets and local capability cards stay visually secondary',
-  /backgroundColor: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : colors\.ui\.semantic\.surface\.base/.test(contextPanel) && /assetCardSurface\(colors, active \? colors\.ui\.control\.primaryBorder : colors\.ui\.tone\.warning\.border\)/.test(contextPanel) && /backgroundColor: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.base/.test(contextPanel),
+  /function assetCardSurface[\s\S]*?backgroundColor: colors\.ui\.liquidGlass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(contextPanel) && /assetCardSurface\(colors, active \? colors\.ui\.control\.primaryBorder : colors\.ui\.tone\.warning\.border\)/.test(contextPanel) && /function secondaryActionSurface[\s\S]*?backgroundColor: colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(contextPanel),
   'knowledge, memory, and local capability cards should keep muted surfaces with semantic borders',
 )
 check(
-  'settings foldouts use semantic surfaces in Lime Road mode',
-  /return colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : isGlass \? colors\.ui\.semantic\.chrome\.background/.test(settingsStore + read('src/components/main/SettingsScreenContent.tsx')) && /backgroundColor: colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground/.test(read('src/components/main/SettingsScreenContent.tsx')),
+  'settings foldouts use canonical semantic surfaces in Monet mode',
+  /function resolveSettingsFoldoutSurface[\s\S]*?return colors\.ui\.monet \? colors\.ui\.semantic\.surface\.base : isLiquidGlass \? colors\.ui\.semantic\.chrome\.background/.test(settingsScreen) && /backgroundColor: colors\.ui\.monet \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground/.test(settingsScreen),
   'settings foldout bodies, cards, and theme selectors should not fall back to decorative card fills',
 )
 check(
   'provider settings chrome stays on semantic surfaces instead of heavy cards',
   /function resolveProviderChrome/.test(providerSettings)
-    && /const chromeSurface = colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(providerSettings)
-    && /const mutedSurface = colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(providerSettings)
-    && /const raisedSurface = colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : colors\.ui\.glass \? colors\.ui\.semantic\.surface\.overlay : colors\.ui\.semantic\.surface\.base/.test(providerSettings)
+    && /const chromeSurface = colors\.ui\.monet \? colors\.ui\.semantic\.surface\.base : colors\.ui\.liquidGlass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(providerSettings)
+    && /const mutedSurface = colors\.ui\.monet \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(providerSettings)
+    && /const raisedSurface = colors\.ui\.monet \? colors\.ui\.semantic\.surface\.base : colors\.ui\.liquidGlass \? colors\.ui\.semantic\.surface\.overlay : colors\.ui\.semantic\.surface\.base/.test(providerSettings)
     && /backgroundColor: chromeSurface/.test(providerSettings)
     && /shadowOpacity: 0/.test(providerSettings),
   'provider management should keep chrome/material hierarchy without falling back to decorative cards',
@@ -435,23 +437,24 @@ check(
 )
 check(
   'source reader skeleton and empty states stay on secondary surfaces',
-  /const skeletonSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(sourceRoute)
+  /const skeletonSurface = colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(sourceRoute)
     && /resolveThemeComponentExpression\(canonicalThemeId, 'emptyState'\)/.test(emptyState)
     && /shadowOpacity: glass \? 0\.16 : monet \? 0\.08 : 0/.test(emptyState),
   'loading and empty surfaces should remain quieter than live content while retaining bounded Monet and Glass depth identity',
 )
 check(
   'mcp settings separates quiet, route, and document server geometries while keeping restrained detail depth',
-  /const cardSurface = colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(mcpSettings)
-    && /const mutedSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(mcpSettings)
+  /const cardSurface = colors\.ui\.liquidGlass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(mcpSettings)
+    && /const mutedSurface = colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(mcpSettings)
     && /mcp-server-catalog-minimal/.test(mcpSettingsExperiences)
-    && /mcp-server-catalog-lime-road/.test(mcpSettingsExperiences)
-    && /mcp-server-catalog-markdown/.test(mcpSettingsExperiences)
-    && /const enabledSurface = '#198754'/.test(mcpSettingsExperiences)
+    && /mcp-server-catalog-\$\{family\}/.test(mcpSettingsExperiences)
+    && /family="monet"/.test(mcpSettingsExperiences)
+    && /family="material"/.test(mcpSettingsExperiences)
+    && /family="liquid-glass"/.test(mcpSettingsExperiences)
     && !/aspectRatio: 1/.test(mcpSettings)
     && /shadowOpacity: 0/.test(mcpSettings)
     && /shadowRadius: 0/.test(mcpSettings),
-  'MCP should leave the legacy shared square grid while management details keep light semantic grouping',
+  'MCP should use canonical family geometry while management details keep light semantic grouping',
 )
 
 const failures = checks.filter((item) => !item.ok)

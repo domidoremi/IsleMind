@@ -1262,7 +1262,7 @@ function assertReleaseWorkflowIntegration() {
     ['runner debug', runnerWorkflowSource],
   ]) {
     assert.ok(source.includes('oven-sh/setup-bun@v2'), `${name} workflow installs Bun`)
-    assert.ok(source.includes('bun-version: 1.3.14'), `${name} workflow pins the repository Bun version`)
+    assert.ok(source.includes('bun-version: 1.4.2'), `${name} workflow pins the repository Bun version`)
     assert.ok(source.includes('bun install --frozen-lockfile'), `${name} workflow installs from bun.lock without mutation`)
     assert.ok(source.includes('bun run type-check'), `${name} workflow type-checks through Bun`)
     assert.doesNotMatch(source, /actions\/setup-node|cache:\s*npm|\bnpm\s+(?:ci|install|run)\b|\bnpx\b/, `${name} workflow has no npm toolchain path`)

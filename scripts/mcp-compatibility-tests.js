@@ -72,7 +72,7 @@ Module._load = function loadWithMcpCatalogFakes(request, parent, isMain) {
       buildPendingAction: (...args) => fakes.buildPendingAction(...args),
       formatPendingActionOutput: (...args) => fakes.formatPendingActionOutput(...args),
     }
-    if (request === '@/bootstrap/mcpExecutionRuntime') return { truncateToolBlocks: (blocks) => blocks }
+    if (request === '@/bootstrap/mcpExecutionRuntime') return { truncateToolBlocksWithArtifacts: (blocks) => ({ blocks }) }
     if (request === '@/bootstrap/providerConversationGeneration') return { resolveConversationGenerationParameterRequest: fakes.resolveGenerationParameters }
     if (request === '@/bootstrap/providerRuntime') return { streamProviderChat: fakes.streamProviderChat }
     if (request === '@/modules/tasks') return { resolveWorkflowRunLimitsFromSettings: () => fakes.limits }
@@ -821,15 +821,32 @@ async function runAssistantMcpToolTurnRuntimeTests() {
   })
   assert.deepEqual(
     await empty.runtime.execute(empty.input),
-    { text: 'synthesized from raw observation', usage: undefined },
-    'empty formatted blocks synthesize an answer instead of projecting the raw task observation output',
+    { text: 'chatRunner.error.providerToolSynthesisFailed' },
+    'discarded bounded blocks cannot be replaced with an unbounded raw observation',
   )
   assert.equal(originalBlocks[0].text, 'original block', 'block truncation cannot mutate the task observation input')
-  assert.equal(emptySynthesisCount, 1, 'empty formatted output still reaches synthesis through the raw task observation output')
+  assert.equal(emptySynthesisCount, 0, 'empty bounded output does not bypass the context budget through synthesis')
+  assert.equal(empty.state.revisionMessageRequests.length, 0, 'raw observation output is not a fallback after truncation')
+
+  const rawObservation = createAssistantMcpTurnHarness({
+    async executeTask() {
+      return {
+        observation: {
+          ok: true, status: 'done', output: 'raw observation without blocks', blocks: [],
+          diagnostic: { id: 'raw-observation-diagnostic', status: 'done' },
+        },
+      }
+    },
+    truncateBlocks(blocks) {
+      assert.equal(blocks[0].text, 'raw observation without blocks', 'blockless observations enter the same budget boundary')
+      return [{ type: 'text', text: 'bounded observation' }]
+    },
+  })
+  await rawObservation.runtime.execute(rawObservation.input)
   assert.equal(
-    empty.state.revisionMessageRequests.at(-1).toolOutput,
-    'raw empty fallback',
-    'the raw task observation output is synthesis input only',
+    rawObservation.state.revisionMessageRequests.at(-1).toolOutput,
+    'bounded observation',
+    'blockless observations can be synthesized only after truncation, never projected raw',
   )
 
   const synthesisFailure = createAssistantMcpTurnHarness({
@@ -1354,6 +1371,8 @@ async function run() {
   assert.deepEqual(persisted.map((server) => server.id), ['second', 'remote'], 'MCP catalog upsert preserves deterministic newest-first ordering')
   assert.equal(catalog.needsManifestRefresh({ ...inserted, manifestCachedAt: undefined }), true, 'MCP catalog refreshes entries without cache evidence')
   assert.equal(catalog.needsManifestRefresh({ ...inserted, manifestCachedAt: 999, manifestTtlMs: 10 }), false, 'MCP catalog honors an unexpired manifest TTL')
+  assert.equal(catalog.needsManifestRefresh({ ...inserted, manifestCachedAt: 999, manifestTtlMs: 10, manifestExpiresAt: 1000 }), true, 'server freshness, including zero TTL, expires at the exact boundary')
+  assert.equal(catalog.needsManifestRefresh({ ...inserted, manifestCachedAt: 990, manifestTtlMs: 10 }), true, 'configured freshness expires at the exact boundary')
   assert.equal(catalog.needsManifestRefresh(builtin), false, 'MCP catalog never refreshes the built-in manifest')
   const operationSignal = new AbortController().signal
   await catalog.listServers({ signal: operationSignal })

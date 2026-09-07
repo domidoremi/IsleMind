@@ -87,21 +87,12 @@ function testSystemDark() {
   assert.equal(result.attributes['data-theme-mode-preference'], 'system')
 }
 
-function testAliasesAndInvalidRecords() {
-  const aliases = [
-    ['lime-road', 'monet'],
-    ['cartoon', 'monet'],
-    ['island', 'monet'],
-    ['markdown', 'material'],
-    ['material-3', 'material'],
-    ['material3', 'material'],
-    ['glass', 'liquid-glass'],
-    ['liquid', 'liquid-glass'],
-  ]
-  for (const [alias, canonical] of aliases) {
-    const result = runPrepaint({ persisted: JSON.stringify({ themeId: alias, theme: 'dark' }) })
-    assert.equal(result.attributes['data-theme-id'], canonical, `${alias} migrates to ${canonical}`)
-    assert.equal(result.attributes['data-theme-mode'], 'dark')
+function testRetiredAndInvalidRecords() {
+  const retiredThemeIds = ['lime-road', 'cartoon', 'island', 'markdown', 'material-3', 'material3', 'glass', 'liquid']
+  for (const retiredThemeId of retiredThemeIds) {
+    const result = runPrepaint({ persisted: JSON.stringify({ themeId: retiredThemeId, theme: 'dark' }) })
+    assert.equal(result.attributes['data-theme-id'], 'minimal', `${retiredThemeId} is rejected and falls back to Minimal`)
+    assert.equal(result.attributes['data-theme-mode'], 'dark', 'a valid independent mode preference is retained')
   }
 
   for (const persisted of ['{broken', JSON.stringify(null), JSON.stringify({ themeId: 'unknown', theme: 'sepia' })]) {
@@ -139,14 +130,15 @@ function testRevealContract() {
   assert.match(html, /html\[data-theme-prepaint='v1'\]:not\(\[data-theme-ready='true'\]\) #root/)
   assert.match(html, /data-theme-prepaint', 'v1'/)
   assert.match(layout, /data-theme-ready', 'true'/)
-  assert.match(layout, /data-theme-presentation-id', canonicalThemeId/)
+  assert.match(layout, /data-theme-family', canonicalThemeId/)
+  assert.doesNotMatch(layout, /data-theme-presentation-id|data-theme-(?:lime-road|markdown|glass)/)
   assert.match(layout, /--theme-family', canonicalThemeId/)
 }
 
 testMatrix()
 testSystemDark()
-testAliasesAndInvalidRecords()
+testRetiredAndInvalidRecords()
 testAccentValidation()
 testRevealContract()
 
-console.log('theme prepaint tests passed: 8 canonical states, system-dark, aliases, corrupt storage, accent validation, and reveal contract')
+console.log('theme prepaint tests passed: 8 canonical states, system-dark, retired-id rejection, corrupt storage, accent validation, and reveal contract')

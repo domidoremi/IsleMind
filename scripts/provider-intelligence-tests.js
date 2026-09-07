@@ -141,6 +141,7 @@ async function runSqliteConcurrencyNativeOperation(label, operation) {
 }
 
 function createSqliteConcurrencyTestDatabase() {
+  let transactionActive = false
   const recordTransactionOperation = async (kind, source) => {
     if (/CREATE TABLE IF NOT EXISTS conversation_records/i.test(source)) {
       sqliteConcurrencyProbe.conversationSchemaExecutions += 1
@@ -164,25 +165,28 @@ function createSqliteConcurrencyTestDatabase() {
     },
   }
   return {
-    execAsync: (source) => runSqliteConcurrencyNativeOperation('exec', async () => {
+    execAsync: (source) => transactionActive ? transaction.execAsync(source) : runSqliteConcurrencyNativeOperation('exec', async () => {
       if (/CREATE TABLE IF NOT EXISTS conversation_records/i.test(source)) {
         sqliteConcurrencyProbe.conversationSchemaExecutions += 1
       }
     }),
-    runAsync: (source) => runSqliteConcurrencyNativeOperation('run', async () => ({
+    runAsync: (source) => transactionActive ? transaction.runAsync(source) : runSqliteConcurrencyNativeOperation('run', async () => ({
       changes: 1,
       lastInsertRowId: 0,
     })),
-    getFirstAsync: () => runSqliteConcurrencyNativeOperation('get-first', async () => null),
-    getAllAsync: () => runSqliteConcurrencyNativeOperation('get-all', async () => []),
-    withExclusiveTransactionAsync: (work) => runSqliteConcurrencyNativeOperation('transaction', async () => {
+    getFirstAsync: (source) => transactionActive ? transaction.getFirstAsync(source) : runSqliteConcurrencyNativeOperation('get-first', async () => null),
+    getAllAsync: (source) => transactionActive ? transaction.getAllAsync(source) : runSqliteConcurrencyNativeOperation('get-all', async () => []),
+    closeAsync: async () => undefined,
+    withTransactionAsync: (work) => runSqliteConcurrencyNativeOperation('transaction', async () => {
       const pause = sqliteConcurrencyProbe.nextTransactionPause
       if (pause) {
         sqliteConcurrencyProbe.nextTransactionPause = null
         pause.notifyStarted()
         await pause.released
       }
-      return work(transaction)
+      transactionActive = true
+      try { return await work() }
+      finally { transactionActive = false }
     }),
   }
 }
@@ -321,6 +325,8 @@ Module._load = function loadWithMocks(request, parent, isMain) {
         }
         return ({
         execAsync: async () => undefined,
+        closeAsync: async () => undefined,
+        withTransactionAsync: async (work) => work(),
         runAsync: async (sql, ...args) => {
           if (/UPDATE memories SET lastHitAt/i.test(sql)) {
             const [lastHitAt, id] = args
@@ -912,6 +918,7 @@ Module._load = function loadWithMocks(request, parent, isMain) {
         this.data = data
         this.dims = dims
       }
+      dispose() {}
     }
     return {
       Tensor: FakeTensor,
@@ -923,9 +930,11 @@ Module._load = function loadWithMocks(request, parent, isMain) {
             sentence_embedding: {
               dims: [1, 384],
               data: new Float32Array(Array.from({ length: 384 }, (_, index) => (index % 16) + 1)),
+              dispose() {},
             },
           }),
           modelPath,
+          async release() {},
         }),
       },
     }
@@ -1660,6 +1669,7 @@ const { PROVIDER_HTTP_COPY_ONLY_CODE_KEYS, isProviderHttpCopyOnlyCode } = requir
 const { sanitizeInternalChatOutputText, sanitizeMessageInternalOutput } = require('../src/services/chatInternalOutputGuard.ts')
 const {
   buildCompressedContextPrompt,
+  LOCAL_USER_MEMORY_SCOPE_ID,
   classifyMemoryCandidate: classifyMemoryCandidateForTest,
   createRagQueryPlan,
   createOnnxPlaceholderProvider,
@@ -1696,7 +1706,13 @@ const addMemory = async (content, conversationId, status = 'pending', options = 
   confidence: options.confidence ?? 1,
 })
 const listMemories = async (statuses = ['pending', 'active']) => [...await knowledgeRepository.listMemories({ statuses })]
-const searchMemories = async (query, limit, statuses = ['active']) => (await knowledgeRepository.searchMemories({ query, limit, statuses }))
+const searchMemories = async (query, limit, statuses = ['active'], conversationId) => (await knowledgeRepository.searchMemories({
+  query, limit, statuses,
+  scopes: [
+    { kind: 'user', id: LOCAL_USER_MEMORY_SCOPE_ID },
+    ...(conversationId ? [{ kind: 'conversation', id: conversationId }] : []),
+  ],
+}))
   .map((memory) => ({
     ...memory,
     excerpt: memory.content,
@@ -2744,7 +2760,7 @@ async function assertSqliteConcurrencySerializationBehavior() {
   assert.equal(sqliteConcurrencyProbe.maxActiveOperations, 1, 'SQLite operations are serialized per database name')
   assert.equal(sqliteConcurrencyProbe.conversationSchemaExecutions, schemaCountBeforeContention + 2, 'conversation schema initialization runs once per repository')
   assert.equal(sqliteConcurrencyProbe.activeOperations, 0, 'SQLite scheduler releases its operation slot after transactions settle')
-  assert.ok(sqliteConcurrencyProbe.operationLog.indexOf('transaction:start') >= 0, 'SQLite concurrency fixture observes the exclusive transaction')
+  assert.ok(sqliteConcurrencyProbe.operationLog.indexOf('transaction:start') >= 0, 'SQLite concurrency fixture observes the serialized transaction')
   assert.ok(sqliteConcurrencyProbe.operationLog.indexOf('transaction:end') > sqliteConcurrencyProbe.operationLog.indexOf('transaction:start'), 'SQLite transaction completes before queued writes')
 
   resetSqliteConcurrencyProbe({ preserveSchemaCount: true })
@@ -6646,6 +6662,11 @@ async function assertKnowledgeEmbeddingRuntimeLogging() {
     const declaredEmbedding = await embedTextWithProvider(declaredEmbeddingProvider, 'declared provider embedding')
     assert.deepEqual(declaredEmbedding.embedding, [0.4, 0.5, 0.6], 'explicit provider embedding declarations can open protocol-reference embedding endpoints')
     assert.equal(declaredEmbedding.model, 'declared-embedding-v1', 'explicit provider embedding declarations preserve configured embedding model selection')
+    for (const embedding of [[], [0.5, 'invalid', 0.2], [null], [Infinity]]) {
+      global.fetch = async () => new Response(JSON.stringify({ data: [{ embedding }] }), { status: 200 })
+      await assert.rejects(() => embedTextWithProvider(declaredEmbeddingProvider, 'invalid vector'), /invalid_embedding/,
+        'the embedding adapter rejects malformed vectors instead of silently dropping coordinates')
+    }
   } finally {
     global.fetch = originalFetchForDeclaredProviderEmbedding
   }
@@ -10831,7 +10852,7 @@ async function assertContextStorePersistenceBehavior() {
       createdAt: 1000,
     }],
   })
-  const defaultHits = await searchMemories('persistence retrieval', 1)
+  const defaultHits = await searchMemories('persistence retrieval', 1, ['active'], 'context-store-conversation')
   assert.deepEqual(defaultHits.map((hit) => hit.id), ['context-active-memory'], 'default target memory search excludes pending review rows')
   assert.equal(defaultHits[0]?.sourceReason?.includes('local-confirmed'), true, 'target memory search preserves source evidence')
   assert.equal((await listMemories(['active'])).some((memory) => memory.id === 'context-stale-memory'), true, 'memory search never disables an active fact merely because it was not recently retrieved')
@@ -19071,6 +19092,7 @@ async function assertAssistantConversationRequestPlanningRuntimeBehavior() {
     reason: 'remote_compact_required_unsupported',
     nativeSearchTraceId: 'native-search-request-planning',
     providerWebSearchMode: 'native',
+    capabilityPlan: undefined,
   })
   assert.equal(required.usageInputs[0].failureCode, 'provider_capability_missing')
   assert.equal(required.traces.at(-1).trace.id, 'compact-request-planning')
@@ -29805,6 +29827,17 @@ https://gateway.example/messages`
     size: Buffer.byteLength('Provider: Example\nBase URL: https://api.example/v1\nKey: token-fake'),
     limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
   })
+  const markdownBlob = new Blob(['---\nname: web-skill\ndescription: test\n---\nInstructions'], { type: 'text/markdown' })
+  assert.equal(await readUtf8ImportFile('blob:synthetic-picker', { file: markdownBlob, limitBytes: 128 * 1024 }), await markdownBlob.text(),
+    'browser picker Files are read without the unavailable native filesystem adapter')
+  let oversizedRead = false
+  await assert.rejects(() => readUtf8ImportFile('blob:oversized', {
+    file: { size: 5, async text() { oversizedRead = true; return '12345' } }, limitBytes: 4,
+  }), /error\.fileTooLarge/)
+  assert.equal(oversizedRead, false, 'browser size admission happens before allocation')
+  await assert.rejects(() => readUtf8ImportFile('blob:underreported', {
+    file: { size: 1, async text() { return '你好' } }, limitBytes: 4,
+  }), /error\.fileTooLarge/, 'browser file content is checked in UTF-8 bytes after reading')
   assert.ok(providerImportText.includes('https://api.example/v1'), 'bounded import reader preserves ordinary provider import text')
   assert.equal(localFileReadRequests.some((request) => request.uri === 'file:///tmp/provider-import.txt'), true, 'bounded import reader reads accepted text imports')
   localFileReadRequests.length = 0
@@ -30894,8 +30927,12 @@ https://gateway.example/messages`
   const appInfo = await callMcpTool(builtin, 'app_info', {})
   assert.equal(appInfo.observation.ok, true, 'built-in MCP app_info works without network')
   assert.ok(appInfo.observation.blocks[0].text.includes('stdio is disabled'), 'MCP app_info states mobile transport boundary')
-  const truncated = truncateToolBlocks([{ type: 'text', text: 'x'.repeat(2000) }], 50)
-  assert.ok(truncated[0].text.length < 1000, 'MCP tool output is truncated to budget')
+  const toolTokenBudget = 128
+  const toolText = '測試輸出'.repeat(500)
+  const truncated = truncateToolBlocks([{ type: 'text', text: toolText }], toolTokenBudget)
+  assert.ok(truncated[0].text.length < toolText.length, 'oversized MCP output is reduced')
+  assert.ok(estimateTextTokens(truncated.map((block) => block.text ?? '').join('\n')) <= toolTokenBudget,
+    'MCP tool output, including the truncation marker, fits the shared estimated-token budget')
 }
 
 function assertProviderModelDiscoveryBehavior() {
@@ -41516,7 +41553,7 @@ async function assertContextPlannerV2Behavior() {
   assert.equal(cappedToolFragment.included, true, 'context planner v2 includes capped non-message context')
   assert.equal(cappedToolFragment.capped, true, 'context planner v2 marks capped non-message context')
   assert.equal(cappedToolFragment.exclusionReason, 'token_cap_exceeded', 'context planner v2 records cap reason')
-  assert.ok(cappedToolFragment.sourceHash?.startsWith('fnv1a32-'), 'context planner v2 exposes stable source hash')
+  assert.ok(cappedToolFragment.sourceHash?.startsWith('sha256-v1-'), 'context planner v2 exposes collision-resistant stable source hash')
   assert.equal(cappedToolFragment.cache?.sourceHash, cappedToolFragment.sourceHash, 'context planner v2 mirrors source hash into cache metadata')
   assert.ok(cappedToolFragment.originalEstimatedTokens > cappedToolFragment.estimatedTokens, 'context planner v2 records original and capped token estimates')
   assert.ok(cappedToolFragment.estimatedTokens <= cappedToolFragment.tokenCap, 'context planner v2 caps non-message context before request assembly')

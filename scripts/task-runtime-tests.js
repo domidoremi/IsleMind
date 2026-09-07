@@ -302,14 +302,17 @@ function rpcResponse(result, sessionId, status = 200) {
     ok: status >= 200 && status < 300,
     status,
     headers: { get: (name) => name.toLowerCase() === 'mcp-session-id' ? sessionId ?? null : null },
-    text: async () => result === undefined ? '' : JSON.stringify({ jsonrpc: '2.0', id: 'response', result }),
+    text: async () => result === undefined ? '' : JSON.stringify({ jsonrpc: '2.0', id: 'request-fixture', result }),
   }
 }
 
 function testToolArgumentBoundary(integrationsModule) {
   const source = { nested: { values: [1, 'two', true, null] } }
   const parsed = integrationsModule.parseToolArguments(source)
-  assert.deepEqual(parsed, source)
+  assert.deepEqual(parsed, {
+    __proto__: null,
+    nested: { __proto__: null, values: [1, 'two', true, null] },
+  }, 'tool argument dictionaries preserve values without inheriting object prototypes')
   assert.notEqual(parsed, source)
   assert.notEqual(parsed.nested, source.nested, 'tool input is copied at the integration boundary')
 
@@ -619,6 +622,49 @@ async function testRestartRecovery(core, tasksModule, persistence, ids, initialN
   assert.equal(recovered.value.length, 1)
   assert.equal(recovered.value[0].status, 'failed')
   assert.equal(recovered.value[0].failure.code, 'interrupted')
+
+  const createRuntime = (store = persistence) => tasksModule.createTaskRuntime({
+    clock: { now: () => ++now }, ids, persistence: store,
+    policyEvaluator: { async evaluate() { return { outcome: 'allowed', reasonCode: 'allowed' } } },
+  })
+  const pending = await runtime.create({ toolId: 'cancel-recovery', idempotencyKey: 'fixture-cancel-recovery' })
+  assert.equal(pending.ok, true)
+  let entered
+  let finish
+  const ready = new Promise((resolve) => { entered = resolve })
+  const held = new Promise((resolve) => { finish = resolve })
+  const completion = runtime.execute(pending.value.id, { async execute() {
+    entered()
+    await held
+    return { artifacts: [], summary: 'must not succeed after cancellation' }
+  } })
+  await ready
+  assert.equal((await runtime.cancel(pending.value.id)).ok, true)
+  assert.equal((await createRuntime().recoverInterruptedTasks()).ok, true)
+  const cancelled = await persistence.get(pending.value.id)
+  assert.equal(cancelled.status, 'cancelled', 'restart honors acknowledged cancellation even when the executor never returned')
+  assert.equal((await persistence.list(pending.value.id)).at(-1).type, 'task.cancelled')
+  finish()
+  await completion
+  assert.deepEqual(await persistence.get(pending.value.id), cancelled, 'stale completion cannot overwrite cancellation')
+
+  const racing = await runtime.create({ toolId: 'concurrent-recovery', idempotencyKey: 'fixture-concurrent-recovery' })
+  const racingRunning = { ...racing.value, status: 'running', startedAt: ++now, journalSequence: 2 }
+  await persistence.appendAndSave({ schema: 'islemind.task-journal-entry.v1', taskId: racingRunning.id,
+    sequence: 2, type: 'task.started', occurredAt: now }, racingRunning)
+  let listed = 0
+  let release
+  const bothListed = new Promise((resolve) => { release = resolve })
+  const racingStore = { ...persistence, async listRecoverable() {
+    const rows = await persistence.listRecoverable()
+    if (++listed === 2) release()
+    await bothListed
+    return rows
+  } }
+  const outcomes = await Promise.all([createRuntime(racingStore).recoverInterruptedTasks(), createRuntime(racingStore).recoverInterruptedTasks()])
+  assert.ok(outcomes.every((result) => result.ok), 'concurrent task recovery agrees on the durable terminal disposition')
+  assert.equal((await persistence.list(racingRunning.id)).filter((entry) => entry.type === 'task.failed').length, 1)
+  assert.deepEqual((await createRuntime().recoverInterruptedTasks()).value, [])
 }
 
 async function testAtomicPersistence(core, persistence, storage) {

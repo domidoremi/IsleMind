@@ -49,6 +49,7 @@ async function main() {
   testProductionMessageRuntimeBoundary()
   testStopFlushesBeforeTerminalProjectionAndKeepsConversationScope(controlModule)
   await testStaleRecoveryCommitsBuffersAndIsIdempotent(controlModule)
+  await testStaleRecoveryUsesDurableOwner(controlModule)
   await testRetryStopsBeforeTrimAndAwaitsReplyStart(controlModule)
   await testRegenerateStopsBeforeExactRemovalAndAwaitsReplyStart(controlModule)
   await testControlReplyStartFailuresPropagate(controlModule)
@@ -1498,6 +1499,63 @@ async function testControlReplyStartFailuresPropagate(controlModule) {
   )
 }
 
+async function testStaleRecoveryUsesDurableOwner(controlModule) {
+  const conversationId = 'lazy-conversation'
+  const messageId = 'assistant-gap'
+  const run = { id: 'durable-run', conversationId, responseMessageId: messageId, status: 'succeeded', result: { outputText: 'Acknowledged 😀' } }
+  let lookups = 0
+  const fixture = createControlFixture(controlModule, {
+    conversations: [createControlConversation(conversationId, [createControlMessage(messageId, 'assistant', 'streaming')])],
+    async getLatestResponseRun(...args) {
+      lookups += 1
+      assert.deepEqual(args, [conversationId, messageId])
+      return run
+    },
+    async recoverProjection(value) {
+      assert.equal(value, run, 'the durable owner is projected, never replayed')
+      Object.assign(fixture.getMessage(conversationId, messageId), { status: 'done', content: value.result.outputText })
+    },
+  })
+  await fixture.controller.recoverStale(conversationId)
+  await fixture.controller.recoverStale(conversationId)
+  assert.equal(fixture.getMessage(conversationId, messageId).content, 'Acknowledged 😀')
+  assert.equal(lookups, 1, 'repeated recovery leaves an already reconstructed terminal message unchanged')
+  assert.deepEqual(fixture.finishedTasks, [], 'durable success never becomes orphan cancellation')
+
+  const pending = createControlFixture(controlModule, {
+    conversations: [createControlConversation(conversationId, [createControlMessage(messageId, 'assistant', 'streaming')])],
+    getLatestResponseRun: async () => ({ ...run, status: 'awaiting-confirmation' }),
+  })
+  await pending.controller.recoverStale(conversationId)
+  assert.equal(pending.getMessage(conversationId, messageId).status, 'streaming', 'a nonterminal owner is not falsely cancelled by presentation')
+  assert.deepEqual(pending.finishedTasks, [])
+
+  const failed = createControlFixture(controlModule, {
+    conversations: [createControlConversation(conversationId, [createControlMessage(messageId, 'assistant', 'streaming')])],
+    async getLatestResponseRun() { throw new Error('lookup unavailable') },
+  })
+  await assert.rejects(failed.controller.recoverStale(conversationId), /lookup unavailable/)
+  assert.equal(failed.getMessage(conversationId, messageId).status, 'streaming', 'lookup failure is not evidence of an orphan')
+
+  let completeLookup
+  const racing = createControlFixture(controlModule, {
+    conversations: [createControlConversation(conversationId, [createControlMessage(messageId, 'assistant', 'streaming')])],
+    getLatestResponseRun: () => new Promise((resolve) => { completeLookup = resolve }),
+    async recoverProjection() { assert.fail('a newer cancellation or live stream must win') },
+  })
+  const recovery = racing.controller.recoverStale(conversationId)
+  racing.getMessage(conversationId, messageId).status = 'cancelled'
+  completeLookup(run)
+  await recovery
+  assert.equal(racing.getMessage(conversationId, messageId).status, 'cancelled')
+  racing.getMessage(conversationId, messageId).status = 'streaming'
+  const liveRecovery = racing.controller.recoverStale(conversationId)
+  racing.activeStreams.set(conversationId, { messageId, controller: new AbortController() })
+  completeLookup(run)
+  await liveRecovery
+  assert.equal(racing.getMessage(conversationId, messageId).status, 'streaming')
+}
+
 function createControlFixture(controlModule, options = {}) {
   const conversations = structuredClone(options.conversations ?? [])
   const events = []
@@ -1575,6 +1633,8 @@ function createControlFixture(controlModule, options = {}) {
     },
     getConversation: findConversation,
     getMessage: findMessage,
+    getLatestResponseRun: options.getLatestResponseRun ?? (async () => undefined),
+    recoverProjection: options.recoverProjection ?? (async () => { assert.fail('unexpected durable projection') }),
     hasActiveStream(conversationId) {
       return activeStreams.has(conversationId)
     },
@@ -1619,6 +1679,7 @@ function createControlFixture(controlModule, options = {}) {
   return {
     controller,
     controllers,
+    activeStreams,
     events,
     finishedTasks,
     flushes,
@@ -1897,6 +1958,11 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
     requestedOutput: 'work-artifact',
   }
   await assert.rejects(
+    runtimeBindingModule.getLatestConversationResponseRunRuntime('conversation-gap', 'message-gap'),
+    /conversation_message_runtime_uninitialized/,
+    'unbound durable lookup fails closed instead of treating messages as orphans',
+  )
+  await assert.rejects(
     runtimeBindingModule.dispatchConversationMessageRuntime(input),
     (error) => error instanceof Error
       && error.message === runtimeBindingModule.CONVERSATION_MESSAGE_RUNTIME_UNINITIALIZED_ERROR,
@@ -2016,15 +2082,24 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
     dispatchAfterUserProjection: boundDispatch,
     startAfterHistoryProjection: boundReplyStart,
     startConfirmedWorkflowReply: boundConfirmedWorkflowStart,
+    async getLatestResponseRun(conversationId, responseMessageId) {
+      return { id: 'read-only-run', conversationId, responseMessageId }
+    },
     listConversationToolManifests: boundListConversationToolManifests,
     resolveConversationTool: boundResolveConversationTool,
     saveApprovedWorkflowSkillSuggestion: boundSaveApprovedWorkflowSkillSuggestion,
   }
   runtimeBindingModule.bindConversationMessageRuntime(boundRuntime)
   runtimeBindingModule.bindConversationMessageRuntime(boundRuntime)
+  assert.deepEqual(
+    await runtimeBindingModule.getLatestConversationResponseRunRuntime('conversation-gap', 'message-gap'),
+    { id: 'read-only-run', conversationId: 'conversation-gap', responseMessageId: 'message-gap' },
+    'durable lookup passes both identities through the existing composition binding',
+  )
   assert.throws(
     () => runtimeBindingModule.bindConversationMessageRuntime({
       dispatchAfterUserProjection: async () => {},
+      getLatestResponseRun: boundRuntime.getLatestResponseRun,
       startAfterHistoryProjection: boundReplyStart,
       startConfirmedWorkflowReply: boundConfirmedWorkflowStart,
       listConversationToolManifests: boundListConversationToolManifests,
@@ -2039,6 +2114,7 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
     () => runtimeBindingModule.bindConversationMessageRuntime({
       dispatchAfterUserProjection: boundDispatch,
       startAfterHistoryProjection: async () => {},
+      getLatestResponseRun: boundRuntime.getLatestResponseRun,
       startConfirmedWorkflowReply: boundConfirmedWorkflowStart,
       listConversationToolManifests: boundListConversationToolManifests,
       resolveConversationTool: boundResolveConversationTool,
@@ -2053,6 +2129,7 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
       dispatchAfterUserProjection: boundDispatch,
       startAfterHistoryProjection: boundReplyStart,
       startConfirmedWorkflowReply: async () => {},
+      getLatestResponseRun: boundRuntime.getLatestResponseRun,
       listConversationToolManifests: boundListConversationToolManifests,
       resolveConversationTool: boundResolveConversationTool,
       saveApprovedWorkflowSkillSuggestion: boundSaveApprovedWorkflowSkillSuggestion,
@@ -2067,6 +2144,7 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
       startAfterHistoryProjection: boundReplyStart,
       startConfirmedWorkflowReply: boundConfirmedWorkflowStart,
       listConversationToolManifests: async () => [],
+      getLatestResponseRun: boundRuntime.getLatestResponseRun,
       resolveConversationTool: boundResolveConversationTool,
       saveApprovedWorkflowSkillSuggestion: boundSaveApprovedWorkflowSkillSuggestion,
     }),
@@ -2081,6 +2159,7 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
       startConfirmedWorkflowReply: boundConfirmedWorkflowStart,
       listConversationToolManifests: boundListConversationToolManifests,
       resolveConversationTool: () => null,
+      getLatestResponseRun: boundRuntime.getLatestResponseRun,
       saveApprovedWorkflowSkillSuggestion: boundSaveApprovedWorkflowSkillSuggestion,
     }),
     (error) => error instanceof Error
@@ -2095,10 +2174,18 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
       listConversationToolManifests: boundListConversationToolManifests,
       resolveConversationTool: boundResolveConversationTool,
       saveApprovedWorkflowSkillSuggestion: async () => workflowSkillSaveResult,
+      getLatestResponseRun: boundRuntime.getLatestResponseRun,
     }),
     (error) => error instanceof Error
       && error.message === runtimeBindingModule.CONVERSATION_MESSAGE_RUNTIME_ALREADY_BOUND_ERROR,
     'a different workflow-skill save method cannot replace the composition-root binding',
+  )
+  assert.throws(
+    () => runtimeBindingModule.bindConversationMessageRuntime({
+      ...boundRuntime, getLatestResponseRun: async () => undefined,
+    }),
+    /conversation_message_runtime_already_bound/,
+    'a different durable lookup cannot silently replace the composition-root binding',
   )
 
   const listedManifests = await runtimeBindingModule.listConversationToolManifestsRuntime()
@@ -2532,7 +2619,7 @@ function testProductionMessageRuntimeBoundary() {
   const workspaceReceiptRecoveryIndex = bootstrapSource.indexOf('await recoverConversationWorkspaceWritebackReceipts')
   const taskRecoveryIndex = bootstrapSource.indexOf('await recoverInterruptedTasks')
   const readyIndex = bootstrapSource.indexOf('ready: true')
-  const deferredRecoveryDispatchIndex = bootstrapSource.indexOf('void recoverDeferredRuntimeState()')
+  const startupRecoveryDispatchIndex = bootstrapSource.indexOf('await recoverStartupRuntimeState()')
   assert.ok(initializationIndex >= 0, 'application startup explicitly initializes the conversation runtime binding')
   assert.ok(runRecoveryIndex < checkpointRecoveryIndex, 'Chat run recovery precedes exact-run workflow checkpoint reconciliation')
   assert.ok(checkpointRecoveryIndex < workspaceReceiptRecoveryIndex, 'workflow checkpoint dispositions are recovered before workspace receipt reconciliation')
@@ -2543,7 +2630,7 @@ function testProductionMessageRuntimeBoundary() {
     'startup forwards only the exact recovered Chat run identities and recovery signal to checkpoint reconciliation',
   )
   assert.ok(initializationIndex < readyIndex, 'runtime binding initializes before the app becomes ready')
-  assert.ok(deferredRecoveryDispatchIndex > readyIndex, 'non-blocking runtime recovery is dispatched after the app becomes ready')
+  assert.ok(startupRecoveryDispatchIndex > initializationIndex && startupRecoveryDispatchIndex < readyIndex, 'durable startup recovery finishes before Chat admits work or projects stale messages')
 
   const structuredGateIndex = replyDispatchControllerSource.indexOf('const startsStructuredWorkflow')
   const replyIndex = replyDispatchControllerSource.indexOf('void dependencies.startAssistantReply', structuredGateIndex)

@@ -1063,11 +1063,10 @@ const requiredContracts = [
       ['src/hooks/useBootstrap.ts', /await recoverInterruptedPortableImport\(\)[\s\S]*?initializePortableDataApplication\(\)[\s\S]*?initializeConversationStorePersistence\(\)[\s\S]*?initializeSettingsStorePersistence\(\)[\s\S]*?initializeConversationSkills\(\)[\s\S]*?initializeConversationReplyStart\(\)[\s\S]*?safeBootstrap\(st\('bootstrap\.chatData'\), loadChats\)[\s\S]*?safeBootstrap\(st\('bootstrap\.settings'\), loadSettings\)/],
       ['src/platform/storage/expoSqliteDatabase.ts', /SQLite\.openDatabaseAsync\(name, \{\s*useNewConnection: true,\s*finalizeUnusedStatementsBeforeClosing: false,\s*\}\)/],
       ['src/platform/storage/expoSqliteDatabase.ts', /const databaseOperationQueues = new Map<string, Promise<void>>\(\)/],
-      ['src/platform/storage/expoSqliteDatabase.ts', /return enqueueDatabaseOperation\(databaseName, async \(\) => \{[\s\S]*?withExclusiveTransactionAsync/],
+      ['src/platform/storage/expoSqliteDatabase.ts', /return enqueueDatabaseOperation\(databaseName, async \(\) => \{[\s\S]*?await database\.withTransactionAsync\(async \(\) => \{\s*value = await work\(executor\)/],
       ['src/platform/storage/expoSqliteDatabase.ts', /databasePromise \?\?= openDatabase\(databaseName\)\.catch\(\(error\) => \{\s*databasePromise = undefined\s*throw error/],
-      ['src/platform/storage/expoSqliteDatabase.ts', /const supportsExclusiveTransactions = typeof document === 'undefined'/],
-      ['src/platform/storage/expoSqliteDatabase.ts', /supportsExclusiveTransactions\s*&&\s*typeof transactionCapable\.withExclusiveTransactionAsync === 'function'/],
-      ['src/platform/storage/expoSqliteDatabase.ts', /typeof transactionCapable\.withTransactionAsync === 'function'/],
+      ['src/platform/storage/expoSqliteDatabase.ts', /PRAGMA foreign_keys = ON/],
+      ['src/platform/storage/expoSqliteDatabase.ts', /await database\.closeAsync\(\)\.catch\(\(\) => undefined\)\s*throw error/],
       ['metro.config.js', /assetExts[^\n]*'wasm'/],
       ['metro.config.js', /Cross-Origin-Embedder-Policy['"], ['"]credentialless/],
       ['metro.config.js', /Cross-Origin-Opener-Policy['"], ['"]same-origin/],
@@ -1102,6 +1101,7 @@ const requiredContracts = [
     ],
     forbiddenMarkers: [
       ['src/platform/storage/expoSqliteDatabase.ts', /createSqliteWebFallbackDatabase/],
+      ['src/platform/storage/expoSqliteDatabase.ts', /\.withExclusiveTransactionAsync\(/],
       ['src/components/main/SettingsScreenContent.tsx', /from ['"]@\/services\/(?:portableData|storage)['"]/],
       ['src/bootstrap/portableDataApplication.ts', /@\/services\/portableData/],
       ['src/platform/native/expoPortableDataTransfer.ts', /@\/services\//],
@@ -2035,7 +2035,7 @@ const requiredContracts = [
       ['src/modules/assistant-runtime/runtime.ts', /async recoverInterruptedRuns\(\)/],
       ['src/modules/assistant-runtime/runtime.ts', /function createQueuedActivityRun\([^]*?kind: 'chat'[^]*?model: input\.model \?\? 'chat'/],
       ['src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts', /version:\s*5,[^]*?name:\s*'chat-owned-run-kind'[^]*?async up\(\)\s*\{[^]*?Preserve the deployed migration identity without rewriting unsupported run kinds/],
-      ['src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts', /async save\(run\)[^]*?assertChatRunKind\(run\)[^]*?await saveRun\(value, run\)/],
+      ['src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts', /async save\(run\)[^]*?assertChatRunKind\(run\)[^]*?await value\.transaction[^]*?await saveRun\(transaction, run\)[^]*?clearCheckpointSegments/],
       ['src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts', /version:\s*6,[^]*?name:\s*'exact-provider-neutral-request'[^]*?CREATE TABLE IF NOT EXISTS assistant_run_request_snapshots/],
       ['src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts', /async appendAndSave\(entry, run, requestSnapshot\)[^]*?assertChatRunKind\(run\)[^]*?parseRequestSnapshotInput\(requestSnapshot, entry, run\)[^]*?value\.transaction[^]*?saveRun\(transaction, run\)[^]*?insertRequestSnapshot\(transaction, normalizedRequestSnapshot\)[^]*?appendJournalEntry\(transaction, entry\)/],
       ['src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts', /async function saveRun\([^]*?\[\s*run\.id,\s*run\.kind,\s*run\.conversationId/],
@@ -2996,7 +2996,7 @@ const requiredContracts = [
       ['scripts/collect-work-artifact-smoke.js', /documentsSearchFieldFocused/],
       ['scripts/collect-work-artifact-smoke.js', /file-picker-search-\$\{index\}-keyboard-dismissed/],
       ['scripts/collect-work-artifact-smoke.js', /Work artifact smoke self-test passed/],
-      ['package.json', /"packageManager":\s*"bun@1\.3\.14"/],
+      ['package.json', /"packageManager":\s*"bun@1\.4\.2"/],
       ['package.json', /"type-check":\s*"node node_modules\/typescript\/bin\/tsc --noEmit"/],
       ['package.json', /"test:provider-intelligence":\s*"node scripts\/provider-intelligence-tests\.js"/],
       ['package.json', /"test:agent-workflow":\s*"node scripts\/agentic-workflow-tests\.js && node scripts\/agent-rag-quality-tests\.js && node scripts\/agent-trace-contract-tests\.js && node scripts\/agent-work-artifact-workflow-tests\.js && node scripts\/agent-tool-policy-tests\.js"/],
@@ -5032,8 +5032,13 @@ function evaluateContract(projectRoot, contract) {
     const file = path.join(projectRoot, relativeFile)
     if (!fs.existsSync(file)) continue
     const text = fs.readFileSync(file, 'utf8')
-    if (!pattern.test(text)) {
-      issues.push(`Missing required marker ${pattern} in ${relativeFile}.`)
+    const effectivePattern = relativeFile === 'src/modules/assistant-runtime/adapters/sqliteAssistantRunStore.ts'
+      && pattern.source.includes('appendAndSave')
+      && !pattern.source.includes('previousRun')
+      ? /async appendAndSave\(entry, run, requestSnapshot, previousRun\)[^]*?assertChatRunKind\(run\)[^]*?parseRequestSnapshotInput\(requestSnapshot, entry, run\)[^]*?value\.transaction[^]*?saveStreamCheckpoint\(transaction, entry, run, previousRun\)[^]*?saveRun\(transaction, run\)[^]*?insertRequestSnapshot\(transaction, normalizedRequestSnapshot\)[^]*?appendJournalEntry\(transaction, entry\)/
+      : pattern
+    if (!effectivePattern.test(text)) {
+      issues.push(`Missing required marker ${effectivePattern} in ${relativeFile}.`)
     }
   }
   for (const [relativeFile, pattern] of contract.forbiddenMarkers ?? []) {
@@ -11806,8 +11811,8 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       [
         "import { renderCompressionMessage, type CompressionSummary } from './compressionSummary'",
         "import { resolveChatChromeBorder, resolveChatChromeSurface, resolveChatControlSurface } from './chatChromeSurfaces'",
-        'export function CompressionBanner() { const summary = {} as CompressionSummary; renderCompressionMessage(summary, t); resolveChatChromeBorder(colors, isGlass); resolveChatChromeSurface(colors, isGlass); resolveChatControlSurface(colors, isGlass, false); return null }',
-        'export function ConversationHealthBanner() { resolveChatChromeSurface(colors, isGlass); return null }',
+        'export function CompressionBanner() { const summary = {} as CompressionSummary; renderCompressionMessage(summary, t); resolveChatChromeBorder(colors, isLiquidGlass); resolveChatChromeSurface(colors, isLiquidGlass); resolveChatControlSurface(colors, isLiquidGlass, false); return null }',
+        'export function ConversationHealthBanner() { resolveChatChromeSurface(colors, isLiquidGlass); return null }',
       ].join('\n'),
     ],
     [
@@ -11816,7 +11821,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "import { buildHomeModelHighlights, type ModelAccessSettings } from './chatModelSelection'",
         "import { resolveChatChromeBorder, resolveChatControlBorder, resolveChatControlSurface } from './chatChromeSurfaces'",
         'export interface ChatBoundaryMemoryStatus {}',
-        'export function ChatSetupEmptyState() { const settings = {} as ModelAccessSettings; buildHomeModelHighlights(settings); resolveChatChromeBorder(colors, isGlass); resolveChatControlBorder(colors, isGlass, false); resolveChatControlSurface(colors, isGlass, false); return null }',
+        'export function ChatSetupEmptyState() { const settings = {} as ModelAccessSettings; buildHomeModelHighlights(settings); resolveChatChromeBorder(colors, isLiquidGlass); resolveChatControlBorder(colors, isLiquidGlass, false); resolveChatControlSurface(colors, isLiquidGlass, false); return null }',
         'export function ChatConversationEmptyState() { return null }',
       ].join('\n'),
     ],
@@ -13922,11 +13927,13 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '        databasePromise = undefined',
         '        throw error',
         '  })',
-        "const supportsExclusiveTransactions = typeof document === 'undefined'",
         'SQLite.openDatabaseAsync(name, { useNewConnection: true, finalizeUnusedStatementsBeforeClosing: false, })',
+        'PRAGMA foreign_keys = ON',
+        'await database.closeAsync().catch(() => undefined)',
+        'throw error',
         'return enqueueDatabaseOperation(databaseName, async () => {',
-        "supportsExclusiveTransactions && typeof transactionCapable.withExclusiveTransactionAsync === 'function'",
-        "typeof transactionCapable.withTransactionAsync === 'function'",
+        'await database.withTransactionAsync(async () => {',
+        'value = await work(executor)',
       ].join('\n'),
     ],
     [
@@ -14953,12 +14960,16 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         'CREATE TABLE IF NOT EXISTS assistant_run_request_snapshots',
         'async save(run) {',
         'assertChatRunKind(run)',
-        'await saveRun(value, run)',
+        'await value.transaction(async (transaction) => {',
+        'await saveRun(transaction, run)',
+        'await clearCheckpointSegments(transaction, run.id)',
+        '})',
         '}',
-        'async appendAndSave(entry, run, requestSnapshot) {',
+        'async appendAndSave(entry, run, requestSnapshot, previousRun) {',
         'assertChatRunKind(run)',
         'parseRequestSnapshotInput(requestSnapshot, entry, run)',
         'value.transaction(async (transaction) => {',
+        'saveStreamCheckpoint(transaction, entry, run, previousRun)',
         'await saveRun(transaction, run)',
         'insertRequestSnapshot(transaction, normalizedRequestSnapshot)',
         'await appendJournalEntry(transaction, entry)',
@@ -14982,7 +14993,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     [
       'src/modules/assistant-runtime/testing/inMemoryRunStore.ts',
       [
-        'async appendAndSave(entry, run, requestSnapshot) {',
+        'async appendAndSave(entry, run, requestSnapshot, previousRun) {',
         'const storedRun = cloneRun(run)',
         'cloneRequestSnapshot(requestSnapshot)',
         'appendEntry(entriesByRun, entry)',
@@ -16201,7 +16212,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ],
     ['scripts/qa-coverage-audit.js', 'runArchitectureBoundaryAuditSelfTest()\nrunArchitectureBoundaryEvidenceGateSelfTest()\nagentWorkflowMatrixRequiredSnippets\ncollectAgentWorkflowMatrixGateIssues()\nrunAgentWorkflowMatrixGateSelfTest()'],
     ['scripts/collect-work-artifact-smoke.js', 'function runSelfTest() {}\ndocumentsFileTitleVisible\ndocumentsSearchFieldFocused\nfile-picker-search-${index}-keyboard-dismissed\nWork artifact smoke self-test passed'],
-    ['package.json', '{"packageManager":"bun@1.3.14","scripts":{"type-check":"node node_modules/typescript/bin/tsc --noEmit","test:provider-intelligence":"node scripts/provider-intelligence-tests.js","test:agent-workflow":"node scripts/agentic-workflow-tests.js && node scripts/agent-rag-quality-tests.js && node scripts/agent-trace-contract-tests.js && node scripts/agent-work-artifact-workflow-tests.js && node scripts/agent-tool-policy-tests.js","test:architecture-boundary":"node scripts/architecture-boundary-audit.js && node scripts/module-architecture-boundary-tests.js","test:context-compression-v2":"bun scripts/context-compression-v2-tests.js","test:work-artifact-smoke":"node scripts/collect-work-artifact-smoke.js","test:work-artifact-smoke:self":"node scripts/collect-work-artifact-smoke.js --self-test","test:android-capability-boundary":"node scripts/android-capability-boundary-audit.js","test:android-device-tools":"node scripts/android-device-tool-policy-tests.js","test:toolchain-runtime-compatibility":"node scripts/toolchain-runtime-compatibility-tests.js"}}'],
+    ['package.json', '{"packageManager":"bun@1.4.2","scripts":{"type-check":"node node_modules/typescript/bin/tsc --noEmit","test:provider-intelligence":"node scripts/provider-intelligence-tests.js","test:agent-workflow":"node scripts/agentic-workflow-tests.js && node scripts/agent-rag-quality-tests.js && node scripts/agent-trace-contract-tests.js && node scripts/agent-work-artifact-workflow-tests.js && node scripts/agent-tool-policy-tests.js","test:architecture-boundary":"node scripts/architecture-boundary-audit.js && node scripts/module-architecture-boundary-tests.js","test:context-compression-v2":"bun scripts/context-compression-v2-tests.js","test:work-artifact-smoke":"node scripts/collect-work-artifact-smoke.js","test:work-artifact-smoke:self":"node scripts/collect-work-artifact-smoke.js --self-test","test:android-capability-boundary":"node scripts/android-capability-boundary-audit.js","test:android-device-tools":"node scripts/android-device-tool-policy-tests.js","test:toolchain-runtime-compatibility":"node scripts/toolchain-runtime-compatibility-tests.js"}}'],
     ['src/modules/integrations/toolchainContracts.ts', 'export const TOOLCHAIN_MANIFEST_SCHEMA = "islemind.toolchain-manifest.v0"'],
     ['src/modules/integrations/toolchainRuntimeContracts.ts', 'export interface ToolchainToolManifest {}'],
     ['src/modules/integrations/officialToolchainCatalogPolicy.ts', 'export function createOfficialToolchainCatalogPolicy() {}'],

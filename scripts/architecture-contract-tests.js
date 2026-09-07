@@ -94,18 +94,23 @@ async function main() {
   await testConversationMemoryExtractionRuntime(knowledgeModule)
   await testSqliteKnowledgeRepository(knowledgeModule)
   await testStructuredMemoryRepositorySemantics(knowledgeModule)
+  await testMemorySearchAndImportBoundaries(knowledgeModule)
   await testStructuredMemoryMigrationDeduplicates(knowledgeModule)
+  await testMultilingualFtsMigrationRecovery(knowledgeModule)
   await testKnowledgeDocumentImportUseCase(knowledgeModule)
   await testKnowledgeDocumentImporter(knowledgeModule)
   await testKnowledgeRetrievalUseCase(knowledgeModule)
   await testKnowledgeIndexedSearchPort(knowledgeModule)
   await testSqliteKnowledgeHybridIndex(knowledgeModule)
+  await testKnowledgePagedSearchSafety(knowledgeModule)
+  await testKnowledgeIndexWriteIsolation(knowledgeModule)
   await testSqliteKnowledgeColbertIndex(knowledgeModule)
   await testSqliteKnowledgeAgenticIndex(knowledgeModule)
   testKnowledgeCandidateFusion(knowledgeModule)
   testKnowledgeReranking(knowledgeModule)
   await testKnowledgeContextRetriever(knowledgeModule)
   testSqliteWebPersistenceContract()
+  await testSqliteConnectionTransactions()
   await testApplicationRecordStoragePort(storageModule)
   await testApplicationDataRecordRuntime(applicationRecordBootstrapModule)
   await testSettingsStorePersistence(settingsModule, providerModule, settingsStorePersistenceCommandModule)
@@ -317,6 +322,35 @@ async function testConversationSkillApplication(conversationModule, commandModul
   })
   assert.deepEqual(applied.snapshot.skillIds, ['skill-second', 'skill-first'], 'Conversation Skills projects skill stacks by ascending priority')
   assert.equal(applied.snapshot.systemPrompt, 'Second\n\nFirst persistence', 'Conversation Skills preserves template rendering and prompt composition')
+
+  const markdown = '\uFEFF---\r\nname: review-notes\r\ndescription: >-\r\n  Review notes\r\n  with citations.\r\nlicense: MIT\r\ncompatibility: Text instructions only\r\nallowed-tools: shell(*)\r\nproviderId: untrusted-provider\r\nmodel: untrusted-model\r\nscripts: [run.sh]\r\n---\r\nPreserve {{literal}} and cite [notes](references/notes.md).'
+  const importedMarkdown = application.importSkill(markdown)
+  assert.equal(importedMarkdown.ok, true, 'SKILL.md supports BOM, CRLF, and folded YAML scalars')
+  assert.equal(importedMarkdown.skill.name, 'review-notes')
+  assert.match(importedMarkdown.skill.description, /Review notes with citations\./)
+  assert.match(importedMarkdown.skill.description, /License: MIT/)
+  assert.equal(importedMarkdown.skill.providerId, undefined)
+  assert.equal(importedMarkdown.skill.model, undefined)
+  assert.equal(importedMarkdown.skill.enabledTools, undefined, 'allowed-tools is not authorization')
+  assert.equal(importedMarkdown.skill.knowledgeSources, undefined, 'references are not automatically imported')
+  assert.deepEqual(application.extractSkillVariables(importedMarkdown.skill), [])
+  const markdownStack = application.applySkillStack({ skills: [importedMarkdown.skill], variables: { literal: 'REPLACED' } })
+  assert.match(markdownStack.snapshot.systemPrompt, /\{\{literal\}\}/, 'standard Markdown templates remain literal')
+  assert.equal(markdownStack.snapshot.enabledTools, undefined)
+  const roundtrip = application.importSkill(application.exportSkill(importedMarkdown.skill))
+  assert.equal(roundtrip.ok, true, 'instruction-only Skills remain compatible with portable JSON')
+  assert.equal(roundtrip.skill.systemPrompt, importedMarkdown.skill.systemPrompt)
+  assert.deepEqual(roundtrip.skill.tags, importedMarkdown.skill.tags)
+  for (const invalid of [
+    '---\nname: bad-name\nname: duplicate\ndescription: text\n---\nInstructions',
+    '---\nname: &alias bad-name\ndescription: *alias\n---\nInstructions',
+    '---\nname: Bad_Name\ndescription: text\n---\nInstructions',
+    '---\nname: valid-name\ndescription: [not, text]\n---\nInstructions',
+    '---\nname: valid-name\ndescription: text\n---\n',
+    `---\nname: valid-name\ndescription: ${'x'.repeat(1025)}\n---\nInstructions`,
+    `---\nname: valid-name\ndescription: text\nextra: ${'x'.repeat(16 * 1024)}\n---\nInstructions`,
+    `---\nname: valid-name\ndescription: text\n---\n${'x'.repeat(128 * 1024)}`,
+  ]) assert.equal(application.importSkill(invalid).ok, false, 'unsafe or unbounded SKILL.md is rejected')
 
   await Promise.all([
     application.upsertSkill(application.createBaseSkill({
@@ -6626,6 +6660,10 @@ function createKnowledgeSqliteFixture(rows = {}) {
     async getAll(source, parameters = []) {
       calls.push({ kind: 'getAll', source, parameters: [...parameters] })
       if (source.includes('PRAGMA table_info')) return []
+      if (source.includes('WHERE id > ? ORDER BY id LIMIT 128')) {
+        const sourceRows = source.includes('FROM memories') ? rows.memories ?? [] : rows.chunks ?? []
+        return sourceRows.filter(row => row.id > parameters[0]).sort((a, b) => a.id < b.id ? -1 : 1).slice(0, 128)
+      }
       if (source.includes('FROM knowledge_fts')) return rows.fts ?? []
       if (source.includes('FROM memories')) return rows.memories ?? []
       if (source.includes('FROM knowledge_documents')) return rows.documents ?? []
@@ -6648,6 +6686,53 @@ function createKnowledgeSqliteFixture(rows = {}) {
         return database
       },
     },
+  }
+}
+
+async function testMultilingualFtsMigrationRecovery(knowledgeModule) {
+  let database = new Database(':memory:')
+  try {
+    const provider = createBunSqliteProvider(database)
+    const repository = knowledgeModule.createSqliteKnowledgeRepository(provider)
+    const document = { schema: knowledgeModule.KNOWLEDGE_DOCUMENT_RECORD_SCHEMA, id: 'migration-doc', title: '知识笔记', mimeType: 'text/plain', size: 1300, chunkCount: 130, status: 'ready', createdAt: 1, updatedAt: 1 }
+    const chunks = Array.from({ length: 130 }, (_, i) => ({ schema: knowledgeModule.KNOWLEDGE_CHUNK_RECORD_SCHEMA,
+      id: `migration-chunk-${String(i).padStart(3, '0')}`, documentId: document.id, title: document.title,
+      content: `知识库检索与任务恢复 ${i}`, ordinal: i, createdAt: 1 }))
+    await repository.saveDocument(document, chunks)
+    // Reconstruct the v3 derivative projection; canonical records stay intact.
+    database.exec("DELETE FROM platform_schema_migrations WHERE scope = 'knowledge' AND version = 4")
+    database.exec('UPDATE knowledge_fts SET content = (SELECT content FROM knowledge_chunks WHERE knowledge_chunks.id = knowledge_fts.id)')
+    const originalFts = database.query('SELECT * FROM knowledge_fts ORDER BY id').all()
+    const canonical = database.query('SELECT * FROM knowledge_chunks ORDER BY id').all()
+    const storage = await provider.get()
+    let inserts = 0
+    let fail = true
+    const failure = new Error('injected FTS projection failure in second batch')
+    const recovering = knowledgeModule.createSqliteKnowledgeRepository({ get: async () => ({ ...storage,
+      transaction: work => storage.transaction(transaction => work({ ...transaction,
+        async run(sql, parameters) {
+          if (fail && sql.includes('INSERT INTO knowledge_fts') && ++inserts === 129) throw failure
+          return transaction.run(sql, parameters)
+        },
+      })),
+    }) })
+    await assert.rejects(() => recovering.listDocuments(), error => error === failure)
+    assert.equal(inserts, 129, 'migration exercises more than one bounded batch')
+    assert.deepEqual(database.query('SELECT * FROM knowledge_fts ORDER BY id').all(), originalFts, 'failed migration rolls back deleted and partially rebuilt FTS rows')
+    assert.equal(database.query("SELECT version FROM platform_schema_migrations WHERE scope = 'knowledge' AND version = 4").get(), null, 'failure does not advance the schema marker')
+    fail = false
+    await recovering.listDocuments()
+    assert.ok(database.query("SELECT version FROM platform_schema_migrations WHERE scope = 'knowledge' AND version = 4").get(), 'the same repository retries initialization successfully')
+    assert.deepEqual(database.query('SELECT * FROM knowledge_chunks ORDER BY id').all(), canonical, 'FTS migration never rewrites source content or provenance')
+    const image = database.serialize()
+    database.close()
+    database = Database.deserialize(image)
+    const reopened = knowledgeModule.createSqliteKnowledgeRepository(createBunSqliteProvider(database))
+    const hits = await reopened.searchFts({ query: '知识库检索', limit: 5 })
+    assert.equal(hits.length, 20, 'a newly opened SQLite image retains the bounded multilingual FTS candidate pool')
+    assert.equal(database.query('SELECT count(*) AS count FROM knowledge_fts').get().count, 130, 'reopen does not duplicate derivative rows')
+  } finally {
+    database.close()
   }
 }
 
@@ -6957,6 +7042,8 @@ async function testSqliteKnowledgeHybridIndex(knowledgeModule) {
       ids: { next: (prefix) => `${prefix}-${now}` },
     })
     let embeddingCalls = 0
+    let queryOverride
+    let beforeEmbedding
     const index = knowledgeModule.createSqliteKnowledgeHybridIndex(storage, {
       repository,
       clock,
@@ -6964,7 +7051,8 @@ async function testSqliteKnowledgeHybridIndex(knowledgeModule) {
         async resolve(input) {
           embeddingCalls += 1
           assert.equal(input.signal?.aborted, false, 'hybrid query embedding receives the active cancellation signal')
-          return knowledgeModule.createLocalKnowledgeEmbedding(input.query)
+          beforeEmbedding?.()
+          return queryOverride ?? { embedding: knowledgeModule.createLocalKnowledgeEmbedding(input.query), source: 'local', model: knowledgeModule.KNOWLEDGE_LOCAL_HASH_MODEL_ID }
         },
       },
     })
@@ -7034,6 +7122,38 @@ async function testSqliteKnowledgeHybridIndex(knowledgeModule) {
     assert.equal(repaired.status, 'fallback')
     assert.equal(repaired.error, 'missing_or_malformed', 'malformed persisted embeddings are repaired synchronously')
 
+    const vectorRow = () => database.query('SELECT * FROM chunk_embeddings WHERE chunkId = ?').get(chunk.id)
+    database.query("UPDATE chunk_embeddings SET embeddingJson = '[1,0]', dimension = 2, source = 'provider', model = 'model-a', status = 'ready', error = NULL WHERE chunkId = ?").run(chunk.id)
+    const neuralBefore = vectorRow()
+    for (const query of [
+      { embedding: [1, 0], source: 'provider', model: 'model-b' },
+      { embedding: [1, 0], source: 'onnx', model: 'model-a' },
+      { embedding: [1, 0, 0], source: 'provider', model: 'model-a' },
+    ]) {
+      queryOverride = query
+      await index.clearCache({ signal })
+      const hits = await index.searchHybrid({ query: 'island memory', limit: 4, embeddingMode: 'local', signal })
+      assert.equal(hits[0]?.vectorScore, undefined, 'unrelated vector spaces never contribute vector similarity')
+      assert.deepEqual(vectorRow(), neuralBefore, 'model/dimension mismatch does not overwrite a valid embedding')
+    }
+    queryOverride = { embedding: [3, 0], source: 'provider', model: 'model-a' }
+    await index.clearCache({ signal })
+    assert.equal((await index.searchHybrid({ query: 'island memory', limit: 4, embeddingMode: 'local', signal }))[0].vectorScore, 1, 'compatible non-unit vectors use true cosine similarity')
+    queryOverride = undefined
+    await index.clearCache({ signal })
+    await index.searchHybrid({ query: 'island memory', limit: 4, embeddingMode: 'local', signal })
+    assert.deepEqual(vectorRow(), neuralBefore, 'offline hash fallback never destroys the neural vector')
+
+    database.query("UPDATE chunk_embeddings SET embeddingJson = 'broken' WHERE chunkId = ?").run(chunk.id)
+    beforeEmbedding = () => database.query("UPDATE chunk_embeddings SET embeddingJson = '[1,0]' WHERE chunkId = ?").run(chunk.id)
+    await index.clearCache({ signal })
+    await index.searchHybrid({ query: 'island memory', limit: 4, embeddingMode: 'local', signal })
+    assert.deepEqual(vectorRow(), neuralBefore, 'read repair cannot overwrite a concurrent successful embedding upgrade')
+    beforeEmbedding = undefined
+    for (const raw of ['[]', '[1e999]', '["1"]', 'null']) assert.equal(knowledgeModule.parseKnowledgeEmbedding(raw), null)
+    assert.equal(knowledgeModule.knowledgeCosineSimilarity([1, 0], [1]), 0, 'partial vectors cannot be compared')
+    assert.equal(knowledgeModule.knowledgeCosineSimilarity([NaN], [1]), 0)
+
     database.query("UPDATE knowledge_chunks SET createdAt = 'invalid' WHERE id = ?").run(chunk.id)
     await index.clearCache({ signal })
     await assert.rejects(
@@ -7077,7 +7197,7 @@ async function testSqliteKnowledgeHybridIndex(knowledgeModule) {
     })
     const pendingEmbedding = cancellableEmbedding.resolve({
       query: 'cancel provider embedding',
-      chunks: [{ source: 'provider', embeddingJson: '[1]' }],
+      availableSources: ['provider'],
       embeddingMode: 'provider',
       provider: { id: 'provider-for-cancellation' },
       providerConfigured: true,
@@ -7119,7 +7239,376 @@ async function testSqliteKnowledgeHybridIndex(knowledgeModule) {
   }
 }
 
+async function testKnowledgePagedSearchSafety(knowledgeModule) {
+  const database = new Database(':memory:')
+  let cancellationTimer
+  try {
+    const storage = createBunSqliteProvider(database)
+    const connection = await storage.get()
+    const originalGetAll = connection.getAll
+    let pages = []
+    let afterPage
+    connection.getAll = async (sql, parameters) => {
+      const rows = await originalGetAll(sql, parameters)
+      if (sql.includes('e.embeddingJson, e.source, e.model')) {
+        pages.push(rows.map(row => row.id))
+        afterPage?.(rows)
+      }
+      return rows
+    }
+    const clock = { now: () => 10_000 }
+    const repository = knowledgeModule.createSqliteKnowledgeRepository(storage, { clock })
+    let embeddingCalls = 0
+    let onnxCalls = 0
+    const dependencies = {
+      repository, clock, cacheTtlMs: 0,
+      providerCacheKey: () => 'paged-test-provider',
+      resolveProviderEmbeddingState: () => ({ configured: true, supportsEmbeddings: true }),
+      queryEmbedding: knowledgeModule.createKnowledgeQueryEmbeddingUseCase({
+        embedWithOnnx: async () => { onnxCalls += 1; return { embedding: [1, 0], model: 'paged-test' } },
+        embedWithProvider: async () => { embeddingCalls += 1; return { embedding: [1, 0], model: 'paged-test' } },
+        notifyProviderUnsupported: async () => {},
+      }),
+    }
+    const index = knowledgeModule.createSqliteKnowledgeHybridIndex(storage, dependencies)
+    const document = {
+      schema: knowledgeModule.KNOWLEDGE_DOCUMENT_RECORD_SCHEMA,
+      id: 'selected-notebook', title: 'Selected archive', mimeType: 'text/plain', size: 20_000,
+      chunkCount: 260, status: 'ready', sourceUri: 'selected.txt', createdAt: clock.now(), updatedAt: clock.now(),
+    }
+    const chunks = Array.from({ length: 260 }, (_, ordinal) => ({
+      schema: knowledgeModule.KNOWLEDGE_CHUNK_RECORD_SCHEMA,
+      id: `chunk-${String(ordinal).padStart(4, '0')}`, documentId: document.id, title: document.title,
+      content: 'Residents kept disconnected notebooks and recorded archival observations.',
+      ordinal, chunkIndex: 0, createdAt: clock.now(),
+    }))
+    const signal = new AbortController().signal
+    await repository.saveDocument(document, chunks, { signal })
+    await index.synchronize(document, chunks, { signal })
+    const privateDocument = { ...document, id: 'other-notebook', title: 'Private archive', chunkCount: 1 }
+    const privateChunk = { ...chunks[0], id: 'private-chunk', documentId: privateDocument.id, title: privateDocument.title }
+    await repository.saveDocument(privateDocument, [privateChunk], { signal })
+    await index.synchronize(privateDocument, [privateChunk], { signal })
+    database.query("UPDATE chunk_embeddings SET embeddingJson = '[1,0]', dimension = 2, source = 'provider', model = 'paged-test', status = 'ready'").run()
+    const input = { query: 'genesis rationale', limit: 5, embeddingMode: 'provider', provider: {}, signal,
+      knowledgeScope: { ids: new Set([document.id]), terms: [] } }
+
+    const ties = await index.searchHybrid(input)
+    assert.deepEqual(ties.map(hit => hit.id), chunks.slice(0, 5).map(chunk => chunk.id),
+      'equal vector scores and timestamps use stable IDs rather than insertion/page accidents')
+    assert.equal(pages.flat().length, chunks.length)
+    assert.ok(!pages.flat().includes(privateChunk.id), 'scope is applied to every vector page, not after candidate selection')
+
+    const emptyCalls = embeddingCalls
+    pages = []
+    assert.deepEqual(await index.searchHybrid({ ...input, knowledgeScope: { ids: new Set(), terms: [] } }), [])
+    assert.equal(embeddingCalls, emptyCalls, 'an empty selected corpus cannot authorize a provider query from another scope')
+    assert.equal(pages.length, 0)
+
+    database.query("UPDATE chunk_embeddings SET source = 'local', model = ?").run(knowledgeModule.KNOWLEDGE_LOCAL_HASH_MODEL_ID)
+    database.query("UPDATE chunk_embeddings SET source = 'onnx', model = 'paged-test' WHERE chunkId = ?").run(chunks.at(-1).id)
+    const local = await index.searchHybrid({ ...input, embeddingMode: 'local', localEmbeddingModelSource: 'bundled' })
+    assert.deepEqual(local.map(hit => hit.id), [chunks.at(-1).id], 'ONNX source discovery also covers chunks beyond the first page')
+    assert.equal(onnxCalls, 1)
+    assert.equal(embeddingCalls, emptyCalls, 'a local query does not dispatch a provider embedding')
+    database.query("UPDATE chunk_embeddings SET source = 'provider', model = 'paged-test'").run()
+
+    const cachedIndex = knowledgeModule.createSqliteKnowledgeHybridIndex(storage, { ...dependencies, cacheTtlMs: 1_000 })
+    await cachedIndex.searchHybrid(input)
+    database.query("UPDATE rag_query_cache SET key = REPLACE(key, 'knowledge-hybrid-v4', 'knowledge-hybrid-v3')").run()
+    const callsBeforeOldCache = embeddingCalls
+    await cachedIndex.searchHybrid(input)
+    assert.equal(embeddingCalls, callsBeforeOldCache + 1, 'cache entries from the old truncated coverage policy are not reused')
+    await index.clearCache({ signal })
+
+    const append = () => {
+      database.query('INSERT INTO knowledge_chunks (id, documentId, title, content, ordinal, chunkIndex, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run('zz-appended', document.id, document.title, chunks[0].content, 260, 0, clock.now())
+      database.query("INSERT INTO chunk_embeddings (chunkId, embeddingJson, dimension, source, model, updatedAt, status) VALUES ('zz-appended', '[1,0]', 2, 'provider', 'paged-test', 10000, 'ready')").run()
+    }
+    pages = []
+    afterPage = () => { afterPage = undefined; append() }
+    await index.searchHybrid(input)
+    assert.equal(pages.flat().length, chunks.length, 'an appended key above the captured boundary waits until the next query')
+    assert.ok(!pages.flat().includes('zz-appended'))
+    database.query("DELETE FROM knowledge_chunks WHERE id = 'zz-appended'").run()
+
+    // Mutate canonical/derived rows after a page is read but before its repair
+    // transaction. This exercises the actual paged read/commit boundary.
+    database.query("UPDATE chunk_embeddings SET embeddingJson = 'malformed' WHERE chunkId IN ('chunk-0003', 'chunk-0004')").run()
+    afterPage = () => {
+      afterPage = undefined
+      database.query("DELETE FROM knowledge_chunks WHERE id IN ('chunk-0000', 'chunk-0003')").run()
+      database.query("UPDATE knowledge_chunks SET content = 'Replacement content' WHERE id = 'chunk-0001'").run()
+      database.query("UPDATE chunk_embeddings SET embeddingJson = '[0,1]' WHERE chunkId = 'chunk-0004'").run()
+    }
+    const afterChange = await index.searchHybrid(input)
+    assert.ok(afterChange.length > 0, 'one stale source must not discard the remaining valid candidates')
+    assert.ok(afterChange.every(hit => !['chunk-0000', 'chunk-0001', 'chunk-0003'].includes(hit.id)),
+      'fresh results discard deleted/replaced source snapshots from earlier pages')
+    assert.equal(database.query("SELECT chunkId FROM chunk_embeddings WHERE chunkId = 'chunk-0003'").get(), null,
+      'page-local repair cannot resurrect a source deleted after its page was read')
+    assert.deepEqual(database.query("SELECT embeddingJson, source, model FROM chunk_embeddings WHERE chunkId = 'chunk-0004'").get(),
+      { embeddingJson: '[0,1]', source: 'provider', model: 'paged-test' },
+      'page-local repair preserves a concurrent successful vector upgrade')
+
+    const cancelled = new AbortController()
+    pages = []
+    afterPage = () => {
+      afterPage = undefined
+      cancellationTimer = setTimeout(() => cancelled.abort(), 0)
+    }
+    await assert.rejects(index.searchHybrid({ ...input, signal: cancelled.signal }),
+      knowledgeModule.KnowledgeHybridIndexCancelledError,
+      'a real event-loop cancellation is processed between pages even with synchronous SQLite underneath')
+    assert.equal(pages.length, 1, 'cancellation prevents reading the next vector page')
+    assert.equal(database.query('SELECT COUNT(*) AS count FROM rag_query_cache').get().count, 0)
+
+    database.query("INSERT INTO knowledge_chunks (id, documentId, title, content, ordinal, createdAt) VALUES ('zz-invalid ', ?, 'Malformed key', 'Invalid persisted cursor', 300, 10000)").run(document.id)
+    await assert.rejects(index.searchHybrid(input), knowledgeModule.KnowledgeHybridIndexDataError,
+      'paging fails closed instead of trimming a persisted key into a skipped/repeated cursor')
+  } finally {
+    clearTimeout(cancellationTimer)
+    database.close()
+  }
+}
+
+async function testKnowledgeIndexWriteIsolation(knowledgeModule) {
+  const database = new Database(':memory:')
+  try {
+    const storage = createBunSqliteProvider(database)
+    // Deliberately fixed: same-millisecond jobs cannot use timestamps as identity.
+    const clock = { now: () => 10_000 }
+    const repository = knowledgeModule.createSqliteKnowledgeRepository(storage, {
+      clock, ids: { next: (prefix) => `${prefix}-write-isolation` },
+    })
+    const document = {
+      schema: knowledgeModule.KNOWLEDGE_DOCUMENT_RECORD_SCHEMA,
+      id: 'delayed-document', title: 'Delayed embeddings', mimeType: 'text/plain', size: 32,
+      chunkCount: 1, status: 'ready', createdAt: 10_000, updatedAt: 10_000,
+    }
+    const chunk = {
+      schema: knowledgeModule.KNOWLEDGE_CHUNK_RECORD_SCHEMA,
+      id: 'delayed-chunk', documentId: document.id, title: document.title,
+      content: 'Original private knowledge content.', ordinal: 0, createdAt: 10_000,
+    }
+    const signal = new AbortController().signal
+    let dispatched
+    let providerCalls = 0
+    const dependencies = {
+      repository, clock,
+      queryEmbedding: { resolve: async () => ({ embedding: [1, 0], source: 'provider', model: 'test' }) },
+      resolveProviderEmbeddingState: () => ({ configured: true, supportsEmbeddings: true }),
+      embedWithProvider: () => new Promise((resolve, reject) => {
+        providerCalls += 1
+        dispatched({ resolve, reject })
+      }),
+    }
+    const index = knowledgeModule.createSqliteKnowledgeHybridIndex(storage, dependencies)
+    async function reset() {
+      await repository.saveDocument(document, [chunk], { signal })
+      await index.clearEmbeddings({ signal })
+      await index.synchronizeEmbeddings([chunk], { embeddingMode: 'local', localEmbeddingModelSource: 'none', signal })
+    }
+    async function startUpgrade(target = index, cancellation = signal) {
+      const started = new Promise((resolve) => { dispatched = resolve })
+      const completion = target.upgradeProviderEmbeddings([chunk], { provider: { id: 'test' }, signal: cancellation })
+      const request = await started
+      return { ...request, completion }
+    }
+    const vectors = () => database.query('SELECT * FROM chunk_embeddings ORDER BY chunkId').all()
+    const jobs = () => database.query('SELECT * FROM embedding_jobs ORDER BY id').all()
+
+    await reset()
+    const deleted = await startUpgrade()
+    await index.deleteDocumentEmbeddings(document.id, { signal })
+    await repository.deleteDocument(document.id, { signal })
+    deleted.resolve({ embedding: [1, 0], model: 'deleted-model' })
+    const deletedResult = await deleted.completion
+    assert.deepEqual(vectors(), [], 'a delayed provider result cannot resurrect a deleted document vector')
+    assert.deepEqual(jobs(), [], 'a delayed provider result cannot resurrect deleted job records')
+    assert.equal(deletedResult.succeeded, 0)
+    assert.equal(deletedResult.discarded, 1, 'discarded work is not reported as a successful upgrade')
+
+    const callsBeforeMissing = providerCalls
+    const missing = await index.upgradeProviderEmbeddings([chunk], { provider: { id: 'test' }, signal })
+    assert.equal(providerCalls, callsBeforeMissing, 'missing source content is rejected before a provider call')
+    assert.equal(missing.attempted, 0)
+
+    await reset()
+    const replaced = await startUpgrade()
+    const replacement = { ...chunk, content: 'Replacement knowledge has different evidence.' }
+    await repository.saveDocument(document, [replacement], { signal })
+    await index.synchronizeEmbeddings([replacement], { embeddingMode: 'local', localEmbeddingModelSource: 'none', signal })
+    const replacementVector = vectors()
+    replaced.resolve({ embedding: [1, 0], model: 'stale-content-model' })
+    assert.equal((await replaced.completion).discarded, 1)
+    assert.deepEqual(vectors(), replacementVector, 'late output for replaced content cannot overwrite its current vector')
+    assert.deepEqual(jobs(), [], 'superseded source jobs do not remain falsely running')
+
+    await reset()
+    const older = await startUpgrade()
+    const otherIndex = knowledgeModule.createSqliteKnowledgeHybridIndex(storage, dependencies)
+    const newer = await startUpgrade(otherIndex)
+    newer.resolve({ embedding: [0, 1], model: 'newer-model' })
+    assert.equal((await newer.completion).succeeded, 1)
+    const committedVector = vectors()
+    const committedJob = jobs()
+    older.resolve({ embedding: [1, 0], model: 'older-model' })
+    assert.equal((await older.completion).discarded, 1)
+    assert.deepEqual(vectors(), committedVector, 'latest admitted upgrade wins across index instances at the same timestamp')
+    assert.deepEqual(jobs(), committedJob, 'old completion cannot overwrite the current durable receipt')
+
+    const cancellation = new AbortController()
+    const cancelled = await startUpgrade(index, cancellation.signal)
+    const latest = await startUpgrade(otherIndex)
+    latest.resolve({ embedding: [1, 1], model: 'latest-model' })
+    await latest.completion
+    const latestJob = jobs()
+    cancellation.abort()
+    assert.equal((await cancelled.completion).status, 'cancelled')
+    assert.deepEqual(jobs(), latestJob, 'cancelling an old request cannot cancel a newer successful job')
+    cancelled.resolve({ embedding: [1, 0], model: 'cancelled-model' })
+
+    const failed = await startUpgrade()
+    await index.clearEmbeddings({ signal })
+    failed.reject(new Error('late network failure'))
+    await failed.completion
+    assert.deepEqual(jobs(), [], 'a late error cannot recreate a cleared job')
+    assert.deepEqual(vectors(), [], 'a cleared index remains clear after an old request settles')
+
+    await reset()
+    let localStarted
+    let finishLocal
+    const localReady = new Promise((resolve) => { localStarted = resolve })
+    const localIndex = knowledgeModule.createSqliteKnowledgeHybridIndex(storage, {
+      ...dependencies,
+      resolveOnnxEmbeddingPort: () => ({
+        model: 'local-test',
+        embed: () => new Promise((resolve) => { finishLocal = resolve; localStarted() }),
+      }),
+    })
+    const localPending = localIndex.synchronizeEmbeddings([chunk], { embeddingMode: 'local', signal })
+    await localReady
+    await index.deleteDocumentEmbeddings(document.id, { signal })
+    await repository.deleteDocument(document.id, { signal })
+    finishLocal([1, 0])
+    await localPending
+    assert.deepEqual(vectors(), [], 'late local inference cannot recreate a deleted source vector either')
+
+    await reset()
+    await index.clearEmbeddings({ signal })
+    let queryStarted
+    let finishQuery
+    const queryReady = new Promise((resolve) => { queryStarted = resolve })
+    const delayedSearch = knowledgeModule.createSqliteKnowledgeHybridIndex(storage, {
+      ...dependencies,
+      queryEmbedding: { resolve: () => new Promise((resolve) => { finishQuery = resolve; queryStarted() }) },
+    })
+    const readPending = delayedSearch.searchHybrid({ query: 'private knowledge', limit: 5, embeddingMode: 'local', signal })
+    await queryReady
+    await index.deleteDocumentEmbeddings(document.id, { signal })
+    await repository.deleteDocument(document.id, { signal })
+    finishQuery({
+      embedding: knowledgeModule.createLocalKnowledgeEmbedding('private knowledge'),
+      source: 'local', model: knowledgeModule.KNOWLEDGE_LOCAL_HASH_MODEL_ID,
+    })
+    await readPending
+    assert.deepEqual(vectors(), [], 'read repair cannot insert a vector after source deletion')
+    assert.equal(database.query('SELECT COUNT(*) AS count FROM rag_query_cache').get().count, 0,
+      'an in-flight search cannot persist deleted source text back into the result cache')
+
+    await reset()
+    const cached = await index.searchHybrid({ query: 'private knowledge', limit: 5, embeddingMode: 'local', signal })
+    assert.equal(cached.length, 1)
+    await repository.saveDocument(document, [replacement], { signal })
+    const afterReplacement = await index.searchHybrid({ query: 'private knowledge', limit: 5, embeddingMode: 'local', signal })
+    assert.ok(afterReplacement.every((hit) => hit.content !== chunk.content),
+      'cache reads reject content that no longer matches the canonical source')
+
+    await reset()
+    const ready = await startUpgrade()
+    ready.resolve({ embedding: [1, 0], model: 'original-content-model' })
+    await ready.completion
+    await index.searchHybrid({ query: 'private knowledge', limit: 5, embeddingMode: 'local', signal })
+    const beforeRollback = { vectors: vectors(), jobs: jobs(), cache: database.query('SELECT * FROM rag_query_cache').all() }
+    await assert.rejects((await storage.get()).transaction(async (transaction) => {
+      await transaction.run('DELETE FROM knowledge_chunks WHERE id = ?', [chunk.id])
+      throw new Error('rollback canonical deletion')
+    }), /rollback canonical deletion/)
+    assert.deepEqual({ vectors: vectors(), jobs: jobs(), cache: database.query('SELECT * FROM rag_query_cache').all() }, beforeRollback,
+      'rolling back source deletion preserves all associated derivative state')
+    await repository.saveDocument(document, [replacement], { signal })
+    assert.deepEqual(vectors(), [], 'canonical replacement invalidates a previously valid vector for different content')
+    assert.deepEqual(jobs(), [], 'canonical replacement removes the old content job receipt')
+    assert.equal(database.query('SELECT COUNT(*) AS count FROM rag_query_cache').get().count, 0,
+      'canonical replacement invalidates cached evidence in the same transaction')
+
+    // Re-create a v2 index with an orphan to exercise the actual v3 upgrade,
+    // including failure after DDL/cleanup but before the migration commits.
+    for (const { name } of database.query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'knowledge_hybrid_%'").all()) {
+      database.exec(`DROP TRIGGER ${name}`)
+    }
+    database.query('DELETE FROM platform_schema_migrations WHERE scope = ? AND version = ?').run('knowledge-hybrid-index', 3)
+    database.exec("INSERT INTO chunk_embeddings VALUES ('orphan', '[1,0]', 2, 'provider', 'old-model', 10000, 'ready', NULL)")
+    database.exec("INSERT INTO embedding_jobs VALUES ('embed-orphan', 'orphan', 'running', 'provider', NULL, 10000)")
+    const sourceSnapshot = await repository.loadSnapshot()
+    let failMigration = true
+    const migrationFailure = new Error('index lifecycle migration failed')
+    const migratingIndex = knowledgeModule.createSqliteKnowledgeHybridIndex({
+      async get() {
+        const value = await storage.get()
+        return {
+          ...value,
+          transaction: (work) => value.transaction((transaction) => work({
+            ...transaction,
+            async exec(sql) {
+              await transaction.exec(sql)
+              if (failMigration && sql.includes('knowledge_hybrid_source_delete')) throw migrationFailure
+            },
+          })),
+        }
+      },
+    }, dependencies)
+    await assert.rejects(migratingIndex.clearCache(), (error) => error === migrationFailure)
+    assert.equal(vectors()[0].chunkId, 'orphan', 'failed migration rolls back derivative cleanup')
+    assert.equal(jobs()[0].chunkId, 'orphan', 'failed migration also rolls back job cleanup')
+    assert.equal(database.query("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'knowledge_hybrid_%'").get().count, 0,
+      'failed migration rolls back its trigger definitions')
+    assert.equal(database.query('SELECT version FROM platform_schema_migrations WHERE scope = ? AND version = ?').get('knowledge-hybrid-index', 3), null)
+    failMigration = false
+    await migratingIndex.clearCache()
+    assert.deepEqual(vectors(), [], 'retry removes only orphaned vectors')
+    assert.deepEqual(jobs(), [], 'retry removes only orphaned jobs')
+    assert.deepEqual(await repository.loadSnapshot(), sourceSnapshot, 'the migration never changes canonical documents or memories')
+    assert.equal(database.query('SELECT version FROM platform_schema_migrations WHERE scope = ? AND version = ?').get('knowledge-hybrid-index', 3).version, 3)
+  } finally {
+    database.close()
+  }
+}
+
 function testKnowledgeReranking(knowledgeModule) {
+  const same = { title: 'Evidence', content: 'alpha beta evidence', chunkIndex: 0, createdAt: 0 }
+  for (const scores of [
+    [{ ftsScore: -10 }, { ftsScore: -1 }],
+    [{ ftsScore: -2e-6 }, { ftsScore: -1e-6 }],
+    [{ score: 0.9 }, { score: 0.1 }],
+  ]) {
+    assert.deepEqual(knowledgeModule.rerankKnowledgeSources('alpha beta', [
+      { ...same, id: 'strong', ...scores[0] },
+      { ...same, id: 'weak', ...scores[1] },
+    ], 2).map(source => source.id), ['strong', 'weak'],
+    'raw negative BM25 and higher-is-better relevance both preserve their ordering')
+  }
+  const fused = knowledgeModule.fuseHybridKnowledgeCandidates(
+    [{ ...same, id: 'strong', score: -2e-6 }, { ...same, id: 'weak', score: -1e-6 }],
+    [{ ...same, id: 'strong', vectorScore: 0.9 }, { ...same, id: 'weak', vectorScore: 0.1 }],
+    'hybrid',
+  )
+  assert.equal(fused[0].ftsScore, -2e-6, 'fusion preserves raw SQLite scores for provenance')
+  assert.ok(fused[0].score > fused[1].score, 'fusion does not invert lexical relevance')
+  assert.deepEqual(knowledgeModule.rerankKnowledgeSources('alpha beta', fused, 2).map(source => source.id),
+    ['strong', 'weak'], 'reranking preserves fused relevance instead of ignoring the vector signal')
   const reranked = knowledgeModule.rerankKnowledgeSources('alpha beta', [
     { id: 'old', title: 'Old', content: 'gamma delta', score: 0.9, chunkIndex: 10 },
     { id: 'match', title: 'Alpha', content: 'alpha beta beta', score: 0.2, chunkIndex: 0 },
@@ -7145,8 +7634,8 @@ function testKnowledgeCandidateFusion(knowledgeModule) {
     'hybrid',
   )
   assert.equal(hybrid[0].sourceReason, 'fts', 'FTS provenance remains primary for a duplicate hybrid candidate')
-  assert.equal(hybrid[0].ftsScore, 0.5)
-  assert.equal(hybrid[0].score, 0.8 * 0.62 + 0.5 * 0.38)
+  assert.equal(hybrid[0].ftsScore, -1, 'raw BM25 remains attributable to SQLite')
+  assert.equal(hybrid[0].score, 0.8 * 0.62 + 1 * 0.38)
   assert.equal(hybrid[1].retrievalMode, 'vector')
 
   const agentic = knowledgeModule.mergeAgenticKnowledgeCandidates([
@@ -7266,6 +7755,152 @@ async function testKnowledgeContextRetriever(knowledgeModule) {
   )
 }
 
+async function testSqliteConnectionTransactions() {
+  const { transformTypeScriptModule } = require('./node-ts-support')
+  const filename = path.join(__dirname, '..', 'src/platform/storage/expoSqliteDatabase.ts')
+  const compiled = transformTypeScriptModule(fs.readFileSync(filename, 'utf8'), filename)
+
+  for (const web of [false, true]) {
+    const connections = []
+    let failInitialization = false
+    let omitTransactions = false
+    let exclusiveConnections = 0
+    const initializationFailure = new Error('SQLite initialization failed')
+
+    function connection(database = new Database(':memory:')) {
+      // Expo opens a distinct connection for withExclusiveTransactionAsync;
+      // connection-local PRAGMAs are not inherited from the configured parent.
+      database.exec('PRAGMA foreign_keys = OFF')
+      const state = { database, closed: false }
+      connections.push(state)
+      const native = {
+        async execAsync(sql) {
+          if (failInitialization && sql.includes('journal_mode')) {
+            failInitialization = false
+            throw initializationFailure
+          }
+          database.exec(sql)
+        },
+        async runAsync(sql, ...parameters) {
+          const result = database.query(sql).run(...parameters)
+          return { changes: result.changes, lastInsertRowId: Number(result.lastInsertRowid) }
+        },
+        async getFirstAsync(sql, ...parameters) { return database.query(sql).get(...parameters) ?? null },
+        async getAllAsync(sql, ...parameters) { return database.query(sql).all(...parameters) },
+        async closeAsync() { database.close(); state.closed = true },
+        async withTransactionAsync(work) {
+          try {
+            await native.execAsync('BEGIN')
+            await work()
+            await native.execAsync('COMMIT')
+          } catch (error) {
+            await native.execAsync('ROLLBACK')
+            throw error
+          }
+        },
+        async withExclusiveTransactionAsync(work) {
+          exclusiveConnections += 1
+          const separate = connection(Database.deserialize(database.serialize()))
+          try { await separate.withTransactionAsync(() => work(separate)) }
+          finally { await separate.closeAsync() }
+        },
+      }
+      if (omitTransactions) delete native.withTransactionAsync
+      return native
+    }
+
+    const module = { exports: {} }
+    new Function('require', 'module', 'exports', 'document', compiled)(
+      (name) => {
+        assert.equal(name, 'expo-sqlite')
+        return { openDatabaseAsync: async () => connection() }
+      }, module, module.exports, web ? {} : undefined,
+    )
+    const { createExpoSqliteDatabaseProvider, scheduleSqliteDatabaseOperation } = module.exports
+    const databaseName = `connection-policy-${web ? 'web' : 'native'}`
+
+    try {
+      const provider = createExpoSqliteDatabaseProvider({ databaseName })
+      const database = await provider.get()
+      const foreignKeys = await database.transaction((transaction) => transaction.getFirst('PRAGMA foreign_keys'))
+      assert.equal(foreignKeys.foreign_keys, 1,
+        `${web ? 'web' : 'native'} transactions enforce the initialized connection's foreign keys`)
+      assert.equal((await database.transaction((transaction) => transaction.getFirst('PRAGMA synchronous'))).synchronous, 2,
+        'authoritative journal commits keep FULL durability rather than silently inheriting WAL/NORMAL')
+      assert.equal(exclusiveConnections, 0, 'transactions do not open an unconfigured connection')
+      await database.exec(`
+        CREATE TABLE parents (id TEXT PRIMARY KEY);
+        CREATE TABLE children (id TEXT PRIMARY KEY, parentId TEXT REFERENCES parents(id) ON DELETE CASCADE);
+      `)
+      await database.transaction(async (transaction) => {
+        await transaction.run('INSERT INTO parents VALUES (?)', ['parent'])
+        await transaction.run('INSERT INTO children VALUES (?, ?)', ['child', 'parent'])
+      })
+      await database.transaction((transaction) => transaction.run('DELETE FROM parents'))
+      assert.equal((await database.getFirst('SELECT COUNT(*) AS count FROM children')).count, 0,
+        'transactional deletion cascades to dependent records')
+
+      await assert.rejects(database.transaction(async (transaction) => {
+        await transaction.run('INSERT INTO parents VALUES (?)', ['rolled-back'])
+        await transaction.run('INSERT INTO children VALUES (?, ?)', ['orphan', 'missing'])
+      }), /FOREIGN KEY constraint failed/i)
+      assert.equal((await database.getFirst('SELECT COUNT(*) AS count FROM parents')).count, 0,
+        'a failed child insert rolls back earlier writes')
+
+      await assert.rejects(database.transaction(async (transaction) => {
+        await transaction.exec('PRAGMA defer_foreign_keys = ON')
+        await transaction.run('INSERT INTO children VALUES (?, ?)', ['commit-orphan', 'missing'])
+      }), /FOREIGN KEY constraint failed/i, 'deferred constraint failure rejects the commit')
+      assert.equal((await database.getFirst('SELECT COUNT(*) AS count FROM children')).count, 0,
+        'failed commits roll back rather than exposing partial records')
+
+      let entered
+      let finish
+      const enteredTransaction = new Promise((resolve) => { entered = resolve })
+      const finishTransaction = new Promise((resolve) => { finish = resolve })
+      const failure = new Error('interrupted work')
+      const pending = database.transaction(async (transaction) => {
+        await transaction.run('INSERT INTO parents VALUES (?)', ['uncommitted'])
+        entered()
+        await finishTransaction
+        throw failure
+      })
+      const rejected = assert.rejects(pending, (error) => error === failure)
+      await enteredTransaction
+      let readCompleted = false
+      let siblingCompleted = false
+      const read = database.getFirst('SELECT COUNT(*) AS count FROM parents').then((value) => {
+        readCompleted = true
+        return value
+      })
+      const sibling = scheduleSqliteDatabaseOperation(databaseName, async () => { siblingCompleted = true })
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(readCompleted, false, 'queued reads cannot join another asynchronous transaction')
+      assert.equal(siblingCompleted, false, 'independent adapters sharing the file respect the transaction queue')
+      finish()
+      await rejected
+      assert.equal((await read).count, 0, 'queued reads observe the rollback, not uncommitted work')
+      await sibling
+      assert.equal(await database.transaction(async () => 'recovered'), 'recovered', 'failure releases the queue')
+
+      failInitialization = true
+      const retryProvider = createExpoSqliteDatabaseProvider({ databaseName: `${databaseName}-retry` })
+      await assert.rejects(retryProvider.get(), (error) => error === initializationFailure)
+      assert.equal(connections.at(-1).closed, true, 'failed initialization closes its unused native handle')
+      assert.equal((await (await retryProvider.get()).getFirst('PRAGMA foreign_keys')).foreign_keys, 1,
+        'initialization retries on a freshly configured connection')
+
+      omitTransactions = true
+      const unsupported = await createExpoSqliteDatabaseProvider({ databaseName: `${databaseName}-unsupported` }).get()
+      let workStarted = false
+      await assert.rejects(unsupported.transaction(async () => { workStarted = true }))
+      assert.equal(workStarted, false, 'missing transaction support fails before any application write')
+    } finally {
+      for (const { database, closed } of connections) if (!closed) database.close()
+    }
+  }
+}
+
 function testSqliteWebPersistenceContract() {
   const storageSource = fs.readFileSync(
     path.join(__dirname, '..', 'src/platform/storage/expoSqliteDatabase.ts'),
@@ -7277,9 +7912,8 @@ function testSqliteWebPersistenceContract() {
     'utf8',
   )
   assert.doesNotMatch(storageSource, /createSqliteWebFallbackDatabase/, 'web cannot restore no-op SQLite persistence')
-  assert.match(storageSource, /const supportsExclusiveTransactions = typeof document === 'undefined'/, 'web selects the supported non-exclusive transaction API')
-  assert.match(storageSource, /supportsExclusiveTransactions\s*&&\s*typeof transactionCapable\.withExclusiveTransactionAsync/, 'native SQLite retains exclusive transactions')
-  assert.match(storageSource, /transactionCapable\.withTransactionAsync/, 'web SQLite retains transactional persistence')
+  assert.match(storageSource, /await database\.withTransactionAsync/, 'native and web use real transactions on the initialized connection')
+  assert.doesNotMatch(storageSource, /\.withExclusiveTransactionAsync\(/, 'transactions cannot silently switch to an unconfigured connection')
   assert.match(metroSource, /assetExts[^\n]*'wasm'/, 'Metro includes the Expo SQLite wasm asset')
   assert.match(metroSource, /Cross-Origin-Embedder-Policy['"], ['"]credentialless/, 'Metro emits the Expo SQLite COEP header')
   assert.match(metroSource, /Cross-Origin-Opener-Policy['"], ['"]same-origin/, 'Metro emits the Expo SQLite COOP header')
@@ -7431,6 +8065,111 @@ function testPortableImportRecoveryContract(core, storageModule) {
   const replyInitializationIndex = bootstrapHookSource.indexOf('initializeConversationReplyStart()')
   const hydrationIndex = bootstrapHookSource.indexOf('safeBootstrap(st(\'bootstrap.chatData\'), loadChats)')
   assert.ok(recoveryIndex >= 0 && recoveryIndex < replyInitializationIndex && recoveryIndex < hydrationIndex, 'whole-import recovery runs before reply initialization and store hydration')
+}
+
+async function testMemorySearchAndImportBoundaries(knowledgeModule) {
+  const database = new Database(':memory:')
+  try {
+    const repository = knowledgeModule.createSqliteKnowledgeRepository(createBunSqliteProvider(database), {
+      clock: { now: () => 10_000 },
+    })
+    const scope = { kind: 'conversation', id: 'memory-boundary-conversation' }
+    const fact = {
+      id: 'memory-boundary-original',
+      content: 'memoryboundary original preference',
+      status: 'active',
+      scope,
+      subject: 'user',
+      key: 'memoryboundary',
+      value: 'original',
+      sourceKind: 'manual',
+      confidence: 1,
+    }
+    await repository.saveMemory(fact)
+    const search = { query: 'memoryboundary', limit: 10, statuses: ['active'] }
+    assert.deepEqual(await repository.searchMemories({ ...search, scopes: [] }), [],
+      'an empty memory scope list never becomes an unrestricted query')
+    await assert.rejects(repository.searchMemories(search), knowledgeModule.KnowledgeRepositoryDataError,
+      'memory retrieval requires an explicit scope even for JavaScript callers')
+    for (const scopes of [null, {}, [null], [{ id: 'local-user' }], [{ kind: '', id: 'local-user' }]]) {
+      await assert.rejects(repository.searchMemories({ ...search, scopes }), knowledgeModule.KnowledgeRepositoryDataError,
+        'malformed retrieval scopes fail closed instead of invoking legacy scope defaults')
+    }
+    await repository.saveMemory({ ...fact, id: 'memory-boundary-other-user', scope: { kind: 'user', id: 'other-user' } })
+    assert.deepEqual((await repository.searchMemories({ ...search, scopes: [scope] })).map((memory) => memory.id),
+      [fact.id], 'scope selection excludes a different user as well as other conversations')
+
+    const repeatedMemory = {
+      id: 'memory-scope-first', content: 'scopeboundary repeated content', status: 'active',
+      scope, sourceKind: 'manual', sourceMessageIds: ['first-scope-message'],
+    }
+    const otherScope = { kind: 'conversation', id: 'memory-other-conversation' }
+    await repository.saveMemory(repeatedMemory)
+    const [otherMemory] = await repository.importMemories([{
+      ...repeatedMemory, id: 'memory-scope-second', scope: otherScope, sourceMessageIds: ['second-scope-message'],
+    }])
+    assert.equal(otherMemory.id, 'memory-scope-second', 'identical text in different scopes is not an import duplicate')
+    assert.deepEqual(otherMemory.scope, otherScope)
+    const [sameScopeDuplicate] = await repository.importMemories([{
+      ...repeatedMemory, id: 'memory-scope-duplicate', sourceMessageIds: ['first-scope-confirmation'],
+    }])
+    assert.equal(sameScopeDuplicate.id, repeatedMemory.id, 'same-scope text duplicates still merge')
+    assert.deepEqual(sameScopeDuplicate.sourceMessageIds, ['first-scope-message', 'first-scope-confirmation'],
+      'import dedup never merges provenance from another conversation')
+    await assert.rejects(repository.importMemories([{ ...repeatedMemory, scope: otherScope }]),
+      knowledgeModule.KnowledgeRepositoryDataError, 'a cross-scope ID collision must not silently merge records')
+    assert.deepEqual((await repository.searchMemories({ ...search, query: 'scopeboundary', scopes: [otherScope] }))
+      .map((memory) => memory.id), ['memory-scope-second'])
+
+    // Candidate limiting must happen after BM25 ordering, and larger-magnitude
+    // negative BM25 scores mean stronger matches, not worse ones.
+    for (let index = 0; index < 5; index += 1) {
+      await repository.saveMemory({
+        ...fact, id: `memory-rank-weak-${index}`, subject: `rank-${index}`, key: 'rank', value: 'weak',
+        content: `rankingprobe ${'unrelated filler '.repeat(100)}`,
+      })
+    }
+    await repository.saveMemory({
+      ...fact, id: 'memory-rank-strong', subject: 'strong-rank', key: 'rank', value: 'strong',
+      content: 'rankingprobe rankingprobe rankingprobe',
+    })
+    assert.deepEqual((await repository.searchMemories({
+      query: 'rankingprobe', limit: 1, statuses: ['active'], scopes: [scope],
+    })).map((memory) => memory.id), ['memory-rank-strong'],
+    'the strongest memory survives the SQL candidate cap and application ranking')
+
+    const replacement = {
+      ...fact, id: 'memory-boundary-correction', content: 'memoryboundary corrected preference',
+      value: 'corrected', supersedesId: fact.id,
+    }
+    await repository.importMemories([replacement])
+    assert.equal(database.query('SELECT status FROM memories WHERE id = ?').get(fact.id).status, 'superseded',
+      'import persists the old fact supersession before inserting its active replacement')
+    assert.deepEqual((await repository.searchMemories({ ...search, scopes: [scope] })).map((memory) => memory.id),
+      [replacement.id], 'retrieval sees only the corrected active fact')
+
+    database.exec(`CREATE TEMP TRIGGER reject_memory_boundary_import BEFORE INSERT ON memories
+      WHEN NEW.id = 'memory-boundary-import-rejected'
+      BEGIN SELECT RAISE(ABORT, 'test rejected import'); END;`)
+    await assert.rejects(repository.importMemories([
+      { ...replacement, id: 'memory-boundary-rolled-back', value: 'temporary', supersedesId: replacement.id },
+      { ...fact, id: 'memory-boundary-import-rejected', key: 'different-key' },
+    ]), /test rejected import/)
+    assert.equal(database.query('SELECT status FROM memories WHERE id = ?').get(replacement.id).status, 'active',
+      'failed import rolls back supersession of the previous fact')
+    assert.equal(database.query('SELECT COUNT(*) AS count FROM memory_fts WHERE id = ?').get('memory-boundary-rolled-back').count, 0,
+      'failed import rolls back its FTS entry too')
+
+    await repository.updateMemoryStatus(replacement.id, 'disabled')
+    assert.deepEqual(await repository.searchMemories({ ...search, scopes: [scope] }), [],
+      'disabled and superseded memories remain unavailable to active retrieval')
+    await repository.deleteMemory(replacement.id)
+    assert.equal(database.query('SELECT COUNT(*) AS count FROM memories WHERE id = ?').get(replacement.id).count, 0)
+    assert.equal(database.query('SELECT COUNT(*) AS count FROM memory_fts WHERE id = ?').get(replacement.id).count, 0,
+      'deletion removes the FTS row as well as the durable memory record')
+  } finally {
+    database.close()
+  }
 }
 
 function createBunSqliteProvider(database) {

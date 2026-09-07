@@ -355,7 +355,7 @@ function assertAppearanceEvidence(appearance, expected) {
     mode: `settings-theme-mode-${expected.appearance.mode}`,
     accent: `settings-theme-accent-${expected.appearance.accentId}`,
   }
-  const expectedCounts = { family: 3, mode: 3, accent: 6 }
+  const expectedCounts = { family: 4, mode: 3, accent: 6 }
   for (const groupName of ['family', 'mode', 'accent']) {
     assert.deepEqual(
       appearance.radioGroups?.[groupName],

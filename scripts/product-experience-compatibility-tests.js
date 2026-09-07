@@ -268,8 +268,9 @@ function assertSourceIntegration() {
     settingsScreenSource.includes('SettingsControlNavigation') &&
       settingsScreenSource.includes('SettingsControlCatalog') &&
       settingsControlExperienceSource.includes('settings-control-catalog-minimal') &&
-      settingsControlExperienceSource.includes('settings-control-catalog-lime-road') &&
-      settingsControlExperienceSource.includes('settings-control-catalog-markdown'),
+      settingsControlExperienceSource.includes('settings-control-catalog-monet') &&
+      settingsControlExperienceSource.includes('settings-control-catalog-material') &&
+      settingsControlExperienceSource.includes('settings-control-catalog-liquid-glass'),
     'settings home keeps searchable AI and system control views while each theme owns its directory geometry'
   )
   assert.ok(settingsScreenSource.includes("t('settings.controlSearchPlaceholder')"), 'settings home exposes one search entry for settings and capabilities')

@@ -19,6 +19,9 @@ async function main() {
   await assertAssistantRunWorkspaceWritebackMigration(core, runtimeModule)
   await assertAssistantRunKindMigration(core, runtimeModule)
   await assertConversationLegacyMigration(conversationsModule)
+  assertProviderStreamEventBuffer(providersModule)
+  await assertIncrementalStreamCheckpoints(core, runtimeModule)
+  await assertResponseRunLookup(core, runtimeModule)
 
   const database = new Database(':memory:')
   try {
@@ -289,6 +292,7 @@ async function main() {
     )
     await assertAtomicJournalAndRunState(core, persistence)
     await assertChatActivityPersistence(core, runtimeModule, assistantRuntime, persistence, storage)
+    await assertActivityCheckpointOverflow(core, assistantRuntime, persistence)
     await assertChatActivityCancellationPreservesWorkspaceWritebackHandoff(
       core,
       assistantRuntime,
@@ -302,6 +306,37 @@ async function main() {
   }
 
   console.log('Walking-skeleton integration tests passed')
+}
+
+async function assertResponseRunLookup(core, runtimeModule) {
+  const { createInMemoryRunStore } = await import('../src/modules/assistant-runtime/testing/inMemoryRunStore.ts')
+  const database = new Database(':memory:')
+  try {
+    const nativeAdapterOnHost = runtimeModule.createSqliteAssistantRunPersistence(createBunSqliteStorage(database))
+    for (const store of [nativeAdapterOnHost, createInMemoryRunStore()]) {
+      const terminal = {
+        id: core.asAssistantRunId('response-run-1'), kind: 'chat', conversationId: 'conversation-gap', responseMessageId: 'message-gap',
+        providerId: 'fixture', model: 'fixture', contextSnapshotId: core.asContextSnapshotId('context-gap'),
+        status: 'succeeded', createdAt: 10, completedAt: 20, journalSequence: 0,
+        result: { outputText: 'Acknowledged 😀', streamEventCount: 1 },
+      }
+      await store.save(terminal)
+      assert.equal((await store.listRecoverable()).length, 0)
+      assert.deepEqual(await store.getLatestForResponseMessage('conversation-gap', 'message-gap'), terminal,
+        'terminal output remains discoverable when recovery no longer lists its run')
+      assert.equal(await store.getLatestForResponseMessage('another-conversation', 'message-gap'), undefined)
+      assert.equal(await store.getLatestForResponseMessage('conversation-gap', 'another-message'), undefined)
+      const latest = { ...terminal, id: core.asAssistantRunId('response-run-2'), createdAt: 30, status: 'cancelled' }
+      await store.save(latest)
+      assert.equal((await store.getLatestForResponseMessage('conversation-gap', 'message-gap')).id, latest.id,
+        'a newer cancellation wins over an older successful owner')
+      await store.save({ ...terminal, id: core.asAssistantRunId('response-run-3'), createdAt: 30, status: 'running' })
+      assert.equal((await store.getLatestForResponseMessage('conversation-gap', 'message-gap')).status, 'running',
+        'lookup includes nonterminal owners and uses a deterministic tie-breaker')
+    }
+  } finally {
+    database.close()
+  }
 }
 
 function assertStrictChatRequestValidation(core) {
@@ -1588,6 +1623,52 @@ async function assertChatActivityPersistence(core, runtimeModule, assistantRunti
   )
 }
 
+async function assertActivityCheckpointOverflow(core, assistantRuntime, persistence) {
+  const runId = core.asAssistantRunId('run-chat-activity-overflow')
+  const context = {
+    schema: 'islemind.context-snapshot.v1',
+    id: core.asContextSnapshotId('context-chat-activity-overflow'),
+    createdAt: 5,
+    conversationMessageIds: [],
+    memoryIds: [],
+    knowledgeSourceIds: [],
+    attachmentIds: [],
+    approvedToolContextIds: [],
+  }
+  const result = await assistantRuntime.executeActivity({
+    runId,
+    kind: 'chat',
+    conversationId: 'conversation-walking-skeleton',
+    context,
+    executor: {
+      async execute({ checkpointStreamEvent }) {
+        const pending = []
+        for (let index = 0; index < 257; index += 1) {
+          pending.push(checkpointStreamEvent({
+            type: 'trace',
+            traceId: 'overflow-' + index,
+            traceType: 'system',
+            traceStatus: 'started',
+          }))
+        }
+        await Promise.allSettled(pending)
+        return {}
+      },
+    },
+  })
+  assert.equal(result.ok, false, 'checkpoint overflow fails the activity instead of retaining unbounded work')
+  if (result.ok) throw new Error('Expected checkpoint overflow to fail.')
+  assert.equal(result.error.code, 'activity_failed')
+  const stored = await persistence.get(runId)
+  assert.equal(stored?.status, 'failed')
+  assert.equal(stored?.failure?.code, 'activity_failed')
+  assert.equal(
+    (await persistence.list(runId)).at(-1)?.type,
+    'run.failed',
+    'checkpoint overflow still reaches a durable terminal failure barrier',
+  )
+}
+
 async function assertChatActivityCancellationPreservesWorkspaceWritebackHandoff(
   core,
   assistantRuntime,
@@ -1783,10 +1864,316 @@ async function assertRestartRecovery(core, runtimeModule, conversationsModule, p
   assert.equal(recovered.failure.code, 'interrupted')
   assert.equal(recovered.checkpoint.outputText, 'Checkpointed output')
   assert.equal((await persistence.list(runId)).at(-1)?.type, 'run.failed')
+
+  const concurrentRunId = core.asAssistantRunId('run-concurrent-recovery')
+  await persistence.save({
+    id: concurrentRunId,
+    kind: 'chat',
+    conversationId: 'conversation-walking-skeleton',
+    providerId: 'walking-provider',
+    model: 'walking-model',
+    contextSnapshotId: core.asContextSnapshotId('context-concurrent-recovery'),
+    status: 'running',
+    createdAt: ++now,
+    startedAt: ++now,
+    journalSequence: 2,
+    checkpoint: { outputText: 'Concurrent output', streamEventCount: 1 },
+  })
+  await persistence.append({
+    schema: 'islemind.assistant-run-journal-entry.v1',
+    runId: concurrentRunId,
+    sequence: 1,
+    type: 'run.created',
+    occurredAt: now - 1,
+  })
+  await persistence.append({
+    schema: 'islemind.assistant-run-journal-entry.v1',
+    runId: concurrentRunId,
+    sequence: 2,
+    type: 'run.started',
+    occurredAt: now,
+  })
+  let concurrentListCalls = 0
+  let releaseConcurrentLists
+  const concurrentListsReady = new Promise((resolve) => { releaseConcurrentLists = resolve })
+  const racingPersistence = {
+    ...persistence,
+    async listRecoverable() {
+      const rows = await persistence.listRecoverable()
+      concurrentListCalls += 1
+      if (concurrentListCalls === 2) releaseConcurrentLists()
+      await concurrentListsReady
+      return rows
+    },
+  }
+  const concurrentRuntimeA = runtimeModule.createAssistantRuntime({
+    clock: { now: () => ++now },
+    ids,
+    providerGateway: providersModule.createProviderGateway([]),
+    persistence: racingPersistence,
+  })
+  const concurrentRuntimeB = runtimeModule.createAssistantRuntime({
+    clock: { now: () => ++now },
+    ids,
+    providerGateway: providersModule.createProviderGateway([]),
+    persistence: racingPersistence,
+  })
+  const [concurrentA, concurrentB] = await Promise.all([
+    concurrentRuntimeA.recoverInterruptedRuns(),
+    concurrentRuntimeB.recoverInterruptedRuns(),
+  ])
+  assert.equal(concurrentA.ok, true, 'the first concurrent recovery caller succeeds')
+  assert.equal(concurrentB.ok, true, 'a racing recovery caller observes the durable terminal disposition')
+  assert.equal(concurrentA.ok && concurrentA.value.length, 1)
+  assert.equal(concurrentB.ok && concurrentB.value.length, 1)
+  const concurrentRecovered = await persistence.get(concurrentRunId)
+  assert.equal(concurrentRecovered.status, 'failed')
+  assert.equal(concurrentRecovered.failure.code, 'interrupted')
+
+  // Death can occur after cancellation is acknowledged but before the executor
+  // returns. A restarted owner must not replace that authority with interruption.
+  const cancelledRunId = core.asAssistantRunId('run-recovery-cancellation-acknowledged')
+  let entered
+  let finish
+  const executorEntered = new Promise((resolve) => { entered = resolve })
+  const executorFinished = new Promise((resolve) => { finish = resolve })
+  const beforeDeath = runtimeModule.createAssistantRuntime({
+    clock: { now: () => ++now }, ids, persistence,
+    providerGateway: providersModule.createProviderGateway([]),
+  })
+  const completion = beforeDeath.executeActivity({
+    runId: cancelledRunId, kind: 'chat', conversationId: 'conversation-walking-skeleton',
+    context: {
+      schema: 'islemind.context-snapshot.v1', id: core.asContextSnapshotId('context-cancel-recovery'),
+      createdAt: now, conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [],
+    },
+    executor: { async execute({ checkpointTextDelta }) {
+      await checkpointTextDelta('Acknowledged partial output')
+      entered()
+      await executorFinished
+      return { outputText: 'Must not become successful' }
+    } },
+  })
+  await executorEntered
+  assert.equal((await beforeDeath.cancel(cancelledRunId)).ok, true)
+  const afterCancellationRecovery = await runtimeAfterRestart.recoverInterruptedRuns()
+  assert.equal(afterCancellationRecovery.ok, true)
+  const cancelledAfterRestart = await persistence.get(cancelledRunId)
+  assert.equal(cancelledAfterRestart.status, 'cancelled', 'acknowledged cancellation survives a restart before terminalization')
+  assert.equal(cancelledAfterRestart.checkpoint.outputText, 'Acknowledged partial output')
+  assert.equal((await persistence.list(cancelledRunId)).at(-1).type, 'run.cancelled')
+  finish()
+  await completion
+  assert.deepEqual(await persistence.get(cancelledRunId), cancelledAfterRestart, 'a stale executor cannot overwrite recovered cancellation')
+  assert.deepEqual((await runtimeAfterRestart.recoverInterruptedRuns()).value, [], 'recovered cancellation is idempotent')
+}
+
+function assertProviderStreamEventBuffer(providersModule) {
+  const buffer = new providersModule.ProviderStreamEventBuffer({ events: 3, characters: 512 })
+  const receipts = []
+  const textReceipt = () => {
+    const receipt = { id: receipts.length }
+    receipts.push(receipt)
+    return receipt
+  }
+  const first = buffer.push({ type: 'text-delta', text: 'A' }, textReceipt)
+  const merged = buffer.push({ type: 'text-delta', text: 'B', sourceEventCount: 2 }, textReceipt)
+  assert.equal(first, merged, 'adjacent text deltas share one bounded checkpoint receipt')
+  buffer.push({
+    type: 'tool-call',
+    toolCallId: 'bounded-tool',
+    toolName: 'read',
+    arguments: {},
+  }, textReceipt)
+  buffer.push({ type: 'text-delta', text: 'C' }, textReceipt)
+  assert.equal(buffer.length, 3, 'text coalescing never crosses a tool/effect boundary')
+  assert.deepEqual(buffer.shift()?.event, { type: 'text-delta', text: 'AB', sourceEventCount: 3 })
+  assert.deepEqual(buffer.shift()?.event, {
+    type: 'tool-call',
+    toolCallId: 'bounded-tool',
+    toolName: 'read',
+    arguments: {},
+  })
+  assert.deepEqual(buffer.shift()?.event, { type: 'text-delta', text: 'C' })
+  assert.equal(receipts.length, 3, 'coalescing does not retain one receipt per provider fragment')
+
+  const bounded = new providersModule.ProviderStreamEventBuffer({ events: 2, characters: 512 })
+  bounded.push({ type: 'trace', traceId: 'trace-1', traceType: 'system', traceStatus: 'started' }, () => undefined)
+  bounded.push({ type: 'trace', traceId: 'trace-2', traceType: 'system', traceStatus: 'started' }, () => undefined)
+  assert.throws(
+    () => bounded.push({ type: 'trace', traceId: 'trace-3', traceType: 'system', traceStatus: 'started' }, () => undefined),
+    /bounded event buffer/,
+    'non-text boundaries fail explicitly instead of growing without bound',
+  )
+}
+
+async function assertIncrementalStreamCheckpoints(core, runtimeModule) {
+  const request = {
+    schema: core.CHAT_REQUEST_SCHEMA,
+    conversationId: 'stream-storage-conversation', providerId: 'stream-provider', model: 'stream-model',
+    messages: [{ id: 'stream-user', role: 'user', text: 'Synthetic stream.' }],
+    generationParameterSources: {},
+  }
+  const context = {
+    schema: 'islemind.context-snapshot.v1', id: core.asContextSnapshotId('stream-storage-context'), createdAt: 1,
+    conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [],
+  }
+  const measurements = []
+  for (const size of [1024, 16]) {
+    for (const incremental of [false, true]) {
+      const db = new Database(':memory:')
+      let image
+      try {
+        let checkpointBytes = 0
+        let segmentBytes = 0
+        let commits = 0
+        let snapshotWrites = 0
+        const base = await createBunSqliteStorage(db).get()
+        const storage = { get: async () => ({
+          ...base,
+          async transaction(work) {
+            let written = false
+            const result = await base.transaction((tx) => work({
+              ...tx,
+              async run(sql, args = []) {
+                written = true
+                if (sql.startsWith('INSERT INTO assistant_runs (')) {
+                  snapshotWrites += 1
+                  checkpointBytes += Buffer.byteLength(args[14] ?? '')
+                } else if (sql.startsWith('UPDATE assistant_runs SET journalSequence')) {
+                  checkpointBytes += Buffer.byteLength(args[1])
+                } else if (sql.startsWith('INSERT INTO assistant_run_checkpoint_segments')) {
+                  segmentBytes += Buffer.byteLength(args[2])
+                }
+                return tx.run(sql, args)
+              },
+            }))
+            if (written) commits += 1
+            return result
+          },
+        }) }
+        const store = runtimeModule.createSqliteAssistantRunPersistence(storage)
+        await store.get(core.asAssistantRunId('initialize-migrations'))
+        commits = 0
+        let now = 1
+        const runtime = runtimeModule.createAssistantRuntime({
+          clock: { now: () => ++now }, ids: { next: () => 'stream-storage-run' },
+          persistence: incremental ? store : {
+            ...store,
+            // Same owner/API without the incremental hint: full-snapshot reference policy.
+            appendAndSave: (entry, run, captured) => store.appendAndSave(entry, run, captured),
+          },
+          providerGateway: { async *stream() {
+            for (let offset = 0; offset < 32768; offset += size) {
+              yield { type: 'text-delta', text: 'x'.repeat(size) }
+            }
+            image = db.serialize() // Last event acknowledged, terminal not yet committed.
+          } },
+        })
+        const start = performance.now()
+        const result = await runtime.execute({ request, context })
+        const elapsedMs = performance.now() - start
+        assert.equal(result.ok, true)
+        assert.equal(result.value.result.outputText, 'x'.repeat(32768))
+        assert.equal((await store.get(result.value.id)).checkpoint.outputText, result.value.result.outputText)
+        assert.equal(db.query('SELECT COUNT(*) AS n FROM assistant_run_checkpoint_segments').get().n, 0, 'terminal materialization clears fragments atomically')
+        assert.equal(db.query('SELECT schema FROM assistant_runs').get().schema, 'islemind.assistant-run.v1')
+        assert.equal(commits, 32768 / size + 3, 'each acknowledged event remains a distinct durable transaction')
+        if (incremental) {
+          assert.equal(snapshotWrites, 3, 'only create/start/terminal write full snapshots')
+          assert.ok(checkpointBytes + segmentBytes < 262144, 'stream persistence payload stays bounded for this 32 KiB output')
+          const reopened = Database.deserialize(image)
+          try {
+            const restoredStore = runtimeModule.createSqliteAssistantRunPersistence(createBunSqliteStorage(reopened))
+            const restored = await restoredStore.get(result.value.id)
+            assert.equal(restored.status, 'running')
+            assert.equal(restored.checkpoint.outputText, 'x'.repeat(32768), 'restart reads every acknowledged fragment before terminal materialization')
+            const recovery = runtimeModule.createAssistantRuntime({
+              clock: { now: () => ++now }, ids: { next: () => 'unused' }, persistence: restoredStore,
+              providerGateway: { stream() { throw new Error('Recovery must not replay a provider or effect') } },
+            })
+            assert.equal((await recovery.recoverInterruptedRuns()).ok, true)
+            assert.equal((await restoredStore.get(result.value.id)).failure.code, 'interrupted')
+            assert.equal((await restoredStore.get(result.value.id)).checkpoint.outputText, 'x'.repeat(32768))
+          } finally { reopened.close() }
+        }
+        measurements.push({ fragmentCharacters: size, incremental, commits, snapshotWrites, checkpointBytes, segmentBytes, elapsedMs: Number(elapsedMs.toFixed(3)) })
+      } finally { db.close() }
+    }
+  }
+  console.log('Stream checkpoint host/SQLite logical-payload comparison (not device I/O):', JSON.stringify(measurements))
+
+  const db = new Database(':memory:')
+  try {
+    const base = await createBunSqliteStorage(db).get()
+    let failJournal = false
+    const storage = { get: async () => ({ ...base, transaction: (work) => base.transaction((tx) => work({
+      ...tx, async run(sql, args) {
+        if (failJournal && sql.startsWith('INSERT INTO assistant_run_journal')) throw new Error('injected journal failure')
+        return tx.run(sql, args)
+      },
+    })) }) }
+    const store = runtimeModule.createSqliteAssistantRunPersistence(storage)
+    let run = {
+      id: core.asAssistantRunId('stream-fragment-contract'), kind: 'chat', conversationId: request.conversationId,
+      providerId: request.providerId, model: request.model, contextSnapshotId: context.id,
+      status: 'running', startedAt: 1, createdAt: 1, journalSequence: 0,
+    }
+    async function commit(type, checkpoint, patch = {}) {
+      const next = { ...run, ...patch, journalSequence: run.journalSequence + 1, ...(checkpoint ? { checkpoint } : {}) }
+      await store.appendAndSave({ schema: 'islemind.assistant-run-journal-entry.v1', runId: run.id, sequence: next.journalSequence, type, occurredAt: next.journalSequence }, next, undefined, run)
+      run = next
+    }
+    await commit('run.created')
+    const parts = ['A'.repeat(5000), '\ud83d', '\ude00', '\u0000中文\\"']
+    let text = ''
+    let count = 0
+    for (const part of parts) {
+      text += part
+      await commit('stream.event', { outputText: text, streamEventCount: ++count })
+      assert.equal((await store.get(run.id)).checkpoint.outputText, text, 'exact checkpoints include long deltas, NUL, escapes and split surrogate pairs')
+    }
+    const beforeFailure = await store.get(run.id)
+    const fragmentsBeforeFailure = db.query('SELECT * FROM assistant_run_checkpoint_segments ORDER BY sequence').all()
+    failJournal = true
+    await assert.rejects(commit('stream.event', { outputText: text + 'discard', streamEventCount: count + 1 }), /injected/)
+    failJournal = false
+    assert.deepEqual(await store.get(run.id), beforeFailure, 'journal failure rolls back both header and newly appended output')
+    assert.deepEqual(db.query('SELECT * FROM assistant_run_checkpoint_segments ORDER BY sequence').all(), fragmentsBeforeFailure)
+    const stale = { ...run }
+    await commit('stream.event', { outputText: text + 'retry', streamEventCount: ++count })
+    await assert.rejects(store.appendAndSave({ schema: 'islemind.assistant-run-journal-entry.v1', runId: run.id, sequence: stale.journalSequence + 1, type: 'stream.event', occurredAt: 5 }, { ...stale, journalSequence: stale.journalSequence + 1 }, undefined, stale), /not contiguous/)
+
+    // A provider continuation can replace narration rather than append it.
+    await commit('stream.event', { outputText: 'replacement', streamEventCount: ++count })
+    assert.equal((await store.get(run.id)).checkpoint.outputText, 'replacement')
+    await commit('stream.event', { outputText: 'replacement tail', streamEventCount: ++count })
+    await commit('model-operation.selected')
+    assert.equal(db.query('SELECT COUNT(*) AS n FROM assistant_run_checkpoint_segments').get().n, 0, 'effect/selection barriers retain a complete ordinary snapshot')
+    assert.equal((await store.get(run.id)).checkpoint.outputText, 'replacement tail')
+    await commit('stream.event', { outputText: 'replacement tail!', streamEventCount: ++count })
+    await commit('run.cancellation-requested', undefined, { cancellationRequestedAt: 7 })
+    assert.equal((await store.get(run.id)).checkpoint.outputText, 'replacement tail!')
+    assert.equal(db.query('SELECT COUNT(*) AS n FROM assistant_run_checkpoint_segments').get().n, 0)
+    await commit('stream.event', { outputText: 'replacement tail!?', streamEventCount: ++count })
+    db.query('DELETE FROM assistant_run_checkpoint_segments WHERE runId = ? AND sequence = ?').run(run.id, run.journalSequence)
+    await assert.rejects(store.get(run.id), /incomplete/, 'missing fragments must not silently recover a shorter output')
+    await store.clear()
+    assert.equal(db.query('SELECT COUNT(*) AS n FROM assistant_run_checkpoint_segments').get().n, 0, 'owner reset cascades fragments')
+  } finally { db.close() }
 }
 
 function createBunSqliteStorage(database) {
   database.exec('PRAGMA foreign_keys = ON')
+  // Mirror the production adapter's file queue. Recovery now reads fragmented
+  // checkpoints transactionally; concurrent BEGINs on this single host handle
+  // otherwise fail before a rendezvous and let an unfinished suite exit 0.
+  let tail = Promise.resolve()
+  const enqueue = (operation) => {
+    const result = tail.then(operation)
+    tail = result.catch(() => undefined)
+    return result
+  }
   const executor = {
     async exec(source) {
       database.exec(source)
@@ -1803,8 +2190,12 @@ function createBunSqliteStorage(database) {
     },
   }
   const storage = {
-    ...executor,
-    async transaction(work) {
+    exec: (...args) => enqueue(() => executor.exec(...args)),
+    run: (...args) => enqueue(() => executor.run(...args)),
+    getFirst: (...args) => enqueue(() => executor.getFirst(...args)),
+    getAll: (...args) => enqueue(() => executor.getAll(...args)),
+    transaction(work) {
+      return enqueue(async () => {
       database.exec('BEGIN IMMEDIATE')
       try {
         const result = await work(executor)
@@ -1814,12 +2205,17 @@ function createBunSqliteStorage(database) {
         database.exec('ROLLBACK')
         throw error
       }
+      })
     },
   }
   return { get: async () => storage }
 }
 
+const completionTimeout = setTimeout(() => {
+  console.error('Walking-skeleton tests did not complete; unresolved asynchronous work is not a pass.')
+  process.exitCode = 1
+}, 30000)
 main().catch((error) => {
   console.error(error instanceof Error ? error.stack || error.message : error)
   process.exitCode = 1
-})
+}).finally(() => clearTimeout(completionTimeout))
