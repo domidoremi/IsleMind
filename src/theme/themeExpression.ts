@@ -1,4 +1,5 @@
-import type { ThemeFamily } from './themeTokens'
+import { isThemeFamily, resolveThemeMotionDurations, type ThemeFamily } from './themeTokens'
+import { normalizeThemeFamilyValue } from '@/types/settingsContracts'
 
 /**
  * Theme Expression Layer
@@ -294,7 +295,14 @@ const GLASS_COMPONENTS = {
   memory: component('floating memory shards with bounded depth', 'lens', 'capsule', 'balanced', 'edge-highlight', 'layered', 'physical', 'fluid', 'lensing', 'selected lens', 'opaque fallback'),
 } as const satisfies Record<ThemeComponentId, ThemeComponentExpression>
 
-export const THEME_EXPRESSION_REGISTRY: Readonly<Record<ThemeFamily, ThemeExpression>> = Object.freeze({
+const deepFreeze = <T,>(value: T): T => {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
+  Object.freeze(value)
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child)
+  return value
+}
+
+export const THEME_EXPRESSION_REGISTRY: Readonly<Record<ThemeFamily, ThemeExpression>> = deepFreeze({
   minimal: {
     family: 'minimal',
     name: 'Minimal',
@@ -305,7 +313,7 @@ export const THEME_EXPRESSION_REGISTRY: Readonly<Record<ThemeFamily, ThemeExpres
     spatial: { layout: 'continuous canvas with explicit gutters', density: 'compact', alignment: 'strict columns and baseline alignment', containerPolicy: 'use spacing and rules before cards' },
     material: { surface: 'opaque paper and unframed content', border: 'hairline dividers only where needed', elevation: 'mostly flat; one restrained level for interruptive surfaces', background: 'plain, static canvas', fallback: 'opaque canvas with no visual loss' },
     interaction: { grammar: 'direct', press: 'small opacity/translation response', hover: 'quiet tint or rule', focus: 'visible single rule or ring', disabled: 'semantic muted content, never global fade', selection: 'ink edge and text marker' },
-    motion: { grammar: 'precision', duration: { instant: 0, interaction: 80, emphasis: 120, panel: 180, page: 180 }, easing: 'standard easing with no overshoot', reducedMotion: 'opacity-only, 1-120ms', ambient: 'none' },
+    motion: { grammar: 'precision', duration: resolveThemeMotionDurations('minimal'), easing: 'standard easing with no overshoot', reducedMotion: 'opacity-only, 1-120ms', ambient: 'none' },
     navigation: 'list',
     components: MINIMAL_COMPONENTS,
   },
@@ -319,7 +327,7 @@ export const THEME_EXPRESSION_REGISTRY: Readonly<Record<ThemeFamily, ThemeExpres
     spatial: { layout: 'airy compositions with mild organic drift', density: 'airy', alignment: 'soft alignment with intentional asymmetry', containerPolicy: 'group content in translucent planes, never decorate without hierarchy' },
     material: { surface: 'thin atmospheric washes over opaque readable content', border: 'soft edge highlights instead of hard outlines', elevation: 'low floating planes with diffuse shadows', background: 'bounded light fields and slow color interpolation', fallback: 'opaque tonal wash with no blur dependency' },
     interaction: { grammar: 'breathing', press: 'light temperature and soft lift change', hover: 'light moves across the surface', focus: 'diffuse halo plus clear contrast', disabled: 'faded pigment with preserved text contrast', selection: 'warm/cool wash rather than a hard block' },
-    motion: { grammar: 'organic', duration: { instant: 0, interaction: 220, emphasis: 280, panel: 380, page: 420 }, easing: 'slow sinusoidal breath with diagonal drift; no mechanical overshoot', reducedMotion: 'opacity-only, no ambient drift', ambient: 'bounded 6-8s low-amplitude light drift' },
+    motion: { grammar: 'organic', duration: resolveThemeMotionDurations('monet'), easing: 'slow sinusoidal breath with diagonal drift; no mechanical overshoot', reducedMotion: 'opacity-only, no ambient drift', ambient: 'bounded 6-8s low-amplitude light drift' },
     navigation: 'drift',
     components: MONET_COMPONENTS,
   },
@@ -333,7 +341,7 @@ export const THEME_EXPRESSION_REGISTRY: Readonly<Record<ThemeFamily, ThemeExpres
     spatial: { layout: 'adaptive surfaces with component boundaries', density: 'compact', alignment: 'standardized slots and predictable action placement', containerPolicy: 'use filled/outlined/elevated variants intentionally' },
     material: { surface: 'tonal containers with six elevation levels', border: 'outlined component semantics', elevation: 'tonal elevation first, shadow when separation needs it', background: 'dynamic-color-ready tonal canvas', fallback: 'opaque tonal surfaces when dynamic color is unavailable' },
     interaction: { grammar: 'state-layer', press: 'state layer plus bounded ripple', hover: 'state layer at hover opacity', focus: 'focus ring and supporting semantics', disabled: 'role-specific disabled container/content', selection: 'indicator/container plus icon semantics' },
-    motion: { grammar: 'material', duration: { instant: 0, interaction: 100, emphasis: 150, panel: 220, page: 280 }, easing: 'fast standard/decelerate with horizontal shared-axis and container transforms', reducedMotion: 'opacity-only with state completion', ambient: 'none' },
+    motion: { grammar: 'material', duration: resolveThemeMotionDurations('material'), easing: 'fast standard/decelerate with horizontal shared-axis and container transforms', reducedMotion: 'opacity-only with state completion', ambient: 'none' },
     navigation: 'indicator',
     components: MATERIAL_COMPONENTS,
   },
@@ -347,7 +355,7 @@ export const THEME_EXPRESSION_REGISTRY: Readonly<Record<ThemeFamily, ThemeExpres
     spatial: { layout: 'floating planes over a bounded environment', density: 'balanced', alignment: 'nested layers with explicit z-order', containerPolicy: 'one blur layer per region; content remains opaque/readable' },
     material: { surface: 'translucent lens with reflection and environmental tint', border: 'specular edge highlight plus contrast boundary', elevation: 'layered depth with restrained shadow/glow', background: 'bounded environmental field; no unbounded blur', fallback: 'reduced-glass opaque tonal surface on unsupported devices' },
     interaction: { grammar: 'physical', press: 'instant flex/lift and highlight response', hover: 'light bends toward pointer', focus: 'interior glow plus edge contrast', disabled: 'opaque fallback surface with preserved semantics', selection: 'lifted lens and light concentration' },
-    motion: { grammar: 'fluid', duration: { instant: 0, interaction: 140, emphasis: 220, panel: 320, page: 360 }, easing: 'spring with bounded translation and no infinite loops', reducedMotion: 'remove parallax/blur interpolation; keep opacity and focus', ambient: 'optional low-amplitude light movement, one layer per region' },
+    motion: { grammar: 'fluid', duration: resolveThemeMotionDurations('liquid-glass'), easing: 'spring with bounded translation and no infinite loops', reducedMotion: 'remove parallax/blur interpolation; keep opacity and focus', ambient: 'optional low-amplitude light movement, one layer per region' },
     navigation: 'floating',
     components: GLASS_COMPONENTS,
   },
@@ -357,12 +365,19 @@ export function isThemeComponentId(value: unknown): value is ThemeComponentId {
   return (THEME_COMPONENT_IDS as readonly unknown[]).includes(value)
 }
 
-export function resolveThemeExpression(family: ThemeFamily): ThemeExpression {
-  return THEME_EXPRESSION_REGISTRY[family]
+export function resolveThemeExpression(family: ThemeFamily): ThemeExpression
+export function resolveThemeExpression(family: unknown): ThemeExpression
+export function resolveThemeExpression(family: unknown): ThemeExpression {
+  const normalizedFamily = normalizeThemeFamilyValue(family)
+  return THEME_EXPRESSION_REGISTRY[normalizedFamily && isThemeFamily(normalizedFamily) ? normalizedFamily : 'minimal']
 }
 
-export function resolveThemeComponentExpression(family: ThemeFamily, componentId: ThemeComponentId): ThemeComponentExpression {
-  return THEME_EXPRESSION_REGISTRY[family].components[componentId]
+export function resolveThemeComponentExpression(family: ThemeFamily, componentId: ThemeComponentId): ThemeComponentExpression
+export function resolveThemeComponentExpression(family: unknown, componentId: unknown): ThemeComponentExpression
+export function resolveThemeComponentExpression(family: unknown, componentId: unknown): ThemeComponentExpression {
+  const expression = resolveThemeExpression(family)
+  const safeComponent = isThemeComponentId(componentId) ? componentId : 'settings'
+  return expression.components[safeComponent]
 }
 
 /** Stable labels used by grayscale and motion identity checks. */
@@ -370,7 +385,7 @@ export const THEME_IDENTITY_SIGNATURES: Readonly<Record<ThemeFamily, Readonly<{
   grayscale: readonly string[]
   interaction: readonly string[]
   emotion: string
-}>>> = Object.freeze({
+}>>> = deepFreeze({
   minimal: { grayscale: ['rules', 'alignment', 'text-first', 'flat'], interaction: ['short', 'direct', 'quiet'], emotion: 'calm / efficient / precise' },
   monet: { grayscale: ['wash', 'soft-edge', 'organic-offset', 'breathing'], interaction: ['light-drift', 'halo', 'slow'], emotion: 'gentle / natural / dreamy' },
   material: { grayscale: ['tonal-levels', 'state-layer', 'indicator', 'standard-shape'], interaction: ['ripple', 'shared-axis', 'predictable'], emotion: 'reliable / structured / clear' },

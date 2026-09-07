@@ -1,8 +1,9 @@
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import type { CanonicalThemeId, ThemeId } from '@/types/settingsContracts'
 import { normalizeThemeId } from './colors'
+import { THEME_MOTION_DURATIONS } from './themeTokens'
 
-export type ThemeFoundation = 'minimal' | 'monet' | 'material' | 'liquid-glass' | 'animal-island' | 'document'
+export type ThemeFoundation = CanonicalThemeId
 export type ThemeSeasonalLayer = 'none' | 'summer-road'
 export type ThemeMotionProfileId = 'quiet' | 'monet-breathe' | 'material-shared-axis' | 'glass-refraction'
 export type ThemeMotionRole = 'page' | 'section' | 'scenic' | 'accent' | 'overlay'
@@ -147,6 +148,26 @@ export const THEME_EXPERIENCE_EXTENSIONS = {
   },
 } as const satisfies Record<CanonicalThemeId, ThemeExperienceExtension>
 
+/**
+ * Return configuration issues for release/QA tooling without crashing the
+ * application at module load time when a profile is being edited.
+ */
+export function collectThemeMotionProfileIssues(): string[] {
+  const issues: string[] = []
+  for (const family of Object.keys(THEME_EXPERIENCE_EXTENSIONS) as CanonicalThemeId[]) {
+    const durations = THEME_MOTION_DURATIONS[family]
+    const profile = THEME_EXPERIENCE_EXTENSIONS[family].motion
+    if (profile.page.durationMs > durations.page * 2) issues.push(`${family}:page duration exceeds token budget`)
+    if (profile.section.durationMs > durations.panel * 2) issues.push(`${family}:section duration exceeds token budget`)
+  }
+  return issues
+}
+
+const THEME_MOTION_ROLES: readonly ThemeMotionRole[] = ['page', 'section', 'scenic', 'accent', 'overlay']
+const isThemeMotionRole = (value: unknown): value is ThemeMotionRole => (
+  typeof value === 'string' && (THEME_MOTION_ROLES as readonly string[]).includes(value)
+)
+
 export function resolveThemeMotion({
   themeId,
   role,
@@ -161,8 +182,9 @@ export function resolveThemeMotion({
   order?: number
 }): ResolvedThemeMotion {
   const settled: ThemeMotionState = { opacity: 1, translateX: 0, translateY: 0, scale: 1 }
+  const safeIntensity: MotionIntensity = intensity === 'full' || intensity === 'reduced' || intensity === 'none' ? intensity : 'reduced'
 
-  if (intensity === 'none') {
+  if (safeIntensity === 'none') {
     return {
       from: settled,
       animate: settled,
@@ -171,7 +193,7 @@ export function resolveThemeMotion({
     }
   }
 
-  if (intensity === 'reduced') {
+  if (safeIntensity === 'reduced') {
     return {
       from: { ...settled, opacity: 0 },
       animate: settled,
@@ -181,7 +203,7 @@ export function resolveThemeMotion({
   }
 
   const profile = THEME_EXPERIENCE_EXTENSIONS[normalizeThemeId(themeId)].motion
-  const motion = profile[role]
+  const motion = profile[isThemeMotionRole(role) ? role : 'section']
   const directionMultiplier = direction === 'forward' ? 1 : direction === 'backward' ? -1 : 0
   const resolveFrame = (token: ThemeMotionFrameToken): ThemeMotionState => ({
     opacity: token.opacity,
@@ -189,7 +211,7 @@ export function resolveThemeMotion({
     translateY: token.y,
     scale: token.scale,
   })
-  const safeOrder = Math.min(6, Math.max(0, Math.trunc(order)))
+  const safeOrder = Number.isFinite(order) ? Math.min(6, Math.max(0, Math.trunc(order))) : 0
 
   return {
     from: resolveFrame(motion.enter),

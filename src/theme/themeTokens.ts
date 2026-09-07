@@ -6,12 +6,20 @@
  * selecting a raw colour or geometry value for a particular family.
  */
 
-export type ThemeFamily = 'minimal' | 'monet' | 'material' | 'liquid-glass'
-export type ThemeTokenMode = 'light' | 'dark'
+import {
+  CANONICAL_THEME_IDS,
+  THEME_TOKEN_MODE_VALUES,
+  normalizeThemeFamilyValue,
+  type CanonicalThemeId,
+} from '@/types/settingsContracts'
 
-export const THEME_FAMILIES = ['minimal', 'monet', 'material', 'liquid-glass'] as const satisfies readonly ThemeFamily[]
+export type ThemeFamily = CanonicalThemeId
+export type ThemeTokenMode = typeof THEME_TOKEN_MODE_VALUES[number]
 
-export const THEME_TOKEN_MODES = ['light', 'dark'] as const satisfies readonly ThemeTokenMode[]
+/** Canonical family ids are declared once at the settings boundary. */
+export const THEME_FAMILIES = CANONICAL_THEME_IDS
+
+export const THEME_TOKEN_MODES = THEME_TOKEN_MODE_VALUES
 
 export interface ThemeTypographyToken {
   fontFamily: string
@@ -83,6 +91,25 @@ export interface ThemeMotionTokens {
     drag: number
   }
   reducedMotion: 'opacity-only' | 'none'
+}
+
+/**
+ * Canonical duration values shared by the token and expression layers.
+ * Component-specific motion profiles may still add a role-specific stagger,
+ * but their base timings must come from this registry so the same family does
+ * not silently acquire three different interaction speeds.
+ */
+export type ThemeMotionDurationTokens = Pick<ThemeMotionTokens, 'instant' | 'interaction' | 'emphasis' | 'panel' | 'page'>
+
+export const THEME_MOTION_DURATIONS: Readonly<Record<ThemeFamily, Readonly<ThemeMotionDurationTokens>>> = Object.freeze({
+  minimal: Object.freeze({ instant: 0, interaction: 80, emphasis: 120, panel: 180, page: 180 }),
+  monet: Object.freeze({ instant: 0, interaction: 110, emphasis: 180, panel: 260, page: 300 }),
+  material: Object.freeze({ instant: 0, interaction: 120, emphasis: 160, panel: 240, page: 300 }),
+  'liquid-glass': Object.freeze({ instant: 0, interaction: 130, emphasis: 200, panel: 280, page: 320 }),
+})
+
+export function resolveThemeMotionDurations(family: ThemeFamily): ThemeMotionDurationTokens {
+  return { ...THEME_MOTION_DURATIONS[family] }
 }
 
 export interface ThemeBlurTokens {
@@ -206,8 +233,12 @@ export interface ThemeDesignTokens {
   family: ThemeFamily
   mode: ThemeTokenMode
   reference: {
-    accent: string
-    accentSecondary: string
+    /** Effective primary/brand colour (custom accent when supplied). */
+    brand: string
+    brandForeground: string
+    /** Theme-owned decorative role; never replaced by a user brand accent. */
+    tertiary: string
+    tertiaryForeground: string
     neutral: string
     warm: string
     cool: string
@@ -705,54 +736,60 @@ function surfaceMaterialsFor(
 
   if (family === 'liquid-glass') {
     const light = mode === 'light'
+    // Liquid Glass material contract: tint stays LOW so the backdrop does the
+    // visual work. Chrome/floating surfaces must never approach a solid white
+    // fill — anything above ~0.5 alpha reads as a white plastic box on a light
+    // canvas instead of as glass. Depth comes from edge light + drop shadow.
     return {
       background: surfaceMaterial(color.canvas, color.onSurface),
       chrome: surfaceMaterial(
-        light ? 'rgba(248, 252, 255, 0.66)' : 'rgba(22, 39, 54, 0.7)',
+        light ? 'rgba(255, 255, 255, 0.42)' : 'rgba(22, 39, 54, 0.5)',
         color.onSurface,
         color.border,
         {
-          highlight: light ? 'rgba(255, 255, 255, 0.76)' : 'rgba(231, 247, 255, 0.3)',
-          blurRadius: 22,
-          saturation: 1.18,
+          highlight: light ? 'rgba(255, 255, 255, 0.52)' : 'rgba(231, 247, 255, 0.15)',
+          blurRadius: 26,
+          saturation: 1.25,
           shadowColor: elevation.shadowColor,
-          shadowOpacity: 0.08,
-          shadowBlur: 14,
-          shadowOffsetY: 5,
+          shadowOpacity: 0.09,
+          shadowBlur: 18,
+          shadowOffsetY: 7,
           elevation: elevation.level2,
         },
       ),
       conversation,
-      elevated: surfaceMaterial(color.surface, color.onSurface, color.divider, {
+      elevated: surfaceMaterial(light ? 'rgba(255, 255, 255, 0.55)' : color.surface, color.onSurface, color.divider, {
         shadowColor: elevation.shadowColor,
-        shadowOpacity: 0.035,
-        shadowBlur: 7,
-        shadowOffsetY: 2,
+        shadowOpacity: 0.045,
+        shadowBlur: 9,
+        shadowOffsetY: 3,
         elevation: elevation.level1,
       }),
       floating: surfaceMaterial(
-        light ? 'rgba(250, 253, 255, 0.78)' : 'rgba(25, 44, 60, 0.8)',
+        light ? 'rgba(255, 255, 255, 0.6)' : 'rgba(25, 44, 60, 0.64)',
         color.onSurface,
         color.borderStrong,
         {
-          highlight: light ? 'rgba(255, 255, 255, 0.82)' : 'rgba(231, 247, 255, 0.34)',
-          blurRadius: 24,
-          saturation: 1.2,
+          highlight: light ? 'rgba(255, 255, 255, 0.56)' : 'rgba(231, 247, 255, 0.18)',
+          blurRadius: 28,
+          saturation: 1.28,
           shadowColor: elevation.shadowColor,
-          shadowOpacity: 0.12,
-          shadowBlur: 18,
-          shadowOffsetY: 7,
+          shadowOpacity: 0.13,
+          shadowBlur: 22,
+          shadowOffsetY: 9,
           elevation: elevation.level3,
         },
       ),
+      // Inner controls must never carry solid whitespace: a whisper of white,
+      // enough to read as a distinct plane over the parent lens.
       interactive: surfaceMaterial(
-        light ? 'rgba(255, 255, 255, 0.22)' : 'rgba(214, 237, 249, 0.08)',
+        light ? 'rgba(255, 255, 255, 0.14)' : 'rgba(214, 237, 249, 0.05)',
         color.onSurface,
         color.divider,
-        { highlight: light ? 'rgba(255, 255, 255, 0.38)' : 'rgba(231, 247, 255, 0.14)' },
+        { highlight: light ? 'rgba(255, 255, 255, 0.24)' : 'rgba(231, 247, 255, 0.08)' },
       ),
       active: surfaceMaterial(color.primaryContainer, color.onPrimaryContainer, color.borderStrong, {
-        highlight: light ? 'rgba(255, 255, 255, 0.42)' : 'rgba(231, 247, 255, 0.16)',
+        highlight: light ? 'rgba(255, 255, 255, 0.3)' : 'rgba(231, 247, 255, 0.12)',
       }),
     }
   }
@@ -789,38 +826,44 @@ function makeTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignToken
         ? palette(mode, glassLight, glassDark)
         : palette(mode, sharedLight, sharedDark)
   const radius = radiusFor(family)
-  const isGlass = family === 'liquid-glass'
+  const isLiquidGlass = family === 'liquid-glass'
   const isMaterial = family === 'material'
   const isMonet = family === 'monet'
   const elevation: ThemeElevationTokens = family === 'minimal'
     ? { level0: 0, level1: 0, level2: 0, level3: 1, level4: 2, level5: 4, shadowColor: '#10201A', shadowOpacity: 0.03, shadowBlur: 4, shadowOffsetY: 1, tonalSurface: false }
     : isMaterial
       ? { level0: 0, level1: 1, level2: 2, level3: 4, level4: 6, level5: 8, shadowColor: '#1D1B20', shadowOpacity: 0.1, shadowBlur: 8, shadowOffsetY: 3, tonalSurface: true }
-      : isGlass
+      : isLiquidGlass
         ? { level0: 0, level1: 1, level2: 3, level3: 6, level4: 9, level5: 12, shadowColor: '#12344A', shadowOpacity: 0.1, shadowBlur: 12, shadowOffsetY: 4, tonalSurface: false }
         : { level0: 0, level1: 1, level2: 2, level3: 4, level4: 6, level5: 9, shadowColor: '#527B73', shadowOpacity: 0.045, shadowBlur: 8, shadowOffsetY: 2, tonalSurface: false }
-  const motion: ThemeMotionTokens = family === 'minimal'
-    ? { instant: 0, interaction: 80, emphasis: 120, panel: 180, page: 180, easing: 'standard', stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.16 }, reducedMotion: 'opacity-only' }
-    : isMaterial
-      ? { instant: 0, interaction: 120, emphasis: 160, panel: 240, page: 300, easing: 'standard', stateLayerOpacity: { hover: 0.08, focus: 0.1, press: 0.1, drag: 0.16 }, reducedMotion: 'opacity-only' }
-      : isGlass
-        ? { instant: 0, interaction: 130, emphasis: 200, panel: 280, page: 320, easing: 'spring', stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.14 }, reducedMotion: 'opacity-only' }
-        : { instant: 0, interaction: 110, emphasis: 180, panel: 260, page: 300, easing: 'ease-out', stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.14 }, reducedMotion: 'opacity-only' }
+  const motionDurations = THEME_MOTION_DURATIONS[family]
+  const motion: ThemeMotionTokens = {
+    ...motionDurations,
+    ...(family === 'minimal'
+      ? { easing: 'standard' as const, stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.16 }, reducedMotion: 'opacity-only' as const }
+      : isMaterial
+        ? { easing: 'standard' as const, stateLayerOpacity: { hover: 0.08, focus: 0.1, press: 0.1, drag: 0.16 }, reducedMotion: 'opacity-only' as const }
+        : isLiquidGlass
+          ? { easing: 'spring' as const, stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.14 }, reducedMotion: 'opacity-only' as const }
+          : { easing: 'ease-out' as const, stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.14 }, reducedMotion: 'opacity-only' as const }),
+  }
   const blur: ThemeBlurTokens = {
-    enabled: isGlass,
-    radius: isGlass ? 22 : 0,
-    material: isGlass ? 'regular' : 'none',
-    maxLayersPerRegion: isGlass ? 1 : 0,
-    fallback: isGlass ? 'opaque' : isMaterial ? 'tonal' : 'opaque',
-    dimmingOpacity: isGlass ? 0.24 : 0,
+    enabled: isLiquidGlass,
+    radius: isLiquidGlass ? 22 : 0,
+    material: isLiquidGlass ? 'regular' : 'none',
+    maxLayersPerRegion: isLiquidGlass ? 1 : 0,
+    fallback: isLiquidGlass ? 'opaque' : isMaterial ? 'tonal' : 'opaque',
+    dimmingOpacity: isLiquidGlass ? 0.24 : 0,
   }
   const surface = surfaceMaterialsFor(family, mode, colors, elevation)
   return {
     family,
     mode,
     reference: {
-      accent: colors.primary,
-      accentSecondary: colors.secondary,
+      brand: colors.primary,
+      brandForeground: colors.onPrimary,
+      tertiary: colors.tertiary,
+      tertiaryForeground: colors.onTertiary,
       neutral: colors.surface,
       warm: colors.tertiary,
       cool: colors.secondary,
@@ -838,14 +881,26 @@ function makeTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignToken
     component: componentsFor(family, colors, radius, mode, surface),
     behavior: {
       density: family === 'minimal' || isMaterial ? 'compact' : isMonet ? 'airy' : 'balanced',
-      surfaceStrategy: family === 'minimal' ? 'boundary' : isMaterial ? 'tonal' : isGlass ? 'glass' : 'atmospheric',
-      interactionStrategy: family === 'minimal' ? 'direct' : isMaterial ? 'state-layer' : isGlass ? 'translucent' : 'breathing',
+      surfaceStrategy: family === 'minimal' ? 'boundary' : isMaterial ? 'tonal' : isLiquidGlass ? 'glass' : 'atmospheric',
+      interactionStrategy: family === 'minimal' ? 'direct' : isMaterial ? 'state-layer' : isLiquidGlass ? 'translucent' : 'breathing',
       contentLayerGlass: false,
     },
   }
 }
 
-export const THEME_DESIGN_TOKENS: Readonly<Record<ThemeFamily, Readonly<Record<ThemeTokenMode, ThemeDesignTokens>>>> = Object.freeze({
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
+  Object.freeze(value)
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child)
+  return value
+}
+
+/**
+ * Immutable canonical token registry.  Freezing nested roles prevents a
+ * component from accidentally mutating the shared palette and leaking a
+ * change into every screen that renders the same family/mode.
+ */
+export const THEME_DESIGN_TOKENS: Readonly<Record<ThemeFamily, Readonly<Record<ThemeTokenMode, ThemeDesignTokens>>>> = deepFreeze({
   minimal: Object.freeze({ light: makeTokens('minimal', 'light'), dark: makeTokens('minimal', 'dark') }),
   monet: Object.freeze({ light: makeTokens('monet', 'light'), dark: makeTokens('monet', 'dark') }),
   material: Object.freeze({ light: makeTokens('material', 'light'), dark: makeTokens('material', 'dark') }),
@@ -853,9 +908,15 @@ export const THEME_DESIGN_TOKENS: Readonly<Record<ThemeFamily, Readonly<Record<T
 })
 
 export function isThemeFamily(value: unknown): value is ThemeFamily {
-  return (THEME_FAMILIES as readonly unknown[]).includes(value)
+  return typeof value === 'string' && (THEME_FAMILIES as readonly string[]).includes(value)
 }
 
-export function resolveThemeDesignTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignTokens {
-  return THEME_DESIGN_TOKENS[family][mode]
+/** Resolve tokens defensively for JavaScript/bridge callers as well as typed callers. */
+export function resolveThemeDesignTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignTokens
+export function resolveThemeDesignTokens(family: unknown, mode: unknown): ThemeDesignTokens
+export function resolveThemeDesignTokens(family: unknown, mode: unknown): ThemeDesignTokens {
+  const normalizedFamily = normalizeThemeFamilyValue(family)
+  const safeFamily: ThemeFamily = normalizedFamily && isThemeFamily(normalizedFamily) ? normalizedFamily : 'minimal'
+  const safeMode: ThemeTokenMode = mode === 'dark' ? 'dark' : 'light'
+  return THEME_DESIGN_TOKENS[safeFamily][safeMode]
 }
