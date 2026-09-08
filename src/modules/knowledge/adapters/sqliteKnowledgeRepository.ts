@@ -183,9 +183,21 @@ export function createSqliteKnowledgeRepository(
     throwIfAborted(signal)
     initialized ??= (async () => {
       searchMode = await resolveSqliteKnowledgeSearchMode(value)
+      await applySqliteMigrations(value, [])
+      const legacyMarker = await value.getFirst<{ name: string }>(
+        'SELECT name FROM platform_schema_migrations WHERE scope = ? AND version = ?',
+        [MIGRATION_SCOPE, MIGRATION_VERSION],
+      )
+      // The old replay adapter could claim knowledge/v3 first. Repair only
+      // that known collision, before v4 needs the base tables, and retain the
+      // historical marker. Re-running v3 on healthy databases would rewrite
+      // current memory scopes with the legacy conversion policy.
+      const recordsScope = legacyMarker?.name === 'knowledge-rag-replay-snapshots'
+        ? 'knowledge-records-repair'
+        : MIGRATION_SCOPE
       await applySqliteMigrations(value, [
         {
-          scope: MIGRATION_SCOPE,
+          scope: recordsScope,
           version: MIGRATION_VERSION,
           name: 'structured-memory-facts-and-scoped-retrieval',
           async up(transaction) {
@@ -258,6 +270,8 @@ export function createSqliteKnowledgeRepository(
             await ensureKnowledgeSearchTables(transaction, searchMode)
           },
         },
+      ])
+      await applySqliteMigrations(value, [
         {
           scope: MIGRATION_SCOPE,
           version: 4,

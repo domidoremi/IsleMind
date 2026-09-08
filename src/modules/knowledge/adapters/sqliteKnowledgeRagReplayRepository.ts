@@ -5,8 +5,10 @@ import {
   type KnowledgeRagReplaySnapshot,
 } from '../application/ragReplaySnapshot'
 
-const MIGRATION_SCOPE = 'knowledge'
-const MIGRATION_VERSION = 3
+// Knowledge records already own knowledge/v3. A separate scope admits both
+// initialization orders and preserves any snapshots created by the old adapter.
+const MIGRATION_SCOPE = 'knowledge-rag-replay'
+const MIGRATION_VERSION = 1
 
 export interface KnowledgeRagReplaySnapshotRepository {
   save(taskId: string, snapshot: KnowledgeRagReplaySnapshot, options?: { signal?: AbortSignal }): Promise<void>
