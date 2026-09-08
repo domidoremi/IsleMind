@@ -9,15 +9,34 @@ export const WORK_ARTIFACT_TOOL_MANIFEST: ConversationToolCatalogManifest = {
   id: WORK_ARTIFACT_TOOL_ID,
   source: 'work-artifact',
   name: WORK_ARTIFACT_TOOL_NAME,
-  description: 'Summarize and quality-check a structured work artifact.',
+  description: 'Audit and summarize the structure of an existing or newly drafted work artifact. When the user requests a draft audit, supply the actual drafted text and use the returned gaps before finalizing. This tool does not generate a draft, verify facts or approvals, or execute actions.',
   permission: 'read-only',
   enabled: true,
   inputSchema: {
     type: 'object',
     properties: {
-      content: { type: 'string' },
-      sourceMessageId: { type: 'string' },
-      citations: { type: 'array' },
+      content: {
+        type: 'string',
+        description: 'The complete artifact or draft text to audit, not instructions asking for one. For a new draft, compose the draft in this field; no other message is fetched.',
+      },
+      sourceMessageId: {
+        type: 'string',
+        description: 'Optional known ID of the message whose text is supplied. Omit for a new draft; do not invent an ID or use a role such as user. This is annotation, not a lookup.',
+      },
+      citations: {
+        type: 'array',
+        description: 'Optional retained source labels such as "[1]" or source-reference objects, not numeric indexes. Copy known references only; the audit does not verify their claims.',
+        items: {
+          type: ['string', 'object'],
+          properties: {
+            id: { type: 'string' },
+            label: { type: 'string' },
+            title: { type: 'string' },
+            url: { type: 'string' },
+            excerpt: { type: 'string' },
+          },
+        },
+      },
     },
     required: ['content'],
   },

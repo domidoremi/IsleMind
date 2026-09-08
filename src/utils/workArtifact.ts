@@ -407,6 +407,13 @@ function workArtifactAuditIssue(
 }
 
 function detectWorkArtifactLanguage(content: string): WorkArtifactLanguage {
+  if (/[\u3040-\u30ff]/.test(content)) return 'ja'
+  // Chinese section labels are stronger evidence than shared Han words such
+  // as "期限" in the body, which also occur in the legacy Japanese heuristic.
+  const chineseLabels = Object.values(LOCALIZED_SECTION_LABELS['zh-CN'])
+  if (content.split(/\r?\n/).some((line) => chineseLabels.includes(
+    normalizeHeadingLine(line).replace(/[:：]\s*$/, '').trim(),
+  ))) return 'zh-CN'
   if (/[\u3040-\u30ff]|要約|現在の状態|完了した作業|残っている作業|構造化|質問|確認事項|根拠|検証|出典|アクション|次の一歩|最初の|必ず完了|結論|推奨|決定|担当者|期限|発火条件|協力者/.test(content)) {
     return 'ja'
   }
@@ -415,25 +422,31 @@ function detectWorkArtifactLanguage(content: string): WorkArtifactLanguage {
 }
 
 function parseSectionLine(line: string): { kind: WorkArtifactKind; title: string; inlineText?: string } | null {
-  if (/^\s*[-*•]\s+/.test(line) || /^\s*\[[ xX]\]\s+/.test(line)) return null
+  if (/^\s*[-*+•]\s+/.test(line) || /^\s*\[[ xX]\]\s+/.test(line)) return null
   const normalized = normalizeHeadingLine(line)
-  if (!normalized || normalized.length > 96) return null
-  const kind = classifySection(normalized)
-  if (!kind) return null
-
   const inlineMatch = normalized.match(/^(.+?)[:：]\s*(.+)$/)
-  const inlineText = inlineMatch && classifySection(inlineMatch[1]) === kind
-    ? inlineMatch[2].trim()
-    : undefined
+  const title = inlineMatch?.[1]?.trim() || normalized
+  // Bound and classify the label, not its inline body: long evidence must not
+  // spill into the preceding section, nor can body keywords override its kind.
+  if (!title || title.length > 96) return null
+  // A numbered action mentioning "sources" or "decisions" is still an item.
+  // Bare numbered headings must be canonical labels; Markdown headings retain
+  // the wider aliases below (for example, "## 2. Risks and blockers").
+  const kind = /^\s*\d+[.)、]\s*/.test(line)
+    ? classifyCanonicalSection(normalized)
+    : classifySection(title)
+  if (!kind) return null
 
   return {
     kind,
-    title: inlineMatch?.[1]?.trim() || normalized,
-    inlineText,
+    title,
+    inlineText: inlineMatch?.[2].trim(),
   }
 }
 
 function classifySection(value: string): WorkArtifactKind | null {
+  const canonical = classifyCanonicalSection(value)
+  if (canonical) return canonical
   const text = value.toLowerCase()
   if (/(shareable|short version|send to collaborators|sent to collaborators|copy to someone|可直接发给|发给协作者|協力者に送れる|コピーできる)/i.test(value)) return 'shareable'
   if (/(open question|question|待确认|待確認|未确认|未確認|问题|質問|確認事項)/i.test(value)) return 'question'
@@ -446,11 +459,23 @@ function classifySection(value: string): WorkArtifactKind | null {
   return null
 }
 
+function classifyCanonicalSection(value: string): WorkArtifactKind | null {
+  const text = value.replace(/[:：]\s*$/, '').trim().toLowerCase()
+  // Use the formatter's vocabulary so copied localized artifacts can be read
+  // again without losing a summary or turning a shareable section into evidence.
+  for (const labels of Object.values(LOCALIZED_SECTION_LABELS)) {
+    for (const [kind, label] of Object.entries(labels)) {
+      if (label.toLowerCase() === text) return kind as WorkArtifactKind
+    }
+  }
+  return null
+}
+
 function normalizeHeadingLine(line: string): string {
   return line
     .trim()
     .replace(/^#{1,6}\s+/, '')
-    .replace(/^[-*•]\s+/, '')
+    .replace(/^[-*+•]\s+/, '')
     .replace(/^\[[ xX]\]\s+/, '')
     .replace(/^\d+[.)、]\s*/, '')
     .replace(/^\*\*(.+?)\*\*$/, '$1')
@@ -461,7 +486,7 @@ function normalizeHeadingLine(line: string): string {
 function normalizeItemLine(line: string): string {
   const cleaned = line
     .trim()
-    .replace(/^[-*•]\s+/, '')
+    .replace(/^[-*+•]\s+/, '')
     .replace(/^\[[ xX]\]\s+/, '')
     .replace(/^\d+[.)、]\s*/, '')
     .replace(/\*\*/g, '')

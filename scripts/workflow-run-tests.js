@@ -55,6 +55,9 @@ async function main() {
     knowledgeModule,
     taskModule,
   })
+  await testStructuredArtifactChatOutcomes({
+    core, runtimeModule, runStoreModule, providerModule, knowledgeModule, taskModule, taskStoreModule,
+  })
 
   console.log('Workflow-run integration tests passed')
 }
@@ -1474,6 +1477,193 @@ function createFixture(input) {
     }),
   })
   return { clock, ids, runStore, snapshots, assistantRuntime, chatWorkflows }
+}
+
+async function testStructuredArtifactChatOutcomes(input) {
+  const integrations = await import('../src/modules/integrations/index.ts')
+  const conversations = await import('../src/modules/conversations/index.ts')
+  const { createTaskBoundToolRuntime } = await import('../src/bootstrap/taskBoundToolRuntime.ts')
+  const { workflowIntentClassifier } = await import('../src/bootstrap/workflowIntent.ts')
+  const { workflowDefinitionPolicy } = await import('../src/bootstrap/workflowDefinitions.ts')
+  const { workflowContinuationPolicy } = await import('../src/bootstrap/workflowContinuation.ts')
+  const { completeWorkflowRun } = await import('../src/bootstrap/workflowCompletion.ts')
+  const { buildWorkflowPermissionEvidence } = await import('../src/bootstrap/workflowPermissionEvidence.ts')
+  const { resolveWorkflowRagEvidencePause } = await import('../src/bootstrap/workflowRagEvidence.ts')
+  const observation = await import('../src/bootstrap/workflowObservation.ts')
+  const failure = await import('../src/bootstrap/workflowFailure.ts')
+  const pending = await import('../src/bootstrap/workflowPendingAction.ts')
+  const { sanitizeAndroidApkUri } = await import('../src/platform/native/androidUriPolicy.ts')
+  const fixture = createFixture(input)
+  const checkpoints = createCheckpointStoreFixture(input)
+  const taskStore = input.taskStoreModule.createInMemoryTaskStore()
+  const manifest = integrations.WORK_ARTIFACT_TOOL_MANIFEST
+  const unexpectedEffect = async () => { throw new Error('Artifact auditing must not execute an external effect.') }
+  const skills = input.taskModule.createWorkflowSkillPolicy({
+    workflowDefinitionPolicy,
+    persistence: { listSkills: async () => [], upsertSkill: unexpectedEffect },
+    now: fixture.clock.now,
+    redactSensitiveText: input.core.redactSensitiveText,
+    clampWorkflowOutput: input.core.clampTraceText,
+    formatToolRequestIdentity: integrations.formatToolRequestIdentity,
+    resolveUniqueManifest: integrations.resolveUniqueToolManifest,
+  })
+  const adapter = createTaskBoundToolRuntime({
+    createTaskRuntime: (policyEvaluator) => input.taskModule.createTaskRuntime({
+      clock: fixture.clock, ids: fixture.ids, persistence: taskStore, policyEvaluator,
+    }),
+    listToolManifests: async () => [manifest],
+    executeMcpTool: unexpectedEffect,
+    executeAndroidTool: unexpectedEffect,
+    executeBuiltinTool: unexpectedEffect,
+    executeAppActionTool: unexpectedEffect,
+  })
+  const stepOutcome = input.taskModule.createWorkflowStepOutcomePolicy({
+    cancel: workflowContinuationPolicy.cancel,
+    buildPendingAction: pending.buildPendingAction,
+    formatPendingActionOutput: pending.formatPendingActionOutput,
+    formatToolFailureDetails: failure.formatWorkflowToolFailureDetails,
+    projectFailureMetadata: observation.projectFailureTraceMetadata,
+    extractRuntimeState: input.taskModule.extractAndroidWorkflowRuntimeState,
+    mergeRuntimeState: input.taskModule.mergeAndroidWorkflowRuntimeState,
+  })
+  // The real owners and policy composition, with only persistence/IDs/time and
+  // external ports supplied by the existing host fixture. No generated answer is stubbed.
+  const orchestrator = input.taskModule.createWorkflowOrchestrator({
+    clock: fixture.clock,
+    validateWorkflowDefinition: workflowDefinitionPolicy.validate,
+    createPlan: input.taskModule.createWorkflowPlanner({
+      clock: fixture.clock,
+      classifyIntent: workflowIntentClassifier.classify,
+      projectTrace: input.core.projectProcessTrace,
+      redactText: input.core.redactSensitiveText,
+      formatToolIdentity: integrations.formatToolRequestIdentity,
+      collectRagProfileRequirements: skills.collectWorkflowRagProfileRequirements,
+      inferClockTime: workflowIntentClassifier.inferClockTime,
+      inferReminderDateTimeIso: workflowIntentClassifier.inferReminderDateTimeIso,
+      inferReminderTitle: workflowIntentClassifier.inferReminderTitle,
+      sanitizeApkUri: sanitizeAndroidApkUri,
+    }),
+    buildStepRuntimeOptions: (options) => options,
+    executeStep: input.taskModule.createWorkflowStepExecutor({
+      clock: fixture.clock,
+      executeTool: ({ stepId, assistantRunId, request, options }) => adapter.execute({ stepId, assistantRunId, request, options }),
+      redactText: input.core.redactSensitiveText,
+      projectTrace: input.core.projectProcessTrace,
+    }),
+    createCheckpointSession: (options) => input.taskModule.createWorkflowCheckpointProjectionSession({
+      ...options, now: fixture.clock.now, redactText: input.core.redactSensitiveText,
+    }),
+    continuationPolicy: workflowContinuationPolicy,
+    resolveStepOutcome: stepOutcome.resolve,
+    buildPermissionEvidence: buildWorkflowPermissionEvidence,
+    projectWorkflowTraceMetadata: observation.projectWorkflowTraceMetadata,
+    resolveRagEvidencePause: resolveWorkflowRagEvidencePause,
+    completeRun: completeWorkflowRun,
+  })
+  const entry = input.taskModule.createConversationChatWorkflowEntryPolicy({
+    classifyConversationChatWorkflowIntent: workflowIntentClassifier.classify,
+    runConversationChatWorkflow: orchestrator.run,
+    createWorkflowSkillSuggestionFromRun: skills.createWorkflowSkillSuggestionFromRun,
+  })
+  const resolve = conversations.createConversationChatWorkflowAssistantMessageResolver({
+    runWorkflow: entry.runConversationChatWorkflow,
+  })
+  const sources = [
+    {
+      id: 'ordered-handoff',
+      content: [
+        'Summary', '- The pilot remains private.',
+        'Action items',
+        '1. Owner: Maya; Next step: Verify source records; Due: 2026-09-09',
+        '2. Owner: Lee; Next step: Confirm the release decision',
+        'Decision log', '- Keep the pilot private.',
+        'Risks', '- Review may slip.',
+        'Open questions', '- Is retention approved?',
+        'Evidence', '- Pilot note P-17: internal rollout only.',
+      ].join('\n'),
+      actionCount: 2, evidenceCount: 1, auditOk: true, missingKinds: [],
+      nextStep: 'Verify source records',
+    },
+    {
+      id: 'incomplete-proposal',
+      content: [
+        'Summary', '- A proposal, not an approved release.',
+        'Action items', '1. Owner: Maya; Next step: Verify evidence before deciding',
+        'Risks', '- Approval has not been recorded.',
+      ].join('\n'),
+      actionCount: 1, evidenceCount: 0, auditOk: false, missingKinds: ['decision', 'question', 'evidence'],
+      nextStep: 'Verify evidence before deciding',
+    },
+  ]
+  for (const source of sources) {
+    const request = { toolId: manifest.id, arguments: { content: source.content, sourceMessageId: source.id } }
+    let resolution
+    const handle = fixture.chatWorkflows.start({
+      conversationId: `e11-${source.id}`,
+      conversationMessageIds: [source.id],
+      requestMessageId: source.id,
+      responseMessageId: `${source.id}-reply`,
+      requestText: 'Audit this supplied handoff. Retain its actions and identify missing evidence; do not execute them.',
+      executor: {
+        async execute({ run, signal }) {
+          resolution = await resolve({
+            content: 'Audit this supplied handoff without executing its actions.',
+            assistantRunId: run.id,
+            workflowCheckpointStore: checkpoints.store,
+            explicitToolRequest: request,
+            manifests: [manifest],
+            signal,
+            startedAt: fixture.clock.now(),
+          })
+          return { outputText: resolution.reply.content, eventCount: resolution.reply.run.steps.length }
+        },
+      },
+    })
+    const completed = await handle.completion
+    assert.equal(completed.ok, true)
+    assert.equal(resolution.handled, true)
+    assert.equal(resolution.reply.status, 'done', 'audit execution success is distinct from artifact approval')
+    assert.equal(resolution.reply.run.steps.length, 1)
+    const step = resolution.reply.run.steps[0]
+    const artifact = step.observation.diagnostic.metadata.workArtifactOutput
+    assert.equal(artifact.actionItemCount, source.actionCount)
+    assert.equal(artifact.evidenceCount, source.evidenceCount)
+    assert.equal(artifact.qualityAudit.ok, source.auditOk)
+    assert.deepEqual(artifact.missingKinds, source.missingKinds)
+    assert.equal(artifact.primaryNextStep, source.nextStep)
+    assert.equal(artifact.sourceMessageId, source.id)
+    assert.deepEqual(artifact.citations, [], 'source prose is not turned into verified citations')
+    assert.ok(resolution.patch.content.includes(source.nextStep))
+    assert.ok(resolution.patch.content.includes(`Quality audit: ${source.auditOk ? 'passed' : 'needs repair'}`))
+    const storedRun = await fixture.runStore.get(handle.runId)
+    assert.equal(storedRun.status, 'succeeded')
+    assert.equal(storedRun.result.outputText, resolution.patch.content, 'the durable Chat result matches the projected terminal answer')
+    assert.equal((await fixture.runStore.list(handle.runId)).filter((event) => event.type === 'run.succeeded').length, 1)
+    const recovered = await checkpoints.store.recover(handle.runId, new AbortController().signal)
+    assert.equal(recovered.ok, true)
+    assert.equal(recovered.value.disposition, 'terminal')
+    assert.equal(recovered.value.replaySideEffects, false)
+    assert.equal(recovered.value.checkpoint.completedSteps.length, 1)
+    const task = await taskStore.get(recovered.value.checkpoint.tasks[0].taskId)
+    assert.equal(task.runId, handle.runId)
+    assert.equal(task.status, 'succeeded')
+    const events = await taskStore.list(task.id)
+    const replayed = await adapter.execute({
+      stepId: step.id, assistantRunId: handle.runId, request,
+      options: { manifests: [manifest] },
+    })
+    assert.equal(replayed.metadata.replayed, true)
+    assert.equal(replayed.output, step.observation.output)
+    assert.deepEqual(replayed.diagnostic.metadata.workArtifactOutput, artifact)
+    assert.deepEqual(await taskStore.list(task.id), events, 'same-version pure replay adds no task execution or terminal events')
+    console.log(JSON.stringify({
+      evidenceClass: 'Host verified', scenario: source.id,
+      actions: artifact.actionItemCount, evidence: artifact.evidenceCount,
+      auditOk: artifact.qualityAudit.ok, missingKinds: artifact.missingKinds,
+      chatOutputReconstructed: true, checkpointTerminal: true, taskReplayStable: true,
+      boundary: 'Explicit deterministic audit; in-memory repositories, no model generation, native filesystem, UI gesture or real external effect.',
+    }))
+  }
 }
 
 async function testChatWorkflowRunCreatesDurableChatParentAndLinkedTask(input) {
