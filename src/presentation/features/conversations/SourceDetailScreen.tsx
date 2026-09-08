@@ -21,10 +21,12 @@ import { collectVisibleProcessTraces, formatDuration, formatProcessTraceForCopy,
 import { WORK_ARTIFACT_WORKFLOW_CONTRACT } from '@/modules/integrations'
 import { isAllowedWebViewNavigation, safeHttpUrl, webViewOriginWhitelist } from '@/utils/sourceUrlSafety'
 import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
+import type { KnowledgeLocalSourceReader } from '@/modules/knowledge'
+import { CanonicalSourceReader } from './CanonicalSourceReader'
 
 type ProcessTraceGroupKey = 'agentPlan' | 'context' | 'search' | 'toolActivity' | 'agentSynthesis' | 'agentRecovery' | 'other'
 
-export default function SourceScreen() {
+export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSourceReader, 'readLocalSource'>) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -38,14 +40,17 @@ export default function SourceScreen() {
   const message = conversation?.messages.find((item) => item.id === messageId)
   const citations = message?.citations ?? []
   const traces = useMemo(() => normalizeTraceStatuses(message ? collectVisibleProcessTraces(message) : [], message?.status ?? 'done'), [message])
-  const citation = citations.find((item) => item.id === citationId) ?? citations[0]
+  // An explicit missing identity must never silently open a different source.
+  const citation = citationId ? citations.find((item) => item.id === citationId) : citations[0]
   const explicitUrl = firstParam(params.url)
-  const rawWebUrl = firstSafeParam(explicitUrl, citation?.url)
+  const isLocalCitation = citation?.type === 'knowledge' || citation?.type === 'memory'
+  const rawWebUrl = (citationId && !citation) || isLocalCitation ? undefined : firstSafeParam(explicitUrl, citation?.url)
   const [webKey, setWebKey] = useState(0)
   const [readerBackgroundState, setReaderBackgroundState] = useState<IsleBackgroundState>('idle')
 
   const mode = firstParam(params.kind) === 'process' ? 'process' : 'source'
   const webUrl = mode === 'source' ? safeHttpUrl(rawWebUrl) : undefined
+  const externalUrl = webUrl ?? (mode === 'source' && citation ? safeHttpUrl(citation.url) ?? safeHttpUrl(citation.sourceUri) : undefined)
   const processBackgroundState: IsleBackgroundState = traces.some((trace) => trace.status === 'error')
     ? 'error'
     : traces.some((trace) => trace.status === 'pending' || trace.status === 'running')
@@ -111,10 +116,10 @@ export default function SourceScreen() {
   }
 
   async function openExternal() {
-    if (!webUrl) return
-    const supported = await Linking.canOpenURL(webUrl)
+    if (!externalUrl) return
+    const supported = await Linking.canOpenURL(externalUrl)
     if (supported) {
-      await Linking.openURL(webUrl)
+      await Linking.openURL(externalUrl)
     } else {
       dialog.toast({ title: t('source.cannotOpen'), message: t('source.cannotOpenMessage'), tone: 'danger' })
     }
@@ -134,26 +139,33 @@ export default function SourceScreen() {
             <AppIcon name="copy" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
           </IsleIconButton>
           {webUrl ? (
-            <>
               <IsleIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
                 <AppIcon name="refresh" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
               </IsleIconButton>
-              <IsleIconButton label={t('common.openExternal')} size="sm" onPress={() => void openExternal()}>
+          ) : null}
+          {externalUrl ? (
+              <IsleIconButton label={t('source.openOriginal')} size="sm" onPress={() => void openExternal()}>
                 <AppIcon name="external-link" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
               </IsleIconButton>
-            </>
           ) : null}
         </View>
       }
     >
       <View style={{ flex: 1 }}>
+        {mode === 'source' && citations.length > 1 ? (
+          <ScrollView horizontal style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 8, gap: 8 }}>
+            {citations.map((item, index) => (
+              <IsleButton key={item.id} label={`${index + 1}. ${item.title}`} onPress={() => router.setParams({ citationId: item.id, url: undefined })} />
+            ))}
+          </ScrollView>
+        ) : null}
         <RenderGuard label={mode === 'process' ? t('source.process') : t('source.source')}>
           {mode === 'process' ? (
             <ProcessReader traces={traces} />
           ) : webUrl ? (
             <WebReader key={webKey} url={webUrl} citation={citation} onOpenExternal={openExternal} onBackgroundStateChange={setReaderBackgroundState} />
           ) : (
-            <LocalSourceReader citation={citation} citations={citations} />
+            <LocalSourceReader citation={citation} conversationId={conversationId} messageId={messageId} messageTimestamp={message?.timestamp} readLocalSource={readLocalSource} />
           )}
         </RenderGuard>
       </View>
@@ -264,11 +276,13 @@ function WebReader({
   )
 }
 
-function LocalSourceReader({ citation, citations }: { citation?: MessageCitation; citations: MessageCitation[] }) {
+function LocalSourceReader({ citation, conversationId, messageId, messageTimestamp, readLocalSource }: {
+  citation?: MessageCitation; conversationId?: string; messageId?: string; messageTimestamp?: number
+  readLocalSource: KnowledgeLocalSourceReader['readLocalSource']
+}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const sources = citation ? [citation, ...citations.filter((item) => item.id !== citation.id)] : citations
-  if (!sources.length) {
+  if (!citation || !conversationId || !messageId || messageTimestamp === undefined) {
     return (
       <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
         <Text style={{ color: colors.text, fontSize: 19, fontWeight: '800' }}>{t('source.noSource')}</Text>
@@ -276,9 +290,9 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
       </View>
     )
   }
-  return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 42 }}>
-      {sources.map((source, index) => (
+  return <CanonicalSourceReader citation={citation} conversationId={conversationId} messageId={messageId} messageTimestamp={messageTimestamp} readLocalSource={readLocalSource} header={
+    <View>
+      {[citation].map((source, index) => (
         <View
           key={`${source.id}-${index}`}
           style={{ marginBottom: 10 }}
@@ -286,7 +300,7 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
           <IsleSection
             material="raised"
             elevated
-            title={source.title || source.type}
+            title={t('source.capturedCitation')}
             subtitle={formatCitationMeta(source, t)}
             action={<View style={{ width: 30, height: 30, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}><AppIcon name="knowledge" color={colors.ui.icon.accentForeground} size={15} strokeWidth={appIconStroke.strong} /></View>}
           >
@@ -309,8 +323,8 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
           </IsleSection>
         </View>
       ))}
-    </ScrollView>
-  )
+    </View>
+  } />
 }
 
 function ProcessReader({ traces }: { traces: ProcessTrace[] }) {

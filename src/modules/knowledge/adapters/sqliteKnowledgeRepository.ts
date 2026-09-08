@@ -31,6 +31,8 @@ import {
   type KnowledgeRepository,
   type KnowledgeRepositoryOperationOptions,
   type KnowledgeRepositorySnapshot,
+  type KnowledgeLocalSource,
+  type KnowledgeLocalSourceReference,
   type PendingMemoryCandidate,
 } from '../contracts'
 
@@ -614,6 +616,39 @@ export function createSqliteKnowledgeRepository(
     return rows.map(normalizeChunkRow)
   }
 
+  async function readLocalSource(
+    reference: KnowledgeLocalSourceReference,
+    operation: KnowledgeRepositoryOperationOptions = {},
+  ): Promise<KnowledgeLocalSource | undefined> {
+    const value = await database(operation.signal)
+    const source = await value.transaction(async (transaction): Promise<KnowledgeLocalSource | undefined> => {
+      throwIfAborted(operation.signal)
+      if (reference.type === 'memory') {
+        const memoryId = normalizeIdentifier(reference.memoryId, 'memory id')
+        const conversationId = normalizeIdentifier(reference.conversationId, 'conversation id')
+        const row = await transaction.getFirst<Record<string, unknown>>(
+          `SELECT ${MEMORY_SELECT_COLUMNS} FROM memories WHERE id = ?
+           AND ((scopeKind = 'user' AND scopeId = ?) OR (scopeKind = 'conversation' AND scopeId = ?))`,
+          [memoryId, LOCAL_USER_MEMORY_SCOPE_ID, conversationId],
+        )
+        return row ? { type: 'memory', memory: normalizeMemoryRow(row) } : undefined
+      }
+      const documentId = normalizeIdentifier(reference.documentId, 'document id')
+      const row = await transaction.getFirst<Record<string, unknown>>(
+        'SELECT * FROM knowledge_documents WHERE id = ?', [documentId],
+      )
+      if (!row) return undefined
+      // Document replacement/deletion cannot interleave metadata from one revision
+      // with chunks from another. This is a read through the existing owner queue.
+      const chunks = await transaction.getAll<Record<string, unknown>>(
+        'SELECT * FROM knowledge_chunks WHERE documentId = ? ORDER BY ordinal ASC, id ASC', [documentId],
+      )
+      return { type: 'knowledge', document: normalizeDocumentRow(row), chunks: chunks.map(normalizeChunkRow) }
+    })
+    throwIfAborted(operation.signal)
+    return source
+  }
+
   async function loadSnapshot(
     operation: KnowledgeRepositoryOperationOptions = {},
   ): Promise<KnowledgeRepositorySnapshot> {
@@ -809,6 +844,7 @@ export function createSqliteKnowledgeRepository(
     updateDocumentStatus,
     listDocuments,
     listChunks,
+    readLocalSource,
     searchFts,
     markFtsHits,
     deleteDocument,
