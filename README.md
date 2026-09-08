@@ -1,124 +1,128 @@
 <p align="center">
-  <img src="assets/icon.png" width="120" height="120" alt="IsleMind 应用图标">
+  <img src="assets/icon.png" width="120" height="120" alt="IsleMind icon">
 </p>
 
 <h1 align="center">IsleMind</h1>
 
 <p align="center">
-  本地优先、服务商可控的 Android AI 工作区
+  A local-first, provider-controlled AI workspace for Android
 </p>
 
 <p align="center">
-  简体中文 · <a href="docs/readme/README.en.md">English</a> · <a href="docs/readme/README.ja.md">日本語</a>
+  English · <a href="README.zh.md">简体中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
-## IsleMind 是什么
+## What IsleMind is
 
-IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工具集成集中在一个移动工作区中。应用以 Android 为主要平台，强调本地数据所有权、明确的网络边界和可恢复的 AI 执行过程。
+IsleMind is a React Native + Expo Android app that puts model providers, conversations, knowledge, memory, and agentic tooling into a single, offline-capable workspace. It treats your data as yours: conversations, settings, and provider credentials stay on the device unless you explicitly wire up a network call.
 
-## 主要能力
+## Capabilities at a glance
 
-- **模型服务商管理**：配置 API Key、Base URL、协议、模型与能力开关；支持模型发现、批量导入、可用性检查、用量查询和运行诊断。
-- **广泛的协议兼容**：支持 OpenAI、Anthropic、Gemini、xAI、DeepSeek、Qwen、GLM，以及 OpenAI-compatible 和 Anthropic-compatible 中转端点。
-- **对话工作区**：管理多会话、流式回复、推理状态、来源引用、附件、草稿、消息操作和生成状态。
-- **知识与个人上下文**：导入知识文档，维护个人记忆和对话上下文，并通过本地索引与 embedding 模型完成检索增强。
-- **Agent 与任务执行**：提供步骤状态、取消与恢复、工具授权、执行证据，以及结构化工作产物的质量门槛、复制交接和继续提示。
-- **工具与集成**：支持 MCP、Skills、内置工作区工具、联网检索、语音和 Android 设备能力；网络能力由用户配置或显式启用。
-- **主题与语言**：提供极简、莫奈、Material 3、液态玻璃主题，支持浅色、深色、跟随系统和自定义强调色；界面支持简体中文、English 和日本語。
-- **Android 体验**：包含安全区与键盘适配、后台状态通知、应用内更新检查、运行时诊断和故障恢复入口。
+- **Model provider management** – API keys, base URLs, protocols, and capability switches; discovery, bulk import, availability checks, usage queries, and runtime diagnostics.
+- **Protocol compatibility** – OpenAI, Anthropic, Gemini, xAI, DeepSeek, Qwen, GLM, and OpenAI/Anthropic-compatible relays.
+- **Conversation workbench** – Multi-session chat, streaming replies, reasoning state, source citations, attachments, drafts, message actions, and generation lifecycle.
+- **Knowledge and context** – Import documents, manage personal memory and conversation context, run retrieval-augmented generation with local embedding models.
+- **Agents and tasks** – Step state, cancel/resume, tool authorization, execution evidence; structured artifacts include quality gates, copyable handoffs, and continuation prompts.
+- **Tools and integrations** – MCP, Skills, built-in workspace tools, web retrieval, speech, and Android device capabilities. Network features are user-configured or explicitly enabled.
+- **Themes and languages** – Minimal, Monet, Material 3, and Liquid Glass themes with light, dark, system, and custom-accent modes. The UI ships in English, Simplified Chinese, and Japanese.
+- **Android experience** – Safe-area and keyboard handling, background notifications, in-app update checks, runtime diagnostics, and recovery entry points.
 
-## 数据与网络边界
+## Data and network boundaries
 
-对话、设置、知识索引、个人上下文和服务商配置默认保存在本机。服务商凭据写入系统安全存储，便携 JSON 导出不包含 API Key。
+Everything except explicit network calls is local by default:
 
-以下操作会访问网络：
+- conversations, settings, knowledge indexes, personal context, provider configuration
+- provider credentials (stored in system secure storage; portable JSON exports never include API keys)
 
-- AI 推理、模型发现、embedding、转录和语音服务；
-- 本地模型资源下载；
-- GitHub 版本检查；
-- 用户启用的联网工具、MCP 服务和第三方集成。
+Network access is limited to:
 
-## 当前版本
+- AI inference, model discovery, embeddings, transcription, and speech
+- local-model resource downloads
+- GitHub version checks
+- user-enabled networking, MCP servers, and third-party integrations
 
-- 当前版本：`v1.0.23`
-- Android：`versionCode 123`
-- [查看 v1.0.23 Release 说明](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.23)
-- [下载 v1.0.21 APK 与校验文件](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
-- [查看全部 Releases 与中英文版本记录](https://github.com/domidoremi/IsleMind/releases)
+## Current release
 
-`v1.0.22`、`v1.0.23` Release 均不附带 APK 构建资产，可安装的最新构建仍为 `v1.0.21`。
+| Item | Value |
+|---|---|
+| Version | `v1.0.24` |
+| Android `versionCode` | `124` |
+| Latest installable APK | `v1.0.21` (`v1.0.22`–`v1.0.24` are source-only) |
 
-### v1.0.23 更新
+- [Read the v1.0.24 notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.24)
+- [Download the v1.0.21 APK and checksums](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
+- [All releases and localized changelog](https://github.com/domidoremi/IsleMind/releases)
 
-- 压缩并精简主题令牌表，新增背景环境系统，统一不同主题下的视觉表达。
-- 完善上下文编排与压缩守护链路，引入 token 估算、内容摘要与压缩守卫核心模块。
-- 统一助手运行时会话能力策略，新增上下文文物、工具输出与压缩守护策略。
-- 强化知识检索链路：扩展 SQLite 知识作用域、检索重排与 RAG 编排能力。
-- 完善聊天、设置、服务商与 MCP 界面的主题体验组件，同步简化三语界面文案。
-- 扩充架构、聊天上下文编排、知识检索运行时等验证与回归脚本。
+### v1.0.24 highlights
 
-### APK 选择
+- Established the root English README as the canonical engineering reference.
+- Added root-level Simplified Chinese and Japanese translations with direct language navigation.
+- Consolidated release guidance around local-first operation, network boundaries, development setup, and validation.
+- Published this version as source-only, with no APK or generated build assets.
 
-- `no-model`：安装包更小，不内置本地 embedding 模型。
-- `with-model-small`：内置小型本地 RAG embedding 模型。
-- 不确定设备架构时，优先选择对应变体的 `universal-64` 包；`.sha256` 文件可用于校验下载完整性。
+### APK variants
 
-## 开发环境
+- `no-model` – Smallest build; no bundled local embedding model.
+- `with-model-small` – Includes a small local RAG embedding model.
+- `universal-64` – Use when you are unsure of the device ABI; verify integrity with the shipped `.sha256` files.
 
-- [Bun 1.4.2](https://bun.sh/)（依赖安装与脚本运行）
-- Node.js（部分项目脚本的运行时）
+## Development environment
+
+- [Bun 1.4.2](https://bun.sh/) for dependencies and scripts
+- Node.js for selected project scripts
 - JDK 25
-- Android SDK
-- Android Platform Tools / ADB
-- Android 模拟器或启用 USB 调试的真机
+- Android SDK and Platform Tools (ADB)
+- Android emulator or a USB-debuggable device
 
-`bun.lock` 是权威依赖锁文件，请勿混用其他包管理器更新依赖。
+`bun.lock` is the authoritative lockfile. Do not mix package managers.
 
-## 获取源码
+## Get the source
 
-```powershell
+```bash
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
 bun install
 bun run doctor
 ```
 
-## 运行 Android
+## Run on Android
 
-启动 Metro：
+Start Metro:
 
-```powershell
+```bash
 bun run start --localhost
 ```
 
-连接 Android 设备并启动应用：
+Connect a device and launch:
 
-```powershell
+```bash
 adb devices
 adb reverse tcp:8081 tcp:8081
-bun run android --device <设备名称> --no-bundler
+bun run android --device <device-name> --no-bundler
 ```
 
-## 项目结构
+## Repository structure
 
 ```text
-app/              Expo Router 页面与路由入口
-src/core/         共享纯类型、协议与基础契约
-src/modules/      业务模块及其公开 API
-src/platform/     存储、网络和原生平台适配
-src/bootstrap/    依赖装配与运行时组合根
-src/presentation/ 展示层控制器与用例桥接
-src/components/   React Native 界面组件
-scripts/          测试、审计、诊断与本地发布脚本
-plugins/          项目内 Expo / Android 原生插件
-docs/             架构说明、迁移状态与多语言文档
+app/               Expo Router routes and entry points
+src/core/          Shared pure types, protocols, and base contracts
+src/modules/       Business modules and public APIs
+src/platform/      Storage, network, and native platform adapters
+src/bootstrap/     Dependency wiring and runtime composition root
+src/presentation/  Presentation controllers and use-case bridges
+src/components/    React Native UI components
+scripts/           Tests, audits, diagnostics, and local release scripts
+plugins/           In-repo Expo and Android native plugins
+docs/              Architecture, migration status, and localized docs
 ```
 
-架构约束以 [IsleMind 架构](docs/architecture/architecture.md) 和 [模块公共 API](docs/architecture/module-public-api.md) 为准。
+Architecture boundaries are enforced by:
+- [IsleMind architecture](docs/architecture/architecture.md)
+- [Module public API](docs/architecture/module-public-api.md)
 
-## 常用验证
+## Validation commands
 
-```powershell
+```bash
 bun run type-check
 bun run test:architecture-boundary
 bun run test:architecture-contract
@@ -128,10 +132,10 @@ bun run test:provider-intelligence
 bun run test:product-mobile-layout
 ```
 
-## 资源与署名
+## Assets and attribution
 
-- Isle UI 是 [animal-island-ui](https://github.com/guokaigdg/animal-island-ui) 的 React Native 适配实现；上游许可证为 CC BY-NC 4.0。
-- 本地模型目录：[assets/models/catalog.json](assets/models/catalog.json)
-- 模型来源与署名：[assets/models/NOTICE.md](assets/models/NOTICE.md)
-- 品牌源文件：`assets/brand/source/`
-- 运行时品牌资源：`assets/brand/generated/`
+- Isle UI is a React Native adaptation of [animal-island-ui](https://github.com/guokaigdg/animal-island-ui); upstream license is CC BY-NC 4.0.
+- Local model catalog: [assets/models/catalog.json](assets/models/catalog.json)
+- Model sources and attribution: [assets/models/NOTICE.md](assets/models/NOTICE.md)
+- Brand sources: `assets/brand/source/`
+- Runtime brand assets: `assets/brand/generated/`

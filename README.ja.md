@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../../assets/icon.png" width="120" height="120" alt="IsleMind アプリアイコン">
+  <img src="assets/icon.png" width="120" height="120" alt="IsleMind アプリアイコン">
 </p>
 
 <h1 align="center">IsleMind</h1>
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="../../README.md">简体中文</a> · <a href="README.en.md">English</a> · 日本語
+  <a href="README.md">English</a> · <a href="README.zh.md">简体中文</a> · 日本語
 </p>
 
 ## IsleMind とは
@@ -18,14 +18,14 @@ IsleMind は、モデルプロバイダー、会話、ナレッジとメモリ�
 
 ## 主な機能
 
-- **モデルプロバイダー管理**：API Key、Base URL、プロトコル、モデル、機能スイッチを設定できます。モデル検出、一括インポート、利用可否の確認、使用量照会、ランタイム診断にも対応します。
-- **幅広いプロトコル互換性**：OpenAI、Anthropic、Gemini、xAI、DeepSeek、Qwen、GLM、および OpenAI 互換・Anthropic 互換の中継エンドポイントを利用できます。
-- **会話ワークスペース**：複数の会話、ストリーミング返信、推論状態、出典、添付ファイル、下書き、メッセージ操作、生成状態をまとめて管理します。
-- **ナレッジと個人コンテキスト**：ナレッジ文書を取り込み、個人メモリと会話コンテキストを管理し、ローカルインデックスと embedding モデルで検索拡張を行います。
-- **エージェントとタスク実行**：ステップ状態、キャンセルと復旧、ツール認可、実行証跡を扱います。構造化された作業成果物には、品質ゲート、コピー可能な引き継ぎ、継続プロンプトが含まれます。
-- **ツールと連携**：MCP、Skills、内蔵ワークスペースツール、Web 検索、音声、Android 端末機能に対応します。ネットワーク機能はユーザーが設定または明示的に有効化します。
-- **テーマと言語**：ミニマル、モネ、Material 3、リキッドグラスの各テーマで、ライト、ダーク、システム連動、カスタムアクセントを選べます。画面表示は簡体中文、English、日本語に対応します。
-- **Android 体験**：セーフエリアとキーボードへの対応、バックグラウンド状態通知、アプリ内更新確認、ランタイム診断、復旧用の導線を備えています。
+- **モデルプロバイダー管理**－API Key、Base URL、プロトコル、モデル、機能スイッチを設定できます。モデル検出、一括インポート、利用可否の確認、使用量照会、ランタイム診断にも対応します。
+- **幅広いプロトコル互換性**－OpenAI、Anthropic、Gemini、xAI、DeepSeek、Qwen、GLM、および OpenAI 互換・Anthropic 互換の中継エンドポイントを利用できます。
+- **会話ワークスペース**－複数の会話、ストリーミング返信、推論状態、出典、添付ファイル、下書き、メッセージ操作、生成状態をまとめて管理します。
+- **ナレッジと個人コンテキスト**－ナレッジ文書を取り込み、個人メモリと会話コンテキストを管理し、ローカルインデックスと embedding モデルで検索拡張を行います。
+- **エージェントとタスク実行**－ステップ状態、キャンセルと復旧、ツール認可、実行証跡を扱います。構造化された作業成果物には、品質ゲート、コピー可能な引き継ぎ、継続プロンプトが含まれます。
+- **ツールと連携**－MCP、Skills、内蔵ワークスペースツール、Web 検索、音声、Android 端末機能に対応します。ネットワーク機能はユーザーが設定または明示的に有効化します。
+- **テーマと言語**－ミニマル、モネ、Material 3、リキッドグラスの各テーマで、ライト、ダーク、システム連動、カスタムアクセントを選べます。画面表示は簡体中文、English、日本語に対応します。
+- **Android 体験**－セーフエリアとキーボードへの対応、バックグラウンド状態通知、アプリ内更新確認、ランタイム診断、復旧用の導線を備えています。
 
 ## データとネットワークの境界
 
@@ -35,31 +35,32 @@ IsleMind は、モデルプロバイダー、会話、ナレッジとメモリ�
 
 - AI 推論、モデル検出、embedding、文字起こし、音声サービス
 - ローカルモデル用リソースのダウンロード
+- GitHub バージョンチェック
 - ユーザーが有効にしたネットワークツール、MCP サーバー、外部サービス連携
 
 ## 現在のリリース
 
-- 現在のバージョン：`v1.0.23`
-- Android：`versionCode 123`
-- [v1.0.23 のリリースノートを見る](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.23)
+| 項目 | 値 |
+|---|---|
+| バージョン | `v1.0.24` |
+| Android `versionCode` | `124` |
+| インストール可能な最新 APK | `v1.0.21`（`v1.0.22`～`v1.0.24` はソースのみ） |
+
+- [v1.0.24 のリリースノートを見る](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.24)
 - [v1.0.21 の APK とチェックサムをダウンロード](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
 - [すべての Releases と多言語の更新履歴を見る](https://github.com/domidoremi/IsleMind/releases)
 
-`v1.0.22` と `v1.0.23` のリリースには APK が含まれないため、インストール可能な最新ビルドは `v1.0.21` です。
+### v1.0.24 の更新
 
-### v1.0.23 の更新
-
-- テーマトークンを圧縮し、背景環境システムを追加してテーマ間の見た目を統一しました。
-- トークン推定、コンテンツダイジェスト、圧縮ガードを含むコンテキスト編成と圧縮保護パイプラインを導入しました。
-- 会話能力ポリシーを統一し、コンテキストアーティファクト、ツール出力、圧縮ガードの各ポリシーを追加しました。
-- SQLite スコープの追加、リランキングの強化、RAG 編成レイヤーの拡張によりナレッジ検索を強化しました。
-- チャット、設定、プロバイダー、MCP 画面のテーマ体験を整え、翻訳文言を簡素化しました。
-- アーキテクチャ、チャットコンテキスト編成、ナレッジ検索ランタイムの検証スクリプトを拡充しました。
+- ルートの英語版 README をエンジニアリング文書の正式版として整備しました。
+- ルートに簡体中国語版と日本語版を追加し、言語間の直接ナビゲーションを用意しました。
+- ローカルファーストの方針、ネットワーク境界、開発環境、検証手順を整理しました。
+- 本バージョンはソースのみを公開し、APK や生成済みビルド資産は添付しません。
 
 ### APK の選択
 
-- `no-model`：ローカル embedding モデルを含まない小さいパッケージです。
-- `with-model-small`：小型のローカル RAG embedding モデルを含みます。
+- `no-model`－ローカル embedding モデルを含まない小さいパッケージです。
+- `with-model-small`－小型のローカル RAG embedding モデルを含みます。
 - 端末のアーキテクチャが不明な場合は、対応する `universal-64` を選び、`.sha256` ファイルでダウンロードを確認してください。
 
 ## 開発環境
@@ -113,7 +114,7 @@ plugins/          リポジトリ内の Expo・Android ネイティブプラグ�
 docs/             アーキテクチャ、移行状況、多言語ドキュメント
 ```
 
-アーキテクチャ境界は、[IsleMind アーキテクチャ](../architecture/architecture.md)と[モジュール公開 API](../architecture/module-public-api.md)で定義されています。
+アーキテクチャ境界は、[IsleMind アーキテクチャ](docs/architecture/architecture.md)と[モジュール公開 API](docs/architecture/module-public-api.md)で定義されています。
 
 ## よく使う検証コマンド
 
@@ -130,7 +131,7 @@ bun run test:product-mobile-layout
 ## アセットとクレジット
 
 - Isle UI は [animal-island-ui](https://github.com/guokaigdg/animal-island-ui) を React Native 向けに適応した実装です。上流ライセンスは CC BY-NC 4.0 です。
-- ローカルモデルカタログ：[assets/models/catalog.json](../../assets/models/catalog.json)
-- モデルの出典とクレジット：[assets/models/NOTICE.md](../../assets/models/NOTICE.md)
+- ローカルモデルカタログ：[assets/models/catalog.json](assets/models/catalog.json)
+- モデルの出典とクレジット：[assets/models/NOTICE.md](assets/models/NOTICE.md)
 - ブランドソース：`assets/brand/source/`
 - ランタイム用ブランドアセット：`assets/brand/generated/`
