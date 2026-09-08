@@ -624,9 +624,6 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     return
   }
 
-  input.onTrace?.(createStreamModeTrace('reader', st('providerTrace.streamReader')))
-  throwIfProviderRuntimeAborted(input.controller.signal)
-
   const decoder = new TextDecoder()
   let fullText = ''
   let buffer = ''
@@ -642,6 +639,15 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }
   const providerCitationSource = resolveStreamProviderCitationSource(input.req.provider, wireProviderType)
   let completionDelivered = false
+  let readerCancelRequested = false
+
+  function cancelReader(): void {
+    if (readerCancelRequested) return
+    readerCancelRequested = true
+    try {
+      void Promise.resolve(reader!.cancel()).catch(() => undefined)
+    } catch {}
+  }
 
   async function completeStream(): Promise<void> {
     if (completionDelivered) return
@@ -733,11 +739,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
 
   function cancelReaderAfterTerminal(): void {
     const terminalReader = reader!
-    const cancel = () => {
-      try {
-        void Promise.resolve(terminalReader.cancel()).catch(() => undefined)
-      } catch {}
-    }
+    const cancel = cancelReader
 
     const closed = terminalReader.closed
     if (!closed || typeof closed.then !== 'function') {
@@ -816,7 +818,15 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     }
   }
 
+  // The transport preserves caller abort after headers. Also explicitly
+  // cancel the acquired reader on caller abort, including a pending read that
+  // may never receive another token. Keep normal terminal EOF's native close
+  // grace period; cancellation/error cleanup must not depend on terminal data.
+  input.controller.signal.addEventListener('abort', cancelReader, { once: true })
   try {
+    if (input.controller.signal.aborted) cancelReader()
+    input.onTrace?.(createStreamModeTrace('reader', st('providerTrace.streamReader')))
+    throwIfProviderRuntimeAborted(input.controller.signal)
     await readStream()
   } catch (error) {
     if (input.controller.signal.aborted) {
@@ -838,6 +848,9 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       latencyMs: Date.now() - startedAt,
     })
     throw error
+  } finally {
+    input.controller.signal.removeEventListener('abort', cancelReader)
+    if (!completionDelivered) cancelReader()
   }
 }
 
