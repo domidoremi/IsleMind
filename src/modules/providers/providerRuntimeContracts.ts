@@ -111,6 +111,8 @@ export interface ProviderRuntimeChatRequest {
   previousResponseId?: string
   requestedModel?: string
   fallbackProviders?: AIProvider[]
+  /** Explicit single-target operations may prohibit provider/model/credential fallback candidates. */
+  allowFallback?: boolean
   providerToolDeclarations?: readonly unknown[]
   structuredOutput?: ProviderStructuredOutputRequest
 }

@@ -15,6 +15,7 @@ export interface ProviderRuntimeFallbackRequest<Attachment extends ProviderSelec
   provider: AIProvider
   model: string
   fallbackProviders?: AIProvider[]
+  allowFallback?: boolean
   attachments?: readonly Attachment[]
   reasoningEffort?: ReasoningEffort
   webSearchMode?: WebSearchMode
@@ -36,6 +37,7 @@ export function routeForRuntimeFallback(
 }
 
 export function fallbackProvidersForRequest(request: ProviderRuntimeFallbackRequest): AIProvider[] {
+  if (request.allowFallback === false) return []
   const providers = request.fallbackProviders?.length ? request.fallbackProviders : [request.provider]
   const currentProvider = providers.some((provider) => provider.id === request.provider.id) ? [] : [request.provider]
   return [...currentProvider, ...providers]
