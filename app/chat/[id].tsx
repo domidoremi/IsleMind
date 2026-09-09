@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react'
 import { BackHandler, Platform, Text, View } from 'react-native'
-import { router, useLocalSearchParams } from 'expo-router'
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
@@ -27,6 +27,7 @@ export default function ConversationDeepLinkScreen() {
     (state) => state.conversations.find((item) => item.id === id) ?? null,
   )
   const select = useChatStore((state) => state.select)
+  const conversationId = conversation?.id
 
   const returnToPreviousSurface = useCallback(() => {
     const action = resolveConversationReturnAction(params.returnTo, router.canGoBack())
@@ -37,9 +38,11 @@ export default function ConversationDeepLinkScreen() {
     router.replace(action.pathname)
   }, [params.returnTo])
 
-  useEffect(() => {
-    if (conversation) select(conversation.id)
-  }, [conversation, select])
+  // A hidden source route can still receive stream updates. Only the focused
+  // route may select a chat (and thereby discard another unsent draft).
+  useFocusEffect(useCallback(() => {
+    if (conversationId) select(conversationId)
+  }, [conversationId, select]))
 
   useEffect(() => {
     if (Platform.OS !== 'android' || conversation) return undefined

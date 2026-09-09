@@ -39,6 +39,7 @@ import type { ConversationGenerationParameterRanges } from '@/modules/providers'
 import { useSettingsStore } from './settingsStore'
 import {
   createResponseLifecycle,
+  createConversationBranchDraft,
   lifecycleStageForMessageStatus,
   lifecycleStageForTrace,
   normalizeResponseLifecycle,
@@ -234,6 +235,7 @@ interface ChatState {
   loadAll: () => Promise<void>
   create: (providerId: string, model: string) => string
   createDraft: (providerId: string, model: string) => string
+  createBranchDraft: (conversationId: string, throughMessageId: string) => string | null
   createLocalSetupConversation: () => string
   select: (id: string | null) => void
   delete: (id: string) => void
@@ -274,6 +276,7 @@ const DEFAULT_CONVERSATION_TEMPERATURE = PROVIDER_PLATFORM_DEFAULT_TEMPERATURE
 const DEFAULT_CONVERSATION_REASONING_EFFORT: Conversation['reasoningEffort'] = 'low'
 const HISTORY_PAGE_SIZE = 40
 const GENERATION_PARAMETER_KEYS = ['temperature', 'topP', 'topK', 'maxTokens'] as const satisfies readonly ConversationGenerationParameterKey[]
+let pendingChatHydration: Promise<void> | undefined
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
@@ -285,41 +288,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
   historyHasMore: false,
   historyLoadingMore: false,
 
-  load: async () => {
+  load: () => {
+    if (pendingChatHydration) return pendingChatHydration
     set({ isLoading: true })
-    const page = await loadConversationPage({ limit: HISTORY_PAGE_SIZE })
-    if (page.conversations.length) {
-      let conversations = prepareConversationsForStore([...page.conversations])
-      const currentId = await readActiveConversationSelection()
-      if (currentId && !conversations.some((conversation) => conversation.id === currentId)) {
-        const activeConversation = await loadConversationRecord(currentId)
-        if (activeConversation) conversations = [
-          ...prepareConversationsForStore([activeConversation]),
-          ...conversations,
-        ]
+    pendingChatHydration = (async () => {
+      const page = await loadConversationPage({ limit: HISTORY_PAGE_SIZE })
+      if (page.conversations.length) {
+        let conversations = prepareConversationsForStore([...page.conversations])
+        const currentId = await readActiveConversationSelection()
+        if (currentId && !conversations.some((conversation) => conversation.id === currentId)) {
+          const activeConversation = await loadConversationRecord(currentId)
+          if (activeConversation) conversations = [
+            ...prepareConversationsForStore([activeConversation]),
+            ...conversations,
+          ]
+        }
+        const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
+        set({
+          conversations,
+          draftConversationIds: new Set<string>(),
+          currentId: selectedId,
+          isLoading: false,
+          historyCursor: page.nextCursor ?? null,
+          historyHasMore: page.hasMore,
+          historyLoadingMore: false,
+        })
+        void writeActiveConversationSelection(selectedId)
+        return
       }
-      const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
+
+      set({ conversations: [], draftConversationIds: new Set<string>(), currentId: null, isLoading: false })
       set({
-        conversations,
-        draftConversationIds: new Set<string>(),
-        currentId: selectedId,
-        isLoading: false,
         historyCursor: page.nextCursor ?? null,
         historyHasMore: page.hasMore,
         historyLoadingMore: false,
       })
-      void writeActiveConversationSelection(selectedId)
-      return
-    }
-
-    set({ conversations: [], draftConversationIds: new Set<string>(), currentId: null, isLoading: false })
-    set({
-      historyCursor: page.nextCursor ?? null,
-      historyHasMore: page.hasMore,
-      historyLoadingMore: false,
+      await writeActiveConversationSelection(null)
+      void hydrateSqliteConversationsInBackground()
+    })().finally(() => {
+      // Share only the active attempt, not a rejected promise. Callers still
+      // receive the failure; no records or unrelated error are cleared here.
+      pendingChatHydration = undefined
+      if (get().isLoading) set({ isLoading: false })
     })
-    await writeActiveConversationSelection(null)
-    void hydrateSqliteConversationsInBackground()
+    return pendingChatHydration
   },
 
   loadMore: async () => {
@@ -383,6 +395,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     })
     return id
+  },
+
+  createBranchDraft: (conversationId: string, throughMessageId: string) => {
+    const state = get()
+    if (isConversationLocked(conversationId) || state.draftConversationIds.has(conversationId)) return null
+    const source = state.conversations.find(conversation => conversation.id === conversationId)
+    if (!source) return null
+    const branch = createConversationBranchDraft(source, throughMessageId, {
+      id: generateId(),
+      title: st('messageBubble.branchChatTitle', { title: source.title || st('conversation.untitled') }),
+      now: Date.now(),
+    })
+    if (!branch) return null
+    set({
+      conversations: [branch, ...state.conversations],
+      draftConversationIds: new Set([...state.draftConversationIds, branch.id]),
+      currentId: branch.id,
+    })
+    return branch.id
   },
 
   createLocalSetupConversation: () => {
@@ -577,7 +608,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
-      void persistConversationRecord(updated, convId)
+      if (!state.draftConversationIds.has(convId)) void persistConversationRecord(updated, convId)
       return { conversations: updated }
     })
   },
@@ -594,7 +625,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
-      void persistConversationRecord(updated, convId)
+      if (!state.draftConversationIds.has(convId)) void persistConversationRecord(updated, convId)
       return { conversations: updated }
     })
   },

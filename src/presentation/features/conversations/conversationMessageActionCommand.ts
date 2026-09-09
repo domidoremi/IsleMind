@@ -100,6 +100,10 @@ export async function copyConversationMessageFinalText(message: Message): Promis
   await messageActionController.copyFinalText(message)
 }
 
+export function branchConversationFromMessage(conversationId: string, messageId: string): string | null {
+  return useChatStore.getState().createBranchDraft(conversationId, messageId)
+}
+
 export function confirmConversationAction(
   conversationId: string,
   assistantMessageId: string,
