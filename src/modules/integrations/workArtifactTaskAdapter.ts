@@ -231,13 +231,18 @@ function cancelledResult(
 
 function formatSummary(workflowOutput: WorkArtifactWorkflowOutputShape): string {
   const missing = workflowOutput.missingKinds.length ? workflowOutput.missingKinds.join(', ') : 'none'
+  // Human follow-up text is an opt-in UI affordance, not a new model task.
+  // Keep the template audit intact without treating every category as requested.
   return [
-    workflowOutput.handoffText,
-    '',
-    `Quality audit: ${workflowOutput.qualityAudit.ok ? 'passed' : 'needs repair'}`,
+    'Work-artifact structural audit (advisory only).',
+    'This checks a general artifact template, not factual accuracy, approvals, or completion of the user task.',
+    `Structural quality: ${workflowOutput.quality}; qualityAudit.ok=${workflowOutput.qualityAudit.ok}`,
     `Coverage: actions=${workflowOutput.actionItemCount}, decisions=${workflowOutput.decisionCount}, risks=${workflowOutput.riskCount}, questions=${workflowOutput.openQuestionCount}, evidence=${workflowOutput.evidenceCount}`,
-    `Missing gates: ${missing}`,
-  ].filter((line) => line.trim()).join('\n')
+    `Absent template categories: ${missing}`,
+    `Template diagnostics: ${JSON.stringify(workflowOutput.qualityGaps)}`,
+    'Absent categories are not automatically user requirements or missing source facts. Address findings only where relevant to the requested deliverable.',
+    'Complete the requested answer from the available sources, retaining recorded constraints, owners, dates, and pending or unknown statuses. If needed facts are absent, say so. Do not invent facts or approvals, claim unperformed actions, or ask the user to fill generic template sections.',
+  ].join('\n')
 }
 
 function buildCompactOutput(

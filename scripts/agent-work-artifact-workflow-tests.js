@@ -32,6 +32,7 @@ function run() {
   runStructuredHandoffOutcomeChecks()
   runInlineSectionChecks()
   runWorkArtifactInvocationChecks()
+  runModelFacingAuditScopeChecks()
   assert.ok(requiredWorkArtifactCases.includes('WORK_ARTIFACT_WORKFLOW_CONTRACT'), 'work artifact workflow contract is named')
   assert.ok(requiredWorkArtifactCases.includes('qualityGapCodes'), 'work artifact workflow contract exposes quality gaps')
   assert.ok(requiredWorkArtifactCases.includes('followUpPrompt'), 'work artifact workflow contract exposes continuation prompts')
@@ -93,6 +94,51 @@ function runWorkArtifactInvocationChecks() {
   const requestOnly = adapter.execute({ toolId: manifest.id, arguments: { content: 'Please make a plan and audit it.' } })
   assert.equal(requestOnly.ok, true, 'the tool still audits supplied text; it does not interpret prose as a mandatory operation')
   assert.equal(requestOnly.trace.metadata.quality, 'none', 'a request is not silently turned into a generated artifact')
+}
+
+function runModelFacingAuditScopeChecks() {
+  const policy = createWorkArtifactWorkflowPolicy({
+    summarizeWorkArtifact, validateWorkArtifactQuality,
+    containsSensitiveText: () => false, redactSensitiveText: value => value,
+  })
+  const adapter = createWorkArtifactTaskAdapter({
+    buildWorkflowOutput: policy.buildWorkArtifactWorkflowOutput,
+    sanitizeOutput: value => value, clampOutput: (value, limit) => value.slice(0, limit),
+    createTrace: value => value, now: () => 100,
+  })
+  const requestedHandoff = [
+    'Summary', '- The private pilot remains capped at 20 employees.',
+    'Decision: Public launch is not authorized.',
+    'Action items', '- Owner: Mina; Next step: Access review; Due: 2026-09-10; Status: pending',
+    'Evidence: Policy P-17 requires written privacy and product-owner approval.',
+  ].join('\n')
+  const completeTemplate = [requestedHandoff, 'Risks', '- Review may slip.',
+    'Open questions', '- Has approval been recorded?'].join('\n')
+  for (const [content, qualityAuditOk] of [[requestedHandoff, false], [completeTemplate, true], ['', false]]) {
+    const expected = policy.buildWorkArtifactWorkflowOutput(content)
+    const result = adapter.execute({ toolId: WORK_ARTIFACT_TOOL_MANIFEST.id, arguments: { content } })
+    const metadata = result.trace.metadata
+    const compact = metadata.workArtifactOutput
+    assert.equal(expected.qualityAudit.ok, qualityAuditOk, 'existing structural audit thresholds remain authoritative')
+    assert.equal(result.ok, true, 'an advisory audit result does not redefine tool execution success')
+    assert.equal(metadata.qualityAuditOk, expected.qualityAudit.ok)
+    assert.equal(metadata.quality, expected.quality)
+    for (const field of ['qualityAudit', 'qualityGaps', 'missingKinds', 'sourceEvidence',
+      'actionItemCount', 'decisionCount', 'riskCount', 'openQuestionCount', 'evidenceCount']) {
+      assert.deepEqual(compact[field], expected[field], `structured ${field} remains unchanged`)
+    }
+    assert.equal(metadata.followUpPrompt, expected.followUpPrompt, 'the existing human follow-up affordance remains available')
+    assert.equal(compact.handoffText, expected.handoffText.slice(0, 720))
+    assert.match(result.output, /structural audit \(advisory only\)/i)
+    assert.ok(result.output.includes(`qualityAudit.ok=${qualityAuditOk}`), 'the raw audit outcome is not relabelled as a semantic pass')
+    assert.ok(result.output.includes(`Template diagnostics: ${JSON.stringify(expected.qualityGaps)}`))
+    assert.match(result.output, /not automatically user requirements or missing source facts/)
+    assert.equal(result.output.includes(expected.followUpPrompt), false, 'generic UI continuation must not become an instruction to the model')
+    assert.doesNotMatch(result.output, /Continue from this work artifact|Fill the missing gates|not directly executable yet/)
+    assert.deepEqual(result.blocks, [{ type: 'text', text: result.output }])
+  }
+  assert.deepEqual(policy.buildWorkArtifactWorkflowOutput(requestedHandoff).missingKinds, ['risk', 'question'])
+  console.log('Host verified: model-facing audit scope is advisory; raw diagnostics, structural thresholds and human follow-up metadata are preserved. This does not grade generated answers.')
 }
 
 function runStructuredHandoffOutcomeChecks() {
