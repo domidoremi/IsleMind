@@ -189,7 +189,9 @@ export function createProviderNativeToolDeclarationAdapter(
               functionDeclarations: tools.map((tool) => ({
                 name: tool.name,
                 description: tool.description,
-                parameters: tool.parameters,
+                // Manifests use JSON Schema; the typed parameters field cannot
+                // represent union types such as string-or-object citations.
+                parametersJsonSchema: tool.parameters,
               })),
             }]
           : []

@@ -6,7 +6,7 @@ import { IslePressable, IsleScreen, type IsleBackgroundState } from '@/component
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 type ThemeDetailFrameProps = {
-  kind: 'source' | 'missing-chat' | 'providers' | 'usage'
+  kind: 'source' | 'missing-chat' | 'providers' | 'usage' | 'documents'
   title: string
   subtitle?: string
   onBack: () => void

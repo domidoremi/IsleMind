@@ -39,16 +39,16 @@ export async function fetchProviderStreamWithTimeout(
   timeoutMs: number,
 ): Promise<Response> {
   const controller = new AbortController()
-  const forwardAbort = () => controller.abort(init?.signal?.reason)
-  if (init?.signal?.aborted) controller.abort(init.signal.reason)
-  init?.signal?.addEventListener('abort', forwardAbort, { once: true })
+  // Only the timeout ends at headers. Caller cancellation must still reach
+  // the native request while its body is open: Expo reader.cancel() alone
+  // can leave Android's socket read blocked. Expo installs AbortSignal.any.
+  const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const body = init?.body ?? undefined
-    return await fetchImplementation(input, { ...init, signal: controller.signal, body })
+    return await fetchImplementation(input, { ...init, signal, body })
   } finally {
     clearTimeout(timeout)
-    init?.signal?.removeEventListener('abort', forwardAbort)
   }
 }
 

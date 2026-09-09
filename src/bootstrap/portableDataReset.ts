@@ -28,6 +28,7 @@ import {
 } from './secureCredentialStorage'
 import { clearTavernSnapshot } from './tavernWorkspace'
 import { clearConversationComposerDraftPersistence } from './conversationComposerDrafts'
+import { documentLibrary } from './documentLibrary'
 
 interface PortableDataResetSnapshot {
   providers: readonly AIProvider[]
@@ -63,6 +64,10 @@ export const portableDataResetRuntime = createPortableDataResetRuntime<PortableD
     {
       id: 'conversations',
       clear: async () => conversationPersistence.clear(),
+    },
+    {
+      id: 'saved-documents',
+      clear: () => documentLibrary.clear(),
     },
     {
       id: 'assistant-runs',

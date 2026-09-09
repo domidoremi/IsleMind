@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals'
 import type { UsagePortableSnapshotRepository } from '@/modules/diagnostics'
+import { SAVED_DOCUMENT_SCHEMA, type SavedDocument } from '@/modules/documents'
 import type { AIProvider } from '@/types/providerContracts'
 import {
   createPortableDataPayloadRuntime,
@@ -70,7 +71,7 @@ function payload(providerMetadata: unknown): string {
   })
 }
 
-function runtime() {
+function runtime(documents: SavedDocument[] = []) {
   const importedPlans: PortableDataApplicationImportPlan[] = []
   const dependencies: PortableDataPayloadRuntimeDependencies = {
     records: {
@@ -91,6 +92,7 @@ function runtime() {
       exportSnapshots: async () => [],
     },
     usage: usageRepository(),
+    documents: { loadSnapshot: async () => documents },
     recovery: {
       importApplication: async (plan) => {
         importedPlans.push(plan)
@@ -105,6 +107,61 @@ function runtime() {
     importedPlans,
   }
 }
+
+describe('portable saved documents', () => {
+  const document: SavedDocument = {
+    schema: SAVED_DOCUMENT_SCHEMA, id: 'doc-1', revision: 'write-1', title: 'My edited draft',
+    body: 'Human edits', createdAt: 1, updatedAt: 2,
+    origin: { conversationId: 'chat', conversationTitle: 'Original chat', messageId: 'answer',
+      messageStatus: 'cancelled', messageTimestamp: 1, originalText: 'Partial answer', citations: [] },
+  }
+
+  it('includes editable text and immutable captured provenance in full and documents-only backups', async () => {
+    const { payloadRuntime } = runtime([document])
+    expect((await payloadRuntime.exportPayload()).savedDocuments).toEqual([document])
+    const selective = await payloadRuntime.exportPayload({ selection: { mode: 'selective', categories: ['documents'] } })
+    expect(selective.savedDocuments).toEqual([document])
+    expect(selective.conversations).toEqual([])
+    expect(selective.context?.documents).toEqual([])
+    expect((await payloadRuntime.exportPayload({ selection: { mode: 'selective', categories: ['conversations'] } })).savedDocuments).toBeUndefined()
+  })
+
+  it('previews same-ID document replacement and honours refusal before calling recovery', async () => {
+    const { payloadRuntime, importedPlans } = runtime([document])
+    const json = (await payloadRuntime.exportJson({ selection: { mode: 'selective', categories: ['documents'] } })).json
+    const result = await payloadRuntime.importJson(json, { confirmRestore: (preview) => {
+      expect(preview.counts.documents).toBe(1)
+      expect(preview.actions).toContainEqual({ category: 'documents', id: 'doc-1', action: 'replace' })
+      return false
+    } })
+    expect(result).toMatchObject({ ok: false, reason: 'operation_cancelled' })
+    expect(importedPlans).toEqual([])
+  })
+
+  it('hands selected documents to recovery without converting them to Knowledge or successful answers', async () => {
+    const { payloadRuntime, importedPlans } = runtime([document])
+    const json = (await payloadRuntime.exportJson({ selection: { mode: 'selective', categories: ['documents'] } })).json
+    expect(await payloadRuntime.importJson(json)).toMatchObject({ ok: true })
+    expect(importedPlans[0].savedDocuments).toEqual([document])
+    expect(importedPlans[0].knowledge).toMatchObject({ documents: [] })
+    expect(importedPlans[0].savedDocuments?.[0].origin?.messageStatus).toBe('cancelled')
+  })
+
+  it('preserves absence in a legacy full backup and rejects missing selected or malformed documents before recovery', async () => {
+    const { payloadRuntime, importedPlans } = runtime([document])
+    await payloadRuntime.importJson(payload(provider()))
+    expect(importedPlans[0].savedDocuments).toBeUndefined()
+    const count = importedPlans.length
+    const old = JSON.parse(payload(provider()))
+    for (const savedDocuments of [[{ ...document, schema: 'unknown' }], [document, document]]) {
+      expect(await payloadRuntime.importJson(JSON.stringify({ ...old, savedDocuments }))).toMatchObject({ ok: false, reason: 'invalid_structure' })
+    }
+    expect(await payloadRuntime.importJson(JSON.stringify({ schema: 'islemind.portable-backup.v2', version: 2,
+      selection: { mode: 'selective', categories: ['documents'] }, payload: old, createdAt: 1 })))
+      .toMatchObject({ ok: false, reason: 'invalid_structure' })
+    expect(importedPlans).toHaveLength(count)
+  })
+})
 
 describe('portable provider identity validation', () => {
   it('imports the current custom endpoint identity with an explicit wire protocol', async () => {
@@ -162,6 +219,7 @@ describe('portable provider identity validation', () => {
         exportSnapshots: async () => [],
       },
       usage: usageRepository(),
+      documents: { loadSnapshot: async () => [] },
       recovery: {
         importApplication: async (plan) => {
           importedPlans.push(plan)
@@ -211,6 +269,7 @@ describe('portable provider identity validation', () => {
         exportActiveScopeLinks: async () => ({}),
         exportSnapshots: async () => [],
       },
+      documents: { loadSnapshot: async () => [] },
       usage: {
         load: async () => {
           usageLoadCount += 1
@@ -279,6 +338,7 @@ describe('portable provider identity validation', () => {
         exportSnapshots: async () => [],
       },
       usage: usageRepository(),
+      documents: { loadSnapshot: async () => [] },
       recovery: {
         importApplication: async (plan) => {
           importedPlans.push(plan)

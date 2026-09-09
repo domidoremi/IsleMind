@@ -1,6 +1,7 @@
 import { memo, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MotiView } from 'moti'
+import { router } from 'expo-router'
 
 import type { useIsleDialog } from '@/components/ui/isle'
 import { resolveProviderBrand } from '@/components/ui/ProviderBrandIcon'
@@ -9,10 +10,12 @@ import {
   regenerateLastConversationAssistant,
   retryConversationMessage,
 } from '@/presentation/features/conversations/conversationControlCommand'
+import { branchConversationFromMessage } from '@/presentation/features/conversations/conversationMessageActionCommand'
 import { speakText } from '@/services/speech'
 import type { Attachment, Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { useSettingsStore } from '@/store/settingsStore'
+import { useChatStore } from '@/store/chatStore'
 
 import { MessageBubble } from './MessageBubble'
 import { resolveMessageProviderIdentity } from './messageProviderIdentity'
@@ -86,6 +89,7 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
   isRewinding = false,
 }: ChatActiveMessageItemProps) {
   const { t } = useTranslation()
+  const isDraftConversation = useChatStore(state => state.draftConversationIds.has(conversationId))
   const capturedProvider = useSettingsStore((state) => message.providerId
     ? state.providers.find((item) => item.id === message.providerId)
     : undefined)
@@ -106,6 +110,23 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
     })
     if (!confirmed) return
     await regenerateLastConversationAssistant(conversationId)
+  }
+
+  async function confirmBranch(item: Message) {
+    const confirmed = await dialog.confirm({
+      title: t('messageBubble.branchChat'),
+      message: t('messageBubble.branchChatDescription'),
+      confirmLabel: t('messageBubble.branchChat'),
+      cancelLabel: t('common.cancel'),
+      tone: 'mint',
+    })
+    if (!confirmed) return
+    const id = branchConversationFromMessage(conversationId, item.id)
+    if (!id) {
+      dialog.toast({ title: t('messageBubble.branchChatUnavailable'), tone: 'amber' })
+      return
+    }
+    router.push({ pathname: '/chat/[id]', params: { id, returnTo: 'chat' } })
   }
 
   return (
@@ -131,6 +152,7 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
         onToggleSelected={onToggleSelected}
         onLayoutChangeRequest={onLayoutChangeRequest}
         onCopy={(item) => copyChatMessageText({ dialog, message: item, t })}
+        onCreateDocument={(item) => router.push({ pathname: '/documents/edit', params: { conversationId, messageId: item.id } })}
         onCopyProcessTrace={(item) => copyChatMessageProcessTrace({ dialog, message: item, t })}
         onCopyWorkArtifact={(item) => copyChatMessageWorkArtifact({ dialog, message: item, t })}
         onContinueWorkArtifact={(item) => continueChatMessageWorkArtifact({ dialog, message: item, onApplyStarter, t })}
@@ -163,6 +185,9 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
         })}
         onSpeak={(item) => void speakText(item.responseText ?? item.content, provider)}
         onQuote={quoteMessage}
+        onBranch={isDraftConversation ? undefined : (item) => void confirmBranch(item).catch(() => {
+          dialog.toast({ title: t('messageBubble.branchChatFailed'), tone: 'danger' })
+        })}
         onEdit={editUserMessage}
         onStartMultiSelect={startMessageMultiSelect}
         onDelete={(item) => deleteChatMessageWithConfirmation({ conversationId, dialog, message: item, removeMessage, t })}

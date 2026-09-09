@@ -49,7 +49,7 @@ const knowledgeQueryEmbedding = createKnowledgeQueryEmbeddingUseCase<AIProvider>
       ...(input.localEmbeddingModelId === undefined ? {} : { localEmbeddingModelId: input.localEmbeddingModelId }),
       ...(input.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: input.localEmbeddingModelSource }),
     })
-    if (!provider || !await provider.available()) return null
+    if (!provider || !await provider.available({ signal: input.signal })) return null
     const embedding = await provider.embed(input.query, { signal: input.signal })
     return { embedding, model: provider.model! }
   },
@@ -95,7 +95,11 @@ export const knowledgeHybridIndex = createSqliteKnowledgeHybridIndex<AIProvider>
       ...(input.localEmbeddingModelId === undefined ? {} : { localEmbeddingModelId: input.localEmbeddingModelId }),
       ...(input.localEmbeddingModelSource === undefined ? {} : { localEmbeddingModelSource: input.localEmbeddingModelSource }),
     })
-    if (!provider || !await provider.available()) return undefined
+    if (!provider || !await provider.available({ signal: input.signal })) return undefined
+    // Catalogue fallback remains useful for read-only queries. An explicit
+    // reindex must not replace valid vectors with an unrequested fallback
+    // model when the selected model is missing or fails integrity verification.
+    if (input.localEmbeddingModelId && !provider.model?.startsWith(`${input.localEmbeddingModelId}@`)) return undefined
     return {
       model: provider.model!,
       embed: (text, options) => provider.embed(text, options),

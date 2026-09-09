@@ -3,7 +3,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { AppState, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { ISLE_MIN_TOUCH_TARGET, IsleHeader, IslePressable, IsleSearchField, useIsleDialog } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleHeader, IslePressable, IsleSearchField, useIsleDialog } from '@/components/ui/isle'
 import { ConversationRow } from '@/components/conversations/ConversationRow'
 import { useMainPagerGestureLock } from './MainPagerGestureLock'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -1147,7 +1147,8 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
   )
 
   const historySearch = (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+    <View style={{ gap: 10 }}>
+      <IsleButton label={t('documents.title')} onPress={() => router.push('/documents')} />
       <IsleSearchField
         inputRef={searchInputRef}
         value={query}

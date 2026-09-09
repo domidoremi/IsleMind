@@ -1,0 +1,28 @@
+diff --git a/build/web/ClipboardModule.js b/build/web/ClipboardModule.js
+index 64e24486e97cacb1d87330adbab2d9fa375413eb..d87a2f940a8560e8d544ca921bd6487b6b3ecf83 100644
+--- a/build/web/ClipboardModule.js
++++ b/build/web/ClipboardModule.js
+@@ -169,8 +169,7 @@ function legacySetString(text) {
+     document.body.appendChild(textField);
+     textField.select();
+     try {
+-        document.execCommand('copy');
+-        return true;
++        return document.execCommand('copy');
+     }
+     catch {
+         return false;
+diff --git a/src/web/ClipboardModule.ts b/src/web/ClipboardModule.ts
+index 853ffcba16e62c5f470da7d553b553f18f879d50..c5297078fe78c6be6273852fe5e42f4ee6cdef3b 100644
+--- a/src/web/ClipboardModule.ts
++++ b/src/web/ClipboardModule.ts
+@@ -201,8 +201,7 @@ function legacySetString(text: string): boolean {
+   document.body.appendChild(textField);
+   textField.select();
+   try {
+-    document.execCommand('copy');
+-    return true;
++    return document.execCommand('copy');
+   } catch {
+     return false;
+   } finally {

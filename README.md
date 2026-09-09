@@ -120,6 +120,8 @@ Architecture boundaries are enforced by:
 - [IsleMind architecture](docs/architecture/architecture.md)
 - [Module public API](docs/architecture/module-public-api.md)
 
+[Technology radar and assimilation](docs/architecture/technology-radar.md) tracks evidence-based technology choices, new product opportunities, and sunset conditions.
+
 ## Validation commands
 
 ```bash

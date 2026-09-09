@@ -10,6 +10,9 @@ const canonicalArchitectureDocuments = new Set([
   'docs/architecture/architecture.md',
   'docs/architecture/module-public-api.md',
 ])
+const supplementalArchitectureDocuments = new Set([
+  'docs/architecture/technology-radar.md',
+])
 const durableWorkspaceEvidenceContractPhrases = [
   '`AssistantRun` schema v4 persists the exact captured handoff atomically with `run.created` as strictly validated durable evidence only; it does not grant recovery authority.',
   'terminal decode-only no-replay inputs',
@@ -71,7 +74,7 @@ function collectArchitectureDocumentSetIssues(documents) {
     }
   }
   for (const document of documentSet) {
-    if (!canonicalArchitectureDocuments.has(document)) {
+    if (!canonicalArchitectureDocuments.has(document) && !supplementalArchitectureDocuments.has(document)) {
       issues.push({ file: document, specifier: '', rule: 'architecture-document-set' })
     }
   }

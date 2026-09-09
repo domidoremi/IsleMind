@@ -31,6 +31,8 @@ import {
   type KnowledgeRepository,
   type KnowledgeRepositoryOperationOptions,
   type KnowledgeRepositorySnapshot,
+  type KnowledgeLocalSource,
+  type KnowledgeLocalSourceReference,
   type PendingMemoryCandidate,
 } from '../contracts'
 
@@ -183,9 +185,21 @@ export function createSqliteKnowledgeRepository(
     throwIfAborted(signal)
     initialized ??= (async () => {
       searchMode = await resolveSqliteKnowledgeSearchMode(value)
+      await applySqliteMigrations(value, [])
+      const legacyMarker = await value.getFirst<{ name: string }>(
+        'SELECT name FROM platform_schema_migrations WHERE scope = ? AND version = ?',
+        [MIGRATION_SCOPE, MIGRATION_VERSION],
+      )
+      // The old replay adapter could claim knowledge/v3 first. Repair only
+      // that known collision, before v4 needs the base tables, and retain the
+      // historical marker. Re-running v3 on healthy databases would rewrite
+      // current memory scopes with the legacy conversion policy.
+      const recordsScope = legacyMarker?.name === 'knowledge-rag-replay-snapshots'
+        ? 'knowledge-records-repair'
+        : MIGRATION_SCOPE
       await applySqliteMigrations(value, [
         {
-          scope: MIGRATION_SCOPE,
+          scope: recordsScope,
           version: MIGRATION_VERSION,
           name: 'structured-memory-facts-and-scoped-retrieval',
           async up(transaction) {
@@ -258,6 +272,8 @@ export function createSqliteKnowledgeRepository(
             await ensureKnowledgeSearchTables(transaction, searchMode)
           },
         },
+      ])
+      await applySqliteMigrations(value, [
         {
           scope: MIGRATION_SCOPE,
           version: 4,
@@ -600,6 +616,39 @@ export function createSqliteKnowledgeRepository(
     return rows.map(normalizeChunkRow)
   }
 
+  async function readLocalSource(
+    reference: KnowledgeLocalSourceReference,
+    operation: KnowledgeRepositoryOperationOptions = {},
+  ): Promise<KnowledgeLocalSource | undefined> {
+    const value = await database(operation.signal)
+    const source = await value.transaction(async (transaction): Promise<KnowledgeLocalSource | undefined> => {
+      throwIfAborted(operation.signal)
+      if (reference.type === 'memory') {
+        const memoryId = normalizeIdentifier(reference.memoryId, 'memory id')
+        const conversationId = normalizeIdentifier(reference.conversationId, 'conversation id')
+        const row = await transaction.getFirst<Record<string, unknown>>(
+          `SELECT ${MEMORY_SELECT_COLUMNS} FROM memories WHERE id = ?
+           AND ((scopeKind = 'user' AND scopeId = ?) OR (scopeKind = 'conversation' AND scopeId = ?))`,
+          [memoryId, LOCAL_USER_MEMORY_SCOPE_ID, conversationId],
+        )
+        return row ? { type: 'memory', memory: normalizeMemoryRow(row) } : undefined
+      }
+      const documentId = normalizeIdentifier(reference.documentId, 'document id')
+      const row = await transaction.getFirst<Record<string, unknown>>(
+        'SELECT * FROM knowledge_documents WHERE id = ?', [documentId],
+      )
+      if (!row) return undefined
+      // Document replacement/deletion cannot interleave metadata from one revision
+      // with chunks from another. This is a read through the existing owner queue.
+      const chunks = await transaction.getAll<Record<string, unknown>>(
+        'SELECT * FROM knowledge_chunks WHERE documentId = ? ORDER BY ordinal ASC, id ASC', [documentId],
+      )
+      return { type: 'knowledge', document: normalizeDocumentRow(row), chunks: chunks.map(normalizeChunkRow) }
+    })
+    throwIfAborted(operation.signal)
+    return source
+  }
+
   async function loadSnapshot(
     operation: KnowledgeRepositoryOperationOptions = {},
   ): Promise<KnowledgeRepositorySnapshot> {
@@ -795,6 +844,7 @@ export function createSqliteKnowledgeRepository(
     updateDocumentStatus,
     listDocuments,
     listChunks,
+    readLocalSource,
     searchFts,
     markFtsHits,
     deleteDocument,

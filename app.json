@@ -62,6 +62,7 @@
       "./plugins/android-status-notification/withAndroidStatusNotification",
       "./plugins/android-device-tools/withAndroidDeviceTools",
       "./plugins/android-trusted-web-fetch/withAndroidTrustedWebFetch",
+      "./plugins/android-file-integrity/withAndroidFileIntegrity",
       "./plugins/android-static-launch/withAndroidStaticLaunch",
       "expo-image",
       "expo-sharing",

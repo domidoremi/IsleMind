@@ -313,7 +313,24 @@ export interface KnowledgeDocumentRepository {
   ): Promise<void>
 }
 
-export type KnowledgeRepository = KnowledgeMemoryRepository & KnowledgeDocumentRepository & KnowledgeFtsSearchPort
+export type KnowledgeLocalSourceReference =
+  | { type: 'knowledge'; documentId: string }
+  | { type: 'memory'; memoryId: string; conversationId: string }
+
+/** Current retained text, not a historical citation snapshot or an original file. */
+export type KnowledgeLocalSource =
+  | { type: 'knowledge'; document: KnowledgeDocumentRecord; chunks: readonly KnowledgeChunkRecord[] }
+  | { type: 'memory'; memory: KnowledgeMemoryRecord }
+
+export interface KnowledgeLocalSourceReader {
+  /** Reads one consistent source; missing and out-of-scope references both return undefined. */
+  readLocalSource(
+    reference: KnowledgeLocalSourceReference,
+    options?: KnowledgeRepositoryOperationOptions,
+  ): Promise<KnowledgeLocalSource | undefined>
+}
+
+export type KnowledgeRepository = KnowledgeMemoryRepository & KnowledgeDocumentRepository & KnowledgeFtsSearchPort & KnowledgeLocalSourceReader
 
 export interface KnowledgeDocumentImportInput {
   title: string

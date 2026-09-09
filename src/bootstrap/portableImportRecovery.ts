@@ -56,6 +56,8 @@ import {
 } from './tavernWorkspace'
 import { clearRuntimeLog } from '@/platform/native/runtimeLog'
 import { usagePortableSnapshotRepository } from './usageStatisticsRuntime'
+import { parseSavedDocuments, type SavedDocument } from '@/modules/documents'
+import { documentLibrary } from './documentLibrary'
 
 const PARTICIPANT_IDS = Object.freeze([
   'workspaces',
@@ -64,8 +66,10 @@ const PARTICIPANT_IDS = Object.freeze([
   'secure_state',
   'knowledge',
   'usage',
+  'documents',
 ] as const)
 const LEGACY_PARTICIPANT_IDS = Object.freeze(PARTICIPANT_IDS.slice(0, 5))
+const USAGE_PARTICIPANT_IDS = Object.freeze(PARTICIPANT_IDS.slice(0, 6))
 
 const APPLICATION_RECORD_KEYS = Object.freeze({
   settings: '@islemind/settings',
@@ -83,6 +87,7 @@ const KNOWLEDGE_BACKUP_SCHEMA =
   'islemind.portable-import-knowledge.v1'
 const USAGE_BACKUP_SCHEMA =
   'islemind.portable-import-usage.v1'
+const DOCUMENT_BACKUP_SCHEMA = 'islemind.portable-import-documents.v1'
 const WORKSPACE_PLAN_SCHEMA =
   'islemind.portable-import-workspaces.v1'
 const SECURE_MANIFEST_SCHEMA =
@@ -106,6 +111,7 @@ export interface PortableApplicationImportPlan {
   readonly mcpServers: readonly McpServerConfig[]
   readonly knowledge: Partial<PortableKnowledgeSnapshot>
   readonly usage?: UsagePortableSnapshot
+  readonly savedDocuments?: readonly SavedDocument[]
   readonly tavernEntries: readonly {
     readonly scopeId?: string
     readonly snapshot: Partial<TavernSnapshot> | undefined
@@ -398,7 +404,7 @@ function isSupportedPortableImportParticipantList(
 ): boolean {
   return sameStrings(persisted, current) || (
     sameStrings(current, PARTICIPANT_IDS) &&
-    sameStrings(persisted, LEGACY_PARTICIPANT_IDS)
+    (sameStrings(persisted, LEGACY_PARTICIPANT_IDS) || sameStrings(persisted, USAGE_PARTICIPANT_IDS))
   )
 }
 
@@ -445,6 +451,7 @@ function createProductionParticipants(
     createSecureStateParticipant(store),
     createKnowledgeParticipant(store),
     createUsageParticipant(store),
+    createDocumentParticipant(store),
   ])
 }
 
@@ -697,6 +704,42 @@ function createUsageParticipant(
   }
 }
 
+function createDocumentParticipant(
+  store: PortableImportRecoveryStore,
+): PortableImportRecoveryParticipant<PortableApplicationImportPlan> {
+  const id = PARTICIPANT_IDS[6]
+  return {
+    id,
+    async prepare(plan, envelope, signal) {
+      throwIfCancelled(signal)
+      let backup: DocumentBackup = { schema: DOCUMENT_BACKUP_SCHEMA, operationId: envelope.operationId, selected: false }
+      // Old backups have no document collection: absence is not permission to erase it.
+      if (isPortableCategorySelected(plan, 'documents') && plan.savedDocuments !== undefined) {
+        const source = await documentLibrary.loadSnapshot({ signal })
+        const imported = parseSavedDocuments(plan.savedDocuments).map((document, index) => ({
+          ...document, revision: `import:${envelope.operationId}:${index}`,
+        }))
+        const merged = new Map((plan.selection.mode === 'selective' ? source : []).map((document) => [document.id, document]))
+        for (const document of imported) merged.set(document.id, document)
+        backup = { ...backup, selected: true, source, target: parseSavedDocuments([...merged.values()]) }
+      }
+      throwIfCancelled(signal)
+      const raw = JSON.stringify(backup)
+      await store.createBlob(envelope.operationId, id, raw)
+      return store.digest(raw)
+    },
+    async apply(envelope, signal) {
+      const backup = parseDocumentBackup(await readVerifiedBlob(store, envelope, id))
+      if (backup.selected) await documentLibrary.replaceSnapshot(backup.target, [backup.source, backup.target], { signal })
+    },
+    async restore(envelope) {
+      const backup = parseDocumentBackup(await readVerifiedBlob(store, envelope, id))
+      if (backup.selected) await documentLibrary.replaceSnapshot(backup.source, [backup.source, backup.target])
+    },
+    cleanup(envelope) { return store.removeBlob(envelope.operationId, id) },
+  }
+}
+
 function createSecureStateParticipant(
   store: PortableImportRecoveryStore,
 ): PortableImportRecoveryParticipant<PortableApplicationImportPlan> {
@@ -794,6 +837,11 @@ interface KnowledgeBackup {
   readonly source: KnowledgeRepositorySnapshot
   readonly target: KnowledgeRepositorySnapshot
 }
+
+type DocumentBackup = {
+  schema: typeof DOCUMENT_BACKUP_SCHEMA
+  operationId: string
+} & ({ selected: false } | { selected: true; source: SavedDocument[]; target: SavedDocument[] })
 
 type UsageBackup =
   | Readonly<{
@@ -1211,6 +1259,17 @@ function parseUsageBackup(raw: string): UsageBackup {
     source: parseUsagePortableSnapshot(value.source),
     target: parseUsagePortableSnapshot(value.target),
   }
+}
+
+function parseDocumentBackup(raw: string): DocumentBackup {
+  const value = parseJsonRecord(raw)
+  if (value.schema !== DOCUMENT_BACKUP_SCHEMA || typeof value.operationId !== 'string' || typeof value.selected !== 'boolean') {
+    throw new Error('The portable import document backup is invalid.')
+  }
+  const identity = { schema: DOCUMENT_BACKUP_SCHEMA, operationId: value.operationId } as const
+  return value.selected
+    ? { ...identity, selected: true, source: parseSavedDocuments(value.source), target: parseSavedDocuments(value.target) }
+    : { ...identity, selected: false }
 }
 
 function parseWorkspacePlan(raw: string): WorkspacePlan {

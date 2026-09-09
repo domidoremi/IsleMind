@@ -60,9 +60,56 @@ function patchGradle() {
   console.log('[patch-onnxruntime-16kb] applied Gradle 9 compatibility to onnxruntime-react-native')
 }
 
+function pinNativeRuntimeSources(gradle, cmake) {
+  const versionDeclaration = 'def onnxRuntimeVersion = new groovy.json.JsonSlurper().parse(file("../package.json")).version'
+  if (!gradle.includes(versionDeclaration)) {
+    const anchor = 'boolean useQnn = readPackageJsonField(\'onnxruntimeUseQnn\') == "true"'
+    const cmakeArgument = '"-DNODE_MODULES_DIR=${nodeModules}",'
+    if (!gradle.includes(anchor) || !gradle.includes(cmakeArgument)
+      || !gradle.includes('onnxruntime-android:latest.integration@aar')
+      || !gradle.includes('onnxruntime-android-qnn:latest.integration@aar')) {
+      throw new Error('[patch-onnxruntime-16kb] unknown ONNX Android dependency configuration')
+    }
+    gradle = gradle.replace(anchor, `${anchor}\n\n${versionDeclaration}\n`
+      + 'def onnxRuntimeAar = (useQnn ? "onnxruntime-android-qnn" : "onnxruntime-android") + "-${onnxRuntimeVersion}.aar"')
+      .replaceAll('onnxruntime-android:latest.integration@aar', 'onnxruntime-android:${onnxRuntimeVersion}@aar')
+      .replaceAll('onnxruntime-android-qnn:latest.integration@aar', 'onnxruntime-android-qnn:${onnxRuntimeVersion}@aar')
+      .replaceAll(cmakeArgument, `${cmakeArgument}\n            "-DORT_ANDROID_AAR=\${onnxRuntimeAar}",`)
+  }
+  const exactIncludes = 'set(onnxruntime_include_DIRS "${BUILD_DIR}/${ORT_ANDROID_AAR}/headers")\n'
+    + 'set(onnxruntime_link_DIRS "${BUILD_DIR}/${ORT_ANDROID_AAR}/jni/${ANDROID_ABI}")'
+  const exactLibrary = 'set(onnxruntime-lib "${onnxruntime_link_DIRS}/libonnxruntime.so")'
+  if (!cmake.includes(exactIncludes) || !cmake.includes(exactLibrary)) {
+    const globIncludes = 'file(GLOB onnxruntime_include_DIRS\n     "${BUILD_DIR}/onnxruntime-android-*.aar/headers")\n'
+      + 'file(GLOB onnxruntime_link_DIRS\n     "${BUILD_DIR}/onnxruntime-android-*.aar/jni/${ANDROID_ABI}/")'
+    const findLibrary = 'find_library(\n  onnxruntime-lib onnxruntime\n  PATHS ${onnxruntime_link_DIRS}\n  NO_CMAKE_FIND_ROOT_PATH)'
+    if (!cmake.includes(globIncludes) || !cmake.includes(findLibrary)) {
+      throw new Error('[patch-onnxruntime-16kb] unknown ONNX CMake library selection')
+    }
+    // Keep old extracted AARs/cache intact, but never compile against their
+    // headers or reuse find_library's cached path from another runtime version.
+    cmake = cmake.replace(globIncludes, exactIncludes).replace(findLibrary, exactLibrary)
+  }
+  if (gradle.includes('onnxruntime-android:latest.integration@aar')
+    || gradle.includes('onnxruntime-android-qnn:latest.integration@aar')
+    || !gradle.includes('"-DORT_ANDROID_AAR=${onnxRuntimeAar}",')) {
+    throw new Error('[patch-onnxruntime-16kb] incomplete native ONNX version pin')
+  }
+  return { gradle, cmake }
+}
+
 function main() {
   patchCmake()
   patchGradle()
+  if (fs.existsSync(gradlePath) && fs.existsSync(cmakePath)) {
+    const gradle = fs.readFileSync(gradlePath, 'utf8')
+    const cmake = fs.readFileSync(cmakePath, 'utf8')
+    const pinned = pinNativeRuntimeSources(gradle, cmake)
+    if (pinned.gradle !== gradle) fs.writeFileSync(gradlePath, pinned.gradle)
+    if (pinned.cmake !== cmake) fs.writeFileSync(cmakePath, pinned.cmake)
+    console.log('[patch-onnxruntime-16kb] native AAR and exact CMake paths match the installed JS package version')
+  }
 }
 
-main()
+if (require.main === module) main()
+module.exports = { pinNativeRuntimeSources }

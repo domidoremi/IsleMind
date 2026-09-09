@@ -14,7 +14,7 @@ export interface EmbeddingProvider {
   readonly dimension?: number
   readonly model?: string
   embed: (text: string, options?: { signal?: AbortSignal }) => Promise<number[]>
-  available: () => Promise<boolean>
+  available: (options?: { signal?: AbortSignal }) => Promise<boolean>
 }
 
 export interface RagRetrievalOptions {

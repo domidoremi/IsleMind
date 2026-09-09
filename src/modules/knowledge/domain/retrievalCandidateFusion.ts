@@ -44,6 +44,14 @@ export function fuseHybridKnowledgeCandidates<Source extends KnowledgeFusionCand
       retrievalMode: existing ? 'hybrid' : 'vector',
     })
   }
+  // With both channels in play, absent vector evidence contributes zero; it
+  // must not give FTS-only hits more weight than equally lexical hybrid hits.
+  // Keep the existing FTS fallback scale when no vector candidates exist.
+  if (mode === 'hybrid' && vectorRows.length > 0) {
+    for (const row of merged.values()) {
+      if (row.retrievalMode === 'fts') row.score = (row.score ?? 0) * 0.38
+    }
+  }
   return Array.from(merged.values())
 }
 

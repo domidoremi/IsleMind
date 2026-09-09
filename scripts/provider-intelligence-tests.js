@@ -3598,15 +3598,15 @@ function assertReleaseVersionsAligned() {
 
   const readmeChecks = [
     {
-      file: 'README.md',
+      file: 'README.zh.md',
       markers: ['结构化工作产物', '质量门槛', '复制交接', '继续提示'],
     },
     {
-      file: 'docs/readme/README.en.md',
-      markers: ['structured work artifacts', 'Quality gates', 'copyable handoffs', 'continuation prompts'],
+      file: 'README.md',
+      markers: ['structured artifacts', 'quality gates', 'copyable handoffs', 'continuation prompts'],
     },
     {
-      file: 'docs/readme/README.ja.md',
+      file: 'README.ja.md',
       markers: ['構造化された作業成果物', '品質ゲート', 'コピー可能な引き継ぎ', '継続プロンプト'],
     },
   ]
@@ -9572,6 +9572,7 @@ async function assertUpstreamGovernanceBehavior() {
     const readerStarted = new Promise((resolve) => { resolveReaderStarted = resolve })
     let resolveReaderResult
     const readerResult = new Promise((resolve) => { resolveReaderResult = resolve })
+    let pendingReaderCancelCount = 0
     const pendingReader = startInjectedHttpExecution({
       stream: true,
       requestStream: async () => ({
@@ -9585,6 +9586,10 @@ async function assertUpstreamGovernanceBehavior() {
               resolveReaderStarted()
               return await readerResult
             },
+            cancel: async () => {
+              pendingReaderCancelCount += 1
+              resolveReaderResult({ done: true, value: undefined })
+            },
           }),
         },
       }),
@@ -9593,11 +9598,14 @@ async function assertUpstreamGovernanceBehavior() {
     const readerAbortReason = Object.assign(new Error('cancel streaming reader'), { name: 'AbortError' })
     const readerTraceCount = pendingReader.traces.length
     pendingReader.controller.abort(readerAbortReason)
-    resolveReaderResult({
-      done: false,
-      value: new TextEncoder().encode(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'late reader text' })}\n\n`),
-    })
-    await assert.rejects(pendingReader.promise, (error) => error === readerAbortReason, 'streaming reader cancellation preserves the exact abort reason')
+    let readerTimeout
+    try {
+      await assert.rejects(Promise.race([
+        pendingReader.promise,
+        new Promise((_, reject) => { readerTimeout = setTimeout(() => reject(new Error('body was not cancelled')), 1000) }),
+      ]), (error) => error === readerAbortReason, 'cancellation must settle a pending body read without waiting for another token')
+    } finally { clearTimeout(readerTimeout) }
+    assert.equal(pendingReaderCancelCount, 1, 'cancellation releases the reader exactly once after response headers')
     assertInjectedAbortHasNoEffects(pendingReader, readerTraceCount, 'streaming reader cancellation')
 
     memoryStorage.clear()
@@ -16274,8 +16282,8 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
         'checkpoint:usage',
         'checkpoint:trace',
         'finalization.started',
-        'nested-revision-emitted',
         'checkpoint:provider-continuation-state',
+        'nested-revision-emitted',
         'finalization.completed',
       ])
       assert.deepEqual(checkpointedEvents, [
@@ -35686,6 +35694,39 @@ function assertProviderNativeToolDeclarationBehavior() {
   assert.equal(openAIResponses.tools[0].name, 'read_context', 'OpenAI Responses emits flat function declarations')
   assert.equal(anthropic.tools[0].input_schema.type, 'object', 'Anthropic emits input_schema declarations')
   assert.equal(google.tools[0].functionDeclarations[0].name, 'read_context', 'Google emits grouped functionDeclarations')
+
+  const { WORK_ARTIFACT_TOOL_MANIFEST } = require('../src/modules/integrations/index.ts')
+  const artifactSchemaBefore = JSON.stringify(WORK_ARTIFACT_TOOL_MANIFEST.inputSchema)
+  for (const target of ['openai-chat', 'openai-responses', 'anthropic', 'google']) {
+    const declarations = buildProviderNativeToolDeclarations({
+      manifests: [WORK_ARTIFACT_TOOL_MANIFEST],
+      target,
+    })
+    const tool = declarations.tools[0]
+    const parameters = target === 'openai-chat' ? tool.function.parameters
+      : target === 'openai-responses' ? tool.parameters
+        : target === 'anthropic' ? tool.input_schema
+          : tool.functionDeclarations[0].parametersJsonSchema
+    assert.ok(parameters, `${target} declares the artifact input as JSON Schema, not Google's typed OpenAPI subset`)
+    assert.deepEqual(JSON.parse(JSON.stringify(parameters)), WORK_ARTIFACT_TOOL_MANIFEST.inputSchema,
+      `${target} preserves string/object citation references and their field constraints on the wire`)
+    if (target === 'google') {
+      assert.equal(Object.hasOwn(tool.functionDeclarations[0], 'parameters'), false,
+        'Google JSON Schema and typed parameters fields are mutually exclusive')
+      const body = buildGoogleBodyForTest({
+        provider: { id: 'google', type: 'google', name: 'Google', models: ['gemini-2.5-flash'], enabled: true },
+        model: 'gemini-2.5-flash',
+        messages: [{ role: 'user', content: 'Audit this supplied draft.' }],
+        providerToolDeclarations: declarations.tools,
+      })
+      assert.deepEqual(JSON.parse(JSON.stringify(body.tools)), JSON.parse(JSON.stringify(declarations.tools)),
+        'the Google request builder retains the JSON Schema declaration without another conversion')
+    }
+  }
+  assert.equal(google.tools[0].functionDeclarations[0].parametersJsonSchema.properties.query.type, 'string',
+    'Google JSON Schema declarations also preserve existing scalar parameter schemas')
+  assert.equal(JSON.stringify(WORK_ARTIFACT_TOOL_MANIFEST.inputSchema), artifactSchemaBefore,
+    'cross-provider declarations never mutate the canonical artifact admission schema')
 
   const repeatedManifest = {
     ...manifests[0],

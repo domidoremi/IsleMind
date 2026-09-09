@@ -6,7 +6,6 @@ import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
-import { useRouter } from 'expo-router'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { Easing, runOnJS } from 'react-native-reanimated'
 import type { Message, MessageResponseLifecycle, ResponseLifecycleStage } from '@/types/chatContracts'
@@ -18,6 +17,7 @@ import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { mergeMessageWithStreamingTraceSnapshot, useChatStreamingStore } from '@/store/chatStreamingStore'
 import { MessageContent } from './MessageContent'
+import { MessageSources } from './MessageSources'
 import { containsDisplayFormulaBlock } from './messageContentSpecialFormatPolicy'
 import {
   collectVisibleProcessTraces,
@@ -93,6 +93,8 @@ export interface MessageBubbleProps {
   onSpeak?: (message: Message) => void
   onDelete?: (message: Message) => void
   onQuote?: (message: Message) => void
+  onBranch?: (message: Message) => void
+  onCreateDocument?: (message: Message) => void
   onEdit?: (message: Message) => void
   onStartMultiSelect?: (message: Message) => void
   onToggleSelected?: (message: Message) => void
@@ -127,6 +129,8 @@ function MessageBubbleComponent({
   onSpeak,
   onDelete,
   onQuote,
+  onBranch,
+  onCreateDocument,
   onEdit,
   onStartMultiSelect,
   onToggleSelected,
@@ -230,9 +234,10 @@ function MessageBubbleComponent({
   const canSaveWorkflowSkill = message.status === 'done' && !!workflowSkillSuggestion?.ok && !!workflowSkillSuggestion.skill && !!onSaveWorkflowSkill
   const canDeleteMessage = !!onDelete && message.status !== 'sending' && message.status !== 'streaming'
   const canQuoteMessage = !!displayText.trim() && !!onQuote && message.status !== 'sending' && message.status !== 'streaming'
+  const canBranchMessage = !!onBranch && message.status !== 'sending' && message.status !== 'streaming'
   const canEditMessage = isUser && !!displayText.trim() && !!onEdit && message.status !== 'sending' && message.status !== 'streaming'
   const canStartMessageMultiSelect = !!onStartMultiSelect && message.status !== 'sending' && message.status !== 'streaming'
-  const canOpenActions = !isStreamingContent && canShowActionBar({
+  const canOpenActions = !isStreamingContent && (canBranchMessage || canShowActionBar({
     message,
     displayText,
     isLastAssistant,
@@ -254,7 +259,7 @@ function MessageBubbleComponent({
     onRegenerate,
     onSpeak,
     onConfigure,
-  }) && !multiSelectActive
+  })) && !multiSelectActive
   const hasDefaultWorkArtifactActions = useMemo(() => {
     if (isUser || isStreamingContent || !displayText.trim()) return false
     if (!onCopyWorkArtifact && !onContinueWorkArtifact) return false
@@ -457,6 +462,8 @@ function MessageBubbleComponent({
             onRegenerate={onRegenerate}
             onDelete={canDeleteMessage && onDelete ? () => onDelete(message) : undefined}
             onQuote={canQuoteMessage && onQuote ? () => onQuote(message) : undefined}
+            onBranch={canBranchMessage && onBranch ? () => onBranch(message) : undefined}
+            onCreateDocument={!isUser && message.status !== 'sending' && message.status !== 'streaming' && displayText.trim() && onCreateDocument ? () => onCreateDocument(message) : undefined}
             onEdit={canEditMessage && onEdit ? () => onEdit(message) : undefined}
             onStartMultiSelect={canStartMessageMultiSelect && onStartMultiSelect ? () => onStartMultiSelect(message) : undefined}
             />
@@ -769,7 +776,9 @@ function MessageBody({
           <TypingDots motion={motion} />
         ) : null}
       </RenderGuard>
-      {!isUser && message.citations?.length ? <MessageSourceLink conversationId={conversationId} message={message} /> : null}
+      {!isUser && message.citations?.length ? (
+        <MessageSources key={`${conversationId}:${message.id}`} conversationId={conversationId} messageId={message.id} citations={message.citations} onLayoutChangeRequest={onLayoutChangeRequest} />
+      ) : null}
     </>
   )
 }
@@ -794,49 +803,6 @@ function StreamingCursor({ motion }: { motion: MotionIntensity }) {
         style={{ width: 2, height: 15, borderRadius: 1, backgroundColor: colors.ui.icon.accentForeground }}
       />
     </View>
-  )
-}
-
-function MessageSourceLink({ conversationId, message }: { conversationId: string; message: Message }) {
-  const router = useRouter()
-  const { colors, isLiquidGlass } = useAppTheme()
-  const { t } = useTranslation()
-  const firstCitation = message.citations?.[0]
-  const count = message.citations?.length ?? 0
-  if (!firstCitation || count < 1) return null
-
-  return (
-    <IslePressable
-      haptic
-      accessibilityRole="button"
-      accessibilityLabel={t('messageBubble.viewSources')}
-      onPress={() => router.push({
-        pathname: '/source',
-        params: {
-          conversationId,
-          messageId: message.id,
-          citationId: firstCitation.id,
-        },
-      })}
-      style={{
-        alignSelf: 'flex-start',
-        minHeight: ISLE_MIN_TOUCH_TARGET,
-        marginTop: 9,
-        borderRadius: colors.ui.radius.controlSmall,
-        paddingHorizontal: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 7,
-        backgroundColor: isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.icon.accentBackground,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: isLiquidGlass ? colors.ui.actionBar.itemBorder : colors.material.stroke,
-      }}
-    >
-      <AppIcon name="knowledge" color={colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />
-      <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>
-        {t('messageBubble.sources', { count })}
-      </Text>
-    </IslePressable>
   )
 }
 
@@ -1850,6 +1816,8 @@ function MessageActionSheet({
   onRegenerate,
   onDelete,
   onQuote,
+  onBranch,
+  onCreateDocument,
   onEdit,
   onStartMultiSelect,
 }: {
@@ -1880,6 +1848,8 @@ function MessageActionSheet({
   onRegenerate?: () => void
   onDelete?: () => void
   onQuote?: () => void
+  onBranch?: () => void
+  onCreateDocument?: () => void
   onEdit?: () => void
   onStartMultiSelect?: () => void
 }) {
@@ -1961,6 +1931,8 @@ function MessageActionSheet({
     !isUser && message.status === 'error' ? action('retry', t('messageBubble.retry'), 'retry', onRetry, { emphasized: true }) : null,
     !isUser && isLastAssistant && message.status !== 'streaming' ? action('regenerate', t('messageBubble.regenerate'), 'regenerate', onRegenerate) : null,
     hasText ? action('quote', t('messageBubble.quote'), 'paste', onQuote) : null,
+    action('branch-chat', t('messageBubble.branchChat'), 'new-chat', onBranch),
+    action('create-document', t('documents.createFromAnswer'), 'file-json', onCreateDocument),
     !isUser && hasText ? action('speak', t('messageBubble.speak'), 'voice', onSpeak) : null,
   ].filter((item): item is MessageActionSheetAction => item !== null)
   const secondaryActions = [
@@ -2446,12 +2418,14 @@ const areMessagesEqual = (
   const nextMsg = nextProps.message
 
   // 基础字段比较
+  if (prevProps.conversationId !== nextProps.conversationId) return false
   if (prevMsg.id !== nextMsg.id) return false
   if (prevMsg.role !== nextMsg.role) return false
   if (prevMsg.content !== nextMsg.content) return false
   if (prevMsg.responseText !== nextMsg.responseText) return false
   if (prevMsg.status !== nextMsg.status) return false
   if (prevMsg.timestamp !== nextMsg.timestamp) return false
+  if (prevMsg.citations !== nextMsg.citations) return false
   if (responseLifecycleSignature(prevMsg.responseLifecycle) !== responseLifecycleSignature(nextMsg.responseLifecycle)) return false
 
   // 附件和 traces 长度比较
@@ -2467,6 +2441,8 @@ const areMessagesEqual = (
   if (prevProps.activeActionMessageId !== nextProps.activeActionMessageId) return false
   if (prevProps.multiSelectActive !== nextProps.multiSelectActive) return false
   if (prevProps.selected !== nextProps.selected) return false
+  if (Boolean(prevProps.onBranch) !== Boolean(nextProps.onBranch)) return false
+  if (Boolean(prevProps.onCreateDocument) !== Boolean(nextProps.onCreateDocument)) return false
 
   return true
 }

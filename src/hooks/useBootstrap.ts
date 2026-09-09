@@ -148,6 +148,11 @@ export function useBootstrap() {
         const initialErrors = results.filter((result) => result.status === 'rejected').length
         initI18n(useSettingsStore.getState().settings.language)
 
+        // A failed read is not an empty Chat history. A later runtime recovery
+        // can succeed after a transient storage conflict, but it does not hydrate
+        // this projection. Keep the existing startup Retry surface authoritative.
+        if (results[0].status === 'rejected') throw results[0].reason
+
         // Recovery-only runtime instances cannot distinguish a new live run
         // owned by another instance from an interrupted row. Keep Chat (and its
         // stale-message recovery hook) closed until durable startup recovery has

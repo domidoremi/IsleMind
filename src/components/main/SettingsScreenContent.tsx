@@ -138,6 +138,7 @@ const PORTABLE_BACKUP_CATEGORY_OPTIONS: readonly {
   { id: 'skills', labelKey: 'settings.skills' },
   { id: 'mcp', labelKey: 'settings.mcp' },
   { id: 'usage', labelKey: 'usage.title' },
+  { id: 'documents', labelKey: 'documents.title' },
 ] as const
 const themeModeCardHeight = 58
 type ApkUpdateUiStage = 'checking' | ApkInstallProgressStage
