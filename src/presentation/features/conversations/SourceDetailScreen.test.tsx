@@ -183,6 +183,20 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     expect(WebView).not.toHaveBeenCalled()
   })
 
+  it.each([true, false])('does not resolve an ambiguous citation ID to the first record (explicit=%s)', async (explicit) => {
+    citations = [citation, { ...citation, title: 'Different source with the same ID', documentId: 'document-b' }]
+    useLocalSearchParams.mockReturnValue({
+      conversationId: 'conversation-a', messageId: 'message-a',
+      ...(explicit ? { citationId: citation.id } : {}), url: 'https://example.test/override',
+    })
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockResolvedValue(undefined)
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    expect(view.getByText('source.noSource')).toBeTruthy()
+    expect(read).not.toHaveBeenCalled()
+    expect(WebView).not.toHaveBeenCalled()
+    expect(view.queryByText(citation.excerpt!)).toBeNull()
+  })
+
   it('reads local retained text without opening its origin URL, even with a legacy URL parameter', async () => {
     citations = [{ ...citation, url: 'https://example.test/source' }]
     useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: citation.id, url: citations[0].url })

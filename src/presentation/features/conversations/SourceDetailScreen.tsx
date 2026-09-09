@@ -23,6 +23,7 @@ import { isAllowedWebViewNavigation, safeHttpUrl, webViewOriginWhitelist } from 
 import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 import type { KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import { CanonicalSourceReader } from './CanonicalSourceReader'
+import { resolveCapturedCitation } from './sourceCitationSelection'
 
 type ProcessTraceGroupKey = 'agentPlan' | 'context' | 'search' | 'toolActivity' | 'agentSynthesis' | 'agentRecovery' | 'other'
 
@@ -40,11 +41,12 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
   const message = conversation?.messages.find((item) => item.id === messageId)
   const citations = message?.citations ?? []
   const traces = useMemo(() => normalizeTraceStatuses(message ? collectVisibleProcessTraces(message) : [], message?.status ?? 'done'), [message])
-  // An explicit missing identity must never silently open a different source.
-  const citation = citationId ? citations.find((item) => item.id === citationId) : citations[0]
+  // Preserve the legacy default only when its identity resolves uniquely.
+  const selectedCitationId = citationId ?? citations[0]?.id
+  const citation = resolveCapturedCitation(citations, selectedCitationId)
   const explicitUrl = firstParam(params.url)
   const isLocalCitation = citation?.type === 'knowledge' || citation?.type === 'memory'
-  const rawWebUrl = (citationId && !citation) || isLocalCitation ? undefined : firstSafeParam(explicitUrl, citation?.url)
+  const rawWebUrl = (selectedCitationId !== undefined && !citation) || isLocalCitation ? undefined : firstSafeParam(explicitUrl, citation?.url)
   const [webKey, setWebKey] = useState(0)
   const [readerBackgroundState, setReaderBackgroundState] = useState<IsleBackgroundState>('idle')
 
@@ -155,7 +157,7 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
         {mode === 'source' && citations.length > 1 ? (
           <ScrollView horizontal style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 8, gap: 8 }}>
             {citations.map((item, index) => (
-              <IsleButton key={item.id} label={`${index + 1}. ${item.title}`} onPress={() => router.setParams({ citationId: item.id, url: undefined })} />
+              <IsleButton key={`${item.id}:${index}`} label={`${index + 1}. ${item.title}`} disabled={!resolveCapturedCitation(citations, item.id)} onPress={() => router.setParams({ citationId: item.id, url: undefined })} />
             ))}
           </ScrollView>
         ) : null}
