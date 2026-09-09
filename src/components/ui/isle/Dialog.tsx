@@ -382,7 +382,7 @@ function AppToastSurface({
         borderLeftWidth: grammar === 'precision' || grammar === 'material' ? 3 : undefined,
         borderLeftColor: toneToken.foreground,
       }}
-      contentStyle={{ padding: 0, backgroundColor: 'transparent' }}
+      contentStyle={{ padding: 0 }}
     >
       <View testID={`theme-toast-${canonicalThemeId}`} style={{ overflow: 'hidden', borderRadius: radius }}>
       {grammar === 'precision' ? <View style={{ height: 1, backgroundColor: toneToken.foreground }} /> : null}
