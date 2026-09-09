@@ -2,7 +2,7 @@
   "expo": {
     "name": "IsleMind",
     "slug": "islemind",
-    "version": "1.0.24",
+    "version": "1.1.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -16,7 +16,7 @@
     },
     "android": {
       "package": "com.islemind.app",
-      "versionCode": 124,
+      "versionCode": 125,
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES",
         "android.permission.POST_NOTIFICATIONS",
