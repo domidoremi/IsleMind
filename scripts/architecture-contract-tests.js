@@ -28,6 +28,8 @@ async function main() {
   const bootstrapModule = await import('../src/bootstrap/providerRuntime.ts')
   const modelOperationBootstrap = await import('../src/bootstrap/conversationModelOperationRuntime.ts')
 
+  await testKnowledgeLocalSourceReader(knowledgeModule)
+
   await testSuccessfulRun(core, runtimeModule, storeModule, providerModule)
   await testModelOperationResumeLifecycle(core, runtimeModule, storeModule, providerModule)
   await testBootstrapModelOperationParity(
@@ -96,6 +98,7 @@ async function main() {
   await testStructuredMemoryRepositorySemantics(knowledgeModule)
   await testMemorySearchAndImportBoundaries(knowledgeModule)
   await testStructuredMemoryMigrationDeduplicates(knowledgeModule)
+  await testKnowledgeRagReplayMigrationCoexistence(knowledgeModule)
   await testMultilingualFtsMigrationRecovery(knowledgeModule)
   await testKnowledgeDocumentImportUseCase(knowledgeModule)
   await testKnowledgeDocumentImporter(knowledgeModule)
@@ -702,6 +705,12 @@ async function testPortableDataPayloadRuntime(dataManagementModule) {
         }
       },
       async replace() {},
+    },
+    documents: {
+      async loadSnapshot() {
+        calls.push({ kind: 'document-export' })
+        return []
+      },
     },
     recovery: {
       async importApplication(plan, options) {
@@ -3098,6 +3107,34 @@ async function testProviderTransportPolicy(providerModule) {
   assert.notEqual(receivedSignal, controller.signal, 'target transport owns its timeout controller')
   assert.equal(await providerModule.safeProviderResponseText(response), 'ready')
   assert.equal(await providerModule.safeProviderResponseText({ text: async () => { throw new Error('unreadable') } }), '')
+
+  const streamController = new AbortController()
+  let streamSignal
+  await providerModule.fetchProviderStreamWithTimeout(async (_input, init) => {
+    streamSignal = init.signal
+    assert.ok(Object.hasOwn(init, 'body'), 'Expo streaming requests retain an explicit body field')
+    return new Response('stream headers')
+  }, 'https://api.example/stream', { signal: streamController.signal }, 10)
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(streamSignal.aborted, false, 'the header deadline must not become a whole-stream deadline')
+  const reason = new Error('cancel after streaming headers')
+  streamController.abort(reason)
+  assert.equal(streamSignal.aborted, true, 'caller cancellation must reach the native request after response headers')
+  assert.equal(streamSignal.reason, reason, 'post-header cancellation preserves the exact reason')
+
+  let preAbortedSignal
+  await providerModule.fetchProviderStreamWithTimeout(async (_input, init) => {
+    preAbortedSignal = init.signal
+    return new Response('synthetic response to an already aborted request')
+  }, 'https://api.example/stream', { signal: streamController.signal }, 10)
+  assert.equal(preAbortedSignal.aborted, true)
+  assert.equal(preAbortedSignal.reason, reason)
+
+  const timeoutCaller = new AbortController()
+  await assert.rejects(providerModule.fetchProviderStreamWithTimeout(async (_input, init) =>
+    new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })),
+  'https://api.example/stream', { signal: timeoutCaller.signal }, 10), { name: 'AbortError' })
+  assert.equal(timeoutCaller.signal.aborted, false, 'a header timeout cannot cancel its caller or sibling requests')
 }
 
 function testProviderAttachmentPolicy(providerModule) {
@@ -6640,6 +6677,58 @@ async function testStructuredMemoryMigrationDeduplicates(knowledgeModule) {
   }
 }
 
+async function testKnowledgeRagReplayMigrationCoexistence(knowledgeModule) {
+  const snapshot = knowledgeModule.createKnowledgeRagReplaySnapshot({
+    createdAt: 10, query: 'migration evidence', profile: 'offline', profileSource: 'settings',
+    sourceCount: 1, citationCount: 1, confidence: 0.8, missingEvidence: false,
+    ragTraceCount: 0, outputCharLimit: 4800, visibleOutput: 'Retained source evidence',
+    warnings: [], fallbackReasons: [], contextPrompt: 'Retained source evidence',
+    citations: [{ id: 'migration-source', label: '[1]', type: 'knowledge', title: 'Retained source' }],
+  })
+  assert.ok(snapshot)
+  for (const order of ['knowledge-first', 'replay-first', 'historical-replay-first']) {
+    const database = new Database(':memory:')
+    try {
+      const provider = createBunSqliteProvider(database)
+      if (order === 'historical-replay-first') {
+        // The old replay adapter could claim knowledge/v3 before Knowledge's
+        // different v3 ran. Keep both its marker and payload; never reset it.
+        database.exec(`
+          CREATE TABLE platform_schema_migrations (scope TEXT NOT NULL, version INTEGER NOT NULL,
+            name TEXT NOT NULL, appliedAt INTEGER NOT NULL, PRIMARY KEY(scope, version));
+          INSERT INTO platform_schema_migrations VALUES ('knowledge', 3, 'knowledge-rag-replay-snapshots', 1);
+          CREATE TABLE knowledge_rag_replay_snapshots (taskId TEXT PRIMARY KEY NOT NULL,
+            schema TEXT NOT NULL, createdAt INTEGER NOT NULL, payloadJson TEXT NOT NULL);
+        `)
+        database.query('INSERT INTO knowledge_rag_replay_snapshots VALUES (?, ?, ?, ?)')
+          .run('retained-task', snapshot.schema, snapshot.createdAt, JSON.stringify(snapshot))
+      }
+      const knowledge = knowledgeModule.createSqliteKnowledgeRepository(provider)
+      const replay = knowledgeModule.createSqliteKnowledgeRagReplaySnapshotRepository(provider)
+      if (order === 'replay-first') await replay.save('retained-task', snapshot)
+      await knowledge.listDocuments()
+      await replay.save('new-task', snapshot)
+      assert.deepEqual(await replay.get('new-task'), snapshot, `${order}: both owners can initialize and persist`)
+      if (order !== 'knowledge-first') assert.deepEqual(await replay.get('retained-task'), snapshot, `${order}: existing replay evidence survives`)
+      await knowledge.saveMemory({
+        id: 'scoped-memory', content: 'Explicit user scope must survive reopening.', status: 'active', sourceKind: 'manual',
+        scope: { kind: 'user', id: 'isolated-user' }, subject: 'IsleMind', key: 'scope', value: 'isolated-user',
+      })
+      const before = await knowledge.listMemories()
+      const beforeMigrations = database.query('SELECT * FROM platform_schema_migrations ORDER BY scope, version').all()
+      await knowledgeModule.createSqliteKnowledgeRepository(provider).listDocuments()
+      assert.deepEqual(await knowledgeModule.createSqliteKnowledgeRagReplaySnapshotRepository(provider).get('new-task'), snapshot)
+      assert.deepEqual(await knowledge.listMemories(), before, `${order}: reopening cannot rerun legacy scope conversion`)
+      assert.deepEqual(database.query('SELECT * FROM platform_schema_migrations ORDER BY scope, version').all(), beforeMigrations,
+        `${order}: repeat initialization is idempotent`)
+      if (order === 'historical-replay-first') assert.equal(
+        database.query("SELECT name FROM platform_schema_migrations WHERE scope = 'knowledge' AND version = 3").get().name,
+        'knowledge-rag-replay-snapshots', 'historical collision evidence is retained rather than rewritten')
+      assert.deepEqual(database.query('PRAGMA integrity_check').all(), [{ integrity_check: 'ok' }])
+    } finally { database.close() }
+  }
+}
+
 function createKnowledgeSqliteFixture(rows = {}) {
   const calls = []
   const executor = {
@@ -6731,6 +6820,66 @@ async function testMultilingualFtsMigrationRecovery(knowledgeModule) {
     const hits = await reopened.searchFts({ query: '知识库检索', limit: 5 })
     assert.equal(hits.length, 20, 'a newly opened SQLite image retains the bounded multilingual FTS candidate pool')
     assert.equal(database.query('SELECT count(*) AS count FROM knowledge_fts').get().count, 130, 'reopen does not duplicate derivative rows')
+  } finally {
+    database.close()
+  }
+}
+
+async function testKnowledgeLocalSourceReader(knowledgeModule) {
+  const database = new Database(':memory:')
+  try {
+    const repository = knowledgeModule.createSqliteKnowledgeRepository(createBunSqliteProvider(database), {
+      clock: { now: () => 2_000 }, ids: { next: (prefix) => `${prefix}-source-reader` },
+    })
+    const document = {
+      schema: knowledgeModule.KNOWLEDGE_DOCUMENT_RECORD_SCHEMA, id: 'source-document',
+      title: 'Saved source', mimeType: 'text/plain', size: 1_024, chunkCount: 2,
+      status: 'ready', createdAt: 1_000, updatedAt: 1_000, contentHash: 'revision-one',
+    }
+    const chunks = [0, 1].map((ordinal) => ({
+      schema: knowledgeModule.KNOWLEDGE_CHUNK_RECORD_SCHEMA, id: `source-chunk-${ordinal}`,
+      documentId: document.id, title: document.title, content: `Full saved section ${ordinal} beyond the captured excerpt.`,
+      ordinal, createdAt: 1_000,
+    }))
+    await repository.saveDocument(document, chunks)
+    await repository.saveDocument({ ...document, id: 'other-document', chunkCount: 1 }, [{
+      ...chunks[0], id: 'other-chunk', documentId: 'other-document', content: 'Unrelated document text',
+    }])
+    const current = await repository.readLocalSource({ type: 'knowledge', documentId: document.id })
+    assert.equal(current.type, 'knowledge')
+    assert.equal(current.document.contentHash, 'revision-one')
+    assert.deepEqual(current.chunks.map((item) => [item.id, item.content]), chunks.map((item) => [item.id, item.content]),
+      'source inspection returns complete ordered canonical chunks, never another document')
+    await repository.saveDocument({ ...document, chunkCount: 1, updatedAt: 2_000, contentHash: 'revision-two' }, [{
+      ...chunks[0], id: 'replacement-chunk', content: 'Current replacement text', createdAt: 2_000,
+    }])
+    const replacement = await repository.readLocalSource({ type: 'knowledge', documentId: document.id })
+    assert.equal(replacement.document.contentHash, 'revision-two')
+    assert.deepEqual(replacement.chunks.map((item) => item.id), ['replacement-chunk'], 'old section identities are not silently reused')
+    await repository.deleteDocument(document.id)
+    assert.equal(await repository.readLocalSource({ type: 'knowledge', documentId: document.id }), undefined)
+    assert.equal(await repository.readLocalSource({ type: 'knowledge', documentId: 'missing-document' }), undefined)
+
+    for (const [id, scope] of [
+      ['shared', { kind: 'user', id: knowledgeModule.LOCAL_USER_MEMORY_SCOPE_ID }],
+      ['own', { kind: 'conversation', id: 'this-conversation' }],
+      ['foreign', { kind: 'conversation', id: 'another-conversation' }],
+      ['foreign-user', { kind: 'user', id: 'another-user' }],
+    ]) await repository.saveMemory({ id, content: `Saved memory ${id}`, status: 'active', scope, sourceKind: 'manual' })
+    const readMemory = (memoryId) => repository.readLocalSource({ type: 'memory', memoryId, conversationId: 'this-conversation' })
+    assert.equal((await readMemory('shared')).memory.content, 'Saved memory shared')
+    assert.equal((await readMemory('own')).memory.content, 'Saved memory own')
+    assert.equal(await readMemory('foreign'), undefined, 'a citation cannot disclose another conversation memory')
+    assert.equal(await readMemory('foreign-user'), undefined, 'user scope is the explicit local-user identity, not any user scope')
+    assert.equal(await readMemory('unknown'), undefined, 'out-of-scope and missing sources have the same result')
+    await repository.updateMemoryStatus('own', 'disabled')
+    assert.equal((await readMemory('own')).memory.status, 'disabled', 'inspection preserves the current saved status; it does not reactivate memory')
+    await repository.deleteMemory('own')
+    assert.equal(await readMemory('own'), undefined)
+    const controller = new AbortController()
+    controller.abort()
+    await assert.rejects(repository.readLocalSource({ type: 'knowledge', documentId: 'other-document' }, { signal: controller.signal }),
+      { name: 'KnowledgeRepositoryCancelledError' })
   } finally {
     database.close()
   }
@@ -7637,6 +7786,21 @@ function testKnowledgeCandidateFusion(knowledgeModule) {
   assert.equal(hybrid[0].ftsScore, -1, 'raw BM25 remains attributable to SQLite')
   assert.equal(hybrid[0].score, 0.8 * 0.62 + 1 * 0.38)
   assert.equal(hybrid[1].retrievalMode, 'vector')
+
+  const lexical = [{ id: 'shared', score: -1 }, { id: 'fts-only', score: -1 }]
+  const missingModality = knowledgeModule.fuseHybridKnowledgeCandidates(lexical,
+    [{ id: 'shared', vectorScore: 0.01 }, { id: 'vector-only', vectorScore: 0.8 }], 'hybrid')
+  const byId = new Map(missingModality.map(row => [row.id, row]))
+  assert.equal(byId.get('fts-only').score, 0.38, 'An absent vector is zero evidence, not a full-weight FTS bonus')
+  assert.equal(byId.get('shared').score, 0.38 + 0.01 * 0.62, 'Shared candidates keep the existing 62/38 formula')
+  assert.ok(byId.get('shared').score > byId.get('fts-only').score, 'Adding positive vector evidence cannot reduce an otherwise equal lexical candidate')
+  assert.equal(byId.get('vector-only').score, 0.8 * 0.62, 'A missing lexical match also contributes zero')
+  assert.equal(byId.get('fts-only').ftsScore, -1)
+  assert.equal(byId.get('fts-only').retrievalMode, 'fts', 'Missing modalities do not invent provenance')
+  assert.equal(knowledgeModule.fuseHybridKnowledgeCandidates(lexical, [], 'hybrid')[0].score, 1,
+    'When the entire vector channel is unavailable, retain the existing FTS fallback scale')
+  assert.equal(knowledgeModule.fuseHybridKnowledgeCandidates(lexical, [], 'fts')[0].score, 1,
+    'Explicit FTS retrieval is unchanged')
 
   const agentic = knowledgeModule.mergeAgenticKnowledgeCandidates([
     [{ id: 'first', chunkId: 'shared-chunk', score: 0.4, sourceReason: 'raptor' }],

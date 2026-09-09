@@ -16,6 +16,7 @@ import { conversationPersistence } from './conversationPersistence'
 import { portableKnowledgeSnapshot } from './knowledgePortableSnapshot'
 import { importPortableApplicationDataWithRecovery } from './portableImportRecovery'
 import { usagePortableSnapshotRepository } from './usageStatisticsRuntime'
+import { documentLibrary } from './documentLibrary'
 import {
   exportTavernActiveScopeLinks,
   exportTavernSnapshots,
@@ -44,6 +45,7 @@ export const portableDataPayloadRuntime = createPortableDataPayloadRuntime({
     exportSnapshots: exportTavernSnapshots,
   },
   usage: usagePortableSnapshotRepository,
+  documents: documentLibrary,
   recovery: {
     importApplication: (plan, options = {}) =>
       importPortableApplicationDataWithRecovery(plan, { signal: options.signal }),

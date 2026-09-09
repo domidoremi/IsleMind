@@ -26,6 +26,7 @@ import {
   type TavernSnapshot,
 } from '@/modules/workspaces'
 import type { PortableKnowledgeSnapshot } from '@/modules/knowledge'
+import { parseSavedDocuments, type SavedDocument, type DocumentRepository } from '@/modules/documents'
 import { normalizeResponseLifecycle } from '@/modules/conversations'
 import {
   redactSensitiveText,
@@ -136,6 +137,7 @@ export interface PortableDataApplicationImportPlan {
   readonly mcpServers: readonly McpServerConfig[]
   readonly knowledge: Partial<PortableKnowledgeSnapshot>
   readonly usage?: UsagePortableSnapshot
+  readonly savedDocuments?: readonly SavedDocument[]
   readonly tavernEntries: readonly {
     readonly scopeId?: string
     readonly snapshot: Partial<TavernSnapshot> | undefined
@@ -166,6 +168,7 @@ export interface PortableDataPayloadRuntimeDependencies {
   knowledge: PortableDataKnowledgePort
   workspaces: PortableDataWorkspacePort
   usage: UsagePortableSnapshotRepository
+  documents: Pick<DocumentRepository, 'loadSnapshot'>
   recovery: PortableDataRecoveryPort
   now(): number
   reportFailure(failure: PortableDataPayloadFailure): void | Promise<void>
@@ -188,6 +191,7 @@ export function createPortableDataPayloadRuntime(
   ): Promise<PortableDataExportPayload> {
     const selection = normalizePortableBackupSelection(options.selection)
     const includeUsage = selection.mode === 'full' || selection.categories.includes('usage')
+    const includeDocuments = selection.mode === 'full' || selection.categories.includes('documents')
     const [
       conversations,
       settings,
@@ -197,6 +201,7 @@ export function createPortableDataPayloadRuntime(
       languagePreferenceSource,
       context,
       usage,
+      savedDocuments,
     ] = await Promise.all([
       dependencies.conversations.loadAll(),
       dependencies.records.loadSettings(),
@@ -206,6 +211,7 @@ export function createPortableDataPayloadRuntime(
       dependencies.records.loadLanguagePreferenceSource(),
       dependencies.knowledge.exportSnapshot(),
       includeUsage ? dependencies.usage.load() : Promise.resolve(undefined),
+      includeDocuments ? dependencies.documents.loadSnapshot() : Promise.resolve(undefined),
     ])
     const conversationIds = conversations.map((conversation) => conversation.id)
     const allScopeIds = await dependencies.workspaces.listScopeIds()
@@ -260,6 +266,7 @@ export function createPortableDataPayloadRuntime(
         new Date(exportedAt).toISOString(),
       ),
       ...(usage ? { usage } : {}),
+      ...(savedDocuments ? { savedDocuments } : {}),
       exportedAt,
     }
     return selectPortableDataPayload(payload, options.selection)
@@ -301,7 +308,12 @@ export function createPortableDataPayloadRuntime(
       const payload = backup.payload
       const selection = normalizePortableBackupSelection(backup.selection)
       let importedUsage: UsagePortableSnapshot | undefined
+      let importedDocuments: SavedDocument[] | undefined
       try {
+        importedDocuments = payload.savedDocuments === undefined ? undefined : parseSavedDocuments(payload.savedDocuments)
+        if (selection.mode === 'selective' && selection.categories.includes('documents') && importedDocuments === undefined) {
+          throw new Error('The selected document snapshot is missing.')
+        }
         importedUsage = payload.usage === undefined
           ? undefined
           : parseUsagePortableSnapshot(payload.usage)
@@ -315,7 +327,7 @@ export function createPortableDataPayloadRuntime(
       } catch (error) {
         await dependencies.reportFailure({
           operation: 'import',
-          detail: 'portableDataPayload:usage-validation',
+          detail: 'portableDataPayload:snapshot-validation',
           error,
         })
         return { ok: false, kind: 'invalid', reason: 'invalid_structure' }
@@ -361,6 +373,7 @@ export function createPortableDataPayloadRuntime(
               providerIds: restoreBaseline?.providers.map((provider) => provider.id),
               modelIds: restoreBaseline?.providers.flatMap(providerModelIds),
               conversationIds: restoreBaseline?.conversations.map((conversation) => conversation.id),
+              documentIds: importedDocuments ? (await dependencies.documents.loadSnapshot()).map((document) => document.id) : undefined,
               workspaceIds: restoreBaseline?.workspaceIds,
               skillIds: restoreBaseline?.skills.map((skill) => skill.id),
               mcpServerIds: restoreBaseline?.mcpServers.map((server) => server.id),
@@ -448,6 +461,7 @@ export function createPortableDataPayloadRuntime(
           mcpServers,
           knowledge,
           usage: importedUsage,
+          savedDocuments: importedDocuments,
           tavernEntries,
           tavernActiveScopeLinks,
           conversationIds: normalizedConversations.map((conversation) => conversation.id),

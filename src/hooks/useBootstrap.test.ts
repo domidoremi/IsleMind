@@ -10,18 +10,19 @@ new Function('require', 'module', 'exports', transformTypeScriptModule(
 ))(require, hookModule, hookModule.exports)
 const { useBootstrap } = hookModule.exports
 
-const mockLoad = jest.fn().mockResolvedValue(undefined)
+const mockLoadChats = jest.fn().mockResolvedValue(undefined)
+const mockLoadSettings = jest.fn().mockResolvedValue(undefined)
 const mockSetError = jest.fn()
 const mockRunRecovery = jest.fn()
 const mockTaskRecovery = jest.fn()
 
 jest.mock('@/store/chatStore', () => ({
-  useChatStore: Object.assign((select: (state: unknown) => unknown) => select({ load: mockLoad }), {
+  useChatStore: Object.assign((select: (state: unknown) => unknown) => select({ load: mockLoadChats }), {
     getState: () => ({ setError: mockSetError }),
   }),
 }))
 jest.mock('@/store/settingsStore', () => ({
-  useSettingsStore: Object.assign((select: (state: unknown) => unknown) => select({ load: mockLoad }), {
+  useSettingsStore: Object.assign((select: (state: unknown) => unknown) => select({ load: mockLoadSettings }), {
     getState: () => ({ settings: { language: 'en', autoUpdateCheckEnabled: false } }),
   }),
 }))
@@ -53,6 +54,8 @@ function deferred<T>() {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockLoadChats.mockReset().mockResolvedValue(undefined)
+  mockLoadSettings.mockReset().mockResolvedValue(undefined)
   mockRunRecovery.mockResolvedValue([])
   mockTaskRecovery.mockResolvedValue({ ok: true, value: [] })
 })
@@ -80,4 +83,50 @@ it('keeps admission closed on recovery failure and allows an explicit startup re
   await act(async () => result.current.retry())
   await waitFor(() => expect(result.current.ready).toBe(true))
   expect(mockTaskRecovery).toHaveBeenCalledTimes(2)
+})
+
+it('does not treat failed Chat hydration as an empty store even if later runtime recovery could succeed', async () => {
+  mockLoadChats.mockRejectedValueOnce(new Error('NoModificationAllowedError: storage is held by another tab'))
+  const { result } = await renderHook(() => useBootstrap())
+  await waitFor(() => expect(result.current.status).toBe('blocked'))
+  expect(result.current.ready).toBe(false)
+  expect(result.current.failure?.reference).toBe('BOOT-STARTUP')
+  expect(mockRunRecovery).not.toHaveBeenCalled()
+  expect(mockTaskRecovery).not.toHaveBeenCalled()
+  expect(mockLoadChats).toHaveBeenCalledTimes(1)
+})
+
+it('retries failed hydration once on an explicit request and keeps admission closed until hydration and recovery finish', async () => {
+  const retryLoad = deferred<void>()
+  const retryTasks = deferred<unknown>()
+  mockLoadChats.mockRejectedValueOnce(new Error('storage unavailable')).mockReturnValueOnce(retryLoad.promise)
+  mockTaskRecovery.mockReturnValueOnce(retryTasks.promise)
+  const { result } = await renderHook(() => useBootstrap())
+  await waitFor(() => expect(result.current.status).toBe('blocked'))
+  await act(async () => {
+    result.current.retry()
+    result.current.retry()
+  })
+  await waitFor(() => expect(mockLoadChats).toHaveBeenCalledTimes(2))
+  expect(result.current.status).toBe('loading')
+  expect(result.current.ready).toBe(false)
+  expect(mockRunRecovery).not.toHaveBeenCalled()
+  await act(async () => retryLoad.resolve())
+  await waitFor(() => expect(mockTaskRecovery).toHaveBeenCalledTimes(1))
+  expect(result.current.ready).toBe(false)
+  await act(async () => retryTasks.resolve({ ok: true, value: [] }))
+  await waitFor(() => expect(result.current.ready).toBe(true))
+  expect(result.current.failure).toBeNull()
+  expect(mockLoadSettings).toHaveBeenCalledTimes(2)
+  expect(mockRunRecovery).toHaveBeenCalledTimes(1)
+  expect(mockSetError.mock.calls.filter(([value]) => value === null)).toHaveLength(1)
+})
+
+it('preserves the existing nonblocking settings-failure policy when Chat hydration and recovery succeed', async () => {
+  mockLoadSettings.mockRejectedValueOnce(new Error('optional settings unavailable'))
+  const { result } = await renderHook(() => useBootstrap())
+  await waitFor(() => expect(result.current.ready).toBe(true))
+  expect(result.current.errorCount).toBe(1)
+  expect(mockRunRecovery).toHaveBeenCalledTimes(1)
+  expect(mockTaskRecovery).toHaveBeenCalledTimes(1)
 })

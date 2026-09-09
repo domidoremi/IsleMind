@@ -1,4 +1,5 @@
 import type { UsagePortableSnapshot } from '@/modules/diagnostics'
+import type { SavedDocument } from '@/modules/documents'
 import type { PortableKnowledgeSnapshot } from '@/modules/knowledge'
 import type {
   TavernExportAudit,
@@ -29,6 +30,7 @@ export type PortableBackupCategory =
   | 'skills'
   | 'mcp'
   | 'usage'
+  | 'documents'
 
 export interface PortableBackupSelection {
   mode: 'full' | 'selective'
@@ -68,6 +70,7 @@ export interface PortableDataExportPayload {
   tavernActiveScopes?: Record<string, string>
   mem0?: Mem0MemoryEnvelope
   usage?: UsagePortableSnapshot
+  savedDocuments?: SavedDocument[]
   exportedAt: number
 }
 

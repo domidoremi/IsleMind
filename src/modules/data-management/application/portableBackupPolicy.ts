@@ -25,6 +25,7 @@ export interface PortableBackupRestoreExistingIds {
   providerIds?: readonly string[]
   modelIds?: readonly string[]
   conversationIds?: readonly string[]
+  documentIds?: readonly string[]
   workspaceIds?: readonly string[]
   skillIds?: readonly string[]
   mcpServerIds?: readonly string[]
@@ -42,6 +43,7 @@ const ALL_CATEGORIES: readonly PortableBackupCategory[] = [
   'skills',
   'mcp',
   'usage',
+  'documents',
 ]
 
 const EMPTY_KNOWLEDGE: PortableKnowledgeSnapshot = {
@@ -89,6 +91,7 @@ export function selectPortableDataPayload(
     ...(has('workspaces') && payload.tavernActiveScopes ? { tavernActiveScopes: payload.tavernActiveScopes } : {}),
     ...(has('knowledge') && payload.mem0 ? { mem0: payload.mem0 } : {}),
     ...(has('usage') && payload.usage ? { usage: payload.usage } : {}),
+    ...(has('documents') && payload.savedDocuments ? { savedDocuments: payload.savedDocuments } : {}),
     exportedAt: payload.exportedAt,
   }
 }
@@ -100,6 +103,9 @@ export function createPortableBackupEnvelope(
 ): PortableBackupEnvelope {
   const normalized = normalizePortableBackupSelection(selection)
   const selectedPayload = selectPortableDataPayload(payload, normalized)
+  if (normalized.mode === 'selective' && normalized.categories.includes('documents') && selectedPayload.savedDocuments === undefined) {
+    throw new TypeError('A selective document backup requires a document snapshot.')
+  }
   if (
     normalized.mode === 'selective' &&
     normalized.categories.includes('usage') &&
@@ -163,6 +169,11 @@ export function planPortableBackupRestore(input: {
   if (selection.categories.includes('usage') && payload.usage) {
     actions.push({ category: 'usage', action: 'replace' })
   }
+  if (selection.categories.includes('documents')) {
+    for (const document of payload.savedDocuments ?? []) {
+      addAction('documents', document.id, existing.documentIds, conflictMode === 'merge' ? 'replace' : conflictMode, conflicts, actions)
+    }
+  }
 
   const missingDependencies: string[] = []
   if (selection.categories.includes('conversations') && !selection.categories.includes('providers')) {
@@ -194,6 +205,7 @@ function countPayloadCategories(payload: PortableDataExportPayload): Record<Port
     providers: payload.providers.length,
     models: payload.providers.reduce((count, provider) => count + (provider.modelConfigs?.length ?? 0), 0),
     conversations: payload.conversations.length,
+    documents: payload.savedDocuments?.length ?? 0,
     workspaces: Object.keys(payload.tavernSnapshots ?? {}).length,
     knowledge: (payload.context?.memories.length ?? 0) + (payload.context?.documents.length ?? 0) + (payload.context?.chunks.length ?? 0),
     skills: payload.skills?.length ?? 0,
