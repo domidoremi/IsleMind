@@ -36,6 +36,7 @@ const pendingTasks = new Map<string, ReturnType<typeof createTaskRuntime>>()
 const lifecycle: Array<{ state: string; at: number }> = [{ state: AppState.currentState, at: Date.now() }]
 const bootGate = deferred()
 let bootView: { ready: boolean; status: string } | undefined
+let sourceFixture: { conversationId: string; messageId: string; documentId: string; memoryId: string; foreignId: string } | undefined
 
 // Test-entry-only scheduling seam: hold recovery, not storage loading, and
 // observe the actual hook/render admission state. Production exports are not changed.
@@ -183,8 +184,81 @@ function rendezvous<Store extends { listRecoverable: () => Promise<readonly unkn
 }
 
 async function command(name: string, args: Record<string, string>): Promise<unknown> {
+  if (name === 'file-integrity-evidence') {
+    const { collectNativeFileIntegrityEvidence } = await import('./native-embedding-evidence')
+    return collectNativeFileIntegrityEvidence(args.input, (phase, detail) => post('milestone', { name: `integrity-${phase}`, detail }))
+  }
+  if (name === 'embedding-evidence') {
+    const { collectNativeEmbeddingEvidence } = await import('./native-embedding-evidence')
+    return collectNativeEmbeddingEvidence(provider, args.input, (phase, detail) => post('milestone', { name: `embedding-${phase}`, detail }))
+  }
+  if (name === 'embedding-admission-evidence') {
+    const { collectNativeEmbeddingAdmissionEvidence } = await import('./native-embedding-evidence')
+    return collectNativeEmbeddingAdmissionEvidence(args.input, (phase, detail) => post('milestone', { name: `admission-${phase}`, detail }))
+  }
   if (name === 'inspect-boot') return bootView ?? null
   if (name === 'release-boot') { bootGate.resolve(); return { released: true } }
+  if (name === 'setup-source-reader') {
+    const { knowledgeRepository } = await import('../src/bootstrap/knowledgeRepository')
+    const { useSettingsStore } = await import('../src/store/settingsStore')
+    const { useChatStore } = await import('../src/store/chatStore')
+    useSettingsStore.getState().updateSettings({ language: 'en', autoUpdateCheckEnabled: false,
+      knowledgeEnabled: false, memoryEnabled: false, webSearchEnabled: false, mcpEnabled: false,
+      systemStatusNotificationsEnabled: false })
+    const conversationId = useChatStore.getState().create('e3-offline', 'e3-no-provider')
+    const documentId = `e3-doc-${session}`
+    const messageId = `e3-message-${session}`
+    const memoryId = `e3-memory-${session}`
+    const foreignId = `e3-foreign-${session}`
+    const timestamp = Date.now()
+    const originalUrl = 'http://127.0.0.1:8081/__e3/original'
+    const document = { schema: 'islemind.knowledge-document-record.v1' as const, id: documentId,
+      title: 'E3 saved document', mimeType: 'text/plain', size: 200, chunkCount: 2, status: 'ready' as const,
+      sourceUri: originalUrl, contentHash: 'e3-original-revision', createdAt: timestamp, updatedAt: timestamp }
+    const chunks = ['E3_FIRST_SECTION: This retained section was not quoted.',
+      'E3_CITED_FULL_TEXT: Saved Unicode 繁體 日本語 😀. This paragraph is absent from the captured excerpt.'].map((content, ordinal) => ({
+      schema: 'islemind.knowledge-chunk-record.v1' as const, id: `${documentId}-${ordinal}`, documentId,
+      title: document.title, content, ordinal, createdAt: timestamp,
+    }))
+    await knowledgeRepository.saveDocument(document, chunks)
+    await knowledgeRepository.saveMemory({ id: memoryId, content: 'E3_MEMORY_FULL_TEXT: Saved, but disabled.',
+      status: 'disabled', scope: { kind: 'conversation', id: conversationId }, sourceKind: 'manual' })
+    await knowledgeRepository.saveMemory({ id: foreignId, content: 'E3_FOREIGN_MEMORY_MUST_NOT_LEAK',
+      status: 'active', scope: { kind: 'conversation', id: `not-${conversationId}` }, sourceKind: 'manual' })
+    await useChatStore.getState().addMessage(conversationId, { id: messageId, role: 'assistant', content: 'E3 local source fixture',
+      status: 'done', timestamp: timestamp - 1000, citations: [
+        { id: documentId, type: 'knowledge', title: 'Doc', excerpt: 'E3_CAPTURED_EXCERPT', documentId,
+          chunkId: chunks[1].id, chunkIndex: 1, url: originalUrl, sourceUri: originalUrl },
+        { id: memoryId, type: 'memory', title: 'Memory', excerpt: 'E3_MEMORY_CAPTURED_EXCERPT' },
+        { id: foreignId, type: 'memory', title: 'Foreign', excerpt: 'E3_FOREIGN_CAPTURED_EXCERPT' },
+      ] })
+    sourceFixture = { conversationId, messageId, documentId, memoryId, foreignId }
+    return { ...sourceFixture, document, chunks,
+      saved: await knowledgeRepository.readLocalSource({ type: 'knowledge', documentId }),
+      memory: await knowledgeRepository.readLocalSource({ type: 'memory', memoryId, conversationId }),
+      foreign: await knowledgeRepository.readLocalSource({ type: 'memory', memoryId: foreignId, conversationId }) ?? null }
+  }
+  if (name === 'source-reader-route') {
+    if (!sourceFixture) throw new Error('Source reader fixture is not prepared')
+    const { router } = await import('expo-router')
+    router.replace({ pathname: '/source', params: { conversationId: sourceFixture.conversationId,
+      messageId: sourceFixture.messageId, citationId: args.citationId ?? sourceFixture.documentId,
+      url: 'http://127.0.0.1:8081/__e3/original' } })
+    return { requested: true }
+  }
+  if (name === 'source-reader-mutate') {
+    if (!sourceFixture) throw new Error('Source reader fixture is not prepared')
+    const { knowledgeRepository } = await import('../src/bootstrap/knowledgeRepository')
+    const { documentId } = sourceFixture
+    if (args.action === 'delete') await knowledgeRepository.deleteDocument(documentId)
+    else if (args.action === 'replace') {
+      const current = await knowledgeRepository.readLocalSource({ type: 'knowledge', documentId })
+      if (current?.type !== 'knowledge') throw new Error('Missing source reader fixture')
+      await knowledgeRepository.saveDocument({ ...current.document, updatedAt: Date.now(), chunkCount: 1, contentHash: 'e3-replacement-revision' },
+        [{ ...current.chunks[0], id: `${documentId}-replacement`, content: 'E3_REPLACEMENT_TEXT: Current revision, not the cited section.' }])
+    } else throw new Error('Unknown source fixture mutation')
+    return await knowledgeRepository.readLocalSource({ type: 'knowledge', documentId }) ?? null
+  }
   if (name === 'inspect') return inspect()
   if (name === 'prepare') {
     fixtureFile.write(fileText)
@@ -275,17 +349,70 @@ async function command(name: string, args: Record<string, string>): Promise<unkn
     else await settings.addProvider(fixtureProvider)
     await useSettingsStore.getState().flushProviderPersistence()
     const id = useChatStore.getState().create('e4-provider', 'e4-model')
-    useChatStore.getState().rename(id, 'E4 native interruption')
-    return { conversationId: id }
+    const title = `E4 ${id.slice(-8)}`
+    useChatStore.getState().rename(id, title)
+    return { conversationId: id, title }
   }
-  if (name === 'terminal-gap') {
+  if (name === 'replay-migration-check') {
+    const knowledge = await import('../src/modules/knowledge')
+    const snapshot = knowledge.createKnowledgeRagReplaySnapshot({
+      createdAt: 10, query: 'Native migration evidence', profile: 'offline', profileSource: 'settings',
+      sourceCount: 1, citationCount: 1, confidence: 0.8, missingEvidence: false,
+      ragTraceCount: 0, outputCharLimit: 4800, visibleOutput: 'Retained native source evidence',
+      warnings: [], fallbackReasons: [], contextPrompt: 'Retained native source evidence',
+      citations: [{ id: 'native-source', label: '[1]', type: 'knowledge', title: 'Retained source' }],
+    })!
+    const results = []
+    for (const order of ['knowledge-first', 'replay-first', 'historical-replay-first']) {
+      const storage = createExpoSqliteDatabaseProvider({ databaseName: `${databaseName}-${order}.db` })
+      const db = await storage.get()
+      if (order === 'historical-replay-first') {
+        // A fresh, purpose-owned database reproduces the old marker collision.
+        // Never rewrite or delete an existing application migration record.
+        await db.exec(`
+          CREATE TABLE platform_schema_migrations (scope TEXT NOT NULL, version INTEGER NOT NULL,
+            name TEXT NOT NULL, appliedAt INTEGER NOT NULL, PRIMARY KEY(scope, version));
+          INSERT INTO platform_schema_migrations VALUES ('knowledge', 3, 'knowledge-rag-replay-snapshots', 1);
+          CREATE TABLE knowledge_rag_replay_snapshots (taskId TEXT PRIMARY KEY NOT NULL,
+            schema TEXT NOT NULL, createdAt INTEGER NOT NULL, payloadJson TEXT NOT NULL);
+        `)
+        await db.run('INSERT INTO knowledge_rag_replay_snapshots VALUES (?, ?, ?, ?)',
+          ['retained-task', snapshot.schema, snapshot.createdAt, JSON.stringify(snapshot)])
+      }
+      const repository = knowledge.createSqliteKnowledgeRepository(storage)
+      const replay = knowledge.createSqliteKnowledgeRagReplaySnapshotRepository(storage)
+      if (order === 'replay-first') await replay.save('retained-task', snapshot)
+      await repository.listDocuments()
+      await replay.save('new-task', snapshot)
+      await repository.saveMemory({ id: 'scoped-memory', content: 'Explicit native user scope.', status: 'active', sourceKind: 'manual',
+        scope: { kind: 'user', id: 'isolated-user' }, subject: 'IsleMind', key: 'scope', value: 'isolated-user' })
+      const before = await repository.listMemories()
+      const markersBefore = await db.getAll('SELECT * FROM platform_schema_migrations ORDER BY scope, version')
+      const newStorage = createExpoSqliteDatabaseProvider({ databaseName: `${databaseName}-${order}.db` })
+      // Recreate adapters/connections and race read-only initialization through
+      // the production file queue. This is native SQLite, not a mock executor.
+      const reopened = await Promise.all([
+        knowledge.createSqliteKnowledgeRepository(newStorage).listMemories(),
+        knowledge.createSqliteKnowledgeRagReplaySnapshotRepository(newStorage).get('new-task'),
+        knowledge.createSqliteKnowledgeRagReplaySnapshotRepository(storage).get('new-task'),
+      ])
+      results.push({ order, snapshot, before, reopened, markersBefore,
+        retained: order === 'knowledge-first' ? undefined : await replay.get('retained-task'),
+        markersAfter: await db.getAll('SELECT * FROM platform_schema_migrations ORDER BY scope, version'),
+        integrity: await db.getAll('PRAGMA integrity_check'), foreignKeys: await db.getAll('PRAGMA foreign_key_check'),
+        journalMode: await db.getFirst('PRAGMA journal_mode'), synchronous: await db.getFirst('PRAGMA synchronous'),
+      })
+    }
+    return { hermes: typeof (globalThis as unknown as { HermesInternal?: unknown }).HermesInternal !== 'undefined', results }
+  }
+  if (name === 'terminal-gap' || name === 'cancel-stream') {
     const { conversationId } = await command('setup-chat', {}) as { conversationId: string }
     const { useChatStore } = await import('../src/store/chatStore')
     const { useSettingsStore } = await import('../src/store/settingsStore')
     const { createPlainChatRuntime } = await import('../src/bootstrap/conversationRuntime')
     const responseMessageId = `e4-gap-assistant-${session}`
     await useChatStore.getState().addMessage(conversationId, { id: `e4-gap-user-${session}`, role: 'user',
-      content: 'E4_COMPLETE', timestamp: Date.now(), status: 'done' })
+      content: name === 'cancel-stream' ? 'E11_CANCEL' : 'E4_COMPLETE', timestamp: Date.now(), status: 'done' })
     await useChatStore.getState().addMessage(conversationId, { id: responseMessageId, role: 'assistant',
       content: '', timestamp: Date.now(), status: 'streaming' })
     await useChatStore.getState().flushStreamingMessage(conversationId, responseMessageId)
@@ -296,12 +423,25 @@ async function command(name: string, args: Record<string, string>): Promise<unkn
       provider: { ...useSettingsStore.getState().providers.find((item) => item.id === 'e4-provider')!,
         apiKey: 'e4-not-a-secret', credentialGroups: [{ id: 'e4-local-group', label: 'E4 local fixture',
           apiKey: 'e4-not-a-secret', enabled: true, availableModels: ['e4-model'] }] },
-      settings: useSettingsStore.getState().settings,
+      settings: name === 'cancel-stream' ? { ...useSettingsStore.getState().settings,
+        agentWorkflowAllowReadOnlyTools: false, agentWorkflowAllowReadWriteTools: false,
+        agentWorkflowAllowDestructiveTools: false, upstreamMaxRetries: 0 } : useSettingsStore.getState().settings,
     })
     // Exercise the real request/context/provider/run path, deliberately omitting
     // its disposable projection to reproduce death after the terminal DB commit.
-    const result = await runtime.start({ conversationId, responseMessageId }).completion
-    return { conversationId, responseMessageId, result, snapshot: await command('inspect-chat', { id: conversationId }) }
+    const cancellation = new AbortController()
+    let acknowledged: Awaited<ReturnType<typeof runs.get>>
+    const appRuns = createSqliteAssistantRunPersistence(createExpoSqliteDatabaseProvider())
+    const result = await runtime.start({ conversationId, responseMessageId,
+      ...(name === 'cancel-stream' ? { cancellationSignal: cancellation.signal,
+        async projection(event) {
+          if (acknowledged || event.journalEntry?.data?.eventType !== 'text-delta') return
+          acknowledged = await appRuns.get(event.run.id)
+          cancellation.abort(new Error('Native fixture caller cancelled after a durable text delta'))
+        },
+      } : {}),
+    }).completion
+    return { conversationId, responseMessageId, result, acknowledged, snapshot: await command('inspect-chat', { id: conversationId }) }
   }
   if (name === 'inspect-chat') {
     const { useChatStore } = await import('../src/store/chatStore')
@@ -331,7 +471,7 @@ if (__DEV__ && Platform.OS === 'android') {
         const job = await response.json()
         if (!job) continue
         try { await post('result', { id: job.id, value: await command(job.name, job.args ?? {}) }) }
-        catch (error) { await post('result', { id: job.id, error: String(error) }) }
+        catch (error) { await post('result', { id: job.id, error: error instanceof Error ? error.stack ?? String(error) : String(error) }) }
       } catch { await new Promise((resolve) => setTimeout(resolve, 500)) }
     }
   })().catch(() => undefined)
