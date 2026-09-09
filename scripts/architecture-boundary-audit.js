@@ -401,7 +401,12 @@ const requiredContracts = [
       ['src/bootstrap/providerRuntimeExecutor.ts', /cancelReaderAfterTerminal\(\)/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /const TERMINAL_READER_CLOSE_GRACE_MS = 50/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /const closed = terminalReader\.closed/],
-      ['src/bootstrap/providerRuntimeExecutor.ts', /terminalReader\.cancel\(\)/],
+      // E11 shares idempotent cleanup between caller abort and terminal EOF.
+      // Check the real call and both bindings, not the removed local variable.
+      ['src/bootstrap/providerRuntimeExecutor.ts', /function cancelReader\(\): void \{[\s\S]*?if \(readerCancelRequested\) return[\s\S]*?reader!\.cancel\(\)/],
+      ['src/bootstrap/providerRuntimeExecutor.ts', /function cancelReaderAfterTerminal\(\): void \{[\s\S]*?const cancel = cancelReader/],
+      ['src/bootstrap/providerRuntimeExecutor.ts', /signal\.addEventListener\('abort', cancelReader, \{ once: true \}\)/],
+      ['src/bootstrap/providerRuntimeExecutor.ts', /signal\.removeEventListener\('abort', cancelReader\)/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /if \(value\) \{[\s\S]*if \(done\) \{/],
       ['src/modules/providers/providerOperationResult.ts', /export function createProviderOperationResultPolicy/],
       ['src/modules/providers/providerJsonPolicy.ts', /export function createProviderJsonPolicy/],
@@ -2023,7 +2028,7 @@ const requiredContracts = [
       ['src/components/chat/ChatWorkspace.tsx', /import \{[^}]*CHAT_PRESENTATION_CATALOG[^}]*\} from ['"]@\/presentation\/features\/chat\/chatPresentationCatalog['"][^]*?export function ChatWorkspace\([^]*?CHAT_PRESENTATION_CATALOG\.systemPromptPlaceholderKey/],
       ['src/components/main/HomeScreenContent.tsx', /const currentId = useChatStore\(\(state\) => state\.currentId\)[^]*?const select = useChatStore\(\(state\) => state\.select\)[^]*?conversations\.find\(\(item\) => item\.id === currentId\)[^]*?<ChatWorkspace/],
       ['src/components/main/ConversationsScreenContent.tsx', /const currentId = useChatStore\(\(state\) => state\.currentId\)[^]*?const select = useChatStore\(\(state\) => state\.select\)[^]*?const createConversation = useCallback\(\(\) => \{[^]*?select\(null\)[^]*?navigateToChat\(\)[^]*?const openConversation[^]*?select\(id\)/],
-      ['app/chat/[id].tsx', /select\(conversation\.id\)[^]*?<ChatWorkspace/],
+      ['app/chat/[id].tsx', /useFocusEffect\(useCallback\(\(\) => \{[^]*?select\(conversationId\)[^]*?\}, \[conversationId, select\]\)\)[^]*?<ChatWorkspace/],
       ['src/presentation/features/conversations/conversationMessageActionCommand.ts', /startWorkflowReply: startConfirmedConversationWorkflowReplyRuntime/],
       ['src/modules/assistant-runtime/contracts.ts', /interface AssistantRun \{[^]*?kind: 'chat'/],
       ['src/modules/assistant-runtime/contracts.ts', /interface StartAssistantActivityRunInput[^]*?kind: 'chat'/],
@@ -12307,7 +12312,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ],
     ['src/bootstrap/providerModelAccess.ts', 'createProviderModelAccessPolicy({})\nexport const PROVIDER_MODEL_ACCESS_POLICY = {}'],
     ['src/bootstrap/providerSessionLeasePool.ts', 'export const providerSessionLeasePool = createProviderSessionLeasePool()'],
-    ['src/bootstrap/providerRuntimeExecutor.ts', 'acquireProviderSessionLease({ signal: input.controller.signal })\nawait input.fallbackEffects.logDecision()\nconst TERMINAL_READER_CLOSE_GRACE_MS = 50\nlet completionDelivered = false\nif (parsed.terminal) {\n  cancelReaderAfterTerminal()\n}\nconst closed = terminalReader.closed\nterminalReader.cancel()\nif (value) {}\nif (done) {}\nfunction normalizeRemoteCompactRoute(req, localFallback) {\n  const nativeEligible = resolveProviderContextManagement({ provider: req.provider, usesOpenAIResponses: usesOpenAIResponses(req) }).nativeSupported\n  if (nativeEligible) return req\n  return { ...req, messages: localFallback.messages, contextPrompt: localFallback.contextPrompt, remoteCompactEligible: false, remoteCompactFallback: undefined, previousResponseId: undefined }\n}\nconst selectedReqBase: ProviderRuntimeChatRequest = { provider: selectedProvider, model: selectedRoute.model, }\nconst selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback)\nconst fallbackReq = normalizeRemoteCompactRoute({ ...req }, req.remoteCompactFallback)'],
+    ['src/bootstrap/providerRuntimeExecutor.ts', 'acquireProviderSessionLease({ signal: input.controller.signal })\nawait input.fallbackEffects.logDecision()\nconst TERMINAL_READER_CLOSE_GRACE_MS = 50\nlet completionDelivered = false\nif (parsed.terminal) {\n  cancelReaderAfterTerminal()\n}\nfunction cancelReader(): void {\n  if (readerCancelRequested) return\n  readerCancelRequested = true\n  void Promise.resolve(reader!.cancel()).catch(() => undefined)\n}\nfunction cancelReaderAfterTerminal(): void {\n  const cancel = cancelReader\n}\ninput.controller.signal.addEventListener(\'abort\', cancelReader, { once: true })\ninput.controller.signal.removeEventListener(\'abort\', cancelReader)\nconst closed = terminalReader.closed\nif (value) {}\nif (done) {}\nfunction normalizeRemoteCompactRoute(req, localFallback) {\n  const nativeEligible = resolveProviderContextManagement({ provider: req.provider, usesOpenAIResponses: usesOpenAIResponses(req) }).nativeSupported\n  if (nativeEligible) return req\n  return { ...req, messages: localFallback.messages, contextPrompt: localFallback.contextPrompt, remoteCompactEligible: false, remoteCompactFallback: undefined, previousResponseId: undefined }\n}\nconst selectedReqBase: ProviderRuntimeChatRequest = { provider: selectedProvider, model: selectedRoute.model, }\nconst selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback)\nconst fallbackReq = normalizeRemoteCompactRoute({ ...req }, req.remoteCompactFallback)'],
     ['src/modules/providers/providerRequestHardeningPolicy.ts', 'export function createProviderRequestHardeningPolicy() {}\nfunction clampTopLevelMaxTokens() {}'],
     ['src/bootstrap/providerRequestHardening.ts', 'createProviderRequestHardeningPolicy({})'],
     ['src/modules/providers/providerConformancePolicy.ts', 'export function createProviderConformancePolicy() {}\ndependencies.hardenProviderRequestBody({})'],
@@ -14993,7 +14998,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     [
       'src/modules/assistant-runtime/testing/inMemoryRunStore.ts',
       [
-        'async appendAndSave(entry, run, requestSnapshot, previousRun) {',
+        'async appendAndSave(entry, run, requestSnapshot) {',
         'const storedRun = cloneRun(run)',
         'cloneRequestSnapshot(requestSnapshot)',
         'appendEntry(entriesByRun, entry)',
@@ -16166,7 +16171,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     [
       'app/chat/[id].tsx',
       [
-        'select(conversation.id)',
+        'useFocusEffect(useCallback(() => { if (conversationId) select(conversationId) }, [conversationId, select]))',
         "const RuntimeRepairConversationWorkspace = createLazyComponent(() => import('@/presentation/features/conversations/RuntimeRepairConversationWorkspace'))",
         "const isRuntimeRepair = routeParamText(params.source) === 'runtime-repair'",
         '<RuntimeRepairConversationWorkspace />',
