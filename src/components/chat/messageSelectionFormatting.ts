@@ -1,6 +1,8 @@
 import type { TFunction } from 'i18next'
 
+import { containsSensitiveText, redactSensitiveText } from '@/core'
 import type { Message } from '@/types/chatContracts'
+import { safeHttpUrl } from '@/utils/sourceUrlSafety'
 
 const MESSAGE_QUOTE_DRAFT_LIMIT = 6000
 
@@ -42,11 +44,42 @@ export function buildQuotedMessageDraft(message: Message, t: TFunction): string 
   return `${t('messageBubble.quoteDraftHeader', { role })}\n${quoted}\n\n`
 }
 
-export function formatSelectedMessagesForExport(messages: Message[], t: TFunction): string {
+function formatSourceTitle(title: string): string {
+  const text = redactSensitiveText(title)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/g, ' ')
+    .trim()
+  if (!text) return ''
+  // Code spans keep even linkified URLs and raw HTML in a title inert. A longer
+  // delimiter plus padding also preserves titles containing their own backticks.
+  const longestBackticks = (text.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length), 0)
+  const delimiter = '`'.repeat(longestBackticks + 1)
+  return `${delimiter} ${text} ${delimiter}`
+}
+
+function formatMessageSources(message: Message, t: TFunction): string {
+  if (!message.citations?.length) return ''
+  // Match the source reader's retained order, without global Markdown reference
+  // definitions that could rebind another message's [1]. Never read source bodies.
+  const sources = message.citations.map((citation, index) => {
+    const title = formatSourceTitle(citation.title) || t('source.capturedCitation')
+    const url = safeHttpUrl(citation.url)
+    const link = url && !containsSensitiveText(url)
+      ? `<${new URL(url).href}>`
+      : t('messageBubble.exportSourceNoLink')
+    return `- \\[${index + 1}\\] ${title} — ${t(`source.${citation.type}`)}\n  ${link}`
+  })
+  return `\n\n### ${t('messageBubble.exportSourcesTitle')}\n\n${t('messageBubble.exportSourcesNotice')}\n\n${sources.join('\n')}`
+}
+
+export function formatSelectedMessagesForExport(
+  messages: Message[],
+  t: TFunction,
+  { includeSources = false }: { includeSources?: boolean } = {},
+): string {
   return messages.map((message, index) => {
     const role = messageRoleLabel(message, t)
     const timestamp = new Date(message.timestamp).toLocaleString()
     const body = messageFinalText(message) || t('messageBubble.emptyResponse')
-    return `## ${index + 1}. ${role} · ${timestamp}\n\n${body}`
+    return `## ${index + 1}. ${role} · ${timestamp}\n\n${body}${includeSources ? formatMessageSources(message, t) : ''}`
   }).join('\n\n---\n\n')
 }

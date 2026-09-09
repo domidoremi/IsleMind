@@ -15,7 +15,7 @@ export type MessageActionDialog = {
     message: string
     confirmLabel: string
     cancelLabel: string
-    tone: 'danger'
+    tone: 'danger' | 'mint'
   }) => Promise<boolean>
 }
 
@@ -29,8 +29,13 @@ export async function copyConversationLinkToClipboard({
   t: TFunction
 }) {
   const url = Linking.createURL(`/chat/${conversationId}`)
-  await Clipboard.setStringAsync(url)
+  const copied = await Clipboard.setStringAsync(url).catch(() => false)
+  if (!copied) {
+    dialog.toast({ title: t('chat.clipboardUnavailable'), tone: 'amber' })
+    return false
+  }
   dialog.toast({ title: t('chat.linkCopied'), message: url, tone: 'mint' })
+  return true
 }
 
 export async function copySelectedMessagesToClipboard({
@@ -47,7 +52,11 @@ export async function copySelectedMessagesToClipboard({
     return false
   }
   const text = formatSelectedMessagesForExport(selectedMessages, t)
-  await Clipboard.setStringAsync(text)
+  const copied = await Clipboard.setStringAsync(text).catch(() => false)
+  if (!copied) {
+    dialog.toast({ title: t('chat.clipboardUnavailable'), tone: 'amber' })
+    return false
+  }
   dialog.toast({ title: t('common.copied'), message: t('messageBubble.multiSelectCopied', { count: selectedMessages.length }), tone: 'mint' })
   return true
 }
@@ -68,26 +77,43 @@ export async function exportSelectedMessagesMarkdown({
     return false
   }
 
-  const text = formatSelectedMessagesForExport(selectedMessages, t)
-  await Clipboard.setStringAsync(text)
+  const text = formatSelectedMessagesForExport(selectedMessages, t, { includeSources: true })
+  if (selectedMessages.some((message) => message.citations?.length)) {
+    const confirmed = await dialog.confirm({
+      title: t('messageBubble.exportSourcesConfirmTitle'),
+      message: t('messageBubble.exportSourcesConfirmMessage'),
+      confirmLabel: t('messageBubble.export'),
+      cancelLabel: t('common.cancel'),
+      tone: 'mint',
+    })
+    if (!confirmed) return false
+  }
+
+  const copied = await Clipboard.setStringAsync(text).catch(() => false)
+  if (!copied) {
+    dialog.toast({ title: t('messageBubble.multiSelectExportFailed'), message: t('chat.clipboardUnavailable'), tone: 'amber' })
+    return false
+  }
   const exportFileName = buildSelectedMessagesExportFileName(conversation.title, conversation.id)
   const exportDirectory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory
-  if (!exportDirectory) {
-    dialog.toast({ title: t('messageBubble.multiSelectExported'), message: t('messageBubble.multiSelectExportClipboardFallback'), tone: 'mint' })
+  if (!exportDirectory || !(await Sharing.isAvailableAsync().catch(() => false))) {
+    dialog.toast({ title: t('common.copied'), message: t('messageBubble.multiSelectExportClipboardFallback'), tone: 'mint' })
     return true
   }
 
   const uri = `${exportDirectory}${exportFileName}`
-  await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 })
   try {
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, {
-        mimeType: 'text/markdown',
-        dialogTitle: exportFileName,
-        UTI: 'net.daringfireball.markdown',
-      })
-    }
+    await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 })
+    await Sharing.shareAsync(uri, {
+      mimeType: 'text/markdown',
+      dialogTitle: exportFileName,
+      UTI: 'net.daringfireball.markdown',
+    })
     dialog.toast({ title: t('messageBubble.multiSelectExported'), message: t('messageBubble.multiSelectExportedMessage', { count: selectedMessages.length }), tone: 'mint' })
+    return true
+  } catch {
+    // The clipboard copy succeeded, but opening a share target is not a save.
+    dialog.toast({ title: t('common.copied'), message: t('messageBubble.multiSelectExportClipboardFallback'), tone: 'amber' })
     return true
   } finally {
     await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)
