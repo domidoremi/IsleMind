@@ -354,7 +354,9 @@ async function main() {
         await new Promise((resolve) => options.signal.addEventListener('abort', resolve, { once: true }))
         return externalResult({ ok: false, status: 'skipped', output: 'Agent workflow execution was cancelled.', errorCode: 'cancelled' })
       }
-      assert.deepEqual(argumentsValue, { target: 'fixture' })
+      assert.equal(Object.getPrototypeOf(argumentsValue), null,
+        'external tool arguments retain the prototype-free shared JSON boundary')
+      assert.deepEqual({ ...argumentsValue }, { target: 'fixture' })
       return externalResult({ ok: true, status: 'done', output: 'Android write completed.' })
     },
     async executeBuiltinTool(tool, argumentsValue, options) {
