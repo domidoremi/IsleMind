@@ -2,6 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 const {
   androidReleaseOptimizationGradleArgs,
   resolveAndroidReleaseOptimization,
@@ -148,7 +149,37 @@ V2 Signer: certificate SHA-256 digest: ${releaseDigest}
   assert.doesNotMatch(jobHeader, /ANDROID_KEYSTORE_BASE64|ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_/, 'signing secrets are scoped to required steps')
 
   const freshnessContract = require('./release-freshness-contract')
+  const autolinking = JSON.parse(execFileSync(process.execPath, [
+    path.join(path.dirname(require.resolve('expo-modules-autolinking/package.json')), 'bin/expo-modules-autolinking.js'),
+    'react-native-config', '--platform', 'android', '--json',
+  ], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000, env: { ...process.env, EXPO_NO_DOTENV: '1' } }))
+  const onnxAndroid = autolinking.dependencies['onnxruntime-react-native']?.platforms?.android
+  assert.equal(onnxAndroid?.packageImportPath, 'import ai.onnxruntime.reactnative.OnnxruntimePackage;',
+    'the actual Expo resolver must register ORT as a React Native package, not only a Gradle dependency')
+  assert.equal(onnxAndroid.packageInstance, 'new OnnxruntimePackage()')
+  const { pinNativeRuntimeSources } = require('./patch-onnxruntime-16kb')
+  const nativeGradle = fs.readFileSync(path.join(onnxAndroid.sourceDir, 'build.gradle'), 'utf8')
+  const nativeCmake = fs.readFileSync(path.join(onnxAndroid.sourceDir, 'CMakeLists.txt'), 'utf8')
+  const pinned = pinNativeRuntimeSources(nativeGradle, nativeCmake)
+  assert.match(pinned.gradle, /onnxruntime-android:\$\{onnxRuntimeVersion\}@aar/)
+  assert.match(pinned.gradle, /parse\(file\("\.\.\/package\.json"\)\)\.version/,
+    'the native runtime version comes from the installed ONNX JS package, not a floating Maven release')
+  assert.doesNotMatch(pinned.cmake, /onnxruntime-android-\*|find_library\(\s*onnxruntime-lib/,
+    'old extracted AARs and cached library paths cannot choose a different native runtime')
+  assert.deepEqual(pinNativeRuntimeSources(pinned.gradle, pinned.cmake), pinned, 'native version pinning is idempotent')
+  assert.throws(() => pinNativeRuntimeSources('', ''), /unknown ONNX Android/,
+    'unsupported upstream build configurations fail closed instead of pretending to pin')
+  // Expo 57 otherwise selects the prebuilt AAR and silently ignores the C patch.
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  const sqlitePatch = 'patches/expo-sqlite@57.0.2.patch'
+  assert.equal(packageJson.patchedDependencies?.['expo-sqlite@57.0.2'], sqlitePatch)
+  assert.ok(fs.existsSync(path.join(root, sqlitePatch)), 'the registered SQLite WAL-reset backport exists')
+  assert.ok(packageJson.expo?.autolinking?.android?.buildFromSource?.includes('expo-sqlite'),
+    'SQLite must build the patched source rather than use an unpatched prebuilt AAR')
   for (const releaseInput of [
+    sqlitePatch,
+    'react-native.config.js',
+    'scripts/patch-onnxruntime-16kb.js',
     'scripts/android-release-build-contract.js',
     'scripts/android-release-signing-contract.js',
     'scripts/release-apk-paths.js',

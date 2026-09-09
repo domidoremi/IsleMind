@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy'
+import { NativeModules, Platform } from 'react-native'
 
 /** Minimal file metadata returned by the local-model integrity adapter. */
 export interface LocalModelFileInfo {
@@ -13,6 +14,15 @@ export interface LocalModelFileIntegrityPort {
 }
 
 export const LOCAL_MODEL_SHA256_READ_CHUNK_BYTES = 1024 * 1024
+
+/** Optional Android acceleration; unsupported hosts retain the bounded JS path. */
+export interface AndroidFileIntegrityModule {
+  sha256File(operationId: string, uri: string, expectedBytes: number): Promise<{ sha256: string; bytesHashed: number }>
+  cancel(operationId: string): void
+}
+
+const hashOperationPrefix = `filehash-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+let hashOperationSequence = 0
 
 export interface ExpoLocalModelFileSystem {
   EncodingType: {
@@ -43,6 +53,7 @@ const SHA256_K = [
 
 export function createExpoLocalModelFileIntegrityPort(
   fileSystem: ExpoLocalModelFileSystem = FileSystem as unknown as ExpoLocalModelFileSystem,
+  nativeModule: AndroidFileIntegrityModule | null = defaultNativeModule(),
 ): LocalModelFileIntegrityPort {
   async function getInfo(uri: string, signal?: AbortSignal): Promise<LocalModelFileInfo> {
     throwIfAborted(signal)
@@ -57,6 +68,9 @@ export function createExpoLocalModelFileIntegrityPort(
   async function sha256File(uri: string, signal?: AbortSignal): Promise<string> {
     const info = await getInfo(uri, signal)
     if (!info.exists) throw new Error(`Downloaded file is missing: ${uri}`)
+    if (nativeModule && isAppPrivateFileUri(uri)) {
+      return sha256NativeFile(nativeModule, uri, info.size, signal)
+    }
     const digest = new Sha256Digest()
     for (let position = 0; position < info.size; position += LOCAL_MODEL_SHA256_READ_CHUNK_BYTES) {
       throwIfAborted(signal)
@@ -73,6 +87,48 @@ export function createExpoLocalModelFileIntegrityPort(
   }
 
   return { getInfo, sha256File }
+}
+
+function defaultNativeModule(): AndroidFileIntegrityModule | null {
+  const module = Platform.OS === 'android' ? NativeModules?.AndroidFileIntegrity : undefined
+  return typeof module?.sha256File === 'function' && typeof module?.cancel === 'function' ? module : null
+}
+
+function isAppPrivateFileUri(uri: string): boolean {
+  // Retain Expo's existing behavior for other URI schemes/locations. Native code
+  // independently canonicalizes and restricts paths, including traversal/symlinks.
+  return uri.startsWith('file://') && [FileSystem.documentDirectory, FileSystem.cacheDirectory]
+    .some(root => typeof root === 'string' && root.length > 0 && uri.startsWith(root))
+}
+
+async function sha256NativeFile(
+  module: AndroidFileIntegrityModule, uri: string, expectedBytes: number, signal?: AbortSignal,
+): Promise<string> {
+  throwIfAborted(signal)
+  const operationId = `${hashOperationPrefix}-${++hashOperationSequence}`
+  const cancel = () => {
+    // A disappearing bridge must not throw from the AbortSignal listener.
+    try { module.cancel(operationId) } catch { /* Native invalidation drains its workers. */ }
+  }
+  try {
+    const pending = module.sha256File(operationId, uri, expectedBytes)
+    signal?.addEventListener('abort', cancel, { once: true })
+    if (signal?.aborted) cancel()
+    // Wait for native descriptor cleanup, not a Promise.race that abandons work.
+    const result = await pending
+    throwIfAborted(signal)
+    if (result?.bytesHashed !== expectedBytes || !/^[0-9a-f]{64}$/.test(result?.sha256)) {
+      throw new Error('Native file verification returned an incomplete digest.')
+    }
+    return result.sha256
+  } catch (error) {
+    throwIfAborted(signal)
+    // Never turn an I/O, size, capacity or native failure into a verified result
+    // or silently retry it through a different reader.
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+  }
 }
 
 export function sha256LocalModelBytes(bytes: Uint8Array): string {
