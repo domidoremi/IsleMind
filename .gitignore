@@ -61,7 +61,7 @@ logcat/
 *.temp
 *.bak
 *.backup
-
+.zcode/
 # local/private workspace notes and automation
 AGENTS.md
 CLAUDE.md
