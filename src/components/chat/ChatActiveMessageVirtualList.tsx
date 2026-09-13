@@ -9,6 +9,7 @@ import type { AIProvider } from '@/types/providerContracts'
 
 import { ChatActiveMessageEmptyState } from './ChatActiveMessageEmptyState'
 import { ChatActiveMessageItem } from './ChatActiveMessageItem'
+import { ChatReplyFallbackNotice } from './ChatReplyFallbackNotice'
 import type { ChatBoundaryMemoryStatus } from './ChatEmptyState'
 import type { ChatActiveMessageFeedState } from './chatActiveMessageFeedState'
 import type { ChatActiveWorkspaceActions } from './chatActiveWorkspaceActions'
@@ -154,6 +155,7 @@ export function ChatActiveMessageVirtualList({
         paddingBottom: messageListBottomPadding,
       }}
       ListHeaderComponent={conversation.messages.length ? renderConversationHeaderSpacer(conversationHeaderTopPadding) : null}
+      ListFooterComponent={<ChatReplyFallbackNotice conversation={conversation} />}
       renderItem={({ item: message, index }) => (
         <ChatActiveMessageItem
           conversationId={conversation.id}
@@ -162,7 +164,7 @@ export function ChatActiveMessageVirtualList({
           motion={messageListMotion}
           viewportHeight={viewportHeight}
           provider={provider}
-          modelId={conversation.model}
+          modelId={conversation.model ?? ''}
           regenerableAssistantId={regenerableAssistantId}
           actionSheetActive={activeActionMessageId === message.id}
           onActionMessageChange={setActiveActionMessageId}

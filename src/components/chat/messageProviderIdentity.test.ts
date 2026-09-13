@@ -16,7 +16,7 @@ describe('message provider identity', () => {
     })).toEqual({ provider: historicalProvider, model: 'history-model' })
   })
 
-  it('keeps old persisted messages compatible by falling back to the conversation identity', () => {
+  it('keeps missing historical attribution unknown instead of substituting the current preference', () => {
     const currentProvider = provider('provider-current')
 
     expect(resolveMessageProviderIdentity({
@@ -24,6 +24,6 @@ describe('message provider identity', () => {
       conversationProvider: currentProvider,
       conversationModel: 'current-model',
       providers: [currentProvider],
-    })).toEqual({ provider: currentProvider, model: 'current-model' })
+    })).toEqual({ provider: undefined, model: '' })
   })
 })

@@ -10,10 +10,10 @@ import { useSettingsStore } from '@/store/settingsStore'
 import type { Attachment, Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { resolveChatMultimodalPolicy, type ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
-import { hasProviderModelAccessRules, resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
+import { getProviderModelDisplayCandidates, hasProviderModelAccessRules, resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
 import { resolveProviderCapabilityManifest } from '@/bootstrap/providerConformance'
 import { providerSupportsReasoning } from '@/utils/modelReasoning'
-import { isProviderConversationReady, resolveProviderModelAlias } from '@/utils/providerModels'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
 
 import type { ComposerPanel } from './FloatingComposer'
 import { resolveChatModelDisplayName } from './chatIdentityPresentation'
@@ -98,28 +98,37 @@ export function useChatSetupWorkspaceState({
   const [setupSystemPrompt, setSetupSystemPrompt] = useState('')
   const [setupSelectedProviderId, setSetupSelectedProviderId] = useState<string | null>(null)
   const [setupSelectedModel, setSetupSelectedModel] = useState<string | null>(null)
+  const [setupSelectionExplicit, setSetupSelectionExplicit] = useState(false)
   const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
   const hasEnabledProvider = enabledProviders.length > 0
   const modelAccessHasRules = useMemo(
     () => hasProviderModelAccessRules(modelAccessSettings),
     [modelAccessSettings]
   )
-  const readyProviders = useMemo(() => enabledProviders.filter((item) => isProviderConversationReady(item)), [enabledProviders])
+  // Selection is not dispatch: a cached model survives a failed/offline health check.
+  const readyProviders = useMemo(() => getProviderModelDisplayCandidates({ providers: enabledProviders, modelLimit: 1, includePreferredModel: false }).map((item) => item.provider), [enabledProviders])
   const quickModelProviders = useMemo(
     () => modelAccessHasRules ? readyProviders.filter((item) => providerHasPolicyAllowedModel(item, modelAccessSettings)) : readyProviders,
     [modelAccessHasRules, modelAccessSettings, readyProviders]
   )
   const hasAvailableModel = quickModelProviders.length > 0
+  const rememberedProvider = quickModelProviders.find((item) => item.id === settings.lastPreferredModel?.providerId)
+  const rememberedModel = rememberedProvider && settings.lastPreferredModel
+    && resolveProviderModelAliasAccess({ provider: rememberedProvider, model: settings.lastPreferredModel.model, settings: modelAccessSettings }).allowed
+    ? settings.lastPreferredModel.model : undefined
   const defaultHomeProvider = useMemo(() => pickReadyProviderForNewConversation(providers, settings.defaultProvider, modelAccessSettings, modelAccessHasRules), [modelAccessHasRules, modelAccessSettings, providers, settings.defaultProvider])
   const setupSelectedProvider = setupSelectedProviderId ? quickModelProviders.find((item) => item.id === setupSelectedProviderId) : undefined
-  const homeProvider = setupSelectedProvider ?? defaultHomeProvider ?? undefined
+  const homeProvider = (setupSelectionExplicit ? setupSelectedProvider : undefined) ?? (rememberedModel ? rememberedProvider : undefined) ?? defaultHomeProvider ?? quickModelProviders[0]
   const homeProviderModels = useMemo(() => homeProvider ? getPolicyAllowedProviderModels(homeProvider, modelAccessSettings, { limit: CHAT_MODEL_QUICK_OPTION_PROVIDER_LIMIT }) : [], [homeProvider, modelAccessSettings])
-  const setupModel = homeProvider && homeProviderModels.includes(setupSelectedModel ?? '')
+  const preferredSetupModel = homeProvider?.id === rememberedProvider?.id && rememberedModel
+    ? rememberedModel : homeProvider ? getPolicyPreferredProviderModel(homeProvider, modelAccessSettings) ?? homeProviderModels[0] : undefined
+  const setupModel = setupSelectionExplicit && homeProvider && setupSelectedModel
+    && resolveProviderModelAliasAccess({ provider: homeProvider, model: setupSelectedModel, settings: modelAccessSettings }).allowed
     ? setupSelectedModel!
-    : homeProvider ? getPolicyPreferredProviderModel(homeProvider, modelAccessSettings) ?? homeProviderModels[0] ?? 'setup-model' : 'setup-model'
+    : preferredSetupModel ?? 'setup-model'
   const setupTemperature = settings.defaultTemperature
   const setupMaxTokens = settings.defaultMaxTokens
-  const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider ?? null, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides])
+  const setupConversation = useMemo<Conversation>(() => ({ ...createSetupConversationShell(homeProvider ?? null, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), providerModelMode: setupSelectionExplicit ? 'manual' : 'inherited' }), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides, setupSelectionExplicit])
   const setupReasoningModel = homeProvider ? resolveProviderModelAlias(homeProvider, setupModel) : setupModel
   const supportsSetupReasoningQuick = !!homeProvider && providerSupportsReasoning(homeProvider, setupReasoningModel)
   const setupMultimodalPolicy = useMemo(
@@ -201,9 +210,10 @@ export function useChatSetupWorkspaceState({
       showNoAvailableModelsFeedback()
       return
     }
-    const nextSetupConversation = createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides)
+    const nextSetupConversation = { ...createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), providerModelMode: setupSelectionExplicit ? 'manual' as const : 'inherited' as const }
     const id = createConversation(readyProvider.id, model)
     updateConversation(id, {
+      providerModelMode: nextSetupConversation.providerModelMode,
       systemPrompt: setupSystemPrompt,
       reasoningEffort: setupReasoningEffort,
       temperature: nextSetupConversation.temperature,
@@ -224,6 +234,7 @@ export function useChatSetupWorkspaceState({
       restoreBlockedDraft()
       currentState.select(null)
     }
+    setSetupSelectionExplicit(false)
   }
 
   function openSetupAiConfiguration() {
@@ -237,7 +248,10 @@ export function useChatSetupWorkspaceState({
     if (!resolveProviderModelAliasAccess({ provider: homeProvider, model: nextModel, settings: modelAccessSettings }).allowed) {
       return
     }
+    setSetupSelectedProviderId(homeProvider.id)
     setSetupSelectedModel(nextModel)
+    setSetupSelectionExplicit(true)
+    rememberExplicitModel(homeProvider.id, nextModel)
     dialog.toast({ title: t('chat.modelSwitched'), message: `${resolveProviderDisplayName(homeProvider, t('providerSettings.customProvider'))} · ${resolveChatModelDisplayName(homeProvider, nextModel, settings.modelDisplayAliases)}`, tone: 'mint' })
   }
 
@@ -247,7 +261,15 @@ export function useChatSetupWorkspaceState({
     }
     setSetupSelectedProviderId(nextProvider.id)
     setSetupSelectedModel(nextModel)
+    setSetupSelectionExplicit(true)
+    rememberExplicitModel(nextProvider.id, nextModel)
     dialog.toast({ title: t('chat.modelSwitched'), message: `${resolveProviderDisplayName(nextProvider, t('providerSettings.customProvider'))} · ${resolveChatModelDisplayName(nextProvider, nextModel, settings.modelDisplayAliases)}`, tone: 'mint' })
+  }
+
+  function rememberExplicitModel(providerId: string, model: string) {
+    void useSettingsStore.getState().rememberPreferredModel(providerId, model).catch(() => {
+      dialog.toast({ title: t('chat.preferredModelSaveFailed'), tone: 'amber' })
+    })
   }
 
   return {

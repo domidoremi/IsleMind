@@ -1,4 +1,5 @@
 import type { PressableProps } from 'react-native'
+import { StyleSheet } from 'react-native'
 import { fireEvent, render } from '@testing-library/react-native'
 import { createInstance, type TFunction } from 'i18next'
 import en from '@/i18n/resources/en.json'
@@ -61,6 +62,20 @@ it('reveals only three additional sources per action and collapses without navig
   await fireEvent.press(view.getByText('Show fewer sources'))
   expect(view.queryByText('Source 4')).toBeNull()
   expect(mockPush).not.toHaveBeenCalled()
+})
+
+it('keeps every rendered source and pagination action at least 44dp high', async () => {
+  const view = await render(<MessageSources {...props} />)
+  const expectPhysicalTargets = () => {
+    for (const button of view.getAllByRole('button')) {
+      expect(StyleSheet.flatten(button.props.style).minHeight).toBeGreaterThanOrEqual(44)
+    }
+  }
+  expectPhysicalTargets()
+  await fireEvent.press(view.getByText('Show more sources (3)'))
+  expectPhysicalTargets()
+  await fireEvent.press(view.getByText('Show fewer sources'))
+  expectPhysicalTargets()
 })
 
 it('refuses ambiguous and blank identities instead of guessing from a title or position', async () => {

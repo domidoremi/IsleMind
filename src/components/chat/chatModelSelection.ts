@@ -106,7 +106,7 @@ export function buildHomeModelHighlights(
     })
   }
 
-  push(provider, conversation.model)
+  push(provider, conversation.model ?? undefined)
   if (provider) {
     push(provider, getPolicyPreferredProviderModel(provider, settings))
     for (const model of getPolicyAllowedProviderModels(provider, settings, { limit: HOME_MODEL_HIGHLIGHT_LIMIT })) push(provider, model)
@@ -167,8 +167,8 @@ export function createSetupConversationShell(
   const conversation: Conversation = {
     id: '__setup__',
     title: '',
-    providerId: provider?.id ?? 'setup',
-    model,
+    providerId: provider?.id ?? null,
+    model: provider ? model : null,
     providerModelMode: 'inherited',
     systemPrompt,
     temperature: resolveConversationGenerationParameterDefault('temperature', parameterRanges, { temperature }) ?? DEFAULT_SETUP_TEMPERATURE,
@@ -217,7 +217,7 @@ export function resolveRuntimeTarget(
   if (!conversation) return null
   if (conversation.providerId === 'local-setup') return { conversation }
   const currentProvider = providers.find((item) => item.id === conversation.providerId)
-  const currentModelValid = !!currentProvider && providerHasSpecificPolicyModel(currentProvider, conversation.model, settings)
+  const currentModelValid = !!currentProvider && !!conversation.model && providerHasSpecificPolicyModel(currentProvider, conversation.model, settings)
   if ((conversation.providerModelMode ?? 'inherited') === 'manual' && currentProvider && currentModelValid) {
     return { conversation, provider: currentProvider }
   }

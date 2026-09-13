@@ -4,6 +4,7 @@ import { resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { useSettingsStore } from '@/store/settingsStore'
 import { isConversationLocked } from '@/services/conversationLock'
+import { hasActiveStream } from '@/services/chatStreamLifecycle'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 
@@ -21,7 +22,6 @@ export function confirmConversationModelSwitch({
   nextModel,
   nextProvider,
   setShowOptions,
-  stopStreaming,
   switchConversationModel,
   t,
 }: {
@@ -31,25 +31,20 @@ export function confirmConversationModelSwitch({
   nextModel: string
   nextProvider: AIProvider
   setShowOptions: (showOptions: boolean) => void
-  stopStreaming: (conversationId: string) => void
   switchConversationModel: (id: string, providerId: string, model: string) => boolean
   t: TFunction
 }): boolean {
-  if (isConversationLocked(activeConversation.id)) return false
-  if (nextProvider.id === activeConversation.providerId && nextModel === activeConversation.model) return false
+  if (isConversationLocked(activeConversation.id) || hasActiveStream(activeConversation.id)) return false
   const access = resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings: modelAccessSettings })
   if (!access.allowed) return false
 
-  void (async () => {
-    stopStreaming(activeConversation.id)
-    const switched = switchConversationModel(activeConversation.id, nextProvider.id, nextModel)
-    if (!switched) return
-    setShowOptions(false)
-    dialog.toast({
-      title: t('chat.modelSwitched'),
-      message: `${resolveProviderDisplayName(nextProvider, t('providerSettings.customProvider'))} · ${resolveChatModelDisplayName(nextProvider, nextModel, useSettingsStore.getState().settings.modelDisplayAliases)}`,
-      tone: 'mint',
-    })
-  })()
+  const switched = switchConversationModel(activeConversation.id, nextProvider.id, nextModel)
+  if (!switched) return false
+  setShowOptions(false)
+  dialog.toast({
+    title: t('chat.modelSwitched'),
+    message: `${resolveProviderDisplayName(nextProvider, t('providerSettings.customProvider'))} · ${resolveChatModelDisplayName(nextProvider, nextModel, useSettingsStore.getState().settings.modelDisplayAliases)}`,
+    tone: 'mint',
+  })
   return true
 }

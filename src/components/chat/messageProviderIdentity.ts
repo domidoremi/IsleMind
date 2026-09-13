@@ -15,22 +15,21 @@ export interface MessageProviderIdentity {
 
 /**
  * Resolves the model identity captured at generation time. Historical rows
- * written before message-level identity existed remain readable through the
- * conversation fallback.
+ * written before message-level identity existed remain unknown. Never borrow
+ * the current Conversation's model to label historical output.
  */
 export function resolveMessageProviderIdentity({
   message,
   conversationProvider,
-  conversationModel,
   providers,
 }: MessageProviderIdentityInput): MessageProviderIdentity {
   const providerId = message.providerId?.trim()
   const provider = providerId
     ? providers.find((item) => item.id === providerId)
       ?? (conversationProvider?.id === providerId ? conversationProvider : undefined)
-    : conversationProvider
+    : undefined
   return {
     provider,
-    model: message.model?.trim() || conversationModel,
+    model: message.model?.trim() || '',
   }
 }

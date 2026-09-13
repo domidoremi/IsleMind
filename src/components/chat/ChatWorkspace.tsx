@@ -53,6 +53,7 @@ import { pushChatSettingsRoute } from './chatSettingsRoutes'
 import { useChatWorkspaceKeyboardState } from './chatWorkspaceKeyboard'
 import { useChatWorkspaceAutoScroll, useChatWorkspaceConversationRecovery, useChatWorkspaceOverlayNavigation } from './chatWorkspaceLifecycleState'
 import { useChatWorkspaceProviderHealthState } from './chatWorkspaceProviderHealthState'
+import { useChatFallbackConfirmation } from './useChatFallbackConfirmation'
 
 export type { RuntimeRepairIntent } from './RuntimeRepairIntentCard'
 
@@ -98,6 +99,7 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
   const selectConversation = useChatStore((state) => state.select)
   const providers = useSettingsStore((state) => state.providers)
   const settings = useSettingsStore((state) => state.settings)
+  useChatFallbackConfirmation({ active, conversationId: conversation?.id, providers, dialog, t })
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const assistantDisplayName = resolveChatAssistantDisplayName(settings.assistantDisplayName)
@@ -127,7 +129,7 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
     t,
   })
   const provider = runtimeTarget?.provider
-  const runtimeReasoningModel = provider && runtimeConversation ? resolveProviderModelAlias(provider, runtimeConversation.model) : runtimeConversation?.model
+  const runtimeReasoningModel = provider && runtimeConversation?.model ? resolveProviderModelAlias(provider, runtimeConversation.model) : runtimeConversation?.model ?? undefined
   const supportsReasoningQuick = !!provider && providerSupportsReasoning(provider, runtimeReasoningModel)
   const runtimeMultimodalPolicy = useMemo(
     () => resolveChatMultimodalPolicy({

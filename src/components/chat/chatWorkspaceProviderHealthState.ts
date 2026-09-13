@@ -83,7 +83,7 @@ export function useChatWorkspaceProviderHealthState({
           title: t('chat.conversationConfigIssue'),
           description: t('chat.sendMessageUnavailableAccessibilityHint'),
           inheritedExpired: false,
-          providerId: provider?.id ?? runtimeConversation?.providerId,
+          providerId: provider?.id ?? runtimeConversation?.providerId ?? undefined,
         })
       })
     return () => {

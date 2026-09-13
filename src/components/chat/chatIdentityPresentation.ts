@@ -16,13 +16,14 @@ export function resolveChatIdentityTitle(
 
 export function resolveChatModelDisplayName(
   provider: AIProvider | undefined,
-  modelId: string,
+  modelId: string | null,
   aliases: readonly SettingsModelDisplayAlias[] | undefined,
 ): string {
+  if (!modelId) return ''
   const alias = provider ? getSettingsModelDisplayAlias(aliases, provider.id, modelId) : undefined
   return alias ?? getProviderDisplayModel(provider, modelId)
 }
 
-export function getChatModelCanonicalDisplayName(provider: AIProvider | undefined, modelId: string): string {
+export function getChatModelCanonicalDisplayName(provider: AIProvider | undefined, modelId: string | null): string {
   return getProviderDisplayModel(provider, modelId)
 }

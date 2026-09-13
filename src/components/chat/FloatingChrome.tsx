@@ -139,7 +139,7 @@ export function FloatingChrome({
             title={modelTitle}
             subtitle={providerHealth?.code ? providerHealth.title : header.title}
             subtitleColor={providerHealth?.code ? providerHealthTone.foreground : undefined}
-            modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model)} size={18} variant={isDark ? 'onDark' : 'onLight'} />}
+            modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model ?? '')} size={18} variant={isDark ? 'onDark' : 'onLight'} />}
             modelStatusColor={providerHealth?.code ? providerHealthTone.foreground : colors.ui.tone.success.foreground}
             modelMenuOpen={showOptions}
             leadingGlyph={leadingChromeIsBack ? 'back' : 'conversation'}

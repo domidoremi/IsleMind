@@ -72,7 +72,6 @@ export function useChatActiveWorkspaceActions({
       nextModel,
       nextProvider,
       setShowOptions,
-      stopStreaming: safeStopMessage,
       switchConversationModel,
       t,
     })

@@ -47,7 +47,7 @@ interface ChatComposerSourceStateOptions {
   providers: AIProvider[]
   runtimeConversation: Conversation | null
   settings: ComposerSourceSettings
-  switchConversationModel: (id: string, providerId: string, model: string) => boolean
+  switchConversationModel: (id: string, providerId: string, model: string, options?: { rememberPreference?: boolean }) => boolean
   t: TFunction
   updateConversation: (id: string, updates: Partial<Conversation>) => void
 }
@@ -119,7 +119,7 @@ export function useChatComposerSourceState({
     }
     updateConversation(runtimeConversation.id, result.conversationUpdates)
     if (result.snapshot.providerId && result.snapshot.model) {
-      const switched = switchConversationModel(runtimeConversation.id, result.snapshot.providerId, result.snapshot.model)
+      const switched = switchConversationModel(runtimeConversation.id, result.snapshot.providerId, result.snapshot.model, { rememberPreference: false })
       if (!switched) {
         return
       }

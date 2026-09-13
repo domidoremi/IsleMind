@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next'
 import { resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/bootstrap/providerModelAccess'
 import { composeUserFacingError, isUserFacingErrorCode, userFacingErrorCodeKey } from '@/core'
 import { isProviderHttpCopyOnlyCode } from '@/modules/providers'
+import { hasConversationModelPreference } from '@/modules/conversations'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { getModelConfig } from '@/types/modelCatalog'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
@@ -28,6 +29,10 @@ export async function resolveConversationHealth(
   settings?: ProviderModelAccessInput['settings']
 ): Promise<ConversationHealth | null> {
   if (!conversation || conversation.providerId === 'local-setup') return null
+  if (!hasConversationModelPreference(conversation)) return {
+    code: 'provider_missing', title: t('chat.noAvailableModels'),
+    description: t('chat.configureProviderBeforeChat'), inheritedExpired: false,
+  }
   const provider = providers.find((item) => item.id === conversation.providerId)
   const inheritedExpired = false
   if (!provider) {

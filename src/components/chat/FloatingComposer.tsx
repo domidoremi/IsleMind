@@ -182,7 +182,7 @@ export function FloatingComposer({
   const promptOpen = panel === 'prompt'
   const toolsOpen = panel === 'more'
   const reasoningOptions = useMemo(() => {
-    const reasoningModel = provider ? resolveProviderModelAlias(provider, conversation.model) : conversation.model
+    const reasoningModel = provider ? resolveProviderModelAlias(provider, conversation.model ?? '') : conversation.model ?? ''
     return getReasoningEffortOptions(provider, reasoningModel)
   }, [conversation.model, provider])
   const reasoningAvailable = showReasoning && reasoningOptions.length > 0
@@ -402,7 +402,7 @@ export function FloatingComposer({
           colors={colors}
           isDark={isDark}
           label={modelStatusLabel}
-          icon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model)} size={17} variant={isDark ? 'onDark' : 'onLight'} />}
+          icon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model ?? '')} size={17} variant={isDark ? 'onDark' : 'onLight'} />}
           accessibilityLabel={`${t('chat.model')}: ${modelStatusAccessibilityLabel}`}
           accessibilityHint={t('chat.quickModelAccessibilityHint')}
           maxWidth={modelSelectorMaxWidth}

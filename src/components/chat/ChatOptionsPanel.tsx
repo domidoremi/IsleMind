@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
+import { useNetworkState } from 'expo-network'
+import { router } from 'expo-router'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { acceptNumericDraft, commitNumericDraft, type NumericDraftKind, type NumericDraftRange } from '@/components/ui/numericDraft'
 import { ISLE_MIN_TOUCH_TARGET, IsleChip, IslePanel, IslePressable } from '@/components/ui/isle'
@@ -16,7 +18,11 @@ import type { CanonicalThemeId, SettingsModelDisplayAlias } from '@/types/settin
 import { normalizeSearchText } from '@/utils/text'
 import { getReasoningControlOptions, getReasoningControlValue, getReasoningEffortOptions, modelSupportsSamplingControls, resolveReasoningControlValue } from '@/utils/modelReasoning'
 import { getProviderDisplayModel, resolveProviderModelAlias } from '@/utils/providerModels'
-import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, type ProviderModelAccessInput } from '@/bootstrap/providerModelAccess'
+import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/bootstrap/providerModelAccess'
+import { providerModelAvailabilityPort, providerModelAvailabilityIntegrationProfile } from '@/bootstrap/providerModelAvailabilityRuntime'
+import { resolveProviderProtocolAdapter } from '@/bootstrap/providerRequestBinding'
+import { resolveProviderEndpointVariant, type ProviderModelCurrent } from '@/modules/providers'
+import { credentialSourceLabel, hasCredentialBlockEvidence, projectModelAvailability, selectModelAvailabilityEvidence } from '@/presentation/features/settings/modelAvailabilityPresentation'
 import { resolveProviderRequestParameters } from '@/bootstrap/providerRequestPolicies'
 import { getProviderParameterEntry } from '@/bootstrap/providerParameterMatrix'
 import { resolveConversationGenerationParameterRanges } from '@/bootstrap/providerConversationGeneration'
@@ -31,6 +37,9 @@ interface ModelPickerItem {
   name: string
   subtitle?: string
   badges: ModelCapabilityBadge[]
+  availabilityLabel?: string
+  evidenceLabel?: string
+  blockedReason?: string
 }
 
 interface ModelPickerGroup {
@@ -79,6 +88,11 @@ export function ChatOptionsPanel({
   const updateConversation = useChatStore((state) => state.updateConversation)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
+  const configuredProviders = useSettingsStore((state) => state.providers)
+  const network = useNetworkState()
+  const offline = network.isConnected === false || network.isInternetReachable === false
+  const [availabilityRows, setAvailabilityRows] = useState<readonly ProviderModelCurrent[]>([])
+  const [availabilityReadFailed, setAvailabilityReadFailed] = useState(false)
   const [selectedProviderId, setSelectedProviderId] = useState(provider?.id ?? conversation.providerId)
   const [modelPickerQuery, setModelPickerQuery] = useState('')
   const currentProvider = provider
@@ -92,31 +106,67 @@ export function ChatOptionsPanel({
     ? resolveProviderDisplayName(currentProvider, providerFallbackName)
     : providerFallbackName
   const policySwitchableProviders = useMemo(
-    () => getProviderModelDisplayCandidates({ providers: switchableProviders, settings, modelLimit: 1, includePreferredModel: false }).map((candidate) => candidate.provider),
-    [settings, switchableProviders]
+    // Cached models remain visible offline or after a failed provider test. Policy
+    // is evaluated per row and again at dispatch, never bypassed by this display.
+    () => {
+      const configured = [...new Map([...configuredProviders, ...switchableProviders, ...(provider ? [provider] : [])].map((item) => [item.id, item])).values()]
+      const displayed = getProviderModelDisplayCandidates({ providers: configured, includeDisabled: true, modelLimit: 1, includePreferredModel: false }).map((candidate) => candidate.provider)
+      if (provider && !displayed.some((item) => item.id === provider.id)) displayed.unshift(provider)
+      return displayed
+    },
+    [configuredProviders, provider, switchableProviders]
   )
   const orderedProviders = useMemo(
-    () => sortSwitchableProviders(policySwitchableProviders, conversation.providerId, normalizedQuery, settings, modelDisplayAliases),
-    [conversation.providerId, modelDisplayAliases, normalizedQuery, policySwitchableProviders, settings]
+    () => sortSwitchableProviders(policySwitchableProviders, conversation.providerId ?? '', normalizedQuery, undefined, modelDisplayAliases),
+    [conversation.providerId, modelDisplayAliases, normalizedQuery, policySwitchableProviders]
   )
   const selectedProvider =
     orderedProviders.find((item) => item.id === selectedProviderId) ??
     orderedProviders[0]
   const visibleProviders = normalizedQuery
-    ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery, settings, modelDisplayAliases))
+    ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery, undefined, modelDisplayAliases))
     : orderedProviders
+  useEffect(() => {
+    let cancelled = false
+    setAvailabilityRows([]); setAvailabilityReadFailed(false)
+    if (selectedProvider) void providerModelAvailabilityPort.listCurrentModels({ providerId: selectedProvider.id, limit: providerModelAvailabilityIntegrationProfile.pageSize })
+      .then((rows) => { if (!cancelled) setAvailabilityRows(rows) })
+      .catch(() => { if (!cancelled) setAvailabilityReadFailed(true) })
+    return () => { cancelled = true }
+  }, [selectedProvider])
+  const selectedModelIds = selectedProvider ? getSwitchableProviderModels(selectedProvider, normalizedQuery, undefined, modelDisplayAliases) : []
+  if (selectedProvider?.id === conversation.providerId && conversation.model && !selectedModelIds.includes(conversation.model)) selectedModelIds.unshift(conversation.model)
   const selectedModels = selectedProvider
-    ? disambiguateModelPickerItems(getSwitchableProviderModels(selectedProvider, normalizedQuery, settings, modelDisplayAliases)
+    ? disambiguateModelPickerItems(selectedModelIds
       .map((id) => {
         const upstreamModel = resolveProviderModelAlias(selectedProvider, id)
         const config = getModelConfig(upstreamModel, selectedProvider.type, selectedProvider.modelConfigs)
         const canonicalName = getChatModelCanonicalDisplayName(selectedProvider, id)
         const displayName = resolveChatModelDisplayName(selectedProvider, id, modelDisplayAliases)
+        const adapter = resolveProviderProtocolAdapter({ provider: selectedProvider, model: upstreamModel, messages: [], generationParameterSources: {} })
+        const endpointVariant = resolveProviderEndpointVariant(selectedProvider)
+        const current = selectModelAvailabilityEvidence({ provider: selectedProvider, modelId: upstreamModel,
+          protocolAdapterId: adapter.id, endpointVariant, rows: availabilityRows })
+        const projection = projectModelAvailability({ current, offline,
+          credentialBlocked: hasCredentialBlockEvidence(selectedProvider), providerDisabled: !selectedProvider.enabled,
+          policyBlocked: !resolveProviderModelAliasAccess({ provider: selectedProvider, model: id, settings }).allowed,
+          incompatible: config.chatCompatible === false,
+          activeReply: conversation.messages.some((message) => message.status === 'streaming'),
+        })
         return {
           id,
           name: displayName,
           subtitle: displayName === canonicalName ? undefined : canonicalName,
           badges: getModelCapabilityBadges(selectedProvider, upstreamModel, config, t),
+          availabilityLabel: [selectedProvider.id === conversation.providerId && id === conversation.model ? t('modelAvailability.preferred') : '',
+            adapter.id, t(`modelAvailability.${projection.availability}`),
+            projection.advertisement === 'not-advertised' ? t('modelAvailability.notAdvertised') : '',
+            ...projection.labels.map((label) => t(`modelAvailability.${label}`))].filter(Boolean).join(' · '),
+          evidenceLabel: current && !current.invalidated ? [credentialSourceLabel(current.credentialSource, selectedProvider, t),
+            current.evidence ? t(`modelAvailability.source.${current.evidence.source}`) : '',
+            new Date(current.evidence?.observedAt ?? current.updatedAt).toLocaleString()].filter(Boolean).join(' · ')
+            : t(availabilityReadFailed ? 'modelAvailability.readFailed' : 'modelAvailability.noEvidence'),
+          blockedReason: projection.blockedReason ? t(`modelAvailability.${projection.blockedReason}`) : undefined,
         }
       }))
     : []
@@ -131,13 +181,13 @@ export function ChatOptionsPanel({
     : t('chat.noProviderModelMatchesDescription')
   const modelEmptyTitle = selectedProvider ? t('chat.noModelsForSelectedProvider', { provider: resolveProviderDisplayName(selectedProvider, providerFallbackName) }) : t('chat.noAvailableModels')
   const selectedProviderIsCurrent = selectedProvider?.id === conversation.providerId
-  const reasoningModel = currentProvider ? resolveProviderModelAlias(currentProvider, conversation.model) : conversation.model
+  const reasoningModel = currentProvider ? resolveProviderModelAlias(currentProvider, conversation.model ?? '') : conversation.model ?? ''
   const reasoningOptions = getReasoningEffortOptions(currentProvider, reasoningModel)
   const selectedReasoningControlValue = getReasoningControlValue(conversation.reasoningEffort)
   const currentModelConfig = getModelConfig(reasoningModel, currentProvider?.type, currentProvider?.modelConfigs)
-  const reasoningParameterEntry = currentProvider ? getProviderParameterEntry(currentProvider, conversation.model, 'reasoning') : undefined
-  const samplingParameterEntry = currentProvider ? getProviderParameterEntry(currentProvider, conversation.model, 'sampling') : undefined
-  const tokenBudgetParameterEntry = currentProvider ? getProviderParameterEntry(currentProvider, conversation.model, 'token-budget') : undefined
+  const reasoningParameterEntry = currentProvider && conversation.model ? getProviderParameterEntry(currentProvider, conversation.model, 'reasoning') : undefined
+  const samplingParameterEntry = currentProvider && conversation.model ? getProviderParameterEntry(currentProvider, conversation.model, 'sampling') : undefined
+  const tokenBudgetParameterEntry = currentProvider && conversation.model ? getProviderParameterEntry(currentProvider, conversation.model, 'token-budget') : undefined
   const reasoningControlOptions = reasoningParameterEntry?.status === 'sendable'
     ? getReasoningControlOptions(reasoningOptions)
     : []
@@ -265,7 +315,7 @@ export function ChatOptionsPanel({
   }
 
   function commitModelAlias() {
-    if (!currentProvider) return
+    if (!currentProvider || !conversation.model) return
     const nextAliases = upsertSettingsModelDisplayAlias(modelDisplayAliases, {
       providerId: currentProvider.id,
       modelId: conversation.model,
@@ -376,21 +426,29 @@ export function ChatOptionsPanel({
             selectedProviderIsCurrent={selectedProviderIsCurrent}
             selectedModels={selectedModels}
             selectedModelGroups={selectedModelGroups}
-            conversationModel={conversation.model}
+            conversationModel={conversation.model ?? ''}
             modelEmptyTitle={modelEmptyTitle}
             modelEmptyDescription={t('chat.providerNoModelsSyncHint')}
             modelListHeight={modelListHeight}
             pickerMinHeight={pickerMinHeight}
             onSelectProvider={setSelectedProviderId}
-            onSwitchModel={(model) => selectedProvider && onSwitchModel(selectedProvider, model)}
+            onSwitchModel={(model) => selectedProvider && !selectedModels.find((item) => item.id === model)?.blockedReason && onSwitchModel(selectedProvider, model)}
             t={t}
           />
         )}
+        <Text style={{ color: colors.textTertiary, fontSize: 11, marginTop: 8 }}>{t('modelAvailability.selectorScopeHint')}</Text>
+        {selectedModels.length > 0 && selectedModels.every((model) => !!model.blockedReason) ? <Text style={{ color: colors.textSecondary, marginTop: 6 }}>{t('modelAvailability.noSelectableModel')}</Text> : null}
+        <IslePressable accessibilityRole="button" accessibilityLabel={t('modelAvailability.details')} onPress={() => {
+          onClose()
+          router.push({ pathname: '/settings/model-availability', params: selectedProvider ? { providerId: selectedProvider.id } : {} })
+        }} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}>
+          <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>{t('modelAvailability.details')}</Text>
+        </IslePressable>
         </View>
         {currentCapabilityBadges.length ? (
           <ModelCapabilityStrip badges={currentCapabilityBadges} />
         ) : null}
-        {showAdvancedControls && currentProvider && conversation.providerId !== 'local-setup' ? (
+        {showAdvancedControls && currentProvider && conversation.model && conversation.providerId !== 'local-setup' ? (
           <View style={{ marginTop: 10 }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 5 }}>{t('chat.modelDisplayName')}</Text>
             <View style={{ minHeight: 46, borderRadius: fieldRadius, paddingLeft: 12, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}>
@@ -413,7 +471,7 @@ export function ChatOptionsPanel({
                     updateSettings({
                       modelDisplayAliases: upsertSettingsModelDisplayAlias(modelDisplayAliases, {
                         providerId: currentProvider.id,
-                        modelId: conversation.model,
+                        modelId: conversation.model ?? '',
                         displayName: '',
                       }),
                     })
@@ -624,10 +682,11 @@ function ModelOption({ model, groupLabel, active, family, maxWidth, colors, sele
     <IslePressable
       haptic
       onPress={onPress}
+      disabled={!!model.blockedReason}
       accessibilityRole="button"
       accessibilityLabel={`${groupLabel} · ${model.name} · ${model.id}`}
-      accessibilityHint={t('chat.selectModelAccessibilityHint', { provider: selectedProvider ? resolveProviderDisplayName(selectedProvider, providerFallbackName) : t('chat.notSelected'), model: `${model.name} · ${model.id}` })}
-      accessibilityState={{ selected: active }}
+      accessibilityHint={[model.blockedReason, model.availabilityLabel, model.evidenceLabel, t('chat.selectModelAccessibilityHint', { provider: selectedProvider ? resolveProviderDisplayName(selectedProvider, providerFallbackName) : t('chat.notSelected'), model: `${model.name} · ${model.id}` })].filter(Boolean).join('. ')}
+      accessibilityState={{ selected: active, disabled: !!model.blockedReason }}
       hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
       style={{ minHeight: ISLE_MIN_TOUCH_TARGET, minWidth: 0, maxWidth, flexShrink: 1, justifyContent: 'center' }}
     >
@@ -657,6 +716,9 @@ function ModelOption({ model, groupLabel, active, family, maxWidth, colors, sele
           {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 8.5, marginTop: 1 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
         </View>
       )}
+      {model.availabilityLabel ? <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 10, marginTop: 4 }}>{model.availabilityLabel}</Text> : null}
+      {model.evidenceLabel ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10 }}>{model.evidenceLabel}</Text> : null}
+      {model.blockedReason ? <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700' }}>{model.blockedReason}</Text> : null}
     </IslePressable>
   )
 }
