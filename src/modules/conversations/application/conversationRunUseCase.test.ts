@@ -3,7 +3,7 @@ import type { ConversationSnapshot } from '../domain/conversationSnapshot'
 import type { ConversationRunUseCaseDependencies } from '../contracts'
 
 const conversation: ConversationSnapshot = {
-  schema: 'islemind.conversation-snapshot.v2',
+  schema: 'islemind.conversation-snapshot.v3',
   id: 'conversation-1',
   providerId: 'provider-1',
   model: 'model-1',
@@ -44,6 +44,16 @@ function createDependencies(
 }
 
 describe('conversation run context assembly boundary', () => {
+  it('keeps an unbound archive readable but does not start context or provider work', async () => {
+    const assemble = jest.fn()
+    const { dependencies, getExecuteCalls } = createDependencies(assemble)
+    const useCase = createConversationRunUseCase({ ...dependencies, conversations: {
+      ...dependencies.conversations, get: async () => ({ ...conversation, providerId: null, model: null }),
+    } })
+    await expect(useCase.start({ conversationId: conversation.id }).completion).resolves.toMatchObject({ ok: false, error: { code: 'provider_failed' } })
+    expect(assemble).not.toHaveBeenCalled()
+    expect(getExecuteCalls()).toBe(0)
+  })
   it('converts thrown context failures into a typed completion result', async () => {
     const { dependencies, getExecuteCalls } = createDependencies(async () => {
       throw new Error('SQLite context read failed')

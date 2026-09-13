@@ -22,6 +22,7 @@ export function createConversationBranchDraft(
     responseText: message.responseText,
     providerId: message.providerId,
     model: message.model,
+    ...(message.generationProtocol ? { generationProtocol: { ...message.generationProtocol } } : {}),
     timestamp: message.timestamp,
     status: message.status,
     errorCode: message.errorCode,

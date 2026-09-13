@@ -20,6 +20,7 @@ import type {
   StartConversationRunInput,
 } from '../contracts'
 import type { ConversationSnapshot } from '../domain/conversationSnapshot'
+import { hasConversationModelPreference } from './conversationModelPreference'
 
 export function createConversationRunUseCase(
   dependencies: ConversationRunUseCaseDependencies,
@@ -86,6 +87,9 @@ async function runConversation(
   }
   if (!conversation) {
     return err('conversation_not_found', 'The persisted conversation does not exist.', { retryable: false })
+  }
+  if (!hasConversationModelPreference(conversation)) {
+    return err('provider_failed', 'Choose a provider and model before starting a reply.', { retryable: false })
   }
 
   const latestUserMessage = [...conversation.messages].reverse().find((message) => message.role === 'user')

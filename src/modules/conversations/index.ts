@@ -1,5 +1,6 @@
 export * from './contracts'
 export * from './domain/conversationSnapshot'
+export * from './application/conversationModelPreference'
 export * from './application/conversationRunUseCase'
 export * from './application/conversationChatWorkflowMessageProjection'
 export * from './application/conversationChatWorkflowAssistantMessageResolution'

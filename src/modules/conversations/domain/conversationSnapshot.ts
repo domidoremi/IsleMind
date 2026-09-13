@@ -5,7 +5,8 @@ import type {
 } from '@/core'
 import * as v from 'valibot'
 
-export const CONVERSATION_SNAPSHOT_SCHEMA = 'islemind.conversation-snapshot.v2'
+export const CONVERSATION_SNAPSHOT_SCHEMA = 'islemind.conversation-snapshot.v3'
+const PREVIOUS_CONVERSATION_SNAPSHOT_SCHEMA = 'islemind.conversation-snapshot.v2'
 const LEGACY_CONVERSATION_SNAPSHOT_SCHEMA = 'islemind.conversation-snapshot.v1'
 
 export type ConversationGenerationParameterOverrides = Partial<
@@ -15,8 +16,9 @@ export type ConversationGenerationParameterOverrides = Partial<
 export interface ConversationSnapshot {
   schema: typeof CONVERSATION_SNAPSHOT_SCHEMA
   id: string
-  providerId: string
-  model: string
+  providerId: string | null
+  model: string | null
+  providerModelMode?: 'inherited' | 'manual'
   systemPrompt?: string
   temperature?: number
   topP?: number
@@ -46,8 +48,9 @@ const legacyMessageSchema = v.object({
 
 const legacyConversationSchema = v.object({
   id: v.string(),
-  providerId: v.string(),
-  model: v.string(),
+  providerId: v.nullish(v.string()),
+  model: v.nullish(v.string()),
+  providerModelMode: v.optional(v.picklist(['inherited', 'manual'])),
   systemPrompt: v.optional(v.string()),
   temperature: v.optional(v.number()),
   topP: v.optional(v.number()),
@@ -62,7 +65,7 @@ export function parseConversationSnapshot(value: unknown): ConversationSnapshot 
   if (!hasSupportedConversationSchema(value)) return undefined
   const parsed = v.safeParse(legacyConversationSchema, value)
   if (!parsed.success) return undefined
-  if (!parsed.output.id.trim() || !parsed.output.providerId.trim() || !parsed.output.model.trim()) return undefined
+  if (!parsed.output.id.trim()) return undefined
 
   const messages = parsed.output.messages.flatMap<ChatMessageInput>((message) => {
     const text = message.responseText ?? message.text ?? message.content ?? ''
@@ -73,8 +76,9 @@ export function parseConversationSnapshot(value: unknown): ConversationSnapshot 
   return {
     schema: CONVERSATION_SNAPSHOT_SCHEMA,
     id: parsed.output.id,
-    providerId: parsed.output.providerId,
-    model: parsed.output.model,
+    providerId: parsed.output.providerId ?? null,
+    model: parsed.output.model ?? null,
+    ...(parsed.output.providerModelMode ? { providerModelMode: parsed.output.providerModelMode } : {}),
     ...(parsed.output.systemPrompt?.trim() ? { systemPrompt: parsed.output.systemPrompt } : {}),
     ...(isFiniteNumber(parsed.output.temperature) ? { temperature: parsed.output.temperature } : {}),
     ...(isFiniteNumber(parsed.output.topP) ? { topP: parsed.output.topP } : {}),
@@ -92,7 +96,7 @@ function hasSupportedConversationSchema(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   if (!Object.prototype.hasOwnProperty.call(value, 'schema')) return true
   const schema = (value as Record<string, unknown>).schema
-  return schema === CONVERSATION_SNAPSHOT_SCHEMA || schema === LEGACY_CONVERSATION_SNAPSHOT_SCHEMA
+  return schema === CONVERSATION_SNAPSHOT_SCHEMA || schema === PREVIOUS_CONVERSATION_SNAPSHOT_SCHEMA || schema === LEGACY_CONVERSATION_SNAPSHOT_SCHEMA
 }
 
 function compactGenerationParameterOverrides(

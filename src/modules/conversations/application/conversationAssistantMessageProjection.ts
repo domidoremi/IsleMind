@@ -23,7 +23,7 @@ export interface ConversationAssistantTaskCompletion {
 
 export interface ConversationAssistantSuccessPlan {
   kind: 'project'
-  messagePatch: Pick<Message, 'status' | 'providerId' | 'model' | 'content' | 'responseText' | 'citations' | 'completedAt' | 'durationMs' | 'estimatedTokens' | 'tokenCount'> & {
+  messagePatch: Pick<Message, 'status' | 'providerId' | 'model' | 'generationProtocol' | 'content' | 'responseText' | 'citations' | 'completedAt' | 'durationMs' | 'estimatedTokens' | 'tokenCount'> & {
     usage: MessageUsage
   }
   taskCompletion: ConversationAssistantTaskCompletion
@@ -51,8 +51,9 @@ export interface ConversationAssistantSuccessInput {
   outputText: string
   citations: MessageCitation[]
   providerUsage?: MessageUsage
-  providerId: string
-  model: string
+  providerId?: string
+  model?: string
+  generationProtocol?: Message['generationProtocol']
   completedAt: number
 }
 
@@ -122,6 +123,7 @@ export function createConversationAssistantMessageProjectionPolicy(
           status: 'done',
           providerId: input.providerId,
           model: input.model,
+          ...(input.generationProtocol ? { generationProtocol: input.generationProtocol } : {}),
           content: input.outputText,
           responseText: input.outputText,
           citations: input.citations.length ? [...input.citations] : message.citations,

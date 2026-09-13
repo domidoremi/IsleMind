@@ -63,6 +63,28 @@ const ensureConversationRecords = async (database: Awaited<ReturnType<SqliteData
   } catch (error) {
     if (!(error instanceof ConversationPayloadMirrorPendingError)) throw error
   }
+  await applySqliteMigrations(database, [{
+    scope: CONVERSATION_MIGRATION_SCOPE,
+    version: 3,
+    name: 'nullable-conversation-model-preference',
+    async up(transaction) {
+      const columns = await transaction.getAll<ConversationColumnRow>('PRAGMA table_info(conversation_records)')
+      const payload = columns.find((column) => column.name === 'payloadJson')
+      // A deferred v2 mirror removal must not discard unresolved legacy payloads.
+      await transaction.exec(`
+        CREATE TABLE conversation_records_nullable (
+          id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL,
+          providerId TEXT, model TEXT, updatedAt INTEGER NOT NULL
+          ${payload ? `, payloadJson TEXT${payload.notnull ? ' NOT NULL' : ''}` : ''}
+        );
+        INSERT INTO conversation_records_nullable (id, title, providerId, model, updatedAt${payload ? ', payloadJson' : ''})
+          SELECT id, title, providerId, model, updatedAt${payload ? ', payloadJson' : ''} FROM conversation_records;
+        DROP TABLE conversation_records;
+        ALTER TABLE conversation_records_nullable RENAME TO conversation_records;
+        CREATE INDEX conversation_records_history_order ON conversation_records (updatedAt DESC, id ASC);
+      `)
+    },
+  }])
   return hasRequiredConversationPayloadColumn(database)
 }
 
@@ -376,12 +398,15 @@ async function removePayloadMirrorIfSafe(database: SqliteExecutor): Promise<bool
   }
 
   await database.run('DROP INDEX IF EXISTS conversation_records_history_order')
+  const columns = await database.getAll<ConversationColumnRow>('PRAGMA table_info(conversation_records)')
+  const providerRequired = columns.find((column) => column.name === 'providerId')?.notnull === 1
+  const modelRequired = columns.find((column) => column.name === 'model')?.notnull === 1
   await database.run(`
     CREATE TABLE conversation_records_without_payload (
       id TEXT PRIMARY KEY NOT NULL,
       title TEXT NOT NULL,
-      providerId TEXT NOT NULL,
-      model TEXT NOT NULL,
+      providerId TEXT${providerRequired ? ' NOT NULL' : ''},
+      model TEXT${modelRequired ? ' NOT NULL' : ''},
       updatedAt INTEGER NOT NULL
     )
   `)
@@ -442,18 +467,18 @@ async function upsertConversation(
     if (requireLegacyPayloadOnInsert) {
       await database.run(
         'INSERT OR REPLACE INTO conversation_records (id, title, providerId, model, updatedAt, payloadJson) VALUES (?, ?, ?, ?, ?, ?)',
-        [conversation.id, conversation.title, conversation.providerId, conversation.model, conversation.updatedAt, JSON.stringify(conversation)],
+        [conversation.id, conversation.title, conversation.providerId ?? null, conversation.model ?? null, conversation.updatedAt, JSON.stringify(conversation)],
       )
     } else {
       await database.run(
         'INSERT OR REPLACE INTO conversation_records (id, title, providerId, model, updatedAt) VALUES (?, ?, ?, ?, ?)',
-        [conversation.id, conversation.title, conversation.providerId, conversation.model, conversation.updatedAt],
+        [conversation.id, conversation.title, conversation.providerId ?? null, conversation.model ?? null, conversation.updatedAt],
       )
     }
   } else {
     await database.run(
       'UPDATE conversation_records SET title = ?, providerId = ?, model = ?, updatedAt = ? WHERE id = ?',
-      [conversation.title, conversation.providerId, conversation.model, conversation.updatedAt, conversation.id],
+      [conversation.title, conversation.providerId ?? null, conversation.model ?? null, conversation.updatedAt, conversation.id],
     )
   }
 
@@ -558,7 +583,7 @@ function composeNormalizedConversation(
     }
     return parsedMessage
   })
-  return { ...base, messages }
+  return { ...base, providerId: base.providerId ?? null, model: base.model ?? null, messages }
 }
 
 function groupMessageRows(
@@ -624,6 +649,6 @@ function isConversationMetadata(value: unknown): value is Pick<Conversation, 'id
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const conversation = value as Partial<Conversation>
   return typeof conversation.id === 'string' && conversation.id.trim().length > 0
-    && typeof conversation.providerId === 'string' && conversation.providerId.trim().length > 0
-    && typeof conversation.model === 'string' && conversation.model.trim().length > 0
+    && (conversation.providerId == null || typeof conversation.providerId === 'string')
+    && (conversation.model == null || typeof conversation.model === 'string')
 }
