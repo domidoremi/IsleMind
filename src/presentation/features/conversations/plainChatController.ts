@@ -3,6 +3,7 @@ import type { ConversationRunProjection, ConversationRunUseCase } from '@/module
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
+import type { ProviderChatExecutionConstraint } from '@/modules/providers'
 
 export interface PlainChatEligibilityInput {
   conversation: Conversation
@@ -20,6 +21,7 @@ export interface PlainChatRuntimeInput {
   conversation: Conversation
   provider: AIProvider
   settings: Settings
+  executionConstraint?: ProviderChatExecutionConstraint
 }
 
 export type PlainChatRuntimeFactory = (
@@ -27,6 +29,7 @@ export type PlainChatRuntimeFactory = (
 ) => ConversationRunUseCase
 
 export interface StartPlainChatRunInput extends PlainChatEligibilityInput, PlainChatProjectionInput {
+  executionConstraint?: ProviderChatExecutionConstraint
   controller: AbortController
   createRuntime: PlainChatRuntimeFactory
 }
@@ -71,6 +74,7 @@ export function createPlainChatController(
         conversation: input.conversation,
         provider: input.provider,
         settings: input.settings,
+        ...(input.executionConstraint ? { executionConstraint: input.executionConstraint } : {}),
       })
       let terminalProjectionPersisted = false
       const projection = dependencies.createProjection(input, () => {

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { AppState, type AppStateStatus } from 'react-native'
 import { act, fireEvent, render } from '@testing-library/react-native'
-import type { DocumentRepository, DocumentRevisionPort, DocumentRevisionSource, SavedDocument } from '@/modules/documents'
+import { SAVED_DOCUMENT_SCHEMA, parseSavedDocument, type DocumentRepository, type DocumentRevisionPort, type DocumentRevisionSource, type SavedDocument } from '@/modules/documents'
 import DocumentEditorScreen from './DocumentEditorScreen'
 
 const mockRoute: { id?: string; conversationId?: string; messageId?: string } = { id: 'saved' }
@@ -31,12 +31,15 @@ jest.mock('@/components/ui/isle', () => {
 
 function fixture() {
   let durable: SavedDocument = {
-    schema: 'islemind.saved-document.v1', id: 'saved', revision: 'r1', createdAt: 10, updatedAt: 10,
+    schema: SAVED_DOCUMENT_SCHEMA, id: 'saved', revision: 'r1', createdAt: 10, updatedAt: 10,
     title: 'Report', body: 'Before body', origin: { conversationId: 'chat', conversationTitle: 'Chat', messageId: 'answer', messageStatus: 'cancelled',
       messageTimestamp: 5, originalText: 'Original interrupted answer', citations: [{ id: 'cite', type: 'knowledge', title: 'Local source', documentId: 'source', excerpt: 'Captured excerpt' }] },
   }
   const get = jest.fn(async () => durable)
-  const save = jest.fn(async (_id, _revision, edit) => { durable = { ...durable, ...edit, revision: 'r2' }; return durable })
+  const save = jest.fn(async (_id, _revision, edit) => {
+    durable = parseSavedDocument({ ...durable, ...edit, reviewContext: edit.reviewContext === null ? undefined : edit.reviewContext ?? durable.reviewContext, revision: 'r2' })
+    return durable
+  })
   const create = jest.fn(async () => durable)
   const repository = { get, save, create } as unknown as DocumentRepository
   const source: DocumentRevisionSource = { citationId: 'cite', type: 'knowledge', documentId: 'source', title: 'Local source', updatedAt: 20, text: 'Current full source text.' }
@@ -101,6 +104,96 @@ it('reads only on demand and sends a source only after an explicit include selec
   expect(f.save).not.toHaveBeenCalled()
 })
 
+it('ordinary acceptance saves only the body, so reviewed text and its labels are unavailable after reopening', async () => {
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await openRevision(view)
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.readSource' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.includeSource' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.generate' }))
+  expect(view.getByTestId('document-revision-source-cite').props.children).toBe(f.source.text)
+  expect(view.getByTestId('document-revision-proposal')).toBeTruthy()
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.accept' }))
+  await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
+  expect(JSON.stringify(f.durable())).not.toContain(f.source.text)
+  await view.unmount()
+  const reopened = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  expect(reopened.getByTestId('document-body').props.value).toBe('Proposed body')
+  expect(reopened.queryByText(f.source.text)).toBeNull()
+  expect(reopened.queryByTestId('document-review-context')).toBeNull()
+  expect(f.port.readSource).toHaveBeenCalledTimes(1)
+})
+
+it('explicitly retains exact selection order with the accepted proposal through Save and reopen without rereading sources', async () => {
+  const f = fixture()
+  const second: DocumentRevisionSource = { citationId: 'second', type: 'knowledge', documentId: 'source-2', title: 'Second source', updatedAt: 30, text: 'Second source — exact retained text.\n' }
+  f.durable().origin!.citations.push({ id: 'second', type: 'knowledge', title: second.title, documentId: second.documentId })
+  ;(f.port.readSource as jest.Mock).mockImplementation(async (_origin, id) => id === 'second' ? second : f.source)
+  const origin = JSON.parse(JSON.stringify(f.durable().origin))
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await openRevision(view)
+  await fireEvent.press(view.getAllByRole('button', { name: 'documents.revision.readSource' })[1])
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.includeSource' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.readSource' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.includeSource' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.generate' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.acceptWithSources' }))
+  expect(f.save).not.toHaveBeenCalled()
+  expect(view.getByTestId('document-review-source-0').props.children).toBe(second.text)
+  expect(view.getByTestId('document-review-source-1').props.children).toBe(f.source.text)
+  await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
+  const retained = JSON.parse(JSON.stringify(f.durable().reviewContext))
+  expect(retained).toMatchObject({ title: 'Report', body: 'Proposed body', sources: [second, f.source] })
+  expect(f.durable().origin).toEqual(origin)
+  second.text = 'The live source has changed.'
+  await view.unmount()
+  const reopened = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await fireEvent.press(reopened.getByRole('button', { name: 'documents.review.show' }))
+  expect(reopened.getByTestId('document-review-source-0').props.children).toBe(retained.sources[0].text)
+  expect(reopened.getByTestId('document-review-source-1').props.children).toBe(retained.sources[1].text)
+  expect(f.port.readSource).toHaveBeenCalledTimes(2)
+  expect(f.port.propose).toHaveBeenCalledTimes(1)
+  await fireEvent.changeText(reopened.getByTestId('document-body'), 'Later human edit')
+  expect(reopened.getByText('documents.review.changed')).toBeTruthy()
+  expect(reopened.getByTestId('document-review-body').props.children).toBe('Proposed body')
+  await fireEvent.press(reopened.getByRole('button', { name: 'common.save' }))
+  expect(f.durable().reviewContext).toEqual(retained)
+  await fireEvent.press(reopened.getByRole('button', { name: 'documents.review.remove' }))
+  expect(reopened.queryByTestId('document-review-context')).toBeNull()
+  expect(reopened.getByTestId('document-save-status').props.children).toBe('documents.unsaved')
+  expect(f.durable().reviewContext).toEqual(retained)
+  await fireEvent.press(reopened.getByRole('button', { name: 'common.save' }))
+  expect(f.durable().reviewContext).toBeUndefined()
+  expect(f.durable().body).toBe('Later human edit')
+})
+
+it('keeps an opted-in review only in the draft when Save fails, then retries without losing the reviewed bytes', async () => {
+  const f = fixture()
+  f.save.mockRejectedValueOnce(new Error('write failed'))
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await openRevision(view)
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.readSource' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.includeSource' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.generate' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.acceptWithSources' }))
+  await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
+  expect(view.getByText('documents.saveFailed')).toBeTruthy()
+  expect(view.getByTestId('document-save-status').props.children).toBe('documents.unsaved')
+  expect(view.getByTestId('document-review-source-0').props.children).toBe(f.source.text)
+  expect(f.durable().reviewContext).toBeUndefined()
+  expect(f.durable().body).toBe('Before body')
+  await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
+  expect(f.durable().reviewContext?.sources).toEqual([f.source])
+  // Ordinary later acceptance does not silently discard or relabel that review.
+  const retained = f.durable().reviewContext
+  ;(f.port.propose as jest.Mock).mockResolvedValueOnce('Later proposal without retained sources')
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.generate' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.accept' }))
+  expect(view.getByText('documents.review.changed')).toBeTruthy()
+  await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
+  expect(f.durable().reviewContext).toEqual(retained)
+})
+
 it('cancels an old request without accepting late results or letting it overwrite a newer proposal', async () => {
   const f = fixture()
   const gate = deferred<string>()
@@ -132,17 +225,20 @@ it('invalidates in-flight proposals when the user edits, even if the old text is
   expect(f.save).not.toHaveBeenCalled()
 })
 
-it('does not apply a proposal over a concurrently changed durable revision', async () => {
+it.each(['documents.revision.accept', 'documents.revision.acceptWithSources'])('does not apply %s over a concurrently changed durable revision', async (acceptAction) => {
   const f = fixture()
   const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
   await openRevision(view)
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.readSource' }))
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.includeSource' }))
   await fireEvent.press(view.getByRole('button', { name: 'documents.revision.generate' }))
   f.replace()
-  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.accept' }))
+  await fireEvent.press(view.getByRole('button', { name: acceptAction }))
   expect(view.getByTestId('document-body').props.value).toBe('Before body')
   expect(view.getByText('documents.conflict')).toBeTruthy()
   expect(f.save).not.toHaveBeenCalled()
   expect(f.durable().body).toBe('Newer durable body')
+  expect(f.durable().reviewContext).toBeUndefined()
   await fireEvent.press(view.getByRole('button', { name: 'documents.reload' }))
   expect(view.getByTestId('document-body').props.value).toBe('Newer durable body')
   expect(view.queryByTestId('document-revision-proposal')).toBeNull()

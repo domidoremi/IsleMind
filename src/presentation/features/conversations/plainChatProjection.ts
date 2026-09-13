@@ -1,4 +1,5 @@
 import type { AssistantRun } from '@/modules/assistant-runtime'
+import { getAssistantRunMessageAttribution } from '@/modules/assistant-runtime'
 import type { ConversationRunProjection, ConversationRunProjectionEvent } from '@/modules/conversations'
 import type { ContextCitation } from '@/modules/knowledge'
 import { finishConversationTaskActivityForMessage } from '@/modules/tasks'
@@ -31,6 +32,13 @@ export function createPlainChatProjection(
     suppressTextUntilContinuation: false,
   }
   return async (event) => {
+    const attribution = getAssistantRunMessageAttribution(event.run)
+    if (attribution) {
+      const message = getMessage(state.conversationId, state.messageId)
+      if (message && (message.providerId !== attribution.providerId || message.model !== attribution.model || message.generationProtocol?.adapterId !== attribution.generationProtocol?.adapterId)) {
+        useChatStore.getState().updateMessage(state.conversationId, state.messageId, attribution)
+      }
+    }
     projectContextCitations(state, event.contextCitations)
     if (event.journalEntry?.type === 'stream.event') projectStreamEvent(state, event)
     if (event.journalEntry?.type === 'model-operation.selected') {
@@ -275,6 +283,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun, rec
   const conversation = useChatStore.getState().conversations.find((item) => item.id === state.conversationId)
   const completedAt = run.completedAt ?? Date.now()
   const outputText = run.result?.outputText ?? run.checkpoint?.outputText ?? current?.responseText ?? current?.content ?? ''
+  const attribution = getAssistantRunMessageAttribution(run)
   const inputMessages = conversation?.messages.filter((message) => message.id !== state.messageId && message.status !== 'error') ?? []
   const estimatedUsage = buildEstimatedUsage(inputMessages, outputText)
 
@@ -282,6 +291,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun, rec
     const usage = state.usage ?? estimatedUsage
     useChatStore.getState().updateMessage(state.conversationId, state.messageId, {
       status: 'done',
+      ...attribution,
       content: outputText,
       responseText: outputText,
       ...(state.citations.length ? { citations: state.citations } : {}),
@@ -301,6 +311,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun, rec
   if (run.status === 'cancelled') {
     useChatStore.getState().updateMessage(state.conversationId, state.messageId, {
       status: 'cancelled',
+      ...attribution,
       content: outputText,
       responseText: outputText,
       completedAt,
@@ -321,6 +332,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun, rec
   useChatStore.getState().updateMessage(state.conversationId, state.messageId, {
     status: 'error',
     content: failureText,
+    ...attribution,
     responseText: failureText,
     errorCode,
     errorProviderId: run.providerId,

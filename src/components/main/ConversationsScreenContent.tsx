@@ -246,7 +246,7 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
   const modelLabelByConversationId = useMemo(
     () => new Map(conversations.map((conversation) => [
       conversation.id,
-      getProviderDisplayModel(providerById.get(conversation.providerId), conversation.model),
+      getProviderDisplayModel(conversation.providerId ? providerById.get(conversation.providerId) : undefined, conversation.model),
     ] as const)),
     [conversations, providerById]
   )
@@ -1345,13 +1345,13 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
 }
 
 function buildConversationSearchIndexItem(conversation: Conversation, providerById?: ReadonlyMap<string, AIProvider>): ConversationSearchIndexItem {
-  const provider = providerById?.get(conversation.providerId)
+  const provider = conversation.providerId ? providerById?.get(conversation.providerId) : undefined
   const fields = [
     buildConversationSearchField('title', conversation.title),
     buildConversationSearchField('provider', provider?.name),
-    buildConversationSearchField('provider', conversation.providerId),
+    buildConversationSearchField('provider', conversation.providerId ?? undefined),
     buildConversationSearchField('model', getProviderDisplayModel(provider, conversation.model)),
-    buildConversationSearchField('model', conversation.model),
+    buildConversationSearchField('model', conversation.model ?? undefined),
     buildConversationSearchField('systemPrompt', conversation.systemPrompt),
     ...buildConversationSearchMessageFields(conversation),
   ].filter((field) => field.normalized.length > 0)

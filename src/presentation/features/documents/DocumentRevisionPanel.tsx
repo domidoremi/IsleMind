@@ -11,7 +11,7 @@ export interface DocumentRevisionBase { draft: DocumentDraft; saved: SavedDocume
 export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }: DocumentRevisionBase & {
   port: DocumentRevisionPort
   disabled: boolean
-  onAccept(base: DocumentRevisionBase, body: string): Promise<boolean>
+  onAccept(base: DocumentRevisionBase, body: string, sources?: readonly DocumentRevisionSource[]): Promise<boolean>
 }) {
   const { t } = useTranslation()
   const { colors } = useAppTheme()
@@ -88,7 +88,7 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
     const controller = new AbortController()
     operation.current = controller
     const base = { draft, saved }
-    const chosen = selected.map((id) => sources.get(id)!).filter(Boolean)
+    const chosen = selected.map((id) => sources.get(id)!).filter(Boolean).map((source) => ({ ...source }))
     setRunning(true); setError(undefined); setProposal(undefined)
     try {
       const body = await port.propose({ draft, instruction, sources: chosen, target }, controller.signal)
@@ -102,9 +102,9 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
     }
   }
 
-  async function accept() {
+  async function accept(retainSources = false) {
     if (!proposal || disabled || proposal.base.draft !== latest.current.draft || proposal.base.saved !== latest.current.saved) return
-    if (await onAccept(proposal.base, proposal.body)) setProposal(undefined)
+    if (await onAccept(proposal.base, proposal.body, retainSources ? proposal.sources : undefined)) setProposal(undefined)
     else setError('staleProposal')
   }
 
@@ -163,8 +163,10 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
         <Text selectable testID="document-revision-before" style={{ color: colors.text }}>{proposal.base.draft.body}</Text>
         <Text style={{ color: colors.text, fontWeight: '700' }}>{t('documents.revision.proposed')}</Text>
         <Text selectable testID="document-revision-proposed" style={{ color: colors.text }}>{proposal.body}</Text>
+        {proposal.sources.length ? <Text selectable style={{ color: colors.textSecondary }}>{t('documents.revision.retainNotice')}</Text> : null}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <IsleButton label={t('documents.revision.accept')} tone="primary" disabled={disabled} onPress={() => void accept()} />
+          {proposal.sources.length ? <IsleButton label={t('documents.revision.acceptWithSources')} disabled={disabled} onPress={() => void accept(true)} /> : null}
           <IsleButton label={t('documents.revision.reject')} disabled={disabled} onPress={() => setProposal(undefined)} />
         </View>
       </View> : null}

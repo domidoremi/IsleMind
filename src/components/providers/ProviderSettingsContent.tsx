@@ -338,7 +338,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
   const usageByProvider = useMemo(() => {
     const usage = new Map<string, number>()
     for (const conversation of conversations) {
-      if (conversation.providerId === 'local-setup') continue
+      if (!conversation.providerId || conversation.providerId === 'local-setup') continue
       usage.set(conversation.providerId, Math.max(usage.get(conversation.providerId) ?? 0, conversation.updatedAt))
     }
     return usage
@@ -982,7 +982,10 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
             onImport={() => setImportOpen(true)}
             attention={providerAttention}
             activation={providerActivation}
-            tools={providerTools}
+            tools={<View style={{ gap: 8 }}>
+              <IsleButton compact label={t('modelAvailability.details')} onPress={() => router.push('/settings/model-availability')} />
+              {providerTools}
+            </View>}
           >
             {providerRegistry}
           </ProviderSettingsExperience>

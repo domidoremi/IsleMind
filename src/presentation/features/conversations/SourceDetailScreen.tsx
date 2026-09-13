@@ -24,6 +24,7 @@ import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 import type { KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import { CanonicalSourceReader } from './CanonicalSourceReader'
 import { resolveCapturedCitation } from './sourceCitationSelection'
+import { ProviderCitationPassages } from './ProviderCitationPassages'
 
 type ProcessTraceGroupKey = 'agentPlan' | 'context' | 'search' | 'toolActivity' | 'agentSynthesis' | 'agentRecovery' | 'other'
 
@@ -51,7 +52,10 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
   const [readerBackgroundState, setReaderBackgroundState] = useState<IsleBackgroundState>('idle')
 
   const mode = firstParam(params.kind) === 'process' ? 'process' : 'source'
+  const webPreviewSupported = Platform.OS !== 'web'
   const webUrl = mode === 'source' ? safeHttpUrl(rawWebUrl) : undefined
+  // A new target or Refresh needs fresh state and callback ownership, not just a new WebView URI.
+  const webReaderKey = JSON.stringify([conversationId, messageId, citation?.id, webUrl, webKey])
   const externalUrl = webUrl ?? (mode === 'source' && citation ? safeHttpUrl(citation.url) ?? safeHttpUrl(citation.sourceUri) : undefined)
   const processBackgroundState: IsleBackgroundState = traces.some((trace) => trace.status === 'error')
     ? 'error'
@@ -60,7 +64,7 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
       : 'idle'
   const backgroundState: IsleBackgroundState = mode === 'process'
     ? processBackgroundState
-    : webUrl
+    : webUrl && webPreviewSupported
       ? readerBackgroundState
       : 'idle'
   const title = mode === 'process' ? t('source.process') : citation?.title ?? t('source.source')
@@ -93,8 +97,8 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
 
   useEffect(() => {
     if (mode === 'process') return
-    setReaderBackgroundState(webUrl ? 'active' : 'idle')
-  }, [mode, webKey, webUrl])
+    setReaderBackgroundState(webUrl && webPreviewSupported ? 'active' : 'idle')
+  }, [mode, webReaderKey, webUrl, webPreviewSupported])
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined
@@ -119,12 +123,15 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
 
   async function openExternal() {
     if (!externalUrl) return
-    const supported = await Linking.canOpenURL(externalUrl)
-    if (supported) {
-      await Linking.openURL(externalUrl)
-    } else {
-      dialog.toast({ title: t('source.cannotOpen'), message: t('source.cannotOpenMessage'), tone: 'danger' })
+    try {
+      if (await Linking.canOpenURL(externalUrl)) {
+        await Linking.openURL(externalUrl)
+        return
+      }
+    } catch {
+      // Capability checks and launch attempts can both reject.
     }
+    dialog.toast({ title: t('source.cannotOpen'), message: t('source.cannotOpenMessage'), tone: 'danger' })
   }
 
   return (
@@ -140,7 +147,7 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
           <IsleIconButton label={t('common.copy')} size="sm" onPress={() => void copyCurrent()}>
             <AppIcon name="copy" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
           </IsleIconButton>
-          {webUrl ? (
+          {webUrl && webPreviewSupported ? (
               <IsleIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
                 <AppIcon name="refresh" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
               </IsleIconButton>
@@ -162,10 +169,13 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
           </ScrollView>
         ) : null}
         <RenderGuard label={mode === 'process' ? t('source.process') : t('source.source')}>
+          {mode === 'source' && citation?.type === 'web' ? (
+            <ProviderCitationPassages key={citation.id} value={citation.providerSupport} answerText={message?.responseText ?? message?.content ?? ''} />
+          ) : null}
           {mode === 'process' ? (
             <ProcessReader traces={traces} />
           ) : webUrl ? (
-            <WebReader key={webKey} url={webUrl} citation={citation} onOpenExternal={openExternal} onBackgroundStateChange={setReaderBackgroundState} />
+            <WebReader key={webReaderKey} url={webUrl} citation={citation} previewSupported={webPreviewSupported} onOpenExternal={openExternal} onBackgroundStateChange={setReaderBackgroundState} />
           ) : (
             <LocalSourceReader citation={citation} conversationId={conversationId} messageId={messageId} messageTimestamp={message?.timestamp} readLocalSource={readLocalSource} />
           )}
@@ -186,11 +196,13 @@ function buildSourceProcessTraceCopyText(traces: ProcessTrace[]): string {
 function WebReader({
   url,
   citation,
+  previewSupported,
   onOpenExternal,
   onBackgroundStateChange,
 }: {
   url: string
   citation?: MessageCitation
+  previewSupported: boolean
   onOpenExternal: () => Promise<void>
   onBackgroundStateChange: (state: IsleBackgroundState) => void
 }) {
@@ -198,11 +210,13 @@ function WebReader({
   const { t } = useTranslation()
   const { width } = useWindowDimensions()
   const compact = width < 430
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(previewSupported)
   const [failed, setFailed] = useState(false)
   const [WebViewComponent, setWebViewComponent] = useState<React.ComponentType<WebViewProps> | null>(null)
 
   useEffect(() => {
+    // The Web shim neither throws nor emits load/error events. Do not mount it.
+    if (!previewSupported) return
     let mounted = true
     try {
       const webviewModule = require('react-native-webview') as typeof import('react-native-webview')
@@ -218,11 +232,11 @@ function WebReader({
     return () => {
       mounted = false
     }
-  }, [])
+  }, [previewSupported])
 
   useEffect(() => {
-    onBackgroundStateChange(failed ? 'error' : loading || !WebViewComponent ? 'active' : 'idle')
-  }, [failed, loading, onBackgroundStateChange, WebViewComponent])
+    onBackgroundStateChange(!previewSupported ? 'idle' : failed ? 'error' : loading || !WebViewComponent ? 'active' : 'idle')
+  }, [failed, loading, onBackgroundStateChange, previewSupported, WebViewComponent])
 
   return (
     <View style={{ flex: 1 }}>
@@ -242,11 +256,11 @@ function WebReader({
           ) : null}
         </View>
       </IslePanel>
-      {failed ? (
+      {!previewSupported || failed ? (
         <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
           <Text style={{ color: colors.text, fontSize: 19, fontWeight: '800' }}>{t('source.previewUnavailable')}</Text>
           <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>
-            {t('source.previewUnavailableMessage')}
+            {t(previewSupported ? 'source.previewUnavailableMessage' : 'source.previewUnsupportedWebMessage')}
           </Text>
           <IsleButton label={t('source.openInBrowser')} tone="primary" onPress={() => void onOpenExternal()} style={{ marginTop: 16 }} />
         </View>

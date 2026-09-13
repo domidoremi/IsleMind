@@ -1,4 +1,4 @@
-import { fireEvent, render } from '@testing-library/react-native'
+import { act, fireEvent, render } from '@testing-library/react-native'
 import { Pressable, StyleSheet, Text } from 'react-native'
 
 import { getColors } from '@/theme/colors'
@@ -27,5 +27,23 @@ it('keeps the minimal toast’s actual panel surface opaque over underlying Chat
   await fireEvent.press(view.getByRole('button', { name: 'Report export failure' }))
   const panel = view.getByTestId('theme-toast-minimal').parent
   expect(StyleSheet.flatten(panel?.props.style).backgroundColor).toBe(getColors('light', 'minimal').ui.semantic.surface.base)
+  await view.unmount()
+})
+
+it('dismisses only the cancelled pending confirmation and settles it false', async () => {
+  const controller = new AbortController()
+  let outcome: Promise<boolean> | undefined
+  function ConfirmTrigger() {
+    const dialog = useIsleDialog()
+    return <Pressable accessibilityRole="button" accessibilityLabel="Ask fallback" onPress={() => {
+      outcome = dialog.confirm({ title: 'Use another provider?', signal: controller.signal })
+    }}><Text>Ask</Text></Pressable>
+  }
+  const view = await render(<IsleDialogProvider><ConfirmTrigger /></IsleDialogProvider>)
+  await fireEvent.press(view.getByRole('button', { name: 'Ask fallback' }))
+  expect(view.getByText('Use another provider?')).toBeTruthy()
+  await act(async () => controller.abort())
+  expect(await outcome).toBe(false)
+  expect(view.queryByText('Use another provider?')).toBeNull()
   await view.unmount()
 })

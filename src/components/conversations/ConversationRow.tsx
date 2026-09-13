@@ -80,7 +80,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
   const rowStatusToken = rowStatusTone ? colors.ui.tone[rowStatusTone] : undefined
   const rowTimestamp = getConversationUpdatedTimestamp(conversation)
   const rowMeta = useMemo(() => t('conversation.rowMeta', {
-    model: modelLabel ?? getModelName(conversation.model),
+    model: modelLabel ?? getModelName(conversation.model ?? ''),
     messageLabel: formatConversationMessageCount(conversation.messages.length, t),
     time: formatConversationUpdatedAt(rowTimestamp, now, t),
   }), [conversation.messages.length, conversation.model, modelLabel, now, rowTimestamp, t])

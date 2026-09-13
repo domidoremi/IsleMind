@@ -16,6 +16,10 @@ export interface SettingsStorePersistence {
 let persistence: SettingsStorePersistence | undefined
 let settingsMutationTail: Promise<void> = Promise.resolve()
 let latestSettingsMutation: Promise<void> = Promise.resolve()
+// The existing save queue also fences route-affecting settings behind their
+// durable scope invalidation. A failed prerequisite must block later snapshots
+// too, since they may contain the same in-memory configuration.
+let settingsSavePrerequisite: Promise<void> = Promise.resolve()
 
 export function bindSettingsStorePersistence(nextPersistence: SettingsStorePersistence): void {
   if (!persistence) {
@@ -28,16 +32,22 @@ export function bindSettingsStorePersistence(nextPersistence: SettingsStorePersi
 }
 
 export function releaseSettingsStorePersistence(boundPersistence: SettingsStorePersistence): void {
-  if (persistence === boundPersistence) persistence = undefined
+  if (persistence === boundPersistence) { persistence = undefined; settingsSavePrerequisite = Promise.resolve() }
 }
 
 export function loadPersistedSettings(): Promise<Partial<Settings> | null> {
   return requirePersistence().settings.load()
 }
 
-export function savePersistedSettings(settings: Settings): Promise<void> {
+export function savePersistedSettings(settings: Settings, beforeSave?: Promise<void>): Promise<void> {
   const boundPersistence = requirePersistence()
-  return enqueueSettingsMutation(() => boundPersistence.settings.save(settings))
+  if (beforeSave) {
+    settingsSavePrerequisite = beforeSave
+    // Mark rejection handled immediately, without changing the awaited outcome.
+    void beforeSave.catch(() => undefined)
+  }
+  const prerequisite = settingsSavePrerequisite
+  return enqueueSettingsMutation(async () => { await prerequisite; await boundPersistence.settings.save(settings) })
 }
 
 export function flushPersistedSettings(): Promise<void> {

@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
-import { Linking, Text } from 'react-native'
+import { Linking, Platform, Text } from 'react-native'
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
 import type { KnowledgeLocalSource, KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import type { MessageCitation } from '@/types/contextContracts'
+import { createProviderCitationSupportBinder } from '@/core'
 import { CanonicalSourceReader, type CanonicalSourceReaderProps } from './CanonicalSourceReader'
 import SourceDetailScreen from './SourceDetailScreen'
 
@@ -25,13 +26,13 @@ jest.mock('@/components/ui/isle', () => {
   return {
     IsleButton: Button, IsleIconButton: Button, IslePanel: View, IsleChip: Text,
     IsleSection: ({ title, children }: { title: string; children: ReactNode }) => <View><Text>{title}</Text>{children}</View>,
-    useIsleDialog: () => ({ toast: jest.fn() }),
+    useIsleDialog: jest.fn(() => ({ toast: jest.fn() })),
   }
 })
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke: {} }))
 jest.mock('@/components/ui/RenderGuard', () => ({ RenderGuard: ({ children }: { children: ReactNode }) => children }))
 jest.mock('@/presentation/app-shell/ThemeDetailFrame', () => ({
-  ThemeDetailFrame: ({ children, actions }: { children: ReactNode; actions: ReactNode }) => <>{actions}{children}</>,
+  ThemeDetailFrame: jest.fn(({ children, actions }: { children: ReactNode; actions: ReactNode }) => <>{actions}{children}</>),
 }))
 jest.mock('@/store/chatStore', () => ({ useChatStore: jest.fn() }))
 jest.mock('@/components/chat/tracePresentation', () => ({ collectVisibleProcessTraces: () => [], normalizeTraceStatuses: () => [] }))
@@ -40,6 +41,8 @@ jest.mock('react-native-webview', () => ({ WebView: jest.fn(() => null) }))
 const { useLocalSearchParams, router } = jest.requireMock('expo-router')
 const { useChatStore } = jest.requireMock('@/store/chatStore')
 const { WebView } = jest.requireMock('react-native-webview')
+const { ThemeDetailFrame } = jest.requireMock('@/presentation/app-shell/ThemeDetailFrame')
+const { useIsleDialog } = jest.requireMock('@/components/ui/isle')
 type Read = KnowledgeLocalSourceReader['readLocalSource']
 
 const citation: MessageCitation = {
@@ -160,15 +163,19 @@ describe('CanonicalSourceReader', () => {
 
 describe('SourceDetailScreen identity and URL boundaries', () => {
   const load = jest.fn(async () => undefined)
+  const toast = jest.fn()
   let citations: MessageCitation[]
+  let content: string
+  let responseText: string | undefined
   beforeEach(() => {
     citations = [citation]
-    load.mockClear()
-    router.setParams.mockClear()
-    WebView.mockClear()
+    content = 'Current answer 日本語 😀'
+    responseText = undefined
+    jest.clearAllMocks()
+    useIsleDialog.mockReturnValue({ toast })
     useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: citation.id })
     useChatStore.mockImplementation((select: (state: unknown) => unknown) => select({ load,
-      conversations: [{ id: 'conversation-a', messages: [{ id: 'message-a', timestamp: 1_500, status: 'done', citations }] }],
+      conversations: [{ id: 'conversation-a', messages: [{ id: 'message-a', timestamp: 1_500, status: 'done', content, responseText, citations }] }],
     }))
   })
   afterEach(() => jest.restoreAllMocks())
@@ -218,13 +225,239 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     expect(WebView).not.toHaveBeenCalled()
   })
 
-  it('preserves a web citation preview and the default selection when no citation ID was requested', async () => {
+  it.each(['ios', 'android'] as const)('preserves a web citation preview and default selection on %s', async (platform) => {
+    jest.replaceProperty(Platform, 'OS', platform)
     citations = [{ id: 'web-citation', type: 'web', title: 'Web source', url: 'https://example.test/article' }]
     useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a' })
     const read = jest.fn<ReturnType<Read>, Parameters<Read>>()
-    await render(<SourceDetailScreen readLocalSource={read} />)
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
     expect(WebView.mock.calls.at(-1)?.[0].source).toEqual({ uri: 'https://example.test/article' })
     expect(read).not.toHaveBeenCalled()
+    expect(view.getByText('source.loadingPreview')).toBeTruthy()
+    expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('active')
+    expect(view.queryByText('source.previewUnsupportedWebMessage')).toBeNull()
+    const props = WebView.mock.calls.at(-1)?.[0]
+    expect(props.originWhitelist).toEqual(['https://example.test'])
+    expect(props.onShouldStartLoadWithRequest({ url: 'https://example.test/next' })).toBe(true)
+    expect(props.onShouldStartLoadWithRequest({ url: 'http://example.test/next' })).toBe(false)
+    expect(props.onShouldStartLoadWithRequest({ url: 'https://another.test/article' })).toBe(false)
+    expect(props.setSupportMultipleWindows).toBe(false)
+    await act(async () => { props.onLoadEnd() })
+    expect(view.queryByText('source.loadingPreview')).toBeNull()
+    expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('idle')
+    await fireEvent.press(view.getByRole('button', { name: 'common.refresh' }))
+    expect(view.getByText('source.loadingPreview')).toBeTruthy()
+    expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('active')
+  })
+
+  it.each(['onError', 'onHttpError'])('preserves native preview failure and retry after %s', async (event) => {
+    jest.replaceProperty(Platform, 'OS', 'android')
+    citations = [{ ...citation, type: 'web', url: 'https://example.test/article' }]
+    const view = await render(<SourceDetailScreen readLocalSource={async () => undefined} />)
+    await act(async () => { WebView.mock.calls.at(-1)?.[0][event]() })
+    expect(view.getByText('source.previewUnavailableMessage')).toBeTruthy()
+    expect(view.queryByText('source.previewUnsupportedWebMessage')).toBeNull()
+    expect(view.queryByText('source.loadingPreview')).toBeNull()
+    expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('error')
+    expect(view.getByRole('button', { name: 'source.openInBrowser' })).toBeTruthy()
+    await fireEvent.press(view.getByRole('button', { name: 'common.refresh' }))
+    expect(view.queryByText('source.previewUnavailableMessage')).toBeNull()
+    expect(view.getByText('source.loadingPreview')).toBeTruthy()
+    expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('active')
+  })
+
+  describe.each(['ios', 'android'] as const)('%s native preview attempt isolation', (platform) => {
+    const firstUrl = 'https://first.example.test/article'
+    const secondUrl = 'https://second.example.test/article'
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>()
+    const params = { conversationId: 'conversation-a', messageId: 'message-a', citationId: 'web-a' }
+
+    beforeEach(() => {
+      jest.replaceProperty(Platform, 'OS', platform)
+      citations = [
+        { id: 'web-a', type: 'web', title: 'First source', url: firstUrl },
+        { id: 'web-b', type: 'web', title: 'Second source', url: secondUrl },
+      ]
+      useLocalSearchParams.mockReturnValue(params)
+    })
+
+    async function selectSource(view: Awaited<ReturnType<typeof render>>, second: boolean) {
+      await fireEvent.press(view.getByRole('button', { name: second ? '2. Second source' : '1. First source' }))
+      const citationId = second ? 'web-b' : 'web-a'
+      expect(router.setParams).toHaveBeenLastCalledWith({ citationId, url: undefined })
+      useLocalSearchParams.mockReturnValue({ ...params, citationId })
+      await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+    }
+
+    function expectLoading(view: Awaited<ReturnType<typeof render>>, url: string) {
+      expect(WebView.mock.calls.at(-1)?.[0].source).toEqual({ uri: url })
+      expect(view.getByText('source.loadingPreview')).toBeTruthy()
+      expect(view.queryByText('source.previewUnavailableMessage')).toBeNull()
+      expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('active')
+    }
+
+    it.each(['onLoadEnd', 'onError', 'onHttpError'])('starts a fresh preview after the previous source reports %s', async (event) => {
+      const view = await render(<SourceDetailScreen readLocalSource={read} />)
+      await act(async () => { WebView.mock.calls.at(-1)?.[0][event]() })
+      await selectSource(view, true)
+      expectLoading(view, secondUrl)
+      const current = WebView.mock.calls.at(-1)?.[0]
+      expect(current.originWhitelist).toEqual(['https://second.example.test'])
+      expect(current.onShouldStartLoadWithRequest({ url: firstUrl })).toBe(false)
+      expect(current.onShouldStartLoadWithRequest({ url: 'http://second.example.test/article' })).toBe(false)
+      expect(current.onShouldStartLoadWithRequest({ url: 'https://second.example.test/next' })).toBe(true)
+      await act(async () => { current.onLoadEnd() })
+      expect(view.queryByText('source.loadingPreview')).toBeNull()
+      expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('idle')
+      expect(read).not.toHaveBeenCalled()
+    })
+
+    it.each(['onLoadEnd', 'onError', 'onHttpError'])('ignores obsolete %s callbacks, even after returning to the same URL', async (event) => {
+      const view = await render(<SourceDetailScreen readLocalSource={read} />)
+      const obsolete = WebView.mock.calls.at(-1)?.[0]
+      await selectSource(view, true)
+      const current = WebView.mock.calls.at(-1)?.[0]
+      await act(async () => { obsolete[event]() })
+      expectLoading(view, secondUrl)
+      await act(async () => { current.onLoadEnd() })
+      await act(async () => { obsolete[event]() })
+      expect(view.queryByText('source.previewUnavailableMessage')).toBeNull()
+      expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('idle')
+      await selectSource(view, false)
+      await act(async () => { obsolete[event]() })
+      expectLoading(view, firstUrl)
+    })
+
+    it.each(['citation', 'message', 'conversation', 'url'])('does not reuse failure state when only %s identity changes', async (identity) => {
+      citations = citations.map((item) => ({ ...item, url: firstUrl }))
+      const view = await render(<SourceDetailScreen readLocalSource={read} />)
+      await act(async () => { WebView.mock.calls.at(-1)?.[0].onError() })
+      const nextParams = { ...params }
+      if (identity === 'citation') nextParams.citationId = 'web-b'
+      if (identity === 'message') nextParams.messageId = 'message-b'
+      if (identity === 'conversation') nextParams.conversationId = 'conversation-b'
+      if (identity === 'url') citations = citations.map((item) => ({ ...item, url: secondUrl }))
+      useChatStore.mockImplementation((select: (state: unknown) => unknown) => select({ load,
+        conversations: [{ id: nextParams.conversationId, messages: [{
+          id: nextParams.messageId, timestamp: 1_500, status: 'done', content, citations,
+        }] }],
+      }))
+      useLocalSearchParams.mockReturnValue(nextParams)
+      await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+      expectLoading(view, identity === 'url' ? secondUrl : firstUrl)
+    })
+
+    it('keeps Refresh attempt-scoped and ignores the previous attempt callbacks', async () => {
+      const view = await render(<SourceDetailScreen readLocalSource={read} />)
+      const obsolete = WebView.mock.calls.at(-1)?.[0]
+      await act(async () => { obsolete.onError() })
+      await fireEvent.press(view.getByRole('button', { name: 'common.refresh' }))
+      await act(async () => { obsolete.onLoadEnd(); obsolete.onHttpError() })
+      expectLoading(view, firstUrl)
+    })
+
+    it('does not restart an unchanged preview for answer, title, excerpt or metadata updates', async () => {
+      const view = await render(<SourceDetailScreen readLocalSource={read} />)
+      await act(async () => { WebView.mock.calls.at(-1)?.[0].onLoadEnd() })
+      content = 'Updated answer'
+      const providerSupport = createProviderCitationSupportBinder(content)([{ text: content, partIndex: 0, startByte: 0, endByte: 14 }])
+      citations = citations.map((item) => ({ ...item, title: 'Updated source title', excerpt: 'New captured excerpt', providerSupport }))
+      await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+      expect(view.getByText('New captured excerpt')).toBeTruthy()
+      expect(view.queryByText('source.loadingPreview')).toBeNull()
+      expect(ThemeDetailFrame.mock.calls.at(-1)?.[0].backgroundState).toBe('idle')
+    })
+
+    it('isolates legacy URL-only previews when their target changes', async () => {
+      useLocalSearchParams.mockReturnValue({ url: firstUrl })
+      const view = await render(<SourceDetailScreen readLocalSource={read} />)
+      await act(async () => { WebView.mock.calls.at(-1)?.[0].onError() })
+      useLocalSearchParams.mockReturnValue({ url: secondUrl })
+      await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+      expectLoading(view, secondUrl)
+    })
+  })
+
+  it('does not leave unsupported Web previews loading or open the source without an explicit action', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web')
+    citations = [{ ...citation, type: 'web', url: 'https://example.test/article' }]
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>()
+    const canOpen = jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true)
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    expect(view.getByText('source.previewUnsupportedWebMessage')).toBeTruthy()
+    expect(view.getByText('Captured excerpt')).toBeTruthy()
+    expect(view.queryByText('source.previewUnavailableMessage')).toBeNull()
+    expect(view.queryByText('source.loadingPreview')).toBeNull()
+    expect(view.queryByRole('button', { name: 'common.refresh' })).toBeNull()
+    expect(ThemeDetailFrame.mock.calls.every(([props]: [{ backgroundState: string }]) => props.backgroundState === 'idle')).toBe(true)
+    expect(WebView).not.toHaveBeenCalled()
+    expect(read).not.toHaveBeenCalled()
+    expect(canOpen).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+    await fireEvent.press(view.getByRole('button', { name: 'source.openInBrowser' }))
+    await waitFor(() => expect(open).toHaveBeenCalledWith('https://example.test/article'))
+    await fireEvent.press(view.getByRole('button', { name: 'source.openOriginal' }))
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(2))
+    expect(toast).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'javascript:alert(1)', 'file:///private/source.txt',
+    'https://user:password@example.test/article', 'https://example.test/article?access_token=synthetic',
+  ])('does not offer a Web fallback for an unsafe URL: %s', async (url) => {
+    jest.replaceProperty(Platform, 'OS', 'web')
+    citations = [{ ...citation, type: 'web', url, sourceUri: url }]
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
+    const view = await render(<SourceDetailScreen readLocalSource={async () => undefined} />)
+    expect(view.queryByRole('button', { name: 'source.openOriginal' })).toBeNull()
+    expect(view.queryByRole('button', { name: 'source.openInBrowser' })).toBeNull()
+    expect(view.queryByText('source.loadingPreview')).toBeNull()
+    expect(WebView).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it.each(['unsupported', 'capability-rejected', 'open-rejected'])('reports external-open failure without an unhandled rejection: %s', async (failure) => {
+    jest.replaceProperty(Platform, 'OS', 'web')
+    citations = [{ ...citation, type: 'web', url: 'https://example.test/article' }]
+    const canOpen = jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(failure !== 'unsupported')
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
+    if (failure === 'capability-rejected') canOpen.mockRejectedValue(new Error('Synthetic capability failure'))
+    if (failure === 'open-rejected') open.mockRejectedValue(new Error('Synthetic launch failure'))
+    const view = await render(<SourceDetailScreen readLocalSource={async () => undefined} />)
+    await fireEvent.press(view.getByRole('button', { name: 'source.openInBrowser' }))
+    await waitFor(() => expect(toast).toHaveBeenCalledWith({
+      title: 'source.cannotOpen', message: 'source.cannotOpenMessage', tone: 'danger',
+    }))
+    expect(open).toHaveBeenCalledTimes(failure === 'open-rejected' ? 1 : 0)
+    expect(view.getByText('source.previewUnsupportedWebMessage')).toBeTruthy()
+  })
+
+  it('keeps the Web fallback scoped to the selected source and preserves the local reader', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web')
+    citations = [
+      { ...citation, type: 'web', url: 'https://example.test/first' },
+      { ...citation, id: 'web-b', type: 'web', title: 'Second source', url: 'https://example.test/second' },
+      { ...citation, id: 'local-c', title: 'Local source', url: 'https://example.test/origin' },
+    ]
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockResolvedValue(documentSource())
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
+    jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true)
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    await fireEvent.press(view.getByRole('button', { name: '2. Second source' }))
+    expect(router.setParams).toHaveBeenCalledWith({ citationId: 'web-b', url: undefined })
+    useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'web-b' })
+    await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+    await fireEvent.press(view.getByRole('button', { name: 'source.openInBrowser' }))
+    await waitFor(() => expect(open).toHaveBeenCalledWith('https://example.test/second'))
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(read).not.toHaveBeenCalled()
+    useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'local-c' })
+    await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+    expect(view.getByText(documentSource().chunks[1].content)).toBeTruthy()
+    expect(view.queryByText('source.previewUnsupportedWebMessage')).toBeNull()
+    expect(view.queryByRole('button', { name: 'source.openInBrowser' })).toBeNull()
+    expect(WebView).not.toHaveBeenCalled()
   })
 
   it('selects another citation by its explicit identity and clears an old URL override', async () => {
@@ -238,5 +471,54 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     expect(read.mock.calls.at(-1)?.[0]).toEqual({ type: 'knowledge', documentId: 'document-b' })
     expect(view.getByText('Another captured excerpt')).toBeTruthy()
     expect(view.queryByText('Captured excerpt')).toBeNull()
+  })
+
+  it.each(['ios', 'web'] as const)('shows plain selectable provider passages on %s, not numbered bindings or source-read authority', async (platform) => {
+    jest.replaceProperty(Platform, 'OS', platform)
+    const text = '日本語 😀'
+    responseText = content
+    const providerSupport = createProviderCitationSupportBinder(responseText)([{ text, partIndex: 2, startByte: 8, endByte: 22 }])!
+    content = 'A different legacy content field'
+    citations = [{ id: 'web', type: 'web', title: 'Web source', url: 'https://example.test/article', providerSupport }]
+    useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'web' })
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>()
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    expect(view.getByText('source.providerPassagesNotice')).toBeTruthy()
+    expect(view.queryByText('source.providerPassagesHistorical')).toBeNull()
+    expect(view.queryByText(text)).toBeNull()
+    await fireEvent.press(view.getByRole('button', { name: 'source.showProviderPassages' }))
+    expect(view.getByText(text).props.selectable).toBe(true)
+    expect(view.getByText('source.providerPassagesRangeNotice')).toBeTruthy()
+    expect(read).not.toHaveBeenCalled()
+    responseText += ' '
+    await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+    expect(view.getByText('source.providerPassagesHistorical')).toBeTruthy()
+    expect(view.getByText(text)).toBeTruthy()
+  })
+
+  it.each([undefined, { schema: 'unknown' }])('does not infer associations from source order, excerpts or malformed metadata: %j', async (providerSupport) => {
+    citations = [{ id: 'web', type: 'web', title: 'Source [1]', excerpt: content, providerSupport } as MessageCitation]
+    useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'web' })
+    const view = await render(<SourceDetailScreen readLocalSource={async () => undefined} />)
+    expect(view.getByText('source.providerPassagesUnknown')).toBeTruthy()
+    expect(view.queryByRole('button', { name: 'source.showProviderPassages' })).toBeNull()
+    expect(view.queryByText('source.providerPassagesNotice')).toBeNull()
+  })
+
+  it('does not display support from an ambiguous ID or carry the old panel to another source', async () => {
+    const providerSupport = createProviderCitationSupportBinder(content)([{ text: '日本語 😀', partIndex: 0, startByte: 0, endByte: 14 }])!
+    const web: MessageCitation = { id: 'web', type: 'web', title: 'Web source', providerSupport }
+    citations = [web, { ...web, title: 'Different source' }]
+    useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'web' })
+    const view = await render(<SourceDetailScreen readLocalSource={async () => undefined} />)
+    expect(view.queryByText('source.providerPassagesNotice')).toBeNull()
+    citations = [web, { ...web, id: 'web-b', providerSupport: undefined }]
+    await view.rerender(<SourceDetailScreen readLocalSource={async () => undefined} />)
+    await fireEvent.press(view.getByRole('button', { name: 'source.showProviderPassages' }))
+    expect(view.getByText('日本語 😀')).toBeTruthy()
+    useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'web-b' })
+    await view.rerender(<SourceDetailScreen readLocalSource={async () => undefined} />)
+    expect(view.queryByText('日本語 😀')).toBeNull()
+    expect(view.getByText('source.providerPassagesUnknown')).toBeTruthy()
   })
 })

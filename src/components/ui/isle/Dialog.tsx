@@ -39,6 +39,8 @@ export interface IsleDialogMetric {
 
 interface ConfirmOptions {
   title: string
+  /** Cancels this pending confirmation only; used by request-scoped consent. */
+  signal?: AbortSignal
   message?: string
   confirmLabel?: string
   cancelLabel?: string
@@ -170,11 +172,23 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const api = useMemo<IsleDialogApi>(() => ({
     confirm: (options) =>
       new Promise<boolean>((resolve) => {
+        if (options.signal?.aborted) { resolve(false); return }
         const id = idRef.current++
-        dialogSettlementsRef.current.register(id, resolve)
-        const next = [...dialogQueueRef.current, { ...options, id, kind: 'confirm' as const, resolve }]
+        const abort = () => {
+          const remaining = dialogQueueRef.current.filter((item) => item.id !== id)
+          dialogQueueRef.current = remaining
+          setDialogQueue(remaining)
+          dialogSettlementsRef.current.settle(id, false)
+        }
+        dialogSettlementsRef.current.register(id, (value) => {
+          options.signal?.removeEventListener('abort', abort)
+          resolve(value && !options.signal?.aborted)
+        })
+        const next = [...dialogQueueRef.current, { ...options, id, kind: 'confirm' as const }]
         dialogQueueRef.current = next
         setDialogQueue(next)
+        options.signal?.addEventListener('abort', abort, { once: true })
+        if (options.signal?.aborted) abort()
       }),
     notice: (options) => {
       const next = [...dialogQueueRef.current, { ...options, id: idRef.current++, kind: 'notice' as const }]

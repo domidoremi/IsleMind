@@ -188,7 +188,8 @@ export function resolveProviderModelAlias(provider: Pick<AIProvider, 'modelAlias
   return match?.model ?? model
 }
 
-export function getProviderDisplayModel(provider: Pick<AIProvider, 'modelAliases' | 'modelConfigs' | 'type'> | undefined, model: string): string {
+export function getProviderDisplayModel(provider: Pick<AIProvider, 'modelAliases' | 'modelConfigs' | 'type'> | undefined, model: string | null): string {
+  if (model === null) return ''
   const normalized = model.trim()
   if (!normalized) return model
   const match = provider ? normalizeProviderModelAliases(provider).find((item) => item.alias.toLowerCase() === normalized.toLowerCase()) : undefined

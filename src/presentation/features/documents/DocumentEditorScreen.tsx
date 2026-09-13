@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import Markdown from 'react-native-markdown-display'
 import { IsleButton, IsleInput, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { DOCUMENT_BODY_LIMIT, DOCUMENT_TITLE_LIMIT, DocumentConflictError, documentDraftFromMessage, type DocumentDraft, type DocumentRepository, type DocumentRevisionPort, type SavedDocument } from '@/modules/documents'
+import { DOCUMENT_BODY_LIMIT, DOCUMENT_TITLE_LIMIT, DocumentConflictError, documentDraftFromMessage, parseDocumentReviewContext, type DocumentDraft, type DocumentRepository, type DocumentRevisionPort, type DocumentRevisionSource, type SavedDocument } from '@/modules/documents'
 import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 import { useChatStore } from '@/store/chatStore'
 import { DocumentRevisionPanel, type DocumentRevisionBase } from './DocumentRevisionPanel'
@@ -34,7 +34,8 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
   draftRef.current = draft
   const [preview, setPreview] = useState(false)
   const [showOrigin, setShowOrigin] = useState(false)
-  const dirty = !!draft && (!saved || draft.title !== saved.title || draft.body !== saved.body)
+  const [showReview, setShowReview] = useState(false)
+  const dirty = !!draft && (!saved || draft.title !== saved.title || draft.body !== saved.body || draft.reviewContext !== saved.reviewContext)
 
   useEffect(() => {
     if (id && savedRef.current?.id === id) return
@@ -43,6 +44,7 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
     setSaved(null)
     setLoading(true)
     setError(null)
+    setShowReview(false)
     void (async () => {
       if (id) {
         const document = await repository.get(id, { signal: controller.signal })
@@ -93,7 +95,7 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
     setError(null)
     try {
       const result = saved && !asCopy
-        ? await repository.save(saved.id, saved.revision, draft)
+        ? await repository.save(saved.id, saved.revision, { title: draft.title, body: draft.body, reviewContext: draft.reviewContext ?? null })
         : await repository.create(draft)
       savedRef.current = result
       setSaved(result)
@@ -138,10 +140,11 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
       message: copied ? t('documents.copyNotice') : undefined, tone: copied ? 'mint' : 'amber' })
   }
 
-  async function acceptRevision(base: DocumentRevisionBase, body: string): Promise<boolean> {
+  async function acceptRevision(base: DocumentRevisionBase, body: string, sources?: readonly DocumentRevisionSource[]): Promise<boolean> {
     if (busyRef.current || draftRef.current !== base.draft || savedRef.current !== base.saved) return false
     busyRef.current = true; setBusy(true)
     try {
+      const reviewContext = sources ? parseDocumentReviewContext({ acceptedAt: Date.now(), title: base.draft.title, body, sources }) : base.draft.reviewContext
       if (base.saved) {
         const current = await repository.get(base.saved.id)
         if (!current || current.revision !== base.saved.revision) { setError('conflict'); return false }
@@ -149,13 +152,23 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
       if (draftRef.current !== base.draft || savedRef.current !== base.saved) return false
       // Acceptance edits only the unsaved draft. The independent Save operation
       // still compares durable revisions and preserves the immutable origin.
-      setDraft({ ...base.draft, body })
+      setDraft({ ...base.draft, body, reviewContext })
+      if (sources) setShowReview(true)
       return true
     } catch { setError('loadFailed'); return false }
     finally { busyRef.current = false; setBusy(false) }
   }
 
+  async function removeReview() {
+    const current = draftRef.current
+    if (!current?.reviewContext || busyRef.current) return
+    if (!await dialog.confirm({ title: t('documents.review.remove'), message: t('documents.review.removeNotice'),
+      confirmLabel: t('documents.review.remove'), cancelLabel: t('common.cancel'), tone: 'danger' })) return
+    if (draftRef.current === current && !busyRef.current) setDraft({ ...current, reviewContext: undefined })
+  }
+
   const origin = draft?.origin
+  const review = draft?.reviewContext
   return <ThemeDetailFrame kind="documents" title={saved?.title ?? t('documents.new')} backLabel={t('documents.title')} onBack={returnToLibrary}
     actions={<IsleButton label={t('common.save')} compact tone="primary" busy={busy} disabled={loading || !draft?.title.trim() || (!dirty && !!saved)} onPress={() => void save()} />}>
     <ScrollView contentInsetAdjustmentBehavior="automatic" keyboardShouldPersistTaps="handled"
@@ -179,6 +192,7 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
           <IsleButton label={t(preview ? 'documents.edit' : 'documents.preview')} onPress={() => setPreview(!preview)} />
           <IsleButton label={t('documents.copyText')} onPress={() => void copyText()} />
           {origin ? <IsleButton label={t(showOrigin ? 'documents.hideOrigin' : 'documents.showOrigin')} onPress={() => setShowOrigin(!showOrigin)} /> : null}
+          {review ? <IsleButton label={t(showReview ? 'documents.review.hide' : 'documents.review.show')} onPress={() => setShowReview(!showReview)} /> : null}
           {saved ? <IsleButton label={t('common.delete')} tone="danger" disabled={busy} onPress={() => void remove()} /> : null}
         </View>
         {preview ? <View testID="document-preview">
@@ -210,6 +224,20 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
             {citation.excerpt ? <Text selectable style={{ color: colors.textSecondary }}>{citation.excerpt}</Text> : null}
             {citation.url ? <Text selectable style={{ color: colors.textSecondary }}>{citation.url}</Text> : null}
           </View>)}
+        </View> : null}
+        {review && showReview ? <View testID="document-review-context" style={{ gap: 12, paddingTop: 16, borderTopWidth: 1, borderTopColor: colors.ui.semantic.chrome.border }}>
+          <Text selectable style={{ color: colors.text, fontWeight: '700' }}>{t('documents.review.title')}</Text>
+          <Text selectable style={{ color: colors.textSecondary }}>{t('documents.review.notice')}</Text>
+          <Text selectable style={{ color: colors.textSecondary }}>{t('documents.review.acceptedAt', { time: new Date(review.acceptedAt).toLocaleString() })}</Text>
+          <Text selectable style={{ color: colors.textSecondary }}>{t(draft.title === review.title && draft.body === review.body ? 'documents.review.matches' : 'documents.review.changed')}</Text>
+          <Text selectable style={{ color: colors.text, fontWeight: '600' }}>{review.title}</Text>
+          <Text selectable testID="document-review-body" style={{ color: colors.text }}>{review.body}</Text>
+          {review.sources.map((source, index) => <View key={`${index}:${source.citationId}`} style={{ gap: 6 }}>
+            <Text selectable style={{ color: colors.text, fontWeight: '600' }}>[S{index + 1}] {source.title} · {t(`source.${source.type}`)}</Text>
+            <Text selectable style={{ color: colors.textSecondary }}>{t('documents.review.sourceVersion', { id: source.documentId ?? source.citationId, citation: source.citationId, time: new Date(source.updatedAt).toLocaleString() })}</Text>
+            <Text selectable testID={`document-review-source-${index}`} style={{ color: colors.text }}>{source.text}</Text>
+          </View>)}
+          <IsleButton label={t('documents.review.remove')} disabled={busy} onPress={() => void removeReview()} />
         </View> : null}
         <DocumentRevisionPanel key={JSON.stringify([id, conversationId, messageId])} draft={draft} saved={saved} port={revision} disabled={busy} onAccept={acceptRevision} />
       </> : null}
