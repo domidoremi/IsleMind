@@ -114,6 +114,9 @@ describe('portable saved documents', () => {
     body: 'Human edits', createdAt: 1, updatedAt: 2,
     origin: { conversationId: 'chat', conversationTitle: 'Original chat', messageId: 'answer',
       messageStatus: 'cancelled', messageTimestamp: 1, originalText: 'Partial answer', citations: [] },
+    reviewContext: { acceptedAt: 2, title: 'Reviewed draft', body: 'Earlier proposed text [S1]', sources: [
+      { citationId: 'source-1', type: 'knowledge', documentId: 'knowledge-1', title: 'Reviewed source', updatedAt: 1, text: 'Exact retained source.\n' },
+    ] },
   }
 
   it('includes editable text and immutable captured provenance in full and documents-only backups', async () => {
@@ -145,6 +148,20 @@ describe('portable saved documents', () => {
     expect(importedPlans[0].savedDocuments).toEqual([document])
     expect(importedPlans[0].knowledge).toMatchObject({ documents: [] })
     expect(importedPlans[0].savedDocuments?.[0].origin?.messageStatus).toBe('cancelled')
+    expect(importedPlans[0].savedDocuments?.[0].reviewContext).toEqual(document.reviewContext)
+  })
+
+  it('normalizes a legacy v1 document but refuses malformed retained context before recovery', async () => {
+    const { payloadRuntime, importedPlans } = runtime([document])
+    const old = JSON.parse(payload(provider()))
+    const { reviewContext: _review, ...withoutReview } = document
+    const legacy = { ...withoutReview, schema: 'islemind.saved-document.v1' }
+    expect(await payloadRuntime.importJson(JSON.stringify({ ...old, savedDocuments: [legacy] }))).toMatchObject({ ok: true })
+    expect(importedPlans[0].savedDocuments).toEqual([withoutReview])
+    for (const invalid of [{ ...document, reviewContext: { ...document.reviewContext, sources: [] } }, { ...legacy, reviewContext: document.reviewContext }]) {
+      expect(await payloadRuntime.importJson(JSON.stringify({ ...old, savedDocuments: [invalid] }))).toMatchObject({ ok: false, reason: 'invalid_structure' })
+    }
+    expect(importedPlans).toHaveLength(1)
   })
 
   it('preserves absence in a legacy full backup and rejects missing selected or malformed documents before recovery', async () => {
@@ -160,6 +177,58 @@ describe('portable saved documents', () => {
       selection: { mode: 'selective', categories: ['documents'] }, payload: old, createdAt: 1 })))
       .toMatchObject({ ok: false, reason: 'invalid_structure' })
     expect(importedPlans).toHaveLength(count)
+  })
+})
+
+describe('portable model preference compatibility', () => {
+  const preference = { schema: 'islemind.global-model-preference.v1', providerId: 'remembered', model: 'alias' }
+  const history = [{ id: 'old', role: 'assistant', content: 'Historical answer', timestamp: 1, status: 'done' }]
+  const base = { id: 'unbound', title: 'Archive', providerId: null, model: null, messages: history }
+
+  it.each([1, 2])('imports payload v%s without binding unbound history or changing the configured default', async (version) => {
+    const { payloadRuntime, importedPlans } = runtime()
+    const result = await payloadRuntime.importJson(JSON.stringify({
+      app: 'islemind', version, providers: [], conversations: [base], exportedAt: 1,
+      settings: { defaultProvider: 'legacy-default', lastPreferredModel: preference },
+    }))
+    expect(result.ok).toBe(true)
+    expect(importedPlans[0].settings).toMatchObject({ defaultProvider: 'legacy-default', lastPreferredModel: preference })
+    expect(importedPlans[0].conversations[0]).toMatchObject({ providerId: null, model: null })
+    expect(importedPlans[0].conversations[0].messages[0].providerId).toBeUndefined()
+    expect(importedPlans[0].conversations[0].messages[0].model).toBeUndefined()
+  })
+
+  it('rejects future payload or preference versions before changing application state', async () => {
+    const { payloadRuntime, importedPlans } = runtime()
+    for (const input of [
+      { version: 99, settings: null },
+      { version: 2, settings: { lastPreferredModel: { ...preference, schema: 'islemind.global-model-preference.v99' } } },
+    ]) {
+      expect((await payloadRuntime.importJson(JSON.stringify({ app: 'islemind', providers: [], conversations: [base], exportedAt: 1, ...input }))).ok).toBe(false)
+    }
+    expect(importedPlans).toHaveLength(0)
+  })
+
+  it('writes payload v2 and retains the existing v2 backup envelope', async () => {
+    const { payloadRuntime } = runtime()
+    expect((await payloadRuntime.exportPayload()).version).toBe(2)
+    const exported = JSON.parse((await payloadRuntime.exportJson({ selection: { mode: 'full' } })).json)
+    expect(exported.schema).toBe('islemind.portable-backup.v2')
+    expect(exported.payload.version).toBe(2)
+  })
+
+  it('round-trips actual message attribution independently of current preference and rejects future protocol versions', async () => {
+    const { payloadRuntime, importedPlans } = runtime()
+    const generationProtocol = { schema: 'islemind.message-protocol.v1', adapterId: 'anthropic' }
+    const attributed = { ...base, providerId: 'current-C', model: 'model-C', messages: [
+      ...history, { ...history[0], id: 'new', providerId: 'actual-B', model: 'upstream-B', generationProtocol },
+    ] }
+    const json = JSON.stringify({ app: 'islemind', version: 2, providers: [], conversations: [attributed], exportedAt: 1, settings: null })
+    expect((await payloadRuntime.importJson(json)).ok).toBe(true)
+    expect(importedPlans[0].conversations[0].messages[1]).toMatchObject({ providerId: 'actual-B', model: 'upstream-B', generationProtocol })
+    expect(importedPlans[0].conversations[0].messages[0].providerId).toBeUndefined()
+    expect((await payloadRuntime.importJson(json.replace('islemind.message-protocol.v1', 'islemind.message-protocol.v99'))).ok).toBe(false)
+    expect(importedPlans).toHaveLength(1)
   })
 })
 

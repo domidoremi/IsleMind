@@ -57,7 +57,7 @@ export type PortableDataLanguagePreferenceSource = 'system' | 'user'
 
 export interface PortableDataExportPayload {
   app: 'islemind'
-  version: 1
+  version: 1 | 2
   conversations: Conversation[]
   settings: Settings | null
   languagePreferenceSource?: PortableDataLanguagePreferenceSource

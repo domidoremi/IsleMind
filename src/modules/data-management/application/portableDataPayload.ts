@@ -35,6 +35,7 @@ import {
   type ProcessTrace,
 } from '@/core'
 import type { AIProvider } from '@/types/providerContracts'
+import { PROVIDER_PROTOCOL_ADAPTER_IDS } from '@/types/providerContracts'
 import type { Conversation, MessageStatus } from '@/types/chatContracts'
 import type {
   McpPromptManifest,
@@ -239,7 +240,7 @@ export function createPortableDataPayloadRuntime(
 
     const payload: PortableDataExportPayload = {
       app: 'islemind',
-      version: 1,
+      version: 2,
       conversations: normalizedConversations,
       settings: settings ? sanitizeSettingsForPortableExport(settings) : null,
       languagePreferenceSource,
@@ -692,7 +693,7 @@ function isMem0ImportPayload(
 
 function isExportPayload(value: unknown): value is PortableDataExportPayload {
   if (!isRecord(value)) return false
-  if (value.app !== 'islemind' || value.version !== 1) return false
+  if (value.app !== 'islemind' || (value.version !== 1 && value.version !== 2)) return false
   if (!Array.isArray(value.conversations) || !value.conversations.every(isConversationLike)) return false
   if (!Array.isArray(value.providers) || !value.providers.every(isProviderLike)) return false
   if (value.skills !== undefined && !Array.isArray(value.skills)) return false
@@ -718,18 +719,24 @@ function isConversationLike(value: unknown): value is Conversation {
   if (!isRecord(value)) return false
   return typeof value.id === 'string' &&
     typeof value.title === 'string' &&
-    typeof value.providerId === 'string' &&
-    typeof value.model === 'string' &&
+    (value.providerId == null || typeof value.providerId === 'string') &&
+    (value.model == null || typeof value.model === 'string') &&
     Array.isArray(value.messages) &&
     value.messages.every(isMessageLike)
 }
 
 function isMessageLike(value: unknown): value is Conversation['messages'][number] {
   if (!isRecord(value)) return false
+  if (value.generationProtocol !== undefined && !isMessageProtocol(value.generationProtocol)) return false
   return typeof value.id === 'string' &&
     (value.role === 'user' || value.role === 'assistant') &&
     typeof value.content === 'string' &&
     typeof value.timestamp === 'number'
+}
+
+function isMessageProtocol(value: unknown): value is NonNullable<Conversation['messages'][number]['generationProtocol']> {
+  return isRecord(value) && value.schema === 'islemind.message-protocol.v1'
+    && PROVIDER_PROTOCOL_ADAPTER_IDS.some((adapter) => adapter === value.adapterId)
 }
 
 function isProviderLike(value: unknown): value is AIProvider {
@@ -752,6 +759,8 @@ function isProviderLike(value: unknown): value is AIProvider {
 function normalizeConversation(conversation: Conversation): Conversation {
   const normalized: Conversation = {
     ...conversation,
+    providerId: conversation.providerId ?? null,
+    model: conversation.model ?? null,
     providerModelMode: conversation.providerModelMode ?? 'inherited',
     skillIds: stringArray(conversation.skillIds),
     skillSnapshot: isRecord(conversation.skillSnapshot)
@@ -770,6 +779,9 @@ function normalizeConversation(conversation: Conversation): Conversation {
     reasoningEffort: conversation.reasoningEffort ?? 'medium',
     maxTokens: Number.isFinite(conversation.maxTokens) ? conversation.maxTokens : 4096,
     messages: conversation.messages.map((message) => {
+      if (message.generationProtocol !== undefined && !isMessageProtocol(message.generationProtocol)) {
+        throw new Error('Unsupported or invalid message protocol metadata.')
+      }
       const status = normalizeMessageStatus(message.status)
       const startedAt = finiteNumber(message.startedAt)
       const completedAt = finiteNumber(message.completedAt)
@@ -783,6 +795,9 @@ function normalizeConversation(conversation: Conversation): Conversation {
         : undefined
       return {
         ...message,
+        generationProtocol: isMessageProtocol(message.generationProtocol)
+          ? { schema: 'islemind.message-protocol.v1' as const, adapterId: message.generationProtocol.adapterId }
+          : undefined,
         status,
         responseText: typeof message.responseText === 'string'
           ? message.responseText
@@ -1056,6 +1071,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
       ? normalizeProviderPresetId(provider.detectedPresetId)
       : presetSelection.presetId,
     apiKey: '',
+    apiKeySource: undefined,
     enabled: provider.enabled ?? false,
     baseUrl: sanitizeProviderBaseUrl(provider.baseUrl),
     models,

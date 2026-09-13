@@ -299,7 +299,7 @@ function isPortablePayload(value: unknown): value is PortableDataExportPayload {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const candidate = value as Partial<PortableDataExportPayload>
   return candidate.app === 'islemind' &&
-    candidate.version === 1 &&
+    (candidate.version === 1 || candidate.version === 2) &&
     Array.isArray(candidate.providers) &&
     Array.isArray(candidate.conversations)
 }
