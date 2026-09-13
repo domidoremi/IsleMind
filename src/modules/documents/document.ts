@@ -1,10 +1,12 @@
 import type { Conversation, Message } from '@/types/chatContracts'
 import type { MessageCitation } from '@/types/contextContracts'
 
-export const SAVED_DOCUMENT_SCHEMA = 'islemind.saved-document.v1' as const
+export const SAVED_DOCUMENT_SCHEMA = 'islemind.saved-document.v2' as const
 export const DOCUMENT_TITLE_LIMIT = 240
 export const DOCUMENT_BODY_LIMIT = 1_000_000
 export const SAVED_DOCUMENT_COUNT_LIMIT = 10_000
+export const DOCUMENT_REVIEW_TEXT_LIMIT = 24_000
+export const DOCUMENT_REVIEW_SOURCE_LIMIT = 12
 
 /** Captured references, not copied source documents or permission to retrieve them. */
 export type DocumentCitation = Pick<MessageCitation, 'id' | 'type' | 'title' | 'excerpt' | 'url' | 'documentId' | 'chunkId'>
@@ -21,10 +23,30 @@ export interface DocumentOrigin {
   citations: DocumentCitation[]
 }
 
+/** Exact retained sections reviewed for a proposal, not live retrieval authority. */
+export interface DocumentRevisionSource {
+  citationId: string
+  type: 'knowledge' | 'memory'
+  documentId?: string
+  title: string
+  updatedAt: number
+  text: string
+}
+
+/** At most one explicitly retained review, bound to its accepted title/body. */
+export interface DocumentReviewContext {
+  acceptedAt: number
+  title: string
+  body: string
+  /** Selection order defines S1, S2, etc. It is not a claim-support mapping. */
+  sources: DocumentRevisionSource[]
+}
+
 export interface DocumentDraft {
   title: string
   body: string
   origin?: DocumentOrigin
+  reviewContext?: DocumentReviewContext
 }
 
 export interface SavedDocument extends DocumentDraft {
@@ -41,7 +63,8 @@ export interface DocumentRepository {
   list(options?: { signal?: AbortSignal }): Promise<DocumentSummary[]>
   get(id: string, options?: { signal?: AbortSignal }): Promise<SavedDocument | undefined>
   create(draft: DocumentDraft): Promise<SavedDocument>
-  save(id: string, revision: string, edit: Pick<DocumentDraft, 'title' | 'body'>): Promise<SavedDocument>
+  /** Omitted reviewContext preserves it; null explicitly removes it. */
+  save(id: string, revision: string, edit: Pick<DocumentDraft, 'title' | 'body'> & { reviewContext?: DocumentReviewContext | null }): Promise<SavedDocument>
   remove(id: string, revision: string): Promise<void>
   loadSnapshot(options?: { signal?: AbortSignal }): Promise<SavedDocument[]>
   /** Atomic, fenced replacement used only by portable import/rollback. */
@@ -87,12 +110,41 @@ export function parseDocumentDraft(value: unknown): DocumentDraft {
     title,
     body: text(data.body, DOCUMENT_BODY_LIMIT),
     ...(data.origin === undefined ? {} : { origin: parseOrigin(data.origin) }),
+    ...(data.reviewContext === undefined ? {} : { reviewContext: parseDocumentReviewContext(data.reviewContext) }),
   }
+}
+
+export function parseDocumentReviewContext(value: unknown): DocumentReviewContext {
+  const data = record(value)
+  if (!Array.isArray(data.sources) || !data.sources.length || data.sources.length > DOCUMENT_REVIEW_SOURCE_LIMIT) throw new TypeError('Invalid review sources.')
+  const sources = data.sources.map((value): DocumentRevisionSource => {
+    const source = record(value)
+    if (source.type !== 'knowledge' && source.type !== 'memory') throw new TypeError('Invalid review source kind.')
+    if (source.type === 'memory' && source.documentId !== undefined) throw new TypeError('Invalid memory review source.')
+    return {
+      citationId: identity(source.citationId),
+      type: source.type,
+      ...(source.type === 'knowledge' ? { documentId: identity(source.documentId) } : {}),
+      title: text(source.title, 4_000),
+      updatedAt: timestamp(source.updatedAt),
+      text: text(source.text, DOCUMENT_REVIEW_TEXT_LIMIT),
+    }
+  })
+  if (new Set(sources.map((source) => source.citationId)).size !== sources.length
+    || new Set(sources.map((source) => `${source.type}:${source.documentId ?? source.citationId}`)).size !== sources.length) throw new TypeError('Duplicate review source.')
+  if (sources.reduce((total, source) => total + source.title.length + source.text.length, 0) > DOCUMENT_REVIEW_TEXT_LIMIT) throw new TypeError('The review sources exceed the document limit.')
+  const title = text(data.title, DOCUMENT_TITLE_LIMIT)
+  const body = text(data.body, DOCUMENT_REVIEW_TEXT_LIMIT)
+  if (!title.trim() || !body.trim()) throw new TypeError('Invalid reviewed proposal.')
+  return { acceptedAt: timestamp(data.acceptedAt), title, body, sources }
 }
 
 export function parseSavedDocument(value: unknown): SavedDocument {
   const data = record(value)
-  if (data.schema !== SAVED_DOCUMENT_SCHEMA) throw new TypeError('Unsupported saved document.')
+  // Read-only v1 compatibility for existing rows/backups. Remove only when their
+  // supported import/migration window ends; the repository tests cover conversion.
+  // v2 prevents an older reader from silently stripping explicitly retained text.
+  if (data.schema !== SAVED_DOCUMENT_SCHEMA && (data.schema !== 'islemind.saved-document.v1' || data.reviewContext !== undefined)) throw new TypeError('Unsupported saved document.')
   const createdAt = timestamp(data.createdAt)
   const updatedAt = timestamp(data.updatedAt)
   if (updatedAt < createdAt) throw new TypeError('Invalid document timestamps.')

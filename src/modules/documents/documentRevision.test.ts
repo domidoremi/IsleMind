@@ -179,6 +179,18 @@ describe('explicit source-backed document revisions (host)', () => {
     expect(f.requests).toHaveLength(1)
   })
 
+  it('never sends retained review copies implicitly or treats them as live source authority', async () => {
+    const f = fixture()
+    const selected = await f.service.readSource(f.draft.origin!, 'citation', signal())
+    f.draft.reviewContext = { acceptedAt: 30, title: 'Historical title', body: 'Historical accepted proposal', sources: [{ ...selected, text: 'Historical private source copy' }] }
+    f.setConversation(undefined)
+    await f.service.propose({ draft: f.draft, instruction: 'Edit body only', sources: [], target: f.target }, signal())
+    expect(f.requests[0].userPrompt).not.toContain('Historical')
+    expect(JSON.parse(f.requests[0].userPrompt).sources).toEqual([])
+    await expect(f.service.propose({ draft: f.draft, instruction: 'Reuse source', sources: [selected], target: f.target }, signal())).rejects.toMatchObject({ code: 'sourceUnavailable' })
+    expect(f.requests).toHaveLength(1)
+  })
+
   it('bounds input and distinct source count rather than silently compressing or duplicating', async () => {
     const f = fixture()
     const source = await f.service.readSource(f.draft.origin!, 'citation', signal())

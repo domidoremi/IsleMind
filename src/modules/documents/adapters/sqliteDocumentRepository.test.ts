@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals'
 import type { SqliteDatabase, SqliteDatabaseProvider, SqliteExecutor, SqliteValue } from '@/platform/storage'
-import { DOCUMENT_BODY_LIMIT, DocumentConflictError, documentDraftFromMessage, parseSavedDocuments } from '../document'
+import { DOCUMENT_BODY_LIMIT, DOCUMENT_REVIEW_TEXT_LIMIT, SAVED_DOCUMENT_SCHEMA, DocumentConflictError, documentDraftFromMessage, parseDocumentReviewContext, parseSavedDocument, parseSavedDocuments, type DocumentReviewContext } from '../document'
 import { createSqliteDocumentRepository } from './sqliteDocumentRepository'
 
 function fixture() {
@@ -44,6 +44,14 @@ const source = {
   id: 'answer', role: 'assistant' as const, status: 'cancelled' as const, timestamp: 9,
   content: 'old body', responseText: '## Draft\n\nRetain this exact answer.  \n', model: 'captured-model',
   citations: [{ id: 'source-1', type: 'knowledge' as const, title: 'Source', excerpt: 'Captured quote', documentId: 'knowledge-1', sourceUri: 'unretained-private-location' }],
+}
+
+const review: DocumentReviewContext = {
+  acceptedAt: 10, title: 'Reviewed proposal', body: 'Proposal [S1], then [S2].\n',
+  sources: [
+    { citationId: 'source-2', type: 'knowledge', documentId: 'knowledge-2', title: 'Second selected first', updatedAt: 8, text: 'Exact source text.  \n' },
+    { citationId: 'memory-1', type: 'memory', title: 'Preference', updatedAt: 9, text: '繁體中文 · 日本語' },
+  ],
 }
 
 describe('saved document ownership and persistence (host SQLite)', () => {
@@ -100,6 +108,95 @@ describe('saved document ownership and persistence (host SQLite)', () => {
       await expect(b.save(winner.id, winner.revision, { title: 'Stale', body: 'not recreated' })).rejects.toBeInstanceOf(DocumentConflictError)
       expect(await a.get(saved.id)).toBeUndefined()
     } finally { f.close() }
+  })
+
+  it('atomically retains detached review text in v2, preserving order, origin and older context across ordinary edits', async () => {
+    const f = fixture()
+    try {
+      const repo = f.repository()
+      const saved = await repo.create(documentDraftFromMessage({ id: 'chat', title: 'Report' }, source))
+      const selected = parseDocumentReviewContext(review)
+      const pending = repo.save(saved.id, saved.revision, { title: review.title, body: review.body, reviewContext: selected })
+      selected.sources[0].text = 'late mutation'
+      const accepted = await pending
+      expect(accepted.schema).toBe('islemind.saved-document.v2')
+      expect(accepted.reviewContext).toEqual(review)
+      expect(accepted.origin).toEqual(saved.origin)
+      expect(await f.repository().get(saved.id)).toEqual(accepted)
+      const humanEdit = await repo.save(accepted.id, accepted.revision, { title: 'Later edit', body: 'Human text' })
+      expect(humanEdit.reviewContext).toEqual(review)
+      // A copy keeps the independently retained review, without fetching sources.
+      const copy = await repo.create(humanEdit)
+      expect(copy.id).not.toBe(humanEdit.id)
+      expect(copy.reviewContext).toEqual(review)
+      const removed = await repo.save(humanEdit.id, humanEdit.revision, { title: humanEdit.title, body: humanEdit.body, reviewContext: null })
+      expect(removed.reviewContext).toBeUndefined()
+      expect(removed.origin).toEqual(saved.origin)
+      expect((await repo.get(copy.id))!.reviewContext).toEqual(review)
+    } finally { f.close() }
+  })
+
+  it('does not acknowledge partial body/context writes and fences stale removal and rollback', async () => {
+    const f = fixture()
+    try {
+      const repo = f.repository()
+      const saved = await repo.create({ title: 'Previous', body: 'Previous body', reviewContext: review })
+      const snapshot = await repo.loadSnapshot()
+      f.setAfterRun((sql) => { if (sql.startsWith('UPDATE saved_documents')) throw new Error('post-write failure') })
+      await expect(repo.save(saved.id, saved.revision, { title: 'New', body: 'New body', reviewContext: null })).rejects.toThrow('post-write failure')
+      f.setAfterRun()
+      expect(await repo.loadSnapshot()).toEqual(snapshot)
+      const newReview = { ...review, body: 'New proposal', acceptedAt: 11 }
+      const newer = await repo.save(saved.id, saved.revision, { title: review.title, body: newReview.body, reviewContext: newReview })
+      await expect(repo.save(saved.id, saved.revision, { title: 'Stale', body: 'Stale', reviewContext: null })).rejects.toBeInstanceOf(DocumentConflictError)
+      await expect(repo.replaceSnapshot(snapshot, [snapshot])).rejects.toBeInstanceOf(DocumentConflictError)
+      expect(await repo.get(saved.id)).toEqual(newer)
+      const replacement = [{ ...newer, revision: 'imported' }]
+      await repo.replaceSnapshot(replacement, [[newer], replacement])
+      await repo.replaceSnapshot(replacement, [[newer], replacement])
+      await repo.replaceSnapshot([newer], [[newer], replacement])
+      expect(await repo.loadSnapshot()).toEqual([newer])
+    } finally { f.close() }
+  })
+
+  it('reads legacy v1 rows losslessly and writes only v2 without a parallel table or premature rewrite', async () => {
+    const f = fixture()
+    try {
+      const repo = f.repository()
+      const saved = await repo.create(documentDraftFromMessage({ id: 'chat', title: 'Report' }, source))
+      const legacy = { ...saved, schema: 'islemind.saved-document.v1' }
+      const json = JSON.stringify(legacy)
+      await f.db.run('UPDATE saved_documents SET payloadJson = ? WHERE id = ?', [json, saved.id])
+      expect(await f.repository().get(saved.id)).toEqual(saved)
+      expect(await f.db.getFirst('SELECT payloadJson FROM saved_documents WHERE id = ?', [saved.id])).toEqual({ payloadJson: json })
+      expect(parseSavedDocument(legacy)).toEqual(saved)
+      expect(() => parseSavedDocument({ ...legacy, reviewContext: review })).toThrow('Unsupported')
+      const updated = await repo.save(saved.id, saved.revision, { title: review.title, body: review.body, reviewContext: review })
+      expect(updated.schema).toBe(SAVED_DOCUMENT_SCHEMA)
+      expect(updated.origin).toEqual(saved.origin)
+      expect((await f.repository().get(saved.id))!.reviewContext).toEqual(review)
+    } finally { f.close() }
+  })
+
+  it('strictly validates review sizes, source identity and primitive metadata instead of dropping malformed context', async () => {
+    const first = review.sources[0]
+    const invalid = [
+      { ...review, acceptedAt: '10' }, { ...review, acceptedAt: -1 },
+      { ...review, sources: [] }, { ...review, sources: Array(13).fill(first) },
+      { ...review, sources: [first, first] },
+      { ...review, sources: [first, { ...first, citationId: 'another-reference' }] },
+      { ...review, sources: [{ ...first, type: ['knowledge'] }] },
+      { ...review, sources: [{ ...first, documentId: undefined }] },
+      { ...review, sources: [{ ...first, updatedAt: NaN }] },
+      { ...review, sources: [{ ...first, type: 'memory' }] },
+      { ...review, sources: [{ ...first, text: 'x'.repeat(DOCUMENT_REVIEW_TEXT_LIMIT) }] },
+      { ...review, body: 'x'.repeat(DOCUMENT_REVIEW_TEXT_LIMIT + 1) },
+    ]
+    for (const value of invalid) expect(() => parseDocumentReviewContext(value)).toThrow()
+    const valid = parseDocumentReviewContext({ ...review, effectAuthority: 'untrusted', sources: [{ ...first, secretLocation: 'untrusted' }] })
+    expect(valid).not.toHaveProperty('effectAuthority')
+    expect(valid.sources[0]).not.toHaveProperty('secretLocation')
+    expect(parseDocumentReviewContext(review)).toEqual(review)
   })
 
   it('makes snapshot recovery idempotent and fences a newer editor from stale import/rollback', async () => {

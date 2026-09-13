@@ -4,6 +4,7 @@ import {
   SAVED_DOCUMENT_SCHEMA,
   SAVED_DOCUMENT_COUNT_LIMIT,
   parseDocumentDraft,
+  parseDocumentReviewContext,
   parseSavedDocument,
   parseSavedDocuments,
   type DocumentRepository,
@@ -71,12 +72,15 @@ export function createSqliteDocumentRepository({ databaseProvider, createId, now
     },
     async save(id, revision, edit) {
       const value = parseDocumentDraft({ title: edit.title, body: edit.body })
+      const reviewContext = edit.reviewContext === undefined || edit.reviewContext === null ? edit.reviewContext : parseDocumentReviewContext(edit.reviewContext)
       const db = await database()
       return db.transaction(async (tx) => {
         const row = await tx.getFirst<DocumentRow>('SELECT id, revision, payloadJson FROM saved_documents WHERE id = ?', [id])
         if (!row || row.revision !== revision) throw new DocumentConflictError()
         const previous = decode(row)
-        const document = parseSavedDocument({ ...previous, ...value, revision: createId(), updatedAt: Math.max(now(), previous.updatedAt + 1) })
+        const document = parseSavedDocument({ ...previous, ...value,
+          reviewContext: reviewContext === undefined ? previous.reviewContext : reviewContext ?? undefined,
+          revision: createId(), updatedAt: Math.max(now(), previous.updatedAt + 1) })
         const result = await tx.run('UPDATE saved_documents SET revision = ?, title = ?, updatedAt = ?, payloadJson = ? WHERE id = ? AND revision = ?',
           [document.revision, document.title, document.updatedAt, JSON.stringify(document), id, revision])
         if (result.changes !== 1) throw new DocumentConflictError()

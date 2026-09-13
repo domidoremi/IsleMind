@@ -1,6 +1,6 @@
 import type { Conversation } from '@/types/chatContracts'
 import { buildKnowledgeScope, filterKnowledgeSources, LOCAL_USER_MEMORY_SCOPE_ID, type KnowledgeLocalSource, type KnowledgeLocalSourceReader } from '@/modules/knowledge'
-import { parseDocumentDraft, type DocumentCitation, type DocumentDraft, type DocumentOrigin } from './document'
+import { DOCUMENT_REVIEW_SOURCE_LIMIT, parseDocumentDraft, type DocumentCitation, type DocumentDraft, type DocumentOrigin, type DocumentRevisionSource } from './document'
 
 export const DOCUMENT_REVISION_INPUT_LIMIT = 24_000
 export const DOCUMENT_REVISION_INSTRUCTION_LIMIT = 2_000
@@ -13,16 +13,6 @@ export interface DocumentRevisionTarget {
   upstreamModel: string
   destination: string
   proxy?: string
-}
-
-/** Exact current retained text the user can inspect before choosing to send it. */
-export interface DocumentRevisionSource {
-  citationId: string
-  type: 'knowledge' | 'memory'
-  documentId?: string
-  title: string
-  updatedAt: number
-  text: string
 }
 
 export interface DocumentRevisionRequest {
@@ -92,7 +82,7 @@ export function createDocumentRevisionService(dependencies: {
       const instruction = request.instruction.trim()
       const target = { ...request.target }
       const sources = request.sources.map((source) => ({ ...source }))
-      if (!instruction || instruction.length > DOCUMENT_REVISION_INSTRUCTION_LIMIT || sources.length > 12) throw new DocumentRevisionError('invalidRequest')
+      if (!instruction || instruction.length > DOCUMENT_REVISION_INSTRUCTION_LIMIT || sources.length > DOCUMENT_REVIEW_SOURCE_LIMIT) throw new DocumentRevisionError('invalidRequest')
       const sourceKeys = sources.map((source) => `${source.type}:${source.documentId ?? source.citationId}`)
       if (new Set(sourceKeys).size !== sourceKeys.length) throw new DocumentRevisionError('invalidRequest')
       const assertTarget = () => {
