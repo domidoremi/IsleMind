@@ -1,7 +1,7 @@
 import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
-import { chooseCredentialForModel, updateCredentialGroupHealth } from '@/modules/providers'
+import { chooseCredentialForModel, updateCredentialGroupHealth, providerForRuntimeFallback } from '@/modules/providers'
 import {
   buildSessionAffinityBinding,
   deriveSessionAffinityKey,
@@ -278,7 +278,15 @@ export async function prepareProviderRuntimePipeline(input: ProviderRuntimePipel
       options: runtimeLogOptions(effectiveReq),
     })
   }
-  const credential = chooseCredentialForModel(input.req.provider, requestedModel, {
+  const constrainedProvider = input.req.executionConstraint ? providerForRuntimeFallback(
+    { provider: input.req.provider, model: requestedModel },
+    { providerId: input.req.provider.id, model: requestedModel, credentialSource: input.req.executionConstraint.identity.credentialSource },
+  ) : undefined
+  const credential = constrainedProvider ? {
+    apiKey: constrainedProvider.apiKey, source: constrainedProvider.apiKeySource!,
+    credentialGroupId: constrainedProvider.apiKeySource?.kind === 'group' ? constrainedProvider.apiKeySource.groupId : undefined,
+  } : chooseCredentialForModel(input.req.provider, requestedModel, {
+    targetCredentialGroupId: input.req.targetCredentialGroupId,
     preferredCredentialGroupId: sessionAffinity.reusable ? sessionAffinity.credentialGroupId : undefined,
     excludedCredentialGroupIds: sessionAffinityCoolingDownCredentialGroupIds,
   })
@@ -324,7 +332,8 @@ export async function prepareProviderRuntimePipeline(input: ProviderRuntimePipel
     ...effectiveReq,
     provider: {
       ...effectiveReq.provider,
-      apiKey: credential.apiKey || effectiveReq.provider.apiKey,
+      apiKey: credential.apiKey,
+      apiKeySource: credential.source,
     },
   }
   const issue = getProviderConfigIssue(runtimeReq.provider, runtimeReq.provider.apiKey)

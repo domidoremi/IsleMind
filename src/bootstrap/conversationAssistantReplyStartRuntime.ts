@@ -21,6 +21,9 @@ import {
 import { st } from '@/i18n/service'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
+import type { BoundConversation, Conversation } from '@/types/chatContracts'
+import type { AIProvider } from '@/types/providerContracts'
+import type { Settings } from '@/types/settingsContracts'
 
 export const conversationAssistantReplyStartRuntime =
   createAssistantConversationReplyStartRuntime({
@@ -46,7 +49,7 @@ export const conversationAssistantReplyStartRuntime =
     },
     replySessionRuntime: conversationAssistantReplySessionRuntime,
     providerAdmissionRuntime: conversationAssistantProviderAdmissionRuntime,
-    persistAdmissionConversation({ conversation }) {
+    persistAdmissionConversation({ conversation }: { conversation: Conversation }) {
       // Admission normalizes provider-owned conversation fields, while a
       // concurrent stop/recovery command may have already terminalized the
       // placeholder in the live store. Persist the admitted identity with
@@ -121,7 +124,7 @@ export const conversationAssistantReplyStartRuntime =
     getSettings() {
       return useSettingsStore.getState().settings
     },
-    createModelOperationSession(input) {
+    createModelOperationSession(input: { conversation: BoundConversation; provider: AIProvider; settings: Settings }) {
       return createConversationModelOperationSession({
         conversation: input.conversation,
         provider: input.provider,

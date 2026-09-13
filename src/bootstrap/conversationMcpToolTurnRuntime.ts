@@ -3,7 +3,7 @@ import {
   createAssistantMcpToolTurnRuntime,
   type AssistantTaggedToolManifestLike,
 } from '@/modules/assistant-runtime'
-import type { ProviderRuntimeCompletionResult } from '@/modules/providers'
+import type { ProviderExecutionTargetObserver, ProviderRuntimeCompletionResult } from '@/modules/providers'
 import {
   BUILT_IN_CAPABILITY_SERVER_ID,
   parseMcpToolRequest,
@@ -48,6 +48,7 @@ export function createConversationMcpToolTurnRuntime(input: {
   conversationId: string
   assistantMessageId: string
   onStreamEvent?: (event: StreamEvent) => void
+  onExecutionTarget?: ProviderExecutionTargetObserver
 }) {
   return createAssistantMcpToolTurnRuntime<
     AIProvider,
@@ -113,15 +114,16 @@ export function createConversationMcpToolTurnRuntime(input: {
     },
     resolveGenerationParameters(parameterInput) {
       const conversation = parameterInput.conversation as Conversation
+      if (!conversation.model?.trim()) throw new Error('Model selection is required for tool continuation.')
       return resolveConversationGenerationParameterRequest({
         provider: parameterInput.provider,
-        conversation,
+        conversation: { ...conversation, model: conversation.model },
         settings: parameterInput.settings,
         model: resolveProviderModelAlias(parameterInput.provider, conversation.model),
         temperatureCap: parameterInput.temperatureCap,
       })
     },
-    synthesize: (request) => synthesizeMcpToolAnswer(request, input.onStreamEvent),
+    synthesize: (request) => synthesizeMcpToolAnswer(request, input.onStreamEvent, input.onExecutionTarget),
     sanitizeAnswer: sanitizeToolRevisionAnswerText,
     translate: st,
     buildTraceMetadata(metadataInput) {
@@ -216,6 +218,7 @@ function isAdmittedTaggedTool(manifest: AssistantTaggedToolManifestLike): boolea
 async function synthesizeMcpToolAnswer(
   request: Record<string, unknown>,
   onStreamEvent?: (event: StreamEvent) => void,
+  onExecutionTarget?: ProviderExecutionTargetObserver,
 ) {
   let text = ''
   let usage: McpToolUsage
@@ -235,7 +238,10 @@ async function synthesizeMcpToolAnswer(
     ...(binding ? { binding } : {}),
   })
   const handle = await streamProviderChat(
-    providerRequest as unknown as Parameters<typeof streamProviderChat>[0],
+    { ...providerRequest, onExecutionTarget: async (target: Parameters<ProviderExecutionTargetObserver>[0]) => {
+      await onExecutionTarget?.(target)
+      reporter.setBinding({ providerId: target.providerId, model: target.model })
+    } } as unknown as Parameters<typeof streamProviderChat>[0],
     (chunk) => {
       text += chunk
       reporter.text(chunk)

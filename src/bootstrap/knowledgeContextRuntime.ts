@@ -118,10 +118,10 @@ export async function retrieveConversationKnowledgeContext(
     }
   }
 
-  const provider = await useSettingsStore.getState().hydrateProviderKey(conversation.providerId)
+  const provider = conversation.providerId ? await useSettingsStore.getState().hydrateProviderKey(conversation.providerId) : null
   throwIfCancelled(signal)
   const modelConfig = getModelConfig(
-    provider ? resolveProviderModelAlias(provider, conversation.model) : conversation.model,
+    provider ? resolveProviderModelAlias(provider, conversation.model ?? '') : conversation.model ?? '',
     provider?.type,
     provider?.modelConfigs,
   )
@@ -210,7 +210,7 @@ export async function retrieveConversationFlareContext(input: {
     return { sources: [], prompt: '', trace: [] }
   }
 
-  const provider = await useSettingsStore.getState().hydrateProviderKey(input.conversation.providerId)
+  const provider = input.conversation.providerId ? await useSettingsStore.getState().hydrateProviderKey(input.conversation.providerId) : null
   throwIfCancelled(input.signal)
   const startedAt = Date.now()
   const query = input.followupQuery || input.query

@@ -13,13 +13,13 @@ import type {
   ProviderRuntimeErrorCallback,
   ProviderRuntimeTraceCallback,
 } from '@/modules/providers'
-import { resolveLocalProviderRoute } from '@/modules/providers'
+import { providerFailoverRouteIdentityKey, resolveLocalProviderRoute } from '@/modules/providers'
 import {
   createProviderTextToolCallStreamFilter,
+  createProviderCitationCollector,
   dedupeCitations,
   executableProviderToolCalls,
   extractCitationsFromText,
-  extractProviderCitationsFromSse,
   filterProviderStructuredOutputToolCalls,
   indexProviderHealthRecords,
   mergeProviderToolCallParts,
@@ -61,13 +61,17 @@ import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/modules/p
 import { resolveProviderContextManagement } from '@/modules/providers'
 import { classifyHttpStatus } from '@/modules/providers'
 import { formatProviderHttpError } from '@/bootstrap/providerResponsePolicies'
-import { prepareHttpJsonRequest, type ProviderRuntimePipelineReady, type ProviderRuntimeRouteResolver } from '@/bootstrap/providerRuntimePipeline'
+import { prepareHttpJsonRequest, prepareProviderRuntimePipeline, type ProviderRuntimePipelineReady, type ProviderRuntimeRouteResolver } from '@/bootstrap/providerRuntimePipeline'
 import { deriveSessionAffinityKey, invalidateSessionAffinityBinding, readSessionAffinityBinding, rotateSessionAffinityBinding, sessionAffinityFailureShouldInvalidate, type SessionAffinityBinding } from '@/modules/providers'
 import { acquireProviderSessionLease } from '@/bootstrap/providerSessionLeasePool'
 import type { ResponsesWebSocketTransport } from '@/modules/providers'
 import { emitRuntimeEvent } from '@/services/runtimeEvents'
 import { appendRuntimeLog } from '@/platform/native/runtimeLog'
 import { recordProviderUsageAttempt } from '@/bootstrap/usageStatisticsRuntime'
+import { ProviderExecutionTargetObserverError, providerExecutionIdentityKey, reportProviderExecutionTarget, resolveProviderEndpointVariant } from '@/modules/providers'
+import { resolveProviderProtocolAdapter } from '@/bootstrap/providerRequestBinding'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { providerRequestHasRouteBoundContinuation, type ProviderFailoverRoute } from '@/modules/providers'
 
 export type { ProviderRuntimeFallbackEffects } from '@/bootstrap/providerRuntimeFallbackEffects'
 
@@ -153,6 +157,8 @@ export interface RuntimeFallbackPlanInput {
   credentialGroupId?: string
   streamStarted?: boolean
   buildFallbackCandidates: ProviderFallbackCandidateBuilder
+  classification?: ProviderFailureClassification
+  confirmedRoute?: ProviderFailoverRoute
 }
 
 export type RuntimeFallbackPlan = ProviderRuntimeFallbackPlan
@@ -242,6 +248,7 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
     const usageStartedAt = Date.now()
     let firstTokenAt: number | undefined
     let usageRecorded = false
+    let targetReported = false
     const recordWebSocketUsage = (
       status: 'success' | 'failed' | 'cancelled',
       usage?: MessageUsage,
@@ -269,6 +276,8 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
       })
     }
     try {
+      await reportRuntimeExecutionTarget(runtimeReq, signal, credentialGroupId)
+      targetReported = true
       await input.responsesWebSocketTransport.run({
         req: runtimeReq,
         url: input.transport.toWebSocketUrl(proxyPolicy.effectiveUrl),
@@ -327,6 +336,7 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
         throwProviderRuntimeCancellation(signal, error)
       }
       recordWebSocketUsage('failed', undefined, error instanceof Error ? error.name : 'websocket_error')
+      if (!targetReported) throw error
       if ((effectiveReq.settings?.transportMode ?? 'auto') === 'websocket' || emittedText) {
         void recordProviderRuntimeFailure({
           req: runtimeReq,
@@ -452,6 +462,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     if (input.controller.signal.aborted) {
       throwProviderRuntimeCancellation(input.controller.signal, error)
     }
+    if (error instanceof ProviderExecutionTargetObserverError) throw error
     void recordProviderRuntimeFailure({
       req: input.req,
       credentialGroupId: input.credentialGroupId,
@@ -627,7 +638,6 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   const decoder = new TextDecoder()
   let fullText = ''
   let buffer = ''
-  let providerCitations: MessageCitation[] = []
   let providerTraces: ProcessTrace[] = []
   let providerToolCalls: ProviderToolCall[] = []
   let providerUsage: MessageUsage | undefined
@@ -638,6 +648,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   const wireProviderType = getWireProviderType(input.req.provider)
   const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }
   const providerCitationSource = resolveStreamProviderCitationSource(input.req.provider, wireProviderType)
+  const citationCollector = providerCitationSource ? createProviderCitationCollector(providerCitationSource) : undefined
   let completionDelivered = false
   let readerCancelRequested = false
 
@@ -654,6 +665,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     completionDelivered = true
 
     const finalParsed = parseProviderStreamChunk(buffer, wireProviderType, streamParseOptions)
+    citationCollector?.addSse(buffer)
     buffer = ''
     if (finalParsed.text) {
       fullText += finalParsed.text
@@ -684,7 +696,6 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     const finalText = structuredOutputText ?? fullText
     const finalResult = withProviderTextToolCallFallback({
       text: finalText,
-      citations: dedupeCitations([...extractCitationsFromText(finalText, input.req.retrievalSources), ...providerCitations]),
       traces: providerTraces,
       usage: providerUsage,
       providerToolCalls: executableProviderToolCalls(filterProviderStructuredOutputToolCalls(providerToolCalls, input.req.structuredOutput)),
@@ -692,6 +703,10 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       ...(providerResponseItems.length ? { responseItems: providerResponseItems } : {}),
       ...(providerContentBlocks.length ? { providerContentBlocks: sanitizeAnthropicReplayContentBlocks(providerContentBlocks) } : {}),
     }, finalText)
+    finalResult.citations = dedupeCitations([
+      ...extractCitationsFromText(finalResult.text, input.req.retrievalSources),
+      ...(citationCollector?.finish(finalResult.text) ?? []),
+    ])
     const citations = finalResult.citations ?? []
     if (!hasDeliverableProviderOutput(finalResult)) {
       recordSuccessfulProviderUsageAttempt(response, input, providerUsage, 'failed', 'empty_response')
@@ -798,9 +813,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
             throwIfProviderRuntimeAborted(input.controller.signal)
           }
           providerUsage = parsed.usage ?? providerUsage
-          if (providerCitationSource) {
-            providerCitations = dedupeCitations([...providerCitations, ...extractProviderCitationsFromSse(event, providerCitationSource)])
-          }
+          citationCollector?.addSse(event)
           if (parsed.terminal) {
             try {
               await completeStream()
@@ -950,6 +963,7 @@ function shouldUseRemoteCompactLocalFallback(req: ProviderRuntimeChatRequest, st
 function normalizeRemoteCompactRoute(
   req: ProviderRuntimeChatRequest,
   localFallback: ProviderRuntimeChatRequest['remoteCompactFallback'] | undefined,
+  routeChanged = false,
 ): ProviderRuntimeChatRequest {
   if (req.remoteCompactEligible !== true) return req
   const nativeEligible = resolveProviderContextManagement({
@@ -957,7 +971,7 @@ function normalizeRemoteCompactRoute(
     settings: req.settings,
     usesOpenAIResponses: usesOpenAIResponses(req),
   }).nativeSupported
-  if (nativeEligible) return req
+  if (nativeEligible && !routeChanged) return req
   return {
     ...req,
     ...(localFallback
@@ -1008,6 +1022,8 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
         ? retryCount
         : 0
     let attemptObserved = false
+    // An attribution/durability failure is not a provider failure and cannot be retried.
+    await reportRuntimeExecutionTarget(input.req, input.controller.signal, input.credentialGroupId)
     try {
       throwIfProviderRetryAborted(input.controller.signal)
       const response = await input.transport.requestStream(input.url, {
@@ -1563,7 +1579,7 @@ export function rectifyXiaomiMimoWebSearchRequestBody(input: {
 export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput): Promise<RuntimeFallbackPlan> {
   const nowMs = Date.now()
   const original = routeForRuntimeFallback(input.req, input.credentialGroupId)
-  const classification = await recordProviderRuntimeFailure({
+  const classification = input.classification ?? await recordProviderRuntimeFailure({
     req: input.req,
     credentialGroupId: input.credentialGroupId,
     status: input.status,
@@ -1574,6 +1590,24 @@ export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput
     retryAfterMs: retryAfterMsFromFailure(input.status),
     nowMs,
   })
+  if (input.req.executionConstraint) {
+    const { providerChatResolutionRuntime, chatFallbackConfirmation } = await import('./providerChatResolutionRuntime')
+    const result = await providerChatResolutionRuntime.resolveFallback({
+      preferred: { providerId: input.req.provider.id, model: input.req.requestedModel ?? input.req.model },
+      original: { ...original, ...input.req.executionConstraint.identity }, trigger: classification.trigger,
+      requiredCapabilities: requiredFallbackCapabilities(input.req), signal: input.req.signal ?? new AbortController().signal,
+      settings: input.req.settings, policy: input.req.failoverPolicy, allowFallback: input.req.allowFallback,
+      targetCredentialGroupId: input.req.targetCredentialGroupId, streamStarted: input.streamStarted,
+      fallbackUsed: input.req.executionConstraint.fallbackUsed,
+      continuationBound: providerRequestHasRouteBoundContinuation(input.req),
+      requiredProtocolAdapterId: input.req.providerToolDeclarations?.length ? resolveProviderProtocolAdapter(input.req).id : undefined,
+      confirmFallback: input.req.confirmFallback ?? chatFallbackConfirmation(input.req),
+    })
+    return { classification, candidates: result.candidates,
+      decision: result.selection ? result.decision : { ...result.decision, eligible: false, selected: undefined },
+      ...(result.selection ? { selection: result.selection } : {}),
+    }
+  }
   const snapshot = await loadProviderHealthSnapshot({ nowMs })
   const healthRecords = indexProviderHealthRecords(snapshot.records)
   const requiredCapabilities = requiredFallbackCapabilities(input.req)
@@ -1587,33 +1621,43 @@ export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput
   const routingInput = {
     trigger: classification.trigger,
     original,
-    candidates: candidates.candidates,
+    candidates: candidates.candidates.filter((candidate) => {
+      if (input.req.targetCredentialGroupId !== undefined && (candidate.providerId !== input.req.provider.id
+        || candidate.credentialSource?.kind !== 'group' || candidate.credentialSource.groupId !== input.req.targetCredentialGroupId)) return false
+      if (!input.req.providerToolDeclarations?.length) return true
+      const provider = fallbackProvidersForRequest(input.req).find((item) => item.id === candidate.providerId)
+      return !!provider && resolveProviderProtocolAdapter({ ...input.req, provider, model: candidate.model }).id === resolveProviderProtocolAdapter(input.req).id
+    }),
     requiredCapabilities,
     streamStarted: input.streamStarted,
   }
-  const sameProviderRoute = resolveLocalProviderRoute({
-    ...routingInput,
-    policy: {
-      mode: 'same-provider',
+  const policy = {
+      ...(input.req.conversationId || input.req.usageContext?.source === 'chat' ? { mode: 'ask-before-cross-provider' as const } : {}),
+      ...input.req.failoverPolicy,
+      ...(input.req.allowFallback === false || providerRequestHasRouteBoundContinuation(input.req) ? { mode: 'off' as const } : {}),
+      allowAfterStreamStart: false,
       maxCandidates: 8,
       maxFailovers: 1,
-    },
-  })
-  const routed = sameProviderRoute.decision.eligible
-    ? sameProviderRoute
-    : resolveLocalProviderRoute({
-        ...routingInput,
-        policy: {
-          maxCandidates: 8,
-          maxFailovers: 1,
-        },
-      })
+  }
+  // Preserve the original same-provider-first pass while intersecting every
+  // supplied restriction. A policy that admits no providers cannot be widened.
+  const canNarrow = policy.mode !== 'off' && !((policy.mode === 'approved-providers' || policy.mode === 'auto-safe')
+    && !policy.approvedProviderIds?.length)
+  const sameProviderRoute = canNarrow ? resolveLocalProviderRoute({ ...routingInput,
+    policy: { ...policy, mode: 'same-provider' }, confirmedRoute: input.confirmedRoute,
+  }) : undefined
+  const routed = sameProviderRoute?.decision.eligible ? sameProviderRoute
+    : resolveLocalProviderRoute({ ...routingInput, policy, confirmedRoute: input.confirmedRoute })
+  if (input.confirmedRoute && routed.decision.selected
+    && providerFailoverRouteIdentityKey(routed.decision.selected) !== providerFailoverRouteIdentityKey(input.confirmedRoute)) {
+    return { classification, candidates, decision: { ...routed.decision, eligible: false, selected: undefined, reason: 'blocked' } }
+  }
   return { classification, decision: routed.decision, candidates }
 }
 
 async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise<boolean> {
   throwIfProviderRetryAborted(input.controller.signal)
-  const plan = await resolveRuntimeFallbackPlan({
+  let plan = await resolveRuntimeFallbackPlan({
     req: input.req,
     status: input.status,
     responseText: input.responseText,
@@ -1621,6 +1665,15 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     credentialGroupId: input.credentialGroupId,
     buildFallbackCandidates: input.buildFallbackCandidates,
   })
+  if (!input.req.executionConstraint && plan.decision.requiresUserConfirmation && input.req.confirmFallback
+    && plan.decision.blockedReasons.every((reason) => reason === 'cross_provider_confirmation_required')) {
+    const candidate = plan.decision.acceptedCandidates[0]
+    if (candidate && await input.req.confirmFallback(candidate, input.controller.signal)) {
+      throwIfProviderRetryAborted(input.controller.signal)
+      plan = await resolveRuntimeFallbackPlan({ req: input.req, classification: plan.classification, confirmedRoute: candidate,
+        credentialGroupId: input.credentialGroupId, buildFallbackCandidates: input.buildFallbackCandidates })
+    }
+  }
   throwIfProviderRetryAborted(input.controller.signal)
   await input.fallbackEffects.logDecision(input.req, plan)
   throwIfProviderRetryAborted(input.controller.signal)
@@ -1637,54 +1690,31 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   }
 
   const selectedRoute = plan.decision.selected
-  const selectedProvider = providerForRuntimeFallback(input.req, selectedRoute)
+  const selectedProvider = plan.selection?.provider ?? providerForRuntimeFallback(input.req, selectedRoute)
   const selectedReqBase: ProviderRuntimeChatRequest = {
     ...input.req,
     provider: selectedProvider,
-    model: selectedRoute.model,
-    requestedModel: selectedRoute.model,
+    model: resolveProviderModelAlias(selectedProvider, selectedRoute.model),
+    requestedModel: plan.selection?.model ?? selectedRoute.model,
     stream: false,
     signal: input.controller.signal,
+    ...(plan.selection ? { executionConstraint: plan.selection.constraint } : {}),
   }
-  const selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback)
+  let selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback, true)
   const fallbackUsageAttribution = {
     originalProviderId: input.req.provider.id,
     originalModel: input.req.requestedModel ?? input.req.model,
     failoverCount: 1,
   }
-  const selectedAssembly = input.transport.assembleRoute({
-    provider: selectedReq.provider,
-    model: selectedReq.model,
-    stream: false,
-    usesResponsesApi: usesOpenAIResponses(selectedReq),
-    settings: selectedReq.settings,
-    hasWebSocketRuntime: typeof WebSocket !== 'undefined',
+  // Reuse the complete admission pipeline (access, credentials, conformance,
+  // payload, proxy), not a shortcut serializer. This remains the same single
+  // non-streaming fallback dispatch, before any stream commitment.
+  const selectedPipeline = await prepareProviderRuntimePipeline({ req: selectedReq, controller: input.controller,
+    resolveRoute: input.resolveRoute, onTrace: input.onTrace, hasWebSocketRuntime: false,
+    assembleProviderRoute: input.transport.assembleRoute,
   })
-  const selectedRouteResult = input.resolveRoute(selectedReq, {
-    endpoint: selectedAssembly.endpoint,
-    transport: selectedAssembly.transportSelection.transport,
-    requestedTransportMode: selectedAssembly.transportSelection.requestedMode,
-    transportFallbackReason: selectedAssembly.transportSelection.fallbackReason,
-  }, {
-    policy: {
-      mode: plan.decision.mode,
-      preserveRegion: true,
-      maxCostTier: 'medium',
-      allowHigherCostTier: false,
-      allowCredentialFailover: false,
-    },
-    trigger: plan.classification.trigger,
-    original: routeForRuntimeFallback(input.req, input.credentialGroupId),
-    candidates: plan.candidates.candidates,
-    requiredCapabilities: requiredFallbackCapabilities(input.req),
-  })
-  await logProviderRouteDecision(selectedReq, selectedRouteResult.decision)
   throwIfProviderRetryAborted(input.controller.signal)
-  await logProviderCompatibility(selectedReq)
-  throwIfProviderRetryAborted(input.controller.signal)
-  await logProviderConformance(selectedReq, selectedRouteResult.conformance)
-  throwIfProviderRetryAborted(input.controller.signal)
-  if (selectedRouteResult.decision.blocked) {
+  if (selectedPipeline.status === 'blocked' || selectedPipeline.routeResult.decision.blocked) {
     recordRuntimeSessionAffinityInvalidation({
       req: input.req,
       credentialGroupId: input.credentialGroupId,
@@ -1695,19 +1725,12 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'error', 'route_blocked'))
     return false
   }
-  const selectedPreparedRequest = prepareHttpJsonRequest({
-    provider: selectedReq.provider,
-    model: selectedReq.model,
-    url: selectedAssembly.endpoint,
-    headers: getHeaders(selectedReq.provider, {
-      remoteCompactEligible: selectedReq.remoteCompactEligible === true,
-      model: selectedReq.model,
-    }),
-    body: selectedRouteResult.body,
-  })
+  selectedReq = selectedPipeline.runtimeReq
+  const selectedPreparedRequest = selectedPipeline.preparedHttpRequest
   throwIfProviderRetryAborted(input.controller.signal)
   const selectedAttemptStartedAt = Date.now()
   let selectedResponse: Response
+  await reportRuntimeExecutionTarget(selectedReq, input.controller.signal, selectedRoute.credentialGroupId)
   try {
     selectedResponse = await input.transport.request(
       selectedPreparedRequest.url,
@@ -1917,6 +1940,39 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   throwIfProviderRetryAborted(input.controller.signal)
   input.onDone(withCredentialGroup(selectedResult, selectedRoute.credentialGroupId))
   return true
+}
+
+async function reportRuntimeExecutionTarget(req: ProviderRuntimeChatRequest, signal: AbortSignal, credentialGroupId?: string): Promise<void> {
+  const group = req.provider.credentialGroups?.find((item) => item.id === credentialGroupId)
+  const credentialSource = req.provider.apiKeySource ?? (group?.apiKey?.trim()
+    ? group.source ?? { kind: 'group' as const, groupId: group.id }
+    : req.provider.apiKey?.trim() ? { kind: 'primary' as const } : { kind: 'none' as const })
+  await reportProviderExecutionTarget({
+    providerId: req.provider.id,
+    model: req.model,
+    credentialSource,
+    protocolAdapterId: resolveProviderProtocolAdapter(req).id,
+    endpointVariant: resolveProviderEndpointVariant(req.provider),
+  }, signal, async (target) => {
+    if (req.executionConstraint) {
+      const [{ providerModelAvailabilityRuntime }, { providerChatResolutionRuntime }] = await Promise.all([
+        import('./providerModelAvailabilityRuntime'), import('./providerChatResolutionRuntime'),
+      ])
+      const admitted = await providerChatResolutionRuntime.revalidate(req.executionConstraint, {
+        preferred: { providerId: req.provider.id, model: req.requestedModel ?? req.model }, signal,
+        settings: req.settings, requiredCapabilities: requiredFallbackCapabilities(req), targetCredentialGroupId: req.targetCredentialGroupId,
+      })
+      if (!admitted || providerExecutionIdentityKey(target) !== providerExecutionIdentityKey(admitted.constraint.identity)) {
+        throw new Error('Provider admission changed before dispatch')
+      }
+      const current = await providerModelAvailabilityRuntime.getAvailability(target)
+      const expected = req.executionConstraint.scope
+      if (current.scope.scopeId !== expected.scopeId || current.scope.epoch !== expected.epoch
+        || current.availability === 'unavailable' || current.availability === 'retired') throw new Error('Provider scope changed before dispatch')
+      target.scope = current.scope
+    }
+    await req.onExecutionTarget?.(target)
+  })
 }
 
 function throwIfProviderRuntimeAborted(signal: AbortSignal): void {

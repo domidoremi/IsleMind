@@ -12,6 +12,12 @@ import type {
   ProviderRuntimeSpeechInput,
   ProviderRuntimeStreamHandle,
   ProviderRuntimeTraceCallback,
+  ProviderExecutionTarget,
+  ProviderChatExecutionConstraint,
+  ProviderModelOperation,
+  ProviderModelAvailabilityEvidence,
+  ProviderModelListOptions,
+  ProviderModelTestOptions,
 } from '@/modules/providers'
 import type { MessageCitation } from '@/types/contextContracts'
 import type {
@@ -30,6 +36,7 @@ import {
   createProviderModelTest,
   createProviderProbe,
   createProviderStreamRuntime,
+  ProviderHttpError,
   ProviderStreamEventBuffer,
   type ProviderAdapter,
   type ProviderEmbeddingAdapter,
@@ -52,6 +59,7 @@ import {
   buildProviderNativeToolDeclarations,
   resolveProviderNativeToolDeclarationTarget,
 } from '@/bootstrap/providerNativeToolDeclarations'
+import { bindProviderModelAvailabilityOperations } from './providerModelAvailabilityRuntime'
 
 const PROVIDER_REQUEST_TIMEOUT_MS = 18000
 const MODEL_TEST_TIMEOUT_MS = 22000
@@ -63,10 +71,51 @@ let providerModelDiscoveryAdapterPromise: Promise<ProviderModelDiscoveryAdapter>
 let providerModelTestPromise: Promise<ProviderModelTest> | undefined
 let providerStreamRuntimePromise: Promise<ProviderRuntimeChatStreamRuntime> | undefined
 
+bindProviderModelAvailabilityOperations({
+  async refresh(input) {
+    const [{ useSettingsStore }, { providerForRuntimeFallback }, { providerModelAvailabilityRuntime }] = await Promise.all([
+      import('@/store/settingsStore'), import('@/modules/providers'), import('./providerModelAvailabilityRuntime'),
+    ])
+    const checkConfiguration = providerModelAvailabilityRuntime.captureConfiguration()
+    checkConfiguration()
+    const provider = await useSettingsStore.getState().hydrateProviderKey(input.providerId)
+    checkConfiguration()
+    if (!provider) throw new Error('Provider no longer exists')
+    const sources = input.credentialSource ? [input.credentialSource] : provider.credentialGroups?.length
+      ? provider.credentialGroups.filter((group) => group.enabled).map((group) => group.source ?? { kind: 'group' as const, groupId: group.id })
+      : [provider.apiKeySource ?? { kind: 'primary' as const }]
+    let failed = false
+    for (const source of sources) {
+      if (input.signal?.aborted) return
+      try {
+        checkConfiguration()
+        const scoped = providerForRuntimeFallback({ provider, model: '' }, { providerId: provider.id, model: '', credentialSource: source })
+        const result = await listProviderModelConfigsDetailed(scoped, scoped.apiKey, { forceRefresh: true, signal: input.signal, credentialSource: source })
+        if (!result.ok) failed = true
+      } catch { failed = true }
+    }
+    if (failed) throw new Error('Some credential scopes could not be refreshed. Prior trusted availability was preserved.')
+  },
+  async retest(input) {
+    const [{ useSettingsStore }, { chooseCredentialForModel, providerForRuntimeFallback }, { providerModelAvailabilityRuntime }] = await Promise.all([
+      import('@/store/settingsStore'), import('@/modules/providers'), import('./providerModelAvailabilityRuntime'),
+    ])
+    const checkConfiguration = providerModelAvailabilityRuntime.captureConfiguration()
+    checkConfiguration()
+    const provider = await useSettingsStore.getState().hydrateProviderKey(input.providerId)
+    checkConfiguration()
+    if (!provider) throw new Error('Provider no longer exists')
+    const source = input.credentialSource ?? chooseCredentialForModel(provider, input.model).source
+    const scoped = providerForRuntimeFallback({ provider, model: input.model }, { providerId: provider.id, model: input.model, credentialSource: source })
+    await testProviderModelRuntime(scoped, input.model, scoped.apiKey, { signal: input.signal, credentialSource: source })
+  },
+})
+
 export interface ProviderRuntimeAdapterOptions {
   provider: AIProvider
   settings?: ProviderRuntimeChatRequest['settings']
   streamChat?: ProviderStreamChat
+  executionConstraint?: ProviderChatExecutionConstraint
 }
 
 export type ProviderStreamChat = (
@@ -104,6 +153,12 @@ async function* streamProviderRuntimeEvents(
   const seenCitations = new Set<string>()
   const streamChat = options.streamChat ?? streamProviderChat
   const runtimeRequest = toRuntimeChatRequest(options, request)
+  let executionTarget: ProviderExecutionTarget | undefined
+  runtimeRequest.onExecutionTarget = async (target) => {
+    if (gatewayOptions.signal.aborted) return
+    await gatewayOptions.onExecutionTarget?.(target)
+    if (!gatewayOptions.signal.aborted) executionTarget = target
+  }
   const upstreamRequestController = new AbortController()
   runtimeRequest.signal = upstreamRequestController.signal
   const abort = () => {
@@ -141,7 +196,7 @@ async function* streamProviderRuntimeEvents(
           if (reasoningReplay.length || toolCallEvents.length) {
             queue.push({
               type: 'provider-continuation-state',
-              binding: { providerId: options.provider.id, model: request.model },
+              binding: { providerId: executionTarget?.providerId ?? options.provider.id, model: executionTarget?.model ?? request.model },
               reasoningReplay,
             })
           }
@@ -271,13 +326,61 @@ export async function streamProviderChat(
   onCitations?: ProviderRuntimeCitationCallback,
   onTrace?: ProviderRuntimeTraceCallback,
 ): Promise<ProviderRuntimeStreamHandle> {
-  return (await resolveProviderStreamRuntime()).start(request, {
-    onChunk,
-    onDone,
-    onError,
+  // The request fence is set by Chat admission; generic non-Chat consumers keep
+  // their existing contract and do not accidentally acquire another route loop.
+  if (!request.executionConstraint) return (await resolveProviderStreamRuntime()).start(request, {
+    onChunk, onDone, onError,
     ...(onCitations ? { onCitations } : {}),
     ...(onTrace ? { onTrace } : {}),
   })
+  const [{ providerChatResolutionRuntime, chatFallbackConfirmation }, { providerModelAvailabilityRuntime },
+    { requiredFallbackCapabilities }] = await Promise.all([import('./providerChatResolutionRuntime'), import('./providerModelAvailabilityRuntime'), import('@/modules/providers')])
+  const signal = request.signal ?? new AbortController().signal
+  const selection = await providerChatResolutionRuntime.revalidate(request.executionConstraint, {
+    preferred: { providerId: request.provider.id, model: request.requestedModel ?? request.model }, signal,
+    settings: request.settings, requiredCapabilities: requiredFallbackCapabilities(request),
+    targetCredentialGroupId: request.targetCredentialGroupId,
+  })
+  if (!selection) {
+    if (signal.aborted) return { controller: new AbortController(), done: Promise.resolve() }
+    throw new Error('The admitted model route changed before dispatch. Retry to re-evaluate your preference.')
+  }
+  let active: { operation: ProviderModelOperation; model: string; output: boolean } | undefined
+  let terminalEvidence: ProviderModelAvailabilityEvidence = { kind: 'operational', reason: 'partial' }
+  const settle = async () => {
+    const previous = active
+    active = undefined
+    if (previous) await providerModelAvailabilityRuntime.settleExecution(previous.operation, previous.model,
+      previous.output ? { kind: 'generation_success' } : signal.aborted ? { kind: 'operational', reason: 'cancelled' } : terminalEvidence)
+  }
+  const observedRequest: ProviderRuntimeChatRequest = {
+    ...request, provider: selection.provider,
+    failoverPolicy: { mode: 'ask-before-cross-provider', ...request.failoverPolicy },
+    confirmFallback: request.confirmFallback ?? chatFallbackConfirmation(request),
+    // An admission fallback already consumed the one route-fallback attempt.
+    ...(request.executionConstraint.fallbackUsed ? { allowFallback: false, settings: { ...request.settings, upstreamMaxRetries: 0 } } : {}),
+    async onExecutionTarget(target) {
+      await settle()
+      const operation = await providerModelAvailabilityRuntime.beginExecution(target, target.attemptId)
+      if (target.scope && (target.scope.scopeId !== operation.scopeId || target.scope.epoch !== operation.epoch)) throw new Error('Provider scope changed before dispatch')
+      active = { operation, model: target.model, output: false }
+      await request.onExecutionTarget?.({ ...target, scope: { scopeId: operation.scopeId, epoch: operation.epoch } })
+    },
+  }
+  try {
+    const handle = await (await resolveProviderStreamRuntime()).start(observedRequest, {
+      onChunk(chunk) { if (active && chunk) active.output = true; onChunk(chunk) },
+      onDone(result) { if (active && (result.text || result.providerToolCalls?.length)) active.output = true; onDone(result) },
+      onError(error) {
+        const code = 'code' in error ? String(error.code) : ''
+        terminalEvidence = { kind: 'operational', reason: code === 'bad_auth' || code === 'missing_key' ? 'unauthorized'
+          : code === 'rate_limited' ? 'rate_limited' : code === 'timeout' ? 'timeout' : code === 'network_error' ? 'dns_tls' : 'partial' }
+        onError(error)
+      },
+      ...(onCitations ? { onCitations } : {}), ...(onTrace ? { onTrace } : {}),
+    })
+    return { ...handle, done: handle.done.finally(settle) }
+  } catch (error) { await settle(); throw error }
 }
 
 export async function generateProviderText(request: ProviderRuntimeChatRequest): Promise<string> {
@@ -298,7 +401,7 @@ export async function testProviderModelRuntime(
   provider: AIProvider,
   model: string,
   apiKey: string,
-  options: { checkParameters?: boolean; timeoutMs?: number; signal?: AbortSignal } = {},
+  options: ProviderModelTestOptions = {},
 ): Promise<ProviderOperationResult<ProviderRuntimeModelTestResult>> {
   return (await resolveProviderModelTest()).testDetailed(provider, model, apiKey, options)
 }
@@ -314,7 +417,7 @@ export async function synchronizeProviderCredentials(
 export async function listProviderModelConfigsDetailed(
   provider: AIProvider,
   apiKey: string,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: ProviderModelListOptions = {},
 ): Promise<ProviderOperationResult<AIModel[]>> {
   return (await resolveProviderModelList()).listDetailed(provider, apiKey, options)
 }
@@ -322,7 +425,7 @@ export async function listProviderModelConfigsDetailed(
 export async function listProviderModelConfigs(
   provider: AIProvider,
   apiKey: string,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: ProviderModelListOptions = {},
 ) {
   return (await resolveProviderModelList()).list(provider, apiKey, options)
 }
@@ -330,7 +433,7 @@ export async function listProviderModelConfigs(
 export async function listProviderModelIds(
   provider: AIProvider,
   apiKey: string,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: ProviderModelListOptions = {},
 ): Promise<string[]> {
   return (await resolveProviderModelList()).listIds(provider, apiKey, options)
 }
@@ -340,10 +443,39 @@ export async function discoverProviderModels(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<AIModel[]> {
+  if (provider.apiKeySource) {
+    const result = await discoverProviderModelsDetailed(provider, timeoutMs, signal)
+    if (result.status === 'cancelled') { const error = new Error('Model discovery cancelled'); error.name = 'AbortError'; throw error }
+    if (result.status === 'failure') {
+      // Preserve the legacy operation classifier without putting raw response
+      // bodies into the evidence envelope or persisted diagnostics.
+      if (result.httpStatus !== undefined) throw new ProviderHttpError(result.httpStatus, '', result.retryAfterMs)
+      const error = new Error(result.failureReason === 'network' ? 'Network request failed' : `Model discovery failed: ${result.failureReason ?? 'unknown'}`)
+      if (result.failureReason === 'timeout') error.name = 'AbortError'
+      throw error
+    }
+    return result.models
+  }
   return (await resolveProviderModelDiscoveryAdapter()).discover(provider, {
     timeoutMs,
     ...(signal ? { signal } : {}),
   })
+}
+
+export async function discoverProviderModelsDetailed(
+  provider: AIProvider,
+  timeoutMs: number,
+  signal?: AbortSignal,
+) {
+  const { providerModelAvailabilityRuntime, resolveRuntimeModelIdentity } = await import('./providerModelAvailabilityRuntime')
+  const checkConfiguration = providerModelAvailabilityRuntime.captureConfiguration()
+  checkConfiguration()
+  const adapter = await resolveProviderModelDiscoveryAdapter()
+  if (!provider.apiKeySource) return adapter.discoverDetailed(provider, { timeoutMs, signal })
+  const identity = await resolveRuntimeModelIdentity(provider, provider.models[0] ?? '')
+  checkConfiguration()
+  return providerModelAvailabilityRuntime.observeDiscovery(identity,
+    (operation) => { checkConfiguration(); return adapter.discoverDetailed(provider, { timeoutMs, signal, scope: identity, operation }) })
 }
 
 export async function transcribeProviderAudio(request: ProviderRuntimeAudioTranscriptionInput): Promise<string> {
@@ -699,6 +831,7 @@ function resolveProviderModelTest(): Promise<ProviderModelTest> {
       discoverModels: (provider, timeoutMs, signal) => (
         discoverProviderModels(provider, timeoutMs, signal)
       ),
+      discoverModelsDetailed: async (provider, timeoutMs, signal) => (await resolveProviderModelDiscoveryAdapter()).discoverDetailed(provider, { timeoutMs, signal }),
     })
     return createProviderModelTest({
     defaultTimeoutMs: MODEL_TEST_TIMEOUT_MS,
@@ -789,7 +922,12 @@ function resolveProviderModelTest(): Promise<ProviderModelTest> {
       getWireProviderType(provider),
     ),
     fetchFailure: providerFetchFailure,
-    probe,
+    probe: { async probe(request) {
+      if (!request.provider.apiKeySource) return probe.probe(request)
+      const { providerModelAvailabilityRuntime, resolveRuntimeModelIdentity } = await import('./providerModelAvailabilityRuntime')
+      const identity = await resolveRuntimeModelIdentity(request.provider, request.model ?? '')
+      return providerModelAvailabilityRuntime.observeProbe(identity, () => probe.probe(request))
+    } },
     usesResponsesApiForModel: (provider, model) => usesOpenAIResponses({ provider, model }),
     })
   })
@@ -875,6 +1013,9 @@ export function toRuntimeChatRequest(
     ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
     ...(request.maxTokens === undefined ? {} : { maxTokens: request.maxTokens }),
     generationParameterSources: request.generationParameterSources,
+    ...(options.executionConstraint && !request.providerStateBinding ? { executionConstraint: options.executionConstraint } : {}),
+    failoverPolicy: { mode: 'ask-before-cross-provider' },
+    ...(request.providerStateBinding ? { allowFallback: false } : {}),
     stream: true,
     conversationId: request.conversationId,
     sessionId: request.conversationId,

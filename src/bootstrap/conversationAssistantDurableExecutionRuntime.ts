@@ -21,8 +21,9 @@ import {
   type AssistantActivityExecutionResult,
   type AssistantRuntimeErrorCode,
   type AssistantModelOperationSession,
+  getAssistantRunMessageAttribution,
 } from '@/modules/assistant-runtime'
-import type { ProviderRuntimeCompletionResult } from '@/modules/providers'
+import { mergeIdenticalProviderCitations, type ProviderExecutionTarget, type ProviderRuntimeCompletionResult } from '@/modules/providers'
 import {
   createProviderRuntimeAdapter,
   streamProviderChat,
@@ -42,6 +43,7 @@ import { st } from '@/i18n/service'
 import type { Attachment, Message } from '@/types/chatContracts'
 import type { RetrievalSource } from '@/types/contextContracts'
 import { preserveMessageIdentity } from '@/bootstrap/plainChatMessageIdentity'
+import { useChatStore } from '@/store/chatStore'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
 const contextSnapshots = createSqliteContextSnapshotRepository(databaseProvider)
@@ -188,7 +190,16 @@ export function createConversationAssistantDurableExecutionRuntime(
       context: contextOutcome.value.snapshot,
       workspaceWritebackHandoff: input.workspaceWritebackHandoff,
       cancellationSignal: input.requestController.signal,
-      async execute({ signal, started, checkpointStreamEvent, continueProviderTurns }) {
+      onPersisted({ run }) {
+        const attribution = getAssistantRunMessageAttribution(run)
+        if (!attribution) return
+        const message = useChatStore.getState().conversations.find((item) => item.id === input.conversationId)?.messages.find((item) => item.id === input.assistantMessageId)
+        if (message && (message.providerId !== attribution.providerId || message.model !== attribution.model || message.generationProtocol?.adapterId !== attribution.generationProtocol?.adapterId)) {
+          useChatStore.getState().updateMessage(input.conversationId, input.assistantMessageId, attribution)
+        }
+      },
+      async execute({ signal, started, checkpointStreamEvent, continueProviderTurns, recordProviderExecutionTarget }) {
+        let executionTarget: ProviderExecutionTarget | undefined
         let terminalLifecycleStarted = false
         let activitySettled = false
         let checkpointFailure: unknown
@@ -269,6 +280,15 @@ export function createConversationAssistantDurableExecutionRuntime(
         if (signal.aborted) abortRequest()
 
         try {
+          const previousTargetObserver = preparedDispatch.request.onExecutionTarget
+          const attributedDispatch = { ...preparedDispatch, request: {
+            ...preparedDispatch.request,
+            onExecutionTarget: async (target: Parameters<NonNullable<typeof recordProviderExecutionTarget>>[0]) => {
+              await previousTargetObserver?.(target)
+              try { await recordProviderExecutionTarget?.(target); executionTarget = target }
+              catch (error) { checkpointFailure = error; throw error }
+            },
+          } }
           const providerDispatchOutcome =
             await dependencies.providerDispatchRuntime.dispatchPrepared({
               ...input,
@@ -289,6 +309,9 @@ export function createConversationAssistantDurableExecutionRuntime(
                         && continueProviderTurns
                       ) {
                         const continuationResults: ProviderRuntimeCompletionResult[] = []
+                        const continuationProvider = !executionTarget || executionTarget.providerId === input.provider.id
+                          ? input.provider : input.fallbackProviders.find((provider) => provider.id === executionTarget?.providerId)
+                        if (!continuationProvider) throw new Error('The actual continuation provider is no longer available.')
                         const continuationResult = await continueProviderTurns({
                           request: canonicalRequest,
                           session: input.modelOperationSession,
@@ -296,7 +319,7 @@ export function createConversationAssistantDurableExecutionRuntime(
                           reasoningReplay: firstReasoningReplay,
                           outputText: result.text,
                           stream: createProviderRuntimeAdapter({
-                            provider: input.provider,
+                            provider: continuationProvider,
                             settings: input.settings,
                             streamChat: createRichContinuationStream(input, continuationResults),
                           }).stream,
@@ -310,6 +333,7 @@ export function createConversationAssistantDurableExecutionRuntime(
                       const finalization = await lifecycle.complete(result, {
                         ...completionContext,
                         onStreamEvent: queueStreamEvent,
+                        onExecutionTarget: attributedDispatch.request.onExecutionTarget,
                       })
                       // Finalization may execute provider/MCP revisions that
                       // emit additional normalized events. Fence terminal run
@@ -342,7 +366,7 @@ export function createConversationAssistantDurableExecutionRuntime(
                 projectMissingTerminal = durableLifecycle.startFailed
                 return durableLifecycle
               },
-            }, preparedDispatch)
+            }, attributedDispatch)
           const streamingOutcome = providerDispatchOutcome.streamingOutcome
           if (streamingOutcome.kind !== 'started') {
             failActivity(
@@ -675,13 +699,7 @@ function mergeProviderCitations(
 ): ProviderRuntimeCompletionResult['citations'] {
   if (!base?.length) return extra
   if (!extra?.length) return base
-  const seen = new Set<string>()
-  return [...base, ...extra].filter((citation) => {
-    const key = JSON.stringify(citation)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  return mergeIdenticalProviderCitations([...base, ...extra])
 }
 
 function projectDurableStartFailure(

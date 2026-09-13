@@ -434,11 +434,17 @@ export function importPortableApplicationDataWithRecovery(
   plan: PortableApplicationImportPlan,
   options: { signal?: AbortSignal } = {},
 ): Promise<PortableImportRecoveryExecutionResult> {
-  return productionCoordinator.importPlan(plan, options)
+  return import('./providerModelAvailabilityRuntime').then(({ providerModelAvailabilityRuntime }) =>
+    providerModelAvailabilityRuntime.withAllMutation(() => productionCoordinator.importPlan(plan, options)))
 }
 
 export function recoverInterruptedPortableImport(): Promise<InterruptedPortableImportRecoveryResult> {
-  return productionCoordinator.recover()
+  // An ordinary startup must not invalidate trusted current summaries.
+  return recoveryStore.readEnvelope().then(async (envelope) => {
+    if (!envelope) return productionCoordinator.recover()
+    const { providerModelAvailabilityRuntime } = await import('./providerModelAvailabilityRuntime')
+    return providerModelAvailabilityRuntime.withAllMutation(() => productionCoordinator.recover())
+  })
 }
 
 function createProductionParticipants(

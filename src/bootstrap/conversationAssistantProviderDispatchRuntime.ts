@@ -2,7 +2,7 @@ import {
   createAssistantConversationProviderDispatchRuntime,
 } from '@/modules/assistant-runtime'
 import type { ProviderRuntimeChatRequest } from '@/modules/providers'
-import type { Attachment, Conversation } from '@/types/chatContracts'
+import type { Attachment, BoundConversation as Conversation } from '@/types/chatContracts'
 import type { RetrievalSource } from '@/types/contextContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings, WebSearchMode } from '@/types/settingsContracts'

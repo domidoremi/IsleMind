@@ -122,6 +122,13 @@ export const conversationProviderStreamingRuntime = {
     })
     return providerStreamingRuntime.start({
       ...streamInput,
+      request: {
+        ...streamInput.request,
+        onExecutionTarget: async (target) => {
+          await streamInput.request.onExecutionTarget?.(target)
+          durableEvents.setBinding({ providerId: target.providerId, model: target.model })
+        },
+      },
       onTextDelta(chunk) {
         input.onTextDelta?.(chunk)
         durableEvents.text(chunk)
@@ -168,6 +175,7 @@ export function createRichStreamEventReporter(
   onStreamEvent: ((event: StreamEvent) => void) | undefined,
   options: RichStreamEventReporterOptions = {},
 ) {
+  let binding = options.binding
   const citationIds = new Set<string>()
   const toolCallIds = new Set<string>()
   const traceStates = new Set<string>()
@@ -237,10 +245,10 @@ export function createRichStreamEventReporter(
         return [{ call, toolCallId, toolName }]
       })
     const reasoningReplay = toRichReasoningReplay(result)
-    if (options.binding && (reasoningReplay.length || calls.length)) {
+    if (binding && (reasoningReplay.length || calls.length)) {
       emit({
         type: 'provider-continuation-state',
-        binding: options.binding,
+        binding,
         reasoningReplay,
       })
     }
@@ -263,7 +271,7 @@ export function createRichStreamEventReporter(
     for (const value of (Array.isArray(result.traces) ? result.traces : [])) trace(value)
   }
 
-  return { text, citations, trace, complete }
+  return { text, citations, trace, complete, setBinding(value: ChatProviderStateBinding) { binding = value } }
 }
 
 function richProviderMetadata(call: {

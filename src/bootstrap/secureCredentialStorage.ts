@@ -13,7 +13,12 @@ export const OBSERVABILITY_SINK_API_KEY = 'islemind.key.observability-sink'
 const rawSecureKeyValueStorage = createExpoSecureKeyValueStoragePort()
 
 export const secureKeyValueStorage = createVerifiedSecureKeyValueStorage(rawSecureKeyValueStorage)
-export const providerCredentialStorage = createProviderCredentialStorage(secureKeyValueStorage)
+export const providerCredentialStorage = createProviderCredentialStorage(secureKeyValueStorage, {
+  async withMutation(providerIds, mutate) {
+    const { withProviderModelAvailabilityChanges } = await import('./providerModelAvailabilityRuntime')
+    await withProviderModelAvailabilityChanges(providerIds, mutate)
+  },
+})
 
 export async function clearKnownSearchSecureKeys(): Promise<void> {
   await Promise.all(KNOWN_SEARCH_SECURE_KEYS.map((key) => secureKeyValueStorage.removeItem(key)))

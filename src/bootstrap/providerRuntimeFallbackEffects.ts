@@ -7,6 +7,7 @@ import {
   type ProviderFailureClassification,
   type ProviderFallbackCandidateBuildResult,
   type ProviderRuntimeChatRequest,
+  type ProviderChatSelection,
 } from '@/modules/providers'
 import {
   recordProviderRuntimeRouteFailure,
@@ -22,6 +23,8 @@ export interface ProviderRuntimeFallbackPlan {
   classification: ProviderFailureClassification
   decision: ProviderFailoverDecision
   candidates: ProviderFallbackCandidateBuildResult
+  /** Runtime-only selected provider; diagnostics project only the decision. */
+  selection?: ProviderChatSelection
 }
 
 export interface ProviderRuntimeFallbackEffects {

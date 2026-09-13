@@ -40,7 +40,8 @@ import { mergeUsage } from '@/services/chatToolResultUtils'
 import { useChatStore } from '@/store/chatStore'
 import { mergeMessageWithStreamingTraceSnapshot, useChatStreamingStore } from '@/store/chatStreamingStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import type { Conversation, Message, MessageUsage } from '@/types/chatContracts'
+import type { BoundConversation as Conversation, Message, MessageUsage } from '@/types/chatContracts'
+import { hasConversationModelPreference } from '@/modules/conversations'
 import type {
   MessageCitation,
   RagEvaluationResult,
@@ -99,9 +100,10 @@ export const conversationAssistantFinalizationRuntime =
       return getMessage(conversationId, assistantMessageId)
     },
     getConversation(conversationId) {
-      return useChatStore.getState().conversations.find(
+      const conversation = useChatStore.getState().conversations.find(
         (conversation) => conversation.id === conversationId,
       )
+      return conversation && hasConversationModelPreference(conversation) ? conversation : undefined
     },
     getSettings() {
       return useSettingsStore.getState().settings
@@ -118,6 +120,7 @@ export const conversationAssistantFinalizationRuntime =
         conversationId: input.conversationId,
         assistantMessageId: input.assistantMessageId,
         onStreamEvent: input.onStreamEvent,
+        onExecutionTarget: input.onExecutionTarget,
       })
       return runtime.execute({
         ...input,

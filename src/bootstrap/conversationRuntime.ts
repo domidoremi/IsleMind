@@ -25,14 +25,13 @@ import {
 } from '@/modules/knowledge'
 import {
   createSameProviderFallbackResolver,
-  type ProviderCapability,
-  type ProviderFallbackModelDescriptor,
   type ProviderRuntimeChatSettings,
   type SameProviderFallbackDescriptor,
+  type ProviderChatExecutionConstraint,
 } from '@/modules/providers'
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
 import type { Conversation, Message } from '@/types/chatContracts'
-import type { AIModel, AIProvider } from '@/types/providerContracts'
+import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import type { RetrievalSource } from '@/types/contextContracts'
 import type { Settings } from '@/types/settingsContracts'
@@ -62,6 +61,7 @@ const ids: IdGenerator = {
 export interface ConversationRuntimeOptions {
   provider?: AIProvider
   providerSettings?: ProviderRuntimeChatSettings
+  executionConstraint?: ProviderChatExecutionConstraint
   providerFallbackDescriptors?: readonly SameProviderFallbackDescriptor[]
   contextRetriever?: KnowledgeContextRetriever
   requestPreparation?: ConversationRunRequestPreparation
@@ -72,6 +72,7 @@ export interface PlainChatRuntimeInput {
   conversation: Conversation
   provider: AIProvider
   settings: Settings
+  executionConstraint?: ProviderChatExecutionConstraint
 }
 
 /** Read-only reconstruction; looking up a terminal run never resumes its effects. */
@@ -86,7 +87,8 @@ export function createConversationRuntime(
     clock: systemClock,
     ids,
     providerAdapters: options.provider
-      ? [createProviderRuntimeAdapter({ provider: options.provider, ...(options.providerSettings ? { settings: options.providerSettings } : {}) })]
+      ? [createProviderRuntimeAdapter({ provider: options.provider, ...(options.providerSettings ? { settings: options.providerSettings } : {}),
+          ...(options.executionConstraint ? { executionConstraint: options.executionConstraint } : {}) })]
       : [],
     runPersistence,
   })
@@ -133,7 +135,9 @@ export function createPlainChatRuntime(
   return createConversationRuntime({
     provider: input.provider,
     providerSettings: input.settings,
-    providerFallbackDescriptors: [createProviderFallbackDescriptor(input.provider)],
+    // Chat has exactly one route-fallback executor. The generic gateway resolver
+    // remains available to other consumers, but must not wrap Chat's executor.
+    ...(input.executionConstraint ? { executionConstraint: input.executionConstraint } : {}),
     contextRetriever: createKnowledgeContextRetriever({
       port: createConversationContextRetrievalPort<Message, Conversation>({
         conversation: input.conversation,
@@ -145,6 +149,7 @@ export function createPlainChatRuntime(
     requestPreparation: createPlainChatRequestPreparation({
       provider: input.provider,
       settings: input.settings,
+      executionModel: input.conversation.model ?? undefined,
     }),
     createModelOperationSession: () => createConversationModelOperationSession(input),
   })
@@ -153,10 +158,15 @@ export function createPlainChatRuntime(
 function createPlainChatRequestPreparation(input: {
   provider: AIProvider
   settings: Settings
+  executionModel?: string
 }): ConversationRunRequestPreparation {
   return {
     async prepare(preparation) {
       throwIfAborted(preparation.cancellationSignal)
+      // The canonical source was loaded through the unchanged full-save barrier.
+      // Apply only the admitted request-local route, never to that stored source.
+      preparation = { ...preparation, request: { ...preparation.request,
+        providerId: input.provider.id, model: input.executionModel ?? preparation.request.model } }
 
       // The Rich path already plans against the admission-normalized upstream
       // model. Keep the Plain request's requested model intact, but use that
@@ -313,57 +323,4 @@ export async function resumeConversationModelOperation(input: {
     projection: input.projection,
   })
   return result.ok && result.value.status !== 'awaiting-confirmation'
-}
-
-function createProviderFallbackDescriptor(provider: AIProvider): SameProviderFallbackDescriptor {
-  return {
-    providerId: provider.id,
-    enabled: provider.enabled,
-    models: fallbackModels(provider),
-    credentials: provider.credentialGroups?.length
-      ? provider.credentialGroups.map((group) => ({
-          enabled: group.enabled,
-          hasCredential: Boolean(group.apiKey?.trim() || provider.apiKey?.trim()),
-          ...(group.availableModels?.length ? { availableModels: credentialModels(provider, group.availableModels) } : {}),
-        }))
-      : [{ enabled: true, hasCredential: Boolean(provider.apiKey?.trim()) }],
-  }
-}
-
-function fallbackModels(provider: AIProvider): ProviderFallbackModelDescriptor[] {
-  const ids = Array.from(new Set([
-    ...provider.models,
-    ...(provider.manualModels ?? []),
-    ...(provider.modelConfigs ?? []).map((model) => model.id),
-    ...(provider.modelAvailability ?? []).map((entry) => entry.modelId),
-    ...(provider.modelAliases ?? []).map((entry) => entry.model),
-  ].map((model) => model.trim()).filter(Boolean)))
-  return ids.map((id) => {
-    const model = getModelConfig(id, provider.type, provider.modelConfigs)
-    return {
-      id,
-      ...(model.deprecated === true ? { deprecated: true } : {}),
-      capabilities: configuredCapabilities(provider, model),
-    }
-  })
-}
-
-function configuredCapabilities(
-  provider: AIProvider,
-  model: AIModel,
-): ProviderCapability[] {
-  const capabilities: ProviderCapability[] = ['chat']
-  if (provider.capabilities?.vision === true && model.supportsVision !== false) capabilities.push('vision')
-  if (provider.capabilities?.files === true && model.supportsFiles !== false) capabilities.push('files')
-  if (provider.capabilities?.audioInput === true) capabilities.push('audio')
-  if (provider.capabilities?.nativeTools === true && model.supportsTools !== false) capabilities.push('tools')
-  return capabilities
-}
-
-function credentialModels(provider: AIProvider, availableModels: readonly string[]): string[] {
-  const available = new Set(availableModels)
-  for (const alias of provider.modelAliases ?? []) {
-    if (available.has(alias.model)) available.add(alias.alias)
-  }
-  return [...available]
 }

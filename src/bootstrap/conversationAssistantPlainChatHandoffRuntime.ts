@@ -18,7 +18,8 @@ import {
 import { sanitizeTrace } from '@/services/chatTraceUtils'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
-import type { Conversation } from '@/types/chatContracts'
+import type { BoundConversation as Conversation } from '@/types/chatContracts'
+import { hasConversationModelPreference } from '@/modules/conversations'
 import type { AIProvider, ChatErrorCode } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
 import { st } from '@/i18n/service'
@@ -32,9 +33,10 @@ export const conversationAssistantPlainChatHandoffRuntime =
   >({
     isEligible: isPlainChatEligible,
     getPersistedConversation(conversationId) {
-      return useChatStore
+      const conversation = useChatStore
         .getState()
         .conversations.find((conversation) => conversation.id === conversationId)
+      return conversation && hasConversationModelPreference(conversation) ? conversation : undefined
     },
     isReplyCancelled({ conversationId, assistantMessageId, controller }) {
       if (controller.signal.aborted) return true

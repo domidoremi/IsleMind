@@ -10,7 +10,7 @@ import { buildSetupGuide } from '@/services/chatErrorUtils'
 import { sanitizeTrace } from '@/services/chatTraceUtils'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
-import type { Conversation } from '@/types/chatContracts'
+import type { BoundConversation, Conversation } from '@/types/chatContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import type { AIProvider, ChatErrorCode } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
@@ -23,7 +23,8 @@ export const conversationAssistantProviderAdmissionRuntime =
     Settings,
     ReturnType<typeof getModelConfig>,
     ChatErrorCode,
-    ProcessTrace
+    ProcessTrace,
+    BoundConversation
   >({
     admitConversation(input) {
       return conversationProviderAdmissionRuntime.admitConversation(input)

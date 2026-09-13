@@ -85,6 +85,7 @@ export async function createConversationModelOperationSession(
   input: ConversationModelOperationRuntimeInput,
   dependencies: ConversationModelOperationSessionDependencies = DEFAULT_MODEL_OPERATION_SESSION_DEPENDENCIES,
 ): Promise<AssistantModelOperationSession | undefined> {
+  if (!input.conversation.providerId?.trim() || !input.conversation.model?.trim()) return undefined
   const created = await dependencies.createCatalog(input.settings)
   if (!created.ok) throw new Error(created.message)
   if (created.catalog.snapshot.operations.length === 0) return undefined
