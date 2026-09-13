@@ -9,14 +9,19 @@ const {
   resolveReleaseArchForAndroidAbi,
 } = require('./release-artifact-contract')
 const { collectReleaseSourceFreshness } = require('./release-freshness-contract')
-const { cleanInstallState, defaultReleaseAppPackageName, validateCurrentApkSmokeResult } = require('./release-validation-contract')
+const {
+  cleanInstallState,
+  defaultReleaseAppPackageName,
+  isValidAdbDeviceSerial,
+  selectReadyAdbDevice,
+  validateCurrentApkSmokeResult,
+} = require('./release-validation-contract')
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const outputPath = path.join(evidenceDir, 'current-apk-smoke-results.json')
 const appPackageName = defaultReleaseAppPackageName
-const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
-const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
+const requestedDevice = process.env.QA_DEVICE_SERIAL ?? 'emulator-5554'
 const expectedApp = readExpectedAppConfig()
 const launchStabilizationMs = 18000
 const fatalEvidenceLineLimit = 1200
@@ -29,7 +34,7 @@ const postWindowObservationMs = readOptionalObservationMs(process.env.QA_POST_WI
 
 function main() {
   fs.mkdirSync(evidenceDir, { recursive: true })
-  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
+  const device = resolveDevice(requestedDevice)
   if (device) forceStop(device)
   const installed = device ? readInstalledPackageInfo(device) : null
   const apkPath = resolveApkPath(expectedApp, {
@@ -48,7 +53,10 @@ function main() {
   }
 
   if (!device) {
-    result.launch = { ok: false, error: 'No connected adb device was found.' }
+    result.launch = {
+      ok: false,
+      error: 'ADB target is not uniquely connected and ready. Set QA_DEVICE_SERIAL to the exact authorized serial; only an unset value defaults to emulator-5554. No fallback device was selected.',
+    }
     writeResult(result)
     process.exitCode = 1
     return
@@ -61,16 +69,10 @@ function main() {
   if (!isPassing(result)) process.exitCode = 1
 }
 
-function resolveDevice(requested, options = {}) {
+function resolveDevice(requested) {
+  if (!isValidAdbDeviceSerial(requested)) return null
   const output = runCommand('adb', ['devices']) ?? ''
-  const serials = output
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/))
-    .filter(([serial, state]) => serial && state === 'device')
-    .map(([serial]) => serial)
-  if (serials.includes(requested)) return requested
-  if (options.strict) return null
-  return serials[0] ?? null
+  return selectReadyAdbDevice(requested, output)
 }
 
 function forceStop(device) {

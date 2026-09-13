@@ -10,9 +10,12 @@ const {
   formatApkArtifactRelativePath,
 } = require('./release-artifact-contract')
 const {
+  compareReleaseSnapshotApk,
   collectReleaseSourceFreshness,
+  isReleaseSourceSnapshotCurrent,
   releaseFreshnessToleranceMs,
   releaseSourceExtensions,
+  releaseSourceSnapshotSchema,
   writeReleaseSourceSnapshot,
 } = require('./release-freshness-contract')
 const {
@@ -554,6 +557,21 @@ const rawInputSourceContracts = new Map([
 main()
 
 function main() {
+  if (process.argv.includes('--self-test=release-provenance')) {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-release-provenance-test-'))
+    try {
+      runReleaseFreshnessSelfTest(tempRoot)
+      runReleaseProvenanceMatrixGateSelfTest()
+      runReleaseRecoveryWorklistSelfTest()
+      runEvidenceCoverageSelfTest()
+    } finally {
+      if (path.dirname(path.resolve(tempRoot)) !== path.resolve(os.tmpdir()) || !path.basename(tempRoot).startsWith('islemind-release-provenance-test-')) {
+        throw new Error(`Refusing unexpected release provenance fixture cleanup: ${tempRoot}`)
+      }
+      fs.rmSync(tempRoot, { recursive: true, force: true })
+    }
+    return
+  }
   if (process.argv.includes('--self-test')) {
     runSelfTest()
     return
@@ -2978,9 +2996,10 @@ function checkCorruptMirrorRequests() {
 
 function collectReleaseProvenanceMatrixGateIssues(text, releaseProvenance) {
   const issues = []
-  if (releaseProvenance?.sourceFreshness?.status === 'stale') {
+  const rebuildCondition = releaseSourceRebuildCondition(releaseProvenance)
+  if (rebuildCondition) {
     const requiredSnippets = [
-      'newest source/resource',
+      rebuildCondition.startsWith('newest source/resource') ? 'newest source/resource' : 'APK/source snapshot binding',
       'test-evidence/qa/coverage-report.md',
       releaseSourceStabilityCommand,
       releaseRebuildCommand,
@@ -2991,7 +3010,7 @@ function collectReleaseProvenanceMatrixGateIssues(text, releaseProvenance) {
       if (!text.includes(snippet)) issues.push(`Matrix is missing release provenance stale-state value: ${snippet}.`)
     }
   }
-  if (releaseProvenance?.sourceFreshness?.status === 'current' && !releaseProvenance?.installed) {
+  if (!rebuildCondition && !releaseProvenance?.installed) {
     const requiredSnippets = [
       'installed-package provenance',
       releaseInstallCurrentApkCommand,
@@ -5795,7 +5814,7 @@ function runReleaseFreshnessSelfTest(tempRoot) {
   if (!(staleFreshness.staleByMs > 0)) throw new Error('Release freshness self-test expected a positive staleByMs value.')
 
   const currentFreshness = collectReleaseSourceFreshness(releaseRoot, { modifiedAt: '2026-01-01T00:00:11.000Z' })
-  if (currentFreshness.status !== 'current') throw new Error(`Release freshness self-test expected current status, got ${currentFreshness.status}.`)
+  if (currentFreshness.status !== 'unknown') throw new Error(`Release freshness self-test expected timestamp-only evidence to remain unknown, got ${currentFreshness.status}.`)
 
   const apkPath = path.join(releaseRoot, 'dist-apk', 'fixture.apk')
   fs.mkdirSync(path.dirname(apkPath), { recursive: true })
@@ -5845,7 +5864,8 @@ function runReleaseProvenanceMatrixGateSelfTest() {
   }
 
   const currentNoDeviceProvenance = {
-    sourceFreshness: { status: 'current' },
+    apk: { sha256: 'a'.repeat(64), sizeBytes: 1 },
+    sourceFreshness: currentReleaseSourceFreshnessFixture('a'.repeat(64), 1),
     installed: null,
   }
   const currentNoDeviceText = [
@@ -5877,6 +5897,16 @@ function runReleaseProvenanceMatrixGateSelfTest() {
   }
 
   console.log('Release provenance matrix gate self-test passed (stale-state rebuild and current no-device commands).')
+}
+
+function currentReleaseSourceFreshnessFixture(sha256, sizeBytes) {
+  return {
+    status: 'current',
+    snapshot: {
+      present: true, schema: releaseSourceSnapshotSchema,
+      apk: { sha256, sizeBytes }, comparison: { status: 'unchanged' },
+    },
+  }
 }
 
 function runReleaseRecoveryWorklistSelfTest() {
@@ -5924,19 +5954,39 @@ function runReleaseRecoveryWorklistSelfTest() {
   if (summary.total !== normalizedRows.length) throw new Error('Release recovery worklist self-test expected summary total to match row count.')
   if (summary.byCommandType.local !== 2) throw new Error('Release recovery worklist self-test expected two local commands.')
   if (summary.byCommandType.device !== 5) throw new Error('Release recovery worklist self-test expected five device commands.')
-  const currentRows = collectReleaseRecoveryWorklist({
+  const currentProvenance = {
     appPackageName,
     apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: fixtureSha256, sidecarSha256: fixtureSha256, sizeBytes: 1 },
-    sourceFreshness: { status: 'current' },
+    sourceFreshness: currentReleaseSourceFreshnessFixture(fixtureSha256, 1),
     expected: { androidPackage: 'com.islemind.app', packageVersion: '1.0.7', expoVersion: '1.0.7', androidVersionCode: 107 },
     installed: fixtureInstalled,
-  })
+  }
+  const currentRows = collectReleaseRecoveryWorklist(currentProvenance)
   if (currentRows.length) throw new Error(`Release recovery worklist self-test expected no rows for valid provenance, got ${currentRows.length}.`)
+
+  for (const sourceFreshness of [
+    { status: 'current' },
+    { ...currentReleaseSourceFreshnessFixture(fixtureSha256, 1), status: 'unknown' },
+    currentReleaseSourceFreshnessFixture('b'.repeat(64), 1),
+    currentReleaseSourceFreshnessFixture(fixtureSha256, 2),
+  ]) {
+    const invalidProvenance = { ...currentProvenance, sourceFreshness }
+    const recovery = collectReleaseRecoveryWorklist(invalidProvenance)
+    if (recovery[0]?.command !== releaseSourceStabilityCommand || recovery[1]?.command !== releaseRebuildCommand) {
+      throw new Error('Unbound source evidence must require local source qualification/rebuild before any device recovery command.')
+    }
+    const captureRow = buildReleaseProvenanceCaptureRow(invalidProvenance)
+    if (captureRow.category !== 'release-provenance' || !captureRow.requiredInput.includes('APK/source snapshot binding')) {
+      throw new Error('Unbound source evidence must not be classified as device-only recovery.')
+    }
+    const matrixIssues = collectReleaseProvenanceMatrixGateIssues('installed-package provenance', invalidProvenance)
+    if (!matrixIssues.some((issue) => issue.includes(releaseRebuildCommand))) throw new Error('Matrix must require rebuild for unbound source evidence.')
+  }
 
   const missingDigestRows = collectReleaseRecoveryWorklist({
     appPackageName,
     apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: fixtureSha256, sidecarSha256: fixtureSha256, sizeBytes: 1 },
-    sourceFreshness: { status: 'current' },
+    sourceFreshness: currentReleaseSourceFreshnessFixture(fixtureSha256, 1),
     expected: { androidPackage: 'com.islemind.app', packageVersion: '1.0.7', expoVersion: '1.0.7', androidVersionCode: 107 },
     installed: { ...fixtureInstalled, packageSha256: null },
   })
@@ -5945,7 +5995,7 @@ function runReleaseRecoveryWorklistSelfTest() {
   const mismatchedDigestRows = collectReleaseRecoveryWorklist({
     appPackageName,
     apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: fixtureSha256, sidecarSha256: fixtureSha256, sizeBytes: 1 },
-    sourceFreshness: { status: 'current' },
+    sourceFreshness: currentReleaseSourceFreshnessFixture(fixtureSha256, 1),
     expected: { androidPackage: 'com.islemind.app', packageVersion: '1.0.7', expoVersion: '1.0.7', androidVersionCode: 107 },
     installed: { ...fixtureInstalled, packageSha256: 'b'.repeat(64) },
   })
@@ -7812,9 +7862,9 @@ function runEvidenceCoverageSelfTest() {
     releaseProvenance: {
       appPackageName,
       source: 'stale-cache',
-      apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: 'current', sidecarSha256: 'current', sizeBytes: 1 },
+      apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: 'a'.repeat(64), sidecarSha256: 'a'.repeat(64), sizeBytes: 1 },
       sourceFreshness: {
-        status: 'current',
+        ...currentReleaseSourceFreshnessFixture('a'.repeat(64), 1),
         newestInput: { path: 'src/services/context.ts', modifiedAt: '2026-01-01T00:00:00.000Z' },
       },
       expected: { androidPackage: appPackageName, packageVersion: '1.0.7', expoVersion: '1.0.7', androidVersionCode: 107 },
@@ -8363,13 +8413,12 @@ function collectBlockingEvidenceCaptureWorklist({ evidenceCoverage, missingScree
 }
 
 function buildReleaseProvenanceCaptureRow(releaseProvenance) {
-  const sourceIsStale = releaseProvenance?.sourceFreshness?.status === 'stale'
-  const newest = releaseProvenance?.sourceFreshness?.newestInput
-  if (sourceIsStale) {
+  const rebuildCondition = releaseSourceRebuildCondition(releaseProvenance)
+  if (rebuildCondition) {
     return {
       category: 'release-provenance',
       item: 'Release APK provenance',
-      requiredInput: newest?.path ? `${newest.path} newer than APK` : 'current APK and installed package provenance',
+      requiredInput: rebuildCondition,
       requiredInputState: 'stale',
       action: 'run Release Recovery Worklist serially after memory and device availability are confirmed',
       evidence: 'dist-apk APK, current-apk-smoke-results.json, and dependent Android evidence',
@@ -8807,22 +8856,33 @@ function debugOverlayNodes(snapshot) {
   return snapshot.debugOverlayNodes ?? []
 }
 
+function releaseSourceRebuildCondition(provenance) {
+  const freshness = provenance?.sourceFreshness
+  if (isReleaseSourceSnapshotCurrent(freshness, provenance?.apk)) return null
+  if (freshness?.status === 'stale' && freshness.reason !== 'artifact_changed_since_snapshot') {
+    return `newest source/resource ${freshness.newestInput?.path ?? 'unknown'} is newer than APK`
+  }
+  const binding = compareReleaseSnapshotApk(freshness?.snapshot, provenance?.apk)
+  return `APK/source snapshot binding ${binding.status} (${binding.reason}); source freshness ${freshness?.status ?? 'missing'}`
+}
+
 function collectReleaseRecoveryWorklist(provenance) {
   const issues = validateReleaseProvenance(provenance)
   if (!issues.length) return []
   const rows = []
-  if (provenance?.sourceFreshness?.status === 'stale') {
+  const rebuildCondition = releaseSourceRebuildCondition(provenance)
+  if (rebuildCondition) {
     rows.push({
       gate: 'Release source stability',
-      condition: `newest source/resource ${provenance.sourceFreshness.newestInput?.path ?? 'unknown'} is newer than APK`,
+      condition: rebuildCondition,
       command: releaseSourceStabilityCommand,
       evidence: 'stable release input mtimes before rebuild',
     })
     rows.push({
       gate: 'Release APK rebuild',
-      condition: `newest source/resource ${provenance.sourceFreshness.newestInput?.path ?? 'unknown'} is newer than APK`,
+      condition: rebuildCondition,
       command: releaseRebuildCommand,
-      evidence: 'dist-apk APK and SHA256 sidecar refreshed',
+      evidence: 'dist-apk APK, SHA256 sidecar and artifact-bound source snapshot refreshed',
     })
   }
   rows.push(
@@ -8893,6 +8953,8 @@ function renderReleaseProvenance(lines, provenance) {
   lines.push(`| Newest source/resource modified | ${escapeCell(provenance.sourceFreshness?.newestInput?.modifiedAt ?? 'missing')} |`)
   lines.push(`| APK freshness | ${escapeCell(provenance.sourceFreshness?.status ?? 'missing')} |`)
   lines.push(`| APK freshness reason | ${escapeCell(provenance.sourceFreshness?.reason ?? 'missing')} |`)
+  const binding = compareReleaseSnapshotApk(provenance.sourceFreshness?.snapshot, provenance.apk)
+  lines.push(`| APK/source snapshot binding | ${escapeCell(`${binding.status} / ${binding.reason}`)} |`)
   lines.push(`| Source snapshot | ${provenance.sourceFreshness?.snapshot?.present ? escapeCell(`${provenance.sourceFreshness.snapshot.comparison?.status ?? 'unknown'} / ${provenance.sourceFreshness.snapshot.inputCount ?? 0} inputs`) : 'missing'} |`)
   lines.push(`| Expected package/version | ${escapeCell(`${provenance.expected?.androidPackage ?? 'missing'} / ${provenance.expected?.expoVersion ?? 'missing'} (${provenance.expected?.androidVersionCode ?? 'missing'})`)} |`)
   lines.push(`| Installed device | ${escapeCell(provenance.installed?.deviceSerial ?? 'missing')} |`)

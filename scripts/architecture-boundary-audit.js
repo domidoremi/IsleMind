@@ -109,6 +109,7 @@ const requiredContracts = [
       'src/modules/providers/providerConfigPolicy.ts',
       'src/modules/providers/providerResponseParsing.ts',
       'src/modules/providers/providerStreamParsing.ts',
+      'src/modules/providers/providerSseData.ts',
       'src/modules/providers/providerOperationResult.ts',
       'src/modules/providers/providerJsonPolicy.ts',
       'src/bootstrap/providerRequestPolicies.ts',
@@ -267,9 +268,9 @@ const requiredContracts = [
       ['src/modules/assistant-runtime/application/assistantConversationRequestPlanningRuntime.ts', /\.\.\.\(usesOpenAIResponses === undefined \? \{\} : \{ usesOpenAIResponses \}\)/],
       ['src/modules/assistant-runtime/application/assistantConversationRequestPlanningRuntime.ts', /dependencies\.resolvePreviousCompactState\(\{[^]*?provider: input\.provider,[^]*?\.\.\.\(usesOpenAIResponses === undefined \? \{\} : \{ usesOpenAIResponses \}\)/],
       ['src/bootstrap/conversationAssistantRequestPlanningRuntime.ts', /resolveUsesOpenAIResponses\(input\) \{[\s\S]*?return usesOpenAIResponses\(\{[\s\S]*?provider: input\.provider[\s\S]*?model: input\.model[\s\S]*?webSearchMode: input\.webSearchMode[\s\S]*?attachments: input\.attachments/],
-      ['src/bootstrap/providerRuntimeExecutor.ts', /function normalizeRemoteCompactRoute\([\s\S]*?resolveProviderContextManagement\(\{[\s\S]*?provider: req\.provider[\s\S]*?usesOpenAIResponses: usesOpenAIResponses\(req\)[\s\S]*?\}\)\.nativeSupported[\s\S]*?if \(nativeEligible\) return req[\s\S]*?messages: localFallback\.messages[\s\S]*?contextPrompt: localFallback\.contextPrompt[\s\S]*?remoteCompactEligible: false[\s\S]*?remoteCompactFallback: undefined[\s\S]*?previousResponseId: undefined/],
-      ['src/bootstrap/providerRuntimeExecutor.ts', /const selectedReqBase:[\s\S]*?provider: selectedProvider,[\s\S]*?model: selectedRoute\.model,[\s\S]*?const selectedReq = normalizeRemoteCompactRoute\(selectedReqBase, input\.req\.remoteCompactFallback\)/],
-      ['src/bootstrap/providerRuntimeExecutor.ts', /const selectedReq = normalizeRemoteCompactRoute\(selectedReqBase, input\.req\.remoteCompactFallback\)/],
+      ['src/bootstrap/providerRuntimeExecutor.ts', /function normalizeRemoteCompactRoute\([\s\S]*?resolveProviderContextManagement\(\{[\s\S]*?provider: req\.provider[\s\S]*?usesOpenAIResponses: usesOpenAIResponses\(req\)[\s\S]*?\}\)\.nativeSupported[\s\S]*?if \(nativeEligible && !routeChanged\) return req[\s\S]*?messages: localFallback\.messages[\s\S]*?contextPrompt: localFallback\.contextPrompt[\s\S]*?remoteCompactEligible: false[\s\S]*?remoteCompactFallback: undefined[\s\S]*?previousResponseId: undefined/],
+      ['src/bootstrap/providerRuntimeExecutor.ts', /const selectedReqBase:[\s\S]*?provider: selectedProvider,[\s\S]*?model: resolveProviderModelAlias\(selectedProvider, selectedRoute\.model\),[\s\S]*?(?:const|let) selectedReq = normalizeRemoteCompactRoute\(selectedReqBase, input\.req\.remoteCompactFallback, true\)/],
+      ['src/bootstrap/providerRuntimeExecutor.ts', /(?:const|let) selectedReq = normalizeRemoteCompactRoute\(selectedReqBase, input\.req\.remoteCompactFallback, true\)/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /const fallbackReq = normalizeRemoteCompactRoute\([\s\S]*?req\.remoteCompactFallback/],
       ['src/modules/assistant-runtime/application/assistantConversationFinalizationRuntime.ts', /dependencies\.buildSuccessPlan\(\{[\s\S]*?if \(terminalProjection\.kind === 'skip'\)[\s\S]*?if \(input\.remoteCompactEligible\)[\s\S]*?dependencies\.recordRemoteCompactFailed\(\{[\s\S]*?dependencies\.recordRemoteCompactCompleted\(\{[\s\S]*?dependencies\.commitSuccess\(\{/],
       ['src/modules/assistant-runtime/application/assistantConversationRequestPlanningRuntime.ts', /resolvePreviousCompactState\(\{[^]*?planContext\(\{[^]*?previousResponseId: previousCompactState\.previousResponseId,[^]*?previousFragments: previousCompactState\.previousFragments,/],
@@ -352,7 +353,7 @@ const requiredContracts = [
       ['src/modules/providers/providerModelTest.ts', /await dependencies\.probe\.probe\(\{/],
       ['src/modules/providers/providerModelTest.ts', /buildProviderModelProbeResult\(\{/],
       ['src/bootstrap/providerRuntime.ts', /const probe = createProviderProbe\(\{/],
-      ['src/bootstrap/providerRuntime.ts', /fetchFailure: providerFetchFailure,\s*probe,\s*usesResponsesApiForModel:/],
+      ['src/bootstrap/providerRuntime.ts', /fetchFailure: providerFetchFailure,[\s\S]*?probe: \{ async probe\(request\)[\s\S]*?observeProbe\(identity, \(\) => probe\.probe\(request\)\)[\s\S]*?usesResponsesApiForModel:/],
       ['src/modules/providers/index.ts', /ProviderProbeResult as ProviderConnectivityProbeResult/],
       ['src/modules/providers/index.ts', /export \* from ['"]\.\/providerUsage['"]/],
       ['src/modules/providers/index.ts', /export \* from ['"]\.\/providerUsageQueryRecipe['"]/],
@@ -394,8 +395,10 @@ const requiredContracts = [
       ['src/modules/providers/providerConfigPolicy.ts', /export function createProviderConfigPolicy/],
       ['src/modules/providers/providerResponseParsing.ts', /export function createProviderResponseParsingPolicy/],
       ['src/modules/providers/providerStreamParsing.ts', /export function createProviderStreamParsingPolicy/],
-      ['src/modules/providers/providerStreamParsing.ts', /terminal\s*=\s*false/],
-      ['src/modules/providers/providerStreamParsing.ts', /terminal\s*=\s*true/],
+      ['src/modules/providers/providerStreamParsing.ts', /const \{ sawDataLine, terminal \} = visitProviderSseData\(chunk, appendPayload\)/],
+      ['src/modules/providers/providerSseData.ts', /export function visitProviderSseData/],
+      ['src/modules/providers/providerSseData.ts', /terminal\s*=\s*false/],
+      ['src/modules/providers/providerSseData.ts', /terminal\s*=\s*true/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /let completionDelivered = false/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /if \(parsed\.terminal\)/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /cancelReaderAfterTerminal\(\)/],
@@ -427,9 +430,9 @@ const requiredContracts = [
       ['src/bootstrap/providerPolicies.ts', /createProviderHostedBoundaryPolicy\(\{/],
       ['src/bootstrap/conversationRuntime.ts', /providerFallbackDescriptors\?: readonly SameProviderFallbackDescriptor\[\]/],
       ['src/bootstrap/conversationRuntime.ts', /createSameProviderFallbackResolver\(options\.providerFallbackDescriptors\)/],
-      ['src/bootstrap/conversationRuntime.ts', /providerFallbackDescriptors: \[createProviderFallbackDescriptor\(input\.provider\)\]/],
     ],
     forbiddenMarkers: [
+      ['src/bootstrap/conversationRuntime.ts', /providerFallbackDescriptors: \[createProviderFallbackDescriptor\(input\.provider\)\]/],
       ['src/modules/providers/providerRequestParameterPolicy.ts', /request\[parameter\]\s*===\s*undefined\s*\?\s*['"]internal-policy['"]\s*:\s*['"]explicit['"]/],
       ['src/modules/providers/providerModelTest.ts', /buildProviderModelTestResult\(\{/],
       ['src/bootstrap/usageStatisticsRuntime.ts', /operationSource:\s*(?:conversation\.)?(?:mode|productMode)/],
@@ -5440,6 +5443,18 @@ function runArchitectureBoundaryAuditSelfTest() {
     const agenticContractCheck = result.checks.find((check) => check.id === 'agentic-workflow-engine-boundary')
     assert.equal(agenticContractCheck?.status, 'passed', 'architecture audit self-test keeps agentic workflow trace and recovery markers complete')
 
+    const sseDataPath = path.join(tempRoot, 'src/modules/providers/providerSseData.ts')
+    const sseDataSource = fs.readFileSync(sseDataPath, 'utf8')
+    for (const marker of ['terminal = false', 'terminal = true']) {
+      fs.writeFileSync(sseDataPath, sseDataSource.replace(marker, ''), 'utf8')
+      assert.ok(
+        collectArchitectureBoundaryAudit(tempRoot).blockingIssues.some((item) =>
+          item.checkId === 'provider-transport-boundary' && item.issue.includes('providerSseData.ts') && /Missing required marker/.test(item.issue)),
+        `architecture audit still blocks missing ${marker} in shared provider SSE framing`,
+      )
+    }
+    fs.writeFileSync(sseDataPath, sseDataSource, 'utf8')
+
     function assertAgenticRestorationsBlocked(restorations) {
       const prepared = restorations.map(({ relativePath, mutate, message }) => {
         const targetPath = path.join(tempRoot, ...relativePath.split('/'))
@@ -6765,7 +6780,7 @@ function runArchitectureBoundaryAuditSelfTest() {
     fs.writeFileSync(
       providerRuntimeExecutorPath,
       originalProviderRuntimeExecutor.replace(
-        'const selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback)',
+        'const selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback, true)',
         'const selectedReq = selectedReqBase',
       ),
       'utf8',
@@ -6775,11 +6790,26 @@ function runArchitectureBoundaryAuditSelfTest() {
       missingSelectedRouteNormalizationResult.blockingIssues.some((item) =>
         item.checkId === 'provider-transport-boundary'
         && /Missing required marker/.test(item.issue)
-        && item.issue.includes('const selectedReq = normalizeRemoteCompactRoute'),
+        && item.issue.includes('selectedReq = normalizeRemoteCompactRoute'),
       ),
       'architecture audit self-test blocks fallback route identity changes without compact normalization',
     )
     fs.writeFileSync(providerRuntimeExecutorPath, originalProviderRuntimeExecutor, 'utf8')
+
+    fs.writeFileSync(providerRuntimeExecutorPath,
+      originalProviderRuntimeExecutor.replace('if (nativeEligible && !routeChanged) return req', 'if (nativeEligible) return req'), 'utf8')
+    assert.ok(collectArchitectureBoundaryAudit(tempRoot).blockingIssues.some((item) =>
+      item.checkId === 'provider-transport-boundary' && item.issue.includes('function normalizeRemoteCompactRoute')),
+    'route changes must clear bound continuation even when both routes support native compaction')
+    fs.writeFileSync(providerRuntimeExecutorPath, originalProviderRuntimeExecutor, 'utf8')
+
+    const chatRuntimePath = path.join(tempRoot, 'src', 'bootstrap', 'conversationRuntime.ts')
+    const originalChatRuntime = fs.readFileSync(chatRuntimePath, 'utf8')
+    fs.writeFileSync(chatRuntimePath, `${originalChatRuntime}\nproviderFallbackDescriptors: [createProviderFallbackDescriptor(input.provider)]`, 'utf8')
+    assert.ok(collectArchitectureBoundaryAudit(tempRoot).blockingIssues.some((item) =>
+      item.checkId === 'provider-transport-boundary' && item.issue.includes('providerFallbackDescriptors')),
+    'Chat must not multiply the executor fallback budget with a second gateway route loop')
+    fs.writeFileSync(chatRuntimePath, originalChatRuntime, 'utf8')
 
     fs.writeFileSync(
       providerRuntimeExecutorPath,
@@ -12287,6 +12317,13 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       'src/modules/providers/providerStreamParsing.ts',
       [
         'export function createProviderStreamParsingPolicy() {}',
+        'const { sawDataLine, terminal } = visitProviderSseData(chunk, appendPayload)',
+      ].join('\n'),
+    ],
+    [
+      'src/modules/providers/providerSseData.ts',
+      [
+        'export function visitProviderSseData() {}',
         'let terminal = false',
         'terminal = true',
       ].join('\n'),
@@ -12312,7 +12349,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ],
     ['src/bootstrap/providerModelAccess.ts', 'createProviderModelAccessPolicy({})\nexport const PROVIDER_MODEL_ACCESS_POLICY = {}'],
     ['src/bootstrap/providerSessionLeasePool.ts', 'export const providerSessionLeasePool = createProviderSessionLeasePool()'],
-    ['src/bootstrap/providerRuntimeExecutor.ts', 'acquireProviderSessionLease({ signal: input.controller.signal })\nawait input.fallbackEffects.logDecision()\nconst TERMINAL_READER_CLOSE_GRACE_MS = 50\nlet completionDelivered = false\nif (parsed.terminal) {\n  cancelReaderAfterTerminal()\n}\nfunction cancelReader(): void {\n  if (readerCancelRequested) return\n  readerCancelRequested = true\n  void Promise.resolve(reader!.cancel()).catch(() => undefined)\n}\nfunction cancelReaderAfterTerminal(): void {\n  const cancel = cancelReader\n}\ninput.controller.signal.addEventListener(\'abort\', cancelReader, { once: true })\ninput.controller.signal.removeEventListener(\'abort\', cancelReader)\nconst closed = terminalReader.closed\nif (value) {}\nif (done) {}\nfunction normalizeRemoteCompactRoute(req, localFallback) {\n  const nativeEligible = resolveProviderContextManagement({ provider: req.provider, usesOpenAIResponses: usesOpenAIResponses(req) }).nativeSupported\n  if (nativeEligible) return req\n  return { ...req, messages: localFallback.messages, contextPrompt: localFallback.contextPrompt, remoteCompactEligible: false, remoteCompactFallback: undefined, previousResponseId: undefined }\n}\nconst selectedReqBase: ProviderRuntimeChatRequest = { provider: selectedProvider, model: selectedRoute.model, }\nconst selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback)\nconst fallbackReq = normalizeRemoteCompactRoute({ ...req }, req.remoteCompactFallback)'],
+    ['src/bootstrap/providerRuntimeExecutor.ts', 'acquireProviderSessionLease({ signal: input.controller.signal })\nawait input.fallbackEffects.logDecision()\nconst TERMINAL_READER_CLOSE_GRACE_MS = 50\nlet completionDelivered = false\nif (parsed.terminal) {\n  cancelReaderAfterTerminal()\n}\nfunction cancelReader(): void {\n  if (readerCancelRequested) return\n  readerCancelRequested = true\n  void Promise.resolve(reader!.cancel()).catch(() => undefined)\n}\nfunction cancelReaderAfterTerminal(): void {\n  const cancel = cancelReader\n}\ninput.controller.signal.addEventListener(\'abort\', cancelReader, { once: true })\ninput.controller.signal.removeEventListener(\'abort\', cancelReader)\nconst closed = terminalReader.closed\nif (value) {}\nif (done) {}\nfunction normalizeRemoteCompactRoute(req, localFallback, routeChanged = false) {\n  const nativeEligible = resolveProviderContextManagement({ provider: req.provider, usesOpenAIResponses: usesOpenAIResponses(req) }).nativeSupported\n  if (nativeEligible && !routeChanged) return req\n  return { ...req, messages: localFallback.messages, contextPrompt: localFallback.contextPrompt, remoteCompactEligible: false, remoteCompactFallback: undefined, previousResponseId: undefined }\n}\nconst selectedReqBase: ProviderRuntimeChatRequest = { provider: selectedProvider, model: resolveProviderModelAlias(selectedProvider, selectedRoute.model), }\nconst selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback, true)\nconst fallbackReq = normalizeRemoteCompactRoute({ ...req }, req.remoteCompactFallback)'],
     ['src/modules/providers/providerRequestHardeningPolicy.ts', 'export function createProviderRequestHardeningPolicy() {}\nfunction clampTopLevelMaxTokens() {}'],
     ['src/bootstrap/providerRequestHardening.ts', 'createProviderRequestHardeningPolicy({})'],
     ['src/modules/providers/providerConformancePolicy.ts', 'export function createProviderConformancePolicy() {}\ndependencies.hardenProviderRequestBody({})'],
@@ -12396,7 +12433,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ['src/bootstrap/providerCompactStateRepository.ts', 'export const providerCompactStateRepository = createProviderCompactStateRepository({})\nSQLite.openDatabaseAsync(databaseName, { useNewConnection: true, finalizeUnusedStatementsBeforeClosing: false, })'],
     [
       'src/bootstrap/conversationRuntime.ts',
-      'providerFallbackDescriptors?: readonly SameProviderFallbackDescriptor[]\ncreateSameProviderFallbackResolver(options.providerFallbackDescriptors)\nproviderFallbackDescriptors: [createProviderFallbackDescriptor(input.provider)]',
+      'providerFallbackDescriptors?: readonly SameProviderFallbackDescriptor[]\ncreateSameProviderFallbackResolver(options.providerFallbackDescriptors)',
     ],
     [
       'src/types/index.ts',
@@ -13050,7 +13087,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       'src/bootstrap/knowledgeRepository.ts',
       'export const knowledgeRepository = createSqliteKnowledgeRepository()\nexport const knowledgeHybridIndex = createSqliteKnowledgeHybridIndex()\nexport function createKnowledgeDocumentIndex() { knowledgeHybridIndex.synchronize() }\nPortable knowledge snapshot replacement and derived-index recovery both failed',
     ],
-    ['src/bootstrap/providerRuntime.ts', 'export function createProviderRuntimeAdapter() { return streamProviderRuntimeEvents() }\nasync function* streamProviderRuntimeEvents() {}\nclass ProviderRuntimeEventQueue {}\nexport async function streamProviderChat() {}\nexport async function generateProviderText() {}\nexport async function testProviderModelRuntime() {}\nexport async function discoverProviderModels() {}\nexport async function embedProviderText() {}\nexport async function transcribeProviderAudio() {}\nexport async function synthesizeProviderSpeech() {}\nexport async function synchronizeProviderCredentials() {}\nexport async function listProviderModelConfigsDetailed() {}\nfallbackEffects: providerRuntimeFallbackEffects\nconst responsesWebSocketTransport = createResponsesWebSocketTransport({})\narguments: parseToolArguments(call.arguments)\nconst probe = createProviderProbe({})\nfetchFailure: providerFetchFailure,\nprobe,\nusesResponsesApiForModel: () => true'],
+    ['src/bootstrap/providerRuntime.ts', 'export function createProviderRuntimeAdapter() { return streamProviderRuntimeEvents() }\nasync function* streamProviderRuntimeEvents() {}\nclass ProviderRuntimeEventQueue {}\nexport async function streamProviderChat() {}\nexport async function generateProviderText() {}\nexport async function testProviderModelRuntime() {}\nexport async function discoverProviderModels() {}\nexport async function embedProviderText() {}\nexport async function transcribeProviderAudio() {}\nexport async function synthesizeProviderSpeech() {}\nexport async function synchronizeProviderCredentials() {}\nexport async function listProviderModelConfigsDetailed() {}\nfallbackEffects: providerRuntimeFallbackEffects\nconst responsesWebSocketTransport = createResponsesWebSocketTransport({})\narguments: parseToolArguments(call.arguments)\nconst probe = createProviderProbe({})\nfetchFailure: providerFetchFailure,\nprobe: { async probe(request) { return runtime.observeProbe(identity, () => probe.probe(request)) } },\nusesResponsesApiForModel: () => true'],
     ['src/bootstrap/providerRuntimeGateway.ts', "export const PROVIDER_RUNTIME_GATEWAY_OUTCOME_SCHEMA = 'islemind.provider-runtime-gateway-outcome.v1'"],
     ['src/bootstrap/providerRuntimePipeline.ts', "export const PROVIDER_ROUTE_DECISION_SNAPSHOT_SCHEMA = 'islemind.provider-route-decision-snapshot.v1'"],
     ['src/bootstrap/providerRuntimeDiagnostics.ts', "event: 'provider.route.decided'\nevent: 'provider.proxy.decided'"],

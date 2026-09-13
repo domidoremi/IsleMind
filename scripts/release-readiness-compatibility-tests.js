@@ -2,6 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const Module = require('node:module')
 const path = require('node:path')
+const vm = require('node:vm')
 
 const root = path.resolve(__dirname, '..')
 
@@ -139,6 +140,11 @@ function assertBlocked(item, expectedCodes) {
 
 async function run() {
   assertReleaseVersionMonotonicity()
+  assertCurrentApkDeviceSelection()
+  assertCurrentApkInstallerTargeting()
+  assertCurrentApkInstallerPreflight()
+  assertCurrentApkStagingFilesystem()
+  assertReleaseSourceSnapshotBinding()
   assert.equal(RELEASE_READINESS_COMPATIBILITY_EVAL_SCHEMA, 'islemind.release-readiness-compatibility-eval.v1', 'release-readiness schema is versioned')
   assert.deepEqual(
     RELEASE_READINESS_COMPATIBILITY_FIXTURE_IDS,
@@ -239,6 +245,807 @@ async function run() {
   await assertMotionPreferenceRuntimeContract()
 
   console.log('Release readiness compatibility tests passed')
+}
+
+function currentApkDeviceFixtures() {
+  const blocked = [
+    { name: 'absent default with an unrelated phone', inventory: 'unrelated-phone\tdevice' },
+    { name: 'absent default with another emulator', inventory: 'emulator-5556\tdevice' },
+    { name: 'empty inventory', inventory: '' },
+    { name: 'failed inventory command', inventoryError: true },
+    ...['offline', 'unauthorized', 'bootloader', 'recovery', 'no permissions'].map((state) => ({
+      name: `default emulator is ${state}`,
+      inventory: `unrelated-phone\tdevice\nemulator-5554\t${state}`,
+    })),
+    { name: 'duplicate ready default', inventory: 'emulator-5554\tdevice\nemulator-5554\tdevice' },
+    { name: 'conflicting default states', inventory: 'emulator-5554\tdevice\nemulator-5554\toffline' },
+    { name: 'prefix is not exact identity', inventory: 'emulator-55540\tdevice' },
+    { name: 'explicit target is missing', requested: 'authorized-phone', inventory: 'emulator-5554\tdevice\nunrelated-phone\tdevice' },
+    { name: 'explicit target is offline', requested: 'authorized-phone', inventory: 'authorized-phone\toffline\nemulator-5554\tdevice' },
+    { name: 'explicit target is unauthorized', requested: 'authorized-phone', inventory: 'authorized-phone\tunauthorized\nunrelated-phone\tdevice' },
+    { name: 'duplicate explicit target', requested: 'authorized-phone', inventory: 'authorized-phone\tdevice\nauthorized-phone\tdevice' },
+    { name: 'conflicting explicit states', requested: 'authorized-phone', inventory: 'authorized-phone\tdevice\nauthorized-phone\tunauthorized' },
+    ...['', ' ', ' authorized-phone ', 'authorized-phone\n', 'authorized-phone\0'].map((requested) => ({
+      name: `invalid explicit serial ${JSON.stringify(requested)}`,
+      requested,
+      inventory: `emulator-5554\tdevice\nauthorized-phone\tdevice\n${requested}\tdevice`,
+      invalidSerial: true,
+    })),
+  ]
+  const admitted = [
+    { name: 'sole default emulator', inventory: 'emulator-5554\tdevice', expected: 'emulator-5554' },
+    { name: 'default after unrelated phone', inventory: 'unrelated-phone\tdevice\nemulator-5554\tdevice', expected: 'emulator-5554' },
+    { name: 'default before unrelated phone', inventory: 'emulator-5554\tdevice\nunrelated-phone\tdevice', expected: 'emulator-5554' },
+    { name: 'unrelated unready entries', inventory: 'offline-phone\toffline\nemulator-5554\tdevice\nuntrusted-phone\tunauthorized', expected: 'emulator-5554' },
+    { name: 'explicit authorized phone', requested: 'authorized-phone', inventory: 'authorized-phone\tdevice', expected: 'authorized-phone' },
+    { name: 'explicit phone beats default', requested: 'authorized-phone', inventory: 'emulator-5554\tdevice\nauthorized-phone\tdevice', expected: 'authorized-phone' },
+    { name: 'explicit different emulator', requested: 'emulator-5556', inventory: 'emulator-5554\tdevice\nemulator-5556\tdevice', expected: 'emulator-5556' },
+    { name: 'explicit TCP serial', requested: '192.0.2.1:5555', inventory: 'unrelated-phone\tdevice\n192.0.2.1:5555\tdevice', expected: '192.0.2.1:5555' },
+    { name: 'explicit mDNS serial', requested: 'adb-fixture._adb-tls-connect._tcp', inventory: 'adb-fixture._adb-tls-connect._tcp\tdevice', expected: 'adb-fixture._adb-tls-connect._tcp' },
+    { name: 'ADB whitespace and metadata', requested: 'authorized-phone', inventory: '\n  authorized-phone\tdevice product:fixture model:fixture transport_id:1\r\n', expected: 'authorized-phone' },
+  ]
+  return { blocked, admitted }
+}
+
+function assertCurrentApkDeviceSelection() {
+  const { blocked, admitted } = currentApkDeviceFixtures()
+  for (const fixture of blocked) {
+    const { result, commands, exitCode } = runCurrentApkFixture(fixture)
+    assert.deepEqual(commands.filter(({ args }) => args[0] !== 'devices'), [], `${fixture.name}: no device command or compatibility subprocess is admitted`)
+    if (fixture.invalidSerial) assert.deepEqual(commands, [], `${fixture.name}: invalid configuration does not start ADB`)
+    assert.equal(result.device, null, `${fixture.name}: no fallback target`)
+    assert.equal(result.installed, null, `${fixture.name}: no installed-package read`)
+    assert.equal(result.launch.ok, false, `${fixture.name}: failed launch receipt`)
+    assert.match(result.launch.error, /QA_DEVICE_SERIAL/, `${fixture.name}: actionable target diagnostic`)
+    assert.equal(result.compatibility16kb, null, `${fixture.name}: no compatibility pass fabricated`)
+    assert.equal(exitCode, 1, `${fixture.name}: CLI fails`)
+  }
+  for (const fixture of admitted) {
+    const { result, commands, exitCode } = runCurrentApkFixture(fixture)
+    assert.equal(result.device, fixture.expected, fixture.name)
+    assert.equal(result.installed.deviceSerial, fixture.expected, `${fixture.name}: receipt is target-scoped`)
+    assert.equal(result.launch.ok, true, `${fixture.name}: synthetic launch path is retained`)
+    assert.equal(result.compatibility16kb.ok, true, `${fixture.name}: synthetic compatibility path is retained`)
+    assert.equal(exitCode, 0, `${fixture.name}: valid synthetic evidence passes the real release validator`)
+    assert.ok(commands.some(({ args }) => args.includes('force-stop')), `${fixture.name}: selected app is stopped`)
+    assert.ok(commands.some(({ args }) => args.includes('monkey')), `${fixture.name}: selected app is launched`)
+    for (const { command, args } of commands.filter(({ command, args }) => command === 'adb' && args[0] !== 'devices')) {
+      assert.deepEqual([command, ...args.slice(0, 2)], ['adb', '-s', fixture.expected], `${fixture.name}: every ADB operation pins the exact target`)
+    }
+  }
+
+  const disconnected = runCurrentApkFixture({
+    requested: 'authorized-phone',
+    inventory: 'authorized-phone\tdevice\nunrelated-phone\tdevice',
+    deviceDisconnected: true,
+  })
+  assert.equal(disconnected.result.device, 'authorized-phone', 'disconnect never reselects another device')
+  assert.equal(disconnected.result.launch.ok, false, 'disconnect is a launch failure')
+  assert.equal(disconnected.exitCode, 1, 'disconnect fails the CLI')
+  for (const { args } of disconnected.commands.filter(({ command, args }) => command === 'adb' && args[0] !== 'devices')) {
+    assert.deepEqual(args.slice(0, 2), ['-s', 'authorized-phone'], 'commands after a disconnect stay pinned instead of falling back')
+  }
+  console.log(`Current APK device selection: ${blocked.length + admitted.length + 1} host command-capture cases passed (no real ADB or filesystem writes)`)
+}
+
+function currentApkSourceFreshnessFixture(sha256, sizeBytes) {
+  return {
+    status: 'current',
+    snapshot: {
+      present: true,
+      schema: require('./release-freshness-contract').releaseSourceSnapshotSchema,
+      apk: { sha256, sizeBytes },
+      comparison: { status: 'unchanged' },
+    },
+  }
+}
+
+function assertCurrentApkInstallerTargeting() {
+  const shared = currentApkDeviceFixtures()
+  const inventory = 'emulator-5554\tdevice\nauthorized-phone\tdevice\nunrelated-phone\tdevice'
+  const invalidArgs = [
+    ['--device'],
+    ['--device='],
+    ['--device', ''],
+    ['--device', '--keep-data'],
+    ['--device', '--device=authorized-phone'],
+    ['--device=authorized-phone', '--device=unrelated-phone'],
+    ['--device', 'authorized-phone', '--device=authorized-phone'],
+    ['--device=unrelated-phone', '--device', 'authorized-phone'],
+    ['--device', 'authorized-phone', '--device', 'unrelated-phone'],
+    ['--device=authorized-phone', '--device=authorized-phone'],
+    ['--device', ' authorized-phone '],
+    ['--device=authorized-phone\n'],
+    ['--device=authorized-phone\0'],
+    ['--help'],
+    ['--devcie', 'authorized-phone'],
+    ['--keep-data=true'],
+    ['authorized-phone'],
+    ['--device=authorized-phone', 'unexpected'],
+    ['--device=authorized-phone', '--bogus'],
+  ]
+  const blocked = [
+    ...shared.blocked,
+    ...invalidArgs.map((args) => ({ name: `invalid CLI ${JSON.stringify(args)}`, args, requested: 'authorized-phone', inventory, invalidSerial: true })),
+    { name: 'missing CLI target cannot fall back to valid environment', args: ['--device=absent-phone'], requested: 'authorized-phone', inventory },
+    { name: 'offline CLI target cannot fall back to default', args: ['--device', 'offline-phone'], inventory: `${inventory}\noffline-phone\toffline` },
+    { name: 'duplicate CLI target inventory', args: ['--device=authorized-phone'], inventory: `${inventory}\nauthorized-phone\tdevice` },
+  ]
+  for (const fixture of blocked) {
+    const { result, commands, exitCode, error } = runCurrentApkFixture({ ...fixture, kind: 'install' })
+    assert.deepEqual(commands.filter(({ args }) => args[0] !== 'devices'), [], `${fixture.name}: rejected installer input sends no device commands`)
+    if (fixture.invalidSerial) assert.deepEqual(commands, [], `${fixture.name}: invalid configuration cannot start ADB`)
+    assert.equal(result, undefined, `${fixture.name}: no install receipt fabricated`)
+    assert.equal(exitCode, 1, `${fixture.name}: installer fails`)
+    assert.match(error?.message ?? '', /--device|QA_DEVICE_SERIAL|synthetic ADB inventory failure/, `${fixture.name}: targeting failure is explicit`)
+  }
+
+  const admitted = [
+    ...shared.admitted,
+    { name: 'spaced CLI overrides environment', args: ['--device', 'authorized-phone'], requested: 'unrelated-phone', inventory, expected: 'authorized-phone' },
+    { name: 'equals CLI overrides environment', args: ['--device=authorized-phone'], requested: 'unrelated-phone', inventory, expected: 'authorized-phone' },
+    { name: 'valid CLI overrides invalid environment', args: ['--device=authorized-phone'], requested: '', inventory, expected: 'authorized-phone' },
+    { name: 'equals in exact serial', args: ['--device=fixture=phone'], inventory: 'fixture=phone\tdevice', expected: 'fixture=phone' },
+    { name: 'keep data before target', args: ['--keep-data', '--device=authorized-phone'], inventory, expected: 'authorized-phone' },
+    { name: 'keep data after target', args: ['--device', 'authorized-phone', '--keep-data'], inventory, expected: 'authorized-phone' },
+    { name: 'already absent app', requested: 'authorized-phone', inventory, expected: 'authorized-phone', appMissing: true },
+  ]
+  for (const fixture of admitted) {
+    const { result, commands, exitCode, error } = runCurrentApkFixture({ ...fixture, kind: 'install' })
+    assert.equal(error, undefined, fixture.name)
+    assert.equal(exitCode, 0, `${fixture.name}: synthetic install succeeds`)
+    assert.equal(result.device, fixture.expected, fixture.name)
+    assert.equal(result.installed.deviceSerial, fixture.expected, `${fixture.name}: provenance stays target-scoped`)
+    assert.equal(result.installed.packageSha256, result.apk.sha256, `${fixture.name}: installed digest matches the artifact`)
+    const keepData = fixture.args?.includes('--keep-data') ?? false
+    assert.equal(result.keepData, keepData, `${fixture.name}: data-retention option is preserved`)
+    const uninstalls = commands.filter(({ args }) => args[2] === 'uninstall')
+    const installs = commands.filter(({ args }) => args[2] === 'install')
+    assert.equal(uninstalls.length, keepData || fixture.appMissing ? 0 : 1, `${fixture.name}: uninstall only on the deliberate clean path`)
+    assert.equal(installs.length, 1, `${fixture.name}: exactly one install`)
+    assert.equal(installs[0].args.includes('-r'), keepData, `${fixture.name}: replacement is keep-data only`)
+    if (uninstalls.length) assert.ok(commands.indexOf(uninstalls[0]) < commands.indexOf(installs[0]), `${fixture.name}: clean uninstall precedes install`)
+    for (const { args } of commands.filter(({ args }) => args[0] !== 'devices')) {
+      assert.deepEqual(args.slice(0, 2), ['-s', fixture.expected], `${fixture.name}: every command pins the admitted target`)
+    }
+  }
+
+  const failures = [
+    { name: 'missing artifact', missingApk: true, message: /APK was not found/ },
+    { name: 'device disconnect', deviceDisconnected: true, message: /synthetic device disconnect/ },
+    { name: 'uninstall failure', uninstallFailure: true, message: /synthetic uninstall failure/ },
+    { name: 'install failure', installFailure: true, message: /synthetic install failure/ },
+    { name: 'missing installed digest', installedDigest: 'missing', message: /SHA256 could not be calculated/ },
+    { name: 'mismatched installed digest', installedDigest: 'mismatch', message: /SHA256 .* does not match/ },
+  ]
+  for (const fixture of failures) {
+    const { result, commands, exitCode, error } = runCurrentApkFixture({ ...fixture, kind: 'install', requested: 'authorized-phone', inventory })
+    assert.equal(exitCode, 1, `${fixture.name}: failure does not become install success`)
+    assert.match(error?.message ?? '', fixture.message, fixture.name)
+    if (fixture.missingApk) assert.equal(commands.some(({ args }) => args[2] === 'install' || args[2] === 'uninstall'), false, 'missing APK cannot uninstall app data')
+    if (fixture.uninstallFailure) assert.equal(commands.some(({ args }) => args[2] === 'install'), false, 'uninstall failure blocks installation')
+    if (fixture.installedDigest) assert.ok(result, `${fixture.name}: failed digest evidence is retained`)
+    else assert.equal(result, undefined, `${fixture.name}: incomplete install has no success receipt`)
+    for (const { args } of commands.filter(({ args }) => args[0] !== 'devices')) {
+      assert.deepEqual(args.slice(0, 2), ['-s', 'authorized-phone'], `${fixture.name}: no fallback after admission`)
+    }
+  }
+  console.log(`Current APK installer targeting: ${blocked.length + admitted.length + failures.length} host command-capture cases passed (no real ADB or filesystem writes)`)
+}
+
+function assertCurrentApkInstallerPreflight() {
+  const snapshot = { present: true, comparison: { status: 'unchanged' } }
+  const blocked = [
+    { name: 'missing APK', missingApk: true, message: /APK was not found/ },
+    { name: 'directory instead of APK', apkIsDirectory: true, message: /nonempty regular file/ },
+    { name: 'empty APK', emptyApk: true, message: /nonempty regular file/ },
+    { name: 'unreadable APK', unreadableApk: true, message: /unreadable APK/ },
+    { name: 'missing sidecar', missingSidecar: true, message: /sidecar file is missing/ },
+    { name: 'mismatched sidecar', sidecarText: '0'.repeat(64), message: /does not match its .sha256/ },
+    { name: 'unreadable sidecar', unreadableSidecar: true, message: /unreadable sidecar/ },
+    { name: 'empty sidecar', sidecarText: '', message: /sidecar file is missing/ },
+    { name: 'short digest', sidecarText: 'a'.repeat(63), message: /sidecar file is missing/ },
+    { name: 'long digest', sidecarText: 'a'.repeat(65), message: /sidecar file is missing/ },
+    { name: 'nonhex digest', sidecarText: 'z'.repeat(64), message: /sidecar file is missing/ },
+    { name: 'multiple sidecar records', sidecarText: (hash) => `${hash}\n${hash}`, message: /sidecar file is missing/ },
+    { name: 'staging directory failure', stagingDirectoryFailure: true, message: /staging directory failure/ },
+    { name: 'partial copy failure', copyFailure: true, message: /copy failure/ },
+    { name: 'corrupt copy', corruptCopy: true, message: /does not match its .sha256/ },
+    { name: 'source changes during copy', sourceChangedDuringCopy: true, message: /changed while being staged/ },
+    { name: 'hash open failure', hashOpenFailure: true, message: /hash open failure/ },
+    { name: 'hash read failure', hashReadFailure: true, message: /hash read failure/ },
+    { name: 'freshness read failure', freshnessFailure: true, message: /freshness read failure/ },
+    { name: 'missing freshness', sourceFreshness: null, message: /freshness was not collected/ },
+    { name: 'unknown freshness', sourceFreshness: { status: 'unknown', snapshot }, message: /freshness could not be verified/ },
+    { name: 'stale artifact', sourceFreshness: { status: 'stale', snapshot }, message: /newer than release APK/ },
+    { name: 'missing source snapshot', sourceFreshness: { status: 'current', snapshot: { present: false } }, message: /matching .source-snapshot.json/ },
+    { name: 'unreadable snapshot despite current mtime', sourceFreshness: { status: 'current', snapshot: { present: true, readError: 'synthetic invalid snapshot', comparison: { status: 'error' } } }, message: /matching .source-snapshot.json/ },
+    { name: 'uncompared source snapshot', sourceFreshness: { status: 'current', snapshot: { present: true } }, message: /matching .source-snapshot.json/ },
+    { name: 'changed source snapshot', sourceFreshness: { status: 'current', snapshot: { present: true, comparison: { status: 'changed' } } }, message: /matching .source-snapshot.json/ },
+    { name: 'legacy unbound snapshot', sourceFreshness: (apk) => {
+      const freshness = currentApkSourceFreshnessFixture(apk.sha256, apk.sizeBytes)
+      delete freshness.snapshot.schema
+      return freshness
+    }, message: /not bound.*snapshot_schema_unsupported/ },
+    { name: 'snapshot from another APK', sourceFreshness: (apk) => currentApkSourceFreshnessFixture('0'.repeat(64), apk.sizeBytes), message: /not bound.*apk_sha256_mismatch/ },
+    { name: 'snapshot byte-count mismatch', sourceFreshness: (apk) => currentApkSourceFreshnessFixture(apk.sha256, apk.sizeBytes + 1), message: /not bound.*apk_size_mismatch/ },
+    { name: 'snapshot missing binary digest', sourceFreshness: (apk) => currentApkSourceFreshnessFixture(null, apk.sizeBytes), message: /not bound.*snapshot_apk_identity_missing/ },
+    { name: 'forged binding status', sourceFreshness: (apk) => ({ ...currentApkSourceFreshnessFixture('0'.repeat(64), apk.sizeBytes), artifactBinding: { status: 'matched' } }), message: /not bound.*apk_sha256_mismatch/ },
+    { name: 'missing package version', packageConfig: { version: null }, message: /package.json version is missing/ },
+    { name: 'missing Expo version', expoConfig: { version: null }, message: /expo.version is missing/ },
+    { name: 'inconsistent versions', expoConfig: { version: '0.0.14' }, message: /versions? .*differ|expo.version differ/ },
+    { name: 'missing Android package', androidConfig: { package: null }, message: /android.package is missing/ },
+    { name: 'missing Android version code', androidConfig: { versionCode: null }, message: /android.versionCode is missing/ },
+    { name: 'fractional Android version code', androidConfig: { versionCode: 13.5 }, message: /android.versionCode is missing/ },
+  ]
+  const runInstaller = (options) => runCurrentApkFixture({
+    kind: 'install', requested: 'authorized-phone', inventory: 'authorized-phone\tdevice', ...options,
+  })
+  for (const fixture of blocked) {
+    for (const keepData of [false, true]) {
+      const { commands, result, exitCode, error } = runInstaller({ ...fixture, args: keepData ? ['--keep-data'] : [] })
+      const afterAbi = commands.filter(({ args }) => args[0] !== 'devices' && args.slice(2).join(' ') !== 'shell getprop ro.product.cpu.abi')
+      assert.deepEqual(afterAbi, [], `${fixture.name} (keep-data=${keepData}): admission must precede app-data deletion, install and package reads`)
+      assert.equal(result, undefined, `${fixture.name}: no install receipt fabricated`)
+      assert.equal(exitCode, 1, `${fixture.name}: installer fails closed`)
+      assert.match(error?.message ?? '', fixture.message, fixture.name)
+    }
+  }
+
+  const admitted = [
+    { name: 'uppercase checksum', sidecarText: (hash) => hash.toUpperCase() },
+    { name: 'checksum with filename', sidecarText: (hash) => `${hash}  IsleMind-0.0.13-x86_64-no-model.apk\r\n` },
+    { name: 'binary checksum marker', sidecarText: (hash) => `${hash} *IsleMind-0.0.13-x86_64-no-model.apk\n` },
+    { name: 'partial hash reads', partialReadBytes: 3 },
+    ...['replace', 'remove'].flatMap((sourceMutation) => [false, true].map((keepData) => ({
+      name: `${sourceMutation} source after admission (keep-data=${keepData})`, sourceMutation,
+      args: keepData ? ['--keep-data'] : [],
+    }))),
+  ]
+  for (const fixture of admitted) {
+    const run = runInstaller(fixture)
+    assert.equal(run.error, undefined, fixture.name)
+    assert.equal(run.exitCode, 0, fixture.name)
+    assert.equal(run.result.apk.sha256, run.apkDigest, `${fixture.name}: receipt retains the admitted copy's digest`)
+    assert.equal(run.result.apk.sidecarSha256, run.apkDigest, `${fixture.name}: normalized sidecar matches`)
+    assert.equal(run.result.installed.packageSha256, run.apkDigest, `${fixture.name}: installed bytes are the admitted copy`)
+    assert.equal(run.result.apk.modifiedAt, run.originalModifiedAt, `${fixture.name}: copy mtime cannot launder an old APK`)
+    assert.equal(run.result.apk.path, path.relative(root, run.apkPath).replace(/\\/g, '/'), `${fixture.name}: receipt identifies the original build artifact`)
+    assert.equal(run.result.sourceFreshness.snapshot.comparison.status, 'unchanged', 'receipt retains observed freshness, not launch evidence')
+    const firstMutation = run.events.findIndex((event) => event.kind === 'command' && ['uninstall', 'install'].includes(event.args[2]))
+    const freshness = run.events.findIndex((event) => event.kind === 'freshness')
+    assert.ok(freshness > run.events.findIndex((event) => event.kind === 'copy') && freshness < firstMutation, `${fixture.name}: staged preflight precedes device mutation`)
+    if (fixture.partialReadBytes) {
+      assert.ok(run.readRequests.length > 2, 'hashing tolerates partial reads instead of treating them as EOF')
+      assert.ok(run.readRequests.every((size) => size <= 1024 * 1024), 'hashing keeps a bounded 1 MiB buffer')
+    }
+    const smokeIssues = require('./release-validation-contract').validateCurrentApkSmokeResult(run.result)
+    assert.ok(smokeIssues.some((issue) => issue.includes('launch smoke')) && smokeIssues.some((issue) => issue.includes('16KB')), 'an install receipt cannot fabricate smoke or compatibility evidence')
+  }
+
+  const failures = [
+    { name: 'receipt failure', receiptFailure: true, message: /receipt write failure/ },
+    { name: 'file cleanup failure after install', cleanupFailure: 'file', message: /Temporary APK cleanup failed.*file cleanup failure/ },
+    { name: 'directory cleanup failure after install', cleanupFailure: 'directory', message: /Temporary APK cleanup failed.*directory cleanup failure/ },
+    { name: 'install and cleanup failure', installFailure: true, cleanupFailure: 'file', message: /install failure.*cleanup failed/, aggregate: true },
+    { name: 'preflight and cleanup failure', freshnessFailure: true, cleanupFailure: 'directory', message: /freshness read failure.*cleanup failed/, aggregate: true },
+  ]
+  for (const fixture of failures) {
+    const run = runInstaller(fixture)
+    assert.equal(run.exitCode, 1, `${fixture.name}: errors remain failures`)
+    assert.match(run.error?.message ?? '', fixture.message, fixture.name)
+    if (fixture.aggregate) {
+      assert.equal(run.error.name, 'AggregateError', 'cleanup cannot hide the primary failure')
+      assert.equal(run.error.errors.length, 2, 'both original errors remain inspectable')
+    }
+    if (fixture.freshnessFailure) assert.equal(run.commands.some(({ args }) => ['install', 'uninstall'].includes(args[2])), false, 'cleanup failure grants no device authority')
+    if (fixture.installFailure || fixture.freshnessFailure || fixture.receiptFailure) assert.equal(run.result, undefined, 'failed installation never fabricates a receipt')
+    else assert.ok(run.result, 'completed install evidence survives a later cleanup failure')
+  }
+  console.log(`Current APK installer preflight: ${blocked.length * 2 + admitted.length + failures.length} host command-capture cases passed (no real ADB or filesystem writes)`)
+}
+
+function assertCurrentApkStagingFilesystem() {
+  const os = require('node:os')
+  const crypto = require('node:crypto')
+  const { withStagedApk } = require('./install-current-release-apk')
+  const { collectReleaseSourceFreshness, writeReleaseSourceSnapshot } = require('./release-freshness-contract')
+  const { validateCurrentApkInstallPreflight } = require('./release-validation-contract')
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-install-preflight-test-'))
+  const apkPath = path.join(temporaryRoot, 'release.apk')
+  const sourcePath = path.join(temporaryRoot, 'app.json')
+  const expected = { packageVersion: '0.0.13', expoVersion: '0.0.13', androidPackage: 'com.islemind.app', androidVersionCode: 13 }
+  const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0x5a)
+  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+  const oldTime = new Date(Date.now() - 86_400_000)
+  let lastStagedPath
+  function resetArtifact() {
+    fs.writeFileSync(sourcePath, '{"fixture":"current source"}')
+    fs.writeFileSync(apkPath, bytes)
+    fs.utimesSync(apkPath, oldTime, oldTime)
+    fs.writeFileSync(`${apkPath}.sha256`, `${sha256}  release.apk\n`)
+    writeReleaseSourceSnapshot(temporaryRoot, apkPath)
+  }
+  function preflight(useArtifact) {
+    return withStagedApk(apkPath, ({ apk, stagedApkPath }) => {
+      lastStagedPath = stagedApkPath
+      const sourceFreshness = collectReleaseSourceFreshness(temporaryRoot, { ...apk, path: apkPath })
+      const issues = validateCurrentApkInstallPreflight({ apk, expected, sourceFreshness })
+      if (issues.length) throw new Error(issues.join(' '))
+      return useArtifact({ apk, stagedApkPath, sourceFreshness })
+    })
+  }
+  function assertCleaned() {
+    assert.equal(fs.existsSync(lastStagedPath), false, 'owned staging file is removed')
+    assert.equal(fs.existsSync(path.dirname(lastStagedPath)), false, 'owned staging directory is removed')
+    assert.equal(fs.readFileSync(sourcePath, 'utf8').includes('fixture'), true, 'unrelated source input is preserved')
+  }
+  try {
+    for (const mutation of ['replace', 'remove']) {
+      resetArtifact()
+      assert.equal(preflight(({ apk, stagedApkPath, sourceFreshness }) => {
+        assert.notEqual(stagedApkPath, apkPath, 'installation gets an independent artifact path')
+        assert.equal(apk.sha256, sha256, 'multi-chunk file hashing matches the actual bytes')
+        assert.equal(apk.sizeBytes, bytes.length, 'staged byte count is exact')
+        assert.equal(apk.modifiedAt, fs.statSync(apkPath).mtime.toISOString(), 'freshness retains source mtime')
+        assert.equal(sourceFreshness.reason, 'mtime_drift_same_content', 'real freshness honors content-matching snapshots despite old APK time')
+        if (mutation === 'replace') {
+          fs.renameSync(apkPath, `${apkPath}.previous`)
+          fs.writeFileSync(apkPath, 'replacement artifact')
+        } else fs.unlinkSync(apkPath)
+        assert.deepEqual(fs.readFileSync(stagedApkPath), bytes, `${mutation}: source mutation cannot change staged bytes`)
+        return 'staged callback complete'
+      }), 'staged callback complete')
+      assertCleaned()
+    }
+
+    resetArtifact()
+    const callbackFailure = new Error('synthetic install callback failure')
+    assert.throws(() => preflight(() => { throw callbackFailure }), (error) => error === callbackFailure, 'original error identity survives successful cleanup')
+    assertCleaned()
+
+    for (const failure of ['changed-source', 'missing-snapshot', 'unreadable-snapshot', 'mismatched-sidecar', 'mismatched-apk-snapshot']) {
+      resetArtifact()
+      if (failure === 'changed-source') fs.writeFileSync(sourcePath, '{"fixture":"changed source"}')
+      if (failure === 'missing-snapshot') fs.unlinkSync(`${apkPath}.source-snapshot.json`)
+      if (failure === 'unreadable-snapshot') fs.writeFileSync(`${apkPath}.source-snapshot.json`, '{invalid')
+      if (failure === 'mismatched-sidecar') fs.writeFileSync(`${apkPath}.sha256`, '0'.repeat(64))
+      if (failure === 'mismatched-apk-snapshot') {
+        const staleBytes = Buffer.from('different APK with its own valid checksum but another build snapshot')
+        fs.writeFileSync(apkPath, staleBytes)
+        fs.writeFileSync(`${apkPath}.sha256`, crypto.createHash('sha256').update(staleBytes).digest('hex'))
+        fs.utimesSync(apkPath, oldTime, oldTime)
+      }
+      if (failure === 'missing-snapshot' || failure === 'unreadable-snapshot') {
+        const futureTime = new Date(Date.now() + 10_000)
+        fs.utimesSync(apkPath, futureTime, futureTime)
+        const freshness = collectReleaseSourceFreshness(temporaryRoot, { path: apkPath })
+        assert.equal(freshness.status, 'unknown', `${failure}: timestamp-only freshness cannot qualify unbound evidence as current`)
+      }
+      let admitted = false
+      assert.throws(() => preflight(() => { admitted = true }), /source-snapshot|newer than release APK|does not match/, failure)
+      assert.equal(admitted, false, `${failure}: actual artifact evidence blocks the install callback`)
+      assertCleaned()
+    }
+  } finally {
+    // Each path is an exact fixture-owned file; no recursive deletion or source-tree cleanup.
+    for (const file of [apkPath, `${apkPath}.previous`, `${apkPath}.sha256`, `${apkPath}.source-snapshot.json`, sourcePath]) {
+      fs.rmSync(file, { force: true })
+    }
+    fs.rmdirSync(temporaryRoot)
+  }
+  console.log('Current APK staging: 8 real temporary-filesystem cases passed (no ADB, install or repository evidence writes)')
+}
+
+function assertReleaseSourceSnapshotBinding() {
+  const os = require('node:os')
+  const crypto = require('node:crypto')
+  const contract = require('./release-freshness-contract')
+  const validation = require('./release-validation-contract')
+  const validators = [validation.validateCurrentApkInstallPreflight, validation.validateCurrentApkSmokeResult, validation.validateReleaseProvenance]
+  const smoke = runCurrentApkFixture({ inventory: 'emulator-5554\tdevice' }).result
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-snapshot-binding-test-'))
+  const apkPath = path.join(temporaryRoot, 'IsleMind-0.0.13-x86_64-no-model.apk')
+  const snapshotPath = `${apkPath}.source-snapshot.json`
+  const sourcePath = path.join(temporaryRoot, 'app.json')
+  const extraInput = path.join(temporaryRoot, 'babel.config.js')
+  const bytes = Buffer.alloc(2 * 1024 * 1024 + 7, 0x61)
+  const changedBytes = Buffer.from(bytes)
+  changedBytes[0] = 0x62
+  const digest = (value) => crypto.createHash('sha256').update(value).digest('hex')
+  const apkTime = new Date(Date.now() + 60_000)
+  let cases = 0
+  function reset() {
+    if (fs.existsSync(apkPath) && fs.statSync(apkPath).isDirectory()) fs.rmdirSync(apkPath)
+    fs.rmSync(extraInput, { force: true })
+    fs.writeFileSync(sourcePath, '{"fixture":"source A"}')
+    fs.writeFileSync(apkPath, bytes)
+    fs.utimesSync(apkPath, apkTime, apkTime)
+    contract.writeReleaseSourceSnapshot(temporaryRoot, apkPath)
+    return JSON.parse(fs.readFileSync(snapshotPath, 'utf8'))
+  }
+  function observedApk() {
+    const sha256 = digest(fs.readFileSync(apkPath))
+    return { path: apkPath, exists: true, sha256, sidecarSha256: sha256, sizeBytes: fs.statSync(apkPath).size, modifiedAt: fs.statSync(apkPath).mtime.toISOString() }
+  }
+  function assertAdmission(apk, sourceFreshness, admitted, label) {
+    const result = { ...smoke, appPackageName: 'com.islemind.app', apk, sourceFreshness, installed: { ...smoke.installed, packageSha256: apk.sha256 } }
+    for (const validate of validators) {
+      const issues = validate(result)
+      if (admitted) assert.deepEqual(issues, [], `${label}: ${validate.name}`)
+      else assert.ok(issues.some((issue) => /source|snapshot|stale APK/i.test(issue)), `${label}: ${validate.name} must reject source evidence: ${issues.join('; ')}`)
+    }
+    assert.equal(contract.isReleaseSourceSnapshotCurrent(sourceFreshness, apk), admitted, `${label}: QA source qualification shares the validators' boundary`)
+    cases += 1
+  }
+  try {
+    const written = reset()
+    assert.equal(written.schema, 'islemind.release-source-snapshot.v1', 'writer emits the versioned binding contract')
+    assert.equal(written.apk.sha256, digest(bytes), 'snapshot records the observed multi-chunk APK digest')
+    assert.equal(written.apk.sizeBytes, bytes.length, 'snapshot records the exact APK byte count')
+    assertAdmission(observedApk(), contract.collectReleaseSourceFreshness(temporaryRoot, { path: apkPath }), true, 'bound writer/reader round trip')
+
+    reset()
+    fs.writeFileSync(apkPath, changedBytes)
+    fs.utimesSync(apkPath, apkTime, apkTime)
+    const swapped = contract.collectReleaseSourceFreshness(temporaryRoot, observedApk())
+    assert.equal(swapped.reason, 'artifact_changed_since_snapshot', 'equal size and mtime cannot hide replaced APK bytes')
+    assert.equal(swapped.artifactBinding.reason, 'apk_sha256_mismatch')
+    assertAdmission(observedApk(), swapped, false, 'matching sidecar cannot bless another APK snapshot')
+
+    for (const mutation of ['replace', 'remove']) {
+      reset()
+      const captured = observedApk()
+      if (mutation === 'replace') fs.writeFileSync(apkPath, changedBytes)
+      else fs.unlinkSync(apkPath)
+      assertAdmission(captured, contract.collectReleaseSourceFreshness(temporaryRoot, captured), true, `${mutation}: captured staged-byte identity remains authoritative`)
+    }
+    const missing = contract.collectReleaseSourceFreshness(temporaryRoot, { path: apkPath })
+    assert.equal(missing.artifactBinding.status, 'unverified', 'without captured bytes a missing path cannot prove identity')
+    assertAdmission({ ...smoke.apk, path: apkPath }, missing, false, 'missing observed APK')
+
+    const malformedSnapshots = [
+      ['legacy snapshot', (snapshot) => { delete snapshot.schema }],
+      ['unsupported schema', (snapshot) => { snapshot.schema = 'islemind.release-source-snapshot.v999' }],
+      ['missing APK digest', (snapshot) => { delete snapshot.apk.sha256 }],
+      ['malformed APK digest', (snapshot) => { snapshot.apk.sha256 = 'not-a-digest' }],
+      ['missing byte count', (snapshot) => { delete snapshot.apk.sizeBytes }],
+      ['fractional byte count', (snapshot) => { snapshot.apk.sizeBytes = 1.5 }],
+      ['wrong byte count', (snapshot) => { snapshot.apk.sizeBytes += 1 }],
+    ]
+    for (const [label, mutate] of malformedSnapshots) {
+      const snapshot = reset()
+      mutate(snapshot)
+      const original = JSON.stringify(snapshot)
+      fs.writeFileSync(snapshotPath, original)
+      const freshness = contract.collectReleaseSourceFreshness(temporaryRoot, observedApk())
+      assertAdmission(observedApk(), freshness, false, label)
+      assert.equal(fs.readFileSync(snapshotPath, 'utf8'), original, 'reading legacy/invalid evidence cannot rewrite it into new authority')
+    }
+    for (const invalidIdentity of [{ sha256: null }, { sha256: 'malformed' }, { sizeBytes: 0 }, { sizeBytes: '1' }, { readError: 'captured read failure' }, { exists: false }]) {
+      reset()
+      const captured = { ...observedApk(), ...invalidIdentity }
+      const freshness = contract.collectReleaseSourceFreshness(temporaryRoot, captured)
+      assert.equal(freshness.artifactBinding.status, 'unverified', 'malformed captured evidence is not replaced by a filesystem fallback')
+      assertAdmission(captured, freshness, false, 'invalid captured identity')
+    }
+    reset()
+    for (const failure of [{ exists: false }, { readError: 'known unreadable artifact' }]) {
+      const freshness = contract.collectReleaseSourceFreshness(temporaryRoot, { path: apkPath, ...failure })
+      assert.equal(freshness.artifactBinding.status, 'unverified', 'explicit failed observation cannot be replaced by a filesystem fallback')
+      assertAdmission(observedApk(), freshness, false, 'failed observation without a captured digest')
+    }
+
+    for (const mutation of ['changed', 'added', 'removed']) {
+      reset()
+      if (mutation === 'changed') fs.writeFileSync(sourcePath, '{"fixture":"source B"}')
+      if (mutation === 'added') fs.writeFileSync(extraInput, 'module.exports = {}')
+      if (mutation === 'removed') fs.unlinkSync(sourcePath)
+      const freshness = contract.collectReleaseSourceFreshness(temporaryRoot, observedApk())
+      assert.equal(freshness.reason, 'content_changed_since_snapshot', `${mutation} source inputs remain blocking`)
+      assertAdmission(observedApk(), freshness, false, `${mutation} source inputs`)
+    }
+    const relocated = reset()
+    relocated.apk.path = 'previous/artifact-location.apk'
+    relocated.apk.modifiedAt = '1970-01-01T00:00:00.000Z'
+    fs.writeFileSync(snapshotPath, JSON.stringify(relocated))
+    assertAdmission(observedApk(), contract.collectReleaseSourceFreshness(temporaryRoot, observedApk()), true, 'path/time are diagnostic, not byte identity')
+
+    const captured = observedApk()
+    const forgedStatus = { status: 'current', artifactBinding: { status: 'matched' }, snapshot: { ...relocated, present: true, comparison: { status: 'unchanged' }, apk: { ...relocated.apk, sha256: '0'.repeat(64) } } }
+    assertAdmission(captured, forgedStatus, false, 'validators recompute binding rather than trust a copied matched flag')
+
+    const contractFile = path.join(root, 'scripts/release-freshness-contract.js')
+    const contractSource = fs.readFileSync(contractFile, 'utf8')
+    for (const failure of ['missing-apk', 'empty-apk', 'directory-apk', 'apk-read', 'source-read', 'write', 'rename', 'changed-before-publish', 'rename-and-cleanup']) {
+      reset()
+      const originalSnapshot = fs.readFileSync(snapshotPath, 'utf8')
+      if (failure === 'missing-apk') fs.unlinkSync(apkPath)
+      if (failure === 'empty-apk') fs.writeFileSync(apkPath, '')
+      if (failure === 'directory-apk') { fs.unlinkSync(apkPath); fs.mkdirSync(apkPath) }
+      const opened = new Map()
+      const ownedTemporary = (target) => {
+        assert.equal(path.dirname(target), temporaryRoot, 'snapshot publication/cleanup stays inside the exact fixture directory')
+        assert.ok(target.startsWith(`${snapshotPath}.`) && target.endsWith('.tmp'), 'only the exclusive snapshot temporary file is touched')
+      }
+      const filesystem = {
+        ...fs,
+        openSync(target, ...args) { const descriptor = fs.openSync(target, ...args); opened.set(descriptor, target); return descriptor },
+        readSync(descriptor, ...args) {
+          if ((failure === 'apk-read' && opened.get(descriptor) === apkPath) || (failure === 'source-read' && opened.get(descriptor) === sourcePath)) throw new Error(`synthetic ${failure} failure`)
+          return fs.readSync(descriptor, ...args)
+        },
+        closeSync(descriptor) { fs.closeSync(descriptor); opened.delete(descriptor) },
+        writeFileSync(target, content, options) {
+          ownedTemporary(target)
+          assert.equal(options.flag, 'wx', 'snapshot publication uses exclusive temporary creation')
+          fs.writeFileSync(target, failure === 'write' ? '{partial' : content, options)
+          if (failure === 'write') throw new Error('synthetic snapshot write failure')
+          if (failure === 'changed-before-publish') fs.appendFileSync(apkPath, 'changed after snapshot serialization')
+        },
+        renameSync(from, to) {
+          ownedTemporary(from)
+          assert.equal(to, snapshotPath, 'publication replaces only the requested snapshot')
+          if (failure === 'rename' || failure === 'rename-and-cleanup') throw new Error('synthetic snapshot rename failure')
+          fs.renameSync(from, to)
+        },
+        rmSync(target, options) {
+          ownedTemporary(target)
+          assert.equal(options.recursive, undefined, 'snapshot temporary cleanup is not recursive')
+          if (failure === 'rename-and-cleanup') throw new Error('synthetic snapshot cleanup failure')
+          fs.rmSync(target, options)
+        },
+      }
+      const fixtureModule = { exports: {} }
+      vm.runInNewContext(contractSource, { module: fixtureModule, Buffer, require(name) {
+        if (name === 'node:fs') return filesystem
+        assert.ok(['node:path', 'node:crypto', './model-catalog'].includes(name), `unexpected snapshot dependency ${name}`)
+        return require(name)
+      } }, { filename: contractFile, timeout: 1000 })
+      assert.throws(() => fixtureModule.exports.writeReleaseSourceSnapshot(temporaryRoot, apkPath), (error) => {
+        if (failure === 'rename-and-cleanup') assert.equal(error.errors?.length, 2, 'cleanup failure preserves the primary publication failure')
+        return /ENOENT|nonempty regular APK|synthetic|APK changed/.test(error.message)
+      }, failure)
+      assert.equal(opened.size, 0, `${failure}: read descriptors close`)
+      assert.equal(fs.readFileSync(snapshotPath, 'utf8'), originalSnapshot, `${failure}: failed publication preserves the preceding snapshot`)
+      const leftovers = fs.readdirSync(temporaryRoot).filter((name) => name.endsWith('.tmp'))
+      assert.equal(leftovers.length, failure === 'rename-and-cleanup' ? 1 : 0, `${failure}: temporary cleanup is exact`)
+      for (const name of leftovers) fs.rmSync(path.join(temporaryRoot, name), { force: true })
+      cases += 1
+    }
+  } finally {
+    for (const name of fs.readdirSync(temporaryRoot)) {
+      const target = path.join(temporaryRoot, name)
+      if (target === apkPath && fs.statSync(target).isDirectory()) fs.rmdirSync(target)
+      else fs.rmSync(target, { force: true })
+    }
+    fs.rmdirSync(temporaryRoot)
+  }
+  console.log(`Release source binding: ${cases} host artifact/validator/publication cases passed (temporary files only, no ADB)`)
+}
+
+function runCurrentApkFixture(options) {
+  // Replace CLI filesystem/process effects with in-memory I/O; shared pure validators remain real.
+  const isInstaller = options.kind === 'install'
+  const file = path.join(root, 'scripts', isInstaller ? 'install-current-release-apk.js' : 'collect-current-apk-smoke.js')
+  const source = fs.readFileSync(file, 'utf8')
+  const commands = []
+  const events = []
+  const digest = (bytes) => require('node:crypto').createHash('sha256').update(bytes).digest('hex')
+  let apkBytes = Buffer.from(options.emptyApk ? '' : 'synthetic current-APK selection fixture')
+  const apkDigest = digest(apkBytes)
+  const apkPath = path.join(root, 'dist-apk', 'IsleMind-0.0.13-x86_64-no-model.apk')
+  const originalModifiedMs = Date.now() - 86_400_000
+  let sourceChanged = false
+  let sourcePresent = !options.missingApk
+  let installedBytes = apkBytes
+  const stagedFiles = new Map()
+  const stagingDirectories = new Set()
+  const descriptors = new Map()
+  const readRequests = []
+  const fixtureProcess = { env: {}, argv: [process.execPath, file, ...(options.args ?? [])], execPath: process.execPath, exitCode: undefined }
+  if (Object.hasOwn(options, 'requested')) fixtureProcess.env.QA_DEVICE_SERIAL = options.requested
+  const fixtureModule = { exports: {} }
+  let result
+  let error
+  let appInstalled = !options.appMissing
+  let time = Date.now()
+  const modules = {
+    'node:path': path,
+    'node:os': { tmpdir: () => path.join(root, 'virtual-temp') },
+    'node:crypto': require('node:crypto'),
+    'node:fs': {
+      constants: fs.constants,
+      mkdirSync() {},
+      existsSync: (target) => stagedFiles.has(target) || stagingDirectories.has(target)
+        || (target === apkPath && sourcePresent) || (target === `${apkPath}.sha256` && !options.missingSidecar),
+      statSync(target) {
+        const original = target === apkPath
+        assert.ok(original || stagedFiles.has(target), `Unexpected stat: ${target}`)
+        if (original && !sourcePresent) throw new Error('synthetic missing source APK')
+        const mtimeMs = original ? originalModifiedMs + (sourceChanged ? 1000 : 0) : time
+        return {
+          size: (original ? apkBytes : stagedFiles.get(target)).length,
+          mtime: new Date(mtimeMs), mtimeMs, ctimeMs: mtimeMs, ino: original ? 1 : 2, dev: 1,
+          isFile: () => !original || !options.apkIsDirectory,
+        }
+      },
+      readFileSync(target) {
+        if (path.basename(target) === 'package.json') return JSON.stringify({ version: '0.0.13', ...options.packageConfig })
+        if (path.basename(target) === 'app.json') return JSON.stringify({ expo: {
+          version: '0.0.13', ...options.expoConfig,
+          android: { package: 'com.islemind.app', versionCode: 13, ...options.androidConfig },
+        } })
+        if (target.endsWith('.apk.sha256')) {
+          if (options.unreadableSidecar) throw new Error('synthetic unreadable sidecar')
+          if (sourceChanged && options.sourceMutation) return digest(apkBytes)
+          return typeof options.sidecarText === 'function' ? options.sidecarText(apkDigest) : options.sidecarText ?? apkDigest
+        }
+        if (target === apkPath) {
+          if (!sourcePresent || options.unreadableApk) throw new Error('synthetic unreadable APK')
+          return apkBytes
+        }
+        if (stagedFiles.has(target)) return stagedFiles.get(target)
+        assert.fail(`Unexpected fixture read: ${target}`)
+      },
+      mkdtempSync(prefix) {
+        if (options.stagingDirectoryFailure) throw new Error('synthetic staging directory failure')
+        const directory = `${prefix}fixture`
+        assert.equal(stagingDirectories.size, 0, 'each invocation owns one unique staging directory')
+        stagingDirectories.add(directory)
+        return directory
+      },
+      copyFileSync(from, to, flags) {
+        assert.equal(from, apkPath)
+        assert.equal(flags, fs.constants.COPYFILE_EXCL, 'staging cannot overwrite an existing artifact')
+        assert.ok(stagingDirectories.has(path.dirname(to)), 'copy is confined to the owned directory')
+        events.push({ kind: 'copy', from, to })
+        if (options.unreadableApk) throw new Error('synthetic unreadable APK')
+        if (options.copyFailure) {
+          stagedFiles.set(to, Buffer.from('partial copy'))
+          throw new Error('synthetic copy failure')
+        }
+        if (options.sourceChangedDuringCopy) sourceChanged = true
+        stagedFiles.set(to, options.corruptCopy ? Buffer.from('corrupt copied APK') : Buffer.from(apkBytes))
+      },
+      openSync(target, mode) {
+        assert.equal(mode, 'r')
+        assert.ok(stagedFiles.has(target), 'hashing reads only the staged copy')
+        if (options.hashOpenFailure) throw new Error('synthetic hash open failure')
+        const descriptor = 42
+        descriptors.set(descriptor, { bytes: stagedFiles.get(target), position: 0 })
+        return descriptor
+      },
+      readSync(descriptor, buffer, offset, length, position) {
+        assert.equal(position, null, 'hash reads advance the descriptor')
+        const opened = descriptors.get(descriptor)
+        assert.ok(opened, 'hash descriptor is open')
+        readRequests.push(length)
+        if (options.hashReadFailure) throw new Error('synthetic hash read failure')
+        const count = Math.min(length, options.partialReadBytes ?? length, opened.bytes.length - opened.position)
+        opened.bytes.copy(buffer, offset, opened.position, opened.position + count)
+        opened.position += count
+        return count
+      },
+      closeSync(descriptor) {
+        assert.ok(descriptors.delete(descriptor), 'hash descriptor is closed exactly once')
+      },
+      rmSync(target, config) {
+        assert.equal(path.basename(target), 'install.apk', 'cleanup cannot delete the source artifact')
+        assert.ok(stagingDirectories.has(path.dirname(target)), 'cleanup stays in the owned staging directory')
+        assert.equal(config.recursive, undefined, 'artifact cleanup is not recursive')
+        events.push({ kind: 'cleanup-file', target })
+        if (options.cleanupFailure === 'file') throw new Error('synthetic file cleanup failure')
+        stagedFiles.delete(target)
+      },
+      rmdirSync(target) {
+        assert.ok(stagingDirectories.has(target), 'only the owned empty directory is removed')
+        assert.equal(stagedFiles.size, 0, 'staged APK is removed before its directory')
+        events.push({ kind: 'cleanup-directory', target })
+        if (options.cleanupFailure === 'directory') throw new Error('synthetic directory cleanup failure')
+        stagingDirectories.delete(target)
+      },
+      writeFileSync(target, content) {
+        assert.equal(target, path.join(root, 'test-evidence/qa', isInstaller ? 'current-apk-install-results.json' : 'current-apk-smoke-results.json'))
+        assert.equal(result, undefined, 'CLI writes exactly one final receipt')
+        if (options.receiptFailure) throw new Error('synthetic receipt write failure')
+        events.push({ kind: 'receipt', target })
+        result = JSON.parse(content)
+      },
+    },
+    'node:child_process': {
+      execFileSync(command, args) {
+        commands.push({ command, args: Array.from(args) })
+        events.push({ kind: 'command', command, args: Array.from(args) })
+        assert.equal(command, 'adb', 'collector uses only the captured ADB command')
+        if (args.length === 1 && args[0] === 'devices') {
+          if (options.inventoryError) throw new Error('synthetic ADB inventory failure')
+          return `List of devices attached\r\n${options.inventory ?? ''}\r\n`
+        }
+        if (options.deviceDisconnected) throw new Error('synthetic device disconnect')
+        const operation = args.slice(2).join(' ')
+        if (options.sourceMutation && !sourceChanged && (args[2] === 'uninstall' || args[2] === 'install')) {
+          sourceChanged = true
+          if (options.sourceMutation === 'remove') sourcePresent = false
+          else apkBytes = Buffer.from('replaced source APK after admission')
+        }
+        if (args[2] === 'uninstall') {
+          if (options.uninstallFailure) throw new Error('synthetic uninstall failure')
+          appInstalled = false
+          return 'Success'
+        }
+        if (args[2] === 'install') {
+          if (options.installFailure) throw new Error('synthetic install failure')
+          const target = args.at(-1)
+          assert.ok(stagedFiles.has(target), 'ADB must consume the staged copy, not the mutable source path')
+          installedBytes = stagedFiles.get(target)
+          appInstalled = true
+          return 'Success'
+        }
+        if (operation === 'shell am force-stop com.islemind.app') return ''
+        if (operation === 'shell dumpsys package com.islemind.app') return 'versionName=0.0.13\nversionCode=13\nprimaryCpuAbi=x86_64\nfirstInstallTime=2026-07-18 00:00:00\nlastUpdateTime=2026-07-18 00:00:00'
+        if (operation === 'shell pm path com.islemind.app') return appInstalled ? 'package:/data/app/com.islemind.app/base.apk' : ''
+        if (operation === 'shell sha256sum /data/app/com.islemind.app/base.apk') {
+          if (options.installedDigest === 'missing') return ''
+          return `${options.installedDigest === 'mismatch' ? '0'.repeat(64) : digest(installedBytes)}  /data/app/com.islemind.app/base.apk`
+        }
+        if (operation === 'shell getprop ro.product.cpu.abi') return 'x86_64'
+        if (operation === 'shell getprop debug.hwui.renderer') return ''
+        if (operation === 'shell getprop ro.kernel.qemu') return '1'
+        if (operation === 'shell pidof com.islemind.app') return '4242'
+        if (operation === 'shell dumpsys window windows' || operation === 'shell dumpsys gfxinfo com.islemind.app' || args[2] === 'logcat') return ''
+        assert.fail(`Unexpected fixture ADB operation: ${operation}`)
+      },
+      spawnSync(command, args) {
+        commands.push({ command, args: Array.from(args) })
+        if (command === 'adb' && args[3] === 'monkey') return { status: options.deviceDisconnected ? 1 : 0, stdout: '', stderr: '' }
+        assert.equal(command, process.execPath)
+        assert.equal(args[0], 'scripts/validate-android-16kb-apk.js')
+        return { status: 0, stdout: '16 KB APK validation passed\nZIP page alignment: OK\nELF LOAD alignment: OK for 64-bit ABIs', stderr: '' }
+      },
+    },
+    './release-artifact-contract': require('./release-artifact-contract'),
+    './release-freshness-contract': { collectReleaseSourceFreshness: (_root, apk) => {
+      events.push({ kind: 'freshness', apk })
+      if (options.freshnessFailure) throw new Error('synthetic freshness read failure')
+      if (typeof options.sourceFreshness === 'function') return options.sourceFreshness(apk)
+      return Object.hasOwn(options, 'sourceFreshness') ? options.sourceFreshness : currentApkSourceFreshnessFixture(apk?.sha256, apk?.sizeBytes)
+    } },
+    './release-validation-contract': require('./release-validation-contract'),
+  }
+  const fixtureRequire = (name) => {
+    assert.ok(Object.hasOwn(modules, name), `Unexpected collector dependency: ${name}`)
+    return modules[name]
+  }
+  fixtureRequire.main = fixtureModule
+  try {
+    vm.runInNewContext(source, {
+      require: fixtureRequire,
+      module: fixtureModule,
+      __dirname: path.dirname(file),
+      process: fixtureProcess,
+      Buffer,
+      console: { log() {} },
+      Atomics: { wait() {} },
+      Date: class extends Date { static now() { time += 1000; return time } },
+    }, { filename: file, timeout: 1000 })
+  } catch (caught) {
+    if (!isInstaller || caught.code === 'ERR_ASSERTION') throw caught
+    error = caught
+  }
+  if (!isInstaller) assert.ok(result, 'smoke CLI produces an in-memory result')
+  assert.equal(descriptors.size, 0, 'hash descriptors close on every success/failure path')
+  if (!options.cleanupFailure) {
+    assert.equal(stagedFiles.size, 0, 'all owned staged bytes are cleaned after success or failure')
+    assert.equal(stagingDirectories.size, 0, 'all owned staging directories are cleaned after success or failure')
+  }
+  return {
+    result, commands, error, events, readRequests, apkPath, apkDigest,
+    originalModifiedAt: new Date(originalModifiedMs).toISOString(),
+    stagedFiles: [...stagedFiles.keys()], stagingDirectories: [...stagingDirectories],
+    openDescriptors: [...descriptors.keys()],
+    exitCode: error ? 1 : fixtureProcess.exitCode ?? 0,
+  }
 }
 
 function assertReleaseVersionMonotonicity() {
@@ -851,7 +1658,7 @@ function assertSourceIntegration() {
       androidPackage: 'com.islemind.app',
       androidVersionCode: 13,
     },
-    sourceFreshness: { status: 'current' },
+    sourceFreshness: currentApkSourceFreshnessFixture(expectedApkSha256, 1),
     installed: {
       deviceSerial: 'fixture-device',
       deviceAbi: 'arm64-v8a',
@@ -1254,6 +2061,8 @@ async function flushMicrotasks() {
 }
 
 function assertReleaseWorkflowIntegration() {
+  const { qualifiedBuildToolchain } = require('./android-build-toolchain')
+  const { parse } = require('yaml')
   const releaseWorkflowSource = fs.readFileSync(path.join(root, '.github', 'workflows', 'release-android-apk.yml'), 'utf8')
   const runnerWorkflowSource = fs.readFileSync(path.join(root, '.github', 'workflows', 'runner-android-apk.yml'), 'utf8')
 
@@ -1265,7 +2074,20 @@ function assertReleaseWorkflowIntegration() {
     assert.ok(source.includes('bun-version: 1.4.2'), `${name} workflow pins the repository Bun version`)
     assert.ok(source.includes('bun install --frozen-lockfile'), `${name} workflow installs from bun.lock without mutation`)
     assert.ok(source.includes('bun run type-check'), `${name} workflow type-checks through Bun`)
-    assert.doesNotMatch(source, /actions\/setup-node|cache:\s*npm|\bnpm\s+(?:ci|install|run)\b|\bnpx\b/, `${name} workflow has no npm toolchain path`)
+    assert.doesNotMatch(source, /cache:\s*npm|\bnpm\s+(?:ci|install|run)\b|\bnpx\b/, `${name} workflow has no npm package-management path`)
+    const jobs = Object.values(parse(source).jobs)
+    assert.ok(jobs.length > 0, `${name} workflow has build jobs`)
+    for (const job of jobs) {
+      const nodeSetups = job.steps.filter(step => step.uses?.startsWith('actions/setup-node@'))
+      const bunSetups = job.steps.filter(step => step.uses?.startsWith('oven-sh/setup-bun@'))
+      assert.equal(nodeSetups.length, 1, `${name} workflow installs Node exactly once for Node scripts`)
+      assert.equal(nodeSetups[0].with?.['node-version'], qualifiedBuildToolchain.node, `${name} workflow pins the qualified Node runtime`)
+      assert.equal(nodeSetups[0].with?.cache, undefined, `${name} Node setup does not take over package caching`)
+      assert.equal(bunSetups.length, 1, `${name} workflow retains Bun package management`)
+      assert.equal(bunSetups[0].with?.['bun-version'], qualifiedBuildToolchain.bun, `${name} workflow pins the qualified Bun version`)
+      assert.ok(job.steps.some(step => step.run === 'bun install --frozen-lockfile'), `${name} build job consumes the Bun lockfile`)
+      assert.ok(job.steps.some(step => step.run === 'bun run type-check'), `${name} build job retains the type gate`)
+    }
   }
 
   const qualityGateIndex = releaseWorkflowSource.indexOf('- name: Release quality contracts')

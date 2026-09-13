@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 90
     env:
       REQUESTED_TAG: ${{ github.event.inputs.tag }}
+      JAVA_TOOL_OPTIONS: --enable-native-access=ALL-UNNAMED
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -28,11 +29,16 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.21.0
+
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 25
+          java-version: 25.0.4+101.0.LTS
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -83,6 +89,12 @@ jobs:
 
       - name: Type check
         run: bun run type-check
+
+      - name: Verify and record build toolchain
+        run: |
+          mkdir -p dist-apk
+          node scripts/android-build-toolchain.js > dist-apk/build-toolchain.json
+          cat dist-apk/build-toolchain.json
 
       - name: Release quality contracts
         run: |

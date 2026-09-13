@@ -726,7 +726,7 @@ async function testPortableDataPayloadRuntime(dataManagementModule) {
   const serialized = await runtime.exportJson({ tavern: { includePrivateMemory: false } })
   const exported = JSON.parse(serialized.json)
   assert.equal(exported.app, 'islemind', 'Data Management owns the portable application discriminator')
-  assert.equal(exported.version, 1, 'Data Management owns the current portable schema version')
+  assert.equal(exported.version, 2, 'Data Management writes the current v2 portable payload while retaining v1 import')
   assert.equal(exported.exportedAt, 1234, 'portable export uses the injected clock')
   assert.equal(exported.providers[0].apiKey, '', 'portable export removes provider secrets')
   assert.equal(exported.providers[0].presetId, 'custom-endpoint', 'portable export migrates legacy protocol-shaped preset IDs to custom supplier identity')
@@ -3089,7 +3089,7 @@ function testProviderHeaderPolicy(providerModule) {
   assert.match(providerIndexSource, /export \* from '\.\/providerClientSimulationPolicy'/, 'client compatibility contracts are exported only through the Providers public entry point')
   assert.match(headerSource, /if \(isBedrockRuntimeProvider\(provider\)\) return headers[\s\S]*applyProviderClientSimulationHeaders/, 'Bedrock isolation remains before compatibility header application')
   assert.match(pipelineSource, /getHeaders\(runtimeReq\.provider,\s*\{[\s\S]*?model:\s*runtimeReq\.model/, 'pipeline must forward the selected model to provider headers')
-  assert.match(executorSource, /getHeaders\(selectedReq\.provider,\s*\{[\s\S]*?model:\s*selectedReq\.model/, 'executor must forward the selected model to provider headers')
+  assert.match(executorSource, /prepareProviderRuntimePipeline\(\{ req: selectedReq,[\s\S]*?selectedReq = selectedPipeline\.runtimeReq[\s\S]*?const selectedPreparedRequest = selectedPipeline\.preparedHttpRequest/, 'executor must use the selected model and headers from the complete governed pipeline')
   assert.match(executorSource, /getHeaders\(fallbackReq\.provider,\s*\{[\s\S]*?model:\s*fallbackReq\.model/, 'fallback execution must recompute UA from its selected model')
   assert.match(runtimeSource, /headers:\s*getHeaders\(provider,\s*\{\s*model\s*\}\)/, 'prepared provider requests must forward their selected model to provider headers')
 }
@@ -5290,6 +5290,26 @@ async function testRuntimeProviderFallbackRoute(core, runtimeModule, storeModule
 }
 
 async function testProviderRuntimeAdapter(core, bootstrapModule) {
+  const actualTarget = { providerId: 'actual-hidden-fallback', model: 'actual-upstream', protocolAdapterId: 'anthropic', endpointVariant: 'direct', credentialSource: { kind: 'group', groupId: 'default' }, attemptId: 'fixture-attempt' }
+  const targetOrder = []
+  const targetAdapter = bootstrapModule.createProviderRuntimeAdapter({
+    provider: { id: 'outer-selected', type: 'openai', enabled: true, apiKey: '', name: 'Outer' },
+    streamChat: async (runtimeRequest, onChunk, onDone) => {
+      await runtimeRequest.onExecutionTarget(actualTarget)
+      targetOrder.push('output')
+      onChunk('Actual answer')
+      onDone({ text: 'Actual answer', providerToolCalls: [{ callId: 'actual-tool', name: 'fixture', arguments: {} }] })
+      return { controller: new AbortController(), done: Promise.resolve() }
+    },
+  })
+  const targetEvents = []
+  for await (const event of targetAdapter.stream(request(core, 'outer-selected'), {
+    signal: new AbortController().signal,
+    onExecutionTarget: async (target) => { assert.deepEqual(target, actualTarget); await Promise.resolve(); targetOrder.push('target') },
+  })) targetEvents.push(event)
+  assert.deepEqual(targetOrder, ['target', 'output'], 'Plain adapter awaits actual out-of-band attribution before output')
+  assert.equal(targetEvents[0].type, 'text-delta', 'execution target reporting is not a premature stream event')
+  assert.deepEqual(targetEvents.find((event) => event.type === 'provider-continuation-state').binding, { providerId: actualTarget.providerId, model: actualTarget.model }, 'continuation binds the hidden actual route, not the outer candidate')
   let capturedRequest
   let completedController
   const providerToolArguments = { query: 'IsleMind', filters: { limit: 3, exact: true }, tags: ['architecture'] }

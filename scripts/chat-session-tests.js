@@ -397,7 +397,8 @@ async function run() {
 
   const deepLinkSource = read('app/chat/[id].tsx')
   assert.equal(deepLinkSource.includes('resolveConversationProductMode(conversation)'), false, 'deep links do not restore historical mode execution selection')
-  assert.ok(deepLinkSource.includes('select(conversation.id)'), 'deep links update the unified active conversation')
+  assert.match(deepLinkSource, /const conversationId = conversation\?\.id/, 'deep links derive the selection identity from the subscribed conversation')
+  assert.match(deepLinkSource, /useFocusEffect\(useCallback\(\(\) => \{\s*if \(conversationId\) select\(conversationId\)\s*\}, \[conversationId, select\]\)\)/, 'only focused deep links update the unified active conversation, without reselecting on background message updates')
   assert.match(deepLinkSource, /useChatStore\(\s*\(state\) => state\.conversations\.find\(\(item\) => item\.id === id\) \?\? null,?\s*\)/, 'deep links subscribe only to the requested conversation')
   assert.equal(deepLinkSource.includes('const conversations = useChatStore'), false, 'deep links do not rerender for unrelated conversation-list updates')
   assert.equal(deepLinkSource.includes('const productMode ='), false, 'deep links have no local product-mode selector')

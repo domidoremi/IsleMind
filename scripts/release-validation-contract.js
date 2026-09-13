@@ -1,8 +1,22 @@
 const path = require('node:path')
 const { defaultReleaseSmokeArch } = require('./release-artifact-contract')
+const { compareReleaseSnapshotApk } = require('./release-freshness-contract')
 
 const defaultReleaseAppPackageName = 'com.islemind.app'
 const cleanInstallWindowMs = 60_000
+
+function isValidAdbDeviceSerial(value) {
+  return typeof value === 'string' && value.length > 0 && !/[\s\x00-\x1f\x7f]/.test(value)
+}
+
+function selectReadyAdbDevice(requested, inventory) {
+  if (!isValidAdbDeviceSerial(requested) || typeof inventory !== 'string') return null
+  const matches = inventory
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([serial]) => serial === requested)
+  return matches.length === 1 && matches[0][1] === 'device' ? requested : null
+}
 
 function validateReleaseProvenance(provenance, options = {}) {
   const appPackageName = options.appPackageName ?? defaultReleaseAppPackageName
@@ -20,6 +34,7 @@ function validateReleaseProvenance(provenance, options = {}) {
     expectedApkSha256: provenance.apk?.sha256,
   })
   validateReleaseSourceFreshness(provenance.sourceFreshness, issues, {
+    apk: provenance.apk,
     stalePrefix: 'Source/resource file',
     staleSuffix: '; rebuild and clean-install before using this APK as current evidence.',
   })
@@ -35,6 +50,7 @@ function validateCurrentApkSmokeResult(result, options = {}) {
   validateReleaseApkEvidence(result.apk, issues, 'Current APK', { requireExists: true })
   validateReleaseExpectedConfig(expected, issues, { appPackageName })
   validateReleaseSourceFreshness(result.sourceFreshness, issues, {
+    apk: result.apk,
     stalePrefix: 'Current APK smoke used a stale APK:',
     staleSuffix: '.',
   })
@@ -47,6 +63,20 @@ function validateCurrentApkSmokeResult(result, options = {}) {
   if (!result.compatibility16kb?.ok) issues.push('16KB APK validation did not pass.')
   if (!result.compatibility16kb?.zipAlignmentOk) issues.push('ZIP page alignment was not proven with zipalign -P 16.')
   if (!result.compatibility16kb?.elf64Ok) issues.push('64-bit ELF LOAD alignment was not proven.')
+  return issues
+}
+
+function validateCurrentApkInstallPreflight(result, options = {}) {
+  if (!result) return ['Current APK install preflight was not collected.']
+  const issues = []
+  validateReleaseApkEvidence(result.apk, issues, 'Current APK')
+  if (!result.apk?.exists) issues.push('Current release APK is not present for installation.')
+  validateReleaseExpectedConfig(result.expected, issues, options)
+  validateReleaseSourceFreshness(result.sourceFreshness, issues, { apk: result.apk })
+  const snapshot = result.sourceFreshness?.snapshot
+  if (!snapshot?.present || snapshot.readError || snapshot.comparison?.status !== 'unchanged') {
+    issues.push('Current APK installation requires a readable, matching .source-snapshot.json; rebuild before installing.')
+  }
   return issues
 }
 
@@ -148,7 +178,18 @@ function validateReleaseSourceFreshness(sourceFreshness, issues, options = {}) {
     issues.push('Release source freshness was not collected.')
     return
   }
+  const binding = compareReleaseSnapshotApk(sourceFreshness.snapshot, options.apk)
+  if (binding.status !== 'matched') {
+    issues.push(`Release source snapshot is not bound to the current APK SHA256 and size (${binding.reason}); rebuild and recollect evidence.`)
+  }
+  if (sourceFreshness.status === 'current' && sourceFreshness.snapshot?.comparison?.status !== 'unchanged') {
+    issues.push('Release source snapshot inputs were not verified unchanged.')
+  }
   if (sourceFreshness.status === 'stale') {
+    if (sourceFreshness.reason === 'artifact_changed_since_snapshot') {
+      issues.push('Current release APK does not match its source-snapshot artifact identity; rebuild before using it as current evidence.')
+      return
+    }
     const newest = sourceFreshness.newestInput?.path ?? 'unknown source/resource'
     const modifiedAt = sourceFreshness.newestInput?.modifiedAt ?? 'unknown time'
     const apkModifiedAt = sourceFreshness.apkModifiedAt ?? 'unknown APK time'
@@ -169,8 +210,11 @@ module.exports = {
   cleanInstallWindowMs,
   defaultReleaseAppPackageName,
   inferReleaseApkArch,
+  isValidAdbDeviceSerial,
   isInstalledAbiCompatible,
+  selectReadyAdbDevice,
   defaultReleaseSmokeArch,
+  validateCurrentApkInstallPreflight,
   validateCurrentApkSmokeResult,
   validateReleaseProvenance,
 }

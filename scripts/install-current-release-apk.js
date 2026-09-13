@@ -1,4 +1,5 @@
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { execFileSync } = require('node:child_process')
@@ -8,25 +9,30 @@ const {
   defaultReleaseSmokeVariant,
   resolveReleaseArchForAndroidAbi,
 } = require('./release-artifact-contract')
-const { cleanInstallState, defaultReleaseAppPackageName } = require('./release-validation-contract')
+const { collectReleaseSourceFreshness } = require('./release-freshness-contract')
+const {
+  cleanInstallState,
+  defaultReleaseAppPackageName,
+  isValidAdbDeviceSerial,
+  selectReadyAdbDevice,
+  validateCurrentApkInstallPreflight,
+} = require('./release-validation-contract')
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const outputPath = path.join(evidenceDir, 'current-apk-install-results.json')
 const appJson = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-const requestedDeviceArg = readDeviceArg()
-const explicitDeviceRequested = Boolean(requestedDeviceArg || process.env.QA_DEVICE_SERIAL)
-const defaultDevice = requestedDeviceArg || process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 const appPackageName = appJson?.expo?.android?.package || defaultReleaseAppPackageName
 const keepData = process.argv.includes('--keep-data')
 
 function main() {
-  fs.mkdirSync(evidenceDir, { recursive: true })
-  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
+  const requestedDevice = readDeviceArg() ?? process.env.QA_DEVICE_SERIAL ?? 'emulator-5554'
+  const device = resolveDevice(requestedDevice)
   if (!device) {
-    throw new Error(`No connected adb device was found for ${defaultDevice}.`)
+    throw new Error('ADB target is not uniquely connected and ready. Use one --device argument or QA_DEVICE_SERIAL with the exact authorized serial; only absent configuration defaults to emulator-5554. No fallback device was selected.')
   }
+  fs.mkdirSync(evidenceDir, { recursive: true })
 
   const version = packageJson.version || appJson?.expo?.version
   const deviceAbi = readDeviceAbi(device)
@@ -38,54 +44,99 @@ function main() {
         variant: process.env.QA_APK_VARIANT || defaultReleaseSmokeVariant,
       })
 
+  const expected = {
+    packageVersion: packageJson.version || null,
+    expoVersion: appJson?.expo?.version || null,
+    androidPackage: appJson?.expo?.android?.package ?? null,
+    androidVersionCode: appJson?.expo?.android?.versionCode ?? null,
+  }
+
+  return withStagedApk(apkPath, ({ apk, stagedApkPath }) => {
+    // Freshness uses the original artifact identity/time, never the new temporary copy's mtime.
+    const sourceFreshness = collectReleaseSourceFreshness(root, apk)
+    const issues = validateCurrentApkInstallPreflight({ apk, expected, sourceFreshness }, { appPackageName })
+    if (issues.length) throw new Error(`Current APK install preflight failed: ${issues.join(' ')}`)
+
+    const uninstall = keepData ? { skipped: true, reason: 'keep-data' } : cleanUninstall(device, appPackageName)
+    const installArgs = ['-s', device, 'install']
+    if (keepData) installArgs.push('-r')
+    installArgs.push(stagedApkPath)
+
+    const output = execFileSync('adb', installArgs, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 120000,
+      maxBuffer: 10 * 1024 * 1024,
+    })
+    console.log(output.trim() || `Installed ${relative(apkPath)} to ${device}.`)
+    const installed = readInstalledPackageInfo(device, appPackageName, deviceAbi)
+    const result = {
+      generatedAt: new Date().toISOString(),
+      device,
+      keepData,
+      appPackageName,
+      apk,
+      expected,
+      sourceFreshness,
+      uninstall,
+      installOutput: output.trim(),
+      installed,
+    }
+    fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
+    if (!installed?.packageSha256) {
+      throw new Error('Installed package SHA256 could not be calculated from the device APK.')
+    }
+    if (installed.packageSha256 !== apk.sha256) {
+      throw new Error(`Installed package SHA256 ${installed.packageSha256} does not match ${relative(apkPath)} SHA256 ${apk.sha256}.`)
+    }
+  })
+}
+
+function withStagedApk(apkPath, useArtifact) {
   if (!fs.existsSync(apkPath)) {
     throw new Error(`Current release APK was not found: ${relative(apkPath)}.`)
   }
+  const originalStat = fs.statSync(apkPath)
+  if (!originalStat.isFile() || originalStat.size <= 0) {
+    throw new Error(`Current release APK must be a nonempty regular file: ${relative(apkPath)}.`)
+  }
+  const sidecarSha256 = readSha256Sidecar(apkPath)
+  if (!sidecarSha256) throw new Error('Current APK .sha256 sidecar file is missing or unreadable.')
 
-  const uninstall = keepData ? { skipped: true, reason: 'keep-data' } : cleanUninstall(device, appPackageName)
-
-  const installArgs = ['-s', device, 'install']
-  if (keepData) installArgs.push('-r')
-  installArgs.push(apkPath)
-
-  const output = execFileSync('adb', installArgs, {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 120000,
-    maxBuffer: 10 * 1024 * 1024,
-  })
-  console.log(output.trim() || `Installed ${relative(apkPath)} to ${device}.`)
-  const installed = readInstalledPackageInfo(device, appPackageName, deviceAbi)
-  const apkSha256 = sha256File(apkPath)
-  const result = {
-    generatedAt: new Date().toISOString(),
-    device,
-    keepData,
-    appPackageName,
-    apk: {
+  // Install only this owned copy: a rebuild/replacement of the source path cannot change admitted bytes.
+  // This is not a lock against same-user tampering or a transaction with Android's package manager.
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-current-apk-'))
+  const stagedApkPath = path.join(stagingDir, 'install.apk')
+  let operationError
+  try {
+    fs.copyFileSync(apkPath, stagedApkPath, fs.constants.COPYFILE_EXCL)
+    const afterCopy = fs.statSync(apkPath)
+    if (['size', 'mtimeMs', 'ctimeMs', 'ino', 'dev'].some((key) => originalStat[key] !== afterCopy[key])) {
+      throw new Error('Current APK changed while being staged; retry with a stable build artifact.')
+    }
+    const apk = {
       path: relative(apkPath),
-      sha256: apkSha256,
-      sidecarSha256: readSha256Sidecar(apkPath),
-      sizeBytes: fs.statSync(apkPath).size,
-      modifiedAt: fs.statSync(apkPath).mtime.toISOString(),
-    },
-    expected: {
-      packageVersion: packageJson.version || null,
-      expoVersion: appJson?.expo?.version || null,
-      androidPackage: appPackageName,
-      androidVersionCode: appJson?.expo?.android?.versionCode ?? null,
-    },
-    uninstall,
-    installOutput: output.trim(),
-    installed,
-  }
-  fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
-  if (!installed?.packageSha256) {
-    throw new Error('Installed package SHA256 could not be calculated from the device APK.')
-  }
-  if (installed.packageSha256 !== apkSha256) {
-    throw new Error(`Installed package SHA256 ${installed.packageSha256} does not match ${relative(apkPath)} SHA256 ${apkSha256}.`)
+      exists: true,
+      sha256: sha256File(stagedApkPath),
+      sidecarSha256,
+      sizeBytes: fs.statSync(stagedApkPath).size,
+      modifiedAt: originalStat.mtime.toISOString(),
+    }
+    return useArtifact({ apk, stagedApkPath })
+  } catch (error) {
+    operationError = error
+    throw error
+  } finally {
+    try {
+      // Remove only the owned file and empty directory, never recursively remove a computed path.
+      fs.rmSync(stagedApkPath, { force: true })
+      fs.rmdirSync(stagingDir)
+    } catch (cleanupError) {
+      const message = `Temporary APK cleanup failed at ${stagingDir}: ${cleanupError.message}`
+      if (operationError) throw new AggregateError([operationError, cleanupError], `${operationError.message}; ${message}`)
+      throw new Error(message, { cause: cleanupError })
+    }
   }
 }
 
@@ -107,28 +158,37 @@ function cleanUninstall(device, packageName) {
   return { skipped: false, output: output.trim() }
 }
 
-function resolveDevice(requested, options = {}) {
+function resolveDevice(requested) {
+  if (!isValidAdbDeviceSerial(requested)) return null
   const output = execFileSync('adb', ['devices'], {
     cwd: root,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 15000,
   })
-  const devices = output
-    .split(/\r?\n/)
-    .map((line) => line.trim().split(/\s+/))
-    .filter(([serial, state]) => serial && state === 'device')
-    .map(([serial]) => serial)
-  if (devices.includes(requested)) return requested
-  if (options.strict) return null
-  return devices[0] ?? null
+  return selectReadyAdbDevice(requested, output)
 }
 
 function readDeviceArg() {
-  const index = process.argv.indexOf('--device')
-  if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1]
-  const deviceWithEquals = process.argv.find((value) => value.startsWith('--device='))
-  return deviceWithEquals ? deviceWithEquals.split('=').slice(1).join('=') : null
+  let requested
+  for (let index = 2; index < process.argv.length; index += 1) {
+    const argument = process.argv[index]
+    if (argument === '--keep-data') continue
+    if (argument !== '--device' && !argument.startsWith('--device=')) {
+      throw new Error('Unsupported installer argument. Use --device SERIAL or --device=SERIAL and optionally --keep-data.')
+    }
+    if (requested !== undefined) throw new Error('Provide --device exactly once; repeated target arguments are ambiguous.')
+    if (argument === '--device') {
+      const value = process.argv[index + 1]
+      if (value === undefined || value.startsWith('--')) throw new Error('--device requires an explicit serial, not another option.')
+      requested = value
+      index += 1
+    } else {
+      requested = argument.slice('--device='.length)
+    }
+    if (!isValidAdbDeviceSerial(requested)) throw new Error('--device requires a nonempty exact serial without whitespace or control characters.')
+  }
+  return requested
 }
 
 function runAdb(args) {
@@ -181,15 +241,24 @@ function readInstalledPackageSha256(device, packagePath) {
 
 function sha256File(file) {
   const hash = crypto.createHash('sha256')
-  hash.update(fs.readFileSync(file))
-  return hash.digest('hex')
+  const buffer = Buffer.allocUnsafe(1024 * 1024)
+  const descriptor = fs.openSync(file, 'r')
+  try {
+    let bytesRead
+    while ((bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(buffer.subarray(0, bytesRead))
+    }
+    return hash.digest('hex')
+  } finally {
+    fs.closeSync(descriptor)
+  }
 }
 
 function readSha256Sidecar(apkPath) {
   const sidecar = `${apkPath}.sha256`
   if (!fs.existsSync(sidecar)) return null
   const text = fs.readFileSync(sidecar, 'utf8').trim()
-  const match = text.match(/^([a-fA-F0-9]{64})\b/)
+  const match = text.match(/^([a-fA-F0-9]{64})(?:[ \t]+[^\r\n]+)?$/)
   return match ? match[1].toLowerCase() : null
 }
 
@@ -210,4 +279,4 @@ function relative(file) {
 
 if (require.main === module) main()
 
-module.exports = { main }
+module.exports = { main, withStagedApk }

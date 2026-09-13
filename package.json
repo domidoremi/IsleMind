@@ -11,9 +11,10 @@
     "postinstall": "node scripts/patch-onnxruntime-16kb.js",
     "android": "node node_modules/expo/bin/cli run:android",
     "ios": "node node_modules/expo/bin/cli run:ios",
-    "test": "jest",
+    "test": "bun --no-env-file run test:sqlite && jest",
+    "test:sqlite": "bun --no-env-file test src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution.test.ts src/modules/conversations/adapters/sqliteConversationPreference.test.ts src/modules/conversations/adapters/sqliteConversationRepository.test.ts src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts src/modules/documents/adapters/sqliteDocumentRepository.test.ts src/modules/providers/adapters/sqliteModelAvailabilityRepository.test.ts",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
+    "test:coverage": "bun --no-env-file run test:sqlite && jest --coverage",
     "test:android-capability-boundary": "node scripts/android-capability-boundary-audit.js",
     "test:android-workflow-templates": "node scripts/android-workflow-template-audit.js",
     "test:android-device-tools": "node scripts/android-device-tool-policy-tests.js",
@@ -43,6 +44,7 @@
     "test:product-mobile-layout": "node scripts/product-mobile-layout-tests.js",
     "test:web-style-runtime-boundary": "node scripts/web-style-runtime-boundary-tests.js",
     "test:android-release-hardening": "node scripts/android-release-hardening-tests.js",
+    "test:android-build-toolchain": "node scripts/android-build-toolchain-tests.js",
     "test:product-mobile-web-render-evidence": "node scripts/product-mobile-web-render-evidence-tests.js",
     "test:product-mobile-native-evidence": "node scripts/product-mobile-native-evidence-tests.js",
     "test:product-mobile-native-evidence:collect": "node scripts/collect-product-mobile-native-adb-evidence.js",
@@ -208,9 +210,10 @@
     "@babel/plugin-transform-modules-commonjs": "~7.29.7",
     "@babel/plugin-transform-react-jsx": "~7.29.7",
     "@babel/plugin-transform-typescript": "~7.29.7",
+    "@react-native/metro-config": "0.86.3",
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "29.5.14",
-    "@types/node": "^26.4.1",
+    "@types/node": "24.13.4",
     "@types/react": "~19.2.18",
     "babel-preset-expo": "~57.0.9",
     "expo-doctor": "^1.20.4",
@@ -223,6 +226,7 @@
   },
   "overrides": {
     "expo-constants": "$expo-constants",
+    "markdown-it": "14.3.2",
     "react-native-screens": "4.26.2"
   },
   "private": true,
@@ -234,7 +238,7 @@
   "jest": {
     "preset": "jest-expo",
     "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|moti)"
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|moti|yaml)"
     ],
     "collectCoverageFrom": [
       "src/**/*.{ts,tsx}",
@@ -251,6 +255,14 @@
     "testMatch": [
       "**/__tests__/**/*.(test|spec).[jt]s?(x)",
       "**/?(*.)+(test|spec).[jt]s?(x)"
+    ],
+    "testPathIgnorePatterns": [
+      "src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution\\.test\\.ts$",
+      "src/modules/conversations/adapters/sqliteConversationPreference\\.test\\.ts$",
+      "src/modules/conversations/adapters/sqliteConversationRepository\\.test\\.ts$",
+      "src/modules/diagnostics/adapters/sqliteUsageRecordRepository\\.test\\.ts$",
+      "src/modules/documents/adapters/sqliteDocumentRepository\\.test\\.ts$",
+      "src/modules/providers/adapters/sqliteModelAvailabilityRepository\\.test\\.ts$"
     ]
   },
   "expo": {

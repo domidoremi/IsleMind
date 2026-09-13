@@ -1,11 +1,17 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 const { normalizeVariant, supportedVariants } = require('./model-catalog')
 const { apkOutputDirName, formatApkArtifactName } = require('./release-artifact-contract')
-const { writeReleaseSourceSnapshot } = require('./release-freshness-contract')
+const {
+  assertReleaseInputsUnchanged,
+  captureReleaseBuildArtifact,
+  captureReleaseBuildInputs,
+  snapshotReleaseInputs,
+  writeReleaseSourceSnapshot,
+} = require('./release-freshness-contract')
 const { resolveAndroidReleaseOptimization } = require('./android-release-build-contract')
+const { selectAndroidJavaHome, assertQualifiedNodeRuntime } = require('./android-build-toolchain')
 
 const projectRoot = path.resolve(__dirname, '..')
 const androidDir = path.join(projectRoot, 'android')
@@ -17,25 +23,6 @@ const apkOutputWaitMs = 10 * 60 * 1000
 const apkOutputPollMs = 2000
 const gradleNativeRetryAttempts = 3
 const preferredCmakeVersions = ['3.22.1', '4.1.2']
-const preferredAndroidJdkMajor = 25
-const miseJavaInstallsDir = path.join('G:\\', 'dev', 'managers', 'mise', 'data', 'installs', 'java')
-const miseJavaPreferredHome = (() => {
-  try {
-    const versions = fs.readdirSync(miseJavaInstallsDir)
-      .filter((entry) => entry.startsWith(`${preferredAndroidJdkMajor}.`))
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-    return versions.length > 0 ? path.join(miseJavaInstallsDir, versions.at(-1)) : undefined
-  } catch {
-    return undefined
-  }
-})()
-const preferredAndroidJdkHomes = [
-  process.env.ISLEMIND_ANDROID_JAVA_HOME,
-  miseJavaPreferredHome,
-  'C:\\Program Files\\Android\\Android Studio\\jbr',
-  'C:\\Program Files\\Eclipse Adoptium\\jdk-17',
-  'C:\\Program Files\\Java\\jdk-17',
-].filter(Boolean)
 const androidReleaseSigningProperties = [
   'ISLEMIND_UPLOAD_STORE_FILE',
   'ISLEMIND_UPLOAD_STORE_PASSWORD',
@@ -146,48 +133,6 @@ function commandName(command) {
 
 function gradleCommand() {
   return process.platform === 'win32' ? 'gradlew.bat' : './gradlew'
-}
-
-function javaExecutable(javaHome) {
-  return path.join(javaHome, 'bin', process.platform === 'win32' ? 'java.exe' : 'java')
-}
-
-function parseJavaMajor(versionText) {
-  const match = String(versionText || '').match(/version\s+"(\d+)(?:\.(\d+))?/)
-  if (!match) return null
-  const first = Number.parseInt(match[1], 10)
-  const second = Number.parseInt(match[2] || '', 10)
-  if (!Number.isFinite(first)) return null
-  return first === 1 && Number.isFinite(second) ? second : first
-}
-
-function detectJavaMajor(javaHome) {
-  if (!javaHome) return null
-  const java = javaExecutable(javaHome)
-  if (!fs.existsSync(java)) return null
-  const result = spawnSync(java, ['-version'], {
-    cwd: projectRoot,
-    encoding: 'utf8',
-    shell: false,
-  })
-  if (result.error || result.status !== 0) return null
-  return parseJavaMajor(`${result.stderr || ''}\n${result.stdout || ''}`)
-}
-
-function selectAndroidJavaHome() {
-  const explicitJavaHome = process.env.ISLEMIND_ANDROID_JAVA_HOME
-  if (explicitJavaHome) {
-    const explicitMajor = detectJavaMajor(explicitJavaHome)
-    if (explicitMajor === preferredAndroidJdkMajor) return explicitJavaHome
-    throw new Error(`ISLEMIND_ANDROID_JAVA_HOME must point to a Java ${preferredAndroidJdkMajor} JDK for Android builds; detected ${explicitMajor ?? 'no runnable java'} at ${explicitJavaHome}.`)
-  }
-  const currentMajor = detectJavaMajor(process.env.JAVA_HOME)
-  if (currentMajor === preferredAndroidJdkMajor) return process.env.JAVA_HOME
-  for (const candidate of preferredAndroidJdkHomes) {
-    const major = detectJavaMajor(candidate)
-    if (major === preferredAndroidJdkMajor) return candidate
-  }
-  throw new Error(`Android builds require Java ${preferredAndroidJdkMajor}. Current JAVA_HOME detected ${currentMajor ?? 'no runnable java'} at ${process.env.JAVA_HOME || '<unset>'}; set ISLEMIND_ANDROID_JAVA_HOME to a Java ${preferredAndroidJdkMajor} JDK.`)
 }
 
 function envPathKey(env) {
@@ -307,22 +252,36 @@ function capitalizeBuildType(buildType) {
   return `${buildType.slice(0, 1).toUpperCase()}${buildType.slice(1)}`
 }
 
-function runGradleAssembleWithNativeRetry(args, env) {
+function runGradleAssembleWithNativeRetry(args, env, source) {
   const buildType = args[0] === 'assembleRelease' ? 'release' : 'debug'
   let lastError = null
   for (let attempt = 1; attempt <= gradleNativeRetryAttempts; attempt += 1) {
     try {
+      assertReleaseInputsUnchanged(projectRoot, source)
+    } catch (sourceError) {
+      if (lastError) throw new AggregateError([lastError, sourceError], `${lastError.message}; ${sourceError.message}`)
+      throw sourceError
+    }
+    let gradleError = null
+    try {
       run(gradleCommand(), args, { cwd: androidDir, env: androidBuildEnv(env) })
-      return
     } catch (error) {
-      lastError = error
-      if (attempt === gradleNativeRetryAttempts) break
-      console.warn(`Gradle failed; clearing native/package build outputs and retrying (${attempt}/${gradleNativeRetryAttempts - 1}).`)
-      const cleanupFailures = removeNativeBuildOutputs(buildType)
-      for (const failure of cleanupFailures) {
-        const detail = failure.error?.code ? `${failure.error.code}: ${failure.error.message}` : String(failure.error)
-        console.warn(`Could not remove ${failure.dir}; continuing retry. ${detail}`)
-      }
+      gradleError = error
+    }
+    try {
+      assertReleaseInputsUnchanged(projectRoot, source)
+    } catch (sourceError) {
+      if (gradleError) throw new AggregateError([gradleError, sourceError], `${gradleError.message}; ${sourceError.message}`)
+      throw sourceError
+    }
+    if (!gradleError) return
+    lastError = gradleError
+    if (attempt === gradleNativeRetryAttempts) break
+    console.warn(`Gradle failed; clearing native/package build outputs and retrying (${attempt}/${gradleNativeRetryAttempts - 1}).`)
+    const cleanupFailures = removeNativeBuildOutputs(buildType)
+    for (const failure of cleanupFailures) {
+      const detail = failure.error?.code ? `${failure.error.code}: ${failure.error.message}` : String(failure.error)
+      console.warn(`Could not remove ${failure.dir}; continuing retry. ${detail}`)
     }
   }
   throw lastError
@@ -403,22 +362,15 @@ function formatLocalPropertyValue(value) {
   return path.resolve(value).replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1\\:')
 }
 
-function sha256File(filePath) {
-  const hash = crypto.createHash('sha256')
-  hash.update(fs.readFileSync(filePath))
-  return hash.digest('hex')
-}
-
-function writeSha256File(filePath) {
-  const hash = sha256File(filePath)
+function writeSha256File(filePath, hash) {
   const checksumPath = `${filePath}.sha256`
   fs.writeFileSync(checksumPath, `${hash}  ${path.basename(filePath)}`, 'ascii')
   return checksumPath
 }
 
-function writeReleaseSidecars(filePath) {
-  writeSha256File(filePath)
-  writeReleaseSourceSnapshot(projectRoot, filePath)
+function writeReleaseSidecars(artifact, workspace) {
+  writeSha256File(artifact.path, artifact.apk.sha256)
+  writeReleaseSourceSnapshot(projectRoot, artifact.path, { build: artifact, workspace })
 }
 
 function cleanStaleApkArtifacts() {
@@ -556,20 +508,44 @@ function prepareAndroidProject(env) {
   ensureAndroidLocalProperties()
 }
 
-function buildVariant(variant, args, artifactBuildType = args.buildType) {
+function withStableBuildInputs(source, operation) {
+  assertReleaseInputsUnchanged(projectRoot, source)
+  let result
+  let operationError
+  try {
+    result = operation()
+  } catch (error) {
+    operationError = error
+  }
+  try {
+    assertReleaseInputsUnchanged(projectRoot, source)
+  } catch (sourceError) {
+    if (operationError) throw new AggregateError([operationError, sourceError], `${operationError.message}; ${sourceError.message}`)
+    throw sourceError
+  }
+  if (operationError) throw operationError
+  return result
+}
+
+function buildVariant(variant, args, artifactBuildType, previousInputs) {
   const assembleTask = args.buildType === 'release' ? 'assembleRelease' : 'assembleDebug'
   const releaseOptimization = resolveAndroidReleaseOptimization(args)
+  assertReleaseInputsUnchanged(projectRoot, { inputs: previousInputs })
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', variant])
+  const source = captureReleaseBuildInputs(projectRoot, variant, previousInputs)
   if (args.clean) {
-    removeDir(path.join(androidDir, 'app', '.cxx'))
-    run(gradleCommand(), ['clean', '--no-daemon'], { cwd: androidDir, env: androidBuildEnv() })
+    withStableBuildInputs(source, () => {
+      removeDir(path.join(androidDir, 'app', '.cxx'))
+      run(gradleCommand(), ['clean', '--no-daemon'], { cwd: androidDir, env: androidBuildEnv() })
+    })
   }
   const passes = args.buildType === 'release'
     ? releaseBuildPasses
     : [releaseBuildPasses[0]]
   const selectedPasses = args.releaseArch ? passes.filter((pass) => pass.arch === args.releaseArch) : passes
   const outputs = []
+  const artifacts = []
   for (const pass of selectedPasses) {
     removeDir(path.join(androidDir, 'app', 'build', 'outputs', 'apk', args.buildType))
     if (args.buildType === 'release') {
@@ -591,14 +567,16 @@ function buildVariant(variant, args, artifactBuildType = args.buildType) {
       ...(args.buildType === 'release' ? { NODE_ENV: 'production' } : {}),
       ISLEMIND_MODEL_BUNDLE: variant,
       EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE: variant,
-    })
-    outputs.push(...copyOutputs(variant, args.buildType, pass, artifactBuildType))
+    }, source)
+    const copied = withStableBuildInputs(source, () => copyOutputs(variant, args.buildType, pass, artifactBuildType))
+    for (const output of copied) artifacts.push(captureReleaseBuildArtifact(projectRoot, output, source))
+    outputs.push(...copied)
   }
   if (args.buildType === 'release') {
     const sixtyFourBitOutputs = outputs.filter((output) => !path.basename(output).includes('armeabi-v7a-legacy'))
-    run(commandName('node'), ['scripts/validate-android-16kb-apk.js', '--strict', ...sixtyFourBitOutputs])
+    withStableBuildInputs(source, () => run(commandName('node'), ['scripts/validate-android-16kb-apk.js', '--strict', ...sixtyFourBitOutputs]))
   }
-  return outputs
+  return { outputs, artifacts, source }
 }
 
 function installApk(device, apks) {
@@ -609,6 +587,7 @@ function installApk(device, apks) {
 }
 
 function main() {
+  assertQualifiedNodeRuntime()
   const args = parseArgs(process.argv.slice(2))
   if (!fs.existsSync(androidDir)) {
     throw new Error('android directory does not exist. Run expo prebuild before local native APK builds.')
@@ -628,21 +607,43 @@ function main() {
 
   const variants = args.variant === 'all' ? supportedVariants() : [args.variant]
   const outputs = []
+  const artifacts = []
+  let source = { inputs: snapshotReleaseInputs(projectRoot) }
+  let buildError
   try {
     for (const variant of variants) {
-      outputs.push(...buildVariant(variant, args, artifactBuildType))
+      const built = buildVariant(variant, args, artifactBuildType, source.inputs)
+      outputs.push(...built.outputs)
+      artifacts.push(...built.artifacts)
+      source = built.source
     }
+  } catch (error) {
+    buildError = error
+    throw error
   } finally {
     if (args.buildType === 'release') {
-      run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', 'no-model'])
+      let sourceError
+      if (!buildError) {
+        try { assertReleaseInputsUnchanged(projectRoot, source) } catch (error) { sourceError = error }
+      }
+      try {
+        run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', 'no-model'])
+        source = captureReleaseBuildInputs(projectRoot, 'no-model', source.inputs)
+      } catch (restorationError) {
+        const primaryError = buildError || sourceError
+        if (primaryError) throw new AggregateError([primaryError, restorationError], `${primaryError.message}; default model-bundle restoration failed: ${restorationError.message}`)
+        throw restorationError
+      }
+      if (sourceError) throw sourceError
     }
   }
-  for (const output of outputs) {
-    writeReleaseSidecars(output)
-  }
   if (args.buildType === 'release' && artifactBuildType === 'release') {
-    run(commandName('node'), ['scripts/validate-android-release-signing.js', ...outputs])
+    withStableBuildInputs(source, () => run(commandName('node'), ['scripts/validate-android-release-signing.js', ...outputs]))
   }
+  for (const artifact of artifacts) {
+    writeReleaseSidecars(artifact, source)
+  }
+  assertReleaseInputsUnchanged(projectRoot, source)
   if (args.installDevice) {
     installApk(args.installDevice, outputs)
   }

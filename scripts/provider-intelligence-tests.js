@@ -42,6 +42,27 @@ const documentPickerRequests = []
 const launchedIntents = []
 const sharedFiles = []
 const sqliteOpenRequests = []
+// The newly integrated availability owner uses SQL predicates/transactions that
+// must not be approximated by the legacy array fixtures below. Keep those
+// unrelated fixtures intact and exercise these tables through a real engine.
+const modelAvailabilityDatabases = new Map()
+function modelAvailabilityDatabase(name) {
+  if (!modelAvailabilityDatabases.has(name)) {
+    const database = process.versions.bun
+      ? new (require('bun:sqlite').Database)(':memory:')
+      : new (require('node:sqlite').DatabaseSync)(':memory:')
+    modelAvailabilityDatabases.set(name, database)
+  }
+  const database = modelAvailabilityDatabases.get(name)
+  return { exec: (sql) => database.exec(sql), prepare: (sql) => database.prepare(sql) }
+}
+function isModelAvailabilitySql(sql, args = []) {
+  return /provider_model_(?:scopes|current|observations)/i.test(sql)
+    || /sqlite_master[\s\S]*platform_schema_migrations/i.test(sql)
+    || /CREATE TABLE IF NOT EXISTS platform_schema_migrations/i.test(sql)
+    || /platform_schema_migrations/i.test(sql) && args[0] === 'provider-model-availability'
+}
+process.once('exit', () => { for (const database of modelAvailabilityDatabases.values()) database.close() })
 let nextReadDirectoryEntries = null
 let nextLocalModelPublishError = null
 let nextLocalFileReadError = null
@@ -323,11 +344,22 @@ Module._load = function loadWithMocks(request, parent, isMain) {
         if (name === SQLITE_WEB_PERSISTENCE_TEST_DATABASE_NAME) {
           return createSqliteWebPersistenceTestDatabase()
         }
+        const availabilitySqlite = modelAvailabilityDatabase(name)
         return ({
-        execAsync: async () => undefined,
+        execAsync: async (sql) => {
+          if (isModelAvailabilitySql(sql) || /^\s*PRAGMA\s/i.test(sql)) availabilitySqlite.exec(sql)
+        },
         closeAsync: async () => undefined,
-        withTransactionAsync: async (work) => work(),
+        withTransactionAsync: async (work) => {
+          availabilitySqlite.exec('BEGIN')
+          try { const result = await work(); availabilitySqlite.exec('COMMIT'); return result }
+          catch (error) { availabilitySqlite.exec('ROLLBACK'); throw error }
+        },
         runAsync: async (sql, ...args) => {
+          if (isModelAvailabilitySql(sql, args)) {
+            const result = availabilitySqlite.prepare(sql).run(...args)
+            return { changes: Number(result.changes), lastInsertRowId: Number(result.lastInsertRowid) }
+          }
           if (/UPDATE memories SET lastHitAt/i.test(sql)) {
             const [lastHitAt, id] = args
             const row = contextMemoryRows.find((item) => item.id === id)
@@ -551,6 +583,7 @@ Module._load = function loadWithMocks(request, parent, isMain) {
           }
         },
         getAllAsync: async (sql, ...args) => {
+          if (isModelAvailabilitySql(sql, args)) return availabilitySqlite.prepare(sql).all(...args)
           if (/FROM memory_fts/i.test(sql)) {
             const limit = args.at(-1) ?? contextMemoryRows.length
             const statuses = args.slice(1, -1)
@@ -639,6 +672,7 @@ Module._load = function loadWithMocks(request, parent, isMain) {
           return []
         },
         getFirstAsync: async (sql, ...args) => {
+          if (isModelAvailabilitySql(sql, args)) return availabilitySqlite.prepare(sql).get(...args) ?? null
           if (/SELECT value FROM portable_import_recovery_blobs WHERE key = \?/i.test(sql)) {
             const value = portableImportRecoveryBlobRows.get(args[0])
             return value === undefined ? null : { value }
@@ -3160,7 +3194,7 @@ function assertReleaseVersionsAligned() {
   const newestReleaseInput = releaseFreshnessContract.findNewestReleaseInput(root)
   assert.ok(newestReleaseInput?.path, 'release freshness contract reports the newest release input path')
   const currentFreshness = releaseFreshnessContract.collectReleaseSourceFreshness(root, { modifiedAt: new Date(Date.now() + 60_000).toISOString() })
-  assert.equal(currentFreshness.status, 'current', 'release freshness contract marks APKs newer than inputs as current')
+  assert.equal(currentFreshness.status, 'unknown', 'release freshness contract cannot qualify timestamp-only evidence as current')
   const staleFreshness = releaseFreshnessContract.collectReleaseSourceFreshness(root, { modifiedAt: '1970-01-01T00:00:00.000Z' })
   assert.equal(staleFreshness.status, 'stale', 'release freshness contract marks APKs older than inputs as stale')
   const passingReleaseEvidence = {
@@ -3179,7 +3213,15 @@ function assertReleaseVersionsAligned() {
       androidPackage: appJson.expo.android.package,
       androidVersionCode: appJson.expo.android.versionCode,
     },
-    sourceFreshness: currentFreshness,
+    sourceFreshness: {
+      status: 'current',
+      snapshot: {
+        present: true,
+        schema: releaseFreshnessContract.releaseSourceSnapshotSchema,
+        apk: { sha256: 'a'.repeat(64), sizeBytes: 1 },
+        comparison: { status: 'unchanged' },
+      },
+    },
     installed: {
       deviceSerial: 'emulator-5554',
       deviceAbi: 'x86_64',
@@ -3199,6 +3241,9 @@ function assertReleaseVersionsAligned() {
   }
   assert.deepEqual(releaseValidationContract.validateReleaseProvenance(passingReleaseEvidence), [], 'release validation contract accepts current provenance evidence')
   assert.deepEqual(releaseValidationContract.validateCurrentApkSmokeResult(passingReleaseEvidence), [], 'release validation contract accepts current APK smoke evidence')
+  const unboundReleaseEvidence = { ...passingReleaseEvidence, sourceFreshness: currentFreshness }
+  assert.ok(releaseValidationContract.validateReleaseProvenance(unboundReleaseEvidence).some((issue) => issue.includes('not bound')), 'timestamp-only provenance remains blocked')
+  assert.ok(releaseValidationContract.validateCurrentApkSmokeResult(unboundReleaseEvidence).some((issue) => issue.includes('not bound')), 'timestamp-only smoke evidence remains blocked')
   assert.equal(
     releaseValidationContract.inferReleaseApkArch({ path: `dist-apk/IsleMind-${packageJson.version}-arm64-v8a-no-model.apk` }),
     'arm64-v8a',
@@ -7058,7 +7103,7 @@ function assertProviderClientSimulationBehavior() {
   const executorSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerRuntimeExecutor.ts'), 'utf8')
   const runtimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerRuntime.ts'), 'utf8')
   assert.match(pipelineSource, /getHeaders\(runtimeReq\.provider,\s*\{[\s\S]*?model:\s*runtimeReq\.model/, 'provider pipeline forwards the selected model to header policy')
-  assert.match(executorSource, /getHeaders\(selectedReq\.provider,\s*\{[\s\S]*?model:\s*selectedReq\.model/, 'provider executor forwards the selected model to header policy')
+  assert.match(executorSource, /prepareProviderRuntimePipeline\(\{ req: selectedReq,[\s\S]*?selectedReq = selectedPipeline\.runtimeReq[\s\S]*?const selectedPreparedRequest = selectedPipeline\.preparedHttpRequest/, 'provider executor uses the selected model and headers from the complete governed pipeline')
   assert.match(executorSource, /getHeaders\(fallbackReq\.provider,\s*\{[\s\S]*?model:\s*fallbackReq\.model/, 'provider fallback recomputes headers for its selected model')
   assert.match(runtimeSource, /headers:\s*getHeaders\(provider,\s*\{\s*model\s*\}\)/, 'provider request preparation forwards its selected model to header policy')
 }
@@ -15448,7 +15493,7 @@ async function assertProviderProbeAndUsageQueryIntegrationBehavior() {
   assert.match(providerIndexSource, /createProviderProbe/, 'Providers publicly export the non-generating probe')
   assert.match(providerIndexSource, /providerUsageQueryRecipe/, 'Providers publicly export bounded quota recipes')
   assert.match(providerRuntimeSource, /const probe = createProviderProbe\(/, 'bootstrap constructs the provider probe')
-  assert.match(providerRuntimeSource, /probe,\s*usesResponsesApiForModel:/, 'bootstrap injects the probe into model tests')
+  assert.match(providerRuntimeSource, /probe:\s*\{\s*async probe\(request\)[\s\S]*?if \(!request\.provider\.apiKeySource\) return probe\.probe\(request\)[\s\S]*?observeProbe\(identity, \(\) => probe\.probe\(request\)\)[\s\S]*?usesResponsesApiForModel:/, 'bootstrap observes the existing non-generating probe without replacing its model-test execution')
   assert.match(diagnosticsIndexSource, /sqliteUsageRecordRepository/, 'Diagnostics publicly exports its SQLite usage repository')
   assert.match(usageRuntimeSource, /usageRecordRepository\.importOnce\('legacy-conversation-messages:v1'/, 'legacy usage import uses one atomic marker')
   assert.doesNotMatch(usageRuntimeSource, /conversation\.productMode === ['"]tavern['"]/, 'legacy usage normalization does not restore Tavern as an active operation source')
@@ -16638,6 +16683,7 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
             provider,
             upstreamModel: 'reply-start-upstream-model',
             modelConfig,
+            ...(options.executionModel ? { executionModel: options.executionModel, executionConstraint: options.executionConstraint } : {}),
           }
         },
       },
@@ -16992,6 +17038,26 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     requestController: controller,
   })
 
+  const fallbackConstraint = Object.freeze({ identity: { providerId: provider.id, model: 'temporary-upstream',
+    credentialSource: { kind: 'primary' }, protocolAdapterId: 'openai-chat', endpointVariant: 'native' },
+    scope: { scopeId: 'scope-fallback', epoch: 'epoch-1' }, fallbackUsed: true })
+  for (const plain of [false, true]) {
+    const temporaryFallback = createHarness({ executionModel: 'temporary-model', executionConstraint: fallbackConstraint,
+      ...(plain ? { workspaceSourceOutcome: { status: 'none' }, workspaceAdmissionOutcome: { status: 'none' } } : {}) })
+    assert.equal((await temporaryFallback.runtime.start(input)).kind, 'completed')
+    assert.equal(temporaryFallback.state.persistAdmissionInput.conversation, runtimeConversation,
+      'the full-save barrier persists the preference, never the ephemeral fallback view')
+    assert.equal(runtimeConversation.model, 'reply-start-model', 'fallback cannot mutate a frozen preference')
+    assert.equal(temporaryFallback.state.dispatchInput.runtimeConversation.model, 'temporary-model')
+    assert.equal(temporaryFallback.state.dispatchInput.executionConstraint, fallbackConstraint)
+    if (plain) {
+      assert.equal(temporaryFallback.state.handoffInput.runtimeConversation.model, 'temporary-model')
+      assert.equal(temporaryFallback.state.handoffInput.executionConstraint, fallbackConstraint)
+    }
+    assert.ok(temporaryFallback.state.events.indexOf('persist_admission') < temporaryFallback.state.events.indexOf('durable_dispatch'),
+      'fallback preserves the first-reply full-save barrier')
+  }
+
   for (const productMode of ['chat', 'agent', 'companion']) {
     const historicalMode = createHarness()
     const outcome = await historicalMode.runtime.start(Object.freeze({ ...input, productMode }))
@@ -17200,13 +17266,11 @@ async function assertAssistantConversationReplySessionRuntimeBehavior() {
   assert.deepEqual(appendedMessage, {
     id: 'reply-session-message',
     role: 'assistant',
-    providerId: conversation.providerId,
-    model: conversation.model,
     content: '',
     timestamp: 1700,
     status: 'streaming',
     startedAt: 1700,
-  }, 'reply-session appends the exact canonical Chat streaming assistant message')
+  }, 'reply-session persists an unattributed placeholder until the actual route produces output')
   assert.deepEqual(taskInput, {
     kind: 'chat-turn',
     conversationId: conversation.id,
@@ -21307,6 +21371,8 @@ async function waitForProviderFixture(promise, failureMessage, timeoutMs = 2_000
 }
 
 async function run() {
+  await assertActualProviderExecutionTargetBehavior()
+  await assertExplicitModelPreferenceReloadBehavior()
   assertProviderProtocolCompositionBehavior()
   assertProviderNativeToolDeclarationBehavior()
   assertReleaseVersionsAligned()
@@ -25091,7 +25157,7 @@ https://gateway.example/messages`
     assert.equal(resilientActivation.testOk, true, 'provider activation succeeds when a later synced model passes')
     assert.notEqual(resilientActivation.testModel, 'bad-model', 'provider activation records a later model found by the catalog probe')
     assert.equal(resilientDiscoveryCalls, 3, 'provider activation performs one sync and stops after the second bounded model probe passes')
-    assert.deepEqual(resilientGroupHealth.map((item) => item.ok), [false, true], 'provider activation records failed and recovered credential health checks')
+    assert.deepEqual(resilientGroupHealth.map((item) => item.ok), [true], 'catalog absence never reports a credential failure; the later reachable probe may record healthy credentials')
     assert.equal(resilientActivationProvider.lastTestStatus, 'ok', 'provider activation stores ok health after a fallback model passes')
     assert.ok(resilientActivationProvider.lastModelTestCapabilityChecks?.some((check) => check.capability === 'chat' && check.status === 'available' && check.sent === false), 'provider activation stores non-generating model probe capability diagnostics')
     assert.ok(resilientActivationProvider.lastModelTestCapabilityChecks?.some((check) => check.capability === 'streaming' && check.status === 'available'), 'provider activation keeps available-but-unsent streaming diagnostics')
@@ -41981,6 +42047,7 @@ function assertRuntimeControlPlanePlanAudit() {
 }
 
 async function assertProviderStreamParsingMigrationBehavior() {
+  await assertGoogleCitationStreamAssociations()
   const providerStreamParsingSource = fs.readFileSync(path.join(root, 'src/modules/providers/providerStreamParsing.ts'), 'utf8')
   const providerRuntimeExecutorSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerRuntimeExecutor.ts'), 'utf8')
   assert.ok(providerStreamParsingSource.includes('export function createProviderStreamParsingPolicy'), 'target provider module owns stream event parsing behind injected presentation dependencies')
@@ -42322,6 +42389,80 @@ async function assertProviderStreamParsingMigrationBehavior() {
   )
 }
 
+async function assertGoogleCitationStreamAssociations() {
+  // Schema-conforming synthetic generateContent packets, never a live-provider receipt.
+  const provider = applyProviderPreset({
+    id: 'google-grounding-fixture', name: 'Google grounding fixture', type: 'google',
+    apiKey: FAKE_KEY_A, models: ['gemini-2.5-flash'], enabled: true,
+  }, 'google')
+  const req = { provider, model: 'gemini-2.5-flash', messages: [{ role: 'user', content: 'Synthetic grounding check' }],
+    stream: true, settings: { upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false } }
+  const answer = '日本語 😀 First. Second.'
+  const declare = (text, indices, startIndex = 0) => ({
+    segment: { partIndex: 0, startIndex, endIndex: startIndex + Buffer.byteLength(text, 'utf8'), text },
+    groundingChunkIndices: indices,
+  })
+  const first = { candidates: [{ content: { parts: [{ text: '日本語 😀 First. ' }] }, groundingMetadata: {
+    groundingChunks: [{ web: { uri: 'https://example.test/a', title: 'A' } }, { retrievedContext: { uri: 'unsupported' } }],
+  } }] }
+  const last = { candidates: [{ content: { parts: [{ text: 'Second.' }] }, groundingMetadata: {
+    groundingChunks: [null, { web: { uri: 'https://example.test/b', title: 'B' } }],
+    groundingSupports: [declare('日本語 😀', [0]), declare('Second.', [3]), declare('Missing', [0])],
+  } }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4, totalTokenCount: 7 } }
+  const raw = `data:${JSON.stringify(first)}\r\n\r\ndata: ${JSON.stringify(last)}`
+  const buffered = parseProviderBufferedStreamResponse(raw, req, 'google')
+  assert.equal(buffered.text, answer, 'buffered grounding retains exact answer text without inline markers')
+  assert.deepEqual(buffered.citations.map((citation) => citation.providerSupport?.passages[0]?.text), ['日本語 😀', 'Second.'], 'buffered grounding resolves cumulative slots, not compacted source positions')
+  assert.ok(buffered.citations.every((citation) => citation.providerSupport.answerSha256 === createHash('sha256').update(answer).digest('hex')), 'support binds the exact final answer, using a digest independently checked by Node crypto')
+
+  const hidden = 'hidden reasoning'
+  const json = { candidates: [{ content: { parts: [{ text: `<think>${hidden}</think>${answer}` }] }, groundingMetadata: {
+    groundingChunks: first.candidates[0].groundingMetadata.groundingChunks,
+    groundingSupports: [declare(hidden, [0]), declare('日本語 😀', [0])],
+  } }] }
+  const parsedJson = parseProviderChatCompletionJson(json, req)
+  assert.equal(parsedJson.text, answer, 'JSON grounding leaves the existing thinking-text filter intact')
+  assert.deepEqual(parsedJson.citations[0].providerSupport.passages.map((passage) => passage.text), ['日本語 😀'], 'hidden reasoning is not retained as an answer passage')
+  assert.equal(parsedJson.citations[0].providerSupport.answerSha256, createHash('sha256').update(answer).digest('hex'), 'JSON binding happens after the text filter')
+
+  for (const scenario of ['eof', 'terminal', 'cancel-on-chunk', 'cancel-on-citations']) {
+    const controller = new AbortController()
+    const events = []
+    const completions = []
+    const citations = []
+    const bytes = new TextEncoder().encode(raw + (scenario === 'terminal' ? '\n\ndata:[DONE]\n\n' : ''))
+    const stream = new ReadableStream({ start(output) {
+      // Includes splits within UTF-8 characters, JSON fields and CRLF separators.
+      for (let offset = 0; offset < bytes.length; offset += 7) output.enqueue(bytes.slice(offset, offset + 7))
+      output.close()
+    } })
+    const execution = executeHttpSseChatForTest({
+      req, url: 'https://grounding-fixture.invalid/generateContent', headers: {}, body: '{}', stream: true, controller,
+      resolveRoute: () => ({ body: {} }),
+      onChunk: (text) => { events.push(['chunk', text]); if (scenario === 'cancel-on-chunk') controller.abort() },
+      onCitations: (value) => { citations.push(value); events.push(['citations']); if (scenario === 'cancel-on-citations') controller.abort() },
+      onDone: (value) => { completions.push(value); events.push(['done']) },
+      onError: (error) => { throw error },
+      transport: { requestStream: async () => new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }), readResponseText: (response) => response.text() },
+      buildFallbackCandidates: () => ({ candidates: [], evidence: [], rejectedCandidates: [] }),
+      fallbackEffects: { logDecision: async () => undefined, recordRouteFailure: async () => undefined, recordRouteSuccess: async () => undefined },
+    })
+    if (scenario.startsWith('cancel')) {
+      await assert.rejects(execution, { name: 'AbortError' }, 'citation collection never overrides caller cancellation')
+      assert.equal(completions.length, 0, 'no completion follows cancellation at a callback boundary')
+      assert.equal(citations.length, scenario === 'cancel-on-chunk' ? 0 : 1, 'cancelled generation never gains a later citation callback')
+    } else {
+      await execution
+      assert.equal(completions.length, 1, `${scenario} completes exactly once`)
+      assert.equal(citations.length, 1, `${scenario} publishes one final citation set`)
+      assert.deepEqual(events.slice(-2), [['citations'], ['done']], 'citations precede the terminal completion')
+      assert.equal(events.filter(([kind]) => kind === 'chunk').map(([, text]) => text).join(''), answer, 'fragmented grounding does not change streaming text')
+      assert.deepEqual(completions[0].citations, buffered.citations, 'live SSE, including an undelimited EOF remainder, retains the buffered association set')
+      assert.deepEqual(completions[0].usage, buffered.usage, 'final metadata collection preserves usage')
+    }
+  }
+}
+
 async function assertProviderRuntimeAndroidCollectorBehavior() {
   const collectorPath = path.join(root, 'scripts/collect-provider-runtime-android.js')
   const collectorSource = fs.readFileSync(collectorPath, 'utf8')
@@ -42365,9 +42506,91 @@ async function assertProviderRuntimeAndroidCollectorBehavior() {
   assert.match(selfTest, /Provider Runtime Android self-test passed \(9 required scenarios\)\./, 'Provider Runtime Android collector self-test passes')
 }
 
+async function assertExplicitModelPreferenceReloadBehavior() {
+  const previous = useSettingsStore.getState()
+  try {
+    await useSettingsStore.getState().rememberPreferredModel('explicit-provider', 'explicit-model')
+    useSettingsStore.setState({ settings: { ...previous.settings, lastPreferredModel: undefined } })
+    await useSettingsStore.getState().load()
+    assert.deepEqual(useSettingsStore.getState().settings.lastPreferredModel, {
+      schema: 'islemind.global-model-preference.v1', providerId: 'explicit-provider', model: 'explicit-model',
+    }, 'real settings-store hydration retains the explicit global preference')
+  } finally {
+    useSettingsStore.setState({ settings: previous.settings, providers: previous.providers })
+  }
+}
+
+async function assertActualProviderExecutionTargetBehavior() {
+  const originalFetch = global.fetch
+  const provider = {
+    id: 'actual-target-fixture', type: 'openai', name: 'Actual target fixture',
+    apiKey: FAKE_KEY_A, models: ['gpt-5.5', 'gpt-5.5-mini'], enabled: true,
+    modelAliases: [{ alias: 'preferred-alias', model: 'gpt-5.5' }],
+  }
+  try {
+    for (const strictGroup of [false, true]) {
+      memoryStorage.clear()
+      const events = []
+      const targets = []
+      const wireProtocols = []
+      let calls = 0
+      let error
+      const selectedProvider = strictGroup ? { ...provider, credentialGroups: [{ id: 'default', label: 'Real default', enabled: true, apiKey: FAKE_KEY_B }] } : provider
+      global.fetch = async (_url, init) => {
+        calls += 1
+        wireProtocols.push(String(_url).endsWith('/responses') ? 'openai-responses' : 'openai-chat')
+        events.push(`wire:${JSON.parse(init.body).model}`)
+        if (calls === 1) return new Response('rate limit', { status: 429 })
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'Actual fallback answer' } }] }), { headers: { 'content-type': 'application/json' } })
+      }
+      const handle = await streamChat({
+        provider: selectedProvider, model: 'preferred-alias', messages: [{ role: 'user', content: 'fixture' }],
+        ...(strictGroup ? { targetCredentialGroupId: 'default' } : {}), stream: false,
+        settings: { upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false },
+        onExecutionTarget: async (target) => { targets.push(target); events.push(`target:${target.model}`) },
+      }, () => events.push('chunk'), () => events.push('done'), (failure) => { error = failure })
+      await handle.done
+      assert.equal(error, undefined, error?.message)
+      assert.equal(calls, 2, 'one hidden executor fallback remains the only extra route attempt')
+      assert.deepEqual(targets.map((target) => target.model), ['gpt-5.5', 'gpt-5.5-mini'], 'identity reports actual alias resolution and selected fallback model')
+      assert.ok(targets.every((target) => target.providerId === provider.id))
+      assert.deepEqual(targets.map((target) => target.protocolAdapterId), wireProtocols, 'reported adapters match the actual endpoint chosen for each request')
+      assert.deepEqual(targets[1].credentialSource, strictGroup ? { kind: 'group', groupId: 'default' } : { kind: 'primary' })
+      assert.ok(events.indexOf('target:gpt-5.5-mini') < events.indexOf('wire:gpt-5.5-mini'))
+      assert.ok(events.indexOf('wire:gpt-5.5-mini') < events.indexOf('chunk'))
+      assert.notEqual(targets[0].attemptId, targets[1].attemptId)
+      assert.equal(JSON.stringify(targets).includes(FAKE_KEY_A), false)
+      assert.equal(JSON.stringify(targets).includes(FAKE_KEY_B), false)
+    }
+    const controller = new AbortController()
+    let calls = 0
+    let completions = 0
+    global.fetch = async () => { calls += 1; throw new Error('dispatch must not happen') }
+    const handle = await streamChat({
+      provider, model: 'gpt-5.5', messages: [], signal: controller.signal,
+      onExecutionTarget: async () => { controller.abort() },
+    }, () => { completions += 1 }, () => { completions += 1 }, () => { completions += 1 })
+    await handle.done
+    assert.equal(calls, 0, 'cancellation in target observer prevents dispatch')
+    assert.equal(completions, 0, 'cancellation in target observer produces no ordinary stream output')
+  } finally { global.fetch = originalFetch }
+}
+
 async function runFocused() {
   const focusArg = process.argv.find((arg) => arg.startsWith('--focus='))
   const focus = focusArg ? focusArg.slice('--focus='.length) : null
+  if (focus === 'explicit-model-preference-reload') {
+    await assertExplicitModelPreferenceReloadBehavior()
+    return
+  }
+  if (focus === 'actual-execution-target') {
+    await assertActualProviderExecutionTargetBehavior()
+    return
+  }
+  if (focus === 'release-contracts') {
+    assertReleaseVersionsAligned()
+    return
+  }
   if (!focus) {
     await run()
     return

@@ -4,8 +4,8 @@ const path = require('node:path')
 const projectRoot = path.resolve(__dirname, '..')
 const catalogPath = path.join(projectRoot, 'assets', 'models', 'catalog.json')
 
-function loadModelCatalog() {
-  return JSON.parse(fs.readFileSync(catalogPath, 'utf8'))
+function loadModelCatalog(root = projectRoot) {
+  return JSON.parse(fs.readFileSync(path.join(root, 'assets', 'models', 'catalog.json'), 'utf8'))
 }
 
 function normalizeVariant(variant) {
@@ -25,8 +25,18 @@ function getModelById(catalog, modelId) {
   return catalog.models.find((model) => model.id === modelId)
 }
 
+function formatGeneratedModelBundle(variant, bundledModelIds, generatedAt) {
+  return [
+    `export const MODEL_BUNDLE_VARIANT = ${JSON.stringify(variant)}`,
+    `export const BUNDLED_LOCAL_EMBEDDING_MODELS: string[] = ${JSON.stringify(bundledModelIds)}`,
+    `export const MODEL_BUNDLE_GENERATED_AT = ${JSON.stringify(generatedAt)}`,
+    '',
+  ].join('\n')
+}
+
 module.exports = {
   catalogPath,
+  formatGeneratedModelBundle,
   getBundledModelIds,
   getModelById,
   loadModelCatalog,

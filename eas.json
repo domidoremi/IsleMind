@@ -1,10 +1,12 @@
 {
   "cli": {
-    "version": ">= 16.0.0",
+    "version": "24.3.0",
     "appVersionSource": "remote"
   },
   "build": {
     "preview": {
+      "node": "24.21.0",
+      "bun": "1.4.2",
       "autoIncrement": true,
       "android": {
         "buildType": "apk"
@@ -13,6 +15,8 @@
       "developmentClient": false
     },
     "production": {
+      "node": "24.21.0",
+      "bun": "1.4.2",
       "autoIncrement": true,
       "android": {
         "buildType": "apk"

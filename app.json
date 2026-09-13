@@ -64,6 +64,7 @@
       "./plugins/android-trusted-web-fetch/withAndroidTrustedWebFetch",
       "./plugins/android-file-integrity/withAndroidFileIntegrity",
       "./plugins/android-static-launch/withAndroidStaticLaunch",
+      "./plugins/android-build-toolchain/withAndroidBuildToolchain",
       "expo-image",
       "expo-sharing",
       "expo-font",

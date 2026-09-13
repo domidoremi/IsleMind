@@ -2,6 +2,7 @@ const fs = require('node:fs')
 const crypto = require('node:crypto')
 const path = require('node:path')
 const {
+  formatGeneratedModelBundle,
   getBundledModelIds,
   getModelById,
   loadModelCatalog,
@@ -104,11 +105,7 @@ function writeGeneratedBundle(variant, bundledModels, generatedAt) {
     const existingGeneratedAt = existing.match(/MODEL_BUNDLE_GENERATED_AT = "([^"]+)"/)?.[1]
     if (hasSameStableContent && existingGeneratedAt) generatedAt = existingGeneratedAt
   }
-  const source = [
-    ...stableLines,
-    `export const MODEL_BUNDLE_GENERATED_AT = ${JSON.stringify(generatedAt)}`,
-    '',
-  ].join('\n')
+  const source = formatGeneratedModelBundle(variant, bundledModels, generatedAt)
   if (fs.existsSync(generatedBundlePath) && fs.readFileSync(generatedBundlePath, 'utf8') === source) return
   fs.writeFileSync(generatedBundlePath, source)
 }

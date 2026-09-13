@@ -30,23 +30,32 @@ jobs:
         if: steps.eas-config.outputs.configured == 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: 24.20.0
-          cache: npm
+          node-version: 24.21.0
+
+      - name: Setup Bun
+        if: steps.eas-config.outputs.configured == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
 
       - name: Setup Expo and EAS
         if: steps.eas-config.outputs.configured == 'true'
         uses: expo/expo-github-action@v8
         with:
-          eas-version: latest
+          eas-version: 24.3.0
           token: ${{ secrets.EAS_TOKEN }}
 
       - name: Install dependencies
         if: steps.eas-config.outputs.configured == 'true'
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Type check
         if: steps.eas-config.outputs.configured == 'true'
-        run: npm run type-check
+        run: bun run type-check
+
+      - name: Build toolchain contracts
+        if: steps.eas-config.outputs.configured == 'true'
+        run: bun run test:android-build-toolchain
 
       - name: Ensure EAS project is linked
         if: steps.eas-config.outputs.configured == 'true'
