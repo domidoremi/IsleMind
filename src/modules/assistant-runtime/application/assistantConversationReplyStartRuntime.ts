@@ -1,4 +1,5 @@
 import type { AssistantRunId } from '@/core'
+import type { ProviderChatExecutionConstraint } from '@/modules/providers'
 import type { AssistantContextPlanReceipt, AssistantModelOperationSession } from '../contracts'
 import { buildAssistantContextPlanReceipt } from './contextPlanReceipt'
 
@@ -105,6 +106,8 @@ export interface AssistantConversationReplyStartProviderAdmissionReady<
   readonly provider: TProvider
   readonly upstreamModel: string
   readonly modelConfig: TModelConfig
+  readonly executionModel?: string
+  readonly executionConstraint?: ProviderChatExecutionConstraint
 }
 
 export type AssistantConversationReplyStartProviderAdmissionOutcome<
@@ -434,7 +437,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
   readonly persistAdmissionConversation: (input: {
     readonly conversationId: string
     readonly assistantMessageId: string
-    readonly conversation: TRuntimeConversation | TConversation
+    readonly conversation: NoInfer<TRuntimeConversation> | TConversation
   }) => Promise<void>
   /**
    * Terminalizes the local placeholder when the Conversations-owned admission
@@ -449,9 +452,10 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
   }) => void
   readonly plainChatHandoffRuntime: {
     handoff(input: {
+      readonly executionConstraint?: ProviderChatExecutionConstraint
       readonly conversationId: string
       readonly assistantMessageId: string
-      readonly runtimeConversation: TRuntimeConversation
+      readonly runtimeConversation: NoInfer<TRuntimeConversation>
       readonly provider: TProvider
       readonly settings: TSettings
       readonly hasAttachments: boolean
@@ -463,8 +467,8 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       readonly conversationId: string
       readonly assistantMessageId: string
       readonly provider: TProvider
-      readonly runtimeConversation: TRuntimeConversation
-      readonly lastUserMessage?: TMessage
+      readonly runtimeConversation: NoInfer<TRuntimeConversation>
+      readonly lastUserMessage?: TConversation['messages'][number]
       readonly workspaceContext?: TWorkspaceContext
       readonly settings: TSettings
       readonly signal: AbortSignal
@@ -504,7 +508,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       readonly modelConfig: TModelConfig
       readonly requestedSearchMode: TSearchMode
       readonly sendableAttachments: TSendableAttachments
-      readonly runtimeConversation: TRuntimeConversation
+      readonly runtimeConversation: NoInfer<TRuntimeConversation>
       readonly settings: TSettings
       readonly sourceMessages: readonly TMessage[]
       readonly lastUserMessage?: TMessage
@@ -530,7 +534,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       readonly conversationId: string
       readonly assistantMessageId: string
       readonly context: TContext
-      readonly runtimeConversation: TRuntimeConversation
+      readonly runtimeConversation: NoInfer<TRuntimeConversation>
       readonly provider: TProvider
       readonly modelTraceId: string
       readonly nativeSearchTraceId: string
@@ -555,11 +559,12 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
   }
   readonly durableDispatchRuntime: {
     dispatch(input: {
+      readonly executionConstraint?: ProviderChatExecutionConstraint
       readonly runId?: AssistantRunId
       readonly conversationId: string
       readonly assistantMessageId: string
       readonly requestController: AbortController
-      readonly runtimeConversation: TRuntimeConversation
+      readonly runtimeConversation: NoInfer<TRuntimeConversation>
       readonly provider: TProvider
       readonly upstreamModel: string
       readonly systemPrompt: string
@@ -595,7 +600,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
   getLatestConversation(conversationId: string): TConversation | undefined
   getSettings(): TSettings
   createModelOperationSession?(input: {
-    readonly conversation: TRuntimeConversation
+    readonly conversation: NoInfer<TRuntimeConversation>
     readonly provider: TProvider
     readonly settings: TSettings
   }): Promise<AssistantModelOperationSession | undefined>
@@ -734,11 +739,16 @@ export function createAssistantConversationReplyStartRuntime<
     }
 
     const {
-      conversation: runtimeConversation,
+      conversation: preferenceConversation,
       provider,
       upstreamModel,
       modelConfig,
     } = admission
+    // Execution is an ephemeral view. The full-save barrier below must retain
+    // the user's authoritative preference even when admission chose a fallback.
+    const runtimeConversation = admission.executionModel
+      ? { ...preferenceConversation, providerId: provider.id, model: admission.executionModel }
+      : preferenceConversation
     dependencies.projectLifecycleStage?.({
       conversationId: input.conversationId,
       assistantMessageId: assistantMessage.id,
@@ -748,7 +758,7 @@ export function createAssistantConversationReplyStartRuntime<
       await persistAdmissionConversation({
         conversationId: input.conversationId,
         assistantMessageId: assistantMessage.id,
-        conversation: runtimeConversation,
+        conversation: preferenceConversation,
       })
     } catch (error) {
       requestController.abort(error)
@@ -849,6 +859,7 @@ export function createAssistantConversationReplyStartRuntime<
         settings,
         hasAttachments: sendableAttachments.length > 0,
         requestController,
+        ...(admission.executionConstraint ? { executionConstraint: admission.executionConstraint } : {}),
       })
       if (plainChatHandoff.kind !== 'continue') {
         return {
@@ -1032,6 +1043,7 @@ export function createAssistantConversationReplyStartRuntime<
         assistantMessageId: assistantMessage.id,
         requestController,
         runtimeConversation,
+        ...(admission.executionConstraint ? { executionConstraint: admission.executionConstraint } : {}),
         provider,
         upstreamModel,
         systemPrompt,

@@ -43,6 +43,7 @@ import {
   type AssistantConversationWorkspaceWritebackHandoff,
   type AssistantConversationWorkspaceWritebackPolicy,
 } from '../workspaceWritebackContracts'
+import { decodeAssistantRunRouteDetails } from '../application/actualExecutionAttribution'
 
 const MIGRATION_SCOPE = 'assistant-runtime'
 const RUN_SCHEMA = 'islemind.assistant-run.v1'
@@ -56,6 +57,7 @@ const WORKSPACE_WRITEBACK_IDEMPOTENCY_KEY_PATTERN =
   /^islemind\.chat-workspace-writeback\.v1:sha256:[0-9a-f]{64}$/
 
 interface AssistantRunRow {
+  routeDetailsJson?: string | null
   id: string
   kind: string
   conversationId: string
@@ -87,6 +89,7 @@ interface RunJournalRow {
 }
 
 interface AssistantRunRequestSnapshotRow {
+  routeDetailsJson?: string | null
   runId: string
   conversationId: string
   providerId: string
@@ -276,6 +279,14 @@ export function createSqliteAssistantRunPersistence(
           `)
         },
       },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 11,
+        name: 'actual-provider-execution-details',
+        async up(transaction) {
+          await transaction.exec('ALTER TABLE assistant_runs ADD COLUMN routeDetailsJson TEXT;')
+        },
+      },
     ]).catch((error) => {
       initialized = undefined
       throw error
@@ -291,7 +302,7 @@ export function createSqliteAssistantRunPersistence(
         `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
                 providerId, model, contextSnapshotId, status, createdAt,
                 startedAt, cancellationRequestedAt, completedAt, journalSequence,
-                checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema
+                checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson
          FROM assistant_runs WHERE id = ?`,
         [runId],
       )
@@ -305,7 +316,7 @@ export function createSqliteAssistantRunPersistence(
           `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
                   providerId, model, contextSnapshotId, status, createdAt,
                   startedAt, cancellationRequestedAt, completedAt, journalSequence,
-                  checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema
+                  checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson
            FROM assistant_runs
            WHERE conversationId = ? AND responseMessageId = ?
            ORDER BY createdAt DESC, id DESC LIMIT 1`,
@@ -321,7 +332,7 @@ export function createSqliteAssistantRunPersistence(
         `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
                 providerId, model, contextSnapshotId, status, createdAt,
                 startedAt, cancellationRequestedAt, completedAt, journalSequence,
-                checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema
+                checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson
          FROM assistant_runs
          WHERE status IN ('queued', 'running', 'awaiting-confirmation')
          ORDER BY createdAt ASC`,
@@ -357,7 +368,7 @@ export function createSqliteAssistantRunPersistence(
 
     async getRequestSnapshot(runId) {
       const row = await (await database()).getFirst<AssistantRunRequestSnapshotRow>(
-        `SELECT snapshot.runId, run.conversationId, run.providerId, run.model,
+        `SELECT snapshot.runId, run.conversationId, run.providerId, run.model, run.routeDetailsJson,
                 snapshot.capturedAt,
                 snapshot.requestJson, snapshot.contextReceiptJson,
                 snapshot.capabilityRevision, snapshot.requestHash, snapshot.schema
@@ -572,8 +583,8 @@ async function saveRun(database: SqliteExecutor, run: AssistantRun): Promise<voi
        id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
        providerId, model, contextSnapshotId, status, createdAt,
        startedAt, cancellationRequestedAt, completedAt, journalSequence,
-       checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        kind = excluded.kind,
        conversationId = excluded.conversationId,
@@ -592,7 +603,8 @@ async function saveRun(database: SqliteExecutor, run: AssistantRun): Promise<voi
        resultJson = excluded.resultJson,
        failureJson = excluded.failureJson,
        pendingModelOperationJson = excluded.pendingModelOperationJson,
-       schema = excluded.schema`,
+       schema = excluded.schema,
+       routeDetailsJson = excluded.routeDetailsJson`,
     [
       run.id,
       run.kind,
@@ -615,6 +627,7 @@ async function saveRun(database: SqliteExecutor, run: AssistantRun): Promise<voi
       run.failure ? JSON.stringify(run.failure) : null,
       run.pendingModelOperation ? JSON.stringify(run.pendingModelOperation) : null,
       RUN_SCHEMA,
+      run.routeDetails ? JSON.stringify(decodeAssistantRunRouteDetails(run.routeDetails)) : null,
     ],
   )
 }
@@ -649,6 +662,9 @@ function parseRun(row: AssistantRunRow): AssistantRun {
   }
 
   const checkpoint = parseCheckpoint(row.checkpointJson)
+  let routeDetails: AssistantRun['routeDetails']
+  try { routeDetails = decodeAssistantRunRouteDetails(row.routeDetailsJson ? JSON.parse(row.routeDetailsJson) : undefined) }
+  catch { throw new AssistantRunPersistenceDataError('An assistant run route-details version is unsupported or invalid.') }
   const result = parseResult(row.resultJson)
   const failure = parseFailure(row.failureJson)
   const pendingModelOperation = parsePendingModelOperation(row.pendingModelOperationJson, row.id)
@@ -684,6 +700,7 @@ function parseRun(row: AssistantRunRow): AssistantRun {
     ...(workspaceWritebackHandoff ? { workspaceWritebackHandoff } : {}),
     providerId: row.providerId,
     model: row.model,
+    ...(routeDetails ? { routeDetails } : {}),
     contextSnapshotId: asContextSnapshotId(row.contextSnapshotId),
     status: row.status,
     createdAt: row.createdAt,
@@ -769,9 +786,16 @@ function parseRequestSnapshotRow(
   }
   const request = parseJson(row.requestJson)
   const contextReceipt = parseContextReceipt(parseJson(row.contextReceiptJson ?? null))
+  // The snapshot is the immutable original request, while run provider/model
+  // now identify actual output. Its captured hash, not the latest route, binds it.
+  let hasActualRoute = false
+  if (row.routeDetailsJson != null) {
+    try { hasActualRoute = !!decodeAssistantRunRouteDetails(JSON.parse(row.routeDetailsJson)) }
+    catch { throw new AssistantRunPersistenceDataError('An assistant run route-details version is unsupported or invalid.') }
+  }
   if (row.schema === ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA && isChatRequest(request) &&
-    request.conversationId === row.conversationId && request.providerId === row.providerId &&
-    request.model === row.model) {
+    request.conversationId === row.conversationId &&
+    (hasActualRoute || (request.providerId === row.providerId && request.model === row.model))) {
     assertRequestIdentity(row.capabilityRevision ?? undefined, row.requestHash ?? undefined, request)
     return Object.freeze({
       schema: ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,

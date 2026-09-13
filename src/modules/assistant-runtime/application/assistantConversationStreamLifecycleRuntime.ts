@@ -1,4 +1,5 @@
 import type { StreamEvent } from '@/core'
+import type { ProviderExecutionTargetObserver } from '@/modules/providers'
 import type { AssistantConversationWorkspaceWritebackHandoff } from './assistantConversationWorkspaceWritebackHandoffRuntime'
 
 export interface AssistantConversationStreamLifecycleProviderLike {
@@ -13,6 +14,7 @@ export interface AssistantConversationStreamLifecycleCompletionContext {
   readonly requestController: AbortController
   readonly flush: () => void
   readonly onStreamEvent?: (event: StreamEvent) => void
+  readonly onExecutionTarget?: ProviderExecutionTargetObserver
 }
 
 export interface AssistantConversationStreamLifecycleCapture<
@@ -90,6 +92,7 @@ export interface AssistantConversationStreamLifecycleFinalizationInput<
   readonly requestController: AbortController
   readonly chunkFlush: () => void
   readonly onStreamEvent?: (event: StreamEvent) => void
+  readonly onExecutionTarget?: ProviderExecutionTargetObserver
 }
 
 export interface AssistantConversationStreamLifecycleFailureInput {
@@ -263,6 +266,7 @@ export function createAssistantConversationStreamLifecycleRuntime<
           requestController: lifecycle.requestController,
           chunkFlush: lifecycle.flush,
           ...(lifecycle.onStreamEvent ? { onStreamEvent: lifecycle.onStreamEvent } : {}),
+          ...(lifecycle.onExecutionTarget ? { onExecutionTarget: lifecycle.onExecutionTarget } : {}),
           upstreamModel: input.upstreamModel,
           remoteCompactEligible: input.remoteCompactEligible,
           remoteCompactMode: input.remoteCompactMode,

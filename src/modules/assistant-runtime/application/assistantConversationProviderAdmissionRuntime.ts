@@ -1,5 +1,7 @@
+import type { ProviderChatExecutionConstraint } from '@/modules/providers'
+
 export interface AssistantConversationProviderAdmissionConversationLike {
-  readonly model: string
+  readonly model: string | null
 }
 
 export interface AssistantConversationProviderAdmissionProviderLike {
@@ -39,6 +41,8 @@ export interface AssistantConversationProviderAdmissionReady<
   readonly provider: TProvider
   readonly upstreamModel: string
   readonly modelConfig: TModelConfig
+  readonly executionModel?: string
+  readonly executionConstraint?: ProviderChatExecutionConstraint
 }
 
 export type AssistantConversationProviderAdmissionPortOutcome<
@@ -78,6 +82,7 @@ export interface AssistantConversationProviderAdmissionRuntimeDependencies<
   TModelConfig,
   TErrorCode,
   TTrace,
+  TReadyConversation extends { readonly model: string } = TConversation & { model: string },
 > {
   admitConversation(input: {
     readonly conversation: TConversation
@@ -85,7 +90,7 @@ export interface AssistantConversationProviderAdmissionRuntimeDependencies<
     readonly settings: TSettings
     readonly signal: AbortSignal
   }): Promise<AssistantConversationProviderAdmissionPortOutcome<
-    TConversation,
+    TReadyConversation,
     TProvider,
     TModelConfig,
     TErrorCode
@@ -152,6 +157,7 @@ export function createAssistantConversationProviderAdmissionRuntime<
   TModelConfig,
   TErrorCode,
   TTrace,
+  TReadyConversation extends { readonly model: string } = TConversation & { model: string },
 >(
   dependencies: AssistantConversationProviderAdmissionRuntimeDependencies<
     TConversation,
@@ -160,7 +166,8 @@ export function createAssistantConversationProviderAdmissionRuntime<
     TSettings,
     TModelConfig,
     TErrorCode,
-    TTrace
+    TTrace,
+    TReadyConversation
   >,
 ) {
   async function admit(
@@ -170,7 +177,7 @@ export function createAssistantConversationProviderAdmissionRuntime<
       TSettings
     >,
   ): Promise<AssistantConversationProviderAdmissionOutcome<
-    TConversation,
+    TReadyConversation,
     TProvider,
     TModelConfig,
     TErrorCode
@@ -234,7 +241,7 @@ export function createAssistantConversationProviderAdmissionRuntime<
         conversationId: input.conversationId,
         provider: admission.provider,
         model: admission.upstreamModel,
-        requestedModel: admission.conversation.model,
+        requestedModel: admission.executionModel ?? admission.conversation.model,
         settings: input.settings,
       }),
     })

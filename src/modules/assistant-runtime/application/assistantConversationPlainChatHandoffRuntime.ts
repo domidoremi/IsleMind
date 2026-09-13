@@ -1,3 +1,5 @@
+import type { ProviderChatExecutionConstraint } from '@/modules/providers'
+
 export interface AssistantConversationPlainChatConversationLike {
   readonly providerId: string
   readonly model: string
@@ -34,6 +36,7 @@ export interface AssistantConversationPlainChatHandoffInput<
   readonly settings: TSettings
   readonly hasAttachments: boolean
   readonly requestController: AbortController
+  readonly executionConstraint?: ProviderChatExecutionConstraint
 }
 
 export interface AssistantConversationPlainChatHandoffRuntimeDependencies<
@@ -60,6 +63,7 @@ export interface AssistantConversationPlainChatHandoffRuntimeDependencies<
     readonly settings: TSettings
     readonly hasAttachments: boolean
     readonly controller: AbortController
+    readonly executionConstraint?: ProviderChatExecutionConstraint
   }): Promise<AssistantConversationPlainChatRunHandle | undefined>
   setActiveStream(
     conversationId: string,
@@ -166,6 +170,7 @@ export function createAssistantConversationPlainChatHandoffRuntime<
         settings: input.settings,
         hasAttachments: input.hasAttachments,
         controller: input.requestController,
+        ...(input.executionConstraint ? { executionConstraint: input.executionConstraint } : {}),
       })
       if (!handle) {
         if (isCancelled(input)) return { kind: 'cancelled' }

@@ -4,6 +4,7 @@ import {
   type GenerationParameterSources,
   type StreamEvent,
 } from '@/core'
+import type { ProviderExecutionTargetObserver, ProviderChatExecutionConstraint } from '@/modules/providers'
 
 export interface AssistantConversationProviderDispatchProviderLike {
   readonly id: string
@@ -73,6 +74,8 @@ export interface AssistantConversationProviderDispatchRequest<
   readonly remoteCompactEligible: boolean
   readonly remoteCompactFallback: TRemoteCompactFallback
   readonly previousResponseId: string | undefined
+  readonly onExecutionTarget?: ProviderExecutionTargetObserver
+  readonly executionConstraint?: ProviderChatExecutionConstraint
   readonly providerToolDeclarations: TProviderToolDeclarations | undefined
 }
 
@@ -109,6 +112,7 @@ export interface AssistantConversationProviderDispatchInput<
   readonly previousResponseId: string | undefined
   readonly providerToolDeclarations: TProviderToolDeclarations | undefined
   readonly onTextDelta?: (chunk: string) => void
+  readonly executionConstraint?: ProviderChatExecutionConstraint
   readonly onStreamEvent?: (event: StreamEvent) => void
   readonly buildStreamLifecycle: (input: {
     readonly modelTraceId: string
@@ -278,6 +282,7 @@ export function createAssistantConversationProviderDispatchRuntime<
       remoteCompactEligible: input.remoteCompactEligible,
       remoteCompactFallback: snapshotPreparedValue(input.remoteCompactFallback, snapshots),
       previousResponseId: input.previousResponseId,
+      ...(input.executionConstraint ? { executionConstraint: snapshotPreparedValue(input.executionConstraint, snapshots) } : {}),
       providerToolDeclarations: snapshotPreparedValue(
         input.providerToolDeclarations,
         snapshots,

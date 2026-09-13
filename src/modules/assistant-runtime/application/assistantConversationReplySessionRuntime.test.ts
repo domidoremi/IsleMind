@@ -1,7 +1,7 @@
 import { createAssistantConversationReplySessionRuntime } from './assistantConversationReplySessionRuntime'
 
 describe('assistant conversation reply session identity', () => {
-  it('captures the selected provider and model on the durable assistant placeholder', async () => {
+  it('leaves placeholder attribution unknown until evidence identifies the actual producing route', async () => {
     const appended: unknown[] = []
     const runtime = createAssistantConversationReplySessionRuntime({
       stopConversationMessage: jest.fn(),
@@ -19,12 +19,12 @@ describe('assistant conversation reply session identity', () => {
 
     await runtime.start({ conversationId: 'conversation-1' })
 
-    expect(appended).toEqual([
-      expect.objectContaining({
-        id: 'assistant-1',
-        providerId: 'openai-primary',
-        model: 'gpt-5.2',
-      }),
-    ])
+    expect(appended).toEqual([{
+      id: 'assistant-1', role: 'assistant', content: '', status: 'streaming',
+      timestamp: 42, startedAt: 42,
+    }])
+    expect(appended[0]).not.toHaveProperty('providerId')
+    expect(appended[0]).not.toHaveProperty('model')
+    expect(appended[0]).not.toHaveProperty('generationProtocol')
   })
 })

@@ -1,4 +1,5 @@
 export * from './contracts'
+export { getAssistantRunMessageAttribution } from './application/actualExecutionAttribution'
 export * from './workspaceWritebackContracts'
 export * from './runtime'
 export * from './contextContributionPolicy'

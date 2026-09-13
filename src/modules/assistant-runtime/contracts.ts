@@ -10,7 +10,7 @@ import type {
   Result,
   StreamEvent,
 } from '@/core'
-import type { ProviderGateway, ProviderGatewayOptions } from '@/modules/providers'
+import type { ProviderExecutionTarget, ProviderExecutionTargetObserver, ProviderGateway, ProviderGatewayOptions } from '@/modules/providers'
 import type { AssistantConversationWorkspaceWritebackHandoff } from './workspaceWritebackContracts'
 
 export const CONTEXT_SNAPSHOT_SCHEMA = 'islemind.context-snapshot.v1'
@@ -92,6 +92,10 @@ export interface PendingModelOperation {
   readonly continuationDigest: string
 }
 
+export interface AssistantRunRouteDetails extends Pick<ProviderExecutionTarget, 'protocolAdapterId' | 'endpointVariant' | 'credentialSource' | 'attemptId' | 'scope'> {
+  readonly schema: 'islemind.assistant-run-route-details.v1'
+}
+
 export interface AssistantRun {
   id: AssistantRunId
   /** The persisted invocation owner; unsupported kinds fail closed. */
@@ -101,6 +105,8 @@ export interface AssistantRun {
   workspaceWritebackHandoff?: AssistantConversationWorkspaceWritebackHandoff
   providerId: string
   model: string
+  /** Latest producing route. Attempt-only selections remain in the existing journal. */
+  routeDetails?: AssistantRunRouteDetails
   contextSnapshotId: ContextSnapshotId
   status: AssistantRunStatus
   createdAt: number
@@ -501,6 +507,7 @@ export interface AssistantActivityProviderContinuationResult {
 export interface AssistantActivityExecutionInput {
   readonly run: AssistantRun
   readonly signal: AbortSignal
+  readonly recordProviderExecutionTarget?: ProviderExecutionTargetObserver
   /**
    * Persists one normalized, bounded provider event before terminal activity
    * completion. Trace events intentionally contain identifiers and lifecycle

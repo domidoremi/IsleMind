@@ -34,6 +34,7 @@ export interface AssistantConversationDurableExecutionCallbackInput<TStarted> {
   readonly signal: AbortSignal
   readonly checkpointStreamEvent?: (event: StreamEvent) => Promise<void>
   readonly checkpointTextDelta?: (text: string) => Promise<void>
+  readonly recordProviderExecutionTarget?: AssistantActivityExecutionInput['recordProviderExecutionTarget']
   readonly continueProviderTurns?: AssistantActivityExecutionInput['continueProviderTurns']
   readonly started: (
     value: TStarted,
@@ -127,7 +128,7 @@ export function createAssistantConversationDurableExecutionRuntime(
       cancellationSignal: input.cancellationSignal,
       onPersisted: input.onPersisted,
       executor: {
-        async execute({ run, signal, checkpointStreamEvent, checkpointTextDelta, continueProviderTurns }) {
+        async execute({ run, signal, checkpointStreamEvent, checkpointTextDelta, continueProviderTurns, recordProviderExecutionTarget }) {
           const started = (
             value: TStarted,
           ): AssistantConversationDurableExecutionStartedPublication => {
@@ -157,6 +158,7 @@ export function createAssistantConversationDurableExecutionRuntime(
               started,
               checkpointStreamEvent,
               checkpointTextDelta,
+              recordProviderExecutionTarget,
               continueProviderTurns,
             })
           } finally {

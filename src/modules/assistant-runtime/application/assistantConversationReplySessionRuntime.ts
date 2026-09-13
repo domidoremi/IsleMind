@@ -1,13 +1,13 @@
 export interface AssistantConversationReplySessionConversationLike {
-  readonly providerId: string
-  readonly model: string
+  readonly providerId: string | null
+  readonly model: string | null
 }
 
 export interface AssistantConversationReplySessionMessage {
   readonly id: string
   readonly role: 'assistant'
-  readonly providerId: string
-  readonly model: string
+  readonly providerId?: string
+  readonly model?: string
   readonly content: ''
   readonly timestamp: number
   readonly status: 'streaming'
@@ -20,8 +20,8 @@ export interface AssistantConversationReplySessionActivity {
   readonly messageId: string
   readonly title: 'Chat reply'
   readonly metadata: {
-    readonly providerId: string
-    readonly model: string
+    readonly providerId?: string
+    readonly model?: string
   }
 }
 
@@ -116,8 +116,6 @@ export function createAssistantConversationReplySessionRuntime<
     const message: AssistantConversationReplySessionMessage = {
       id: dependencies.generateId(),
       role: 'assistant',
-      providerId: conversation.providerId,
-      model: conversation.model,
       content: '',
       timestamp: startedAt,
       status: 'streaming',
@@ -152,8 +150,8 @@ export function createAssistantConversationReplySessionRuntime<
       messageId: message.id,
       title: 'Chat reply',
       metadata: {
-        providerId: conversation.providerId,
-        model: conversation.model,
+        providerId: conversation.providerId ?? undefined,
+        model: conversation.model ?? undefined,
       },
     }, startedAt)
     dependencies.setStreaming(input.conversationId, message.id)

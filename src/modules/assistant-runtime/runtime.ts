@@ -21,6 +21,8 @@ import {
   isAssistantRequestHash,
 } from './application/requestIdentity'
 import { ProviderStreamEventBuffer, streamEventCount } from '@/modules/providers'
+import type { ProviderExecutionTarget } from '@/modules/providers'
+import { createAssistantRunRouteDetails } from './application/actualExecutionAttribution'
 import type {
   AssistantActivityContinuationIdentity,
   AssistantContextPlanReceipt,
@@ -51,6 +53,7 @@ class PersistenceFailure extends Error {
 }
 
 interface ActiveRun {
+  executionTarget?: Pick<AssistantRun, 'providerId' | 'model' | 'routeDetails'>
   controller: AbortController
   now: () => number
   run: AssistantRun
@@ -284,6 +287,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             try {
               applyStreamEvent(active, item.event, maxOutputChars)
               await record(active, 'stream.event', journalDataForStreamEvent(item.event), {
+                ...producingRoutePatch(active, item.event),
                 checkpoint: { outputText: active.outputText, streamEventCount: active.streamEventCount },
               })
               item.receipt.resolve()
@@ -337,6 +341,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
               signal: active.controller.signal,
               checkpointStreamEvent,
               checkpointTextDelta,
+              async recordProviderExecutionTarget(target) {
+                await flushCheckpoints()
+                await recordExecutionTarget(active, target)
+              },
               async continueProviderTurns(continuation) {
                 await flushCheckpoints()
                 const initialEventCount = active.streamEventCount
@@ -743,10 +751,14 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           await record(active, 'provider.route-selected', {
             providerId: route.providerId,
             model: route.model,
-          }, {
+          }, active.run.routeDetails ? {} : {
             providerId: route.providerId,
             model: route.model,
           })
+        },
+        onExecutionTarget: async (target) => {
+          await providerGatewayOptions?.onExecutionTarget?.(target)
+          await recordExecutionTarget(active, target)
         },
       })) {
         if (active.controller.signal.aborted) break
@@ -760,8 +772,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         }
         if (event.type === 'provider-continuation-state') {
           if (
-            event.binding.providerId !== active.run.providerId
-            || event.binding.model !== active.run.model
+            event.binding.providerId !== (active.executionTarget ?? active.run).providerId
+            || event.binding.model !== (active.executionTarget ?? active.run).model
           ) {
             throw new Error('The provider continuation state does not match the selected route.')
           }
@@ -769,6 +781,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         }
         applyStreamEvent(active, event, maxOutputChars)
         await record(active, 'stream.event', journalDataForStreamEvent(event), {
+          ...producingRoutePatch(active, event),
           checkpoint: {
             outputText: active.outputText,
             streamEventCount: active.streamEventCount,
@@ -860,7 +873,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     stream: import('@/modules/providers').ProviderAdapter['stream'],
     onStreamEvent?: (event: StreamEvent) => void,
   ): Promise<string> {
-    let request = freezeChatRequest(initialRequest)
+    const initialRoute = active.executionTarget ?? active.run
+    let request = freezeChatRequest({ ...initialRequest, providerId: initialRoute.providerId, model: initialRoute.model,
+      providerStateBinding: { providerId: initialRoute.providerId, model: initialRoute.model } })
     let stepIndex = 0
     let calls = Object.freeze([...initialCalls])
     let reasoningReplay = freezeReasoningReplay(initialReasoningReplay)
@@ -901,7 +916,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       // final answer. Start each canonical continuation with a fresh visible
       // output accumulator so it cannot leak into the terminal response.
       active.outputText = ''
-      for await (const event of stream(request, { signal: active.controller.signal })) {
+      for await (const event of stream(request, { signal: active.controller.signal, onExecutionTarget: (target) => recordExecutionTarget(active, target) })) {
         if (active.controller.signal.aborted) break
         if (event.type === 'tool-call') {
           calls = Object.freeze([...calls, {
@@ -912,7 +927,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           }])
         }
         if (event.type === 'provider-continuation-state') {
-          if (event.binding.providerId !== active.run.providerId || event.binding.model !== active.run.model) {
+          if (event.binding.providerId !== (active.executionTarget ?? active.run).providerId || event.binding.model !== (active.executionTarget ?? active.run).model) {
             throw new Error('The provider continuation state does not match the selected route.')
           }
           reasoningReplay = freezeReasoningReplay(event.reasoningReplay)
@@ -920,6 +935,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         applyStreamEvent(active, event, maxOutputChars)
         outputText = active.outputText
         await record(active, 'stream.event', journalDataForStreamEvent(event), {
+          ...producingRoutePatch(active, event),
           checkpoint: {
             outputText: active.outputText,
             streamEventCount: active.streamEventCount,
@@ -934,6 +950,19 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       await record(active, 'provider-continuation.completed', continuationJournalData(continuation))
       stepIndex += 1
     }
+  }
+
+  async function recordExecutionTarget(active: ActiveRun, target: ProviderExecutionTarget): Promise<void> {
+    if (active.controller.signal.aborted) throw new DOMException('The assistant run was cancelled.', 'AbortError')
+    const routeDetails = createAssistantRunRouteDetails(target)
+    await record(active, 'provider.route-selected', { providerId: target.providerId, model: target.model, ...routeDetails })
+    if (active.controller.signal.aborted) throw new DOMException('The assistant run was cancelled.', 'AbortError')
+    active.executionTarget = { providerId: target.providerId, model: target.model, routeDetails }
+  }
+
+  function producingRoutePatch(active: ActiveRun, event: StreamEvent): Partial<AssistantRun> {
+    return active.executionTarget && ((event.type === 'text-delta' && !!event.text) || event.type === 'tool-call')
+      ? active.executionTarget : {}
   }
 
   async function recordModelOperationSelection(

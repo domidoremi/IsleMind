@@ -1,4 +1,6 @@
 import type { StreamEvent } from '@/core'
+import type { Message } from '@/types/chatContracts'
+import type { ProviderExecutionTargetObserver } from '@/modules/providers'
 import type { AssistantConversationDetachedWorkLease } from './assistantConversationDetachedWorkRegistry'
 import type { AssistantConversationWorkspaceWritebackHandoff } from './assistantConversationWorkspaceWritebackHandoffRuntime'
 
@@ -13,6 +15,9 @@ export interface AssistantConversationFinalizationUsageLike {
 }
 
 export interface AssistantConversationFinalizationMessageLike<TCitation> {
+  readonly providerId?: string
+  readonly model?: string
+  readonly generationProtocol?: Message['generationProtocol']
   readonly id: string
   readonly status: string
   readonly content: string
@@ -199,6 +204,7 @@ export interface AssistantConversationMcpRevisionInput<
   readonly providerTools?: TProviderTools
   readonly signal: AbortSignal
   readonly onStreamEvent?: (event: StreamEvent) => void
+  readonly onExecutionTarget?: ProviderExecutionTargetObserver
 }
 
 export interface AssistantConversationFinalizationRuntimeInput<
@@ -251,6 +257,7 @@ export interface AssistantConversationFinalizationRuntimeInput<
   readonly contextWindowState?: TContextWindowState
   readonly contextFragments?: readonly TContextFragment[]
   readonly onStreamEvent?: (event: StreamEvent) => void
+  readonly onExecutionTarget?: ProviderExecutionTargetObserver
 }
 
 export interface AssistantConversationProviderFailureInput<TError> {
@@ -339,8 +346,9 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
     readonly outputText: string
     readonly citations: TCitation[]
     readonly providerUsage?: TUsage
-    readonly providerId: string
-    readonly model: string
+    readonly providerId?: string
+    readonly model?: string
+    readonly generationProtocol?: Message['generationProtocol']
     readonly completedAt: number
   }): TSuccessPlan | TSkipPlan
   recordRemoteCompactCompleted(input: AssistantConversationRemoteCompactRecordBase<
@@ -597,6 +605,7 @@ export function createAssistantConversationFinalizationRuntime<
         providerTools: input.providerTools,
         signal: input.requestController.signal,
         onStreamEvent: input.onStreamEvent,
+        onExecutionTarget: input.onExecutionTarget,
       })
       if (revision?.text.trim()) {
         finalOutput = revision.text
@@ -644,8 +653,9 @@ export function createAssistantConversationFinalizationRuntime<
       outputText: finalOutput,
       citations: finalCitations,
       providerUsage: finalResult.usage,
-      providerId: input.provider.id,
-      model: input.runtimeConversation.model,
+      providerId: latestAssistantMessage?.providerId,
+      model: latestAssistantMessage?.model,
+      generationProtocol: latestAssistantMessage?.generationProtocol,
       completedAt,
     })
     if (terminalProjection.kind === 'skip') {

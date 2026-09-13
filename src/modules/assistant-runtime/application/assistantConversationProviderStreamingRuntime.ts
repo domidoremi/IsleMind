@@ -1,4 +1,5 @@
 import type { StreamEvent } from '@/core'
+import type { ProviderExecutionTargetObserver } from '@/modules/providers'
 
 export interface AssistantConversationProviderStreamHandle {
   readonly controller: AbortController
@@ -69,6 +70,7 @@ export interface AssistantConversationProviderStreamingRuntimeInput<
       readonly requestController: AbortController
       readonly flush: () => void
       readonly onStreamEvent?: (event: StreamEvent) => void
+      readonly onExecutionTarget?: ProviderExecutionTargetObserver
     },
   ) => Promise<void>
   readonly completionFailed: (error: unknown) => void
