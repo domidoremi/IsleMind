@@ -1,10 +1,11 @@
-import type { AIModel, AIProvider, ProviderOperationCode } from '@/types/providerContracts'
+import type { AIModel, AIProvider, ProviderCredentialSource, ProviderOperationCode } from '@/types/providerContracts'
 import { failure, success, type ProviderOperationResult } from './providerOperationResult'
 
 export interface ProviderModelListOptions {
   timeoutMs?: number
   signal?: AbortSignal
   forceRefresh?: boolean
+  credentialSource?: ProviderCredentialSource
 }
 
 export interface ProviderModelListIssue {
@@ -62,7 +63,7 @@ export function createProviderModelList(
     const normalizedApiKey = apiKey.trim()
     if (!normalizedApiKey) return failure<AIModel[]>('missing_key', dependencies.messages.saveApiKeyFirst)
 
-    const configuredProvider = { ...provider, apiKey: normalizedApiKey }
+    const configuredProvider = { ...provider, apiKey: normalizedApiKey, apiKeySource: options.credentialSource }
     const configurationIssue = dependencies.configurationIssue(configuredProvider, normalizedApiKey)
     if (configurationIssue) {
       return failure<AIModel[]>(configurationIssue.code, configurationIssue.message)
@@ -71,7 +72,9 @@ export function createProviderModelList(
     // All cache identity decisions must use the same normalized credential that
     // is sent to discovery. This keeps whitespace-only input from splitting a
     // provider snapshot into a second cache entry.
-    const credentialGroupId = dependencies.credentialGroupId(provider, normalizedApiKey)
+    const credentialGroupId = options.credentialSource
+      ? options.credentialSource.kind === 'group' ? options.credentialSource.groupId : undefined
+      : dependencies.credentialGroupId(provider, normalizedApiKey)
     const hostedIssue = dependencies.hostedIssue(configuredProvider)
     if (hostedIssue) {
       return withCredentialGroup(
@@ -184,6 +187,7 @@ function providerModelCacheKey(
     provider.presetId ?? provider.detectedPresetId ?? '',
     provider.wireProtocol ?? '',
     credentialScope,
+    provider.apiKeySource ? JSON.stringify(provider.apiKeySource) : '',
   ].map(encodeCachePart).join('|')
 }
 

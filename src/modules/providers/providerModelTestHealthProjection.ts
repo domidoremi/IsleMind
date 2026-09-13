@@ -10,15 +10,12 @@ const BLOCKING_MODEL_TEST_CODES = new Set<ProviderOperationCode>([
   'credential_mismatch',
   'bad_auth',
   'bad_base_url',
-  'model_unavailable',
-  'empty_models',
 ])
 
 const CREDENTIAL_FAILURE_CODES = new Set<ProviderOperationCode>([
   'missing_key',
   'credential_mismatch',
   'bad_auth',
-  'model_unavailable',
 ])
 
 /** Keeps partial probe evidence from becoming a durable Chat admission block. */

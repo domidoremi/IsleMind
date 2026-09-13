@@ -1,4 +1,5 @@
 import type { ChatRequest, StreamEvent } from '@/core'
+import { ProviderExecutionTargetObserverError } from './providerExecutionTarget'
 import {
   PROVIDER_CAPABILITIES,
   type ProviderAdapter,
@@ -111,7 +112,7 @@ async function* streamWithFallback(
       }
       return
     } catch (error) {
-      if (options.signal.aborted || emitted) throw error
+      if (options.signal.aborted || emitted || error instanceof ProviderExecutionTargetObserverError) throw error
       lastError = error
     }
   }

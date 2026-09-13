@@ -1,5 +1,7 @@
 import {
   resolveFailoverDecision,
+  compareProviderFailoverCandidates,
+  providerFailoverRouteIdentityKey,
   type ProviderFailoverCandidate,
   type ProviderFailoverDecision,
   type ProviderFailoverPolicy,
@@ -21,6 +23,7 @@ export interface ProviderLocalRouterInput {
   requiredCapabilities?: readonly string[]
   streamStarted?: boolean
   attemptedRoutes?: readonly ProviderFailoverRoute[]
+  confirmedRoute?: ProviderFailoverRoute
   policy?: Partial<ProviderLocalRouterPolicy>
 }
 
@@ -57,18 +60,19 @@ export const DEFAULT_PROVIDER_LOCAL_ROUTER_POLICY: ProviderLocalRouterPolicy = {
 export function resolveLocalProviderRoute(input: ProviderLocalRouterInput): ProviderLocalRouterResult {
   const policy = normalizePolicy(input.policy)
   const attemptedRoutes = input.attemptedRoutes ?? []
-  const originalKey = routeKey(input.original)
-  const attemptedKeys = new Set(attemptedRoutes.map(routeKey))
+  const originalKey = providerFailoverRouteIdentityKey(input.original)
+  const attemptedKeys = new Set(attemptedRoutes.map(providerFailoverRouteIdentityKey))
   attemptedKeys.add(originalKey)
-  const priorFailoverCount = [...new Set(attemptedRoutes.map(routeKey))]
+  const priorFailoverCount = [...new Set(attemptedRoutes.map(providerFailoverRouteIdentityKey))]
     .filter((key) => key !== originalKey)
     .length
   const boundedCandidates = input.candidates
-    .filter((candidate) => !attemptedKeys.has(routeKey(candidate)))
+    .filter((candidate) => !attemptedKeys.has(providerFailoverRouteIdentityKey(candidate)))
+    .sort((left, right) => compareProviderFailoverCandidates(input.original, left, right))
     .slice(0, policy.maxCandidates)
   const rejectedBeforePolicy = Math.max(0, input.candidates.length - boundedCandidates.length)
   const candidateLimitReached = input.candidates
-    .filter((candidate) => !attemptedKeys.has(routeKey(candidate)))
+    .filter((candidate) => !attemptedKeys.has(providerFailoverRouteIdentityKey(candidate)))
     .length > boundedCandidates.length
   const decision = resolveFailoverDecision({
     policy,
@@ -77,6 +81,7 @@ export function resolveLocalProviderRoute(input: ProviderLocalRouterInput): Prov
     candidates: [...boundedCandidates],
     requiredCapabilities: input.requiredCapabilities ? [...input.requiredCapabilities] : undefined,
     streamStarted: input.streamStarted,
+    confirmedRoute: input.confirmedRoute,
   })
   const failoverLimitReached = priorFailoverCount >= policy.maxFailovers
   const boundedDecision = failoverLimitReached || (decision.selected !== undefined && priorFailoverCount + 1 > policy.maxFailovers)
@@ -84,6 +89,7 @@ export function resolveLocalProviderRoute(input: ProviderLocalRouterInput): Prov
         ...decision,
         eligible: false,
         selected: undefined,
+        requiresUserConfirmation: false,
         blockedReasons: decision.blockedReasons.includes('failover_limit_reached')
           ? decision.blockedReasons
           : [...decision.blockedReasons, 'failover_limit_reached' as const],
@@ -114,8 +120,11 @@ export function resolveLocalProviderRoute(input: ProviderLocalRouterInput): Prov
   }
 }
 
-export function providerRouteKey(route: Pick<ProviderFailoverRoute, 'providerId' | 'model' | 'credentialGroupId'>): string {
-  return routeKey(route)
+export function providerRouteKey(route: ProviderFailoverRoute): string {
+  // Preserve the legacy diagnostic format; resolved routes use complete, collision-safe identity.
+  return route.credentialSource || route.protocolAdapterId || route.endpointVariant
+    ? providerFailoverRouteIdentityKey(route)
+    : routeKey(route)
 }
 
 function normalizePolicy(input: Partial<ProviderLocalRouterPolicy> | undefined): ProviderLocalRouterPolicy {

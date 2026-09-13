@@ -1,9 +1,10 @@
-import type { AIModel, AIProvider, ProviderCredentialGroup } from '@/types/providerContracts'
+import type { AIModel, AIProvider, ProviderCredentialGroup, ProviderCredentialSource } from '@/types/providerContracts'
 import { failure, success, type ProviderOperationResult } from './providerOperationResult'
 
 export interface ProviderCredentialSynchronizationOptions {
   timeoutMs?: number
   signal?: AbortSignal
+  credentialSource?: ProviderCredentialSource
 }
 
 export interface ProviderCredentialSynchronizationMessages {
@@ -56,6 +57,7 @@ export function createProviderCredentialSynchronization(
             enabled: true,
             apiKey: provider.apiKey,
             availableModels: [],
+            source: provider.apiKeySource ?? { kind: 'primary' as const },
           }]
       const synchronized = await dependencies.synchronize(
         { ...provider, credentialGroups: sourceGroups },
@@ -64,10 +66,10 @@ export function createProviderCredentialSynchronization(
             const result = await dependencies.fetchModels(
               source,
               group.apiKey ?? '',
-              options,
+              { ...options, credentialSource: group.source ?? { kind: 'group', groupId: group.id } },
             )
-            if (!result.ok || !result.data?.length) throw new Error(result.message)
-            return result.data
+            if (!result.ok && result.code !== 'empty_models') throw new Error(result.message)
+            return result.data ?? []
           },
           signal: options.signal,
         },

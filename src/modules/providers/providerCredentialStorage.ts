@@ -58,6 +58,11 @@ export interface ProviderCredentialStorage {
   replaceCredentials(input: ProviderCredentialReplacementInput): Promise<void>
 }
 
+export interface ProviderCredentialMutationLifecycle {
+  /** Secret-free fence around the existing verified/rollback-capable mutation. */
+  withMutation(providerIds: readonly string[], mutate: () => Promise<void>): Promise<void>
+}
+
 export function providerCredentialStorageKey(providerId: string): string {
   return `islemind.key.${credentialIdentitySegment(providerId, 'provider')}`
 }
@@ -72,6 +77,7 @@ export function providerCredentialGroupStorageKey(providerId: string, groupId: s
  */
 export function createProviderCredentialStorage(
   storage: SecureKeyValueStoragePort,
+  lifecycle?: ProviderCredentialMutationLifecycle,
 ): ProviderCredentialStorage {
   let operationQueue: Promise<void> = Promise.resolve()
 
@@ -106,12 +112,12 @@ export function createProviderCredentialStorage(
     }
   }
 
-  async function applyTarget(target: ReadonlyMap<string, string | null>): Promise<void> {
+  async function applyTarget(target: ReadonlyMap<string, string | null>, providerIds: readonly string[]): Promise<void> {
     const keys = [...target.keys()].sort()
     const before = new Map<string, string | null>()
     for (const key of keys) before.set(key, await readKey(key, 'replacement'))
 
-    try {
+    const mutate = async () => { try {
       for (const key of keys) {
         const value = target.get(key) ?? null
         if (value === null) await deleteKey(key, 'replacement')
@@ -133,7 +139,18 @@ export function createProviderCredentialStorage(
       }
       if (error instanceof ProviderCredentialStorageError) throw error
       throw new ProviderCredentialStorageError('write_failed', 'replacement')
-    }
+    } }
+    // Comparing values here only detects a secure-storage mutation. It never
+    // attributes an execution or discloses a credential/fingerprint to the fence.
+    if (lifecycle && keys.some((key) => before.get(key) !== target.get(key))) {
+      await lifecycle.withMutation([...new Set(providerIds)], mutate)
+    } else await mutate()
+  }
+
+  async function mutateOne(providerId: string, key: string, value: string | null, scope: ProviderCredentialStorageScope) {
+    const mutate = () => value === null ? deleteKey(key, scope) : setKey(key, value, scope)
+    if (lifecycle && await readKey(key, scope) !== value) await lifecycle.withMutation([providerId], mutate)
+    else await mutate()
   }
 
   return Object.freeze({
@@ -143,11 +160,11 @@ export function createProviderCredentialStorage(
     },
     setProviderCredential(providerId: string, credential: string) {
       const key = providerCredentialStorageKey(providerId)
-      return enqueue(() => setKey(key, credential, 'provider'))
+      return enqueue(() => mutateOne(providerId, key, credential, 'provider'))
     },
     deleteProviderCredential(providerId: string) {
       const key = providerCredentialStorageKey(providerId)
-      return enqueue(() => deleteKey(key, 'provider'))
+      return enqueue(() => mutateOne(providerId, key, null, 'provider'))
     },
     getCredentialGroupCredential(providerId: string, groupId: string) {
       const key = providerCredentialGroupStorageKey(providerId, groupId)
@@ -155,17 +172,17 @@ export function createProviderCredentialStorage(
     },
     setCredentialGroupCredential(providerId: string, groupId: string, credential: string) {
       const key = providerCredentialGroupStorageKey(providerId, groupId)
-      return enqueue(() => setKey(key, credential, 'credential_group'))
+      return enqueue(() => mutateOne(providerId, key, credential, 'credential_group'))
     },
     deleteCredentialGroupCredential(providerId: string, groupId: string) {
       const key = providerCredentialGroupStorageKey(providerId, groupId)
-      return enqueue(() => deleteKey(key, 'credential_group'))
+      return enqueue(() => mutateOne(providerId, key, null, 'credential_group'))
     },
     applyMutations(mutations: readonly ProviderCredentialMutation[]) {
-      return enqueue(() => applyTarget(buildMutationTarget(mutations)))
+      return enqueue(() => applyTarget(buildMutationTarget(mutations), mutations.map((item) => item.providerId)))
     },
     replaceCredentials(input: ProviderCredentialReplacementInput) {
-      return enqueue(() => applyTarget(buildReplacementTarget(input)))
+      return enqueue(() => applyTarget(buildReplacementTarget(input), [...input.current, ...input.replacement].map((item) => item.providerId)))
     },
   })
 }

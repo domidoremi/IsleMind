@@ -1,16 +1,6 @@
-import type { AIProvider } from '@/types/providerContracts'
+import type { AIProvider, ProviderProtocolAdapterId } from '@/types/providerContracts'
+export type { ProviderProtocolAdapterId } from '@/types/providerContracts'
 import type { OpenAIRequestInput } from './providerOpenAIRequestPolicy'
-
-export type ProviderProtocolAdapterId =
-  | 'openai-chat'
-  | 'openai-responses'
-  | 'anthropic'
-  | 'google'
-  | 'openai-compatible-chat'
-  | 'openai-compatible-responses'
-  | 'openai-compatible-anthropic'
-  | 'xiaomi-mimo-chat'
-  | 'xiaomi-mimo-anthropic'
 
 export type ProviderProtocolBodyTarget =
   | 'openai-chat'

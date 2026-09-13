@@ -1,5 +1,6 @@
 import type { AIModel, AIProvider } from '@/types/providerContracts'
 import { ProviderHttpError } from './providerOperationResult'
+import { canApplyProviderModelDiscoveryAbsence, type ProviderModelDiscoveryResult } from './providerModelDiscoveryEvidence'
 
 export const PROVIDER_PROBE_EVIDENCE_SCHEMA = 'islemind.provider-probe-evidence.v1' as const
 
@@ -8,6 +9,7 @@ export type ProviderProbeClassification =
   | 'credential_required'
   | 'authentication_failed'
   | 'model_unavailable'
+  | 'model_not_advertised'
   | 'quota_exhausted'
   | 'rate_limited'
   | 'http_error'
@@ -83,6 +85,7 @@ export interface ProviderProbeDependencies {
   hostedIssue(provider: AIProvider): ProviderProbeUnsupportedIssue | undefined
   supportsModelDiscovery(provider: AIProvider): boolean
   discoverModels(provider: AIProvider, timeoutMs: number, signal?: AbortSignal): Promise<AIModel[]>
+  discoverModelsDetailed?(provider: AIProvider, timeoutMs: number, signal?: AbortSignal): Promise<ProviderModelDiscoveryResult>
 }
 
 export interface ProviderProbePort {
@@ -158,19 +161,29 @@ export function createProviderProbe(dependencies: ProviderProbeDependencies): Pr
       }
 
       try {
-        const models = await dependencies.discoverModels(
-          configuredProvider,
-          boundedProbeTimeout(request.timeoutMs, dependencies.defaultTimeoutMs),
-          request.signal,
-        )
+        const timeoutMs = boundedProbeTimeout(request.timeoutMs, dependencies.defaultTimeoutMs)
+        const detailed = await dependencies.discoverModelsDetailed?.(configuredProvider, timeoutMs, request.signal)
+        if (detailed && detailed.status !== 'success') {
+          const classification: ProviderProbeClassification = detailed.status === 'unsupported' ? 'unsupported_route'
+            : detailed.status === 'cancelled' ? 'cancelled' : detailed.failureReason === 'timeout' ? 'timed_out'
+            : detailed.failureReason === 'invalid_configuration' ? 'invalid_configuration'
+            : detailed.httpStatus ? classifyProviderProbeHttpFailure(detailed.httpStatus, '')
+            : detailed.failureReason === 'malformed' || detailed.failureReason === 'pagination' ? 'malformed_response' : 'network_error'
+          return result(baseEvidence, classification, false, startedAt, { httpStatus: detailed.httpStatus, retryAfterMs: detailed.retryAfterMs })
+        }
+        const models = detailed?.models ?? await dependencies.discoverModels(configuredProvider, timeoutMs, request.signal)
         throwIfProviderProbeAborted(request.signal)
         const modelDiscovered = models.some((model) => providerProbeModelIdsMatch(model.id, upstreamModel))
+        const verifiedAccess = detailed?.valid && detailed.authority === 'access-authoritative'
         return result(
           baseEvidence,
-          modelDiscovered ? 'reachable' : 'model_unavailable',
+          modelDiscovered ? 'reachable'
+            : detailed && canApplyProviderModelDiscoveryAbsence(detailed) ? 'model_unavailable' : 'model_not_advertised',
           modelDiscovered,
           startedAt,
-          { discoveredModelCount: models.length },
+          { discoveredModelCount: models.length, ...(modelDiscovered && !verifiedAccess ? { states: {
+            reachability: 'reachable', credentialState: authentication === 'credentialless_local' ? 'not-required' : 'valid', modelAccess: 'unknown', quotaState: 'unknown',
+          } as const } : {}) },
         )
       } catch (error) {
         throwIfProviderProbeAborted(request.signal)
@@ -231,7 +244,7 @@ function classifyProviderProbeFailure(
       redactedReason: providerProbeHttpReason(classification, error.status),
     })
   }
-  if (error instanceof Error && error.name === 'AbortError') {
+  if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
     return result(baseEvidence, 'timed_out', false, startedAt, {
       redactedReason: 'The provider probe timed out.',
     })
@@ -299,7 +312,7 @@ function result(
   const ok = classification === 'reachable'
   return {
     ok,
-    readiness: providerProbeReadiness(classification),
+    readiness: classification === 'reachable' && states.modelAccess === 'unknown' ? 'partial' : providerProbeReadiness(classification),
     ...states,
     durationMs,
     ...(optional.httpStatus === undefined ? {} : { httpStatus: optional.httpStatus }),
@@ -322,6 +335,7 @@ function providerProbeReadiness(
     case 'timed_out':
     case 'unsupported_route':
     case 'malformed_response':
+    case 'model_not_advertised':
       return 'partial'
     case 'credential_required':
     case 'authentication_failed':
@@ -359,6 +373,8 @@ function providerProbeStates(
       return { reachability: 'reachable', credentialState: credentialOnSuccess, modelAccess: 'available', quotaState: 'unknown' }
     case 'model_unavailable':
       return { reachability: 'reachable', credentialState: credentialOnSuccess, modelAccess: 'unavailable', quotaState: 'unknown' }
+    case 'model_not_advertised':
+      return { reachability: 'reachable', credentialState: credentialOnSuccess, modelAccess: 'unknown', quotaState: 'unknown' }
     case 'credential_required':
       return { reachability: 'unknown', credentialState: 'missing', modelAccess: 'unknown', quotaState: 'unknown' }
     case 'authentication_failed':

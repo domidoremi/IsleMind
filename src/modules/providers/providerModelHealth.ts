@@ -1,9 +1,10 @@
-import type { AIProvider } from '@/types/providerContracts'
+import type { AIProvider, ProviderCredentialSource } from '@/types/providerContracts'
 import type { ProviderModelTestEvidenceResult } from './providerModelTestEvidence'
 import { projectProviderModelTestHealth } from './providerModelTestHealthProjection'
 import type { ProviderOperationResult } from './providerOperationResult'
 
 export interface ProviderModelHealthOptions {
+  credentialSource?: ProviderCredentialSource
   checkParameters?: boolean
   recordLastTestModel?: boolean
   timeoutMs?: number
@@ -33,7 +34,7 @@ export interface ProviderModelHealthDependencies {
     provider: AIProvider,
     model: string,
     apiKey: string,
-    options?: { checkParameters?: boolean; timeoutMs?: number; signal?: AbortSignal },
+    options?: { checkParameters?: boolean; timeoutMs?: number; signal?: AbortSignal; credentialSource?: ProviderCredentialSource },
   ): Promise<ProviderOperationResult<ProviderModelTestEvidenceResult>>
   now?: () => number
 }
@@ -60,6 +61,7 @@ export function createProviderModelHealth(
           checkParameters: options.checkParameters,
           timeoutMs: options.timeoutMs,
           ...(options.signal ? { signal: options.signal } : {}),
+          ...(options.credentialSource ? { credentialSource: options.credentialSource } : {}),
         })
         throwIfProviderModelHealthAborted(options.signal)
 

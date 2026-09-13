@@ -1,3 +1,6 @@
+import type { ProviderCredentialSource } from './providerCredentials'
+import type { ProviderProtocolAdapterId } from './providerProtocolAdapter'
+
 export const PROVIDER_FAILOVER_DECISION_SCHEMA = 'islemind.provider-failover-decision.v1'
 
 export type ProviderFailoverMode =
@@ -51,6 +54,9 @@ export interface ProviderFailoverRoute {
   providerId: string
   model: string
   credentialGroupId?: string
+  credentialSource?: ProviderCredentialSource
+  protocolAdapterId?: ProviderProtocolAdapterId
+  endpointVariant?: string
   family?: string
   region?: string
   costTier?: ProviderCostTier
@@ -89,6 +95,8 @@ export interface ProviderFailoverInput {
   candidates: ProviderFailoverCandidate[]
   requiredCapabilities?: string[]
   streamStarted?: boolean
+  /** Ephemeral consent for this request and exact candidate; all policy checks still apply. */
+  confirmedRoute?: ProviderFailoverRoute
 }
 
 export interface ProviderFailoverDecision {
@@ -206,7 +214,9 @@ export function resolveFailoverDecision(input: ProviderFailoverInput): ProviderF
   if (!evaluated.accepted.length && !blockedReasons.length) blockedReasons.push('no_eligible_candidates')
 
   const crossProviderSelected = evaluated.accepted[0] && evaluated.accepted[0].providerId !== input.original.providerId
-  const requiresUserConfirmation = input.policy.mode === 'ask-before-cross-provider' && !!crossProviderSelected
+  const confirmed = input.confirmedRoute && evaluated.accepted[0]
+    && providerFailoverRouteIdentityKey(input.confirmedRoute) === providerFailoverRouteIdentityKey(evaluated.accepted[0])
+  const requiresUserConfirmation = !blockedReasons.length && input.policy.mode === 'ask-before-cross-provider' && !!crossProviderSelected && !confirmed
   if (requiresUserConfirmation) blockedReasons.push('cross_provider_confirmation_required')
 
   const eligible = !blockedReasons.length && !!evaluated.accepted.length
@@ -241,14 +251,12 @@ function evaluateCandidates(input: ProviderFailoverInput): { accepted: ProviderF
     }
     accepted.push(candidate)
   }
-  accepted.sort((left, right) => {
-    return candidateRank(input, right) - candidateRank(input, left)
-  })
+  accepted.sort((left, right) => compareProviderFailoverCandidates(input.original, left, right))
   return { accepted, rejected }
 }
 
 function rejectCandidate(input: ProviderFailoverInput, candidate: ProviderFailoverCandidate): ProviderFailoverCandidateRejection['reason'] | undefined {
-  if (candidate.providerId === input.original.providerId && candidate.model === input.original.model) return 'same_route'
+  if (providerFailoverRouteIdentityKey(candidate) === providerFailoverRouteIdentityKey(input.original)) return 'same_route'
   if (candidate.cooldownActive === true) return 'cooldown'
   if (candidate.healthy === false) return 'unhealthy'
   if (!providerAllowed(input, candidate)) return 'provider_not_approved'
@@ -339,8 +347,8 @@ function classifyErrorText(
   return undefined
 }
 
-function candidateRank(input: ProviderFailoverInput, candidate: ProviderFailoverCandidate): number {
-  const sameProviderBonus = candidate.providerId === input.original.providerId ? 1000 : 0
+function candidateRank(original: ProviderFailoverRoute, candidate: ProviderFailoverCandidate): number {
+  const sameProviderBonus = candidate.providerId === original.providerId ? 1000 : 0
   const healthScore = candidate.healthScore ?? (candidate.healthy === true ? 100 : 50)
   const costScore = candidate.costTier ? 30 - COST_TIER_RANK[candidate.costTier] * 10 : 0
   const latencyScore = typeof candidate.latencyMs === 'number' ? Math.max(0, 30 - Math.round(candidate.latencyMs / 1000)) : 0
@@ -348,11 +356,32 @@ function candidateRank(input: ProviderFailoverInput, candidate: ProviderFailover
   return sameProviderBonus + healthScore + costScore + latencyScore + recentSuccessScore
 }
 
+/** Reused by the bounded router so catalog order cannot hide the policy's preferred route. */
+export function compareProviderFailoverCandidates(original: ProviderFailoverRoute, left: ProviderFailoverCandidate, right: ProviderFailoverCandidate): number {
+  const rank = candidateRank(original, right) - candidateRank(original, left)
+  if (rank) return rank
+  const leftKey = providerFailoverRouteIdentityKey(left)
+  const rightKey = providerFailoverRouteIdentityKey(right)
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+}
+
+export function providerFailoverRouteIdentityKey(route: ProviderFailoverRoute): string {
+  const source = route.credentialSource ?? (route.credentialGroupId === undefined ? undefined : { kind: 'group' as const, groupId: route.credentialGroupId })
+  return JSON.stringify([
+    route.providerId, route.model, source?.kind ?? 'unresolved',
+    source?.kind === 'group' ? source.groupId : '',
+    route.protocolAdapterId ?? '', route.endpointVariant ?? '',
+  ])
+}
+
 function routeFromCandidate(candidate: ProviderFailoverCandidate): ProviderFailoverRoute {
   return {
     providerId: candidate.providerId,
     model: candidate.model,
     credentialGroupId: candidate.credentialGroupId,
+    ...(candidate.credentialSource ? { credentialSource: candidate.credentialSource } : {}),
+    ...(candidate.protocolAdapterId ? { protocolAdapterId: candidate.protocolAdapterId } : {}),
+    ...(candidate.endpointVariant ? { endpointVariant: candidate.endpointVariant } : {}),
     family: candidate.family,
     region: candidate.region,
     costTier: candidate.costTier,

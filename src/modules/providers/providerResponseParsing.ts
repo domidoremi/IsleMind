@@ -210,13 +210,8 @@ export function createProviderResponseParsingPolicy(
     })
     const text = stripProviderTextToolCallBlocks(parsed.text)
     const source = providerCitationSource(request, providerType)
-    const citations = dedupeCitations([
-      ...extractCitationsFromText(text, request.retrievalSources),
-      ...(source ? extractProviderCitationsFromSse(raw, source) : []),
-    ])
-    return withProviderTextToolCallFallback({
+    const result = withProviderTextToolCallFallback({
       text,
-      citations,
       traces: parsed.traces,
       usage: parsed.usage,
       responseId: parsed.responseId,
@@ -225,6 +220,13 @@ export function createProviderResponseParsingPolicy(
       responseItems: parsed.responseItems,
       providerContentBlocks: parsed.providerContentBlocks,
     }, parsed.text)
+    return {
+      ...result,
+      citations: dedupeCitations([
+        ...extractCitationsFromText(result.text, request.retrievalSources),
+        ...(source ? extractProviderCitationsFromSse(raw, source, result.text) : []),
+      ]),
+    }
   }
 
   function parseProviderChatCompletionJson(
@@ -273,16 +275,19 @@ export function createProviderResponseParsingPolicy(
       }
       case 'google': {
         const source = providerCitationSource(request, providerType)
-        return withProviderTextToolCallFallback({
+        const result = withProviderTextToolCallFallback({
           text: extractGoogleText(json),
           usage: extractUsage(json, 'google', { includeReasoning }),
-          citations: [
-            ...extractCitationsFromText('', request.retrievalSources),
-            ...(source ? extractProviderCitations(json, source) : []),
-          ],
           traces: dependencies.extractTraces(json, 'google', { includeReasoning }),
           providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, 'google')),
         })
+        return {
+          ...result,
+          citations: dedupeCitations([
+            ...extractCitationsFromText(result.text, request.retrievalSources),
+            ...(source ? extractProviderCitations(json, source, result.text) : []),
+          ]),
+        }
       }
       case 'openai-compatible':
       case 'xiaomi-mimo': {

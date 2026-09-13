@@ -1,7 +1,7 @@
 import type { AIModel, AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderOperationCode } from '@/types/providerContracts'
 import { extractUserFacingErrorDetail } from '@/core'
 import { mergeModelConfig, sortModelConfigs } from '@/types/modelCatalog'
-import { selectProviderCredential, updateProviderCredentialHealth } from './providerCredentials'
+import { selectProviderCredential, updateProviderCredentialHealth, type ProviderCredentialSource } from './providerCredentials'
 
 const PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT = 256
 const PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT = 512
@@ -38,10 +38,13 @@ interface ProviderOperationResult<T = undefined> {
 export interface CredentialSelection {
   credentialGroupId?: string
   apiKey: string
+  source: ProviderCredentialSource
 }
 
 export interface CredentialSelectionOptions {
   preferredCredentialGroupId?: string
+  targetCredentialGroupId?: string
+  providerCredentialSource?: ProviderCredentialSource
   excludedCredentialGroupIds?: readonly string[]
 }
 
@@ -63,7 +66,7 @@ export function normalizeProviderCredentialGroups(
   options: ProviderCredentialGroupNormalizationOptions = {},
 ): AIProvider {
   const messages = options.messages ?? defaultCredentialGroupMessages
-  const groups = provider.credentialGroups?.length
+  const groups: (ProviderCredentialGroup & { source?: ProviderCredentialSource })[] = provider.credentialGroups?.length
     ? provider.credentialGroups
     : provider.apiKey
       ? [{
@@ -72,6 +75,7 @@ export function normalizeProviderCredentialGroups(
           apiKey: provider.apiKey,
           enabled: true,
           availableModels: [],
+          source: provider.apiKeySource ?? { kind: 'primary' as const },
         }]
       : []
 
@@ -154,11 +158,15 @@ export function chooseCredentialForModel(
     modelId,
     upstreamModelId: upstreamModel,
     preferredCredentialId: options.preferredCredentialGroupId,
+    targetCredentialId: options.targetCredentialGroupId,
+    providerCredentialSource: options.providerCredentialSource ?? provider.apiKeySource,
     excludedCredentialIds: options.excludedCredentialGroupIds,
+    includeSource: true,
   })
   return {
     credentialGroupId: selected.credentialId,
     apiKey: selected.apiKey,
+    source: selected.source,
   }
 }
 
@@ -271,12 +279,13 @@ async function fetchModelsForCredentialGroup(
   deps: CredentialSyncDeps,
   requestCache: Map<string, Promise<Pick<AIModel, 'id' | 'name' | 'provider'>[] | AIModel[]>>
 ): Promise<Pick<AIModel, 'id' | 'name' | 'provider'>[] | AIModel[]> {
-  const apiKey = group.apiKey?.trim() || provider.apiKey
+  const apiKey = group.apiKey?.trim() ?? ''
+  if (!apiKey) throw new Error('The selected credential group has no credential')
   const cacheKey = `${provider.id}:${provider.type}:${provider.baseUrl ?? ''}:${provider.presetId ?? ''}:${apiKey}`
   const cached = requestCache.get(cacheKey)
   if (cached) return cached
   throwIfCredentialSyncAborted(deps.signal)
-  const request = deps.fetchModels({ ...provider, apiKey }, group, deps.signal)
+  const request = deps.fetchModels({ ...provider, apiKey, apiKeySource: group.source ?? { kind: 'group', groupId: group.id } }, group, deps.signal)
   requestCache.set(cacheKey, request)
   return request
 }

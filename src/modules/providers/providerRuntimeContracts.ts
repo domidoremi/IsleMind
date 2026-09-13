@@ -5,6 +5,8 @@ import type { WebSearchMode } from '@/types/settingsContracts'
 import type { GenerationParameterSources, ProcessTrace, ReasoningEffort } from '@/core'
 
 import type { ProviderContentPart } from './providerContentParts'
+import type { ProviderExecutionTargetObserver } from './providerExecutionTarget'
+import type { ProviderFailoverPolicy, ProviderFailoverRoute } from './providerFailoverPolicy'
 import type { ProviderModelTestEvidenceResult } from './providerModelTestEvidence'
 import type { ProviderAudioTranscriptionInput, ProviderSpeechInput } from './providerMediaAdapter'
 import type { ProviderResponseParsingResult } from './providerResponseParsing'
@@ -12,6 +14,7 @@ import type { ProviderRequestParameterPlan } from './providerRequestParameterPol
 import type { ProviderStreamCallbacks, ProviderStreamHandle, ProviderStreamRuntime } from './providerStreamRuntime'
 import type { ProviderStructuredOutputRequest } from './providerStructuredOutput'
 import type { ProviderToolCall } from './providerToolCalls'
+import type { ProviderChatExecutionConstraint } from './providerChatResolution'
 
 export interface ProviderRuntimeChatMessage {
   role: 'user' | 'assistant' | 'tool'
@@ -110,9 +113,17 @@ export interface ProviderRuntimeChatRequest {
   }
   previousResponseId?: string
   requestedModel?: string
+  /** Explicit group pins are strict; session affinity remains a separate soft preference. */
+  targetCredentialGroupId?: string
   fallbackProviders?: AIProvider[]
   /** Explicit single-target operations may prohibit provider/model/credential fallback candidates. */
   allowFallback?: boolean
+  /** Chat supplies ask-before-cross-provider; other existing use cases retain their policy. */
+  failoverPolicy?: Partial<ProviderFailoverPolicy>
+  confirmFallback?: (candidate: ProviderFailoverRoute, signal: AbortSignal) => Promise<boolean>
+  onExecutionTarget?: ProviderExecutionTargetObserver
+  /** Ephemeral pre-dispatch admission fence; never copied into Conversation or messages. */
+  executionConstraint?: ProviderChatExecutionConstraint
   providerToolDeclarations?: readonly unknown[]
   structuredOutput?: ProviderStructuredOutputRequest
 }

@@ -2,11 +2,13 @@ import type { ReasoningEffort } from '@/core'
 import type { AIProvider } from '@/types/providerContracts'
 import type { WebSearchMode } from '@/types/settingsContracts'
 import { selectProviderRequestAttachments, type ProviderSelectableAttachment } from './providerAttachments'
+import type { ProviderCredentialSource } from './providerCredentials'
 
 export interface ProviderRuntimeFallbackRoute {
   providerId: string
   model: string
   credentialGroupId?: string
+  credentialSource?: ProviderCredentialSource
   region?: string
   capabilities?: string[]
 }
@@ -21,6 +23,10 @@ export interface ProviderRuntimeFallbackRequest<Attachment extends ProviderSelec
   webSearchMode?: WebSearchMode
   providerToolDeclarations?: readonly unknown[]
   structuredOutput?: unknown
+  previousResponseId?: string
+  remoteCompactEligible?: boolean
+  remoteCompactFallback?: { messages: { role: 'user' | 'assistant'; content: string }[]; contextPrompt: string }
+  messages?: readonly { toolCallId?: string; toolCalls?: readonly unknown[]; responseItems?: readonly unknown[]; providerContentBlocks?: readonly unknown[]; reasoningContent?: string }[]
 }
 
 export function routeForRuntimeFallback(
@@ -31,6 +37,7 @@ export function routeForRuntimeFallback(
     providerId: request.provider.id,
     model: request.model,
     credentialGroupId,
+    ...(request.provider.apiKeySource ? { credentialSource: request.provider.apiKeySource } : {}),
     region: request.provider.tokenPlanRegion,
     capabilities: requiredFallbackCapabilities(request),
   }
@@ -41,6 +48,16 @@ export function fallbackProvidersForRequest(request: ProviderRuntimeFallbackRequ
   const providers = request.fallbackProviders?.length ? request.fallbackProviders : [request.provider]
   const currentProvider = providers.some((provider) => provider.id === request.provider.id) ? [] : [request.provider]
   return [...currentProvider, ...providers]
+}
+
+/** Provider-owned replay state may not be sent to a different execution route. */
+export function providerRequestHasRouteBoundContinuation(request: ProviderRuntimeFallbackRequest): boolean {
+  // The existing compaction planner may supply an independent, bounded text
+  // transcript. The executor must substitute it and clear continuation identity
+  // on every route change, even if the new route also supports compaction.
+  if (request.remoteCompactEligible && request.remoteCompactFallback) return false
+  return Boolean(request.previousResponseId || request.messages?.some((message) => message.toolCallId
+    || message.toolCalls?.length || message.responseItems?.length || message.providerContentBlocks?.length || message.reasoningContent))
 }
 
 export function requiredFallbackCapabilities(request: ProviderRuntimeFallbackRequest): string[] {
@@ -71,14 +88,21 @@ export function retryAfterMsFromFailure(status?: number): number | undefined {
 
 export function providerForRuntimeFallback(
   request: ProviderRuntimeFallbackRequest,
-  route: Pick<ProviderRuntimeFallbackRoute, 'providerId' | 'model' | 'credentialGroupId'>,
+  route: Pick<ProviderRuntimeFallbackRoute, 'providerId' | 'model' | 'credentialGroupId' | 'credentialSource'>,
 ): AIProvider {
-  const source = fallbackProvidersForRequest(request).find((provider) => provider.id === route.providerId) ?? request.provider
-  const groupKey = route.credentialGroupId
-    ? source.credentialGroups?.find((group) => group.id === route.credentialGroupId)?.apiKey
-    : undefined
-  return {
-    ...source,
-    apiKey: groupKey?.trim() || source.apiKey || request.provider.apiKey,
+  const source = fallbackProvidersForRequest(request).find((provider) => provider.id === route.providerId)
+  if (!source) throw new Error('Requested fallback provider is not available')
+  const credentialSource = route.credentialSource ?? (route.credentialGroupId
+    ? source.credentialGroups?.find((group) => group.id === route.credentialGroupId)?.source
+      ?? { kind: 'group', groupId: route.credentialGroupId }
+    : source.apiKeySource ?? { kind: 'primary' })
+  if (credentialSource.kind === 'group') {
+    const group = source.credentialGroups?.find((item) => item.id === credentialSource.groupId && item.source?.kind !== 'primary')
+    if (!group?.enabled || !group.apiKey?.trim()) throw new Error('Requested credential group is not available')
+    return { ...source, apiKey: group.apiKey, apiKeySource: credentialSource }
   }
+  if (credentialSource.kind !== 'primary' || !source.apiKey.trim() || (source.apiKeySource && source.apiKeySource.kind !== 'primary')) {
+    throw new Error('Requested primary credential is not available')
+  }
+  return { ...source, apiKeySource: credentialSource }
 }

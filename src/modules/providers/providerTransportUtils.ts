@@ -19,16 +19,38 @@ export async function fetchProviderWithTimeout(
   timeoutMs: number,
 ): Promise<Response> {
   const controller = new AbortController()
-  const forwardAbort = () => controller.abort(init?.signal?.reason)
-  if (init?.signal?.aborted) controller.abort(init.signal.reason)
-  init?.signal?.addEventListener('abort', forwardAbort, { once: true })
+  // Keep caller/whole-operation cancellation connected after headers, as for streams.
+  const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetchImplementation(input, { ...init, signal: controller.signal })
+    return await fetchImplementation(input, { ...init, signal })
   } finally {
     clearTimeout(timeout)
-    init?.signal?.removeEventListener('abort', forwardAbort)
   }
+}
+
+/** One configured deadline for headers, body consumption and every page of an operation. */
+export async function withProviderOperationTimeout<T>(
+  timeoutMs: number,
+  callerSignal: AbortSignal | undefined,
+  operation: (signal: AbortSignal, wait: <Value>(pending: Promise<Value>) => Promise<Value>) => Promise<T>,
+): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid provider operation timeout')
+  const controller = new AbortController()
+  const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal
+  const timeout = setTimeout(() => {
+    const error = new Error('The provider operation timed out')
+    error.name = 'TimeoutError'
+    controller.abort(error)
+  }, timeoutMs)
+  const wait = <Value>(pending: Promise<Value>) => new Promise<Value>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new Error('Provider operation aborted'))
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
+    pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+  })
+  try { return await wait(operation(signal, wait)) }
+  finally { clearTimeout(timeout) }
 }
 
 /** Fetches a streaming request while preserving runtimes that require an explicit body field. */

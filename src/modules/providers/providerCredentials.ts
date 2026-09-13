@@ -1,3 +1,6 @@
+import type { ProviderCredentialSource } from '@/types/providerContracts'
+export type { ProviderCredentialSource } from '@/types/providerContracts'
+
 export interface ProviderCredentialDescriptor {
   id: string
   apiKey?: string
@@ -6,6 +9,8 @@ export interface ProviderCredentialDescriptor {
   lastUsedAt?: number
   lastFailureAt?: number
   failureCount?: number
+  /** Set by normalization for a synthetic primary group; real groups default to group identity. */
+  source?: ProviderCredentialSource
 }
 
 export interface ProviderCredentialSelectionInput {
@@ -14,7 +19,11 @@ export interface ProviderCredentialSelectionInput {
   modelId: string
   upstreamModelId?: string
   preferredCredentialId?: string
+  /** Strict targeting is separate from soft session affinity. */
+  targetCredentialId?: string
   excludedCredentialIds?: readonly string[]
+  providerCredentialSource?: ProviderCredentialSource
+  includeSource?: boolean
 }
 
 export interface ProviderCredentialSelection {
@@ -22,7 +31,13 @@ export interface ProviderCredentialSelection {
   apiKey: string
 }
 
-export function selectProviderCredential(input: ProviderCredentialSelectionInput): ProviderCredentialSelection {
+export interface ProviderCredentialSelectionWithSource extends ProviderCredentialSelection {
+  source: ProviderCredentialSource
+}
+
+export function selectProviderCredential(input: ProviderCredentialSelectionInput & { includeSource: true }): ProviderCredentialSelectionWithSource
+export function selectProviderCredential(input: ProviderCredentialSelectionInput): ProviderCredentialSelection
+export function selectProviderCredential(input: ProviderCredentialSelectionInput): ProviderCredentialSelection | ProviderCredentialSelectionWithSource {
   const excluded = new Set(input.excludedCredentialIds ?? [])
   const enabled = input.credentials
     .filter((credential) => credential.enabled && !excluded.has(credential.id))
@@ -32,8 +47,18 @@ export function selectProviderCredential(input: ProviderCredentialSelectionInput
   const preferred = input.preferredCredentialId
     ? candidates.find((credential) => credential.id === input.preferredCredentialId)
     : undefined
-  const selected = preferred ?? candidates[0] ?? enabled[0]
-  return { credentialId: selected?.id, apiKey: selected?.apiKey ?? input.providerApiKey }
+  const targeted = input.targetCredentialId === undefined ? undefined : enabled.find((credential) => credential.id === input.targetCredentialId)
+  if (input.targetCredentialId !== undefined && (!targeted || !targeted.apiKey?.trim() || targeted.source?.kind === 'primary')) {
+    throw new Error('Requested credential group is not available')
+  }
+  const selected = targeted ?? preferred ?? candidates[0] ?? enabled[0]
+  const apiKey = selected?.apiKey ?? input.providerApiKey
+  const selection = { credentialId: selected?.id, apiKey }
+  if (!input.includeSource) return selection
+  const source: ProviderCredentialSource = selected?.apiKey?.trim()
+    ? selected.source ?? { kind: 'group', groupId: selected.id }
+    : apiKey.trim() ? input.providerCredentialSource ?? { kind: 'primary' } : { kind: 'none' }
+  return { ...selection, source }
 }
 
 export function updateProviderCredentialHealth<TCredential extends ProviderCredentialDescriptor>(

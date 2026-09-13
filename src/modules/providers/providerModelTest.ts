@@ -2,6 +2,7 @@ import type { ReasoningEffort } from '@/core'
 import type {
   AIProvider,
   ProviderOperationCode,
+  ProviderCredentialSource,
 } from '@/types/providerContracts'
 import {
   buildProviderModelProbeResult,
@@ -17,6 +18,7 @@ import {
 } from './providerProbe'
 
 export interface ProviderModelTestOptions {
+  credentialSource?: ProviderCredentialSource
   checkParameters?: boolean
   timeoutMs?: number
   signal?: AbortSignal
@@ -110,10 +112,11 @@ export function createProviderModelTest(dependencies: ProviderModelTestDependenc
       }
 
       const selected = dependencies.selectCredential(provider, model)
-      const selectedGroupId = selected.apiKey === apiKey
-        ? selected.credentialGroupId
-        : dependencies.credentialGroupId(provider, apiKey)
-      const configuredProvider = { ...provider, apiKey: apiKey.trim() }
+      const selectedGroupId = options.credentialSource
+        ? options.credentialSource.kind === 'group' ? options.credentialSource.groupId : undefined
+        : selected.apiKey === apiKey ? selected.credentialGroupId : dependencies.credentialGroupId(provider, apiKey)
+      // Legacy callers may supply an arbitrary key. Do not infer actual source for evidence by matching it.
+      const configuredProvider = { ...provider, apiKey: apiKey.trim(), apiKeySource: options.credentialSource }
       const configurationIssue = dependencies.configurationIssue(configuredProvider, apiKey)
       if (configurationIssue) {
         return failure(configurationIssue.code, configurationIssue.message)
@@ -231,9 +234,10 @@ function providerProbeFailureResult(
       )
     case 'unsupported_route':
     case 'malformed_response':
+    case 'model_not_advertised':
       return failure(
         'models_endpoint_unavailable',
-        detail || 'Provider model discovery did not return a usable catalog',
+        detail || 'The non-generating probe did not verify access to this model.',
         evidence,
         credentialGroupId,
       )

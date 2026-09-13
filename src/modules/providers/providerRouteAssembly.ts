@@ -1,7 +1,7 @@
 import type { Settings } from '@/types/settingsContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { getProviderEffectiveBaseUrl } from '@/types/providerBaseUrls'
-import { isBedrockMantleBaseUrl, normalizeBedrockMantleBaseUrl } from './providerAwsBedrockRouting'
+import { isBedrockMantleBaseUrl, isBedrockRuntimeProvider, normalizeBedrockMantleBaseUrl } from './providerAwsBedrockRouting'
 import { isAzureOpenAIProvider, normalizeAzureOpenAIBaseUrl } from './providerAzureRouting'
 import { isGitHubModelsProvider, isNovitaProvider, isPerplexityProvider } from './providerIdentityPolicy'
 
@@ -16,6 +16,15 @@ export interface ProviderRouteAssemblyInput extends ProviderEndpointInput { sett
 export interface ProviderRouteAssembly { endpoint: string; transportSelection: ProviderTransportSelection }
 export interface ProviderRouteAssemblyDependencies {
   compatibilityCapabilityCanBeSent(provider: AIProvider, capability: 'responsesApi' | 'responsesWebSocket', explicitDeclaration: boolean): boolean
+}
+
+/** Route-family identity only. Provider scope/epoch owns endpoint configuration changes. */
+export function resolveProviderEndpointVariant(provider: AIProvider): string {
+  if (isBedrockRuntimeProvider(provider)) return 'bedrock-invoke'
+  if (isBedrockMantleBaseUrl(provider.baseUrl)) return 'bedrock-mantle'
+  if (isAzureOpenAIProvider(provider)) return 'azure-openai-v1'
+  if (provider.type === 'xiaomi-mimo') return provider.credentialMode === 'payg' ? 'mimo-payg' : 'mimo-token-plan'
+  return provider.type === 'openai-compatible' ? 'compatible' : 'direct'
 }
 
 export function createProviderRouteAssemblyPolicy(dependencies: ProviderRouteAssemblyDependencies) {

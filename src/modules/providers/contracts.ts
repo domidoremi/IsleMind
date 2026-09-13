@@ -1,4 +1,5 @@
 import type { ChatRequest, StreamEvent } from '@/core'
+import type { ProviderExecutionTargetObserver } from './providerExecutionTarget'
 
 export const PROVIDER_CAPABILITIES = [
   'chat',
@@ -18,6 +19,8 @@ export interface ProviderFallbackRoute {
 
 export interface ProviderGatewayOptions {
   signal: AbortSignal
+  /** Actual wire target, not the gateway's candidate; never an ordinary stream event. */
+  onExecutionTarget?: ProviderExecutionTargetObserver
   /**
    * Ordered alternatives to try only when the selected adapter fails before
    * emitting an event. The primary provider always remains first.

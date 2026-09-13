@@ -19,6 +19,7 @@ import {
 } from './providerToolCalls'
 import { isDoneEvent, isReasoningEventType, isToolEventType, stableTraceId } from './providerTracePolicy'
 import { extractUsage } from './providerUsage'
+import { visitProviderSseData } from './providerSseData'
 
 export interface ParsedProviderStreamChunk {
   text: string
@@ -106,23 +107,6 @@ export function createProviderStreamParsingPolicy(
     let reasoningContent = ''
     let responseItems: Record<string, unknown>[] = []
     let providerContentBlocks: Record<string, unknown>[] = []
-    let sawDataLine = false
-    let terminal = false
-    const dataPayloads: string[] = []
-
-    for (const line of chunk.replace(/\r\n|\r/g, '\n').split('\n')) {
-      if (line.startsWith(':')) continue
-      const match = /^data:(.*)$/.exec(line)
-      if (!match) continue
-      sawDataLine = true
-      const payload = match[1].startsWith(' ') ? match[1].slice(1) : match[1]
-      if (payload.trim() === '[DONE]') {
-        terminal = true
-      } else {
-        dataPayloads.push(payload)
-      }
-    }
-
     function appendPayload(payload: string): boolean {
       try {
         const json = JSON.parse(payload)
@@ -150,12 +134,7 @@ export function createProviderStreamParsingPolicy(
       }
     }
 
-    if (dataPayloads.length) {
-      const joinedPayload = dataPayloads.join('\n')
-      if (!appendPayload(joinedPayload) && dataPayloads.length > 1) {
-        for (const payload of dataPayloads) appendPayload(payload)
-      }
-    }
+    const { sawDataLine, terminal } = visitProviderSseData(chunk, appendPayload)
     const trimmed = chunk.trim()
     if (!sawDataLine && trimmed.startsWith('{')) {
       try {

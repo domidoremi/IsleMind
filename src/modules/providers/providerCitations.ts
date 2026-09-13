@@ -1,3 +1,14 @@
+import {
+  createProviderCitationSupportBinder,
+  mergeProviderCitationSupport,
+  parseProviderCitationPassage,
+  PROVIDER_CITATION_SUPPORT_LIMITS,
+  type ProviderCitationPassage,
+  type ProviderCitationSupport,
+} from '@/core'
+import { asRecord } from './providerJsonPolicy'
+import { visitProviderSseData } from './providerSseData'
+
 export type ProviderCitationType = 'memory' | 'knowledge' | 'web'
 export type ProviderCitationSource = string
 
@@ -24,6 +35,7 @@ export interface ProviderCitation {
   qualityScore?: number
   queryVariant?: string
   retrievalStage?: string
+  providerSupport?: ProviderCitationSupport
 }
 
 export interface ProviderRetrievalSource extends ProviderCitation {
@@ -52,7 +64,12 @@ export function extractCitationsFromText(
   }))
 }
 
-export function extractProviderCitations(json: unknown, providerType: ProviderCitationSource): ProviderCitation[] {
+export function extractProviderCitations(json: unknown, providerType: ProviderCitationSource, answerText?: string): ProviderCitation[] {
+  if (providerType === 'google') {
+    const collector = createProviderCitationCollector(providerType)
+    collector.addJson(json)
+    return collector.finish(answerText)
+  }
   const citations: ProviderCitation[] = []
   if (!json || typeof json !== 'object') return citations
   const value = json as Record<string, unknown>
@@ -105,24 +122,6 @@ export function extractProviderCitations(json: unknown, providerType: ProviderCi
       }
     }
   }
-  if (providerType === 'google') {
-    const candidates = Array.isArray(value.candidates) ? value.candidates : []
-    for (const candidate of candidates) {
-      const metadata = (candidate as Record<string, unknown>).groundingMetadata as Record<string, unknown> | undefined
-      const chunks = Array.isArray(metadata?.groundingChunks) ? metadata.groundingChunks : []
-      for (const chunk of chunks) {
-        const web = (chunk as Record<string, unknown>).web as Record<string, unknown> | undefined
-        if (web?.uri || web?.title) {
-          citations.push({
-            id: String(web.uri || web.title),
-            type: 'web',
-            title: String(web.title || web.uri || 'Google Search'),
-            url: web.uri ? String(web.uri) : undefined,
-          })
-        }
-      }
-    }
-  }
   if (providerType === 'xiaomi-mimo') {
     const choices = Array.isArray(value.choices) ? value.choices : []
     for (const choice of choices) {
@@ -157,25 +156,163 @@ export function extractProviderCitations(json: unknown, providerType: ProviderCi
   return citations
 }
 
-export function extractProviderCitationsFromSse(event: string, providerType: ProviderCitationSource): ProviderCitation[] {
-  const citations: ProviderCitation[] = []
-  for (const line of event.split('\n')) {
-    if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
-    try {
-      citations.push(...extractProviderCitations(JSON.parse(line.slice(6)), providerType))
-    } catch {}
-  }
-  return dedupeCitations(citations)
+export function extractProviderCitationsFromSse(event: string, providerType: ProviderCitationSource, answerText?: string): ProviderCitation[] {
+  const collector = createProviderCitationCollector(providerType)
+  collector.addSse(event)
+  return collector.finish(answerText)
 }
 
 export function dedupeCitations(citations: ProviderCitation[]): ProviderCitation[] {
-  const seen = new Set<string>()
-  return citations.filter((citation) => {
-    const key = `${citation.type}:${citation.url || citation.id || citation.title}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  return mergeCitationsBy(citations, (citation) => `${citation.type}:${citation.url || citation.id || citation.title}`)
+}
+
+/** Continuations may extend support, but differing captured identities remain ambiguous. */
+export function mergeIdenticalProviderCitations(citations: ProviderCitation[]): ProviderCitation[] {
+  return mergeCitationsBy(citations, ({ providerSupport: _support, ...citation }) => JSON.stringify(citation))
+}
+
+function mergeCitationsBy(citations: ProviderCitation[], keyFor: (citation: ProviderCitation) => string): ProviderCitation[] {
+  const result = new Map<string, ProviderCitation>()
+  for (const citation of citations) {
+    const key = keyFor(citation)
+    const previous = result.get(key)
+    if (!previous) result.set(key, citation)
+    else if (previous.providerSupport || citation.providerSupport) {
+      const providerSupport = mergeProviderCitationSupport(previous.providerSupport, citation.providerSupport)
+      result.set(key, { ...previous, providerSupport })
+    }
+  }
+  return [...result.values()]
+}
+
+export interface ProviderCitationCollector {
+  addJson(json: unknown): void
+  /** Complete SSE events, or an EOF remainder; not arbitrary transport fragments. */
+  addSse(event: string): void
+  /** Bind only to the final visible answer, after thinking/tool text filtering. */
+  finish(answerText?: string): ProviderCitation[]
+}
+
+const MAX_GROUNDING_SLOTS = 128
+const MAX_GROUNDING_SUPPORTS = 64
+const MAX_SUPPORT_SOURCE_INDICES = 16
+const MAX_GROUNDING_TEXT_CHARS = 32_768
+
+/** Request-scoped: Google sends new chunks but support indices span ALL stream responses. */
+export function createProviderCitationCollector(providerType: ProviderCitationSource): ProviderCitationCollector {
+  const slots: Array<ProviderCitation | undefined> = []
+  const declarations: Array<{ passage: ProviderCitationPassage; indices: number[] }> = []
+  let supportCount = 0
+  let supportChars = 0
+  let associationsComplete = true
+  let selectedCandidateIndex: number | undefined
+  let candidateDiscontinuity = false
+  let otherCitations: ProviderCitation[] = []
+
+  function addJson(json: unknown): void {
+    if (providerType !== 'google') {
+      otherCitations = dedupeCitations([...otherCitations, ...extractProviderCitations(json, providerType)])
+      return
+    }
+    const value = asRecord(json)
+    if (!value || (value.candidates !== undefined && !Array.isArray(value.candidates))) {
+      associationsComplete = false
+      return
+    }
+    // Same candidate as extractGoogleText / the stream text parser. Never flatten peers.
+    const candidate = asRecord(Array.isArray(value?.candidates) ? value.candidates[0] : undefined)
+    if (!candidate || candidateDiscontinuity) {
+      if (Array.isArray(value.candidates) && value.candidates.length) associationsComplete = false
+      return
+    }
+    const candidateIndex = candidate.index === undefined ? 0 : candidate.index
+    if (typeof candidateIndex !== 'number' || !Number.isInteger(candidateIndex) || candidateIndex < 0 ||
+      (selectedCandidateIndex !== undefined && selectedCandidateIndex !== candidateIndex)) {
+      // Text parsing selects the first item. A changing candidate identity cannot
+      // share one cumulative grounding index space, so discard this unknown map.
+      candidateDiscontinuity = true
+      slots.length = 0
+      declarations.length = 0
+      return
+    }
+    selectedCandidateIndex = candidateIndex
+    const metadata = asRecord(candidate?.groundingMetadata)
+    if ((candidate.groundingMetadata !== undefined && !metadata) ||
+      (metadata?.groundingChunks !== undefined && !Array.isArray(metadata.groundingChunks))) associationsComplete = false
+    const chunks = Array.isArray(metadata?.groundingChunks) ? metadata.groundingChunks : []
+    for (const chunk of chunks.slice(0, MAX_GROUNDING_SLOTS - slots.length)) {
+      const web = asRecord(asRecord(chunk)?.web)
+      const url = boundedString(web?.uri, 8_192)
+      const title = boundedString(web?.title, 1_024) ?? url
+      // Unsupported/malformed slots still count. Never shift later source indices.
+      slots.push(title ? { id: url ?? title, type: 'web', title, url } : undefined)
+    }
+    if (!associationsComplete) return
+    const supports = Array.isArray(metadata?.groundingSupports) ? metadata.groundingSupports : []
+    for (const support of supports.slice(0, Math.max(0, MAX_GROUNDING_SUPPORTS - supportCount))) {
+      supportCount += 1
+      const record = asRecord(support)
+      const segment = asRecord(record?.segment)
+      const passage = parseProviderCitationPassage({
+        text: segment?.text, partIndex: segment?.partIndex === undefined ? 0 : segment.partIndex,
+        startByte: segment?.startIndex === undefined ? 0 : segment.startIndex, endByte: segment?.endIndex,
+      })
+      if (!passage || supportChars + passage.text.length > MAX_GROUNDING_TEXT_CHARS ||
+        !Array.isArray(record?.groundingChunkIndices)) continue
+      const indices = record.groundingChunkIndices.slice(0, MAX_SUPPORT_SOURCE_INDICES)
+        .filter((index): index is number => typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < MAX_GROUNDING_SLOTS)
+      if (!indices.length) continue
+      declarations.push({ passage, indices: [...new Set(indices)] })
+      supportChars += passage.text.length
+    }
+  }
+
+  function addSse(event: string): void {
+    const append = (payload: string): boolean => {
+      try { addJson(JSON.parse(payload)); return true } catch { return false }
+    }
+    const { sawDataLine, malformedData } = visitProviderSseData(event, append)
+    if (malformedData || (!sawDataLine && event.trim().startsWith('{') && !append(event.trim()))) {
+      // An unreadable response may have introduced chunks. Continuing its
+      // cumulative index space would silently bind later indices to wrong URLs.
+      associationsComplete = false
+      declarations.length = 0
+    }
+  }
+
+  function finish(answerText?: string): ProviderCitation[] {
+    if (providerType !== 'google') return otherCitations
+    const citations = dedupeCitations(slots.filter((citation): citation is ProviderCitation => Boolean(citation)))
+    if (!associationsComplete || !answerText || answerText.length > PROVIDER_CITATION_SUPPORT_LIMITS.answerChars) return citations
+    const passagesById = new Map<string, ProviderCitationPassage[]>()
+    let retainedChars = 0
+    for (const { passage, indices } of declarations) {
+      if (!answerText.includes(passage.text)) continue
+      // A title-only entry is captured, but is not a stable source identity.
+      const sourceIds = new Set(indices.map((index) => slots[index]?.url).filter((id): id is string => Boolean(id)))
+      for (const id of sourceIds) {
+        const passages = passagesById.get(id) ?? []
+        if (passages.length >= PROVIDER_CITATION_SUPPORT_LIMITS.passages ||
+          passages.reduce((chars, item) => chars + item.text.length, 0) + passage.text.length > PROVIDER_CITATION_SUPPORT_LIMITS.totalPassageChars ||
+          retainedChars + passage.text.length > MAX_GROUNDING_TEXT_CHARS ||
+          passages.some((existing) => JSON.stringify(existing) === JSON.stringify(passage))) continue
+        passages.push(passage)
+        passagesById.set(id, passages)
+        retainedChars += passage.text.length
+      }
+    }
+    const bindSupport = createProviderCitationSupportBinder(answerText)
+    return citations.map((citation) => {
+      const providerSupport = bindSupport(citation.url ? passagesById.get(citation.url) ?? [] : [])
+      return providerSupport ? { ...citation, providerSupport } : citation
+    })
+  }
+
+  return { addJson, addSse, finish }
+}
+
+function boundedString(value: unknown, limit: number): string | undefined {
+  return typeof value === 'string' && value.length <= limit ? stringField(value) : undefined
 }
 
 function stringField(value: unknown): string | undefined {

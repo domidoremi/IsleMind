@@ -1,6 +1,8 @@
 import type { AIProvider, ProviderCredentialGroup } from '@/types/providerContracts'
 import type { ProviderFailoverCandidate, ProviderFailoverRoute } from './providerFailoverPolicy'
 import { annotateFailoverCandidatesWithHealth, type ProviderHealthRecord } from './providerHealth'
+import type { ProviderCredentialSource } from './providerCredentials'
+import { providerFailoverRouteIdentityKey } from './providerFailoverPolicy'
 
 export const PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA = 'islemind.provider-fallback-candidate-build.v1'
 
@@ -118,6 +120,7 @@ export function createProviderFallbackCandidateBuilder(
             providerId: provider.id,
             model,
             credentialGroupId: group.id,
+            credentialSource: group.source ?? { kind: 'group', groupId: group.id },
             family: projection.family,
             region: provider.tokenPlanRegion,
             costTier: inferCostTier(model, projection.source),
@@ -155,7 +158,7 @@ function candidateModelIds(provider: AIProvider): string[] {
   ])
 }
 
-function candidateCredentialGroups(provider: AIProvider): ProviderCredentialGroup[] {
+function candidateCredentialGroups(provider: AIProvider): (ProviderCredentialGroup & { source?: ProviderCredentialSource })[] {
   if (provider.credentialGroups?.length) return provider.credentialGroups
   if (!provider.apiKey?.trim()) return []
   return [{
@@ -164,6 +167,7 @@ function candidateCredentialGroups(provider: AIProvider): ProviderCredentialGrou
     apiKey: provider.apiKey,
     enabled: true,
     availableModels: [],
+    source: provider.apiKeySource ?? { kind: 'primary' },
   }]
 }
 
@@ -175,7 +179,7 @@ function rejectCredential(
   includeDisabledCredentials: boolean,
 ): ProviderFallbackCandidateRejectionReason | undefined {
   if (!group.enabled && !includeDisabledCredentials) return 'credential_disabled'
-  if (!group.apiKey?.trim() && !provider.apiKey?.trim()) return 'credential_missing'
+  if (!group.apiKey?.trim()) return 'credential_missing'
   if (!credentialCanUseModel(model, upstreamModel, group)) return 'model_not_available_for_credential'
   return undefined
 }
@@ -207,12 +211,7 @@ function dedupeCandidates(candidates: ProviderFailoverCandidate[]): ProviderFail
   const seen = new Set<string>()
   const result: ProviderFailoverCandidate[] = []
   for (const candidate of candidates) {
-    const key = [
-      candidate.providerId,
-      candidate.model,
-      candidate.credentialGroupId ?? '*',
-      candidate.region ?? '*',
-    ].join('|')
+    const key = JSON.stringify([providerFailoverRouteIdentityKey(candidate), candidate.region ?? ''])
     if (seen.has(key)) continue
     seen.add(key)
     result.push(candidate)
