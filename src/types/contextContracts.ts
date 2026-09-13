@@ -1,5 +1,5 @@
 import type { Language, RagProfile } from './settingsContracts'
-import type { ProcessTraceStatus } from '@/core'
+import type { ProcessTraceStatus, ProviderCitationSupport } from '@/core'
 
 export type MemoryStatus = 'pending' | 'active' | 'disabled'
 export type MemorySourceKind = 'manual' | 'deterministic' | 'model' | 'imported' | 'legacy'
@@ -178,6 +178,7 @@ export interface MessageCitation {
   qualityScore?: number
   queryVariant?: string
   retrievalStage?: string
+  providerSupport?: ProviderCitationSupport
 }
 
 export interface RetrievalSource extends MessageCitation {

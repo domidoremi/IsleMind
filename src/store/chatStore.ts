@@ -26,7 +26,7 @@ import {
   sanitizeProcessTraceForBoundary,
   sanitizeProcessTracesForBoundary,
 } from '@/core'
-import { abortAllStreams, abortStream } from '@/services/chatStreamLifecycle'
+import { abortAllStreams, abortStream, hasActiveStream } from '@/services/chatStreamLifecycle'
 import { isConversationLocked } from '@/services/conversationLock'
 import { sanitizeMessageInternalOutput } from '@/services/chatInternalOutputGuard'
 import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/modules/providers'
@@ -40,6 +40,7 @@ import { useSettingsStore } from './settingsStore'
 import {
   createResponseLifecycle,
   createConversationBranchDraft,
+  applyConversationModelPreference,
   lifecycleStageForMessageStatus,
   lifecycleStageForTrace,
   normalizeResponseLifecycle,
@@ -115,7 +116,7 @@ function resolveConversationParameterRanges(
   providers: ReturnType<typeof useSettingsStore.getState>['providers']
 ): ConversationGenerationParameterRanges {
   const provider = providers.find((item) => item.id === conversation.providerId)
-  const upstreamModel = provider ? resolveProviderModelAlias(provider, conversation.model) : conversation.model
+  const upstreamModel = provider ? resolveProviderModelAlias(provider, conversation.model ?? '') : conversation.model ?? ''
   const modelConfig = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
   return resolveConversationGenerationParameterRanges({
     provider,
@@ -241,7 +242,7 @@ interface ChatState {
   delete: (id: string) => void
   rename: (id: string, title: string) => void
   updateConversation: (id: string, updates: Partial<Conversation>) => void
-  switchConversationModel: (id: string, providerId: string, model: string) => boolean
+  switchConversationModel: (id: string, providerId: string, model: string, options?: { rememberPreference?: boolean }) => boolean
   removeMessage: (convId: string, msgId: string) => void
   trimAfterMessage: (convId: string, msgId: string) => void
   addMessage: (
@@ -508,8 +509,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  switchConversationModel: (id: string, providerId: string, model: string) => {
-    if (isConversationLocked(id)) return false
+  switchConversationModel: (id: string, providerId: string, model: string, options?: { rememberPreference?: boolean }) => {
+    if (isConversationLocked(id) || hasActiveStream(id)) return false
+    if (!get().conversations.some((conversation) => conversation.id === id)) return false
     const nextModel = model.trim()
     if (!nextModel) return false
     const { providers, settings } = useSettingsStore.getState()
@@ -530,7 +532,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const updated = state.conversations.map((c) => {
         if (c.id !== id) return c
         const currentProvider = providers.find((item) => item.id === c.providerId)
-        const currentUpstreamModel = currentProvider ? resolveProviderModelAlias(currentProvider, c.model) : c.model
+        const currentUpstreamModel = currentProvider ? resolveProviderModelAlias(currentProvider, c.model ?? '') : c.model ?? ''
         const currentModelConfig = getModelConfig(currentUpstreamModel, currentProvider?.type, currentProvider?.modelConfigs)
         const currentRanges = resolveConversationGenerationParameterRanges({
           provider: currentProvider,
@@ -573,10 +575,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           maxTokens: currentOverrides?.maxTokens === true,
         }, true)
         const nextConversation: Conversation = {
-          ...c,
-          providerId,
-          model: nextModel,
-          providerModelMode: 'manual' as const,
+          ...applyConversationModelPreference(c, { providerId, model: nextModel }, Date.now()),
           maxTokens: nextMaxTokens || resolveConversationDefaultMaxTokens(settings, nextRanges),
           temperature: nextTemperature,
           topP: nextTopP,
@@ -594,6 +593,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!state.draftConversationIds.has(id)) void persistConversationRecord(updated, id)
       return { conversations: updated }
     })
+    // Separate stores, not an atomic commit. A global save failure must not
+    // undo the explicit Conversation selection or bypass its full-save barrier.
+    if (options?.rememberPreference !== false) {
+      void useSettingsStore.getState().rememberPreferredModel(providerId, nextModel).catch(() => {
+        get().setError(st('chat.preferredModelSaveFailed'))
+      })
+    }
     return true
   },
 

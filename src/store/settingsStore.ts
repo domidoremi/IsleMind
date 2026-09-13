@@ -26,9 +26,11 @@ import { st } from '@/i18n/service'
 import { getSystemLanguage, setServiceLanguage } from '@/i18n/service'
 import { clearLanguagePreferenceSource, loadLanguagePreferenceSource, resolveEffectiveLanguage, saveLanguagePreferenceSource } from '@/i18n/languagePreference'
 import { normalizeThemeId } from '@/theme/colors'
-import { normalizeSettingsBackgroundIntensity, normalizeSettingsBackgroundMotion, normalizeSettingsBackgroundVariation, normalizeSettingsIdentityPreferences, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, sanitizeSettingsUrlFields } from '@/modules/settings'
+import { normalizeSettingsBackgroundIntensity, normalizeSettingsBackgroundMotion, normalizeSettingsBackgroundVariation, normalizeSettingsIdentityPreferences, normalizeSettingsLastPreferredModel, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, sanitizeSettingsUrlFields } from '@/modules/settings'
 import { removeProviderHealthRecordsByProviderId, clearProviderHealthSnapshot } from '@/bootstrap/providerHealthRepository'
 import { invalidateAllCompactStates, invalidateCompactStatesByProvider } from '@/bootstrap/providerCompactStateRepository'
+import { providerModelScopeConfigurationChanged } from '@/modules/providers'
+import { providerModelAvailabilityRuntime, withProviderModelAvailabilityChanges } from '@/bootstrap/providerModelAvailabilityRuntime'
 
 interface SettingsState {
   settings: Settings
@@ -36,6 +38,7 @@ interface SettingsState {
 
   load: () => Promise<void>
   updateSettings: (updates: Partial<Settings>) => void
+  rememberPreferredModel: (providerId: string, model: string) => Promise<void>
   setTheme: (theme: ThemeMode) => void
   setThemeId: (themeId: ThemeId) => void
   setThemeAccent: (themeAccent: string | undefined) => void
@@ -197,6 +200,7 @@ const defaultSettings: Settings = {
 
 const PROVIDER_CATALOG_VERSION = 1
 const OPTIONAL_SETTINGS_KEYS_WITHOUT_DEFAULT = [
+  'lastPreferredModel',
   'googleSearchCx',
   'customSearchEndpoint',
   'lastApkUpdateCheckAt',
@@ -238,8 +242,8 @@ async function setSecureKey(key: string, value: string): Promise<void> {
   }
 }
 
-function persistSettingsSnapshot(settings: Settings): void {
-  void savePersistedSettings(settings)
+function persistSettingsSnapshot(settings: Settings, beforeSave?: Promise<void>): void {
+  void savePersistedSettings(settings, beforeSave)
 }
 
 function persistProvidersSnapshot(providers: AIProvider[], mode: ProviderUpdateOptions['persist'] = 'immediate'): void {
@@ -363,6 +367,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  rememberPreferredModel: async (providerId: string, model: string) => {
+    const lastPreferredModel = normalizeSettingsLastPreferredModel({ schema: 'islemind.global-model-preference.v1', providerId, model })
+    if (!lastPreferredModel) throw new TypeError('A complete model preference is required.')
+    const settings = { ...get().settings, lastPreferredModel }
+    set({ settings })
+    await savePersistedSettings(settings)
+  },
+
   updateSettings: (updates: Partial<Settings>) => {
     set((state) => {
       const hasThemeAccentUpdate = Object.prototype.hasOwnProperty.call(updates, 'themeAccent')
@@ -397,7 +409,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             webSearchEnabled: nextSearchProvider !== 'off',
           }
         : draft)
-      persistSettingsSnapshot(updated)
+      // Close admission synchronously, before publishing a new proxy setting.
+      // Reapplying these fields also retries a failed invalidation. The existing
+      // settings save queue cannot persist this or later snapshots first.
+      const routeSettingsChanged = Object.prototype.hasOwnProperty.call(updates, 'proxyMode')
+        || Object.prototype.hasOwnProperty.call(updates, 'proxyBaseUrl')
+      const beforeSave = routeSettingsChanged ? providerModelAvailabilityRuntime.invalidateAll() : undefined
+      persistSettingsSnapshot(updated, beforeSave)
       return { settings: updated }
     })
   },
@@ -421,6 +439,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   addProvider: async (provider: AIProvider) => {
+    await withProviderModelAvailabilityChanges([provider.id], async () => {
     await providerCredentialStorage.applyMutations(providerCredentialMutationsForAdd(provider))
     set((state) => {
       const updated = [normalizeProvider({ ...provider, apiKey: '' } as AIProvider), ...state.providers]
@@ -430,10 +449,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
       return { providers: updated }
     })
+    })
   },
 
   updateProvider: async (id: string, updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => {
     const previous = get().providers.find((provider) => provider.id === id)
+    await withProviderModelAvailabilityChanges(providerModelScopeConfigurationChanged(previous, updates) ? [id] : [], async () => {
     await providerCredentialStorage.applyMutations(providerCredentialMutationsForUpdate(id, updates, previous))
     set((state) => {
       const updated = state.providers.map((p) =>
@@ -441,6 +462,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       )
       persistProvidersSnapshot(updated, options?.persist)
       return { providers: updated }
+    })
     })
   },
 
@@ -461,6 +483,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         currentProviders.find((provider) => provider.id === id),
       ))
     }
+    const changedScopes = [...mergedPatches].filter(([id, updates]) =>
+      providerModelScopeConfigurationChanged(currentProviders.find((provider) => provider.id === id), updates)).map(([id]) => id)
+    await withProviderModelAvailabilityChanges(changedScopes, async () => {
     await providerCredentialStorage.applyMutations(credentialMutations)
 
     set((state) => {
@@ -471,10 +496,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       persistProvidersSnapshot(updated, options?.persist)
       return { providers: updated }
     })
+    })
   },
 
   addProviders: async (providers: AIProvider[], options?: AddProvidersOptions) => {
     if (!providers.length) return
+    await withProviderModelAvailabilityChanges(providers.map((provider) => provider.id), async () => {
     const total = providers.length
     const yieldEvery = normalizeYieldEvery(options?.yieldEvery)
     options?.onProgress?.({ completed: 0, total })
@@ -502,6 +529,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       persistSettingsSnapshot(settings)
       return { providers: updated, settings }
     })
+    })
   },
 
   updateProviders: async (ids: string[], updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => {
@@ -515,12 +543,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       return
     }
     const targetIds = new Set(uniqueIds)
+    const changedScopes = get().providers.filter((provider) => targetIds.has(provider.id) && providerModelScopeConfigurationChanged(provider, updates)).map((provider) => provider.id)
+    await withProviderModelAvailabilityChanges(changedScopes, async () => {
     set((state) => {
       const updated = state.providers.map((provider) =>
         targetIds.has(provider.id) ? normalizeProvider({ ...provider, ...updates, apiKey: '' } as AIProvider) : provider
       )
       persistProvidersSnapshot(updated, options?.persist)
       return { providers: updated }
+    })
     })
   },
 
@@ -552,6 +583,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   removeProvider: async (id: string) => {
+    await withProviderModelAvailabilityChanges([id], async () => {
     const provider = get().providers.find((item) => item.id === id)
     if (provider) await clearProviderArtifacts(provider, 'provider_removed')
     set((state) => {
@@ -569,10 +601,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         settings,
       }
     })
+    }, true)
   },
 
   clearAllProviders: async () => {
     const allProviders = get().providers
+    await withProviderModelAvailabilityChanges(allProviders.map((provider) => provider.id), async () => {
     await providerCredentialStorage.applyMutations(
       allProviders.flatMap(providerCredentialDeletionMutations),
     )
@@ -586,6 +620,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         settings,
       }
     })
+    }, true)
   },
 
   listInvalidProviders: async () => {
@@ -699,8 +734,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ...group,
       apiKey: await providerCredentialStorage.getCredentialGroupCredential(id, group.id) ?? group.apiKey ?? '',
     })))
-    const primaryGroupKey = credentialGroups.find((group) => group.enabled && group.apiKey)?.apiKey
-    return normalizeProviderCredentialGroups({ ...provider, apiKey: apiKey ?? primaryGroupKey ?? '', credentialGroups })
+    const primaryGroup = credentialGroups.find((group) => group.enabled && group.apiKey?.trim())
+    return normalizeProviderCredentialGroups({
+      ...provider, apiKey: apiKey?.trim() ? apiKey : primaryGroup?.apiKey ?? '', credentialGroups,
+      apiKeySource: apiKey?.trim() ? { kind: 'primary' }
+        : primaryGroup ? primaryGroup.source ?? { kind: 'group', groupId: primaryGroup.id } : { kind: 'none' },
+    })
   },
 
   getConfiguredProviders: async () => {
@@ -790,6 +829,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
   const normalized = applyProviderPreset({
     ...provider,
     apiKey: '',
+    apiKeySource: undefined,
     baseUrl,
     presetId,
     detectedPresetId,
@@ -949,12 +989,15 @@ async function clearProviderArtifacts(provider: AIProvider, reason: string): Pro
     removeProviderHealthRecordsByProviderId(provider.id),
     invalidateCompactStatesByProvider(provider.id, reason),
   ])
+  const { providerModelAvailabilityRuntime } = await import('@/bootstrap/providerModelAvailabilityRuntime')
+  await providerModelAvailabilityRuntime.withProviderMutation(provider.id, async () => undefined, true)
 }
 
 async function clearProviderRuntimeState(): Promise<void> {
   await Promise.all([
     clearProviderHealthSnapshot(),
     invalidateAllCompactStates('providers_cleared'),
+    import('@/bootstrap/providerModelAvailabilityRuntime').then(({ providerModelAvailabilityRuntime }) => providerModelAvailabilityRuntime.clear()),
   ])
 }
 

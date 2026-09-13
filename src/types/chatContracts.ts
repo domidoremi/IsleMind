@@ -1,6 +1,6 @@
 import type { ReasoningEffort } from '@/core'
 import type { MessageCitation } from './contextContracts'
-import type { ChatErrorCode } from './providerContracts'
+import type { ChatErrorCode, ProviderProtocolAdapterId } from './providerContracts'
 import type { ProcessTrace } from '@/core'
 import type { SkillSnapshot } from './skillContracts'
 
@@ -64,6 +64,10 @@ export interface Message {
   /** Provider/model captured for this assistant turn; absent on legacy rows. */
   providerId?: string
   model?: string
+  generationProtocol?: {
+    schema: 'islemind.message-protocol.v1'
+    adapterId: ProviderProtocolAdapterId
+  }
   content: string
   responseText?: string
   reasoning?: ProcessTrace[]
@@ -101,8 +105,9 @@ export type ConversationGenerationParameterOverrides = Partial<Record<Conversati
 export interface Conversation {
   id: string
   title: string
-  providerId: string
-  model: string
+  /** Nullable for legacy/unbound conversations; only a complete nonblank pair may execute. */
+  providerId: string | null
+  model: string | null
   providerModelMode?: ConversationProviderModelMode
   skillIds?: string[]
   skillSnapshot?: SkillSnapshot
@@ -124,4 +129,6 @@ export interface Conversation {
 export type MessageRole = 'user' | 'assistant'
 export type MessageStatus = 'sending' | 'streaming' | 'done' | 'error' | 'cancelled'
 export type ConversationProviderModelMode = 'inherited' | 'manual'
+/** Runtime narrowing only; the stored Conversation remains the sole preference authority. */
+export type BoundConversation = Conversation & { providerId: string; model: string }
 export type AttachmentType = 'image' | 'pdf' | 'text' | 'document'

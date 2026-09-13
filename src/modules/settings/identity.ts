@@ -1,8 +1,20 @@
-import type { Settings, SettingsModelDisplayAlias } from '@/types/settingsContracts'
+import type { Settings, SettingsModelDisplayAlias, SettingsLastPreferredModel } from '@/types/settingsContracts'
 
 export const SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH = 48
 export const SETTINGS_IDENTITY_ID_MAX_LENGTH = 200
 export const SETTINGS_MODEL_DISPLAY_ALIAS_LIMIT = 128
+
+export function normalizeSettingsLastPreferredModel(value: unknown): SettingsLastPreferredModel | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (record.schema !== 'islemind.global-model-preference.v1') {
+    throw new TypeError('Unsupported global model preference version.')
+  }
+  const providerId = normalizeIdentityId(record.providerId)
+  const model = normalizeIdentityId(record.model)
+  return providerId && model ? { schema: 'islemind.global-model-preference.v1', providerId, model } : undefined
+}
 
 export function normalizeSettingsIdentityDisplayName(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -32,9 +44,11 @@ export function normalizeSettingsModelDisplayAliases(value: unknown): SettingsMo
 export function normalizeSettingsIdentityPreferences(settings: Settings): Settings {
   const assistantDisplayName = normalizeSettingsIdentityDisplayName(settings.assistantDisplayName)
   const modelDisplayAliases = normalizeSettingsModelDisplayAliases(settings.modelDisplayAliases)
+  const lastPreferredModel = normalizeSettingsLastPreferredModel(settings.lastPreferredModel)
   if (
     settings.assistantDisplayName === assistantDisplayName &&
-    modelDisplayAliasesEqual(settings.modelDisplayAliases, modelDisplayAliases)
+    modelDisplayAliasesEqual(settings.modelDisplayAliases, modelDisplayAliases) &&
+    JSON.stringify(settings.lastPreferredModel) === JSON.stringify(lastPreferredModel)
   ) {
     return settings
   }
@@ -44,13 +58,15 @@ export function normalizeSettingsIdentityPreferences(settings: Settings): Settin
   else delete normalized.assistantDisplayName
   if (modelDisplayAliases) normalized.modelDisplayAliases = modelDisplayAliases
   else delete normalized.modelDisplayAliases
+  if (lastPreferredModel) normalized.lastPreferredModel = lastPreferredModel
+  else delete normalized.lastPreferredModel
   return normalized
 }
 
 export function getSettingsModelDisplayAlias(
   aliases: readonly SettingsModelDisplayAlias[] | undefined,
   providerId: string,
-  modelId: string,
+  modelId: string | null,
 ): string | undefined {
   const normalizedProviderId = normalizeIdentityId(providerId)
   const normalizedModelId = normalizeIdentityId(modelId)

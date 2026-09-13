@@ -33,6 +33,7 @@ function sourceConversation(): Conversation {
         attachments: [{ id: 'note', type: 'text', uri: 'file://transient-note', name: 'note.txt', mimeType: 'text/plain', size: 4, base64: 'bm90ZQ==' }] },
       { id: 'answer', role: 'assistant', content: 'Public launch is blocked.', responseText: 'Public launch is blocked.', status: 'done', timestamp: 2,
         providerId: 'captured-provider', model: 'captured-model', usage: { totalTokens: 80, source: 'provider' }, durationMs: 900,
+        generationProtocol: { schema: 'islemind.message-protocol.v1', adapterId: 'anthropic' },
         citations: [{ id: 'policy-0', type: 'knowledge', title: 'Pilot policy', documentId: 'policy', chunkId: 'policy-0', headingPath: ['Decision'] }],
         toolCalls: [{ id: 'old-task', type: 'tool', title: 'Approval', status: 'done', metadata: { taskId: 'old-task', runId: 'old-run', confirmable: true } }],
         responseLifecycle: { stage: 'completed', startedAt: 1, stageStartedAt: 2, completedAt: 2, history: [] } },
@@ -83,6 +84,8 @@ describe('non-destructive Chat branch drafts', () => {
     expect(draft.messages.map(message => message.content)).toEqual(['Can the pilot launch?', 'Public launch is blocked.'])
     expect(draft.messages.every(message => !source.messages.some(original => original.id === message.id))).toBe(true)
     expect(draft.messages[1]).toMatchObject({ providerId: 'captured-provider', model: 'captured-model', status: 'done' })
+    expect(draft.messages[1].generationProtocol).toEqual(source.messages[1].generationProtocol)
+    expect(draft.messages[1].generationProtocol).not.toBe(source.messages[1].generationProtocol)
     expect(draft.messages[1].toolCalls).toBeUndefined()
     expect(draft.messages[1].responseLifecycle).toBeUndefined()
     expect(draft.messages[1].usage).toBeUndefined()

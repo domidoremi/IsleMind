@@ -2,6 +2,12 @@ import type { ReasoningEffort } from '@/core'
 
 export type ModelReasoningMode = 'openai-effort' | 'gemini-thinking-level' | 'gemini-thinking-budget' | 'deepseek-thinking' | 'anthropic-thinking' | 'dashscope-thinking' | 'kimi-thinking' | 'minimax-thinking' | 'xai-reasoning-effort' | 'groq-reasoning-effort' | 'together-reasoning-effort' | 'fireworks-reasoning-effort' | 'perplexity-reasoning-effort' | 'cohere-reasoning-effort' | 'cerebras-reasoning-effort' | 'sambanova-reasoning-effort' | 'huggingface-reasoning-effort' | 'deepinfra-reasoning-effort' | 'siliconflow-thinking-budget' | 'none'
 export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openai-compatible' | 'xiaomi-mimo'
+export const PROVIDER_PROTOCOL_ADAPTER_IDS = [
+  'openai-chat', 'openai-responses', 'anthropic', 'google',
+  'openai-compatible-chat', 'openai-compatible-responses', 'openai-compatible-anthropic',
+  'xiaomi-mimo-chat', 'xiaomi-mimo-anthropic',
+] as const
+export type ProviderProtocolAdapterId = typeof PROVIDER_PROTOCOL_ADAPTER_IDS[number]
 export type ProviderPresetId =
   | 'custom-endpoint'
   | 'openai'
@@ -116,6 +122,11 @@ export interface ProviderModelTestCapabilityCheck {
   }
 }
 
+export type ProviderCredentialSource =
+  | { kind: 'primary' }
+  | { kind: 'group'; groupId: string }
+  | { kind: 'none' }
+
 export interface ProviderCredentialGroup {
   id: string
   label: string
@@ -129,6 +140,8 @@ export interface ProviderCredentialGroup {
   lastUsedAt?: number
   lastFailureAt?: number
   failureCount?: number
+  /** Distinguishes normalization's synthetic primary from a real group named default. */
+  source?: ProviderCredentialSource
 }
 
 export interface ProviderCapabilities {
@@ -206,6 +219,8 @@ export interface AIProvider {
   detectionStatus?: ProviderDetectionStatus
   name: string
   apiKey: string
+  /** Hydrated runtime provenance only; stripped with apiKey before storage or publication. */
+  apiKeySource?: ProviderCredentialSource
   baseUrl?: string
   credentialMode?: ProviderCredentialMode
   tokenPlanRegion?: ProviderRegion

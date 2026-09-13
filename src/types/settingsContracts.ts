@@ -71,6 +71,12 @@ export interface SettingsModelDisplayAlias {
   displayName: string
 }
 
+export interface SettingsLastPreferredModel {
+  schema: 'islemind.global-model-preference.v1'
+  providerId: string
+  model: string
+}
+
 export interface Settings {
   theme: ThemeMode
   themeId?: ThemeId
@@ -81,6 +87,8 @@ export interface Settings {
   backgroundPreset?: number
   assistantDisplayName?: string
   modelDisplayAliases?: SettingsModelDisplayAlias[]
+  /** Updated only by an explicit user selection, not runtime fallback or initialization. */
+  lastPreferredModel?: SettingsLastPreferredModel
   language: Language
   defaultProvider: string | null
   fontSize: number
