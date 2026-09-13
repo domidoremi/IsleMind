@@ -69,12 +69,21 @@ Network access is limited to:
 ## Development environment
 
 - [Bun 1.4.2](https://bun.sh/) for dependencies and scripts
-- Node.js for selected project scripts
-- JDK 25
+- Node.js **24.21.0** for selected project scripts
+- Eclipse Temurin **25.0.4.1+1** (mise version `temurin-25.0.4+101.0.LTS`)
 - Android SDK and Platform Tools (ADB)
 - Android emulator or a USB-debuggable device
 
 `bun.lock` is the authoritative lockfile. Do not mix package managers.
+
+Install the pinned tools with `mise install` and run commands through `mise exec --`
+when the shell has not activated mise. `node scripts/android-build-toolchain.js`
+verifies Node/Bun and records the exact Android JDK without reading application
+credentials. Android builders prefer the project-managed JDK and reject an
+unqualified `ISLEMIND_ANDROID_JAVA_HOME` override; a Java 25 major alone is not
+sufficient. Run raw Gradle commands through mise as well, rather than inheriting
+an unrelated `JAVA_HOME`. The build-only Expo plugin pins the Gradle 9.3.1
+distribution checksum again after native regeneration.
 
 ## Get the source
 
@@ -120,11 +129,12 @@ Architecture boundaries are enforced by:
 - [IsleMind architecture](docs/architecture/architecture.md)
 - [Module public API](docs/architecture/module-public-api.md)
 
-[Technology radar and assimilation](docs/architecture/technology-radar.md) tracks evidence-based technology choices, new product opportunities, and sunset conditions.
+[Technology radar and assimilation](docs/technology-radar.md) tracks evidence-based technology choices, new product opportunities, and sunset conditions.
 
 ## Validation commands
 
 ```bash
+bun run test --runInBand
 bun run type-check
 bun run test:architecture-boundary
 bun run test:architecture-contract
@@ -132,6 +142,106 @@ bun run test:walking-skeleton
 bun run test:task-runtime
 bun run test:provider-intelligence
 bun run test:product-mobile-layout
+bun run test:release-readiness-compatibility
+```
+
+`bun run test` runs the native SQLite repository suites under Bun, then the
+React Native/unit suites under Jest. `bun run test:sqlite` runs just the real
+SQLite boundary. Direct `jest` and `test:watch` cover only the Jest partition;
+use the combined command for the complete unit suite. No SQLite assertions are
+replaced with mocks or skipped in the combined run.
+
+### Isolated availability qualification
+
+Model-availability history uses Android-calibrated 7-day/500-record retention,
+50-row pages (100 maximum), 8-row write/cleanup batches and an 8 KiB normalized
+observation budget. Current lifecycle evidence and discovery catalog coverage are
+not capped by history retention. Both current/history rows are virtualized.
+
+For explicitly authorized M2007J3SC qualification, use
+`scripts/build-native-availability-apk.js --stage <outside-repository-directory>`
+and `scripts/collect-native-availability-evidence.js`, not the production installer
+below. The collector requires `--serial`, a resolved `--adb`, and `--out`; inspect
+the APK with `--mode inspect --apk ...` before an authorized isolated install.
+It targets only `com.islemind.stage9`, has no network permission, and compares
+the existing application's read-only file hashes. Native suites are `calibration`,
+`bounds`, `startup`, `recovery`, `final` (with `--profile`), and `retention`.
+The pure `scripts/validate-native-availability-evidence.js <evidence-root>` gate
+requires complete native, preservation and host receipts. See the
+[architecture qualification contract](docs/architecture/architecture.md#isolated-availability-qualification).
+Generated receipts are under `test-evidence/qa/provider-model-availability-android/`;
+they do not certify another device or a production-signed release.
+
+### Current APK device targeting
+
+`test:current-apk-smoke` force-stops and launches the installed app; it is not a host-only
+test. Use it only on an explicitly authorized target. `QA_DEVICE_SERIAL` must name exactly
+one connected device in the ready `device` state. Only an **unset** value defaults to
+`emulator-5554`; blank, whitespace/control-containing, missing, unready or duplicate targets
+fail without device commands. Inventory order never selects a replacement, and subsequent
+ADB operations remain pinned with `-s` if the target disconnects.
+
+Target selection does not prove APK freshness or device authorization. Existing installed
+APK/provenance, launch and 16 KB checks still apply. The release-readiness compatibility
+suite exercises targeting with fake ADB and in-memory receipts, without touching devices.
+
+`release:install-current-apk` shares the exact ready-target rule. It accepts one
+`--device SERIAL` or `--device=SERIAL`, which takes precedence over `QA_DEVICE_SERIAL`,
+and optional `--keep-data`. Empty, malformed, repeated or unsupported arguments fail
+before ADB; an invalid CLI target never falls back to the environment or default.
+Without CLI/environment selection, only `emulator-5554` is eligible, never the first device.
+
+**The installer uninstalls the existing app by default, deleting its app-local data.**
+Use this clean path only with explicit data-deletion authorization on the selected target.
+`--keep-data` skips uninstall and uses `adb install -r`; it does not prove a clean install.
+Neither targeting nor artifact preflight authorizes deletion.
+
+Both installer modes require a readable, nonempty regular APK, a matching single-digest
+`.sha256` sidecar, consistent app/package version configuration, and a readable
+`.source-snapshot.json` whose APK digest/byte count and source inputs match the admitted
+artifact and current tree. Missing, unreadable or stale evidence fails before uninstall/install;
+a recent APK timestamp alone is insufficient. Smoke and QA provenance enforce the same binding.
+
+Source snapshots use `islemind.release-source-snapshot.v1`. Local builds also emit a
+`build` record with schema `islemind.release-build-source-capture.v1`: `build.inputs` are the
+literal prepared-variant inputs, while top-level `inputs` are the exact final workspace used
+for freshness comparison. Only the catalog/format-validated model-bundle generation and
+restoration may differ between those sets. Generated source, including its timestamp, is
+checked in both; it is not exempt from freshness. Release builds restore `no-model`, while
+debug builds retain their selected bundle as before.
+
+Content/path checks surround Gradle attempts (including failures/retries), output copying,
+validation and publication. Copied APK identity is captured before restoration and rechecked
+before publication. Source changes cannot become a fresh retry baseline. Restoration still
+runs after build failures, and combined failures preserve both causes. Signing validation
+precedes sidecar publication; failed qualification cannot reach optional installation.
+
+Legacy/unversioned snapshots and cached receipts without a matching binary binding cannot
+qualify as current; rebuild from the intended sources and recollect evidence. The standalone
+snapshot writer, including the current CI invocation, remains compatible but supplies only
+post-build observations, not this local build-window record. Do not regenerate a snapshot
+over an old/unqualified APK merely to pass a gate. Snapshot publication uses an exclusive
+temporary file and same-directory rename; failures do not replace a preceding snapshot with
+partial evidence.
+
+Installation consumes an independently staged temporary copy, not the mutable build path.
+Hashing uses a bounded 1 MiB buffer; receipts retain the admitted digest and original
+artifact identity/time. Cleanup runs on success and failure, with cleanup errors surfaced.
+This is checksum/source-input preflight, not APK manifest/signature/16 KB validation,
+trusted source-to-binary build attestation, or transactional Android installation. The binding
+identifies observed bytes, not a trusted/reproducible build. Local build checks observe the
+enumerated inputs at boundaries; they do not isolate compilation from transient edit/revert
+races or cover every generated native file/model binary. A later package-manager failure can
+still follow authorized clean deletion; abrupt host termination can leave a temporary copy.
+It does not protect against same-user tampering with that copy.
+Do not assume other collectors share these targeting or argument-validation policies.
+
+Focused host-only provenance checks (no ADB or QA evidence writes):
+
+```bash
+node scripts/release-readiness-compatibility-tests.js
+node scripts/qa-coverage-audit.js --self-test=release-provenance
+node scripts/provider-intelligence-tests.js --focus=release-contracts
 ```
 
 ## Assets and attribution
