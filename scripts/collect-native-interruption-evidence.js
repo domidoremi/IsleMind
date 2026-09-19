@@ -234,7 +234,7 @@ function collectWalResetProbe() {
     compiler: run(clang, ['--version']).trim(), compileArgs, hashes,
     probeSourceSha256: sha256(source), headerSha256: sha256(path.join(headerDir, 'sqlite3.h')),
     vendoredSourceSha256: sha256(path.join(headerDir, 'sqlite3.c')),
-    patchSha256: sha256(path.join(root, 'patches', 'expo-sqlite@57.0.2.patch')),
+    patchSha256: sha256(path.join(root, 'patches', 'expo-sqlite@57.0.3.patch')),
   }
   saveReceipt()
   // Identity was checked by main before any device mutation. Only these fresh,

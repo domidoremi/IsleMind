@@ -605,13 +605,13 @@ V2 Signer: certificate SHA-256 digest: ${releaseDigest}
     'unsupported upstream build configurations fail closed instead of pretending to pin')
   // Expo 57 otherwise selects the prebuilt AAR and silently ignores the C patch.
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-  const sqlitePatch = 'patches/expo-sqlite@57.0.2.patch'
-  assert.equal(packageJson.patchedDependencies?.['expo-sqlite@57.0.2'], sqlitePatch)
+  const sqlitePatch = 'patches/expo-sqlite@57.0.3.patch'
+  assert.equal(packageJson.patchedDependencies?.['expo-sqlite@57.0.3'], sqlitePatch)
   assert.ok(fs.existsSync(path.join(root, sqlitePatch)), 'the registered SQLite WAL-reset backport exists')
   assert.ok(packageJson.expo?.autolinking?.android?.buildFromSource?.includes('expo-sqlite'),
     'SQLite must build the patched source rather than use an unpatched prebuilt AAR')
   for (const releaseInput of [
-    sqlitePatch,
+    ...Object.values(packageJson.patchedDependencies),
     'react-native.config.js',
     'scripts/patch-onnxruntime-16kb.js',
     'scripts/android-release-build-contract.js',
