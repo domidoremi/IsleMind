@@ -2902,8 +2902,9 @@
     "webCompactStorageWarning": "Web はプロバイダーの compact 継続状態を永続化しません。以前の compact 応答を再利用せずにコンテキストを再構成します。会話履歴は変更されません。ストレージ障害は有効なランタイム診断に記録されます。",
     "localModel": {
       "title": "ローカルモデル",
+      "experimentalNotice": "EXPERIMENTAL / OPT-IN。コールド起動の利用準備は 5,000 ms の目標を満たしていません。明示的な選択が必要で、自動フォールバックの対象外です。",
       "collapsedDetail": "有効 {{active}} · ダウンロード可能 {{downloadable}} · Lite 戦略 {{planned}}",
-      "priority": "有効なダウンロードモデル、APK 内蔵モデル、hash embedding の順に使用します。",
+      "priority": "明示的に選択したモデルを優先します。自動フォールバックは非実験モデルのみを使用し、利用できない場合は設定済みのモデル不要検索を使用します。",
       "capabilityNotice": "ワンタップダウンロードは現在 embedding モデルで利用できます。Reranker Lite、ColBERT Lite、Compressor Lite は軽量ローカル戦略で、語彙シグナル、token max-sim、抽出的圧縮へフォールバックします。",
       "download": "ダウンロード",
       "downloading": "ダウンロード中",

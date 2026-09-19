@@ -2906,8 +2906,9 @@
     "webCompactStorageWarning": "Web does not persist provider compact continuation state. Requests rebuild context without reusing a previous compact response. Conversation history is unchanged; storage failures appear in enabled runtime diagnostics.",
     "localModel": {
       "title": "Local models",
+      "experimentalNotice": "EXPERIMENTAL / OPT-IN. Cold admission has not met the 5,000 ms target. This model requires explicit selection and is excluded from automatic fallback.",
       "collapsedDetail": "{{active}} active · {{downloadable}} downloadable · {{planned}} lite strategies",
-      "priority": "Uses the enabled downloaded model first, then bundled APK models, then hash embedding fallback.",
+      "priority": "Explicit model selection takes priority. Automatic fallback uses only non-experimental models; otherwise retrieval uses the configured model-free strategy.",
       "capabilityNotice": "One-tap download is currently available for embedding models. Reranker Lite, ColBERT Lite, and Compressor Lite are lightweight local strategies that fall back to lexical signals, token max-sim, or extractive compression.",
       "download": "Download",
       "downloading": "Downloading",

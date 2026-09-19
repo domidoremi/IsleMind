@@ -2904,8 +2904,9 @@
     "webCompactStorageWarning": "Web 不持久化服务商 compact 续接状态，请求会重建上下文，不复用上次 compact 响应。对话历史不受影响；存储失败会记录到已启用的运行诊断。",
     "localModel": {
       "title": "本地模型",
+      "experimentalNotice": "EXPERIMENTAL / OPT-IN（实验性／主动启用）。冷启动准入尚未达到 5,000 ms 目标，必须明确选择此模型，自动回退不会启用它。",
       "collapsedDetail": "启用 {{active}} · 可下载 {{downloadable}} · 轻量策略 {{planned}}",
-      "priority": "优先使用已启用的下载模型，其次使用 APK 内置模型；不可用时回退到 hash embedding。",
+      "priority": "优先使用明确选择的模型；自动回退仅使用非实验模型。没有可用模型时使用已配置的无模型检索策略。",
       "capabilityNotice": "当前提供一键下载的是 embedding 模型；Reranker Lite、ColBERT Lite、Compressor Lite 是本地轻量策略，专用模型未就绪时会降级到词法、token max-sim 或抽取式压缩。",
       "download": "下载",
       "downloading": "下载中",

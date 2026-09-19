@@ -1595,6 +1595,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
         <Text style={{ color: view.active ? colors.ui.control.link : colors.textTertiary, fontSize: 11, fontWeight: '800' }}>{statusLabel}</Text>
       </View>
       <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{view.model.useCase}</Text>
+      {view.model.experimental ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{t('contextPanel.localModel.experimentalNotice')}</Text> : null}
       <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
         {view.model.publisher ?? view.model.upstreamModel ?? '-'} · {view.model.license ?? '-'}
       </Text>

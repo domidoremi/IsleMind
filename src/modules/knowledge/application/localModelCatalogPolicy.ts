@@ -52,6 +52,7 @@ export interface LocalEmbeddingModel {
   version: string
   name: string
   capability?: LocalRagModelCapability
+  experimental?: boolean
   language: string
   useCase: string
   dimension: number
@@ -181,6 +182,7 @@ const modelSchema = v.object({
   version: boundedLabelSchema,
   name: boundedLabelSchema,
   capability: v.optional(v.picklist(LOCAL_RAG_MODEL_CAPABILITIES)),
+  experimental: v.optional(v.boolean()),
   language: boundedLabelSchema,
   useCase: boundedDescriptionSchema,
   dimension: nonNegativeIntegerSchema(MAX_MODEL_DIMENSION),
@@ -315,7 +317,8 @@ export function createLocalEmbeddingModelCatalogPolicy(
     throwIfAborted(options.signal)
     for (const model of models) {
       if (
-        isRunnableModel(model)
+        !model.experimental
+        && isRunnableModel(model)
         && state.records[model.id]?.source === 'downloaded'
         && await verifyAvailability(model, 'downloaded', options.signal)
       ) {
@@ -326,6 +329,7 @@ export function createLocalEmbeddingModelCatalogPolicy(
       const model = modelsById.get(modelId)
       if (
         model
+        && !model.experimental
         && isRunnableModel(model)
         && await verifyAvailability(model, 'bundled', options.signal)
       ) {

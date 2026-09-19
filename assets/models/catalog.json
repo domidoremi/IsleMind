@@ -115,6 +115,7 @@
       "version": "xenova-2024-02-02",
       "name": "paraphrase-multilingual-MiniLM-L12-v2",
       "capability": "embedding",
+      "experimental": true,
       "language": "Multilingual",
       "useCase": "Chinese, English, and Japanese retrieval",
       "dimension": 384,
