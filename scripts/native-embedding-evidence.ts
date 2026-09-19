@@ -19,6 +19,50 @@ interface EmbeddingEvidenceInput {
   legacy: { model: string; text: string; vector: number[] }
 }
 
+/** Same available() wall-time boundary as the original five-second gate.
+ * Instrumented wrappers delegate to the real hashing, reads and tokenizer. */
+export async function collectNativeColdAdmissionProfile(input: { modelId: string }) {
+  if (!['com.islemind.stage9', 'com.islemind.stage9.network'].includes(NativeModules.Stage9?.packageName)) {
+    throw new Error('Cold admission profiling requires an isolated qualification APK')
+  }
+  await releaseOnnxEmbeddingResources()
+  const fs = require('expo-file-system/legacy') as typeof import('expo-file-system/legacy')
+  const parser = require('../src/platform/localModels/xlmRobertaTokenizer') as typeof import('../src/platform/localModels/xlmRobertaTokenizer')
+  const catalog = require('../src/bootstrap/localModelCatalog') as typeof import('../src/bootstrap/localModelCatalog')
+  const segments: Array<{ phase: string; elapsedMs: number }> = []
+  const restorations: (() => void)[] = []
+  const wrap = (owner: any, key: string, phase: string) => {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key)!
+    const original = owner[key]
+    Object.defineProperty(owner, key, { ...descriptor, value: async (...args: any[]) => {
+      const start = performance.now()
+      try { return await original(...args) } finally { segments.push({ phase, elapsedMs: performance.now() - start }) }
+    } })
+    restorations.push(() => Object.defineProperty(owner, key, descriptor))
+  }
+  let lastTick = performance.now(), maxTimerGapMs = 0, timerTicks = 0
+  const timer = setInterval(() => { const now = performance.now(); maxTimerGapMs = Math.max(maxTimerGapMs, now - lastTick); lastTick = now; timerTicks++ }, 25)
+  try {
+    wrap(fs, 'readAsStringAsync', 'file-read')
+    wrap(parser, 'parseXlmRobertaTokenizer', 'tokenizer-build')
+    wrap(catalog, 'resolveConfiguredLocalEmbeddingModel', 'catalogue-and-integrity')
+    const provider = (await createOnnxEmbeddingProvider({ localEmbeddingModelId: input.modelId, localEmbeddingModelSource: 'downloaded' }))!
+    const start = performance.now()
+    const available = await provider.available!()
+    const admissionMs = performance.now() - start
+    if (!available || !provider.model?.startsWith(input.modelId + '@')) throw new Error('Requested model was not admitted')
+    const firstStart = performance.now()
+    const vector = await provider.embed('Hello world! 繁體 日本語')
+    const firstEmbeddingMs = performance.now() - firstStart
+    const warmStart = performance.now()
+    const warm = await provider.embed('Hello world! 繁體 日本語')
+    return { model: provider.model, hermes: Boolean((globalThis as any).HermesInternal), dev: __DEV__,
+      admissionMs, targetMs: 5000, passed: admissionMs <= 5000, firstEmbeddingMs, warmEmbeddingMs: performance.now() - warmStart,
+      segments, maxTimerGapMs, timerTicks, vector, identicalWarm: JSON.stringify(vector) === JSON.stringify(warm),
+      methodology: 'available() from a fresh provider and retired resources; all catalogue files verified; downloads excluded; first native session measured separately' }
+  } finally { clearInterval(timer); restorations.reverse().forEach(restore => restore()); await releaseOnnxEmbeddingResources() }
+}
+
 /** Profile the real bounded file adapter separately from catalogue/inference.
  * Only owned, already hash-checked model files are read; no model files change. */
 export async function collectNativeFileIntegrityEvidence(raw: string,

@@ -363,6 +363,8 @@ async function prepareStartup() {
 }
 
 async function command(name: string, input: Input) {
+  if (name.startsWith('lifecycle-')) return require('./native-lifecycle-evidence').nativeLifecycleEvidence(name, input)
+  if (name === 'cold-admission-profile') return require('./native-embedding-evidence').collectNativeColdAdmissionProfile(input)
   switch (name) {
     case 'configure': return configure(input)
     case 'seed': return seed(input)
@@ -421,6 +423,7 @@ function TestRoot() {
   </IsleDialogProvider></SafeAreaProvider></GestureHandlerRootView>
 }
 function Root() {
+  useEffect(() => { if (native.mode === 'app') void loop() }, [])
   if (native.mode === 'app') {
     const { ExpoRoot } = require('expo-router')
     // @ts-expect-error Metro's require.context is intentionally not Node's require.
