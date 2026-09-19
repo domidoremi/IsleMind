@@ -38,30 +38,33 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 - GitHub 版本检查；
 - 用户启用的联网工具、MCP 服务和第三方集成。
 
-## 当前版本
+## 当前资格验证版本
 
 | 项目 | 值 |
 |---|---|
-| 版本 | `v1.0.24` |
-| Android `versionCode` | `124` |
-| 可安装的最新 APK | `v1.0.21`（`v1.0.22`–`v1.0.24` 仅发布源码） |
+| 源码版本 | `1.1.0` |
+| Android `versionCode` | `125` |
+| 状态 | 预发布资格验证进行中 |
+| `1.1.0` 生产 APK 附件 | 尚未发布 |
 
-- [查看 v1.0.24 Release 说明](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.24)
-- [下载 v1.0.21 APK 与校验文件](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
-- [查看全部 Releases 与多语言版本记录](https://github.com/domidoremi/IsleMind/releases)
+`1.1.0` 正在进行资格验证。GitHub 标签与 Release 说明不代表生产构建已通过验证；当前 Release 没有 APK 或校验文件附件。开发与资格验证需从源码构建，生产 APK 仅以通过验证的 Release 实际附件为准。
 
-### v1.0.24 更新
+- [查看 v1.1.0 Release 说明](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.0)
+- [查看全部 Releases 与实际附件](https://github.com/domidoremi/IsleMind/releases)
 
-- 将仓库根目录的英文 README 确立为工程文档的权威版本。
-- 在根目录新增简体中文和日语翻译，并提供直接的语言导航。
-- 统一整理本地优先原则、网络边界、开发环境与验证流程。
-- 本版本仅发布源码，不附带 APK 或其他生成的构建资产。
+### 1.1.0 验证范围
 
-### APK 选择
+- 模型执行配置与推理准入遵循所选服务商支持的能力。
+- 故障披露区分服务商、模型与请求错误；用量展示保留 token 数据不可用状态。
+- 联网检索适配器与本地存储恢复包含针对性回归测试。
+- Android 资格验证使用隔离测试应用，生产签名与 Release 不可调试策略保持不变。
 
-- `no-model`——安装包更小，不内置本地 embedding 模型。
-- `with-model-small`——内置小型本地 RAG embedding 模型。
-- 不确定设备架构时，优先选择对应变体的 `universal-64`；`.sha256` 文件可用于校验下载完整性。
+### APK 变体
+
+- `no-model`——默认构建，不内置本地 embedding 模型，本地全文检索仍可用。
+- `with-model-small`——内置标准小型 RAG embedding 模型，需在目标设备完成原生资格验证。
+- 多语言 embedding 标记为 **EXPERIMENTAL / OPT-IN（实验性／主动启用）**，不阻塞默认候选资格验证。
+- 架构分包与 `universal-64` 仅在 Release 实际附带对应 APK 和 `.sha256` 时可下载。
 
 ## 开发环境
 

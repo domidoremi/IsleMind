@@ -1052,6 +1052,26 @@ function assertReleaseVersionMonotonicity() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   const appJson = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
   const updateManifest = JSON.parse(fs.readFileSync(path.join(root, 'updates', 'android.json'), 'utf8'))
+  assertCandidateVersionRelationship(packageJson, appJson, updateManifest)
+
+  const candidate = { version: '2.0.0' }
+  const app = { expo: { version: '2.0.0', android: { versionCode: 200 } } }
+  const published = { versionName: '1.0.0', versionCode: 100 }
+  assertCandidateVersionRelationship(candidate, app, published)
+  assert.throws(() => assertCandidateVersionRelationship(candidate, app, { ...published, versionCode: 200 }))
+  assert.throws(() => assertCandidateVersionRelationship(candidate, app, { ...published, versionName: '2.0.0' }))
+  assert.throws(() => assertCandidateVersionRelationship(candidate, app, { ...published, versionName: '3.0.0' }))
+  const qualification = { versionName: '2.0.0', versionCode: 200, status: 'prerelease-qualification', assets: [], publishedAt: null }
+  assertCandidateVersionRelationship(candidate, app, qualification)
+  for (const invalid of [
+    { ...qualification, versionName: '1.0.0' },
+    { ...qualification, versionCode: 199 },
+    { ...qualification, assets: [{ name: 'unexpected.apk' }] },
+    { ...qualification, publishedAt: '2026-09-19T00:00:00Z' },
+  ]) assert.throws(() => assertCandidateVersionRelationship(candidate, app, invalid))
+}
+
+function assertCandidateVersionRelationship(packageJson, appJson, updateManifest) {
   const packageVersion = String(packageJson.version ?? '')
   const expoVersion = String(appJson?.expo?.version ?? '')
   const androidVersionCode = Number(appJson?.expo?.android?.versionCode)
@@ -1059,6 +1079,17 @@ function assertReleaseVersionMonotonicity() {
   const publishedVersionCode = Number(updateManifest.versionCode)
 
   assert.equal(packageVersion, expoVersion, 'package and Expo versions remain synchronized')
+  assert.ok(Number.isSafeInteger(androidVersionCode) && androidVersionCode > 0, 'candidate versionCode must be a positive integer')
+  assert.ok(Number.isSafeInteger(publishedVersionCode) && publishedVersionCode > 0, 'manifest versionCode must be a positive integer')
+  if (updateManifest.status === 'prerelease-qualification') {
+    // An asset-free qualification manifest describes this source candidate,
+    // not a previously published binary against which monotonicity is measured.
+    assert.equal(packageVersion, publishedVersion, 'qualification version must match the source candidate')
+    assert.equal(androidVersionCode, publishedVersionCode, 'qualification versionCode must match the source candidate')
+    assert.deepEqual(updateManifest.assets, [], 'qualification cannot advertise installable APKs')
+    assert.equal(updateManifest.publishedAt, null, 'qualification cannot claim a publication date')
+    return
+  }
   assert.ok(compareSemanticVersions(packageVersion, publishedVersion) > 0, 'candidate app version is newer than the published Android manifest')
   assert.ok(Number.isSafeInteger(androidVersionCode) && androidVersionCode > publishedVersionCode, 'candidate Android versionCode is newer than the published manifest')
 }

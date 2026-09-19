@@ -41,30 +41,33 @@ Network access is limited to:
 - GitHub version checks
 - user-enabled networking, MCP servers, and third-party integrations
 
-## Current release
+## Current qualification version
 
 | Item | Value |
 |---|---|
-| Version | `v1.0.24` |
-| Android `versionCode` | `124` |
-| Latest installable APK | `v1.0.21` (`v1.0.22`–`v1.0.24` are source-only) |
+| Source version | `1.1.0` |
+| Android `versionCode` | `125` |
+| Status | Active pre-release qualification |
+| Production APK assets for `1.1.0` | Not published |
 
-- [Read the v1.0.24 notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.24)
-- [Download the v1.0.21 APK and checksums](https://github.com/domidoremi/IsleMind/releases/tag/v1.0.21)
-- [All releases and localized changelog](https://github.com/domidoremi/IsleMind/releases)
+`1.1.0` is undergoing qualification. Its GitHub tag and release notes do not certify a production build. The current Release has no attached APK or checksum assets. Build a local development/qualification APK from source; download a production APK only when it is explicitly attached to a qualified release.
 
-### v1.0.24 highlights
+- [Read the v1.1.0 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.0)
+- [All releases and their actual attachments](https://github.com/domidoremi/IsleMind/releases)
 
-- Established the root English README as the canonical engineering reference.
-- Added root-level Simplified Chinese and Japanese translations with direct language navigation.
-- Consolidated release guidance around local-first operation, network boundaries, development setup, and validation.
-- Published this version as source-only, with no APK or generated build assets.
+### 1.1.0 qualification scope
+
+- Model execution profiles and reasoning admission use the selected provider's supported capabilities.
+- Failure disclosure distinguishes provider, model and request failures; usage displays preserve unavailable token counts.
+- Search adapters and local storage recovery have targeted regression coverage.
+- Android qualification uses an isolated test application. Production signing and non-debuggable release behavior remain unchanged.
 
 ### APK variants
 
-- `no-model` – Smallest build; no bundled local embedding model.
-- `with-model-small` – Includes a small local RAG embedding model.
-- `universal-64` – Use when you are unsure of the device ABI; verify integrity with the shipped `.sha256` files.
+- `no-model` – Default build; no bundled local embedding model. Local full-text retrieval remains available.
+- `with-model-small` – Includes the standard small local RAG embedding model; native qualification is required for the target device.
+- Multilingual embeddings are **EXPERIMENTAL / OPT-IN** and do not block default candidate qualification.
+- Architecture-specific and `universal-64` downloads are available only when the release actually attaches those APKs and matching `.sha256` files.
 
 ## Development environment
 
@@ -150,6 +153,12 @@ React Native/unit suites under Jest. `bun run test:sqlite` runs just the real
 SQLite boundary. Direct `jest` and `test:watch` cover only the Jest partition;
 use the combined command for the complete unit suite. No SQLite assertions are
 replaced with mocks or skipped in the combined run.
+
+### Static website
+
+`website/` is the complete static artifact; it does not require an Expo export or a site build. Asset paths are relative so the site works under `/IsleMind/`. `.github/workflows/website-pages.yml` uploads that directory, including `.nojekyll`.
+
+For an authorized deployment, set **Settings → Pages → Source → GitHub Actions**, then manually run **Deploy Website**. The workflow has no push/tag trigger and does not build or publish APKs. Committing the workflow alone does not enable Pages or repair the live 404. Release metadata identifies the source qualification version, not an available binary.
 
 ### Isolated availability qualification
 

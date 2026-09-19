@@ -345,7 +345,11 @@ function parseApkUpdateManifest(payload: unknown): ApkUpdateManifest {
     throw createUpdateError('manifest_invalid', 'assets must be an array')
   }
   const assets = record.assets.map((asset) => parseManifestAsset(asset))
-  if (assets.length === 0) {
+  if (record.status === 'prerelease-qualification') {
+    if (assets.length > 0 || publishedAt !== null) {
+      throw createUpdateError('manifest_invalid', 'qualification metadata must not advertise published APK assets')
+    }
+  } else if (assets.length === 0) {
     throw createUpdateError('manifest_invalid', 'assets must include at least one APK')
   }
   return { versionName, versionCode, publishedAt, releaseUrl, assets }

@@ -176,7 +176,7 @@
 
   const releaseVersionNodes = [...document.querySelectorAll('[data-release-version]')];
   const releaseVersionCodeNodes = [...document.querySelectorAll('[data-release-version-code]')];
-  const latestReleaseUrl = 'https://github.com/domidoremi/IsleMind/releases/latest';
+  const releaseNotesUrl = 'https://github.com/domidoremi/IsleMind/releases/tag/v1.1.0';
   const releaseLinks = [...document.querySelectorAll('[data-release-link]')];
 
   const normalizeReleaseTag = (tag) => {
@@ -191,16 +191,20 @@
       if (!response.ok) throw new Error(`Metadata request failed: ${response.status}`);
       return await response.json();
     } catch {
-      return { version: '1.0.21', versionCode: 121 };
+      console.warn('Release metadata unavailable; showing the bundled qualification version.');
+      return { version: '1.1.0', versionCode: 125, status: 'prerelease-qualification' };
     }
   };
 
   const renderReleaseMetadata = async () => {
     const metadata = await loadReleaseMetadata();
-    const version = normalizeReleaseTag(metadata.version) || 'v1.0.21';
+    const version = normalizeReleaseTag(metadata.version) || 'v1.1.0';
     releaseVersionNodes.forEach((node) => { node.textContent = version; });
-    releaseVersionCodeNodes.forEach((node) => { node.textContent = String(metadata.versionCode ?? 121); });
-    releaseLinks.forEach((link) => { link.href = latestReleaseUrl; });
+    releaseVersionCodeNodes.forEach((node) => { node.textContent = String(metadata.versionCode ?? 125); });
+    releaseLinks.forEach((link) => { link.href = releaseNotesUrl; });
+    document.querySelectorAll('[data-release-status]').forEach((node) => {
+      node.textContent = metadata.status === 'prerelease-qualification' ? '预发布资格验证中 · 暂无 APK' : '发布状态待确认';
+    });
   };
 
   void renderReleaseMetadata();

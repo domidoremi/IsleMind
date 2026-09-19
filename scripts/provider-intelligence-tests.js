@@ -2891,11 +2891,18 @@ function assertReleaseVersionsAligned() {
     `https://github.com/domidoremi/IsleMind/releases/tag/v${androidUpdateManifest.versionName}`,
     'Android APK update manifest points at its own installable release tag',
   )
-  assert.ok(Array.isArray(androidUpdateManifest.assets) && androidUpdateManifest.assets.length >= 8, 'Android APK update manifest includes installable APK assets')
-  assert.ok(
-    androidUpdateManifest.assets.some((asset) => asset.name === `IsleMind-${androidUpdateManifest.versionName}-universal-64-no-model.apk`),
-    'Android APK update manifest includes the universal no-model APK for unknown ABI fallback'
-  )
+  if (androidUpdateManifest.status === 'prerelease-qualification') {
+    assert.equal(androidUpdateManifest.versionName, packageJson.version, 'qualification metadata follows the source version')
+    assert.equal(androidUpdateManifest.versionCode, appJson.expo.android.versionCode, 'qualification metadata follows the source build')
+    assert.equal(androidUpdateManifest.publishedAt, null, 'an unqualified APK has no publication timestamp')
+    assert.deepEqual(androidUpdateManifest.assets, [], 'qualification metadata must not advertise production APKs')
+  } else {
+    assert.ok(Array.isArray(androidUpdateManifest.assets) && androidUpdateManifest.assets.length >= 8, 'Android APK update manifest includes installable APK assets')
+    assert.ok(
+      androidUpdateManifest.assets.some((asset) => asset.name === `IsleMind-${androidUpdateManifest.versionName}-universal-64-no-model.apk`),
+      'Android APK update manifest includes the universal no-model APK for unknown ABI fallback'
+    )
+  }
 
   const currentApkSmokeScript = fs.readFileSync(path.join(root, 'scripts/collect-current-apk-smoke.js'), 'utf8')
   assert.ok(
@@ -11193,6 +11200,15 @@ async function assertApkUpdateBehavior() {
   assert.equal(selectedManifestRelease.apkName, 'IsleMind-0.0.7-arm64-v8a-no-model.apk', 'APK manifest selects the device arm64 no-model asset')
   assert.equal(selectedManifestRelease.versionCode, 7, 'APK manifest preserves Android versionCode')
   assert.equal(selectedManifestRelease.sha256, '3'.repeat(64), 'APK manifest preserves selected asset checksum')
+  assert.equal(normalizeApkUpdateManifestForTest({ ...apkManifestFixture,
+    status: 'prerelease-qualification', publishedAt: null, assets: [],
+  }, ['arm64-v8a']), null, 'qualification metadata cannot advertise an installable update')
+  assert.throws(() => normalizeApkUpdateManifestForTest({ ...apkManifestFixture, assets: [] }, ['arm64-v8a']),
+    /assets must include at least one APK/, 'published manifests still require real assets')
+  assert.throws(() => normalizeApkUpdateManifestForTest({ ...apkManifestFixture,
+    status: 'prerelease-qualification', publishedAt: null,
+  }, ['arm64-v8a']), /qualification metadata must not advertise published APK assets/,
+  'qualification status cannot bypass release asset admission')
   assert.equal(isAllowedAndroidApkUri('file:///tmp/IsleMind-0.0.7.apk'), true, 'Android APK URI policy allows explicit file APK URIs')
   assert.equal(isAllowedAndroidApkUri('content://downloads/document/IsleMind-0.0.7.apk'), true, 'Android APK URI policy allows content URIs whose document path is an APK')
   assert.equal(isAllowedAndroidApkUri('content://downloads/document/report.pdf'), false, 'Android APK URI policy rejects non-APK content document URIs')
