@@ -34,6 +34,7 @@ export interface ProviderCompactStateDatabase {
   execAsync(source: string): Promise<unknown>
   runAsync(source: string, ...params: ProviderCompactStateSqlValue[]): Promise<unknown>
   getAllAsync<T>(source: string, ...params: ProviderCompactStateSqlValue[]): Promise<T[]>
+  closeAsync?(): Promise<void>
 }
 
 export interface ProviderCompactStateRepositoryDependencies {
@@ -67,39 +68,45 @@ export function createProviderCompactStateRepository(
     if (!persistenceAvailable) throw new Error('Compact continuation state persistence is unavailable on this platform.')
     if (!dbPromise) {
       dbPromise = dependencies.openDatabase(PROVIDER_COMPACT_STATE_DATABASE_NAME).then(async (db) => {
-        if (initializeSchema) await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, async () => {
-          await db.execAsync(`
-            CREATE TABLE IF NOT EXISTS compact_states (
-              id TEXT PRIMARY KEY NOT NULL,
-              conversationId TEXT NOT NULL,
-              providerId TEXT NOT NULL,
-              model TEXT NOT NULL,
-              responseId TEXT,
-              sessionId TEXT,
-              compactItemJson TEXT NOT NULL,
-              sourceMessageStartIndex INTEGER NOT NULL,
-              sourceMessageEndIndex INTEGER NOT NULL,
-              inputTokens INTEGER,
-              outputTokens INTEGER,
-              estimatedSavedTokens INTEGER,
-              activeContextTokens INTEGER,
-              autoCompactScopeTokens INTEGER,
-              prefillInputTokens INTEGER,
-              tokensUntilCompaction INTEGER,
-              previousResponseId TEXT,
-              lastCompactSummary TEXT,
-              compactFailureState TEXT,
-              contextFragmentIdentitiesJson TEXT,
-              status TEXT NOT NULL,
-              failureCode TEXT,
-              createdAt INTEGER NOT NULL,
-              updatedAt INTEGER NOT NULL,
-              expiresAt INTEGER
-            );
-          `)
-          await ensureCompactStateColumns(db)
-        })
-        return db
+        try {
+          if (initializeSchema) await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, async () => {
+            await db.execAsync(`
+              CREATE TABLE IF NOT EXISTS compact_states (
+                id TEXT PRIMARY KEY NOT NULL,
+                conversationId TEXT NOT NULL,
+                providerId TEXT NOT NULL,
+                model TEXT NOT NULL,
+                responseId TEXT,
+                sessionId TEXT,
+                compactItemJson TEXT NOT NULL,
+                sourceMessageStartIndex INTEGER NOT NULL,
+                sourceMessageEndIndex INTEGER NOT NULL,
+                inputTokens INTEGER,
+                outputTokens INTEGER,
+                estimatedSavedTokens INTEGER,
+                activeContextTokens INTEGER,
+                autoCompactScopeTokens INTEGER,
+                prefillInputTokens INTEGER,
+                tokensUntilCompaction INTEGER,
+                previousResponseId TEXT,
+                lastCompactSummary TEXT,
+                compactFailureState TEXT,
+                contextFragmentIdentitiesJson TEXT,
+                status TEXT NOT NULL,
+                failureCode TEXT,
+                createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL,
+                expiresAt INTEGER
+              );
+            `)
+            await ensureCompactStateColumns(db)
+            await db.execAsync('CREATE INDEX IF NOT EXISTS compact_states_lookup ON compact_states (conversationId, providerId, model, status, updatedAt DESC);')
+          })
+          return db
+        } catch (error) {
+          await db.closeAsync?.().catch(() => undefined)
+          throw error
+        }
       }).catch((error) => {
         dbPromise = null
         throw error
@@ -109,6 +116,9 @@ export function createProviderCompactStateRepository(
   }
 
   async function saveCompactState(record: CompactStateRecord): Promise<void> {
+    // Detach before the first await: caller mutation cannot change an admitted write.
+    record = { ...record }
+    assertCompactStateRecord(record)
     const db = await getDb()
     await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, () => db.runAsync(
       `INSERT OR REPLACE INTO compact_states (
@@ -152,15 +162,17 @@ export function createProviderCompactStateRepository(
     model: string,
   ): Promise<CompactStateRecord[]> {
     const db = await getDb()
-    return scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, () => db.getAllAsync<CompactStateRecord>(
+    const records = await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, () => db.getAllAsync<CompactStateRecord>(
       `SELECT * FROM compact_states
        WHERE conversationId = ? AND providerId = ? AND model = ? AND status = 'active' AND (expiresAt IS NULL OR expiresAt > ?)
-       ORDER BY updatedAt DESC`,
+       ORDER BY updatedAt DESC, rowid DESC`,
       conversationId,
       providerId,
       model,
       now(),
     ))
+    for (const record of records) assertCompactStateRecord(record)
+    return records
   }
 
   async function invalidateCompactStates(conversationId: string, reason = 'invalidated'): Promise<void> {
@@ -210,6 +222,29 @@ export function createProviderCompactStateRepository(
     invalidateAllCompactStates,
     clearAllCompactStates,
   }
+}
+
+function assertCompactStateRecord(record: CompactStateRecord): void {
+  const invalid = () => { throw new Error('Invalid persisted compact continuation state.') }
+  for (const key of ['id', 'conversationId', 'providerId', 'model'] as const) {
+    if (typeof record[key] !== 'string' || !record[key].trim()) invalid()
+  }
+  for (const key of ['sourceMessageStartIndex', 'sourceMessageEndIndex', 'createdAt', 'updatedAt'] as const) {
+    if (!Number.isSafeInteger(record[key]) || record[key] < 0) invalid()
+  }
+  if (record.sourceMessageEndIndex < record.sourceMessageStartIndex) invalid()
+  if (!['active', 'invalidated', 'failed'].includes(record.status)) invalid()
+  for (const key of ['responseId', 'sessionId', 'previousResponseId', 'lastCompactSummary', 'compactFailureState', 'failureCode'] as const) {
+    if (record[key] != null && typeof record[key] !== 'string') invalid()
+  }
+  for (const key of ['inputTokens', 'outputTokens', 'estimatedSavedTokens', 'activeContextTokens', 'autoCompactScopeTokens', 'prefillInputTokens', 'tokensUntilCompaction', 'expiresAt'] as const) {
+    if (record[key] != null && (!Number.isFinite(record[key]) || record[key]! < 0)) invalid()
+  }
+  try {
+    const item: unknown = JSON.parse(record.compactItemJson)
+    if (!item || typeof item !== 'object' || Array.isArray(item)) invalid()
+    if (record.contextFragmentIdentitiesJson != null && !Array.isArray(JSON.parse(record.contextFragmentIdentitiesJson))) invalid()
+  } catch { invalid() }
 }
 
 async function ensureCompactStateColumns(db: ProviderCompactStateDatabase): Promise<void> {

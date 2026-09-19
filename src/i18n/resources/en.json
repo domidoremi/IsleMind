@@ -2903,7 +2903,7 @@
       "failedStatus": "Failed",
       "tapForDetails": "Tap to view details"
     },
-    "webCompactStorageWarning": "Web does not persist provider compact continuation state. Requests rebuild context without reusing a previous compact response. Conversation history is unchanged; storage failures appear in enabled runtime diagnostics.",
+    "webCompactStorageWarning": "Compact continuation is stored in this browser’s local database. Private browsing, cleared site data, or storage failures can make it unavailable; requests then rebuild context safely. Conversation history is not replaced. Storage failures appear in enabled runtime diagnostics.",
     "localModel": {
       "title": "Local models",
       "experimentalNotice": "EXPERIMENTAL / OPT-IN. Cold admission has not met the 5,000 ms target. This model requires explicit selection and is excluded from automatic fallback.",

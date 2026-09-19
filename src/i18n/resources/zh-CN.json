@@ -2901,7 +2901,7 @@
       "failedStatus": "失败",
       "tapForDetails": "点此查看详情"
     },
-    "webCompactStorageWarning": "Web 不持久化服务商 compact 续接状态，请求会重建上下文，不复用上次 compact 响应。对话历史不受影响；存储失败会记录到已启用的运行诊断。",
+    "webCompactStorageWarning": "Compact 续接状态保存在此浏览器的本地数据库中。隐私浏览、清除网站数据或存储故障可能使其不可用，此时请求会安全地重建上下文，不会替换对话历史。存储故障会记录到已启用的运行诊断。",
     "localModel": {
       "title": "本地模型",
       "experimentalNotice": "EXPERIMENTAL / OPT-IN（实验性／主动启用）。冷启动准入尚未达到 5,000 ms 目标，必须明确选择此模型，自动回退不会启用它。",

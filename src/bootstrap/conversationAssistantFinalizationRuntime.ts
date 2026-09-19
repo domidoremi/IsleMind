@@ -135,10 +135,10 @@ export const conversationAssistantFinalizationRuntime =
       return conversationAssistantMessageProjection.buildSuccessPlan(input)
     },
     recordRemoteCompactCompleted(input) {
-      providerRemoteCompactLifecycle.recordCompleted(input)
+      return providerRemoteCompactLifecycle.recordCompleted(input)
     },
     recordRemoteCompactFailed(input) {
-      providerRemoteCompactLifecycle.recordFailed(input)
+      return providerRemoteCompactLifecycle.recordFailed(input)
     },
     commitSuccess(input) {
       commitConversationAssistantSuccessProjection(input)

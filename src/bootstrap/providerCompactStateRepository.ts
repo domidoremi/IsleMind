@@ -4,20 +4,26 @@ import {
   type ProviderCompactStateDatabase,
 } from '@/modules/providers'
 import { scheduleSqliteDatabaseOperation } from '@/platform/storage'
-import { shouldUseSqliteWebFallback } from '@/platform/storage/sqliteFallback'
 
 export type { CompactStateRecord } from '@/modules/providers'
 
 export const providerCompactStateRepository = createProviderCompactStateRepository({
-  persistenceAvailable: !shouldUseSqliteWebFallback,
   openDatabase: async (databaseName) => {
-    return scheduleSqliteDatabaseOperation(databaseName, () => SQLite.openDatabaseAsync(databaseName, {
-      useNewConnection: true,
-      finalizeUnusedStatementsBeforeClosing: false,
-    }) as Promise<ProviderCompactStateDatabase>)
+    return scheduleSqliteDatabaseOperation(databaseName, async () => {
+      const database = await SQLite.openDatabaseAsync(databaseName, {
+        useNewConnection: true,
+        finalizeUnusedStatementsBeforeClosing: false,
+      })
+      try {
+        await database.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;')
+        return database as ProviderCompactStateDatabase
+      } catch (error) {
+        await database.closeAsync().catch(() => undefined)
+        throw error
+      }
+    })
   },
   scheduleOperation: scheduleSqliteDatabaseOperation,
-  initializeSchema: !shouldUseSqliteWebFallback,
 })
 
 export const {

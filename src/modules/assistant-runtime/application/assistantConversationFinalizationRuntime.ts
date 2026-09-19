@@ -362,7 +362,7 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
   > & {
     readonly responseId?: string
     readonly outputTokens?: number
-  }): void
+  }): void | Promise<void>
   recordRemoteCompactFailed(input: AssistantConversationRemoteCompactRecordBase<
     TSettings,
     TRemoteCompactMode,
@@ -374,7 +374,7 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
   > & {
     readonly failureCode: string
     readonly fallbackLocal: true
-  }): void
+  }): void | Promise<void>
   commitSuccess(input: {
     readonly conversationId: string
     readonly assistantMessageId: string
@@ -667,6 +667,7 @@ export function createAssistantConversationFinalizationRuntime<
     }
 
     const terminalUsage = terminalProjection.messagePatch.usage
+    let compactPersistence: void | Promise<void> = undefined
     if (input.remoteCompactEligible) {
       const messageCount = latest?.messages.filter(
         (message) => message.id !== input.assistantMessageId && message.status !== 'error',
@@ -696,14 +697,14 @@ export function createAssistantConversationFinalizationRuntime<
         contextFragments: input.contextFragments,
       }
       if (finalResult.remoteCompactFallbackUsed) {
-        dependencies.recordRemoteCompactFailed({
+        compactPersistence = dependencies.recordRemoteCompactFailed({
           ...compactRecordBase,
           failureCode: finalResult.remoteCompactFallbackReason
             ?? 'remote_compact_local_fallback',
           fallbackLocal: true,
         })
       } else {
-        dependencies.recordRemoteCompactCompleted({
+        compactPersistence = dependencies.recordRemoteCompactCompleted({
           ...compactRecordBase,
           responseId: finalResult.responseId,
           outputTokens: finalResult.usage?.outputTokens,
@@ -856,6 +857,9 @@ export function createAssistantConversationFinalizationRuntime<
       }
     }
 
+    // Completion includes the continuation write, without adding an await between
+    // the terminal eligibility check and projection (which could race cancellation).
+    await compactPersistence
     return {
       kind: 'completed',
       output: finalOutput,

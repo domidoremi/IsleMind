@@ -157,12 +157,12 @@ export function createProviderRemoteCompactLifecycle(
       options: runtimeLogOptions(input.settings),
     }).catch(() => undefined)
   }
-  function persistState(input: ProviderRemoteCompactRecordBaseInput, state: CompactStateRecord): void {
+  async function persistState(input: ProviderRemoteCompactRecordBaseInput, state: CompactStateRecord): Promise<void> {
     if (dependencies.compactStatePersistenceAvailable === false) {
       reportStorageFallback(input, 'write')
       return
     }
-    void dependencies.saveCompactState(state).catch(() => reportStorageFallback(input, 'write'))
+    await dependencies.saveCompactState(state).catch(() => reportStorageFallback(input, 'write'))
   }
   async function resolvePreviousState(
     input: ResolveProviderRemoteCompactPreviousStateInput,
@@ -213,7 +213,7 @@ export function createProviderRemoteCompactLifecycle(
     }
   }
 
-  function recordCompleted(input: RecordCompletedProviderRemoteCompactInput): void {
+  async function recordCompleted(input: RecordCompletedProviderRemoteCompactInput): Promise<void> {
     if (input.signal?.aborted) return
     compactionGuard.recordAttempt({ conversationId: input.conversationId, succeeded: true })
     const record = dependencies.recordCompactUsage(buildCompletedUsageInput(input))
@@ -231,10 +231,10 @@ export function createProviderRemoteCompactLifecycle(
 
     if (input.signal?.aborted) return
     const state = buildCompletedState(input, record, dependencies.now())
-    if (state) persistState(input, state)
+    if (state) await persistState(input, state)
   }
 
-  function recordFailed(input: RecordFailedProviderRemoteCompactInput): void {
+  async function recordFailed(input: RecordFailedProviderRemoteCompactInput): Promise<void> {
     if (input.signal?.aborted) return
     compactionGuard.recordAttempt({ conversationId: input.conversationId, succeeded: false })
     const record = dependencies.recordCompactUsage(buildFailedUsageInput(input))
@@ -252,7 +252,7 @@ export function createProviderRemoteCompactLifecycle(
 
     if (input.signal?.aborted) return
     const state = buildFailedState(input, record, dependencies.now())
-    persistState(input, state)
+    await persistState(input, state)
   }
 
   function recordApplicationCompactionResult(input: {
@@ -381,7 +381,7 @@ function buildCompletedState(
 ): CompactStateRecord | undefined {
   if (!input.responseId || !allowsCompletedStateReuse(input, record)) return undefined
   return {
-    id: `compact-state-${input.responseId}`,
+    id: `compact-state-${JSON.stringify([input.conversationId, record.providerId, record.model, input.responseId])}`,
     conversationId: input.conversationId,
     providerId: record.providerId,
     model: record.model,
@@ -424,7 +424,7 @@ function buildFailedState(
 ): CompactStateRecord {
   const failureCode = record.failureCode ?? 'remote_compact_failed'
   return {
-    id: `compact-state-failed-${now}`,
+    id: `compact-state-failed-${JSON.stringify([input.conversationId, record.providerId, record.model, now])}`,
     conversationId: input.conversationId,
     providerId: record.providerId,
     model: record.model,
@@ -548,6 +548,7 @@ function compactStateMatchesInput(
   input: ResolveProviderRemoteCompactPreviousStateInput,
 ): boolean {
   if (input.signal?.aborted) return false
+  if (typeof state.responseId !== 'string' || !state.responseId.trim()) return false
   if (state.status !== undefined && state.status !== 'active') return false
   if (state.conversationId !== undefined && state.conversationId !== input.conversationId) return false
   if (state.providerId !== undefined && state.providerId !== input.providerId) return false
@@ -556,6 +557,8 @@ function compactStateMatchesInput(
 
   const item = parseCompactStateItem(state.compactItemJson)
   if (!item) return false
+  if (item.responseId !== undefined && item.responseId !== state.responseId) return false
+  if (state.contextFragmentIdentitiesJson != null && !validStoredFragmentIdentities(state.contextFragmentIdentitiesJson)) return false
   if (item.type !== 'responses_context_management') return false
   if (item.strategy !== 'native-openai-responses') return false
   if (item.capabilityKind !== 'native-compaction') return false
@@ -564,6 +567,17 @@ function compactStateMatchesInput(
   return item.strategy === input.strategy
     && item.capabilityKind === input.capabilityKind
     && item.remoteClassification === input.remoteClassification
+}
+
+function validStoredFragmentIdentities(value: string): boolean {
+  try {
+    const items: unknown = JSON.parse(value)
+    return Array.isArray(items) && items.length <= 32 && items.every(item =>
+      item && typeof item === 'object' && !Array.isArray(item)
+      && typeof item.id === 'string' && typeof item.sourceId === 'string'
+      && (item.sourceHash === undefined || typeof item.sourceHash === 'string')
+      && (item.included === undefined || typeof item.included === 'boolean'))
+  } catch { return false }
 }
 
 function parseCompactStateItem(value: string): Record<string, unknown> | undefined {
