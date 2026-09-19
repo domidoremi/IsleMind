@@ -290,6 +290,17 @@ function assertLocalBuildSourceCapture() {
     const signing = result.events.findIndex((event) => event.kind === 'validate' && event.script === 'scripts/validate-android-release-signing.js')
     assert.ok(signing >= 0 && signing < result.events.findIndex((event) => event.kind === 'snapshot-write'))
   })
+  test('explicit unsigned packaging retains production build and source evidence without a signing claim', {
+    args: ['--release', '--unsigned', '--variant', 'no-model', '--release-arch', 'arm64-v8a'],
+  }, result => {
+    assertCaptured(result, 1, 'no-model')
+    assert.ok(result.snapshots[0].path.includes('android-release-unsigned'))
+    assert.ok(result.commands.some(command => command.args.includes('scripts/configure-android-release.js') && command.args.includes('--unsigned')))
+    assert.equal(result.events.some(event => event.kind === 'install' || event.script === 'scripts/validate-android-release-signing.js'), false)
+  })
+  for (const args of [['--unsigned'], ['--release', '--unsigned', '--install-device', 'emulator-5554']]) {
+    test('unsigned mode cannot become a debug or installed artifact', { args }, result => assertRejected(result, /--unsigned requires --release/, 0))
+  }
   test('content mutation inside Gradle', {
     onEvent(kind, state) {
       if (kind !== 'gradle') return
@@ -553,6 +564,8 @@ V2 Signer: certificate SHA-256 digest: ${releaseDigest}
   )
 
   const configureSource = fs.readFileSync(path.join(root, 'scripts', 'configure-android-release.js'), 'utf8')
+  assert.doesNotMatch(localBuildSource, /cleanStaleApkArtifacts|fs\.rmSync\(path\.join\(outputDir/,
+    'local packaging must preserve previously generated releases and integrity receipts')
   for (const property of [
     'ISLEMIND_UPLOAD_STORE_FILE',
     'ISLEMIND_UPLOAD_STORE_PASSWORD',

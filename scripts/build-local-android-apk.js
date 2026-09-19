@@ -77,6 +77,7 @@ function parseArgs(argv) {
     installDevice: '',
     releaseArch: '',
     optimizeRelease: false,
+    unsigned: false,
   }
   for (let index = 0; index < argv.length; index += 1) {
     const item = argv[index]
@@ -107,6 +108,8 @@ function parseArgs(argv) {
       args.releaseArch = item.slice('--release-arch='.length)
     } else if (item === '--optimize-release') {
       args.optimizeRelease = true
+    } else if (item === '--unsigned') {
+      args.unsigned = true
     }
   }
   args.variant = args.variant === 'all' ? 'all' : normalizeVariant(args.variant)
@@ -117,6 +120,9 @@ function parseArgs(argv) {
     throw new Error(`Unsupported build type "${args.buildType}".`)
   }
   resolveAndroidReleaseOptimization(args)
+  if (args.unsigned && (args.buildType !== 'release' || args.installDevice)) {
+    throw new Error('--unsigned requires --release and cannot be installed before legitimate signing.')
+  }
   if (args.releaseArch && args.buildType !== 'release') {
     throw new Error('--release-arch can only be used with --release.')
   }
@@ -373,16 +379,6 @@ function writeReleaseSidecars(artifact, workspace) {
   writeReleaseSourceSnapshot(projectRoot, artifact.path, { build: artifact, workspace })
 }
 
-function cleanStaleApkArtifacts() {
-  if (!fs.existsSync(outputDir)) return
-  const currentVersionMarker = `-${packageJson.version}-`
-  for (const name of fs.readdirSync(outputDir)) {
-    const generatedArtifact = name.endsWith('.apk') || name.endsWith('.apk.sha256') || name.endsWith('.apk.source-snapshot.json')
-    if (!generatedArtifact || !name.startsWith('IsleMind-') || name.includes(currentVersionMarker)) continue
-    fs.rmSync(path.join(outputDir, name), { force: true })
-  }
-}
-
 function listApks(dir) {
   if (!fs.existsSync(dir)) return []
   return fs.readdirSync(dir)
@@ -453,7 +449,8 @@ function assertReleaseOutputs(outputs, variant, pass, artifactBuildType = 'relea
   }
 }
 
-function resolveLocalReleaseSigningMode() {
+function resolveLocalReleaseSigningMode(args) {
+  if (args.unsigned) return { mode: 'unsigned', env: {} }
   const values = new Map(androidReleaseSigningProperties.map((name) => [
     name,
     process.env[`ORG_GRADLE_PROJECT_${name}`] || process.env[name] || '',
@@ -483,10 +480,12 @@ function resolveLocalReleaseSigningMode() {
 
 function prepareAndroidProjectForRelease(args) {
   const releaseOptimization = resolveAndroidReleaseOptimization(args)
-  const signing = resolveLocalReleaseSigningMode()
+  const signing = resolveLocalReleaseSigningMode(args)
   if (signing.mode === 'qa-debug') {
     console.warn('Local release APKs are QA artifacts signed with the Android debug certificate.')
     console.warn('Do not publish them as production releases; they are named with an android-release-debug marker and cannot update a production-signed installation.')
+  } else if (signing.mode === 'unsigned') {
+    console.warn('Explicit unsigned release packaging: no certificate is used; this artifact cannot be installed or published as a signed release.')
   } else {
     console.log('Local release APKs use the configured IsleMind release signing certificate.')
   }
@@ -499,6 +498,7 @@ function prepareAndroidProjectForRelease(args) {
   run(commandName('node'), [
     'scripts/configure-android-release.js',
     ...(signing.mode === 'qa-debug' ? ['--skip-signing'] : []),
+    ...(signing.mode === 'unsigned' ? ['--unsigned'] : []),
   ], { env })
   return signing.mode
 }
@@ -592,11 +592,11 @@ function main() {
   if (!fs.existsSync(androidDir)) {
     throw new Error('android directory does not exist. Run expo prebuild before local native APK builds.')
   }
-  cleanStaleApkArtifacts()
+  // Older releases and their integrity receipts are retained for rollback.
   let artifactBuildType = args.buildType
   if (args.buildType === 'release') {
     const signingMode = prepareAndroidProjectForRelease(args)
-    artifactBuildType = signingMode === 'signed' ? 'release' : 'release-debug'
+    artifactBuildType = signingMode === 'signed' ? 'release' : signingMode === 'unsigned' ? 'release-unsigned' : 'release-debug'
   } else {
     prepareAndroidProject(androidBuildEnv())
   }

@@ -18,6 +18,8 @@ const mainApplicationPath = path.join(
 )
 const args = new Set(process.argv.slice(2))
 const skipSigning = args.has('--skip-signing')
+const unsigned = args.has('--unsigned')
+if (skipSigning && unsigned) throw new Error('Choose unsigned packaging or debug-signed QA, not both.')
 const releaseGradleJvmArgs = '-Xmx2048m -XX:MaxMetaspaceSize=1024m'
 
 if (!fs.existsSync(buildGradlePath)) {
@@ -156,7 +158,7 @@ if (!source.includes('abiFilters(*islemindAbiFilters)')) {
 ${source.slice(defaultConfig.bodyEnd)}`
 }
 
-if (!skipSigning && !source.includes('ISLEMIND_UPLOAD_STORE_FILE')) {
+if (!skipSigning && !unsigned && !source.includes('ISLEMIND_UPLOAD_STORE_FILE')) {
   const signingConfigs = findBlock(source, 'signingConfigs')
   if (!signingConfigs) throw new Error('Could not find signingConfigs block in android/app/build.gradle.')
   const releaseSigningConfig = `
@@ -193,15 +195,15 @@ if (!releaseBlock || releaseBlock.start > buildTypes.close) {
 if (!skipSigning) {
   const releaseBody = source
     .slice(releaseBlock.bodyStart, releaseBlock.bodyEnd)
-    .replace(/^\s*signingConfig\s+signingConfigs\.[A-Za-z0-9_]+\s*$/m, '')
+    .replace(/^\s*signingConfig\s+(?:signingConfigs\.[A-Za-z0-9_]+|null)\s*$/m, '')
     .trimEnd()
 
   const nextReleaseBody = `${releaseBody}
-            signingConfig signingConfigs.release
+            signingConfig ${unsigned ? 'null' : 'signingConfigs.release'}
 `
 
   source = `${source.slice(0, releaseBlock.bodyStart)}${nextReleaseBody}${source.slice(releaseBlock.bodyEnd)}`
 }
 
 fs.writeFileSync(buildGradlePath, source)
-console.log(skipSigning ? 'Configured Android ABI split APK outputs.' : 'Configured Android release signing and ABI split APK outputs.')
+console.log(unsigned ? 'Configured explicitly unsigned Android release packaging.' : skipSigning ? 'Configured Android ABI split APK outputs.' : 'Configured Android release signing and ABI split APK outputs.')
