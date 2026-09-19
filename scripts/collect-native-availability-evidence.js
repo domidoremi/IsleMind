@@ -353,9 +353,89 @@ async function qualification() {
   }
 }
 
+async function lifecycleQualification() {
+  // Exercise the real ExpoRoot/bootstrap and bound persistence owners, while
+  // never granting this collector access to the production sandbox.
+  const productionBefore = publicSnapshot('before-lifecycle')
+  const env = environment()
+  const identity = apkIdentity(path.resolve(option('--apk')))
+  const installedPath = shell(`pm path ${pkg}`).replace(/^package:/, '')
+  assert(!installedPath.includes('\n') && installedPath.startsWith('/data/app/'))
+  assert.equal(shell(`sha256sum '${installedPath}'`).split(/\s+/)[0], identity.sha256)
+  const events = []
+  const record = (name, value) => { events.push({ name, value, at: new Date().toISOString() }); save('lifecycle-progress.json', events); return value }
+  const launchApp = async name => {
+    const value = record(name, await launch('app'))
+    assert(value.hermes && value.dev === false && value.initialErrors === 0, 'Full app startup must succeed on optimized Hermes')
+    return value
+  }
+  const assertData = (seed, value) => {
+    assert.deepEqual(value.conversation, seed.conversation, 'Acknowledged conversation changed')
+    assert.deepEqual(value.document, seed.document, 'Acknowledged document changed')
+    assert.deepEqual(value.compact, seed.compact, 'Acknowledged continuation changed')
+    assert.deepEqual(value.integrity, [{ integrity_check: 'ok' }])
+    assert.deepEqual(value.foreignKeyViolations, [])
+    assert.equal(value.journal.journal_mode, 'wal')
+    assert.equal(value.synchronous.synchronous, 2)
+    assert.equal(value.foreignKeys.foreign_keys, 1)
+  }
+  try {
+    await launch()
+    record('offline-preferences', await command('prepare-startup'))
+    await launchApp('full-app-launch')
+    const seed = record('acknowledged-writes', await command('lifecycle-seed'))
+    assert(seed.document.id && seed.compact.previousResponseId === 'qualification-response')
+    const runIds = [`local-qualification-interrupted-${Date.now()}`, `local-qualification-cancelled-${Date.now()}`]
+    for (const id of runIds) record(id, await command('lifecycle-start-run', { id }))
+    const cancelled = record('cancel-acknowledged', await command('lifecycle-cancel-run', { id: runIds[1] }))
+    assert(cancelled.cancellationRequestedAt !== undefined)
+    const input = { documentId: seed.document.id, runIds }
+    assertData(seed, record('before-background', await command('lifecycle-inspect', input)))
+    const beforePid = shell(`pidof ${pkg}`)
+    shell('input keyevent KEYCODE_HOME')
+    await sleep(1500)
+    const background = record('background', { pid: shell(`pidof ${pkg}`), lifecycle: read('stage9-lifecycle.json') })
+    assert.equal(background.lifecycle?.at(-1)?.state, 'background', 'App did not enter the background')
+    shell(`am start -W -n ${pkg}/.MainActivity --es stage9Mode app --es stage9RunId ${runId}`)
+    assert.equal(shell(`pidof ${pkg}`), beforePid, 'Foreground/background test unexpectedly recreated the process')
+    await until(() => read('stage9-lifecycle.json')?.at(-1)?.state === 'active', 'full-app foreground AppState')
+    assertData(seed, record('foreground-read', await command('lifecycle-inspect', input)))
+    shell('input keyevent KEYCODE_HOME')
+    await sleep(500)
+    // Force-stop dispatches process death without an application SQLite close.
+    // am kill is advisory and may leave the process alive on an OEM build.
+    record('background-process-kill', shell(`am force-stop ${pkg}`))
+    await until(() => !shell(`pidof ${pkg} || true`), 'qualification process death')
+    await launchApp('after-kill-startup')
+    assert.notEqual(shell(`pidof ${pkg}`), beforePid)
+    const recovered = record('after-kill-recovery', await command('lifecycle-inspect', input))
+    assertData(seed, recovered)
+    assert.equal(recovered.runs[0].run.status, 'failed')
+    assert.equal(recovered.runs[0].run.failure.code, 'interrupted')
+    assert.equal(recovered.runs[1].run.status, 'cancelled')
+    for (const row of recovered.runs) assert.equal(row.run.checkpoint.outputText, seed.conversation.messages[0].content)
+    for (let index = 0; index < 3; index++) {
+      await launchApp(`repeat-startup-${index}`)
+      const next = record(`repeat-read-${index}`, await command('lifecycle-inspect', input))
+      assertData(seed, next)
+      assert.deepEqual(next.runs, recovered.runs, 'Recovery duplicated or modified a terminal journal')
+    }
+    const productionAfter = publicSnapshot('after-lifecycle')
+    assert.deepEqual(productionAfter.identity, productionBefore.identity)
+    assert.deepEqual(productionAfter.apks, productionBefore.apks)
+    save('lifecycle.json', { schema: 'islemind.full-app-lifecycle-qualification.v1', passed: true,
+      scope: 'full-application-bootstrap-on-isolated-qualification-identity', identity, environment: env,
+      productionBefore, productionAfter, productionPrivatePreservation: 'not-inspected', events,
+      limitations: ['one physical Android/OEM device', 'qualification identity, not production-signed APK', 'no device power-loss or storage-hardware failure'],
+      completedAt: new Date().toISOString() })
+    console.log('Full-app native lifecycle qualification passed')
+  } finally { shell(`am force-stop ${pkg}`) }
+}
+
 async function main() {
   const mode = option('--mode', 'inspect')
   if (mode === 'qualification') { await qualification(); return }
+  if (mode === 'lifecycle') { await lifecycleQualification(); return }
   if (mode === 'matrix') assert(!profile.internet, 'The full C4 matrix requires the offline qualification profile')
   if (mode === 'inspect' || mode === 'install') {
     environment()

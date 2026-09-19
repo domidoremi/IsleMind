@@ -26,31 +26,22 @@ export async function collectNativeColdAdmissionProfile(input: { modelId: string
     throw new Error('Cold admission profiling requires an isolated qualification APK')
   }
   await releaseOnnxEmbeddingResources()
-  const fs = require('expo-file-system/legacy') as typeof import('expo-file-system/legacy')
-  const parser = require('../src/platform/localModels/xlmRobertaTokenizer') as typeof import('../src/platform/localModels/xlmRobertaTokenizer')
-  const catalog = require('../src/bootstrap/localModelCatalog') as typeof import('../src/bootstrap/localModelCatalog')
+  const global = globalThis as typeof globalThis & Record<string, any>
   const segments: Array<{ phase: string; elapsedMs: number }> = []
-  const restorations: (() => void)[] = []
-  const wrap = (owner: any, key: string, phase: string) => {
-    const descriptor = Object.getOwnPropertyDescriptor(owner, key)!
-    const original = owner[key]
-    Object.defineProperty(owner, key, { ...descriptor, value: async (...args: any[]) => {
-      const start = performance.now()
-      try { return await original(...args) } finally { segments.push({ phase, elapsedMs: performance.now() - start }) }
-    } })
-    restorations.push(() => Object.defineProperty(owner, key, descriptor))
+  const previous = global.__stage9EmbeddingMeasure
+  global.__stage9EmbeddingMeasure = async (phase: string, work: () => Promise<unknown>) => {
+    const start = performance.now()
+    try { return await work() } finally { segments.push({ phase, elapsedMs: performance.now() - start }) }
   }
   let lastTick = performance.now(), maxTimerGapMs = 0, timerTicks = 0
   const timer = setInterval(() => { const now = performance.now(); maxTimerGapMs = Math.max(maxTimerGapMs, now - lastTick); lastTick = now; timerTicks++ }, 25)
   try {
-    wrap(fs, 'readAsStringAsync', 'file-read')
-    wrap(parser, 'parseXlmRobertaTokenizer', 'tokenizer-build')
-    wrap(catalog, 'resolveConfiguredLocalEmbeddingModel', 'catalogue-and-integrity')
     const provider = (await createOnnxEmbeddingProvider({ localEmbeddingModelId: input.modelId, localEmbeddingModelSource: 'downloaded' }))!
     const start = performance.now()
     const available = await provider.available!()
     const admissionMs = performance.now() - start
     if (!available || !provider.model?.startsWith(input.modelId + '@')) throw new Error('Requested model was not admitted')
+    if (!segments.some(segment => segment.phase === 'tokenizer-build')) throw new Error('Build with the staged admission instrumentation before profiling')
     const firstStart = performance.now()
     const vector = await provider.embed('Hello world! 繁體 日本語')
     const firstEmbeddingMs = performance.now() - firstStart
@@ -60,7 +51,7 @@ export async function collectNativeColdAdmissionProfile(input: { modelId: string
       admissionMs, targetMs: 5000, passed: admissionMs <= 5000, firstEmbeddingMs, warmEmbeddingMs: performance.now() - warmStart,
       segments, maxTimerGapMs, timerTicks, vector, identicalWarm: JSON.stringify(vector) === JSON.stringify(warm),
       methodology: 'available() from a fresh provider and retired resources; all catalogue files verified; downloads excluded; first native session measured separately' }
-  } finally { clearInterval(timer); restorations.reverse().forEach(restore => restore()); await releaseOnnxEmbeddingResources() }
+  } finally { clearInterval(timer); global.__stage9EmbeddingMeasure = previous; await releaseOnnxEmbeddingResources() }
 }
 
 /** Profile the real bounded file adapter separately from catalogue/inference.

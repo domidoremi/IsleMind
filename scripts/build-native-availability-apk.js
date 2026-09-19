@@ -192,8 +192,21 @@ edit('src/presentation/features/settings/ModelAvailabilityScreen.tsx', text => r
 edit('src/platform/storage/expoSqliteDatabase.ts', text => replaceOnce(text,
   '      return database.getAllAsync<Row>(source, ...(parameters as SQLite.SQLiteVariadicBindParams))',
   '      ;(globalThis as any).__stage9SqlRead?.(source)\n      return database.getAllAsync<Row>(source, ...(parameters as SQLite.SQLiteVariadicBindParams))'))
+// Metro barrels can expose nonconfigurable getters. Instrument the disposable
+// provider copy, not SDK exports or production source, and delegate every call.
+edit('src/bootstrap/knowledgeEmbeddingProvider.ts', text => {
+  const measure = `\nfunction stage9Measure<T>(phase: string, work: () => Promise<T>): Promise<T> {\n  return (globalThis as any).__stage9EmbeddingMeasure?.(phase, work) ?? work()\n}\n`
+  text = replaceOnce(text, 'await resolveConfiguredLocalEmbeddingModel(settings, signal)',
+    "await stage9Measure('catalogue-and-integrity', () => resolveConfiguredLocalEmbeddingModel(settings, signal))")
+  text = replaceOnce(text, '        await getOnnxRuntime()\n', "        await stage9Measure('runtime-import', () => getOnnxRuntime())\n")
+  text = replaceOnce(text, "await FileSystem.readAsStringAsync(`${directoryUri}tokenizer.json`, { encoding: FileSystem.EncodingType.UTF8 })",
+    "await stage9Measure('tokenizer-read', () => FileSystem.readAsStringAsync(`${directoryUri}tokenizer.json`, { encoding: FileSystem.EncodingType.UTF8 }))")
+  text = replaceOnce(text, "? parseXlmRobertaTokenizer(raw) :", "? stage9Measure('tokenizer-build', () => parseXlmRobertaTokenizer(raw)) :")
+  return text + measure
+})
 
-for (const file of ['scripts/native-availability-entry.tsx', 'src/bootstrap/providerModelAvailabilityRuntime.ts',
+for (const file of ['scripts/native-availability-entry.tsx', 'scripts/native-embedding-evidence.ts', 'scripts/native-lifecycle-evidence.ts',
+  'src/bootstrap/knowledgeEmbeddingProvider.ts', 'src/bootstrap/providerModelAvailabilityRuntime.ts',
   'src/modules/providers/adapters/sqliteModelAvailabilityRepository.ts', 'src/platform/storage/expoSqliteDatabase.ts',
   'src/hooks/useBootstrap.ts', 'src/presentation/features/settings/ModelAvailabilityScreen.tsx',
   'android/app/build.gradle', 'android/app/src/main/AndroidManifest.xml', `${javaDir}/Stage9Module.kt`]) {
