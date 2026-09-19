@@ -25330,8 +25330,8 @@ https://gateway.example/messages`
   assert.equal(importedDataOk, true, 'imports portable data for model normalization')
   const storedProviders = await loadData('PROVIDERS')
   assert.deepEqual(storedProviders[0].models, [], 'historical injected DeepSeek models are cleared without sync evidence')
-  assert.deepEqual(storedProviders[1].models, ['deepseek-v4-pro', 'deepseek-v4-flash'], 'successfully synced remote model lists are preserved for compatible providers')
-  assert.deepEqual(storedProviders[2].models, ['deepseek-v4-pro', 'deepseek-v4-flash'], 'real DeepSeek model lists are preserved')
+  assert.deepEqual(storedProviders[1].models, ['deepseek-v4-pro'], 'successfully synced remote model lists are preserved for compatible providers, with catalog-deprecated models pruned')
+  assert.deepEqual(storedProviders[2].models, ['deepseek-v4-pro'], 'real DeepSeek model lists are preserved, with catalog-deprecated models pruned')
   const importedDataResult = await importAllDataDetailed(JSON.stringify({
     app: 'islemind',
     version: 1,

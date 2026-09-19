@@ -2,10 +2,34 @@ import { getModelConfig } from './modelCatalog'
 
 describe('current provider model catalog', () => {
   it('contains the current official flagship entries', () => {
+    expect(getModelConfig('gpt-6-astra', 'openai')).toMatchObject({
+      contextWindow: 1050000,
+      maxOutputTokens: 128000,
+      preferredEndpoint: 'responses',
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    })
     expect(getModelConfig('gpt-5.6-sol', 'openai')).toMatchObject({
       contextWindow: 1050000,
       maxOutputTokens: 128000,
       preferredEndpoint: 'responses',
+    })
+    expect(getModelConfig('claude-fable-5-1', 'anthropic')).toMatchObject({
+      contextWindow: 1000000,
+      maxOutputTokens: 128000,
+      reasoningMode: 'anthropic-thinking',
+      supportsVision: true,
+    })
+    expect(getModelConfig('gemini-3.8-flash', 'google')).toMatchObject({
+      contextWindow: 1048576,
+      maxOutputTokens: 65536,
+      reasoningMode: 'gemini-thinking-level',
+      reasoningEfforts: ['low', 'medium', 'high'],
+    })
+    expect(getModelConfig('deepseek-flash', 'openai-compatible')).toMatchObject({
+      contextWindow: 1000000,
+      maxOutputTokens: 384000,
+      supportsVision: true,
+      reasoningMode: 'deepseek-thinking',
     })
     expect(getModelConfig('claude-opus-5', 'anthropic')).toMatchObject({
       contextWindow: 1000000,
@@ -63,7 +87,7 @@ describe('current provider model catalog', () => {
     })
     expect(getModelConfig('command-a-03-2025', 'openai-compatible')).toMatchObject({
       contextWindow: 256000,
-      supportsVision: true,
+      supportsVision: false,
     })
     expect(getModelConfig('glm-4.6v', 'openai-compatible')).toMatchObject({
       contextWindow: 128000,
@@ -80,5 +104,8 @@ describe('current provider model catalog', () => {
     expect(getModelConfig('deepseek-chat', 'openai-compatible').deprecated).toBe(true)
     expect(getModelConfig('kimi-k2-turbo-preview', 'openai-compatible').deprecated).toBe(true)
     expect(getModelConfig('mimo-v2-flash', 'xiaomi-mimo').deprecated).toBe(true)
+    expect(getModelConfig('kimi-k2.5', 'openai-compatible').deprecated).toBe(true)
+    expect(getModelConfig('moonshot-v1-128k', 'openai-compatible').deprecated).toBe(true)
+    expect(getModelConfig('deepseek-v4-flash', 'openai-compatible').deprecated).toBe(true)
   })
 })
