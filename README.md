@@ -52,6 +52,8 @@ Network access is limited to:
 
 `1.1.0` is undergoing qualification. Its GitHub tag and release notes do not certify a production build. The current Release has no attached APK or checksum assets. Build a local development/qualification APK from source; download a production APK only when it is explicitly attached to a qualified release.
 
+Local validation (2026-09-19) produced an **unsigned** `com.islemind.app` ARM64 release APK (`1.1.0` / `125`, no-model), with checksum and source-input receipt. It is not installable until legitimately signed. Full-app lifecycle/recovery passed on the isolated Android 12 test identity; production-signed installation and private-data preservation remain unverified. C4 and broad Web reliability remain **NOT PASS**, so local release readiness is **NOT READY**. See [qualification boundaries](docs/architecture/architecture.md#isolated-availability-qualification).
+
 - [Read the v1.1.0 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.0)
 - [All releases and their actual attachments](https://github.com/domidoremi/IsleMind/releases)
 
@@ -197,6 +199,41 @@ preservation; qualification never changes its debuggability. See the
 [architecture qualification contract](docs/architecture/architecture.md#isolated-availability-qualification).
 Generated receipts belong under `test-evidence/qa/provider-model-availability-android/`.
 They do not certify another device or a production-signed release.
+
+After the isolated APK is installed, `--mode lifecycle` (with the same explicit serial,
+ADB, APK and output arguments) exercises the real ExpoRoot/bootstrap, conversation,
+document and continuation persistence, background/foreground, process recreation,
+interrupted/cancelled runs and idempotent recovery. It never launches or modifies
+`com.islemind.app`. Admission profiling instruments only the disposable source copy.
+
+### Web persistence qualification
+
+Remote-compaction continuation now uses real SQLite/OPFS persistence, with atomic
+replacement, scope isolation and validation before reuse. Storage failure preserves
+acknowledged state and reports a safe fallback; Settings displays the browser-local
+limitation even with runtime logging disabled. Use a persistent browser profile:
+private-mode/evicted/cleared origin storage cannot provide durable retention.
+
+Against a current local Metro app, run
+`node scripts/qualify-web-storage.js --url http://127.0.0.1:18110 --browser <absolute-chrome-executable> --out <new-evidence-directory>`.
+The default idle interval is 30 minutes; `--idle-ms 0` is a transition-only check.
+The script verifies actual application writes, raw OPFS hashes, reload/browser exit,
+renderer crash, exclusive-tab retry, corrupt-state fallback and failed-write recovery.
+It blocks external requests and never reuses or overwrites an existing evidence directory.
+Current persistent-profile checks pass, but an unrelated OPFS file disappeared in the
+nonpersistent Chrome context where the application's files were lost. A separate
+no-application private context retained its control file for 30 minutes, so a browser-only
+cause is not established. Export/rendering alone does not close that broader reliability gate.
+
+### Local unsigned release packaging
+
+When production signing secrets are unavailable, explicitly use
+`node scripts/build-local-android-apk.js --release --unsigned --variant no-model --release-arch arm64-v8a`.
+This keeps the real production package/version and non-debuggable release behavior;
+it does not substitute a debug certificate, install the APK or publish anything.
+The output is `dist-apk/IsleMind-1.1.0-android-release-unsigned-no-model-arm64-v8a.apk`
+with `.sha256` and `.source-snapshot.json` sidecars. Signed release qualification still
+requires legitimate production signing and exact-artifact installation/runtime checks.
 
 ### Current APK device targeting
 
