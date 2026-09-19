@@ -5,6 +5,13 @@ const path = require('node:path')
 const assert = require('node:assert/strict')
 const base = path.resolve(process.argv[2])
 const load = name => JSON.parse(fs.readFileSync(path.join(base, name), 'utf8').replace(/^\uFEFF/, ''))
+if (process.argv.includes('--qualification')) {
+  const { validateQualificationProbe } = require('./native-availability-qualification')
+  const result = validateQualificationProbe(load('qualification.json'))
+  fs.writeFileSync(path.join(base, 'qualification-verdict.json'), JSON.stringify(result, null, 2) + '\n')
+  console.log(JSON.stringify(result, null, 2))
+  return
+}
 function stats(values) {
   const a = [...values].sort((a, b) => a - b)
   assert(a.length && a.every(Number.isFinite), 'Missing/non-finite native measurements')

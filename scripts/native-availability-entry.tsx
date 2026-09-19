@@ -1,4 +1,4 @@
-/** Offline-only Android qualification entry. Never selected by the production build. */
+/** Isolated Android qualification entry. Never selected by the production build. */
 import React, { useEffect, useState } from 'react'
 import { AppState, NativeModules, Text, View } from 'react-native'
 import { registerRootComponent } from 'expo'
@@ -9,7 +9,7 @@ import type { ProviderModelAvailabilityPort } from '../src/modules/providers/pro
 
 type Input = Record<string, any>
 const native = NativeModules.Stage9
-if (!native || native.packageName !== 'com.islemind.stage9') throw new Error('Qualification entry refuses a non-isolated package')
+if (!native || !['com.islemind.stage9', 'com.islemind.stage9.network'].includes(native.packageName)) throw new Error('Qualification entry refuses a non-isolated package')
 const global = globalThis as typeof globalThis & Record<string, any>
 const started = performance.now()
 const commandFile = new File(Paths.document, 'stage9-command.json')
@@ -367,6 +367,11 @@ async function command(name: string, input: Input) {
     case 'configure': return configure(input)
     case 'seed': return seed(input)
     case 'queries': return queries(input)
+    case 'qualification-rows': {
+      assert(/^stage9-qualification-[a-f0-9]{32}\.db$/.test(config.database), 'Only qualification probe rows may be inspected')
+      const db = await provider.get()
+      return db.getAll('SELECT eventKey, modelId, observedAt, source, outcome, detailsJson FROM provider_model_observations ORDER BY eventKey')
+    }
     case 'pagination': return pagination()
     case 'storage': return { storage: await storage(), integrity: await integrity(), memory: memory(), lifecycle }
     case 'refresh': return measureRefresh(input)

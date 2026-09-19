@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // Explicit opt-in physical-device qualification. No production launch, stop,
-// install, uninstall, data clearing, global ADB mutation, network, or inference.
+// install, uninstall, data clearing, global ADB mutation, or provider inference.
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
+const { qualificationProfile, assertQualificationApk, validateQualificationProbe } = require('./native-availability-qualification')
 const cli = process.argv.slice(2)
 const option = (name, fallback) => cli.includes(name) ? cli[cli.indexOf(name) + 1] : fallback
-const pkg = 'com.islemind.stage9', production = 'com.islemind.app'
+const profile = qualificationProfile(cli.includes('--network'))
+const pkg = profile.package, production = 'com.islemind.app'
 const serial = option('--serial'), out = option('--out') && path.resolve(option('--out'))
 const adb = option('--adb'), sdk = process.env.ANDROID_HOME
 assert(serial && /^[a-zA-Z0-9_-]+$/.test(serial) && adb && path.isAbsolute(adb) && out, 'Explicit serial, resolved --adb and --out are required')
@@ -29,13 +31,20 @@ function write(name, value) {
   assert(/^stage9-[a-z-]+\.json$/.test(name))
   device(['shell', `run-as ${pkg} sh -c 'cat > files/${name}.incoming && mv files/${name}.incoming files/${name}'`], value)
 }
-function snapshot(label) {
+function publicSnapshot(label) {
   const dump = shell(`dumpsys package ${production}`)
   const fields = ['userId', 'codePath', 'dataDir', 'versionCode', 'versionName', 'firstInstallTime', 'lastUpdateTime']
   const identity = Object.fromEntries(fields.map(field => [field, new RegExp(`^\\s*${field}=([^\\r\\n]+)`, 'm').exec(dump)?.[1]?.trim()]))
   assert(identity.userId && identity.codePath && identity.dataDir, 'Original installation not found; refuse device mutation')
   const codePaths = shell(`pm path ${production}`).split('\n').map(line => line.trim().replace(/^package:/, ''))
   const apks = codePaths.map(file => ({ path: file, sha256: shell(`sha256sum '${file}'`).split(/\s+/)[0] }))
+  return { label, at: new Date().toISOString(), identity, apks }
+}
+function snapshot(label) {
+  const { identity, apks } = publicSnapshot(label)
+  try { shell(`run-as ${production} pwd`) } catch {
+    throw new Error('Production private-file preservation is unavailable: the installed app must permit run-as. Use --mode qualification for the isolated storage probe; it does not certify production preservation or full C4.')
+  }
   const files = []
   for (const [area, location] of [['credential', '.'], ['device', `/data/user_de/0/${production}`], ['external', `/sdcard/Android/data/${production}`]]) {
     const raw = shell(`run-as ${production} sh -c 'if [ -d ${location} ]; then cd ${location} && find . -type f -exec sha256sum {} \\;; fi'`)
@@ -77,17 +86,12 @@ function apkIdentity(apk) {
   const manifest = run(['dump', 'xmltree', apk, '--file', 'AndroidManifest.xml'])
   const signing = execFileSync(path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java'),
     ['-jar', path.join(buildTools, 'lib/apksigner.jar'), 'verify', '--verbose', '--print-certs', apk], { encoding: 'utf8', windowsHide: true })
-  assert.equal(/package: name='([^']+)'/.exec(badging)?.[1], pkg)
-  assert.equal(/launchable-activity: name='([^']+)'/.exec(badging)?.[1], `${pkg}.MainActivity`)
-  assert(!manifest.includes('sharedUserId') && !manifest.includes(production), 'APK shares identity or components with the original application')
-  assert(!badging.includes("name='android.permission.INTERNET'"), 'Test APK must be unable to access the network')
-  assert(/allowBackup[^\n]*0x0/.test(manifest), 'Backup/restore must be disabled')
-  assert(/native-code: 'arm64-v8a'\s*$/.test(badging.trim()), 'Expected exactly arm64-v8a')
-  const result = { apk, sha256: digest(fs.readFileSync(apk)), package: pkg,
+  assertQualificationApk({ badging, manifest, signing }, profile)
+  const result = { apk, sha256: digest(fs.readFileSync(apk)), package: pkg, profile: profile.name,
     versionCode: /versionCode='([^']+)'/.exec(badging)?.[1], versionName: /versionName='([^']+)'/.exec(badging)?.[1],
     launchActivity: `${pkg}.MainActivity`, permissions: [...badging.matchAll(/uses-permission: name='([^']+)'/g)].map(x => x[1]),
     certificateSha256: /certificate SHA-256 digest: (\S+)/.exec(signing)?.[1],
-    sharedUid: false, internet: false, backup: false, abi: 'arm64-v8a' }
+    sharedUid: false, internet: profile.internet, backup: false, debuggable: true, abi: 'arm64-v8a' }
   save('apk-identity.json', result)
   fs.writeFileSync(path.join(out, 'apk-manifest.txt'), manifest)
   fs.writeFileSync(path.join(out, 'apk-signature.txt'), signing)
@@ -111,6 +115,7 @@ async function until(work, label, timeout = 60000) {
   throw new Error(`Timed out: ${label}`)
 }
 async function launch(mode = 'bench') {
+  assert.equal(shell(`run-as ${pkg} pwd`), `/data/user/0/${pkg}`, 'Qualification package private storage is not inspectable')
   runId = crypto.randomUUID()
   shell(`am force-stop ${pkg}`)
   const launch = shell(`am start -W -n ${pkg}/.MainActivity --es stage9Mode ${mode} --es stage9RunId ${runId}`)
@@ -299,8 +304,59 @@ async function matrix() {
   save('measurements.json', receipt)
 }
 
+async function qualification() {
+  assert(cli.includes('--isolated-install-authorized'), 'Explicit isolated qualification authorization is required')
+  const env = environment()
+  const identity = apkIdentity(path.resolve(option('--apk')))
+  const productionBefore = publicSnapshot('before')
+  const installed = shell(`pm list packages -U ${pkg}`).split('\n').filter(line => line.startsWith(`package:${pkg} `))
+  assert(!installed.length || cli.includes('--update-test-package'), 'Existing test package requires explicit test-only update authorization')
+  device(['install', ...(installed.length ? ['-r'] : []), '--no-streaming', identity.apk])
+  const test = shell(`dumpsys package ${pkg}`)
+  const uid = /^\s*userId=(\d+)/m.exec(test)?.[1]
+  assert(uid && uid !== productionBefore.identity.userId, 'Qualification must use a separate UID')
+  const installedHash = () => {
+    const apkPath = shell(`pm path ${pkg}`)
+    assert(/^package:[^\r\n]+$/.test(apkPath), 'Expected one installed qualification APK')
+    return shell(`sha256sum '${apkPath.slice('package:'.length)}'`).split(/\s+/)[0]
+  }
+  assert.equal(installedHash(), identity.sha256, 'Installed qualification APK does not match the inspected artifact')
+  const database = `stage9-qualification-${crypto.randomUUID().replaceAll('-', '')}.db`
+  const config = { database, pageSize: 8, writeBatchSize: 8, cleanupBatchSize: 8, autoCleanup: false }
+  const capture = async () => ({
+    ...await command('storage'),
+    queries: await command('queries', { rows: 8, repeats: 1 }),
+    rowsSha256: digest(JSON.stringify(await command('qualification-rows'))),
+  })
+  try {
+    await launch()
+    await command('configure', config)
+    await command('seed', { rows: 8, models: 8 })
+    const before = await capture()
+    const fileHash = shell(`run-as ${pkg} sha256sum files/SQLite/${database}`).split(/\s+/)[0]
+    assert.match(fileHash, /^[a-f0-9]{64}$/, 'Qualification private database read failed')
+    await launch()
+    await command('configure', config)
+    const after = await capture()
+    const receipt = { schema: 'islemind.native-availability-qualification.v1', scope: 'isolated-storage-qualification',
+      package: pkg, profile: profile.name, identity, uid, environment: env, database,
+      installedApkSha256: installedHash(), productionBefore, productionAfter: publicSnapshot('after'),
+      productionPrivatePreservation: { status: 'not-inspected', verified: false,
+        reason: 'Isolated qualification does not access production private files; production preservation requires separately authorized evidence.' },
+      fullC4: 'not-certified', privateFileRead: { database, exitCode: 0, sha256: fileHash },
+      before, after, reseededAfterRestart: false, completedAt: new Date().toISOString() }
+    const verdict = validateQualificationProbe(receipt)
+    save('qualification.json', receipt)
+    console.log(JSON.stringify(verdict, null, 2))
+  } finally {
+    shell(`am force-stop ${pkg}`)
+  }
+}
+
 async function main() {
   const mode = option('--mode', 'inspect')
+  if (mode === 'qualification') { await qualification(); return }
+  if (mode === 'matrix') assert(!profile.internet, 'The full C4 matrix requires the offline qualification profile')
   if (mode === 'inspect' || mode === 'install') {
     environment()
     const identity = apkIdentity(path.resolve(option('--apk')))

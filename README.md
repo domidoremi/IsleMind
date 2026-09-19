@@ -158,19 +158,36 @@ Model-availability history uses Android-calibrated 7-day/500-record retention,
 observation budget. Current lifecycle evidence and discovery catalog coverage are
 not capped by history retention. Both current/history rows are virtualized.
 
-For explicitly authorized M2007J3SC qualification, use
-`scripts/build-native-availability-apk.js --stage <outside-repository-directory>`
-and `scripts/collect-native-availability-evidence.js`, not the production installer
-below. The collector requires `--serial`, a resolved `--adb`, and `--out`; inspect
-the APK with `--mode inspect --apk ...` before an authorized isolated install.
-It targets only `com.islemind.stage9`, has no network permission, and compares
-the existing application's read-only file hashes. Native suites are `calibration`,
-`bounds`, `startup`, `recovery`, `final` (with `--profile`), and `retention`.
-The pure `scripts/validate-native-availability-evidence.js <evidence-root>` gate
-requires complete native, preservation and host receipts. See the
+For authorized M2007J3SC qualification, use
+`scripts/build-native-availability-apk.js --stage <new-outside-repository-directory>`.
+It regenerates native files without copying the working Android project or production
+signing material, then builds the debug-signed `qualification` variant with optimized
+bundled Hermes and no developer-server dependency. Production `release` is unchanged.
+Only the qualification build pins CMake to `RelWithDebInfo`, matching the release
+React Native dependencies while keeping the test app inspectable with `run-as`.
+
+The default package is `com.islemind.stage9`, without INTERNET permission. `--network`
+builds `com.islemind.stage9.network` with INTERNET for explicitly authorized networking
+qualification; pass the same flag to the collector. Neither profile grants permission
+to send provider credentials, make paid requests or mutate the production app.
+
+On an installed non-debuggable production app, use
+`scripts/collect-native-availability-evidence.js --mode qualification --serial SERIAL --adb <resolved-adb> --apk <qualification-apk> --out <evidence-root> --isolated-install-authorized`.
+Add `--update-test-package` only to authorize replacement of an existing test package.
+This mode writes and reads a fresh fixture database, hashes the actual private test
+file, restarts only the test app and verifies the same SQLite rows and integrity.
+`scripts/validate-native-availability-evidence.js <evidence-root> --qualification`
+validates that probe. Its scoped verdict explicitly leaves production private-file
+preservation and full C4 **not certified**; public package/APK identity is still checked.
+
+The strict offline C4 path retains `inspect`, `install`, and the `calibration`, `bounds`,
+`startup`, `recovery`, `final` (with `--profile`) and `retention` suites. Its verifier
+without `--qualification` still requires complete native, preservation and host
+receipts. A release package that denies `run-as` remains blocked for private-file
+preservation; qualification never changes its debuggability. See the
 [architecture qualification contract](docs/architecture/architecture.md#isolated-availability-qualification).
-Generated receipts are under `test-evidence/qa/provider-model-availability-android/`;
-they do not certify another device or a production-signed release.
+Generated receipts belong under `test-evidence/qa/provider-model-availability-android/`.
+They do not certify another device or a production-signed release.
 
 ### Current APK device targeting
 
