@@ -26,13 +26,14 @@ async function launch() {
   context = await chromium.launchPersistentContext(report.profile, { executablePath, headless: true, viewport: { width: 430, height: 932 } })
   await context.route('**/*', route => new URL(route.request().url()).origin === url.origin ? route.continue() : route.abort())
   page = context.pages()[0] || await context.newPage()
-  page.on('pageerror', error => report.errors.push(String(error)))
+  page.on('pageerror', pageError)
   await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 90000 })
   await ready(page)
 }
 async function ready(target) {
   await target.waitForFunction(() => document.querySelector('textarea') && !document.body.innerText.includes('BOOT-'), null, { timeout: 90000 })
 }
+function pageError(error) { report.errors.push(String(error)) }
 async function application(operation) {
   return page.evaluate(async operation => {
     const mod = name => {
@@ -107,14 +108,24 @@ async function main() {
   await context.close(); await launch()
   same(baseline, await application('read')); pass('browser-exit-and-persistent-profile-reopen')
   const cdp = await context.newCDPSession(page)
-  await cdp.send('Page.crash').catch(() => {})
-  await page.reload(); await ready(page)
+  const crashed = page.waitForEvent('crash', { timeout: 30000 })
+  // Chromium does not necessarily reply to the crashing command. Wait for the
+  // actual target event instead of hanging on its protocol response.
+  void cdp.send('Page.crash').catch(() => {})
+  await crashed
+  await page.close()
+  page = await context.newPage()
+  page.on('pageerror', pageError)
+  await page.goto(url.href); await ready(page)
   same(baseline, await application('read')); pass('renderer-crash-and-recovery')
   const contender = await context.newPage()
+  contender.on('pageerror', pageError)
   await contender.goto(url.href, { waitUntil: 'domcontentloaded' })
   await contender.waitForFunction(() => document.body.innerText.includes('BOOT-'), null, { timeout: 60000 })
   pass('second-tab-fails-closed', await contender.locator('body').innerText())
   await page.close(); page = contender
+  // Page close precedes asynchronous Chromium worker/OPFS handle release.
+  await new Promise(resolve => setTimeout(resolve, 1000))
   await page.getByRole('button', { name: /^(Retry|重试|再試行)$/ }).click()
   await ready(page)
   same(baseline, await application('read')); pass('retry-after-exclusive-owner-closes')
@@ -125,8 +136,12 @@ async function main() {
   await page.reload(); await ready(page)
   same(baseline, await application('read')); pass('repaired-state-persists-after-reload')
   await page.screenshot({ path: path.join(out, 'app.png'), fullPage: true })
+  assert.deepEqual(report.errors, [], 'Unexpected application page errors')
   report.completedAt = new Date().toISOString()
   report.passed = true
 }
-main().catch(error => { report.passed = false; report.failure = String(error); process.exitCode = 1 })
+main().catch(async error => {
+  report.passed = false; report.failure = String(error); process.exitCode = 1
+  report.failurePage = await page?.locator('body').innerText().catch(() => undefined)
+})
   .finally(async () => { save(); await context?.close(); console.log(JSON.stringify(report, null, 2)) })

@@ -20198,10 +20198,10 @@ async function assertProviderRemoteCompactLifecycleBehavior() {
   }), {}, 'remote compact off mode returns no previous state')
   assert.deepEqual(effects, [], 'remote compact off mode performs no repository or event effect')
 
-  const storedFragments = Array.from({ length: 34 }, (_, index) => ({
+  const storedFragments = Array.from({ length: 32 }, (_, index) => ({
     id: `fragment-${index}`,
     sourceId: `source-${index}`,
-    sourceHash: index % 2 === 0 ? `hash-${index}` : 123,
+    sourceHash: index % 2 === 0 ? `hash-${index}` : undefined,
     included: index % 2 === 0,
     rawText: `secret body ${index}`,
   }))
@@ -20212,11 +20212,7 @@ async function assertProviderRemoteCompactLifecycleBehavior() {
       type: 'responses_context_management',
       ...reusableRouteEvidence,
     }),
-    contextFragmentIdentitiesJson: JSON.stringify([
-      ...storedFragments,
-      { id: 1, sourceId: 'invalid' },
-      null,
-    ]),
+    contextFragmentIdentitiesJson: JSON.stringify(storedFragments),
   }]
   effects.length = 0
   const reuseSettings = Object.freeze({
@@ -20308,6 +20304,20 @@ async function assertProviderRemoteCompactLifecycleBehavior() {
     },
     options: { enabled: false, maxBytes: 4096 },
   }, 'state reuse preserves event identity, legacy payload, and runtime-log options')
+
+  const validState = activeStates[0]
+  for (const fragments of [
+    [...storedFragments, { id: 'over-limit', sourceId: 'source' }],
+    [{ id: 1, sourceId: 'invalid' }], [null],
+    [{ id: 'fragment', sourceId: 'source', sourceHash: 123 }],
+  ]) {
+    activeStates = [{ ...validState, contextFragmentIdentitiesJson: JSON.stringify(fragments) }]
+    assert.deepEqual(await lifecycle.resolvePreviousState({
+      conversationId: 'compact-reuse-conversation', providerId: 'compact-provider', model: 'requested-model',
+      settings: reuseSettings, ...reusableRouteEvidence,
+    }), {}, 'corrupt or unbounded persisted fragments cannot silently alter continuation semantics')
+  }
+  activeStates = [validState]
 
   const deniedStoredEvidenceCases = [
     {

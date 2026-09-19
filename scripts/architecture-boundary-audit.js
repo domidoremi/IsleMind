@@ -1975,7 +1975,7 @@ const requiredContracts = [
       ['src/services/chatMcpRevisionUtils.ts', /调用状态：\$\{input\.ok \? 'ok' : 'failed'\}/],
       ['src/modules/providers/providerRemoteCompactLifecycle.ts', /estimatedSavedTokens: estimateRemoteCompactSavedTokens\(input\.inputTokens, input\.outputTokens\)/],
       ['src/modules/providers/providerRemoteCompactLifecycle.ts', /status: 'completed'/],
-      ['src/modules/providers/providerRemoteCompactLifecycle.ts', /id: `compact-state-\$\{input\.responseId\}`/],
+      ['src/modules/providers/providerRemoteCompactLifecycle.ts', /id: `compact-state-\$\{JSON\.stringify\(\[input\.conversationId, record\.providerId, record\.model, input\.responseId\]\)\}`/],
       ['src/modules/assistant-runtime/application/assistantConversationRequestPlanningRuntime.ts', /dependencies\.resolvePreviousCompactState\(\{/],
       ['src/modules/assistant-runtime/application/assistantConversationFinalizationRuntime.ts', /dependencies\.recordRemoteCompactCompleted\(\{/],
       ['src/modules/assistant-runtime/application/assistantConversationFinalizationRuntime.ts', /dependencies\.recordRemoteCompactFailed\(\{/],
@@ -12416,7 +12416,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "function compactStateMatchesInput(state) { const item = parseCompactStateItem(state.compactItemJson); if (item.strategy !== 'native-openai-responses') return false; if (item.capabilityKind !== 'native-compaction') return false; if (item.remoteClassification !== 'remote-available') return false }",
         'estimatedSavedTokens: estimateRemoteCompactSavedTokens(input.inputTokens, input.outputTokens)',
         "status: 'completed'",
-        'id: `compact-state-${input.responseId}`',
+        'id: `compact-state-${JSON.stringify([input.conversationId, record.providerId, record.model, input.responseId])}`',
       ].join('\n'),
     ],
     [
