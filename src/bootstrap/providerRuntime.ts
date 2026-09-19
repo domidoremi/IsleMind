@@ -334,7 +334,7 @@ export async function streamProviderChat(
     ...(onTrace ? { onTrace } : {}),
   })
   const [{ providerChatResolutionRuntime, chatFallbackConfirmation }, { providerModelAvailabilityRuntime },
-    { requiredFallbackCapabilities }] = await Promise.all([import('./providerChatResolutionRuntime'), import('./providerModelAvailabilityRuntime'), import('@/modules/providers')])
+    { requiredFallbackCapabilities, providerFailureAvailabilityEvidence }] = await Promise.all([import('./providerChatResolutionRuntime'), import('./providerModelAvailabilityRuntime'), import('@/modules/providers')])
   const signal = request.signal ?? new AbortController().signal
   const selection = await providerChatResolutionRuntime.revalidate(request.executionConstraint, {
     preferred: { providerId: request.provider.id, model: request.requestedModel ?? request.model }, signal,
@@ -345,13 +345,13 @@ export async function streamProviderChat(
     if (signal.aborted) return { controller: new AbortController(), done: Promise.resolve() }
     throw new Error('The admitted model route changed before dispatch. Retry to re-evaluate your preference.')
   }
-  let active: { operation: ProviderModelOperation; model: string; output: boolean } | undefined
-  let terminalEvidence: ProviderModelAvailabilityEvidence = { kind: 'operational', reason: 'partial' }
+  let active: { operation: ProviderModelOperation; model: string; completed: boolean; evidence?: ProviderModelAvailabilityEvidence } | undefined
   const settle = async () => {
     const previous = active
     active = undefined
     if (previous) await providerModelAvailabilityRuntime.settleExecution(previous.operation, previous.model,
-      previous.output ? { kind: 'generation_success' } : signal.aborted ? { kind: 'operational', reason: 'cancelled' } : terminalEvidence)
+      signal.aborted ? { kind: 'operational', reason: 'cancelled' }
+        : previous.evidence ?? (previous.completed ? { kind: 'generation_success' } : { kind: 'operational', reason: 'partial' }))
   }
   const observedRequest: ProviderRuntimeChatRequest = {
     ...request, provider: selection.provider,
@@ -359,28 +359,39 @@ export async function streamProviderChat(
     confirmFallback: request.confirmFallback ?? chatFallbackConfirmation(request),
     // An admission fallback already consumed the one route-fallback attempt.
     ...(request.executionConstraint.fallbackUsed ? { allowFallback: false, settings: { ...request.settings, upstreamMaxRetries: 0 } } : {}),
+    onExecutionFailure(code) {
+      if (active) active.evidence = providerFailureAvailabilityEvidence(code)
+      request.onExecutionFailure?.(code)
+    },
     async onExecutionTarget(target) {
       await settle()
       const operation = await providerModelAvailabilityRuntime.beginExecution(target, target.attemptId)
       if (target.scope && (target.scope.scopeId !== operation.scopeId || target.scope.epoch !== operation.epoch)) throw new Error('Provider scope changed before dispatch')
-      active = { operation, model: target.model, output: false }
+      active = { operation, model: target.model, completed: false }
       await request.onExecutionTarget?.({ ...target, scope: { scopeId: operation.scopeId, epoch: operation.epoch } })
     },
   }
   try {
     const handle = await (await resolveProviderStreamRuntime()).start(observedRequest, {
-      onChunk(chunk) { if (active && chunk) active.output = true; onChunk(chunk) },
-      onDone(result) { if (active && (result.text || result.providerToolCalls?.length)) active.output = true; onDone(result) },
+      onChunk,
+      onDone(result) { if (active) active.completed = Boolean(result.text?.trim() || result.providerToolCalls?.length); onDone(result) },
       onError(error) {
-        const code = 'code' in error ? String(error.code) : ''
-        terminalEvidence = { kind: 'operational', reason: code === 'bad_auth' || code === 'missing_key' ? 'unauthorized'
-          : code === 'rate_limited' ? 'rate_limited' : code === 'timeout' ? 'timeout' : code === 'network_error' ? 'dns_tls' : 'partial' }
+        const code = 'chatErrorCode' in error ? String(error.chatErrorCode) : 'code' in error ? String(error.code) : ''
+        // A terminal error can still describe the original route after a failed fallback.
+        if (active) active.evidence ??= providerFailureAvailabilityEvidence(code)
         onError(error)
       },
       ...(onCitations ? { onCitations } : {}), ...(onTrace ? { onTrace } : {}),
     })
-    return { ...handle, done: handle.done.finally(settle) }
-  } catch (error) { await settle(); throw error }
+    return { ...handle, done: handle.done.catch((error) => {
+      if (active) active.evidence ??= { kind: 'operational', reason: 'partial' }
+      throw error
+    }).finally(settle) }
+  } catch (error) {
+    if (active) active.evidence ??= { kind: 'operational', reason: 'partial' }
+    await settle()
+    throw error
+  }
 }
 
 export async function generateProviderText(request: ProviderRuntimeChatRequest): Promise<string> {

@@ -1,3 +1,4 @@
+import { getConversationReasoningEffortOptions as getReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import type { TFunction } from 'i18next'
@@ -16,7 +17,7 @@ import type { Conversation } from '@/types/chatContracts'
 import type { AIModel, AIProvider } from '@/types/providerContracts'
 import type { CanonicalThemeId, SettingsModelDisplayAlias } from '@/types/settingsContracts'
 import { normalizeSearchText } from '@/utils/text'
-import { getReasoningControlOptions, getReasoningControlValue, getReasoningEffortOptions, modelSupportsSamplingControls, resolveReasoningControlValue } from '@/utils/modelReasoning'
+import { getReasoningControlOptions, getReasoningControlValue, modelSupportsSamplingControls, resolveReasoningControlValue } from '@/utils/modelReasoning'
 import { getProviderDisplayModel, resolveProviderModelAlias } from '@/utils/providerModels'
 import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/bootstrap/providerModelAccess'
 import { providerModelAvailabilityPort, providerModelAvailabilityIntegrationProfile } from '@/bootstrap/providerModelAvailabilityRuntime'
@@ -143,7 +144,7 @@ export function ChatOptionsPanel({
         const config = getModelConfig(upstreamModel, selectedProvider.type, selectedProvider.modelConfigs)
         const canonicalName = getChatModelCanonicalDisplayName(selectedProvider, id)
         const displayName = resolveChatModelDisplayName(selectedProvider, id, modelDisplayAliases)
-        const adapter = resolveProviderProtocolAdapter({ provider: selectedProvider, model: upstreamModel, messages: [], generationParameterSources: {} })
+        const adapter = resolveProviderProtocolAdapter({ provider: selectedProvider, model: upstreamModel, requestedModel: id, messages: [], generationParameterSources: {} })
         const endpointVariant = resolveProviderEndpointVariant(selectedProvider)
         const current = selectModelAvailabilityEvidence({ provider: selectedProvider, modelId: upstreamModel,
           protocolAdapterId: adapter.id, endpointVariant, rows: availabilityRows })
@@ -182,7 +183,7 @@ export function ChatOptionsPanel({
   const modelEmptyTitle = selectedProvider ? t('chat.noModelsForSelectedProvider', { provider: resolveProviderDisplayName(selectedProvider, providerFallbackName) }) : t('chat.noAvailableModels')
   const selectedProviderIsCurrent = selectedProvider?.id === conversation.providerId
   const reasoningModel = currentProvider ? resolveProviderModelAlias(currentProvider, conversation.model ?? '') : conversation.model ?? ''
-  const reasoningOptions = getReasoningEffortOptions(currentProvider, reasoningModel)
+  const reasoningOptions = getReasoningEffortOptions(currentProvider, conversation.model ?? '')
   const selectedReasoningControlValue = getReasoningControlValue(conversation.reasoningEffort)
   const currentModelConfig = getModelConfig(reasoningModel, currentProvider?.type, currentProvider?.modelConfigs)
   const reasoningParameterEntry = currentProvider && conversation.model ? getProviderParameterEntry(currentProvider, conversation.model, 'reasoning') : undefined

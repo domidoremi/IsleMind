@@ -424,7 +424,7 @@ export function IsleInput({
     : fieldFamily === 'material'
       ? fieldExpression?.border === 'none' ? 0 : 1
       : 0
-  const fieldRadius = fieldExpression?.shape === 'capsule'
+  const fieldRadius = multiline ? palette.ui.radius.controlLarge : fieldExpression?.shape === 'capsule'
     ? palette.ui.radius.chip
     : fieldExpression?.shape === 'material'
       ? design?.semantic.radius.medium ?? controlRadius(size, palette)

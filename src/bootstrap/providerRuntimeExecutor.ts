@@ -1067,6 +1067,8 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
       })
       attemptObserved = true
 
+      input.req.onExecutionFailure?.(classifyHttpStatus(response.status, '', input.req.model, input.req.provider))
+
       const canRetryStatus = classifyProviderHealthCheckError({ status: response.status }).retryable
       if (isAnthropicWireRequest(input.req)) {
         const errorText = await input.transport.readResponseText(response)
@@ -1657,6 +1659,11 @@ export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput
 
 async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise<boolean> {
   throwIfProviderRetryAborted(input.controller.signal)
+  if (input.status && input.status >= 400) {
+    input.req.onExecutionFailure?.(classifyHttpStatus(input.status, input.responseText, input.req.model, input.req.provider))
+  } else if (input.emptyResponse) {
+    input.req.onExecutionFailure?.('unknown')
+  }
   let plan = await resolveRuntimeFallbackPlan({
     req: input.req,
     status: input.status,
@@ -1809,6 +1816,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     })
     const selectedResponseText = await input.transport.readResponseText(selectedResponse)
     throwIfProviderRetryAborted(input.controller.signal)
+    selectedReq.onExecutionFailure?.(classifyHttpStatus(selectedResponse.status, selectedResponseText, selectedReq.model, selectedReq.provider))
     await input.fallbackEffects.recordRouteFailure(
       selectedRoute,
       selectedResponse.status,
@@ -1873,6 +1881,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       ...(selectedReq.usageContext?.runId ? { runId: selectedReq.usageContext.runId } : {}),
       ...(selectedResult.usage ? { usage: selectedResult.usage } : {}),
     })
+    selectedReq.onExecutionFailure?.('unknown')
     await input.fallbackEffects.recordRouteFailure(
       selectedRoute,
       selectedResponse.status,
@@ -2311,6 +2320,11 @@ function providerOperationCodeToChatErrorCode(code: ProviderOperationCode): Chat
     case 'missing_key':
     case 'credential_mismatch':
     case 'bad_auth':
+    case 'access_denied':
+    case 'client_restricted':
+    case 'invalid_request':
+    case 'endpoint_unavailable':
+    case 'upstream_error':
     case 'bad_base_url':
     case 'model_unavailable':
     case 'network_error':
@@ -2319,7 +2333,7 @@ function providerOperationCodeToChatErrorCode(code: ProviderOperationCode): Chat
     case 'max_tokens_exceeded':
       return code
     case 'models_endpoint_unavailable':
-      return 'model_unavailable'
+      return 'endpoint_unavailable'
     case 'ok':
     case 'empty_models':
     case 'unknown':

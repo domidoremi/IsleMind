@@ -10,7 +10,7 @@ import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { ConversationMetrics } from '@/modules/conversations'
 import { ProviderBrandIcon, resolveProviderBrand } from '@/components/ui/ProviderBrandIcon'
-import { getProviderDisplayModel } from '@/utils/providerModels'
+import { getProviderCompactModel, getProviderDisplayModel, resolveProviderModelAlias } from '@/utils/providerModels'
 
 import type { ModelAccessSettings } from './chatModelSelection'
 import { getProviderHeaderState } from './conversationHeaderState'
@@ -90,7 +90,8 @@ export function FloatingChrome({
   const [headerHeight, setHeaderHeight] = useState(0)
   const [contextCapacityOpen, setContextCapacityOpen] = useState(false)
   const header = getProviderHeaderState(conversation, t)
-  const modelTitle = getProviderDisplayModel(provider, conversation.model)
+  const modelTitle = getProviderCompactModel(provider, conversation.model ?? '')
+  const modelIdentity = `${provider?.name ?? ''} · ${getProviderDisplayModel(provider, conversation.model)} · ${provider ? resolveProviderModelAlias(provider, conversation.model ?? '') : conversation.model}`
   const chromeTopPadding = visualTopInset + topChromeInset + FLOATING_CHROME_SAFE_AREA_GAP
   const providerHealthTone = providerHealth?.inheritedExpired || providerHealth?.code === 'provider_missing'
     ? colors.ui.tone.danger
@@ -140,13 +141,13 @@ export function FloatingChrome({
             subtitle={providerHealth?.code ? providerHealth.title : header.title}
             subtitleColor={providerHealth?.code ? providerHealthTone.foreground : undefined}
             modelIcon={<ProviderBrandIcon brand={resolveProviderBrand(provider, conversation.model ?? '')} size={18} variant={isDark ? 'onDark' : 'onLight'} />}
-            modelStatusColor={providerHealth?.code ? providerHealthTone.foreground : colors.ui.tone.success.foreground}
+            modelStatusColor={providerHealth?.code ? providerHealthTone.foreground : colors.textTertiary}
             modelMenuOpen={showOptions}
             leadingGlyph={leadingChromeIsBack ? 'back' : 'conversation'}
             leadingLabel={leadingChromeIsBack ? t('common.back') : t('conversation.title')}
             onLeadingPress={onBack}
             onModelPress={onOpenModelPicker}
-            modelAccessibilityLabel={`${t('chat.model')}: ${modelTitle}`}
+            modelAccessibilityLabel={`${t('chat.model')}: ${modelIdentity}. ${providerHealth?.code ? providerHealth.description : t('modelAvailability.unknown')}`}
             modelAccessibilityHint={t('chat.quickModelAccessibilityHint')}
             onNewConversation={onNewConversation}
             onSettings={onSettings}

@@ -17,7 +17,6 @@ import {
 } from '@/bootstrap/conversationAssistantDetachedWorkRegistry'
 import { st } from '@/i18n/service'
 import { resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
-import { getReasoningEffortOptions } from '@/utils/modelReasoning'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 import {
   clampTraceText,
@@ -34,6 +33,7 @@ import {
   clampConversationGenerationParameter,
   resolveConversationGenerationParameterDefault,
   resolveConversationGenerationParameterRanges,
+  resolveConversationReasoningEffort,
 } from '@/bootstrap/providerConversationGeneration'
 import type { ConversationGenerationParameterRanges } from '@/modules/providers'
 import { useSettingsStore } from './settingsStore'
@@ -57,17 +57,6 @@ function generateId(): string {
 
 export function generateTitle(content: string): string {
   return content.slice(0, 50).replace(/\n/g, ' ') + (content.length > 50 ? '...' : '')
-}
-
-function selectSupportedReasoningEffort(
-  requested: Conversation['reasoningEffort'],
-  options: NonNullable<Conversation['reasoningEffort']>[]
-): Conversation['reasoningEffort'] {
-  if (!options.length) return undefined
-  if (requested === undefined) return undefined
-  if (requested && options.includes(requested)) return requested
-  if (options.includes('medium')) return 'medium'
-  return options.find((effort) => effort !== 'none' && effort !== 'minimal') ?? options[0]
 }
 
 function resolveConversationDefaultTemperature(
@@ -194,8 +183,7 @@ function buildConversationRecord(providerId: string, model: string): Conversatio
   const provider = providers.find((item) => item.id === providerId)
   const upstreamModel = provider ? resolveProviderModelAlias(provider, model) : model
   const modelConfig = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
-  const reasoningOptions = getReasoningEffortOptions(provider, upstreamModel)
-  const defaultReasoningEffort = selectSupportedReasoningEffort(DEFAULT_CONVERSATION_REASONING_EFFORT, reasoningOptions)
+  const defaultReasoningEffort = resolveConversationReasoningEffort(provider, model, DEFAULT_CONVERSATION_REASONING_EFFORT)
   const parameterRanges = resolveConversationGenerationParameterRanges({
     provider,
     model: upstreamModel,
@@ -527,7 +515,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     const upstreamModel = resolveProviderModelAlias(provider, nextModel)
     const modelConfig = getModelConfig(upstreamModel, provider.type, provider.modelConfigs)
-    const reasoningOptions = getReasoningEffortOptions(provider, upstreamModel)
     set((state) => {
       const updated = state.conversations.map((c) => {
         if (c.id !== id) return c
@@ -545,7 +532,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           modelConfig: currentModelConfig,
         })
         const currentOverrides = resolveStoredGenerationParameterOverrides(c)
-        const nextReasoningEffort = selectSupportedReasoningEffort(c.reasoningEffort, reasoningOptions)
+        const nextReasoningEffort = resolveConversationReasoningEffort(provider, nextModel, c.reasoningEffort)
         const nextRanges = resolveConversationGenerationParameterRanges({
           provider,
           model: upstreamModel,

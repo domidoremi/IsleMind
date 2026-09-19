@@ -17,14 +17,13 @@ import { sendConversationMessage as sendMessage } from '@/presentation/features/
 import { getConversationMetrics } from '@/modules/conversations'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { Attachment, Conversation, Message } from '@/types/chatContracts'
-import { resolveProviderModelAlias } from '@/utils/providerModels'
-import { providerSupportsReasoning } from '@/utils/modelReasoning'
+import { getConversationReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 import {
   CHAT_PRESENTATION_CATALOG,
   type ChatStarterDefinition,
 } from '@/presentation/features/chat/chatPresentationCatalog'
 import { resolveChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
-import { resolveProviderCapabilityManifest } from '@/bootstrap/providerConformance'
+import { resolveEffectiveProviderCapabilityManifest as resolveProviderCapabilityManifest } from '@/bootstrap/providerModelExecutionProfile'
 import { buildWorkflowSettingsParams } from './workflowPresentation'
 import {
   pickModelAccessSettings,
@@ -129,8 +128,8 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
     t,
   })
   const provider = runtimeTarget?.provider
-  const runtimeReasoningModel = provider && runtimeConversation?.model ? resolveProviderModelAlias(provider, runtimeConversation.model) : runtimeConversation?.model ?? undefined
-  const supportsReasoningQuick = !!provider && providerSupportsReasoning(provider, runtimeReasoningModel)
+  const runtimeReasoningModel = runtimeConversation?.model ?? undefined
+  const supportsReasoningQuick = !!provider && getConversationReasoningEffortOptions(provider, runtimeReasoningModel ?? '').length > 0
   const runtimeMultimodalPolicy = useMemo(
     () => resolveChatMultimodalPolicy({
       provider,

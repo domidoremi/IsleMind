@@ -1,5 +1,6 @@
 {
   "modelAvailability": {
+    "degraded": "最近一次操作失败",
     "details": "模型可用性",
     "preferred": "首选",
     "usingFallback": "正在使用临时替代模型",
@@ -1182,6 +1183,11 @@
       "missing_key": "缺少 API Key",
       "disabled_provider": "服务商未启用",
       "credential_mismatch": "密钥类型与地址不匹配",
+      "access_denied": "访问被拒绝",
+      "client_restricted": "客户端兼容性限制",
+      "invalid_request": "请求参数无效",
+      "endpoint_unavailable": "请求端点不可用",
+      "upstream_error": "服务商服务器错误",
       "bad_auth": "密钥或权限不可用",
       "bad_base_url": "服务商地址可能不正确",
       "model_unavailable": "模型不可用",
@@ -1198,6 +1204,11 @@
       "missing_key": "保存当前服务商的 Key 后，可以直接回到这里重试。",
       "disabled_provider": "在设置中启用当前服务商，或切换到其他可用服务商。",
       "credential_mismatch": "例如 MiMo 的 tp- Key 必须走 Token Plan 地址，sk- Key 必须走按量付费地址。",
+      "access_denied": "请检查账户权限；这不一定表示密钥无效。",
+      "client_restricted": "请检查服务商公布的客户端要求。兼容性请求头并不实现完整 CLI。",
+      "invalid_request": "请检查所选模型、协议和支持的参数。",
+      "endpoint_unavailable": "请检查端点和协议；这并不能证明模型不可用。",
+      "upstream_error": "服务商返回了服务器错误，请稍后重试。这不是 DNS 或本地网络故障。",
       "bad_auth": "建议重新保存 Key，并使用测试密钥确认权限。",
       "bad_base_url": "如果使用代理或 Token Plan，请确认 Base URL 包含 /v1。",
       "model_unavailable": "获取可用模型后选择一个账号有权限的模型。",
@@ -2172,6 +2183,12 @@
     }
   },
   "providerSettings": {
+    "singleTokenHint": "输入一个凭据，默认隐藏，可按需显示。",
+    "batchTokensVisible": "批量编辑时凭据可见，请每行输入一个。",
+    "hideToken": "隐藏凭据",
+    "showToken": "显示凭据",
+    "singleToken": "使用单个凭据",
+    "multipleTokens": "添加多个凭据",
     "sort": {
       "manual": "手动",
       "recent": "最近使用",
@@ -3420,6 +3437,10 @@
     "provider": "服务商",
     "currentModel": "当前模型",
     "http": {
+      "accessDenied": "请检查账户权限；这不一定表示密钥无效。",
+      "clientRestricted": "请检查服务商公布的客户端要求。兼容性请求头并不实现完整 CLI。",
+      "invalidRequest": "请检查所选模型、协议和支持的参数。",
+      "endpointUnavailable": "请检查端点和协议；这并不能证明模型不可用。",
       "badAuth": "{{provider}} 拒绝了当前密钥，请检查 API Key、账户权限或计费模式。",
       "modelUnavailable": "{{model}} 不可用，可能是模型 ID 错误或账号没有权限。",
       "modelsEndpointUnavailable": "{{provider}} 的模型列表接口不可用，请手动维护模型列表或检查 Base URL。",

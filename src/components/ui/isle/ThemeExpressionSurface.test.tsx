@@ -6,6 +6,22 @@ import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { ThemeExpressionSurface } from './ThemeExpressionSurface'
 
 describe('ThemeExpressionSurface markdown nesting', () => {
+  it.each<CanonicalThemeId>(['minimal', 'monet', 'material', 'liquid-glass'])(
+    'does not shrink the intrinsic user-message width a second time in %s',
+    async family => {
+      const screen = await render(
+        <ThemeExpressionSurface family={family} colors={getColors('light', family)} kind="message" isUser testID="user-bubble">
+          <Text>好的</Text>
+        </ThemeExpressionSurface>,
+      )
+      const style = StyleSheet.flatten(screen.getByTestId('user-bubble').props.style)
+      expect(style.maxWidth).toBe('100%')
+      expect(style.width).toBeUndefined()
+      expect(style.alignSelf).toBe('flex-end')
+      expect(screen.getByText('好的')).toBeTruthy()
+    },
+  )
+
   it.each<CanonicalThemeId>(['monet', 'material', 'liquid-glass'])(
     'keeps ordinary markdown transparent inside the %s message surface',
     async (family) => {

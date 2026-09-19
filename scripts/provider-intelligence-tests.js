@@ -3486,8 +3486,18 @@ function assertReleaseVersionsAligned() {
     'ChatWorkspace does not import provider transport test helpers directly'
   )
   assert.ok(
-    chatWorkspaceSource.includes("@/utils/providerModels"),
-    'ChatWorkspace reads model family metadata through the provider model utility boundary'
+    chatWorkspaceSource.includes("@/bootstrap/providerConversationGeneration") &&
+      chatWorkspaceSource.includes("@/bootstrap/providerModelExecutionProfile"),
+    'ChatWorkspace reads effective reasoning and capability metadata through the execution-profile composition boundary'
+  )
+  assert.match(
+    chatWorkspaceSource,
+    /const runtimeReasoningModel = runtimeConversation\?\.model \?\? undefined/,
+    'ChatWorkspace preserves the selected model for single-hop alias resolution inside the execution profile'
+  )
+  assert.ok(
+    !/resolveProviderModelAlias\(/.test(chatWorkspaceSource),
+    'ChatWorkspace must not resolve an alias before passing it to the execution profile'
   )
   assert.ok(
     !/function inferModelFamily/.test(chatWorkspaceSource),
@@ -21622,11 +21632,11 @@ async function run() {
   const copyOnlyProviderFailures = [
     { code: 'bad_auth', status: 401, responseText: `{"message":"${upstreamFailureMarker}"}` },
     { code: 'model_unavailable', status: 404, responseText: `{"message":"model_not_found ${upstreamFailureMarker}"}` },
-    { code: 'models_endpoint_unavailable', status: 404, responseText: `{"message":"${upstreamFailureMarker}"}` },
+    { code: 'models_endpoint_unavailable', status: 404, responseText: `{"message":"models endpoint missing ${upstreamFailureMarker}"}` },
     { code: 'rate_limited', status: 429, responseText: `{"message":"${upstreamFailureMarker}"}` },
-    { code: 'max_tokens_exceeded', status: 400, responseText: `{"message":"max_tokens ${upstreamFailureMarker}"}` },
+    { code: 'max_tokens_exceeded', status: 400, responseText: `{"message":"max_tokens exceeds maximum ${upstreamFailureMarker}"}` },
     { code: 'timeout', status: 408, responseText: `{"message":"${upstreamFailureMarker}"}` },
-    { code: 'bad_base_url', status: 400, responseText: `{"message":"${upstreamFailureMarker}"}` },
+    { code: 'bad_base_url', status: 400, responseText: `{"message":"invalid base url ${upstreamFailureMarker}"}` },
   ]
   assert.deepEqual(
     copyOnlyProviderFailures.map((failureCase) => failureCase.code).sort(),
@@ -22181,8 +22191,10 @@ async function run() {
   const providerFallbackCandidatesSource = fs.readFileSync(path.join(root, 'src/modules/providers/providerFallbackCandidates.ts'), 'utf8')
   const providerFallbackCandidatesBootstrapSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerFallbackCandidates.ts'), 'utf8')
   assert.ok(providerFallbackCandidatesSource.includes('projection.deprecated') && providerFallbackCandidatesSource.includes("reason: 'model_deprecated'"), 'provider fallback candidates reject deprecated model projections before retry planning')
-  assert.ok(providerFallbackCandidatesBootstrapSource.includes("contractAllows(provider, 'files'"), 'provider fallback candidate composition gates file retry candidates through the compatibility contract')
-  assert.ok(providerFallbackCandidatesBootstrapSource.includes("contractAllows(provider, 'reasoning'"), 'provider fallback candidate composition gates reasoning retry candidates through the compatibility contract')
+  const providerExecutionProfileSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerModelExecutionProfile.ts'), 'utf8')
+  assert.ok(providerFallbackCandidatesBootstrapSource.includes('resolveProviderModelExecutionProfile') && providerFallbackCandidatesBootstrapSource.includes('profile.capabilities'), 'fallback admission uses the shared execution profile')
+  assert.ok(providerExecutionProfileSource.includes("canSend(provider, 'files'"), 'the shared profile gates file retry candidates through the compatibility contract')
+  assert.ok(providerExecutionProfileSource.includes("canSend(provider, 'reasoning'"), 'the shared profile gates reasoning retry candidates through the compatibility contract')
   assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerFallbackCandidates.ts')), false, 'legacy provider fallback candidate facade is deleted after target factory composition')
   assert.ok(providerMediaAdapterSource.includes('dependencies.supportsAudio(provider)'), 'target provider audio request boundaries gate transcription and speech on the provider compatibility audio contract')
   assert.ok(!chatOptionsPanelSource.includes("config.supportsTools || provider.capabilities?.nativeTools) badges.push({ key: 'tools'"), 'chat model picker does not infer tool badges from model id alone')
@@ -23287,7 +23299,9 @@ async function run() {
     'abort during backoff does not increment or open the provider circuit'
   )
 
+  const terminalFailureCodes = []
   const terminalRetryReq = {
+    onExecutionFailure: (code) => terminalFailureCodes.push(code),
     provider: { id: 'retry-provider-terminal', type: 'openai-compatible' },
     model: `retry-terminal-${Date.now()}`,
     messages: [{ role: 'user', content: 'terminal failure' }],
@@ -23312,6 +23326,8 @@ async function run() {
     },
   })
   assert.equal(terminalRetryResponse.status, 500, 'terminal non-abort provider failures remain visible')
+  assert.deepEqual(terminalFailureCodes, ['upstream_error'], 'attempt evidence retains the precise HTTP failure before fallback or terminal projection')
+  assert.equal(await terminalRetryResponse.text(), 'terminal failure', 'failure evidence does not consume or replace the response body')
   const terminalRetryCircuitKey = providerCircuitKey(terminalRetryReq)
   assert.throws(
     () => assertProviderCircuitClosed(terminalRetryReq, terminalRetryCircuitKey),
@@ -23908,7 +23924,9 @@ codex    ${FAKE_KEY_D} "
   assert.equal(fs.existsSync(path.join(root, 'src/services/providerImportSummary.ts')), false, 'legacy provider import summary facade is deleted after consumer migration')
   assert.ok(providerSettingsContentSource.includes('clearInvalidProviders'), 'provider settings exposes invalid-provider cleanup')
   assert.ok(providerSettingsContentSource.includes("parseProviderImportDraft(text, { requireConnection: source === 'manual', preferredWireProtocol: wireProtocol })"), 'add provider form applies detected provider import drafts from clipboard and manual input')
-  assert.ok(providerSettingsContentSource.includes('onChangeText: handleKeysText'), 'add provider form routes token input through provider import auto-detection')
+  assert.match(providerSettingsContentSource, /<ProviderTokenField\s+value=\{keysText\}\s+onChangeText=\{handleKeysText\}/, 'add provider form routes token input through provider import auto-detection')
+  const providerTokenFieldSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderTokenField.tsx'), 'utf8')
+  assert.match(providerTokenFieldSource, /inputProps=\{\{ value, onChangeText, onFocus/, 'the token-field boundary forwards edits and focus without changing imported credentials')
   const addProviderFromFormStart = providerSettingsContentSource.indexOf('async function addProviderFromForm')
   const publishImportProgressStart = providerSettingsContentSource.indexOf('async function publishImportProgress', addProviderFromFormStart)
   assert.notEqual(addProviderFromFormStart, -1, 'provider settings keeps the single-provider onboarding function')
@@ -24855,7 +24873,8 @@ https://gateway.example/messages`
   assert.deepEqual(success('ok', { value: 1 }, 'group-a'), { ok: true, code: 'ok', message: 'ok', data: { value: 1 }, credentialGroupId: 'group-a' }, 'provider operation result helper preserves success result shape')
   assert.deepEqual(failure('bad_auth', 'bad key', undefined, 'group-b'), { ok: false, code: 'bad_auth', message: 'bad key', data: undefined, credentialGroupId: 'group-b' }, 'provider operation result helper preserves failure result shape')
   assert.equal(classifyHttpStatus(429, 'quota exceeded'), 'rate_limited', 'provider operation result helper classifies rate limits')
-  assert.equal(classifyHttpStatus(404, 'missing model', 'model-a'), 'model_unavailable', 'provider operation result helper classifies missing models')
+  assert.equal(classifyHttpStatus(404, 'model_not_found', 'model-a'), 'model_unavailable', 'explicit missing-model evidence invalidates model availability')
+  assert.equal(classifyHttpStatus(404, 'missing model', 'model-a'), 'endpoint_unavailable', 'ambiguous missing-model wording is not model invalidation evidence')
   assert.equal(
     classifyHttpStatus(503, JSON.stringify({ error: { code: 'model_not_found', message: 'No available channel for model MiniMax-M3 under group openclaw' } }), 'MiniMax-M3'),
     'model_unavailable',
@@ -24864,7 +24883,7 @@ https://gateway.example/messages`
   const mimoInvalidRequest = JSON.stringify({ error: { type: 'invalid_request_error', message: 'Unsupported web_search parameter', request_id: 'mimo_req_1' } })
   assert.equal(
     classifyHttpStatus(400, mimoInvalidRequest, 'mimo-v2.5-pro', { type: 'xiaomi-mimo' }),
-    'unknown',
+    'invalid_request',
     'MiMo parameter 400 errors do not masquerade as bad Base URL failures'
   )
   const formattedMimoInvalidRequest = formatProviderHttpErrorForTest(

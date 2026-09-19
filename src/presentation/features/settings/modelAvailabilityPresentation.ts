@@ -19,7 +19,9 @@ export function projectModelAvailability(input: {
   return {
     availability: current?.availability ?? 'unknown',
     advertisement: current?.advertisement ?? 'unknown',
-    labels: [...(input.offline ? ['offline'] : []), ...(input.credentialBlocked ? ['credentialBlocked'] : [])],
+    labels: [...(input.offline ? ['offline'] : []), ...(input.credentialBlocked ? ['credentialBlocked'] : []),
+      ...(current?.evidence?.evidence.kind === 'operational'
+        && !['cancelled', 'partial'].includes(current.evidence.evidence.reason) ? ['degraded'] : [])],
     blockedReason,
   }
 }

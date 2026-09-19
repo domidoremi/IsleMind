@@ -9,6 +9,12 @@ const current: ProviderModelCurrent = {
 const t = ((key: string, values?: Record<string, unknown>) => `${key}${values?.group ? `:${values.group}` : ''}`) as any
 
 describe('availability presentation is evidence, not routing authority', () => {
+  it('shows current operational failure separately from historical availability', () => {
+    const row: ProviderModelCurrent = { ...current, evidence: { schema: 'islemind.model-availability-evidence.v1', source: 'generation', observedAt: 20,
+      evidence: { kind: 'operational', reason: 'server_error' } } }
+    expect(projectModelAvailability({ current: row })).toMatchObject({ availability: 'available', labels: ['degraded'], blockedReason: undefined })
+    expect(projectModelAvailability({ current: { ...row, invalidated: true } }).labels).toEqual([])
+  })
   it('keeps offline and credential status separate from trusted model access', () => {
     expect(projectModelAvailability({ current, offline: true, credentialBlocked: true })).toEqual({
       availability: 'available', advertisement: 'present', labels: ['offline', 'credentialBlocked'], blockedReason: undefined,

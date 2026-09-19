@@ -11,9 +11,8 @@ import type { Attachment, Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { resolveChatMultimodalPolicy, type ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
 import { getProviderModelDisplayCandidates, hasProviderModelAccessRules, resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
-import { resolveProviderCapabilityManifest } from '@/bootstrap/providerConformance'
-import { providerSupportsReasoning } from '@/utils/modelReasoning'
-import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { resolveEffectiveProviderCapabilityManifest as resolveProviderCapabilityManifest } from '@/bootstrap/providerModelExecutionProfile'
+import { getConversationReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 
 import type { ComposerPanel } from './FloatingComposer'
 import { resolveChatModelDisplayName } from './chatIdentityPresentation'
@@ -129,15 +128,14 @@ export function useChatSetupWorkspaceState({
   const setupTemperature = settings.defaultTemperature
   const setupMaxTokens = settings.defaultMaxTokens
   const setupConversation = useMemo<Conversation>(() => ({ ...createSetupConversationShell(homeProvider ?? null, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), providerModelMode: setupSelectionExplicit ? 'manual' : 'inherited' }), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides, setupSelectionExplicit])
-  const setupReasoningModel = homeProvider ? resolveProviderModelAlias(homeProvider, setupModel) : setupModel
-  const supportsSetupReasoningQuick = !!homeProvider && providerSupportsReasoning(homeProvider, setupReasoningModel)
+  const supportsSetupReasoningQuick = getConversationReasoningEffortOptions(homeProvider, setupModel).length > 0
   const setupMultimodalPolicy = useMemo(
     () => resolveChatMultimodalPolicy({
       provider: homeProvider,
-      model: setupReasoningModel,
+      model: setupModel,
       resolveProviderCapabilityManifest,
     }),
-    [homeProvider, setupReasoningModel]
+    [homeProvider, setupModel]
   )
   const emptyHeaderTitle = !hasEnabledProvider ? t('chat.noProviderConnected') : hasAvailableModel ? homeProvider?.name ?? t('settings.providerManagement') : t('chat.noAvailableModels')
   const emptyHeaderSubtitle = homeProvider ? resolveChatModelDisplayName(homeProvider, setupModel, settings.modelDisplayAliases) : undefined
@@ -215,7 +213,7 @@ export function useChatSetupWorkspaceState({
     updateConversation(id, {
       providerModelMode: nextSetupConversation.providerModelMode,
       systemPrompt: setupSystemPrompt,
-      reasoningEffort: setupReasoningEffort,
+      reasoningEffort: nextSetupConversation.reasoningEffort,
       temperature: nextSetupConversation.temperature,
       topP: nextSetupConversation.topP,
       topK: nextSetupConversation.topK,
@@ -284,7 +282,7 @@ export function useChatSetupWorkspaceState({
     setupConversation,
     setupMultimodalPolicy,
     setupProviderName,
-    setupReasoningEffort,
+    setupReasoningEffort: setupConversation.reasoningEffort,
     setupSystemPrompt,
     setSetupReasoningEffort,
     setSetupSystemPrompt,

@@ -1,5 +1,5 @@
 import type { Attachment } from '@/types/chatContracts'
-import type { AIModel, AIProvider, ProviderType } from '@/types/providerContracts'
+import type { AIModel, AIProvider, ProviderType, ProviderProtocolAdapterId } from '@/types/providerContracts'
 import type { GenerationParameterKey, ReasoningEffort } from '@/core'
 import { isBedrockRuntimeProvider } from './providerAwsBedrockRouting'
 import {
@@ -254,6 +254,8 @@ export interface ProviderCapabilityManifest {
 export interface ProviderConformanceRequest {
   provider: AIProvider
   model: string
+  /** Request-local serializer decision; never a persisted model preference. */
+  protocolAdapterId?: ProviderProtocolAdapterId
   reasoningEffort?: ReasoningEffort
   maxTokens?: number
   attachments?: Attachment[]
@@ -623,6 +625,19 @@ function isMiniMaxM3Model(provider: AIProvider, model: string): boolean {
 }
 
 function inferProtocol(input: ProviderConformanceRequest, family: ProviderConformanceFamily): ProviderConformanceProtocol {
+  // When serialization has selected an adapter, conformance must inspect that
+  // wire shape rather than independently guessing from provider/model names.
+  switch (input.protocolAdapterId) {
+    case 'openai-chat': return 'openai-chat-completions'
+    case 'openai-responses':
+    case 'openai-compatible-responses': return 'openai-responses'
+    case 'anthropic': return 'anthropic-messages'
+    case 'google': return 'google-generate-content'
+    case 'openai-compatible-chat': return 'openai-compatible'
+    case 'openai-compatible-anthropic': return 'anthropic-compatible'
+    case 'xiaomi-mimo-chat': return 'xiaomi-mimo-openai-compatible'
+    case 'xiaomi-mimo-anthropic': return 'xiaomi-mimo-anthropic-compatible'
+  }
   if (family === 'openai') {
     const config = dependencies.getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
     return config.preferredEndpoint === 'responses' || input.webSearchMode === 'native' ? 'openai-responses' : 'openai-chat-completions'

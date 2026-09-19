@@ -67,16 +67,21 @@ function run() {
 
   const statusCases = [
     [401, 'invalid api key', '', undefined, 'bad_auth'],
-    [403, 'permission denied', '', undefined, 'bad_auth'],
+    [403, 'permission denied', '', undefined, 'access_denied'],
+    [403, 'Only Codex CLI clients are allowed', '', undefined, 'client_restricted'],
+    [400, 'unsupported parameter: response_format', 'model-a', undefined, 'invalid_request'],
+    [400, 'unsupported parameter: max_tokens', 'model-a', undefined, 'invalid_request'],
+    [404, 'route not found', 'model-a', undefined, 'endpoint_unavailable'],
     [408, '', '', undefined, 'timeout'],
     [504, '', '', undefined, 'timeout'],
     [429, 'quota exceeded', '', undefined, 'rate_limited'],
-    [404, 'missing model', 'model-a', undefined, 'model_unavailable'],
+    [404, 'model_not_found', 'model-a', undefined, 'model_unavailable'],
+    [404, 'missing model', 'model-a', undefined, 'endpoint_unavailable'],
     [404, 'missing endpoint', '', undefined, 'models_endpoint_unavailable'],
     [400, 'model does not exist', '', undefined, 'model_unavailable'],
     [400, 'invalid base url', '', { type: 'openai-compatible' }, 'bad_base_url'],
-    [400, 'bad request', '', { type: 'xiaomi-mimo' }, 'unknown'],
-    [500, 'upstream failed', '', undefined, 'network_error'],
+    [400, 'bad request', '', { type: 'xiaomi-mimo' }, 'invalid_request'],
+    [500, 'upstream failed', '', undefined, 'upstream_error'],
     [422, 'maximum context length exceeded', '', undefined, 'max_tokens_exceeded'],
   ]
   for (const [status, text, model, provider, code] of statusCases) {
@@ -115,7 +120,8 @@ function run() {
   const source = readSource('src/modules/providers/providerOperationResult.ts')
   assert.ok(source.includes('PROVIDER_OPERATION_RESULT_SCHEMA'), 'provider operation result source declares the schema')
   assert.ok(source.includes('messages.redact'), 'provider operation result source redacts error details through its injected boundary')
-  assert.ok(source.includes('no available channel'), 'provider operation result source centralizes model-unavailable text classification')
+  assert.equal(classifyHttpStatus(503, 'no available channel'), 'upstream_error', 'channel exhaustion alone is operational, not model-negative evidence')
+  assert.equal(classifyHttpStatus(429, 'model temporarily unavailable'), 'rate_limited', 'rate limits cannot invalidate model availability')
   assert.ok(source.includes('findRequestId'), 'provider operation result source extracts request ids')
 
   console.log('Provider operation result compatibility tests passed')

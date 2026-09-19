@@ -1,6 +1,6 @@
 import type { Attachment, MessageUsage } from '@/types/chatContracts'
 import type { MessageCitation, RetrievalSource } from '@/types/contextContracts'
-import type { AIProvider } from '@/types/providerContracts'
+import type { AIProvider, ProviderOperationCode } from '@/types/providerContracts'
 import type { WebSearchMode } from '@/types/settingsContracts'
 import type { GenerationParameterSources, ProcessTrace, ReasoningEffort } from '@/core'
 
@@ -122,6 +122,8 @@ export interface ProviderRuntimeChatRequest {
   failoverPolicy?: Partial<ProviderFailoverPolicy>
   confirmFallback?: (candidate: ProviderFailoverRoute, signal: AbortSignal) => Promise<boolean>
   onExecutionTarget?: ProviderExecutionTargetObserver
+  /** Safe attempt classification before retry/fallback; never a provider payload. */
+  onExecutionFailure?: (code: ProviderOperationCode) => void
   /** Ephemeral pre-dispatch admission fence; never copied into Conversation or messages. */
   executionConstraint?: ProviderChatExecutionConstraint
   providerToolDeclarations?: readonly unknown[]

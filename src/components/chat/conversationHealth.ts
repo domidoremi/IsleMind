@@ -64,11 +64,10 @@ export async function resolveConversationHealth(
   if (issue) {
     return health(issue.code, inheritedExpired, provider.id, providerDisplayName, t(issue.messageKey ?? issue.message, { defaultValue: issue.message }), t)
   }
-  if (provider.lastTestStatus === 'bad' && provider.lastTestCode && provider.lastTestCode !== 'ok' && (!provider.lastTestModel || provider.lastTestModel === conversation.model || provider.lastTestModel === upstreamModel)) {
-    return health(provider.lastTestCode, inheritedExpired, provider.id, providerDisplayName, describeProviderTestFailure(provider.lastTestCode, provider.lastTestMessage, t), t)
-  }
-  if (provider.lastTestStatus === 'bad') {
-    return health('model_unavailable', inheritedExpired, provider.id, providerDisplayName, describeProviderTestFailure('model_unavailable', provider.lastTestMessage, t), t)
+  const testedModel = provider.lastTestModel ? resolveProviderModelAlias(provider, provider.lastTestModel) : undefined
+  if (provider.lastTestStatus === 'bad' && (!testedModel || testedModel === upstreamModel)) {
+    const code = provider.lastTestCode && provider.lastTestCode !== 'ok' ? provider.lastTestCode : 'unknown'
+    return health(code, inheritedExpired, provider.id, providerDisplayName, describeProviderTestFailure(code, provider.lastTestMessage, t), t)
   }
   const config = getModelConfig(upstreamModel, provider.type, provider.modelConfigs)
   if (config.deprecated) {

@@ -12,7 +12,6 @@ import {
   createOpenAIResponsesRequestBodyBuilder,
   createProviderAttachmentEncodingPolicy,
   createProviderNativeSearchPolicy,
-  createProviderProtocolAdapterPolicy,
   createProviderRequestCompatibilityPolicy,
   createProviderRequestSerializationPolicy,
   createProviderRequestShapePolicy,
@@ -23,17 +22,16 @@ import {
 } from '@/modules/providers'
 import { clampMaxTokens } from './providerRequestPolicies'
 import { getOpenAIChatMaxTokensField } from '@/modules/providers'
-import { openAICompatibleReasoningReplayField, openAIResponsesNativeWebSearchTool, usesOpenAIResponses } from './providerRequestPolicies'
+import { openAICompatibleReasoningReplayField, openAIResponsesNativeWebSearchTool } from './providerRequestPolicies'
+import { providerProtocolAdapterPolicy } from './providerModelExecutionProfile'
 import { providerRequestReasoningPolicy } from './providerRequestReasoning'
 import type { Attachment } from '@/types/chatContracts'
 import type { ProviderRuntimeChatRequest } from '@/modules/providers'
 import { providerModelCapabilityCanBeSent } from './providerCapabilityMatrix'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
+import type { ProviderConformanceRequest } from '@/modules/providers'
 
 export { resolveProviderRoute } from './providerRouteBinding'
-
-const providerProtocolAdapterPolicy = createProviderProtocolAdapterPolicy<ProviderRuntimeChatRequest>({
-  usesOpenAIResponses,
-})
 
 export const resolveProviderProtocolAdapter = providerProtocolAdapterPolicy.resolve
 
@@ -152,10 +150,17 @@ const providerProtocolBodyBuilder = providerProtocolAdapterPolicy.bindBodyBuilde
 })
 
 export function buildProviderProtocolRequestBody(req: ProviderRuntimeChatRequest): Record<string, unknown> {
-  return providerProtocolBodyBuilder.build(req).body
+  return providerProtocolBodyBuilder.build(resolveRequestModel(req)).body
 }
 
-function prepareProviderProtocolRequest(req: ProviderRuntimeChatRequest): ProviderRuntimeChatRequest {
+function resolveRequestModel(req: ProviderRuntimeChatRequest): ProviderRuntimeChatRequest {
+  const requestedModel = req.requestedModel ?? req.model
+  const model = resolveProviderModelAlias(req.provider, requestedModel)
+  return model === req.model ? req : { ...req, model, requestedModel }
+}
+
+function prepareProviderProtocolRequest(input: ProviderRuntimeChatRequest): ProviderRuntimeChatRequest & Pick<ProviderConformanceRequest, 'protocolAdapterId'> {
+  const req = resolveRequestModel(input)
   const adapter = resolveProviderProtocolAdapter(req)
   let parameterPlan
   switch (adapter.bodyTarget) {
@@ -195,7 +200,7 @@ function prepareProviderProtocolRequest(req: ProviderRuntimeChatRequest): Provid
       }).parameterPlan
       break
   }
-  return { ...req, generationParameterPlan: parameterPlan }
+  return { ...req, generationParameterPlan: parameterPlan, protocolAdapterId: adapter.id }
 }
 
 export const providerRequestSerializer = createProviderRequestSerializationPolicy<

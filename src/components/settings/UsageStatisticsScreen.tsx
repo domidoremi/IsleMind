@@ -1,3 +1,4 @@
+import { formatReportedTokens, reportedTotalTokens, reportedCacheTokens } from '@/presentation/features/settings/usageTokenPresentation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Platform, ScrollView, View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
@@ -159,9 +160,9 @@ export function UsageStatisticsScreen() {
     statusLabel: usageStatusLabel(record.status, t),
     sourceLabel: usageSourceLabel(record.operationSource, t),
     tokensLabel: usageRecordTokenLabel(record, t),
-    inputTokensLabel: `${t('usage.inputTokens')}: ${formatCompactNumber(record.tokens.inputTokens ?? 0)}`,
-    outputTokensLabel: `${t('usage.outputTokens')}: ${formatCompactNumber(record.tokens.outputTokens ?? 0)}`,
-    cacheTokensLabel: `${t('usage.cacheTokens')}: ${formatCompactNumber(record.tokens.cachedInputTokens ?? ((record.tokens.cacheReadInputTokens ?? 0) + (record.tokens.cacheCreationInputTokens ?? 0)))}`,
+    inputTokensLabel: `${formatReportedTokens(record.tokens.inputTokens)} ${t('usage.inputTokens')}`,
+    outputTokensLabel: `${formatReportedTokens(record.tokens.outputTokens)} ${t('usage.outputTokens')}`,
+    cacheTokensLabel: `${formatReportedTokens(reportedCacheTokens(record.tokens))} ${t('usage.cacheTokens')}`,
     firstTokenLabel: record.firstTokenMs === undefined ? undefined : `${t('usage.firstToken')}: ${formatMilliseconds(record.firstTokenMs)}`,
     measurementLabel: measurementSourceLabel(record, t),
     latencyLabel: formatMilliseconds(record.durationMs),
@@ -438,11 +439,11 @@ function mapRequestDetail(
     ...((record.failoverCount ?? 0) > 0 ? [{ id: 'failovers', label: t('usage.failovers'), value: formatInteger(record.failoverCount ?? 0), tone: 'warning' as const }] : []),
     { id: 'source', label: t('usage.requestSource'), value: usageSourceLabel(record.operationSource, t) },
     { id: 'measurement', label: t('usage.measurementSource'), value: measurementSourceLabel(record, t) },
-    { id: 'input', label: t('usage.inputTokens'), value: formatInteger(tokens.inputTokens ?? 0) },
-    { id: 'output', label: t('usage.outputTokens'), value: formatInteger(tokens.outputTokens ?? 0) },
-    { id: 'total', label: t('usage.totalTokens'), value: formatInteger(usageRecordTotalTokens(record)) },
-    { id: 'cache', label: t('usage.cacheTokens'), value: formatInteger(tokens.cachedInputTokens ?? ((tokens.cacheReadInputTokens ?? 0) + (tokens.cacheCreationInputTokens ?? 0))) },
-    { id: 'reasoning', label: t('usage.reasoningTokens'), value: formatInteger(tokens.reasoningTokens ?? 0) },
+    { id: 'input', label: t('usage.inputTokens'), value: formatReportedTokens(tokens.inputTokens) },
+    { id: 'output', label: t('usage.outputTokens'), value: formatReportedTokens(tokens.outputTokens) },
+    { id: 'total', label: t('usage.totalTokens'), value: formatReportedTokens(reportedTotalTokens(tokens)) },
+    { id: 'cache', label: t('usage.cacheTokens'), value: formatReportedTokens(reportedCacheTokens(tokens)) },
+    { id: 'reasoning', label: t('usage.reasoningTokens'), value: formatReportedTokens(tokens.reasoningTokens) },
     { id: 'latency', label: t('usage.latency'), value: formatMilliseconds(record.durationMs) },
     ...(record.firstTokenMs === undefined ? [] : [{ id: 'first-token', label: t('usage.firstToken'), value: formatMilliseconds(record.firstTokenMs) }]),
     ...(record.totalCostNanodollars === undefined ? [] : [{ id: 'cost', label: t('usage.estimatedCost'), value: formatUsageCost(record.totalCostNanodollars) ?? '-' }]),
@@ -573,14 +574,11 @@ function providerLabelFromId(id: string, providerById: Map<string, ReturnType<ty
 }
 
 function usageRecordTokenLabel(record: UsageRecord, t: ReturnType<typeof useTranslation>['t']): string {
-  const total = usageRecordTotalTokens(record)
+  const total = reportedTotalTokens(record.tokens)
   const source = measurementSourceLabel(record, t)
-  return `${formatCompactNumber(total)} · ${source}`
+  return `${formatReportedTokens(total)} · ${source}`
 }
 
-function usageRecordTotalTokens(record: UsageRecord): number {
-  return record.tokens.totalTokens ?? (record.tokens.inputTokens ?? 0) + (record.tokens.outputTokens ?? 0) + (record.tokens.reasoningTokens ?? 0)
-}
 
 function parsePricingRate(value: string): number {
   const parsed = Number(value.trim())

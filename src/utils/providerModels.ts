@@ -208,6 +208,16 @@ function sameProviderModelId(left: string | undefined, right: string | undefined
   return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase())
 }
 
+/** Display-only: never use this label for routing, persistence or model access. */
+export function getProviderCompactModel(provider: (Pick<AIProvider, 'modelAliases' | 'modelConfigs'> & { models?: readonly string[] }) | undefined, model: string): string {
+  const alias = provider && normalizeProviderModelAliases(provider).find(item => item.alias.toLowerCase() === model.trim().toLowerCase())
+  if (alias) return alias.alias
+  const compact = modelDisplaySuffix(model)
+  const ambiguous = [...(provider?.models ?? []), ...(provider?.modelConfigs ?? []).map(item => item.id)]
+    .some(id => id !== model && modelDisplaySuffix(id) === compact)
+  return ambiguous ? model : compact
+}
+
 function modelDisplaySuffix(model: string): string {
   const normalized = model.trim()
   const lastSegment = normalized.split('/').filter(Boolean).at(-1) ?? normalized

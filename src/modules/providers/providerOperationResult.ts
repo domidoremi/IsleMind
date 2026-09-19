@@ -90,6 +90,10 @@ export function createProviderOperationResultPolicy(messages: ProviderOperationR
     const key = (PROVIDER_HTTP_COPY_ONLY_CODE_KEYS as Partial<Record<ProviderOperationCode, string>>)[code]
     if (key === 'modelUnavailable') return t(`providerOperation.http.${key}`, { model: model || t('providerOperation.currentModel') })
     if (key) return t(`providerOperation.http.${key}`, { provider: providerName })
+    if (['access_denied', 'client_restricted', 'invalid_request', 'endpoint_unavailable', 'upstream_error'].includes(code)) {
+      return t('providerOperation.http.errorWithSummary', { provider: providerName, status,
+        detail: [t(`messageBubble.error.${code}`), detail].filter(Boolean).join(' · ') })
+    }
     if (code === 'network_error') return detail ? t('providerOperation.http.errorWithSummary', { provider: providerName, status, detail }) : t('providerOperation.http.network', { provider: providerName })
     return detail ? t('providerOperation.http.errorWithSummary', { provider: providerName, status, detail }) : t('providerOperation.http.error', { provider: providerName, status })
   }
@@ -105,20 +109,37 @@ export function createProviderOperationResultPolicy(messages: ProviderOperationR
   return { extractProviderErrorDetail, formatProviderHttpError, providerFetchFailure }
 }
 
-export function classifyHttpStatus(status: number, responseText = '', model = '', provider?: Pick<AIProvider, 'type'>): ProviderOperationCode {
-  const text = responseText.toLowerCase()
-  if (/model[_ -]?not[_ -]?found|no available channel|无可用渠道|模型[^。.,，]*无可用|model[^。.,]*unavailable|model[^。.,]*(not found|not exist|does not exist)/i.test(text)) return 'model_unavailable'
-  if (status === 401 || status === 403 || /invalid api key|unauthorized|permission/.test(text)) return 'bad_auth'
+export function classifyHttpStatus(status: number, responseText = '', model = '', _provider?: Pick<AIProvider, 'type'>): ProviderOperationCode {
+  const text = providerClassificationText(responseText)
+  // Explicit transport status wins over incidental wording in the payload.
   if (status === 408 || status === 504) return 'timeout'
-  if (status === 429 || /rate limit|too many requests|quota/.test(text)) return 'rate_limited'
-  if (/max_tokens|max_completion_tokens|maximum context|context length|too many tokens/.test(text)) return 'max_tokens_exceeded'
-  if (status === 404 && (model || text.includes('model'))) return 'model_unavailable'
-  if (status === 404) return 'models_endpoint_unavailable'
-  if (status === 400 && /model|not found|not exist/.test(text)) return 'model_unavailable'
-  if (status === 400 && provider?.type === 'xiaomi-mimo' && !/base[\s_-]?url|endpoint|unsupported url|invalid url|not found|route|path|html|404/.test(text)) return 'unknown'
-  if (status === 400) return 'bad_base_url'
-  if (status >= 500) return 'network_error'
+  if (status === 429) return 'rate_limited'
+  if (status === 401 || /invalid api key|invalid_api_key|unauthorized|authentication[_ -]?(?:failed|error)/.test(text)) return 'bad_auth'
+  if (/(?:only|restrict(?:ed|ion)?|require[ds]?|must).{0,80}(?:codex|claude.code|user.agent)|only.{0,80}clients?.{0,30}(?:allowed|supported)|(?:client|user.agent).{0,80}(?:not.allowed|unsupported|restrict)/.test(text)) return 'client_restricted'
+  if (/model[_ -]?not[_ -]?found|model[^。.,]*(not found|not exist|does not exist)/i.test(text)) return 'model_unavailable'
+  if (status < 500 && /model[^。.,]*unavailable|模型[^。.,，]*无可用/.test(text)) return 'model_unavailable'
+  if (status === 403) return 'access_denied'
+  if (/rate limit|too many requests|quota/.test(text)) return 'rate_limited'
+  if (/maximum context|context length|too many tokens|(?:max_tokens|max_completion_tokens).{0,80}(?:exceed|too (?:large|high)|at most|maximum)/.test(text)) return 'max_tokens_exceeded'
+  if (status === 404) return !model && /(?:models|missing endpoint)/.test(text) ? 'models_endpoint_unavailable' : 'endpoint_unavailable'
+  if (status === 400 && /base[\s_-]?url|unsupported url|invalid url/.test(text)) return 'bad_base_url'
+  if (status === 400 || status === 422) return 'invalid_request'
+  if (status >= 500) return 'upstream_error'
   return 'unknown'
+}
+
+function providerClassificationText(responseText: string): string {
+  const trimmed = responseText.trim()
+  if (trimmed.startsWith('<')) return ''
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return ''
+    const payload = parsed as Record<string, unknown>
+    const error = payload.error && typeof payload.error === 'object' ? payload.error as Record<string, unknown> : payload
+    // Echoed request/model fields and arbitrary metadata are not error evidence.
+    return [error.code, error.type, error.message, typeof payload.error === 'string' ? payload.error : '']
+      .map(stringValue).join(' ').toLowerCase()
+  } catch { return trimmed.toLowerCase() }
 }
 
 function stringValue(value: unknown): string { return typeof value === 'string' ? value.trim() : '' }

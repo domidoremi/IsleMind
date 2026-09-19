@@ -1,5 +1,6 @@
 {
   "modelAvailability": {
+    "degraded": "Recent operation failed",
     "details": "Model availability",
     "preferred": "Preferred",
     "usingFallback": "Using fallback",
@@ -1182,6 +1183,11 @@
       "missing_key": "Missing API Key",
       "disabled_provider": "Provider disabled",
       "credential_mismatch": "Key type and endpoint do not match",
+      "access_denied": "Access denied",
+      "client_restricted": "Client compatibility restriction",
+      "invalid_request": "Invalid request parameters",
+      "endpoint_unavailable": "Request endpoint unavailable",
+      "upstream_error": "Provider server error",
       "bad_auth": "Key or permission unavailable",
       "bad_base_url": "Provider URL may be incorrect",
       "model_unavailable": "Model unavailable",
@@ -1198,6 +1204,11 @@
       "missing_key": "Save the current provider key, then return here and retry.",
       "disabled_provider": "Enable the current provider in settings or switch to another available provider.",
       "credential_mismatch": "For example, MiMo tp- keys must use the Token Plan endpoint, while sk- keys must use the metered endpoint.",
+      "access_denied": "Check account permissions; this is not necessarily an invalid key.",
+      "client_restricted": "Check the provider’s documented client requirements. Compatibility headers do not implement a full CLI.",
+      "invalid_request": "Check the selected model, protocol and supported parameters.",
+      "endpoint_unavailable": "Check the configured endpoint and protocol; this does not prove the model is unavailable.",
+      "upstream_error": "The provider returned a server error. Retry later; this is not a DNS or local network failure.",
       "bad_auth": "Save the key again and test it to confirm permissions.",
       "bad_base_url": "If you use a proxy or Token Plan, confirm the Base URL includes /v1.",
       "model_unavailable": "Sync available models and choose one your account can use.",
@@ -2174,6 +2185,12 @@
     }
   },
   "providerSettings": {
+    "singleTokenHint": "Enter one credential. It stays hidden unless you reveal it.",
+    "batchTokensVisible": "Batch editing: credentials are visible. Enter one per line.",
+    "hideToken": "Hide credential",
+    "showToken": "Show credential",
+    "singleToken": "Use one credential",
+    "multipleTokens": "Add multiple credentials",
     "sort": {
       "manual": "Manual",
       "recent": "Recently used",
@@ -3422,6 +3439,10 @@
     "provider": "Provider",
     "currentModel": "Current model",
     "http": {
+      "accessDenied": "Check account permissions; this is not necessarily an invalid key.",
+      "clientRestricted": "Check the provider’s documented client requirements. Compatibility headers do not implement a full CLI.",
+      "invalidRequest": "Check the selected model, protocol and supported parameters.",
+      "endpointUnavailable": "Check the configured endpoint and protocol; this does not prove the model is unavailable.",
       "badAuth": "{{provider}} rejected the current key. Check API Key, account permissions, or billing mode.",
       "modelUnavailable": "{{model}} is unavailable. The model ID may be wrong or your account may lack access.",
       "modelsEndpointUnavailable": "{{provider}} model list endpoint is unavailable. Maintain models manually or check Base URL.",

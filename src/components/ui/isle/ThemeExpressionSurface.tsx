@@ -388,7 +388,9 @@ function GlassEdgeLight({ highlight, style }: {
 
 const styles = StyleSheet.create({
   minimalBase: { minHeight: 44, minWidth: 0, maxWidth: '100%', justifyContent: 'center', position: 'relative' },
-  minimalUserMessage: { alignSelf: 'flex-end', maxWidth: '76%', paddingHorizontal: 4, paddingVertical: 8, borderRadius: 0 },
+  // MessageBubble owns the width budget. A second percentage on this intrinsic
+  // surface shrinks short text again, wrapping even two CJK glyphs vertically.
+  minimalUserMessage: { alignSelf: 'flex-end', paddingHorizontal: 4, paddingVertical: 8, borderRadius: 0 },
   minimalAssistantMessage: { width: '100%', paddingVertical: 8, paddingLeft: 2, paddingRight: 2 },
   minimalContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 5, minHeight: 0, overflow: 'hidden' },
   minimalMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', overflow: 'hidden' },
@@ -399,7 +401,7 @@ const styles = StyleSheet.create({
   monetBase: { minHeight: 48, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderTopLeftRadius: 16, borderTopRightRadius: 9, borderBottomRightRadius: 18, borderBottomLeftRadius: 11, paddingHorizontal: 11, paddingVertical: 8 },
   monetChrome: { minHeight: 50, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 14 },
   monetComposer: { marginHorizontal: 0, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 14 },
-  monetUserMessage: { alignSelf: 'flex-end', maxWidth: '84%', marginRight: 4, borderTopLeftRadius: 22, borderTopRightRadius: 10, borderBottomRightRadius: 9, borderBottomLeftRadius: 16 },
+  monetUserMessage: { alignSelf: 'flex-end', marginRight: 4, borderTopLeftRadius: 22, borderTopRightRadius: 10, borderBottomRightRadius: 9, borderBottomLeftRadius: 16 },
   // Assistant replies stay on the shared reading column: transparent flow plus
   // one identity accent instead of an inset card per message.
   monetAssistantMessage: { width: '100%', alignSelf: 'flex-start', marginTop: 2, marginBottom: 2, paddingHorizontal: 0, paddingTop: 8, paddingBottom: 4 },
@@ -424,7 +426,7 @@ const styles = StyleSheet.create({
   materialBase: { minHeight: 48, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
   materialChrome: { minHeight: 50, borderRadius: 12, paddingHorizontal: 0, paddingVertical: 0 },
   materialComposer: { marginHorizontal: 0, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 12 },
-  materialUserMessage: { alignSelf: 'flex-end', maxWidth: '78%', marginRight: 4, borderTopLeftRadius: 20, borderTopRightRadius: 5, borderBottomRightRadius: 20, borderBottomLeftRadius: 20, paddingHorizontal: 15, paddingVertical: 10 },
+  materialUserMessage: { alignSelf: 'flex-end', marginRight: 4, borderTopLeftRadius: 20, borderTopRightRadius: 5, borderBottomRightRadius: 20, borderBottomLeftRadius: 20, paddingHorizontal: 15, paddingVertical: 10 },
   // Assistant replies share the reading column with a single tonal wash; no
   // per-message card, no inset margins, no decorative indicator rail.
   materialAssistantMessage: { width: '100%', alignSelf: 'flex-start', marginTop: 2, marginBottom: 2, borderRadius: 12, paddingHorizontal: 0, paddingTop: 9, paddingBottom: 4, backgroundColor: 'transparent' },
@@ -443,7 +445,7 @@ const styles = StyleSheet.create({
   glassBase: { minHeight: 50, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, position: 'relative' },
   glassChrome: { minHeight: 50, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 16 },
   glassComposer: { marginHorizontal: 0, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 16 },
-  glassUserMessage: { alignSelf: 'flex-end', maxWidth: '80%', marginRight: 4, marginVertical: 4, borderRadius: 20 },
+  glassUserMessage: { alignSelf: 'flex-end', marginRight: 4, marginVertical: 4, borderRadius: 20 },
   glassAssistantMessage: { width: '100%', alignSelf: 'flex-start', marginTop: 2, marginBottom: 2, borderRadius: 14, paddingHorizontal: 0, paddingTop: 8, paddingBottom: 4, backgroundColor: 'transparent' },
   glassContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
   glassMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },

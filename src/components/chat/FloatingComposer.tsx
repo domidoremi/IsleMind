@@ -1,3 +1,4 @@
+import { getConversationReasoningEffortOptions as getReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   KeyboardAvoidingView,
@@ -28,8 +29,7 @@ import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { Attachment, Conversation, CommandReference } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
-import { getReasoningControlOptions, getReasoningControlValue, getReasoningEffortOptions, resolveReasoningControlValue } from '@/utils/modelReasoning'
-import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { getReasoningControlOptions, getReasoningControlValue, resolveReasoningControlValue } from '@/utils/modelReasoning'
 import { PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, resolveProductMobileComposerLayout } from '@/presentation/layout/productMobileLayout'
 import type { ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
 import { ComposerToolButton, ReasoningToolIcon } from './FloatingComposerControls'
@@ -181,10 +181,7 @@ export function FloatingComposer({
   })
   const promptOpen = panel === 'prompt'
   const toolsOpen = panel === 'more'
-  const reasoningOptions = useMemo(() => {
-    const reasoningModel = provider ? resolveProviderModelAlias(provider, conversation.model ?? '') : conversation.model ?? ''
-    return getReasoningEffortOptions(provider, reasoningModel)
-  }, [conversation.model, provider])
+  const reasoningOptions = useMemo(() => getReasoningEffortOptions(provider, conversation.model ?? ''), [conversation.model, provider])
   const reasoningAvailable = showReasoning && reasoningOptions.length > 0
   const reasoningControlOptions = useMemo(() => getReasoningControlOptions(reasoningOptions), [reasoningOptions])
   const promptStatusLabel = systemPrompt.trim() ? t('chat.quickPromptActive') : t('chat.quickPromptEmpty')

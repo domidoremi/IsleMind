@@ -1,5 +1,6 @@
 {
   "modelAvailability": {
+    "degraded": "直近の操作に失敗しました",
     "details": "モデルの利用可否",
     "preferred": "優先",
     "usingFallback": "一時的な代替モデルを使用中",
@@ -1182,6 +1183,11 @@
       "missing_key": "API キーがありません",
       "disabled_provider": "プロバイダーが無効です",
       "credential_mismatch": "キー種別とエンドポイントが一致しません",
+      "access_denied": "アクセスが拒否されました",
+      "client_restricted": "クライアント互換性の制限",
+      "invalid_request": "リクエストパラメータが無効です",
+      "endpoint_unavailable": "リクエスト先を利用できません",
+      "upstream_error": "プロバイダーのサーバーエラー",
       "bad_auth": "キーまたは権限を利用できません",
       "bad_base_url": "プロバイダー URL が正しくない可能性があります",
       "model_unavailable": "モデルを利用できません",
@@ -1198,6 +1204,11 @@
       "missing_key": "現在のプロバイダーのキーを保存してから、ここに戻って再試行してください。",
       "disabled_provider": "設定で現在のプロバイダーを有効にするか、別の利用可能なプロバイダーへ切り替えてください。",
       "credential_mismatch": "例: MiMo の tp- キーは Token Plan の URL、sk- キーは従量課金 URL を使用します。",
+      "access_denied": "アカウント権限を確認してください。キーが無効とは限りません。",
+      "client_restricted": "プロバイダーが指定するクライアント要件を確認してください。互換ヘッダーは CLI 全体を再現しません。",
+      "invalid_request": "選択したモデル、プロトコル、対応パラメータを確認してください。",
+      "endpoint_unavailable": "エンドポイントとプロトコルを確認してください。モデルが利用不可とは限りません。",
+      "upstream_error": "サーバーエラーです。後で再試行してください。DNS や端末のネットワーク障害とは異なります。",
       "bad_auth": "キーを保存し直し、テストで権限を確認してください。",
       "bad_base_url": "プロキシや Token Plan を使う場合、Base URL に /v1 が含まれるか確認してください。",
       "model_unavailable": "利用可能モデルを同期し、アカウントで使えるモデルを選んでください。",
@@ -2170,6 +2181,12 @@
     }
   },
   "providerSettings": {
+    "singleTokenHint": "認証情報を1つ入力してください。表示するまで非表示です。",
+    "batchTokensVisible": "一括編集では認証情報が表示されます。1行に1つ入力してください。",
+    "hideToken": "認証情報を隠す",
+    "showToken": "認証情報を表示",
+    "singleToken": "1つの認証情報を使用",
+    "multipleTokens": "複数の認証情報を追加",
     "sort": {
       "manual": "手動",
       "recent": "最近使用",
@@ -3418,6 +3435,10 @@
     "provider": "プロバイダー",
     "currentModel": "現在のモデル",
     "http": {
+      "accessDenied": "アカウント権限を確認してください。キーが無効とは限りません。",
+      "clientRestricted": "プロバイダーが指定するクライアント要件を確認してください。互換ヘッダーは CLI 全体を再現しません。",
+      "invalidRequest": "選択したモデル、プロトコル、対応パラメータを確認してください。",
+      "endpointUnavailable": "エンドポイントとプロトコルを確認してください。モデルが利用不可とは限りません。",
       "badAuth": "{{provider}} が現在のキーを拒否しました。API キー、アカウント権限、課金モードを確認してください。",
       "modelUnavailable": "{{model}} は利用できません。モデル ID が誤っているか、アカウントに権限がない可能性があります。",
       "modelsEndpointUnavailable": "{{provider}} のモデル一覧エンドポイントは利用できません。モデルを手動管理するか Base URL を確認してください。",

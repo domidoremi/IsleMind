@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
+import { ProviderTokenField } from './ProviderTokenField'
 import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { ISLE_MIN_TOUCH_TARGET, IsleField, IsleIconButton, IsleProgress } from '@/components/ui/isle'
@@ -2351,11 +2352,7 @@ function ProviderFormModal({
                 ) : null}
               </View>
               <View onLayout={rememberFieldLayout('tokens')}>
-                <IsleField
-                  label={t('providerSettings.tokens')}
-                  note={t('providerSettings.tokensNote')}
-                  inputProps={{ value: keysText, onChangeText: handleKeysText, onFocus: () => markInputFocused('tokens'), placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 64 : 80, maxHeight: compact ? 96 : 124 } }}
-                />
+                <ProviderTokenField value={keysText} onChangeText={handleKeysText} onFocus={() => markInputFocused('tokens')} />
               </View>
               <IslePressable
                 haptic

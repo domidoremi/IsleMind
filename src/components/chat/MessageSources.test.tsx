@@ -1,4 +1,3 @@
-import type { PressableProps } from 'react-native'
 import { StyleSheet } from 'react-native'
 import { fireEvent, render } from '@testing-library/react-native'
 import { createInstance, type TFunction } from 'i18next'
@@ -14,16 +13,10 @@ const i18n = createInstance()
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (...args: Parameters<TFunction>) => mockT(...args) }) }))
 jest.mock('@/hooks/useAppTheme', () => ({
-  useAppTheme: () => ({ colors: jest.requireActual('@/theme/colors').getColors('light', 'minimal') }),
+  useAppTheme: () => ({ colors: jest.requireActual('@/theme/colors').getColors('light', 'minimal'), canonicalThemeId: 'minimal' }),
 }))
+jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke: {} }))
-jest.mock('@/components/ui/isle', () => {
-  const { Pressable } = jest.requireActual('react-native')
-  return {
-    ISLE_MIN_TOUCH_TARGET: 44,
-    IslePressable: ({ haptic: _haptic, ...props }: PressableProps & { haptic?: boolean }) => <Pressable {...props} />,
-  }
-})
 
 const citations: MessageCitation[] = Array.from({ length: 7 }, (_, index) => ({
   id: `source-${index}`, type: 'knowledge', title: `Source ${index + 1}`, documentId: `document-${index}`,

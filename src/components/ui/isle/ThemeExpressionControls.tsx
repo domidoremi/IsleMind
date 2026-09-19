@@ -124,7 +124,8 @@ export function ThemeInputExpressionBody({ family, colors, prefix, input, suffix
 
   return (
     <View testID="theme-input-body-liquid-glass" style={styles.inputBody}>
-      <View {...decorativeAccessibility} style={[styles.glassInputPlane, { borderColor: colors.ui.actionBar.itemBorder }]} />
+      <View {...decorativeAccessibility} style={[styles.glassInputPlane, { borderColor: colors.ui.actionBar.itemBorder,
+        borderRadius: multiline ? colors.ui.radius.controlLarge : 999, left: -8, right: -8 }]} />
       {content}
     </View>
   )

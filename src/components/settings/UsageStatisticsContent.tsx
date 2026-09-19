@@ -845,7 +845,7 @@ function RequestRow({ item, compact, includeEstimates, accessibilityLabel, onPre
   const { colors } = useAppTheme()
   const tone = statusTone(item.status, colors)
   return (
-    <IslePressable accessibilityLabel={accessibilityLabel} onPress={onPress} style={[styles.requestRow, { minHeight: compact ? 94 : 82 }]}>
+    <IslePressable accessibilityLabel={accessibilityLabel} onPress={onPress} style={[styles.requestRow, compact && { flexWrap: 'wrap' }, { minHeight: compact ? 94 : 82 }]}>
       <View style={styles.requestPrimary}>
         <View style={styles.rowTitleLine}>
           <Text numberOfLines={1} style={[styles.rowTitle, { color: colors.text }]}>{item.modelLabel}</Text>
@@ -855,21 +855,21 @@ function RequestRow({ item, compact, includeEstimates, accessibilityLabel, onPre
         <Text numberOfLines={1} style={[styles.rowMeta, { color: colors.textSecondary }]}>{item.providerLabel} · {item.sourceLabel}</Text>
         {item.measurementLabel ? <Text numberOfLines={1} style={[styles.rowMeta, { color: colors.textTertiary }]}>{item.measurementLabel}</Text> : null}
       </View>
-      <View style={[styles.requestMetrics, compact && styles.requestMetricsCompact]}>
-        <Text numberOfLines={1} style={[styles.metricText, { color: colors.textSecondary }]}>{item.tokensLabel}</Text>
-        {item.inputTokensLabel || item.outputTokensLabel ? (
-          <Text numberOfLines={1} style={[styles.metricText, { color: colors.textTertiary }]}>
-            {[item.inputTokensLabel, item.outputTokensLabel].filter(Boolean).join(' / ')}
-          </Text>
-        ) : null}
-        {item.cacheTokensLabel ? <Text numberOfLines={1} style={[styles.metricText, { color: colors.textTertiary }]}>{item.cacheTokensLabel}</Text> : null}
-        <Text numberOfLines={1} style={[styles.metricText, { color: colors.textSecondary }]}>{item.latencyLabel}</Text>
-        {item.firstTokenLabel ? <Text numberOfLines={1} style={[styles.metricText, { color: colors.textTertiary }]}>{item.firstTokenLabel}</Text> : null}
-        {includeEstimates && item.estimatedCostLabel ? <Text numberOfLines={1} style={[styles.metricText, { color: colors.textSecondary }]}>{item.estimatedCostLabel}</Text> : null}
-      </View>
       <View style={styles.requestTime}>
         <Text numberOfLines={1} style={[styles.timeLabel, { color: colors.textTertiary }]}>{item.timestampLabel}</Text>
         <AppIcon name="arrow-right" color={colors.textTertiary} size={15} />
+      </View>
+      <View style={[styles.requestMetrics, compact && styles.requestMetricsCompact]}>
+        <Text style={[styles.metricText, { color: colors.textSecondary }]}>{item.tokensLabel}</Text>
+        {item.inputTokensLabel || item.outputTokensLabel ? (
+          <Text style={[styles.metricText, { color: colors.textTertiary }]}>
+            {[item.inputTokensLabel, item.outputTokensLabel].filter(Boolean).join(' / ')}
+          </Text>
+        ) : null}
+        {item.cacheTokensLabel ? <Text style={[styles.metricText, { color: colors.textTertiary }]}>{item.cacheTokensLabel}</Text> : null}
+        <Text style={[styles.metricText, { color: colors.textSecondary }]}>{item.latencyLabel}</Text>
+        {item.firstTokenLabel ? <Text style={[styles.metricText, { color: colors.textTertiary }]}>{item.firstTokenLabel}</Text> : null}
+        {includeEstimates && item.estimatedCostLabel ? <Text style={[styles.metricText, { color: colors.textSecondary }]}>{item.estimatedCostLabel}</Text> : null}
       </View>
     </IslePressable>
   )
@@ -1331,7 +1331,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   requestMetricsCompact: {
-    width: 78,
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    alignItems: 'flex-start',
   },
   metricText: {
     maxWidth: '100%',

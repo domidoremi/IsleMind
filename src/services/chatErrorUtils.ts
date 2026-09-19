@@ -53,6 +53,12 @@ function hasProviderHttpStatusDetail(message: string): boolean {
  */
 export function toUserFacingError(message: string, code: ChatErrorCode = classifyChatError(message)): string {
   switch (code) {
+    case 'access_denied':
+    case 'client_restricted':
+    case 'invalid_request':
+    case 'endpoint_unavailable':
+    case 'upstream_error':
+      return composeUserFacingError(st(`messageBubble.error.${code}`), message)
     case 'bad_auth':
       return st('chatRunner.userError.badAuth')
     case 'credential_mismatch':

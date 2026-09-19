@@ -1,6 +1,7 @@
 module.exports = function (api) {
-  api.cache(true)
+  const isTest = api.env('test')
   return {
     presets: ['babel-preset-expo'],
+    ...(isTest ? { plugins: ['@babel/plugin-proposal-dynamic-import'] } : {}),
   }
 }

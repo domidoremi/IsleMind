@@ -19,6 +19,19 @@ export interface ProviderModelAvailabilityTransition extends ProviderModelAvaila
 }
 
 /** This is one admission input, never a replacement for capability/access/routing policy. */
+export function providerFailureAvailabilityEvidence(code: string): ProviderModelAvailabilityEvidence {
+  if (code === 'model_unavailable') return { kind: 'model_invalidated' }
+  return { kind: 'operational', reason:
+    code === 'bad_auth' || code === 'missing_key' || code === 'credential_mismatch' ? 'unauthorized'
+      : code === 'access_denied' || code === 'client_restricted' || code === 'provider_conformance_blocked' ? 'policy_blocked'
+        : code === 'rate_limited' ? 'rate_limited'
+          : code === 'timeout' ? 'timeout'
+            : code === 'network_error' ? 'dns_tls'
+              : code === 'upstream_error' ? 'server_error'
+                : code === 'endpoint_unavailable' || code === 'models_endpoint_unavailable' || code === 'bad_base_url' ? 'generic_not_found'
+                  : code === 'invalid_request' ? 'unsupported' : 'partial' }
+}
+
 export function isProviderModelAvailabilityBlocked(availability: ProviderModelAvailability): boolean {
   return availability === 'unavailable' || availability === 'retired'
 }

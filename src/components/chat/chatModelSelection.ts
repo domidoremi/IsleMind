@@ -2,6 +2,7 @@ import {
   clampConversationGenerationParameter,
   resolveConversationGenerationParameterDefault,
   resolveConversationGenerationParameterRanges,
+  resolveConversationReasoningEffort,
 } from '@/bootstrap/providerConversationGeneration'
 import {
   getPolicyAllowedProviderModels as getAccessAllowedProviderModels,
@@ -155,11 +156,12 @@ export function createSetupConversationShell(
   overrides: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'maxTokens'>> = {}
 ): Conversation {
   const upstreamModel = provider ? resolveProviderModelAlias(provider, model) : model
+  const effectiveReasoningEffort = resolveConversationReasoningEffort(provider, model, reasoningEffort)
   const config = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
   const parameterRanges = resolveConversationGenerationParameterRanges({
     provider,
     model: upstreamModel,
-    reasoningEffort,
+    reasoningEffort: effectiveReasoningEffort,
     temperature,
     maxTokens,
     modelConfig: config,
@@ -173,7 +175,7 @@ export function createSetupConversationShell(
     systemPrompt,
     temperature: resolveConversationGenerationParameterDefault('temperature', parameterRanges, { temperature }) ?? DEFAULT_SETUP_TEMPERATURE,
     topP: resolveConversationGenerationParameterDefault('topP', parameterRanges) ?? 1,
-    reasoningEffort,
+    reasoningEffort: effectiveReasoningEffort,
     maxTokens: resolveConversationGenerationParameterDefault('maxTokens', parameterRanges, { maxTokens }) ?? config.defaultMaxTokens,
     messages: [],
     createdAt: 0,
