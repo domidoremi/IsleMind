@@ -6,6 +6,7 @@ import type {
   BuiltInCapabilityExecutionResult,
   BuiltInCapabilityOutcome,
   BuiltInCapabilityOutcomeCode,
+  BuiltInCapabilityFailureDetails,
   BuiltInCapabilityToolName,
   BuiltInNetworkTargetAdmission,
   BuiltInRemoteWebCrawlResult,
@@ -923,6 +924,7 @@ function failureResult(
       code: error.code,
       message: error.message,
       retryable: error.retryable,
+      details: error.details,
       startedAt,
       dependencies,
     })
@@ -944,6 +946,7 @@ function typedFailureResult(input: {
   code: Exclude<BuiltInCapabilityOutcomeCode, 'completed'>
   message: string
   retryable: boolean
+  details?: BuiltInCapabilityFailureDetails
   metadata?: Record<string, unknown>
   startedAt: number
   dependencies: BuiltInCapabilityAdapterDependencies
@@ -953,6 +956,7 @@ function typedFailureResult(input: {
     code: input.code,
     retryable: input.retryable,
     message,
+    ...(input.details ? { details: input.details } : {}),
   }
   const completedAt = now(input.dependencies)
   const errorCode = externalErrorCode(input.code)
@@ -973,10 +977,10 @@ function typedFailureResult(input: {
       completedAt,
       content: message,
       status: input.code === 'cancelled' ? 'cancelled' : skipped ? 'skipped' : 'error',
-      metadata: { ...input.metadata, capabilityOutcome: input.code },
+      metadata: { ...input.metadata, capabilityOutcome: input.code, ...(input.details ? { failureDetails: input.details, retryable: input.retryable } : {}) },
     },
     errorCode,
-    metadata: { ...input.metadata, capabilityOutcome: input.code },
+    metadata: { ...input.metadata, capabilityOutcome: input.code, ...(input.details ? { failureDetails: input.details, retryable: input.retryable } : {}) },
   })
   return { ...normalized, capabilityOutcome: outcome }
 }

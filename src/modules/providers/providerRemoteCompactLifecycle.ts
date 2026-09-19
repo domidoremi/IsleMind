@@ -74,6 +74,7 @@ export interface ProviderRemoteCompactRuntimeEventInput {
 }
 
 export interface ProviderRemoteCompactLifecycleDependencies {
+  readonly compactStatePersistenceAvailable?: boolean
   recordCompactUsage(input: CompactUsageInput): CompactUsageRecord
   listActiveCompactStates(
     conversationId: string,
@@ -135,6 +136,34 @@ export function createProviderRemoteCompactLifecycle(
   dependencies: ProviderRemoteCompactLifecycleDependencies,
 ) {
   const compactionGuard = createContextCompactionGuardPolicy()
+  function reportStorageFallback(
+    input: Pick<ResolveProviderRemoteCompactPreviousStateInput, 'conversationId' | 'providerId' | 'model' | 'settings' | 'signal'>,
+    operation: 'read' | 'write',
+  ): void {
+    if (input.signal?.aborted) return
+    const data = {
+      status: dependencies.compactStatePersistenceAvailable === false ? 'storage_unavailable' : `storage_${operation}_failed`,
+      operation,
+      fallback: operation === 'read' ? 'no-previous-response' : 'no-new-continuation-state',
+    }
+    void dependencies.emitRuntimeEvent({
+      event: 'context.compact.decided',
+      conversationId: input.conversationId,
+      providerId: input.providerId,
+      model: input.model,
+      data,
+      legacyEvent: 'compact.request',
+      legacyData: data,
+      options: runtimeLogOptions(input.settings),
+    }).catch(() => undefined)
+  }
+  function persistState(input: ProviderRemoteCompactRecordBaseInput, state: CompactStateRecord): void {
+    if (dependencies.compactStatePersistenceAvailable === false) {
+      reportStorageFallback(input, 'write')
+      return
+    }
+    void dependencies.saveCompactState(state).catch(() => reportStorageFallback(input, 'write'))
+  }
   async function resolvePreviousState(
     input: ResolveProviderRemoteCompactPreviousStateInput,
   ): Promise<ProviderRemoteCompactPreviousState> {
@@ -142,6 +171,10 @@ export function createProviderRemoteCompactLifecycle(
     if (guardState.autoDisabled && (input.settings.remoteCompactMode ?? 'auto') !== 'required') return {}
     if ((input.settings.remoteCompactMode ?? 'auto') === 'off' || input.signal?.aborted) return {}
     if (!allowsPreviousStateReuse(input)) return {}
+    if (dependencies.compactStatePersistenceAvailable === false) {
+      reportStorageFallback(input, 'read')
+      return {}
+    }
 
     try {
       const states = await dependencies.listActiveCompactStates(
@@ -175,6 +208,7 @@ export function createProviderRemoteCompactLifecycle(
       }).catch(() => undefined)
       return { previousResponseId: state.responseId, previousFragments }
     } catch {
+      reportStorageFallback(input, 'read')
       return {}
     }
   }
@@ -197,7 +231,7 @@ export function createProviderRemoteCompactLifecycle(
 
     if (input.signal?.aborted) return
     const state = buildCompletedState(input, record, dependencies.now())
-    if (state) void dependencies.saveCompactState(state).catch(() => undefined)
+    if (state) persistState(input, state)
   }
 
   function recordFailed(input: RecordFailedProviderRemoteCompactInput): void {
@@ -218,7 +252,7 @@ export function createProviderRemoteCompactLifecycle(
 
     if (input.signal?.aborted) return
     const state = buildFailedState(input, record, dependencies.now())
-    void dependencies.saveCompactState(state).catch(() => undefined)
+    persistState(input, state)
   }
 
   function recordApplicationCompactionResult(input: {

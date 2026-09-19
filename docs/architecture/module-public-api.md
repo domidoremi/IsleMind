@@ -82,6 +82,7 @@ Current readers support current Chat rows and current storage formats. Owner-pri
 ## Model Operation Boundary
 
 - Integrations owns the immutable catalog, normalized calls, bounded receipts, schema validation, and runnable-capability admission.
+- Search failures retain safe stage/service/category, HTTP status, retryability and bounded retry timing through the existing built-in receipt. Raw URLs, credentials and response bodies are not diagnostic fields. Valid empty results are separate from disabled/missing configuration and transport failures. On Web, built-in Bing/DuckDuckGo page scraping is rejected before dispatch because those services do not grant CORS access; users must explicitly configure a supported search service or CORS-enabled Custom endpoint. Native search/fallback is unchanged. No public proxy or implicit credential forwarding is introduced.
 - Assistant Runtime owns the bounded operation loop, pending confirmation state, continuation, cancellation, and recovery.
 - Tasks owns durable authorization, permission decisions, confirmation, and idempotency.
 - Bootstrap binds concrete executors and freezes the catalog revision used by a run.

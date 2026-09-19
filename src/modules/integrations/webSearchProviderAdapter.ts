@@ -59,6 +59,12 @@ export type WebSearchProviderAdapterErrorCode =
   | 'invalid_configuration'
   | 'http_failed'
   | 'malformed_response'
+  | 'service_rejected'
+  | 'network_failed'
+  | 'dns_failed'
+  | 'tls_failed'
+  | 'timed_out'
+  | 'browser_transport_required'
 
 export class WebSearchProviderAdapterError extends Error {
   constructor(
@@ -67,6 +73,9 @@ export class WebSearchProviderAdapterError extends Error {
     readonly provider?: WebSearchProviderId,
     readonly status?: number,
     readonly retryable = false,
+    readonly service: string = provider ?? 'search',
+    readonly stage: 'configuration' | 'transport' | 'request' | 'response' = 'response',
+    readonly retryAfterMs?: number,
   ) {
     super(message)
     this.name = 'WebSearchProviderAdapterError'
@@ -83,6 +92,7 @@ export interface WebSearchProviderAdapter {
 export interface WebSearchProviderAdapterDependencies {
   resolveConfiguration(options: { signal: AbortSignal }): Promise<WebSearchProviderConfiguration>
   fetch: typeof globalThis.fetch
+  platform?: 'web' | 'native'
   now?: () => Date
 }
 
@@ -155,7 +165,14 @@ export function createWebSearchProviderAdapter(
       }
 
       if (provider.provider === 'islemind') {
+        if (dependencies.platform === 'web') {
+          // These public HTML/RSS services do not grant browser CORS access.
+          // Never route queries through an unconfigured third-party proxy.
+          throw new WebSearchProviderAdapterError('browser_transport_required',
+            'Choose a CORS-enabled search service in Search settings.', 'islemind', undefined, false, 'islemind', 'transport')
+        }
         let initialResults: WebSearchProviderSource[] = []
+        let initialFailure: unknown
         try {
           const payload = await requestProviderResults(
             provider,
@@ -170,7 +187,7 @@ export function createWebSearchProviderAdapter(
           initialResults = normalizeProviderResults(provider.provider, payload, limit)
         } catch (error) {
           if (options.signal.aborted) throw error
-          if (error instanceof WebSearchProviderAdapterError && !error.retryable) throw error
+          initialFailure = error
         }
 
         const results = await refineIsleMindSearchResults({
@@ -178,6 +195,7 @@ export function createWebSearchProviderAdapter(
             fetchImplementation,
             initialQuery: query,
             initialResults,
+            initialFailure,
             limit,
             now,
             signal: options.signal,
@@ -216,6 +234,7 @@ async function refineIsleMindSearchResults(input: {
   fetchImplementation: typeof globalThis.fetch
   initialQuery: string
   initialResults: WebSearchProviderSource[]
+  initialFailure?: unknown
   limit: number
   now: () => Date
   signal: AbortSignal
@@ -243,8 +262,13 @@ async function refineIsleMindSearchResults(input: {
     }
   } catch (error) {
     if (input.signal.aborted) throw error
+    // A different service may recover the primary request, but a failed search
+    // must never be reported as a successful search with zero matches.
+    if (!bestResults.length) throw input.initialFailure ?? error
+    return bestResults
   }
   if (bestCoverage >= ISLEMIND_SEARCH_RELEVANCE_THRESHOLD) return bestResults
+  if (!bestResults.length && input.initialFailure) throw input.initialFailure
 
   for (const query of buildSearchSuffixRefinements(input.initialQuery)) {
     throwIfAborted(input.signal)
@@ -377,9 +401,14 @@ async function requestProviderResults(
   attemptTimeoutMs?: number,
 ): Promise<Record<string, unknown>> {
   const attempt = createSearchAttemptSignal(signal, attemptTimeoutMs)
+  const service = configuration.provider === 'islemind'
+    ? isleMindEndpoint === ISLEMIND_SEARCH_FALLBACK_ENDPOINT ? 'duckduckgo-html' : 'bing-rss'
+    : configuration.provider
+  let stage: 'request' | 'response' = 'request'
   try {
     const request = buildProviderRequest(configuration, query, limit, attempt.signal, isleMindEndpoint)
     const response = await fetchImplementation(request.url, request.init)
+    stage = 'response'
     throwIfSearchAttemptUnavailable(signal, attempt)
     if (!response.ok) {
       throw new WebSearchProviderAdapterError(
@@ -388,6 +417,9 @@ async function requestProviderResults(
         configuration.provider,
         response.status,
         response.status === 408 || response.status === 429 || response.status >= 500,
+        service,
+        stage,
+        parseRetryAfter(response.headers.get('Retry-After')),
       )
     }
 
@@ -411,7 +443,9 @@ async function requestProviderResults(
       payload = await response.json()
     } catch (error) {
       throwIfSearchAttemptUnavailable(signal, attempt)
-      if (isAbortError(error)) throw error
+      // Fetch may reject while reading the body, not only before headers arrive.
+      // Only a JSON syntax failure proves the service returned malformed JSON.
+      if (!(error instanceof SyntaxError) && !(error && typeof error === 'object' && 'name' in error && error.name === 'SyntaxError')) throw error
       throw new WebSearchProviderAdapterError(
         'malformed_response',
         `${configuration.provider} web search returned invalid JSON.`,
@@ -426,13 +460,44 @@ async function requestProviderResults(
         configuration.provider,
       )
     }
+    if (payload.error) {
+      throw new WebSearchProviderAdapterError(
+        'service_rejected',
+        'The search service rejected the request.',
+        configuration.provider,
+      )
+    }
     return payload
   } catch (error) {
-    throwIfSearchAttemptUnavailable(signal, attempt)
-    throw error
+    throwIfAborted(signal)
+    if (attempt.timedOut()) {
+      throw new WebSearchProviderAdapterError('timed_out', 'Web search timed out. Try again later.', configuration.provider, undefined, true, service, stage)
+    }
+    if (error instanceof WebSearchProviderAdapterError) {
+      throw new WebSearchProviderAdapterError(error.code, error.message, configuration.provider, error.status, error.retryable, service,
+        error.code === 'invalid_configuration' ? 'configuration' : stage, error.retryAfterMs)
+    }
+    const code = transportFailureCode(error)
+    throw new WebSearchProviderAdapterError(code, 'Web search could not reach the service. Check the connection and search transport.',
+      configuration.provider, undefined, code !== 'tls_failed', service, stage)
   } finally {
     attempt.dispose()
   }
+}
+
+function transportFailureCode(error: unknown): 'dns_failed' | 'tls_failed' | 'network_failed' {
+  // Inspect only known transport codes. Never publish raw errors, URLs or bodies.
+  const value = error as { code?: unknown; cause?: { code?: unknown } } | null
+  const code = String(value?.cause?.code ?? value?.code ?? '')
+  if (/^(ENOTFOUND|EAI_AGAIN)$/.test(code)) return 'dns_failed'
+  if (/CERT|TLS|SSL|SELF_SIGNED|UNABLE_TO_VERIFY/.test(code)) return 'tls_failed'
+  return 'network_failed'
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value?.trim()) return undefined
+  const milliseconds = /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now()
+  return Number.isFinite(milliseconds) ? Math.min(86_400_000, Math.max(0, milliseconds)) : undefined
 }
 
 function createSearchAttemptSignal(
@@ -932,10 +997,6 @@ function isPlainRecord(input: unknown): input is Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false
   const prototype = Object.getPrototypeOf(input)
   return prototype === Object.prototype || prototype === null
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError'
 }
 
 function throwIfAborted(signal: AbortSignal): void {

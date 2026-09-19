@@ -1,5 +1,5 @@
 import { createProviderRemoteCompactLifecycle } from '@/modules/providers'
-import { listActiveCompactStates, saveCompactState } from '@/bootstrap/providerCompactStateRepository'
+import { listActiveCompactStates, saveCompactState, providerCompactStateRepository } from '@/bootstrap/providerCompactStateRepository'
 import { recordCompactUsage } from '@/bootstrap/providerCompactUsage'
 import { emitRuntimeEvent } from '@/services/runtimeEvents'
 
@@ -8,5 +8,6 @@ export const providerRemoteCompactLifecycle = createProviderRemoteCompactLifecyc
   listActiveCompactStates,
   saveCompactState,
   emitRuntimeEvent,
+  compactStatePersistenceAvailable: providerCompactStateRepository.persistenceAvailable,
   now: () => Date.now(),
 })

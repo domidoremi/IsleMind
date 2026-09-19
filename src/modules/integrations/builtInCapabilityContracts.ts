@@ -43,11 +43,31 @@ export type BuiltInCapabilityOutcomeCode =
   | 'idempotency_conflict'
   | 'capability_unavailable'
   | 'execution_failed'
+  | 'network_failed'
+  | 'dns_failed'
+  | 'tls_failed'
+  | 'rate_limited'
+  | 'authentication_failed'
+  | 'service_rejected'
+  | 'upstream_error'
+  | 'malformed_response'
+  | 'configuration_required'
+  | 'browser_transport_required'
+
+/** Safe search diagnostics only: never a request URL, query, credential or body. */
+export interface BuiltInCapabilityFailureDetails {
+  stage: 'configuration' | 'transport' | 'request' | 'response'
+  service: string
+  category: string
+  httpStatus?: number
+  retryAfterMs?: number
+}
 
 export interface BuiltInCapabilityOutcome {
   code: BuiltInCapabilityOutcomeCode
   retryable: boolean
   message: string
+  details?: BuiltInCapabilityFailureDetails
 }
 
 export interface BuiltInCapabilityExecutionResult extends ExternalToolExecutionResult {

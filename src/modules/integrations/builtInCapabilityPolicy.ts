@@ -2,6 +2,7 @@ import type {
   BuiltInCapabilityAdmissionDecision,
   BuiltInCapabilityAdmissionRequest,
   BuiltInCapabilityOutcomeCode,
+  BuiltInCapabilityFailureDetails,
 } from './builtInCapabilityContracts'
 
 export const BUILT_IN_FILE_READ_DEFAULT_BYTES = 64 * 1024
@@ -65,6 +66,7 @@ export class BuiltInCapabilityPolicyError extends Error {
     readonly code: Exclude<BuiltInCapabilityOutcomeCode, 'completed'>,
     message: string,
     readonly retryable = false,
+    readonly details?: BuiltInCapabilityFailureDetails,
   ) {
     super(message)
     this.name = 'BuiltInCapabilityPolicyError'

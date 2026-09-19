@@ -979,6 +979,7 @@
     "unspecifiedTime": "the requested time"
   },
   "messageBubble": {
+    "completedWithToolFailure": "Reply completed · a tool failed",
     "messageContent": "Message content",
     "attachmentCount": "{{count}} attachments",
     "emptyResponse": "The model returned no body.",
@@ -2902,6 +2903,7 @@
       "failedStatus": "Failed",
       "tapForDetails": "Tap to view details"
     },
+    "webCompactStorageWarning": "Web does not persist provider compact continuation state. Requests rebuild context without reusing a previous compact response. Conversation history is unchanged; storage failures appear in enabled runtime diagnostics.",
     "localModel": {
       "title": "Local models",
       "collapsedDetail": "{{active}} active · {{downloadable}} downloadable · {{planned}} lite strategies",
@@ -3345,7 +3347,20 @@
     "googleDone": "Google Custom Search complete.",
     "bingDone": "Bing/Azure search complete.",
     "customDone": "Custom search complete.",
-    "noResults": "Web search returned no usable results. Check the search provider, API key, endpoint, or try a more specific query.",
+    "noResults": "Search completed with no usable results. Try a different query.",
+    "failure": {
+      "configuration_required": "Configure the search service and its required credentials in Search settings.",
+      "browser_transport_required": "Built-in search pages cannot be read in a browser (CORS). Choose Google Custom Search or a CORS-enabled Custom search endpoint in Search settings.",
+      "network_failed": "Search could not connect. Check your connection; in a browser, also check that the search endpoint allows CORS.",
+      "dns_failed": "The search service address could not be resolved. Check DNS and your connection.",
+      "tls_failed": "The search service certificate could not be verified. Check the endpoint; do not disable TLS verification.",
+      "timed_out": "The search service timed out. Try again later.",
+      "rate_limited": "The search service rate limit was reached. Wait before trying again.",
+      "authentication_failed": "The search service rejected authentication. Check its configured credentials.",
+      "service_rejected": "The search service rejected this request. Check its access and endpoint requirements.",
+      "upstream_error": "The search service encountered an upstream error. Try again later.",
+      "malformed_response": "The search service returned an unsupported response. Check the endpoint and response format."
+    },
     "islemindFailedStatus": "IsleMind search is temporarily unavailable: {{status}}",
     "tavilyFailedStatus": "Tavily search failed: {{status}}",
     "googleFailedStatus": "Google search failed: {{status}}",

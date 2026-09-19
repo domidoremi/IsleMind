@@ -1,4 +1,5 @@
 import type { RetrievalSource } from '@/types/contextContracts'
+import { Platform } from 'react-native'
 import type { SearchProviderId } from '@/types/settingsContracts'
 import { useSettingsStore } from '@/store/settingsStore'
 import { st } from '@/i18n/service'
@@ -12,6 +13,7 @@ import {
   type RemoteWebSearchProviderId,
   type WebSearchProviderConfiguration,
   type WebSearchProviderResult,
+  type BuiltInCapabilityOutcomeCode,
 } from '@/modules/integrations'
 
 export interface WebSearchRuntimeResult {
@@ -29,6 +31,7 @@ export interface WebSearchRuntimeOptions {
 const webSearchProviderAdapter = createWebSearchProviderAdapter({
   resolveConfiguration: resolveWebSearchConfiguration,
   fetch: (input, init) => globalThis.fetch(input, init),
+  platform: Platform.OS === 'web' ? 'web' : 'native',
   now: () => new Date(),
 })
 
@@ -42,14 +45,16 @@ export async function searchExternalWeb(
     const result = await webSearchProviderAdapter.search({ query, limit }, { signal })
     return projectRuntimeResult(result)
   } catch (error) {
-    if (
-      error instanceof WebSearchProviderAdapterError
-      && error.code === 'http_failed'
-      && error.provider
-      && isRemoteWebSearchProvider(error.provider)
-      && error.status !== undefined
-    ) {
-      throw new Error(st(providerFailureStatusKey(error.provider), { status: error.status }))
+    if (signal.aborted) throw signal.reason ?? error
+    if (error instanceof WebSearchProviderAdapterError) {
+      const code = searchFailureOutcome(error)
+      throw new BuiltInCapabilityPolicyError(code, st(`search.failure.${code}`), error.retryable, {
+        stage: error.stage,
+        service: error.service,
+        category: code,
+        ...(error.status !== undefined ? { httpStatus: error.status } : {}),
+        ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
+      })
     }
     throw error
   }
@@ -67,10 +72,11 @@ export const builtInWebSearchPort: BuiltInWebSearchPort = {
   async search(input, options) {
     const result = await searchExternalWeb(input.query, input.limit, { signal: options.signal })
     if (!result.ok) {
+      if (result.code === 'no_results') return []
       throw new BuiltInCapabilityPolicyError(
-        'execution_failed',
+        result.code === 'empty_query' ? 'schema_invalid' : result.code === 'missing_credentials' ? 'configuration_required' : 'capability_unavailable',
         result.message || st('search.noResults'),
-        true,
+        false,
       )
     }
     return result.sources.flatMap((source) => source.url
@@ -145,7 +151,7 @@ function projectRuntimeResult(result: WebSearchProviderResult): WebSearchRuntime
           mode: result.provider,
           message: result.provider === 'bing' && result.missingConfiguration?.includes('endpoint')
             ? st('search.bingEndpointRequired')
-            : st('search.noResults'),
+            : st('search.failure.configuration_required'),
           ok: false,
           code: 'missing_credentials',
         }
@@ -186,23 +192,14 @@ function providerCompletionKey(provider: RemoteWebSearchProviderId): string {
   }
 }
 
-function providerFailureStatusKey(provider: RemoteWebSearchProviderId): string {
-  switch (provider) {
-    case 'islemind':
-      return 'search.islemindFailedStatus'
-    case 'tavily':
-      return 'search.tavilyFailedStatus'
-    case 'google':
-      return 'search.googleFailedStatus'
-    case 'bing':
-      return 'search.bingFailedStatus'
-    case 'custom':
-      return 'search.customFailedStatus'
-  }
-}
-
-function isRemoteWebSearchProvider(provider: SearchProviderId): provider is RemoteWebSearchProviderId {
-  return provider === 'islemind' || provider === 'tavily' || provider === 'google' || provider === 'bing' || provider === 'custom'
+function searchFailureOutcome(error: WebSearchProviderAdapterError): Exclude<BuiltInCapabilityOutcomeCode, 'completed'> {
+  if (error.code === 'invalid_configuration') return 'configuration_required'
+  if (error.code !== 'http_failed') return error.code
+  if (error.status === 401) return 'authentication_failed'
+  if (error.status === 429) return 'rate_limited'
+  if (error.status === 408 || error.status === 504) return 'timed_out'
+  if (error.status !== undefined && error.status >= 500) return 'upstream_error'
+  return 'service_rejected'
 }
 
 function throwIfAborted(signal: AbortSignal): void {

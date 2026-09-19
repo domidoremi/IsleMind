@@ -979,6 +979,7 @@
     "unspecifiedTime": "请求的时间"
   },
   "messageBubble": {
+    "completedWithToolFailure": "回复已完成 · 有工具执行失败",
     "messageContent": "消息内容",
     "attachmentCount": "{{count}} 个附件",
     "emptyResponse": "模型未返回正文。",
@@ -2900,6 +2901,7 @@
       "failedStatus": "失败",
       "tapForDetails": "点此查看详情"
     },
+    "webCompactStorageWarning": "Web 不持久化服务商 compact 续接状态，请求会重建上下文，不复用上次 compact 响应。对话历史不受影响；存储失败会记录到已启用的运行诊断。",
     "localModel": {
       "title": "本地模型",
       "collapsedDetail": "启用 {{active}} · 可下载 {{downloadable}} · 轻量策略 {{planned}}",
@@ -3343,7 +3345,20 @@
     "googleDone": "Google Custom Search 完成。",
     "bingDone": "Bing/Azure 搜索完成。",
     "customDone": "自定义搜索完成。",
-    "noResults": "联网搜索没有返回可用结果。请检查搜索服务商、API Key、端点，或换一个更具体的搜索词。",
+    "noResults": "搜索已完成，但没有可用结果。请尝试其他搜索词。",
+    "failure": {
+      "configuration_required": "请在搜索设置中配置搜索服务及其所需凭据。",
+      "browser_transport_required": "浏览器无法读取内置搜索网页（CORS 限制）。请在搜索设置中选择 Google Custom Search 或支持 CORS 的自定义搜索端点。",
+      "network_failed": "搜索无法连接。请检查网络；浏览器中还需确认搜索端点允许 CORS。",
+      "dns_failed": "无法解析搜索服务地址。请检查 DNS 和网络连接。",
+      "tls_failed": "无法验证搜索服务证书。请检查端点，不要关闭 TLS 验证。",
+      "timed_out": "搜索服务超时，请稍后重试。",
+      "rate_limited": "搜索服务已达到速率限制，请等待后再试。",
+      "authentication_failed": "搜索服务拒绝了身份验证，请检查所配置的凭据。",
+      "service_rejected": "搜索服务拒绝了此请求，请检查访问权限和端点要求。",
+      "upstream_error": "搜索服务发生上游错误，请稍后重试。",
+      "malformed_response": "搜索服务返回了不支持的响应，请检查端点和响应格式。"
+    },
     "islemindFailedStatus": "IsleMind 搜索暂时不可用：{{status}}",
     "tavilyFailedStatus": "Tavily 搜索失败：{{status}}",
     "googleFailedStatus": "Google 搜索失败：{{status}}",

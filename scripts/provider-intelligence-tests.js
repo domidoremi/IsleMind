@@ -20381,7 +20381,17 @@ async function assertProviderRemoteCompactLifecycleBehavior() {
     settings: reuseSettings,
     ...reusableRouteEvidence,
   }), {}, 'compact state repository failures remain fail-open')
-  assert.deepEqual(effects, ['read'], 'repository failure emits no reuse event')
+  assert.deepEqual(effects, ['read', 'event'], 'repository failure emits a storage fallback diagnostic without a reuse event')
+  assert.deepEqual(emittedEvents.at(-1), {
+    event: 'context.compact.decided',
+    conversationId: 'compact-read-failure',
+    providerId: 'compact-provider',
+    model: 'requested-model',
+    data: { status: 'storage_read_failed', operation: 'read', fallback: 'no-previous-response' },
+    legacyEvent: 'compact.request',
+    legacyData: { status: 'storage_read_failed', operation: 'read', fallback: 'no-previous-response' },
+    options: { enabled: false, maxBytes: 4096 },
+  }, 'storage failure disclosure preserves scope and log settings without response IDs or raw exceptions')
   repositoryError = undefined
 
   const contextWindowState = Object.freeze({
@@ -20523,6 +20533,7 @@ async function assertProviderRemoteCompactLifecycleBehavior() {
   assert.deepEqual(effects, ['record', 'event', 'now', 'save'], 'completed compact persistence rejection remains fire-and-forget')
   await Promise.resolve()
   await Promise.resolve()
+  assert.equal(emittedEvents.at(-1).data.status, 'storage_write_failed', 'compact persistence failure is observable without failing the reply')
   saveShouldReject = false
 
   const savedCountBeforeMissingResponse = savedStates.length
@@ -20967,7 +20978,8 @@ async function assertBuiltInSearchRuntimeBehavior() {
       { query: 'latest IsleMind status' },
     )).observation
     assert.equal(noResultToolSearch.ok, false, 'configured target built-in search without provider output returns explicit failure')
-    assert.ok(noResultToolSearch.output.includes(st('search.noResults')), 'target built-in no-output state preserves the visible no-results explanation')
+    assert.ok(noResultToolSearch.output.includes(st('search.failure.configuration_required')), 'missing search credentials preserve the actionable configuration explanation')
+    assert.equal(noResultToolSearch.metadata.capabilityOutcome, 'configuration_required', 'missing configuration is not a no-results response')
 
     let tavilyRequest
     useSettingsStore.setState({ getTavilyApiKey: async () => 'tavily-request-shape-fixture' })

@@ -42,6 +42,7 @@
     "test:source-url-safety": "node scripts/source-url-safety-tests.js",
     "test:product-experience-compatibility": "node scripts/product-experience-compatibility-tests.js",
     "test:product-mobile-layout": "node scripts/product-mobile-layout-tests.js",
+    "test:message-bubble-web-layout": "node scripts/message-bubble-web-layout-tests.js",
     "test:web-style-runtime-boundary": "node scripts/web-style-runtime-boundary-tests.js",
     "test:android-release-hardening": "node scripts/android-release-hardening-tests.js",
     "test:android-build-toolchain": "node scripts/android-build-toolchain-tests.js",

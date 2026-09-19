@@ -864,7 +864,8 @@ function MessageProcessLayer({
       />
     )
   }
-  const isError = lifecycleStage === 'error' || message.status === 'error'
+  const toolFailed = message.status === 'done' && traces.some(trace => (trace.type === 'tool' || trace.type === 'search') && trace.status === 'error')
+  const isError = lifecycleStage === 'error' || message.status === 'error' || toolFailed
   const isCancelled = lifecycleStage === 'cancelled' || message.status === 'cancelled'
   const emphasizedStatus = isCancelled || traces.some(isAgentWorkflowWaitingTrace)
   const processAccessibilityLabel = canExpand
@@ -1348,6 +1349,10 @@ function processLayerLabel(
 ): string {
   const waitingLabel = waitingProcessLayerLabel(traces, t)
   if (waitingLabel) return withProcessStageLabel(waitingLabel, traces, message.status)
+
+  if (message.status === 'done' && traces.some(trace => (trace.type === 'tool' || trace.type === 'search') && trace.status === 'error')) {
+    return t('messageBubble.completedWithToolFailure')
+  }
 
   if (lifecycle) return lifecycleProcessLayerLabel(lifecycle, t)
 

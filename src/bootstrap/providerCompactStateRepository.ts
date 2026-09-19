@@ -4,18 +4,13 @@ import {
   type ProviderCompactStateDatabase,
 } from '@/modules/providers'
 import { scheduleSqliteDatabaseOperation } from '@/platform/storage'
-import {
-  shouldUseSqliteWebFallback,
-  sqliteWebFallbackDb,
-} from '@/platform/storage/sqliteFallback'
+import { shouldUseSqliteWebFallback } from '@/platform/storage/sqliteFallback'
 
 export type { CompactStateRecord } from '@/modules/providers'
 
 export const providerCompactStateRepository = createProviderCompactStateRepository({
+  persistenceAvailable: !shouldUseSqliteWebFallback,
   openDatabase: async (databaseName) => {
-    if (shouldUseSqliteWebFallback) {
-      return sqliteWebFallbackDb as ProviderCompactStateDatabase
-    }
     return scheduleSqliteDatabaseOperation(databaseName, () => SQLite.openDatabaseAsync(databaseName, {
       useNewConnection: true,
       finalizeUnusedStatementsBeforeClosing: false,

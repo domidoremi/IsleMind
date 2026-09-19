@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
@@ -816,6 +816,11 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   return (
     <View style={{ paddingBottom: showKnowledge ? 12 : 0 }}>
       <Lead section={section} summary={summary} toggles={toggles} compact={compact} />
+      {showContext && Platform.OS === 'web' ? (
+        <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 18, marginTop: 10 }}>
+          {t('contextPanel.webCompactStorageWarning')}
+        </Text>
+      ) : null}
 
       {showContext ? (
         <View style={{ marginTop: 10 }}>
@@ -845,6 +850,11 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                   </IslePressable>
                 ))}
               </View>
+              {Platform.OS === 'web' && searchProvider === 'islemind' ? (
+                <Text accessibilityRole="alert" style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 8 }}>
+                  {t('search.failure.browser_transport_required')}
+                </Text>
+              ) : null}
             </MotiView>
           ) : null}
         </View>

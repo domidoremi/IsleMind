@@ -979,6 +979,7 @@
     "unspecifiedTime": "指定された時刻"
   },
   "messageBubble": {
+    "completedWithToolFailure": "回答完了 · ツールの失敗あり",
     "messageContent": "メッセージ内容",
     "attachmentCount": "{{count}} 件の添付",
     "emptyResponse": "モデルは本文を返しませんでした。",
@@ -2898,6 +2899,7 @@
       "failedStatus": "失敗",
       "tapForDetails": "タップして詳細を表示"
     },
+    "webCompactStorageWarning": "Web はプロバイダーの compact 継続状態を永続化しません。以前の compact 応答を再利用せずにコンテキストを再構成します。会話履歴は変更されません。ストレージ障害は有効なランタイム診断に記録されます。",
     "localModel": {
       "title": "ローカルモデル",
       "collapsedDetail": "有効 {{active}} · ダウンロード可能 {{downloadable}} · Lite 戦略 {{planned}}",
@@ -3341,7 +3343,20 @@
     "googleDone": "Google Custom Search が完了しました。",
     "bingDone": "Bing/Azure 検索が完了しました。",
     "customDone": "カスタム検索が完了しました。",
-    "noResults": "Web 検索は利用できる結果を返しませんでした。検索プロバイダー、API キー、エンドポイントを確認するか、より具体的な検索語を試してください。",
+    "noResults": "検索は完了しましたが、利用できる結果がありません。別の検索語を試してください。",
+    "failure": {
+      "configuration_required": "検索設定で検索サービスと必要な認証情報を設定してください。",
+      "browser_transport_required": "組み込み検索ページはブラウザーでは読み取れません（CORS）。検索設定で Google Custom Search または CORS 対応のカスタム検索エンドポイントを選択してください。",
+      "network_failed": "検索に接続できません。接続状態と、ブラウザーでは検索エンドポイントの CORS 許可も確認してください。",
+      "dns_failed": "検索サービスの名前を解決できません。DNS と接続状態を確認してください。",
+      "tls_failed": "検索サービスの証明書を検証できません。エンドポイントを確認し、TLS 検証は無効にしないでください。",
+      "timed_out": "検索がタイムアウトしました。しばらくしてから再試行してください。",
+      "rate_limited": "検索サービスのレート制限に達しました。時間を置いて再試行してください。",
+      "authentication_failed": "検索サービスの認証に失敗しました。設定した認証情報を確認してください。",
+      "service_rejected": "検索サービスがリクエストを拒否しました。アクセス条件とエンドポイントを確認してください。",
+      "upstream_error": "検索サービスで上流エラーが発生しました。後で再試行してください。",
+      "malformed_response": "検索サービスの応答形式に対応していません。エンドポイントと形式を確認してください。"
+    },
     "islemindFailedStatus": "IsleMind 検索は一時的に利用できません: {{status}}",
     "tavilyFailedStatus": "Tavily 検索に失敗しました: {{status}}",
     "googleFailedStatus": "Google 検索に失敗しました: {{status}}",

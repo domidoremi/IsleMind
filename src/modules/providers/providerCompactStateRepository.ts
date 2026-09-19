@@ -40,10 +40,12 @@ export interface ProviderCompactStateRepositoryDependencies {
   openDatabase(databaseName: string): Promise<ProviderCompactStateDatabase>
   scheduleOperation?<Value>(databaseName: string, operation: () => Promise<Value>): Promise<Value>
   initializeSchema?: boolean
+  persistenceAvailable?: boolean
   now?(): number
 }
 
 export interface ProviderCompactStateRepository {
+  readonly persistenceAvailable: boolean
   saveCompactState(record: CompactStateRecord): Promise<void>
   listActiveCompactStates(conversationId: string, providerId: string, model: string): Promise<CompactStateRecord[]>
   invalidateCompactStates(conversationId: string, reason?: string): Promise<void>
@@ -56,11 +58,13 @@ export function createProviderCompactStateRepository(
   dependencies: ProviderCompactStateRepositoryDependencies,
 ): ProviderCompactStateRepository {
   const initializeSchema = dependencies.initializeSchema !== false
+  const persistenceAvailable = dependencies.persistenceAvailable !== false
   const now = dependencies.now ?? Date.now
   const scheduleOperation = dependencies.scheduleOperation ?? ((_databaseName, operation) => operation())
   let dbPromise: Promise<ProviderCompactStateDatabase> | null = null
 
   async function getDb(): Promise<ProviderCompactStateDatabase> {
+    if (!persistenceAvailable) throw new Error('Compact continuation state persistence is unavailable on this platform.')
     if (!dbPromise) {
       dbPromise = dependencies.openDatabase(PROVIDER_COMPACT_STATE_DATABASE_NAME).then(async (db) => {
         if (initializeSchema) await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, async () => {
@@ -160,6 +164,7 @@ export function createProviderCompactStateRepository(
   }
 
   async function invalidateCompactStates(conversationId: string, reason = 'invalidated'): Promise<void> {
+    if (!persistenceAvailable) return
     const db = await getDb()
     await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, () => db.runAsync(
       `UPDATE compact_states SET status = 'invalidated', failureCode = ?, updatedAt = ? WHERE conversationId = ? AND status = 'active'`,
@@ -170,6 +175,7 @@ export function createProviderCompactStateRepository(
   }
 
   async function invalidateCompactStatesByProvider(providerId: string, reason = 'provider_changed'): Promise<void> {
+    if (!persistenceAvailable) return
     const db = await getDb()
     await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, () => db.runAsync(
       `UPDATE compact_states SET status = 'invalidated', failureCode = ?, updatedAt = ? WHERE providerId = ? AND status = 'active'`,
@@ -180,6 +186,7 @@ export function createProviderCompactStateRepository(
   }
 
   async function invalidateAllCompactStates(reason = 'all_invalidated'): Promise<void> {
+    if (!persistenceAvailable) return
     const db = await getDb()
     await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, () => db.runAsync(
       `UPDATE compact_states SET status = 'invalidated', failureCode = ?, updatedAt = ? WHERE status = 'active'`,
@@ -189,11 +196,13 @@ export function createProviderCompactStateRepository(
   }
 
   async function clearAllCompactStates(): Promise<void> {
+    if (!persistenceAvailable) return
     const db = await getDb()
     await scheduleOperation(PROVIDER_COMPACT_STATE_DATABASE_NAME, () => db.runAsync('DELETE FROM compact_states'))
   }
 
   return {
+    persistenceAvailable,
     saveCompactState,
     listActiveCompactStates,
     invalidateCompactStates,
