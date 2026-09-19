@@ -92,6 +92,8 @@ const supportedCpuArchitectures = ['arm64-v8a', 'armeabi-v7a']
 let expoDeviceModuleAvailable = true
 let expoNativeApplicationVersion = '0.0.6'
 let expoNativeBuildVersion = '6'
+const expoConfig = { version: '0.0.6', android: { versionCode: 6 } }
+const expoPlatform = { android: { versionCode: 6 } }
 const reactNativePlatform = {
   OS: 'test',
   select: (choices) => choices?.[reactNativePlatform.OS] ?? choices?.default,
@@ -913,8 +915,8 @@ Module._load = function loadWithMocks(request, parent, isMain) {
     return {
       __esModule: true,
       default: {
-        expoConfig: { version: '0.0.6' },
-        platform: { android: { versionCode: 6 } },
+        expoConfig,
+        platform: expoPlatform,
       },
     }
   }
@@ -1784,6 +1786,7 @@ const {
 } = require('../src/modules/knowledge/index.ts')
 const {
   checkLatestApkRelease,
+  getVersionSnapshot,
   compareReleaseToSnapshotForTest,
   downloadAndOpenApkInstaller,
   normalizeApkUpdateManifestForTest,
@@ -11163,6 +11166,23 @@ async function assertClearAllDataBehavior() {
 }
 
 async function assertApkUpdateBehavior() {
+  const savedVersion = { native: expoNativeBuildVersion, config: expoConfig.android, platform: expoPlatform.android }
+  try {
+    expoConfig.android = { versionCode: 125 }
+    expoPlatform.android = undefined
+    assert.equal(getVersionSnapshot().buildVersion, '6', 'Installed native build identity takes precedence over source configuration')
+    expoNativeBuildVersion = null
+    assert.equal(getVersionSnapshot().buildVersion, '125', 'Web uses the current Expo source versionCode rather than a fabricated build 1')
+    expoConfig.android = undefined
+    expoPlatform.android = { versionCode: 124 }
+    assert.equal(getVersionSnapshot().buildVersion, '124', 'Legacy native Constants remain supported')
+    expoPlatform.android = undefined
+    assert.equal(getVersionSnapshot().buildVersion, String(require('../app.json').expo.android.versionCode), 'The stripped Web manifest falls back to canonical source build metadata')
+  } finally {
+    expoNativeBuildVersion = savedVersion.native
+    expoConfig.android = savedVersion.config
+    expoPlatform.android = savedVersion.platform
+  }
   const apkManifestFixture = {
     versionName: '0.0.7',
     versionCode: 7,

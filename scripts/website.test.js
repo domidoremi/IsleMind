@@ -1,10 +1,33 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const YAML = require('yaml')
+const vm = require('node:vm')
+const { parse } = require('@babel/parser')
+const { transformTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const read = name => fs.readFileSync(path.join(root, name), 'utf8')
 const json = name => JSON.parse(read(name))
+
+test('settings display keeps installed build identity and uses Expo versionCode on Web', () => {
+  const source = read('src/components/main/SettingsScreenContent.tsx')
+  const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
+  const declaration = ast.program.body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'getSettingsVersionSnapshot')
+  expect(declaration).toBeDefined()
+  const code = transformTypeScriptModule(source.slice(declaration.start, declaration.end), 'settings-version.ts')
+  const Application = { nativeApplicationVersion: '1.1.0', nativeBuildVersion: '124' }
+  const Constants = { expoConfig: { version: '1.1.0', android: { versionCode: 125 } }, platform: undefined }
+  const snapshot = () => vm.runInNewContext(`${code}; getSettingsVersionSnapshot()`, { Application, Constants, sourceAppConfig: json('app.json') })
+  expect(snapshot().buildVersion).toBe('124')
+  Application.nativeBuildVersion = null
+  expect(snapshot().buildVersion).toBe('125')
+  expect(snapshot().appVersion).toBe('1.1.0')
+  Constants.expoConfig.android = undefined
+  Constants.platform = { android: { versionCode: 123 } }
+  expect(snapshot().buildVersion).toBe('123')
+  Constants.platform = undefined
+  expect(snapshot().buildVersion).toBe(String(json('app.json').expo.android.versionCode))
+})
 
 test('source, update metadata, website and localized READMEs agree on the qualification version', () => {
   const pkg = json('package.json')

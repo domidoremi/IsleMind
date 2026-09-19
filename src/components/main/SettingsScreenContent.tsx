@@ -4,6 +4,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { router } from 'expo-router'
 import * as Application from 'expo-application'
 import Constants from 'expo-constants'
+import sourceAppConfig from '../../../app.json'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { userFacingErrorDetail } from '@/core'
@@ -167,7 +168,9 @@ function loadAndroidStatusNotification(): Promise<AndroidStatusNotificationModul
 function getSettingsVersionSnapshot(): { appVersion: string; buildVersion: string } {
   return {
     appVersion: Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '1.0.0',
-    buildVersion: Application.nativeBuildVersion ?? String(Constants.platform?.android?.versionCode ?? '1'),
+    // Expo omits the Android section from the Web manifest; keep its source
+    // build label aligned without overriding an installed native identity.
+    buildVersion: Application.nativeBuildVersion ?? String(Constants.expoConfig?.android?.versionCode ?? Constants.platform?.android?.versionCode ?? sourceAppConfig.expo.android.versionCode),
   }
 }
 

@@ -1,5 +1,6 @@
 import { Platform } from 'react-native'
 import Constants from 'expo-constants'
+import sourceAppConfig from '../../../app.json'
 import * as Application from 'expo-application'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
@@ -95,7 +96,7 @@ class ApkUpdateError extends Error {
 export function getVersionSnapshot(): VersionSnapshot {
   return {
     appVersion: Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '1.0.0',
-    buildVersion: Application.nativeBuildVersion ?? String(Constants.platform?.android?.versionCode ?? '1'),
+    buildVersion: Application.nativeBuildVersion ?? String(Constants.expoConfig?.android?.versionCode ?? Constants.platform?.android?.versionCode ?? sourceAppConfig.expo.android.versionCode),
     updateMode: 'apk',
     hotUpdateMode: 'disabled',
   }
