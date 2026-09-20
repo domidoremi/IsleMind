@@ -1151,6 +1151,7 @@
     "completed": "完了",
     "thinkingActive": "生成プロセス",
     "thinkingDetails": "思考サマリー",
+    "activitySteps": "実行プロセス",
     "thinkingCompleted": "思考完了",
     "thinkingCollapsed": "生成プロセスは折りたたまれました",
     "expandThinking": "生成プロセスを展開",

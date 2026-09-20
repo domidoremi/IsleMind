@@ -20,6 +20,8 @@ fs.mkdirSync(out, { recursive: true })
 const report = { schema: 'islemind.web-storage-qualification.v1', url: url.href, executablePath,
   profile: path.join(out, 'profile'), idleMs, startedAt: new Date().toISOString(), checks: [], errors: [] }
 let context, page
+const controlName = 'qualification-unrelated-control.txt'
+const controlValue = 'Unrelated OPFS control — never owned by an application repository.'
 const save = () => fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify(report, null, 2))
 const pass = (name, detail) => { report.checks.push({ name, detail, at: new Date().toISOString() }); save() }
 async function launch() {
@@ -43,6 +45,7 @@ async function application(operation) {
     }
     const conversation = mod('src/bootstrap/conversationPersistence.ts').conversationPersistence
     const lifecycle = mod('src/bootstrap/providerRemoteCompactLifecycle.ts').providerRemoteCompactLifecycle
+    const repository = mod('src/bootstrap/providerCompactStateRepository.ts').providerCompactStateRepository
     const db = await mod('src/platform/storage/expoSqliteDatabase.ts').createExpoSqliteDatabaseProvider().get()
     const input = { conversationId: 'web-storage-qualification', providerId: 'qualification-provider', model: 'namespace/model',
       settings: { remoteCompactMode: 'auto', runtimeLogEnabled: true }, strategy: 'native-openai-responses',
@@ -58,6 +61,8 @@ async function application(operation) {
     }
     if (operation === 'corrupt') await db.run('UPDATE compact_states SET compactItemJson=? WHERE conversationId=?', ['{invalid', input.conversationId])
     if (operation === 'repair') await lifecycle.recordCompleted(completed)
+    if (operation === 'invalidate') await repository.invalidateCompactStates(input.conversationId, 'qualification')
+    if (operation === 'clear-continuations') await repository.clearAllCompactStates()
     if (operation === 'write-failure') {
       // The repository owns another connection; target only this fixture.
       await db.exec("CREATE TRIGGER reject_qualification_compact_write BEFORE INSERT ON compact_states WHEN NEW.conversationId='web-storage-qualification' BEGIN SELECT RAISE(ABORT, 'qualification write failure'); END")
@@ -69,6 +74,19 @@ async function application(operation) {
       synchronous: await db.getFirst('PRAGMA synchronous'), integrity: await db.getAll('PRAGMA integrity_check'),
       isolation: crossOriginIsolated, timeOrigin: performance.timeOrigin }
   }, operation)
+}
+async function control(operation = 'read') {
+  const result = await page.evaluate(async ({ name, value, operation }) => {
+    const root = await navigator.storage.getDirectory()
+    const file = await root.getFileHandle(name, { create: operation === 'seed' })
+    if (operation === 'seed') {
+      const writer = await file.createWritable()
+      await writer.write(value)
+      await writer.close()
+    }
+    return (await file.getFile()).text()
+  }, { name: controlName, value: controlValue, operation })
+  assert.equal(result, controlValue, 'Unrelated OPFS control changed or disappeared')
 }
 async function files() {
   return page.evaluate(async () => {
@@ -94,18 +112,24 @@ function same(expected, actual) {
 }
 async function main() {
   await launch()
+  await control('seed')
   const baseline = await application('seed')
+  await control()
   assert.equal(baseline.compact.previousResponseId, 'qualification-response')
   pass('acknowledged-app-writes', baseline)
   const before = await files()
   await new Promise(resolve => setTimeout(resolve, idleMs))
   const after = await files() // Observe filesystem before SQL can recreate anything.
+  report.idleEvidence = { before, after, observedAt: new Date().toISOString() }
+  save() // Preserve the missing-file inventory even if the assertion fails.
   assert.deepEqual(after, before, 'Raw OPFS files changed during idle')
   same(baseline, await application('read'))
   pass('idle-raw-opfs-and-rows', { before, after, elapsedMs: idleMs })
   await page.reload(); await ready(page)
+  await control()
   same(baseline, await application('read')); pass('reload')
   await context.close(); await launch()
+  await control()
   same(baseline, await application('read')); pass('browser-exit-and-persistent-profile-reopen')
   const cdp = await context.newCDPSession(page)
   const crashed = page.waitForEvent('crash', { timeout: 30000 })
@@ -117,6 +141,7 @@ async function main() {
   page = await context.newPage()
   page.on('pageerror', pageError)
   await page.goto(url.href); await ready(page)
+  await control()
   same(baseline, await application('read')); pass('renderer-crash-and-recovery')
   const contender = await context.newPage()
   contender.on('pageerror', pageError)
@@ -128,12 +153,29 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 1000))
   await page.getByRole('button', { name: /^(Retry|重试|再試行)$/ }).click()
   await ready(page)
+  await control()
   same(baseline, await application('read')); pass('retry-after-exclusive-owner-closes')
   assert.deepEqual((await application('corrupt')).compact, {})
+  await control()
   pass('corruption-safe-fallback')
   same(baseline, await application('repair'))
   same(baseline, await application('write-failure')); pass('failed-write-preserves-acknowledged-state')
+  await control()
+  for (const operation of ['invalidate', 'clear-continuations']) {
+    // Each fault case starts a new runtime. Repeated synthetic repairs in one
+    // runtime legitimately trip the automatic-compaction thrashing guard.
+    await page.reload(); await ready(page)
+    await control()
+    same(baseline, await application('read'))
+    const cleared = await application(operation)
+    assert.deepEqual(cleared.conversation, baseline.conversation, 'Continuation cleanup changed conversation history')
+    assert.deepEqual(cleared.compact, {})
+    await control()
+    same(baseline, await application('repair'))
+    pass(`${operation}-preserves-conversation-and-control`)
+  }
   await page.reload(); await ready(page)
+  await control()
   same(baseline, await application('read')); pass('repaired-state-persists-after-reload')
   await page.screenshot({ path: path.join(out, 'app.png'), fullPage: true })
   assert.deepEqual(report.errors, [], 'Unexpected application page errors')

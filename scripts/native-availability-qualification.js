@@ -1,6 +1,46 @@
 const assert = require('node:assert/strict')
+const { createHash } = require('node:crypto')
 
 const PRODUCTION_PACKAGE = 'com.islemind.app'
+const C4_ACCEPTANCE = Object.freeze({
+  detailSqlP95Ms: 250, filteredSqlP95Ms: 100, aggregateP95Ms: 50,
+  uiFirstPageP95Ms: 500, writeBatchP95Ms: 250, cleanupBatchP95Ms: 50,
+  startupPopulatedMedianIncreaseMs: 100, additionalUsedJsHeapBytes: 16 * 1024 * 1024,
+  scrollingFrameP95Ms: 33.34, scrollingFramesOver50MsFraction: .05,
+  historyBoundMustHold: true, integrityAndRecoveryMustPass: true,
+})
+
+function assertC4Preservation(before, after) {
+  const hash = value => createHash('sha256').update(value).digest('hex')
+  const sha256 = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+  for (const snapshot of [before, after]) {
+    assert(snapshot && snapshot.identity, 'Missing original installation identity')
+    for (const field of ['userId', 'codePath', 'dataDir']) {
+      assert(typeof snapshot.identity[field] === 'string' && snapshot.identity[field].trim(), `Missing original ${field}`)
+    }
+    assert(Array.isArray(snapshot.apks) && snapshot.apks.length > 0, 'Missing original APK hashes')
+    for (const apk of snapshot.apks) {
+      assert(typeof apk.path === 'string' && apk.path.trim() && sha256(apk.sha256), 'Invalid original APK hash')
+    }
+    assert(Array.isArray(snapshot.files) && snapshot.files.some(file => file.area === 'credential' && file.category === 'database'),
+      'No original database was hashed; unreadable data is not an empty preservation snapshot')
+    const paths = new Set()
+    for (const file of snapshot.files) {
+      assert(['credential', 'device', 'external'].includes(file.area) && sha256(file.pathSha256) && sha256(file.sha256),
+        'Invalid original private-file hash')
+      const key = `${file.area}/${file.pathSha256}`
+      assert(!paths.has(key), 'Duplicate original private-file identity')
+      paths.add(key)
+    }
+    assert.equal(snapshot.manifestSha256, hash(JSON.stringify(snapshot.files)), 'Private-file manifest hash mismatch')
+    assert(typeof snapshot.dataDirectoryStat === 'string' && snapshot.dataDirectoryStat.trim(), 'Missing original data-directory identity')
+  }
+  assert.deepEqual(after.identity, before.identity, 'Original installation identity changed')
+  assert.deepEqual(after.apks, before.apks, 'Original APK changed')
+  assert.equal(after.dataDirectoryStat, before.dataDirectoryStat, 'Original data-directory identity changed')
+  assert.deepEqual(after.files, before.files, 'Original private-file hashes changed')
+  return true
+}
 
 function qualificationProfile(network = false) {
   return {
@@ -106,4 +146,4 @@ function validateQualificationProbe(receipt) {
   return { scope: receipt.scope, passed: true, productionPrivatePreservation: receipt.productionPrivatePreservation, fullC4: receipt.fullC4 }
 }
 
-module.exports = { PRODUCTION_PACKAGE, qualificationProfile, configureQualificationGradle, configureQualificationManifest, assertQualificationApk, validateQualificationProbe }
+module.exports = { PRODUCTION_PACKAGE, C4_ACCEPTANCE, assertC4Preservation, qualificationProfile, configureQualificationGradle, configureQualificationManifest, assertQualificationApk, validateQualificationProbe }

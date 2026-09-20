@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const assert = require('node:assert/strict')
+const { C4_ACCEPTANCE, assertC4Preservation } = require('./native-availability-qualification')
 const base = path.resolve(process.argv[2])
 const load = name => JSON.parse(fs.readFileSync(path.join(base, name), 'utf8').replace(/^\uFEFF/, ''))
 if (process.argv.includes('--qualification')) {
@@ -22,6 +23,7 @@ const installation = load('qualified-install/installation.json'), gates = load('
 const baseline = load('install/preservation-before.json'), preserved = load('preservation/preservation-final.json')
 const retention = load('retention/measurements.json')
 const checks = [], metrics = {}, policy = final.protocol.acceptance
+assert.deepEqual(policy, C4_ACCEPTANCE, 'Receipt acceptance budgets do not match the C4 policy')
 const check = (name, pass, evidence) => checks.push({ name, passed: Boolean(pass), evidence })
 function get(receipt, name) {
   const item = receipt.observations.find(item => item.name === name)
@@ -32,8 +34,7 @@ check('final APK identity and authorized hardware', [final, startup, recovery].e
   && r.environmentBefore.model === 'M2007J3SC'), installation.identity)
 check('separate UID, no network, no restore', installation.uid !== baseline.identity.userId
   && installation.identity.internet === false && installation.identity.backup === false && installation.identity.sharedUid === false, installation.uid)
-check('original private files and installed code unchanged', JSON.stringify(baseline.files) === JSON.stringify(preserved.files)
-  && JSON.stringify(baseline.identity) === JSON.stringify(preserved.identity) && JSON.stringify(baseline.apks) === JSON.stringify(preserved.apks),
+check('original private files and installed code unchanged', assertC4Preservation(baseline, preserved),
 { files: baseline.files.length, sha256: preserved.manifestSha256 })
 check('23 required host gates plus combined unit suite', gates.length === 24 && gates.every(g => g.exitCode === 0), gates)
 const jest = load('gates/jest.json')

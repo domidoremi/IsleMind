@@ -189,6 +189,14 @@ edit('src/hooks/useBootstrap.ts', text => replaceOnce(text,
 edit('src/presentation/features/settings/ModelAvailabilityScreen.tsx', text => replaceOnce(text,
   '  const page = useModelAvailabilityPage(availability, pageSize, filter, revision)',
   '  const page = useModelAvailabilityPage(availability, pageSize, filter, revision)\n  useEffect(() => { if (!page.loading && page.history) (globalThis as any).__stage9PageCommitted?.({ count: page.history.items.length, current: page.current.length, failed: page.failed }) }, [page.loading, page.history])'))
+edit('src/presentation/features/settings/ModelAvailabilityScreen.tsx', text => {
+  text = replaceOnce(text, '  const { t } = useTranslation()', "  ;(globalThis as any).__stage9PagePhase?.('render-start')\n  const { t } = useTranslation()")
+  return replaceOnce(text, '  return <FlatList', "  ;(globalThis as any).__stage9PagePhase?.('render-elements', { loading: page.loading, rows: rows.length })\n  return <FlatList")
+})
+edit('src/presentation/features/settings/useModelAvailabilityPage.ts', text => {
+  text = replaceOnce(text, '    let cancelled = false', "    ;(globalThis as any).__stage9PagePhase?.('data-effect')\n    let cancelled = false")
+  return replaceOnce(text, '      if (cancelled) return', "      ;(globalThis as any).__stage9PagePhase?.('data-ready')\n      if (cancelled) return")
+})
 edit('src/platform/storage/expoSqliteDatabase.ts', text => replaceOnce(text,
   '      return database.getAllAsync<Row>(source, ...(parameters as SQLite.SQLiteVariadicBindParams))',
   '      ;(globalThis as any).__stage9SqlRead?.(source)\n      return database.getAllAsync<Row>(source, ...(parameters as SQLite.SQLiteVariadicBindParams))'))
@@ -209,6 +217,7 @@ for (const file of ['scripts/native-availability-entry.tsx', 'scripts/native-emb
   'src/bootstrap/knowledgeEmbeddingProvider.ts', 'src/bootstrap/providerModelAvailabilityRuntime.ts',
   'src/modules/providers/adapters/sqliteModelAvailabilityRepository.ts', 'src/platform/storage/expoSqliteDatabase.ts',
   'src/hooks/useBootstrap.ts', 'src/presentation/features/settings/ModelAvailabilityScreen.tsx',
+  'src/presentation/features/settings/useModelAvailabilityPage.ts',
   'android/app/build.gradle', 'android/app/src/main/AndroidManifest.xml', `${javaDir}/Stage9Module.kt`]) {
   receipt.files[file] = { stagedSha256: hash(path.join(stage, file)), ...(fs.existsSync(path.join(root, file)) ? { sourceSha256: hash(path.join(root, file)) } : {}) }
 }

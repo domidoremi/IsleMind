@@ -51,7 +51,24 @@ let pause: Input | undefined
 let commitNumber = 0
 let ui: ((value: Input | undefined) => void) | undefined
 let pageCommitted: ((value: Input) => void) | undefined
-global.__stage9PageCommitted = async (detail: Input) => { const notify = pageCommitted; pageCommitted = undefined; if (notify) notify({ ...detail, presented: await native.presented() }) }
+let pageTrace: Input[] | undefined
+let pageStarted = 0
+global.__stage9PagePhase = (name: string, detail: Input = {}) => {
+  if (pageTrace && pageTrace.length < 256) pageTrace.push({ name, atMs: performance.now() - pageStarted, ...detail })
+}
+async function pageMeasure<T>(name: string, work: () => Promise<T>): Promise<T> {
+  const start = performance.now()
+  try { return await work() }
+  finally { global.__stage9PagePhase(name, { durationMs: performance.now() - start }) }
+}
+global.__stage9PageCommitted = async (detail: Input) => {
+  const notify = pageCommitted; pageCommitted = undefined
+  if (notify) {
+    global.__stage9PagePhase('page-commit', detail)
+    const presented = await pageMeasure('native-presentation', () => native.presented())
+    notify({ ...detail, presented })
+  }
+}
 const identity = (index = 0): ProviderModelScopeIdentity => ({ providerId: `stage9-provider-${index % 2}`,
   credentialSource: index < 2 ? { kind: 'primary' } : { kind: 'group', groupId: 'default' },
   protocolAdapterId: 'openai-chat', endpointVariant: 'direct' })
@@ -66,11 +83,11 @@ function instrument(executor: SqliteExecutor): SqliteExecutor {
     },
     async getFirst<Row extends object>(sql: string, values?: readonly SqliteValue[]) {
       const start = performance.now()
-      const result = await executor.getFirst<Row>(sql, values)
+      const result = await pageMeasure('sql-get-first', () => executor.getFirst<Row>(sql, values))
       if (aggregateCapture && /SELECT COUNT\(\*\) AS total/.test(sql)) aggregates.push(performance.now() - start)
       return result
     },
-    getAll: (sql, values) => executor.getAll(sql, values),
+    getAll: (sql, values) => pageMeasure('sql-get-all', () => executor.getAll(sql, values)),
   }
 }
 
@@ -322,14 +339,22 @@ async function show(input: Input) {
     type: 'custom' as const, enabled: true, models: [], baseUrl: 'https://invalid.invalid',
     credentialGroups: [{ id: 'default', name: 'Fixture group', enabled: true }] } as any)) })
   const start = performance.now()
+  pageStarted = start
+  pageTrace = []
   const rendered = new Promise<Input>((resolve, reject) => {
     const timeout = setTimeout(() => { pageCommitted = undefined; reject(new Error('Real availability screen did not commit its page')) }, 15000)
     pageCommitted = value => { clearTimeout(timeout); resolve(value) }
   })
-  ui?.({ key: ++counter, availability: runtime.port, pageSize: input.pageSize ?? config.pageSize, initialProviderId: input.providerId ?? '' })
+  const availability: ProviderModelAvailabilityPort = { ...runtime.port,
+    queryHistory: input => pageMeasure(input.filter.outcome === 'failure' ? 'latest-failure' : 'history', () => runtime.port.queryHistory(input)),
+    listCurrentModels: input => pageMeasure('current', () => runtime.port.listCurrentModels(input)),
+  }
+  ui?.({ key: ++counter, availability, pageSize: input.pageSize ?? config.pageSize, initialProviderId: input.providerId ?? '' })
   const result = await rendered
+  const elapsedMs = performance.now() - start
+  const phases = pageTrace; pageTrace = undefined
   assert(!result.failed && result.count > 0, 'Rendered availability page was empty or failed')
-  return { elapsedMs: performance.now() - start, ...result, memory: memory() }
+  return { elapsedMs, ...result, phases, memory: memory() }
 }
 
 async function payloadBoundary() {

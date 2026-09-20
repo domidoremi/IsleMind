@@ -1151,6 +1151,7 @@
     "completed": "Completed",
     "thinkingActive": "Generation process",
     "thinkingDetails": "Thinking summary",
+    "activitySteps": "Activity",
     "thinkingCompleted": "Thinking complete",
     "thinkingCollapsed": "Generation process collapsed",
     "expandThinking": "Expand generation process",

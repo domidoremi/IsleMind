@@ -38,7 +38,8 @@ import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/c
 import { clampTraceText, redactSensitiveText, relocalizeUserFacingError } from '@/core'
 import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
 import {
-  responseLifecycleElapsedMs,
+  collectLifecycleActivitySteps,
+  hasExpandableActivitySteps,
   safeResponseLifecycleSummary,
   safeResponseLifecycleTraceSummary,
 } from '@/modules/conversations'
@@ -182,7 +183,8 @@ function MessageBubbleComponent({
   const responseLifecycle = !isUser ? message.responseLifecycle : undefined
   const processCanExpand = !isUser && (
     processTraces.some(hasExpandableThinkingContent) ||
-    hasExpandableLifecycleDetails(responseLifecycle)
+    hasExpandableLifecycleDetails(responseLifecycle) ||
+    hasExpandableActivitySteps(responseLifecycle)
   )
   const hasVisibleAssistantReply = !isUser && Boolean(renderedDisplayText.trim())
   const processNeedsAttention = !isUser && processTraces.some((trace) =>
@@ -1030,7 +1032,9 @@ function SettledThinkingDisclosure({
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
-  const label = settledThinkingDisclosureLabel(message, lifecycle, traces, t)
+  const label = settledModelStatusLabel(message, lifecycle, t)
+  const settledStage = lifecycle?.stage ?? (message.status === 'error' ? 'error' : message.status === 'cancelled' ? 'cancelled' : 'completed')
+  const settledStatusIcon: AppIconName = settledStage === 'error' ? 'warning' : settledStage === 'cancelled' ? 'stop' : 'check'
   const disclosureExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
   const grammar = disclosureExpression.motion
   const disclosureBackground = grammar === 'precision'
@@ -1081,7 +1085,7 @@ function SettledThinkingDisclosure({
       >
         {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 14, right: 14, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.2 }} /> : null}
         {grammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: expanded ? 0.08 : 0.03 }} /> : null}
-        <AppIcon name="reasoning" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
+        <AppIcon name={settledStatusIcon} color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
         <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>
           {label}
         </Text>
@@ -1229,6 +1233,7 @@ function MessageProcessPanel({ message, lifecycle, traces, maxHeight, motion }: 
   const { t } = useTranslation()
   const scrollRef = useRef<ScrollView>(null)
   const thinkingSummaries = collectThinkingSummaries(lifecycle, traces)
+  const activitySteps = collectLifecycleActivitySteps(lifecycle)
   const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
   const running = lifecycle
     ? !isTerminalLifecycleStage(lifecycle.stage)
@@ -1279,6 +1284,8 @@ function MessageProcessPanel({ message, lifecycle, traces, maxHeight, motion }: 
     >
       {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 18, right: 18, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.22 }} /> : null}
       {grammar === 'material' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 3, bottom: 0, backgroundColor: colors.primary, opacity: 0.72 }} /> : null}
+      {thinkingSummaries.length > 0 || (running && lifecycle?.stage === 'thinking') ? (
+      <View style={{ marginBottom: activitySteps.length ? 9 : 0 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
         <AppIcon name="reasoning" color={colors.ui.icon.accentForeground} size={13} strokeWidth={appIconStroke.strong} />
         <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
@@ -1316,6 +1323,44 @@ function MessageProcessPanel({ message, lifecycle, traces, maxHeight, motion }: 
           <TypingDots motion={motion} />
         ) : null}
       </ScrollView>
+      </View>
+      ) : null}
+      {activitySteps.length ? (
+        <View testID="message-activity-steps" style={{ gap: 5 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+            <AppIcon name="spark" color={colors.ui.icon.accentForeground} size={13} strokeWidth={appIconStroke.strong} />
+            <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
+              {t('messageBubble.activitySteps', { defaultValue: '运行过程' })}
+            </Text>
+          </View>
+          {activitySteps.map((step, index) => {
+            const durationMs = step.completedAt !== undefined ? Math.max(0, step.completedAt - step.startedAt) : undefined
+            return (
+              <View key={`${step.stage}-${index}-${step.startedAt}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <AppIcon
+                  name={step.live ? 'spark' : 'check'}
+                  color={step.live ? colors.ui.icon.accentForeground : colors.textTertiary}
+                  size={12}
+                  strokeWidth={appIconStroke.strong}
+                />
+                <Text
+                  numberOfLines={1}
+                  style={{ flexShrink: 1, color: step.live ? colors.textSecondary : colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: step.live ? '700' : '600' }}
+                >
+                  {lifecycleStageLabel(step.stage, t)}
+                </Text>
+                {step.live ? (
+                  <LifecycleElapsedText startedAt={step.startedAt} />
+                ) : durationMs && durationMs > 0 ? (
+                  <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontVariant: ['tabular-nums'] }}>
+                    {formatDuration(durationMs)}
+                  </Text>
+                ) : null}
+              </View>
+            )
+          })}
+        </View>
+      ) : null}
     </View>
   )
 }
@@ -1521,27 +1566,23 @@ function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunctio
   return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
 }
 
-function settledThinkingDisclosureLabel(
+function settledModelStatusLabel(
   message: Message,
   lifecycle: MessageResponseLifecycle | undefined,
-  traces: ProcessTrace[],
   t: TFunction,
 ): string {
-  const title = t('messageBubble.thinkingDetails', { defaultValue: '思考摘要' })
-  const durationMs = lifecycle
-    ? resolveLifecycleThinkingDurationMs(lifecycle) ?? resolveThinkingDurationMs(message, traces)
-    : resolveThinkingDurationMs(message, traces)
-  return durationMs ? `${title} · ${formatDuration(durationMs)}` : title
-}
-
-function resolveLifecycleThinkingDurationMs(lifecycle: MessageResponseLifecycle): number | undefined {
-  let total = 0
-  for (const entry of lifecycle.history) {
-    if (entry.stage !== 'thinking' || entry.completedAt === undefined) continue
-    total += Math.max(0, entry.completedAt - entry.startedAt)
+  // The settled capsule sits in the model-status position, so it reports the
+  // terminal runtime state (已完成 / 失败 / 已停止). It must not reuse the
+  // thinking-summary name; reasoning stays in the expandable panel below.
+  if (lifecycle) return lifecycleStageLabel(lifecycle.stage, t)
+  switch (message.status) {
+    case 'error':
+      return translateMessageBubbleLabel(t, 'messageBubble.failed', '失败')
+    case 'cancelled':
+      return translateMessageBubbleLabel(t, 'messageBubble.stopped', '已停止')
+    default:
+      return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
   }
-  if (total > 0) return total
-  return lifecycle.stage === 'thinking' ? responseLifecycleElapsedMs(lifecycle) : undefined
 }
 
 function settledProcessStageLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {

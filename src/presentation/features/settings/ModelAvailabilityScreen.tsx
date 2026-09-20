@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FlatList, Text, View } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { useNetworkState } from 'expo-network'
@@ -38,8 +38,8 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
   const [operationResult, setOperationResult] = useState<'recorded' | 'failed'>()
   const operationController = useRef<AbortController | undefined>(undefined)
   const provider = providers.find((item) => item.id === providerId)
-  const source: ProviderCredentialSource | undefined = credential === 'primary' ? { kind: 'primary' }
-    : credential === 'none' ? { kind: 'none' } : credential.startsWith('group:') ? { kind: 'group', groupId: credential.slice(6) } : undefined
+  const source = useMemo<ProviderCredentialSource | undefined>(() => credential === 'primary' ? { kind: 'primary' }
+    : credential === 'none' ? { kind: 'none' } : credential.startsWith('group:') ? { kind: 'group', groupId: credential.slice(6) } : undefined, [credential])
   const page = useModelAvailabilityPage(availability, pageSize, filter, revision)
   // Current summaries must be windowed too: putting them in ListHeaderComponent
   // eagerly mounts the entire page before the history list can become responsive.
@@ -57,25 +57,25 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
       value: `group:${group.id}`, label: credentialSourceLabel({ kind: 'group', groupId: group.id }, provider, t),
     })),
   ], [provider, t])
-  const providerLabel = (id: string) => {
+  const providerLabel = useCallback((id: string) => {
     const item = providers.find((candidate) => candidate.id === id)
     return item ? resolveProviderDisplayName(item, t('providerSettings.customProvider')) : id
-  }
-  const textStyle = { color: colors.textSecondary, fontSize: 12 }
-  const headingStyle = { color: colors.text, fontSize: 15, fontWeight: '700' as const }
+  }, [providers, t])
+  const textStyle = useMemo(() => ({ color: colors.textSecondary, fontSize: 12 }), [colors.textSecondary])
+  const headingStyle = useMemo(() => ({ color: colors.text, fontSize: 15, fontWeight: '700' as const }), [colors.text])
   const scopeLabel = (row: ProviderModelHistoryPage['items'][number]) => `${providerLabel(row.providerId)} · ${credentialSourceLabel(row.credentialSource, providers.find((item) => item.id === row.providerId), t)} · ${row.protocolAdapterId}`
   const observationLabel = (row: ProviderModelHistoryPage['items'][number]) => [new Date(row.observedAt).toLocaleString(),
     t(`modelAvailability.source.${row.source}`), t(`modelAvailability.classification.${row.classification}`), row.httpStatus ? `HTTP ${row.httpStatus}` : undefined].filter(Boolean).join(' · ')
 
-  function applyFilter() {
+  const applyFilter = useCallback(() => {
     const duration = range === 'day' ? 24 * 60 * 60 * 1000 : range === 'week' ? 7 * 24 * 60 * 60 * 1000 : undefined
     setFilter({ ...(providerId ? { providerId } : {}), ...(source ? { credentialSource: source } : {}),
       ...(model.trim() ? { modelId: model.trim() } : {}), ...(duration ? { from: Math.max(0, Date.now() - duration) } : {}),
       ...(evidenceSource ? { source: evidenceSource } : {}) })
     setRevision((value) => value + 1)
-  }
+  }, [providerId, source, model, range, evidenceSource])
 
-  async function runOperation(kind: 'refresh' | 'model' | 'provider') {
+  const runOperation = useCallback(async (kind: 'refresh' | 'model' | 'provider') => {
     if (!provider || offline || operationController.current) return
     const controller = new AbortController()
     operationController.current = controller; setOperation(kind); setOperationResult(undefined)
@@ -92,17 +92,11 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
       operationController.current = undefined
       if (!controller.signal.aborted) { setOperation(undefined); setRevision((value) => value + 1) }
     }
-  }
+  }, [provider, offline, availability, source, model, getProviderTestModel, settings])
 
-  return <FlatList
-    testID="model-availability-history"
-    data={rows}
-    keyExtractor={(item) => item.kind === 'current' ? `current:${item.row.scopeId}:${item.row.modelId}`
-      : item.kind === 'history' ? `history:${item.row.id}` : item.kind}
-    initialNumToRender={6}
-    keyboardShouldPersistTaps="handled"
-    contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 40 }}
-    ListHeaderComponent={<View style={{ gap: 12 }}>
+  // The controls do not depend on page data. Keep their element identity while
+  // reads settle so native controls/animated styles are not reconciled again.
+  const controls = useMemo(() => <>
       <Text style={textStyle}>{t('modelAvailability.historyHint')}</Text>
       {offline ? <Text accessibilityLiveRegion="polite" style={headingStyle}>{t('modelAvailability.offline')} — {t('modelAvailability.offlineHint')}</Text> : null}
       <Text style={headingStyle}>{t('modelAvailability.providerFilter')}</Text>
@@ -129,6 +123,19 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
         </View>
       </View> : null}
       {operationResult ? <Text accessibilityLiveRegion="polite" style={textStyle}>{t(`modelAvailability.operation.${operationResult}`)}</Text> : null}
+    </>, [t, textStyle, headingStyle, offline, providerId, providers, providerLabel, credential, credentialOptions,
+      model, range, evidenceSource, applyFilter, provider, operation, getProviderTestModel, settings, runOperation, operationResult])
+
+  return <FlatList
+    testID="model-availability-history"
+    data={rows}
+    keyExtractor={(item) => item.kind === 'current' ? `current:${item.row.scopeId}:${item.row.modelId}`
+      : item.kind === 'history' ? `history:${item.row.id}` : item.kind}
+    initialNumToRender={6}
+    keyboardShouldPersistTaps="handled"
+    contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 40 }}
+    ListHeaderComponent={<View style={{ gap: 12 }}>
+      {controls}
       {page.failed ? <Text accessibilityRole="alert" style={textStyle}>{t('modelAvailability.readFailed')}</Text> : null}
       {page.loading ? <Text style={textStyle}>{t('common.loading')}</Text> : null}
       <Text style={headingStyle}>{t('modelAvailability.currentState')}</Text>

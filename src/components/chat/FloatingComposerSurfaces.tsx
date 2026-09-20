@@ -369,8 +369,12 @@ export function MessageInput({
       borderColor: interpolateColor(
         focusProgress.value,
         [0, 1],
+        // Liquid glass: the frosted pill IS the input surface. Drawing a focus
+        // ring on this inner surface (r12) inside the pill (r16) reads as an
+        // independent inner rectangle against the dark backdrop, so the focus
+        // border stays transparent and the pill + keyboard signal focus instead.
         isLiquidGlass
-          ? ['transparent', colors.ui.input.focus]
+          ? ['transparent', 'transparent']
           : [interactiveMaterial?.border ?? colors.ui.input.border, colors.ui.input.focus],
       ),
     }

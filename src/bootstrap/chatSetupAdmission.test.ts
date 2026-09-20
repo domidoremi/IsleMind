@@ -61,7 +61,8 @@ beforeEach(() => {
 
 it.each([
   model('gpt-4o-mini'),
-  model('deepseek-ai/deepseek-v4-flash-0731', { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['none', 'high', 'xhigh'] }),
+  model('deepseek-ai/deepseek-flash', { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['none', 'high', 'xhigh'] }),
+  model('deepseek-ai/deepseek-v4-flash-0731', { deprecated: true, reasoningMode: 'deepseek-thinking', reasoningEfforts: ['none', 'high', 'xhigh'] }),
 ])('does not admit hidden reasoning into a new $id conversation', async selectedModel => {
   const selectedProvider = provider([selectedModel])
   const { result, updateConversation } = await setup(selectedProvider)
@@ -78,7 +79,12 @@ it.each([
   expect(useChatStore.getState().conversations[0].reasoningEffort).toBeUndefined()
   const required = requiredFallbackCapabilities({ provider: selectedProvider, model: selectedModel.id, reasoningEffort: dispatched.reasoningEffort })
   expect(required).not.toContain('reasoning')
-  expect(buildProviderFallbackCandidates({ providers: [selectedProvider], original: { providerId: selectedProvider.id, model: selectedModel.id }, requiredCapabilities: required }).candidates).toHaveLength(1)
+  const fallback = buildProviderFallbackCandidates({ providers: [selectedProvider], original: { providerId: selectedProvider.id, model: selectedModel.id }, requiredCapabilities: required })
+  // Retirement is independent of reasoning admission: the refreshed catalogue
+  // must still reject the legacy Flash ID, not silently re-enable it for this test.
+  expect(fallback.candidates).toHaveLength(selectedModel.deprecated ? 0 : 1)
+  expect(fallback.rejectedCandidates).toEqual(selectedModel.deprecated
+    ? [{ providerId: selectedProvider.id, model: selectedModel.id, reason: 'model_deprecated' }] : [])
 })
 
 it('preserves a supported explicit effort and clears it on a setup model switch', async () => {

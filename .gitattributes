@@ -4,8 +4,7 @@
 # those matches fail. The working tree must stay LF on all platforms.
 * text=auto eol=lf
 
-# cmd.exe parses batch files line by line. Multi-line parenthesized blocks and ^ escapes
-# in scripts/setup-hot-reload.bat require CRLF.
+# cmd.exe batch files use CRLF for multi-line parenthesized blocks and ^ escapes.
 *.bat text eol=crlf
 
 # Local model fixtures are pinned by byte size and SHA-256 in assets/models/catalog.json.

@@ -6,7 +6,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
-const { qualificationProfile, assertQualificationApk, validateQualificationProbe } = require('./native-availability-qualification')
+const { C4_ACCEPTANCE, qualificationProfile, assertQualificationApk, validateQualificationProbe } = require('./native-availability-qualification')
 const cli = process.argv.slice(2)
 const option = (name, fallback) => cli.includes(name) ? cli[cli.indexOf(name) + 1] : fallback
 const profile = qualificationProfile(cli.includes('--network'))
@@ -157,11 +157,7 @@ async function matrix() {
       ui: 'Real ModelAvailabilityScreen; staged post-commit callback plus two native Choreographer frames; native FrameMetrics and gfxinfo',
       startup: 'Same optimized full ExpoRoot/useBootstrap; empty versus retained availability data, not a pre-implementation binary comparison',
       interference: 'No display/CPU/thermal/system settings changed; charging, display and thermal metadata captured',
-      acceptance: { detailSqlP95Ms: 250, filteredSqlP95Ms: 100, aggregateP95Ms: 50,
-        uiFirstPageP95Ms: 500, writeBatchP95Ms: 250, cleanupBatchP95Ms: 50,
-        startupPopulatedMedianIncreaseMs: 100, additionalUsedJsHeapBytes: 16 * 1024 * 1024,
-        scrollingFrameP95Ms: 33.34, scrollingFramesOver50MsFraction: .05,
-        historyBoundMustHold: true, integrityAndRecoveryMustPass: true } },
+      acceptance: { ...C4_ACCEPTANCE } },
     observations: [], failures: [] }
   const record = (name, value) => { receipt.observations.push({ name, at: new Date().toISOString(), value }); save('measurements.json', receipt); console.log(`Captured ${name}`); return value }
   record('launch', await launch())

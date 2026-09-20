@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "platform": "android",
-  "versionName": "1.1.0",
-  "versionCode": 125,
+  "versionName": "1.1.2",
+  "versionCode": 127,
   "status": "prerelease-qualification",
   "publishedAt": null,
-  "releaseUrl": "https://github.com/domidoremi/IsleMind/releases/tag/v1.1.0",
+  "releaseUrl": "https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2",
   "assets": []
 }

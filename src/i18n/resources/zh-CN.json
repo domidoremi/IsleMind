@@ -1151,6 +1151,7 @@
     "completed": "已完成",
     "thinkingActive": "生成过程",
     "thinkingDetails": "思考摘要",
+    "activitySteps": "运行过程",
     "thinkingCompleted": "思考完成",
     "thinkingCollapsed": "生成过程已折叠",
     "expandThinking": "展开生成过程",

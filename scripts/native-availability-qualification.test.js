@@ -1,6 +1,11 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const os = require('node:os')
+const { createHash } = require('node:crypto')
+const { spawnSync } = require('node:child_process')
 const {
+  C4_ACCEPTANCE,
+  assertC4Preservation,
   qualificationProfile,
   configureQualificationGradle,
   configureQualificationManifest,
@@ -140,7 +145,88 @@ test('strict C4 validator still requires original private files and full measure
   const source = fs.readFileSync(path.join(root, 'scripts/validate-native-availability-evidence.js'), 'utf8')
   expect(source).toContain("load('final/measurements.json')")
   expect(source).toContain("load('install/preservation-before.json')")
-  expect(source).toContain('JSON.stringify(baseline.files) === JSON.stringify(preserved.files)')
+  expect(source).toContain('assertC4Preservation(baseline, preserved)')
   expect(source).toContain("'qualification-verdict.json'")
   expect(source).toContain("'stage9-verdict.json'")
+})
+
+function preservationSnapshot() {
+  const files = ['credential', 'device', 'external'].map(area =>
+    ({ area, category: 'database', pathSha256: 'a'.repeat(64), sha256: 'b'.repeat(64) }))
+  return { identity: { userId: '10001', codePath: '/data/app/fixture', dataDir: '/data/user/0/com.islemind.app' },
+    apks: [{ path: '/data/app/fixture/base.apk', sha256: 'c'.repeat(64) }], files,
+    dataDirectoryStat: '10001:10001:1234:700',
+    manifestSha256: createHash('sha256').update(JSON.stringify(files)).digest('hex') }
+}
+
+test('strict C4 accepts complete unchanged preservation evidence', () => {
+  const before = preservationSnapshot()
+  expect(assertC4Preservation(before, structuredClone(before))).toBe(true)
+})
+
+test.each([
+  ['empty private-file lists', snapshot => { snapshot.files = [] }],
+  ['unhashed private files', snapshot => { snapshot.files[0].sha256 = '' }],
+  ['coercible hash', snapshot => { snapshot.files[0].sha256 = [snapshot.files[0].sha256] }],
+  ['cache-only files', snapshot => { snapshot.files[0].category = 'cache' }],
+  ['device-only files', snapshot => { snapshot.files[0].area = 'device' }],
+  ['duplicate private paths', snapshot => { snapshot.files.push({ ...snapshot.files[0] }) }],
+  ['missing APK hashes', snapshot => { snapshot.apks = [] }],
+  ['missing installation identity', snapshot => { delete snapshot.identity.userId }],
+  ['missing directory identity', snapshot => { delete snapshot.dataDirectoryStat }],
+  ['wrong manifest hash', snapshot => { snapshot.manifestSha256 = 'd'.repeat(64) }],
+])('identical but incomplete C4 snapshots fail: %s', (name, mutate) => {
+  const before = preservationSnapshot()
+  mutate(before)
+  if (name !== 'wrong manifest hash') before.manifestSha256 = createHash('sha256').update(JSON.stringify(before.files)).digest('hex')
+  expect(() => assertC4Preservation(before, structuredClone(before))).toThrow()
+})
+
+test.each([
+  after => { after.dataDirectoryStat = '10001:10001:4321:700' },
+  after => { after.identity.userId = '10002' },
+  after => { after.apks[0].sha256 = 'd'.repeat(64) },
+  after => { after.files[0].sha256 = 'd'.repeat(64)
+    after.manifestSha256 = createHash('sha256').update(JSON.stringify(after.files)).digest('hex') },
+])('strict C4 rejects changed production data or identity', mutate => {
+  const before = preservationSnapshot(), after = structuredClone(before)
+  mutate(after)
+  expect(() => assertC4Preservation(before, after)).toThrow()
+})
+
+test.each([
+  ['relaxed latency budget', inputs => { inputs['final/measurements.json'].protocol.acceptance.uiFirstPageP95Ms = 999999 },
+    'Receipt acceptance budgets do not match the C4 policy'],
+  ['matching empty snapshots', inputs => {
+    for (const name of ['install/preservation-before.json', 'preservation/preservation-final.json']) {
+      inputs[name].files = []
+      inputs[name].manifestSha256 = createHash('sha256').update('[]').digest('hex')
+    }
+  }, 'No original database was hashed'],
+])('C4 CLI cannot certify invalid evidence: %s', (_name, mutate, message) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-c4-policy-'))
+  try {
+    const inputs = {
+      'final/measurements.json': { protocol: { acceptance: { ...C4_ACCEPTANCE } } },
+      'startup-qualified/measurements.json': {}, 'recovery/measurements.json': {},
+      'qualified-install/installation.json': { uid: '10002', identity: { internet: false, backup: false, sharedUid: false } }, 'gates/gates.json': [],
+      'install/preservation-before.json': preservationSnapshot(),
+      'preservation/preservation-final.json': preservationSnapshot(), 'retention/measurements.json': {},
+    }
+    mutate(inputs)
+    for (const [name, value] of Object.entries(inputs)) {
+      const target = path.join(directory, name)
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, JSON.stringify(value))
+    }
+    const result = spawnSync(process.execPath, [path.join(root, 'scripts/validate-native-availability-evidence.js'), directory],
+      { encoding: 'utf8', windowsHide: true, timeout: 30000 })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(message)
+    expect(fs.existsSync(path.join(directory, 'stage9-verdict.json'))).toBe(false)
+  } finally {
+    expect(path.resolve(directory).startsWith(path.join(path.resolve(os.tmpdir()), 'islemind-c4-policy-'))).toBe(true)
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
 })

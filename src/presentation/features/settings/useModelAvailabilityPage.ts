@@ -10,7 +10,9 @@ export function useModelAvailabilityPage(availability: Pick<ProviderModelAvailab
   const [current, setCurrent] = useState<readonly ProviderModelCurrent[]>([])
   const [latest, setLatest] = useState<ProviderModelHistoryPage['items'][number]>()
   const [latestFailure, setLatestFailure] = useState<ProviderModelHistoryPage['items'][number]>()
-  const [loading, setLoading] = useState(false)
+  // The first page is pending before the effect starts. Starting as "empty"
+  // briefly shows no evidence and needlessly recommits the entire filter UI.
+  const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const identity = JSON.stringify(filter)
   const scope = `${identity}:${revision}`

@@ -69,14 +69,9 @@ docs/
 !docs/
 docs/*
 !docs/README.md
-!docs/agentic-capability-boundary.md
-!docs/agentic-workflow-roadmap.md
-!docs/android-status-notification-roadmap.md
 !docs/technology-radar.md
 !docs/architecture/
 !docs/architecture/**
-!docs/readme/
-!docs/readme/**
 local-docs/
 local-scripts/
 .local/

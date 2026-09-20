@@ -9,6 +9,8 @@ const mockRefresh = jest.fn().mockResolvedValue(undefined)
 const mockRetest = jest.fn().mockResolvedValue(undefined)
 const mockProvider = { id: 'p', name: 'Provider', type: 'openai', enabled: true, apiKey: '', models: ['m'], credentialGroups: [{ id: 'default', label: 'Real default', enabled: true }] }
 const mockState = { providers: [mockProvider], settings: {} }
+const mockTranslate = (key: string) => key
+const mockSelectRender = jest.fn()
 
 const screenProps = { pageSize: 100, getProviderTestModel: () => 'm', availability: {
   queryHistory: mockQuery, listCurrentModels: mockCurrent, refresh: mockRefresh, retest: mockRetest,
@@ -22,7 +24,11 @@ jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => {
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
 jest.mock('@/hooks/useTransparencyPreference', () => ({ useTransparencyPreference: () => false }))
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) }))
-jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: mockTranslate }) }))
+jest.mock('@/components/ui/isle', () => {
+  const actual = jest.requireActual('@/components/ui/isle')
+  return { ...actual, IsleSelect: (props: unknown) => { mockSelectRender(); return actual.IsleSelect(props) } }
+})
 jest.mock('moti', () => ({ MotiView: require('react-native').View, AnimatePresence: require('react').Fragment }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke: {} }))
 
@@ -42,6 +48,19 @@ beforeEach(() => {
   mockNetwork.isConnected = true
   mockQuery.mockImplementation(({ filter, cursor: after }) => Promise.resolve(filter.outcome === 'failure'
     ? { counts, items: [], highWaterId: 2 } : after ? page(1) : page(2, true)))
+})
+
+it('does not rerender the filter controls when the first data page settles', async () => {
+  let finishPage!: (value: ProviderModelHistoryPage) => void
+  const pending = new Promise<ProviderModelHistoryPage>(resolve => { finishPage = resolve })
+  mockQuery.mockReturnValue(pending)
+  const view = await render(<ModelAvailabilityScreen {...screenProps} />)
+  const initialFilterRenders = mockSelectRender.mock.calls.length
+  expect(initialFilterRenders).toBe(4)
+  await act(async () => { finishPage(page(2)); await pending })
+  await waitFor(() => expect(view.getByText('model-2')).toBeTruthy())
+  expect(mockSelectRender).toHaveBeenCalledTimes(initialFilterRenders)
+  await view.unmount()
 })
 
 it('virtualizes current summaries with history instead of mounting a whole current page in the header', async () => {

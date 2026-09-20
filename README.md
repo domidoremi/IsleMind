@@ -45,19 +45,21 @@ Network access is limited to:
 
 | Item | Value |
 |---|---|
-| Source version | `1.1.0` |
-| Android `versionCode` | `125` |
+| Source version | `1.1.2` |
+| Android `versionCode` | `127` |
 | Status | Active pre-release qualification |
-| Production APK assets for `1.1.0` | Not published |
+| Production APK assets for `1.1.2` | Not published |
 
-`1.1.0` is undergoing qualification. Its GitHub tag and release notes do not certify a production build. The current Release has no attached APK or checksum assets. Build a local development/qualification APK from source; download a production APK only when it is explicitly attached to a qualified release.
+`1.1.2` is undergoing qualification. Its GitHub tag and release notes do not certify a production build. The current Release has no attached APK or checksum assets. Build a local development/qualification APK from source; download a production APK only when it is explicitly attached to a qualified release.
 
-Local validation (2026-09-19) produced an **unsigned** `com.islemind.app` ARM64 release APK (`1.1.0` / `125`, no-model), with checksum and source-input receipt. It is not installable until legitimately signed. Full-app lifecycle/recovery passed on the isolated Android 12 test identity; production-signed installation and private-data preservation remain unverified. C4 and broad Web reliability remain **NOT PASS**, so local release readiness is **NOT READY**. See [qualification boundaries](docs/architecture/architecture.md#isolated-availability-qualification).
+Historical 1.1.1 validation (2026-09-21) produced an **unsigned** `com.islemind.app` ARM64 release APK (`1.1.1` / `126`, no-model), with matching checksum/source-input receipts and passing 16 KiB alignment checks. C4 and full-app lifecycle/recovery passed on the isolated Android 12 M2007J3SC test identity, including unchanged private-file hashes for the installed **debuggable** app. Persistent-profile Web qualification also passed. These results do not certify a production-signed installation, other devices, or private-browser retention. Legitimate signing and the applicable policy/licensing/release decisions remain outstanding: **production release readiness is NOT READY**. See [qualification boundaries](docs/architecture/architecture.md#isolated-availability-qualification).
 
-- [Read the v1.1.0 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.0)
+- [Read the v1.1.2 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2)
 - [All releases and their actual attachments](https://github.com/domidoremi/IsleMind/releases)
 
-### 1.1.0 qualification scope
+### 1.1.2 qualification scope
+
+This is a source-only prerelease. The 1.1.1 device/build results above are historical, not exact-artifact qualification for 1.1.2; no installable 1.1.2 APK is published.
 
 - Model execution profiles and reasoning admission use the selected provider's supported capabilities.
 - Failure disclosure distinguishes provider, model and request failures; usage displays preserve unavailable token counts.
@@ -127,14 +129,11 @@ src/presentation/  Presentation controllers and use-case bridges
 src/components/    React Native UI components
 scripts/           Tests, audits, diagnostics, and local release scripts
 plugins/           In-repo Expo and Android native plugins
-docs/              Architecture, migration status, and localized docs
+docs/              Architecture, public APIs, and technology decisions
 ```
 
-Architecture boundaries are enforced by:
-- [IsleMind architecture](docs/architecture/architecture.md)
-- [Module public API](docs/architecture/module-public-api.md)
-
-[Technology radar and assimilation](docs/technology-radar.md) tracks evidence-based technology choices, new product opportunities, and sunset conditions.
+The [documentation index](docs/README.md) links the architecture, module public APIs,
+qualification requirements and technology decisions.
 
 ## Validation commands
 
@@ -220,10 +219,13 @@ The default idle interval is 30 minutes; `--idle-ms 0` is a transition-only chec
 The script verifies actual application writes, raw OPFS hashes, reload/browser exit,
 renderer crash, exclusive-tab retry, corrupt-state fallback and failed-write recovery.
 It blocks external requests and never reuses or overwrites an existing evidence directory.
-Current persistent-profile checks pass, but an unrelated OPFS file disappeared in the
-nonpersistent Chrome context where the application's files were lost. A separate
-no-application private context retained its control file for 30 minutes, so a browser-only
-cause is not established. Export/rendering alone does not close that broader reliability gate.
+Private Chrome 153.0.8010.50 contexts reproduced idle OPFS loss without any application
+code; untouched files disappeared across the browser's ten-minute idle boundary while
+persistent-profile and periodically inspected controls retained them. The earlier
+observed control therefore did not establish untouched-idle retention. The standalone
+`scripts/reproduce-chromium-opfs-idle.js` preserves this regression experiment; polling
+storage is not a durability fix. Use a persistent profile and backups. Neither a scoped
+persistent-profile pass nor export/rendering qualifies private-mode retention.
 
 ### Local unsigned release packaging
 
@@ -231,7 +233,7 @@ When production signing secrets are unavailable, explicitly use
 `node scripts/build-local-android-apk.js --release --unsigned --variant no-model --release-arch arm64-v8a`.
 This keeps the real production package/version and non-debuggable release behavior;
 it does not substitute a debug certificate, install the APK or publish anything.
-The output is `dist-apk/IsleMind-1.1.0-android-release-unsigned-no-model-arm64-v8a.apk`
+The output is `dist-apk/IsleMind-1.1.2-android-release-unsigned-no-model-arm64-v8a.apk`
 with `.sha256` and `.source-snapshot.json` sidecars. Signed release qualification still
 requires legitimate production signing and exact-artifact installation/runtime checks.
 

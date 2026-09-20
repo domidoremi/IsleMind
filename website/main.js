@@ -176,7 +176,7 @@
 
   const releaseVersionNodes = [...document.querySelectorAll('[data-release-version]')];
   const releaseVersionCodeNodes = [...document.querySelectorAll('[data-release-version-code]')];
-  const releaseNotesUrl = 'https://github.com/domidoremi/IsleMind/releases/tag/v1.1.0';
+  const releaseNotesUrl = 'https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2';
   const releaseLinks = [...document.querySelectorAll('[data-release-link]')];
 
   const normalizeReleaseTag = (tag) => {
@@ -192,15 +192,15 @@
       return await response.json();
     } catch {
       console.warn('Release metadata unavailable; showing the bundled qualification version.');
-      return { version: '1.1.0', versionCode: 125, status: 'prerelease-qualification' };
+      return { version: '1.1.2', versionCode: 127, status: 'prerelease-qualification' };
     }
   };
 
   const renderReleaseMetadata = async () => {
     const metadata = await loadReleaseMetadata();
-    const version = normalizeReleaseTag(metadata.version) || 'v1.1.0';
+    const version = normalizeReleaseTag(metadata.version) || 'v1.1.2';
     releaseVersionNodes.forEach((node) => { node.textContent = version; });
-    releaseVersionCodeNodes.forEach((node) => { node.textContent = String(metadata.versionCode ?? 125); });
+    releaseVersionCodeNodes.forEach((node) => { node.textContent = String(metadata.versionCode ?? 127); });
     releaseLinks.forEach((link) => { link.href = releaseNotesUrl; });
     document.querySelectorAll('[data-release-status]').forEach((node) => {
       node.textContent = metadata.status === 'prerelease-qualification' ? '预发布资格验证中 · 暂无 APK' : '发布状态待确认';

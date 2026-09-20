@@ -42,19 +42,21 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 | 项目 | 值 |
 |---|---|
-| 源码版本 | `1.1.0` |
-| Android `versionCode` | `125` |
+| 源码版本 | `1.1.2` |
+| Android `versionCode` | `127` |
 | 状态 | 预发布资格验证进行中 |
-| `1.1.0` 生产 APK 附件 | 尚未发布 |
+| `1.1.2` 生产 APK 附件 | 尚未发布 |
 
-`1.1.0` 正在进行资格验证。GitHub 标签与 Release 说明不代表生产构建已通过验证；当前 Release 没有 APK 或校验文件附件。开发与资格验证需从源码构建，生产 APK 仅以通过验证的 Release 实际附件为准。
+`1.1.2` 正在进行资格验证。GitHub 标签与 Release 说明不代表生产构建已通过验证；当前 Release 没有 APK 或校验文件附件。开发与资格验证需从源码构建，生产 APK 仅以通过验证的 Release 实际附件为准。
 
-- [查看 v1.1.0 Release 说明](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.0)
+- [查看 v1.1.2 Release 说明](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2)
 - [查看全部 Releases 与实际附件](https://github.com/domidoremi/IsleMind/releases)
 
-### 1.1.0 验证范围
+### 1.1.2 验证范围
 
-2026-09-19 已在本地构建 `com.islemind.app` 的 ARM64 Release APK（`1.1.0` / `125`，no-model），附带校验值与源码输入记录，但因缺少生产签名而**未签名、不可安装**。隔离 Android 12 测试应用的完整启动与生命周期恢复已通过；这不等于生产包验证。C4 与完整 Web 可靠性仍为 **NOT PASS**，发布就绪状态为 **NOT READY**。Web compact 续接已使用 SQLite/OPFS 持久化，但隐私窗口、浏览器清理或存储回收不保证保留数据。多语言冷准入在该物理设备测得 2.40–3.86 秒，仍需主动启用。详见[本地验证与打包说明](README.md#web-persistence-qualification)。
+本版本为仅源码预发布，不提供可安装的 1.1.2 APK。下述 1.1.1 设备与构建结果为历史证据，不代表 1.1.2 精确制品已通过验证。
+
+2026-09-21 已在本地构建 `com.islemind.app` 的 ARM64 Release APK（`1.1.1` / `126`，no-model），校验值、源码输入绑定及 16 KiB 对齐检查均通过；因缺少生产签名，仍为**未签名、不可安装**候选包。隔离 Android 12 M2007J3SC 上的 C4 与完整应用生命周期恢复已通过，已安装**调试包**的私有文件哈希保持不变。持久浏览器配置的 Web 验证也已通过，但不代表生产签名包、其他设备或隐私窗口已获认证。合法签名、适用的策略与许可决定以及发布批准仍未完成，**生产发布就绪状态仍为 NOT READY**。详见[本地验证与打包说明](README.md#web-persistence-qualification)。
 
 - 模型执行配置与推理准入遵循所选服务商支持的能力。
 - 故障披露区分服务商、模型与请求错误；用量展示保留 token 数据不可用状态。
@@ -116,10 +118,10 @@ src/presentation/ 展示层控制器与用例桥接
 src/components/   React Native 界面组件
 scripts/          测试、审计、诊断与本地发布脚本
 plugins/          项目内 Expo / Android 原生插件
-docs/             架构说明、迁移状态与多语言文档
+docs/             架构、公共 API 与技术决策
 ```
 
-架构约束以 [IsleMind 架构](docs/architecture/architecture.md) 和 [模块公共 API](docs/architecture/module-public-api.md) 为准。
+[文档索引](docs/README.md) 汇集架构约束、模块公共 API、验证要求与技术决策。
 
 ## 常用验证
 

@@ -1,5 +1,7 @@
 # Technology radar and assimilation
 
+[Documentation index](./README.md) · [Architecture](./architecture/architecture.md). Radar dispositions describe candidate decisions, not release approval or a complete implementation inventory.
+
 Discover technologies that could materially improve IsleMind, evaluate them against real product and system needs, and incorporate them when evidence justifies the change. This is an engineering watch, not a new networked background feature in the Android app.
 
 ## Decision policy
@@ -88,6 +90,8 @@ The baseline already has durable assistant/task owners, reviewed memory, context
 
 ### 5. Provider-side context compaction — Observe
 
+Observe applies to the Anthropic beta/API below. IsleMind already has [scope-bound continuation storage](./architecture/architecture.md#durable-formats-and-migrations); that local mechanism does not establish live-provider qualification for this candidate.
+
 - **Problem/evidence:** long conversations can exhaust context and lose important instructions. [Anthropic's compaction documentation](https://platform.claude.com/docs/en/build-with-claude/compaction) describes server-side summarization and a beta, model-specific API. IsleMind already owns [context assembly](../src/modules/knowledge/application/contextSnapshotAssembler.ts); another API is not evidence that this ownership should move.
 - **Costs/boundaries:** additional provider processing/cost and latency versus fewer future tokens, summary omissions, provider-specific continuation/stream handling, and retention/privacy constraints. Device memory/radio benefit and overall reliability are unknown until measured. It is not an offline solution.
 - **Assimilation/decision:** useful compaction ideas can stay inside existing context/provider owners. Keep original history, source attribution, task state and permissions independent of summaries; never make provider compaction a universal dependency.
@@ -115,13 +119,17 @@ The baseline already has durable assistant/task owners, reviewed memory, context
 
 ## Dependency security resolutions — 2026-09-18
 
+The following are dated dependency-maintenance decisions. Use the current lockfile and dependency tests to assess the installed versions; historical advisory scans are not current security clearance.
+
 - [GHSA-vcc3-ghjq-m6fr](https://github.com/advisories/GHSA-vcc3-ghjq-m6fr) affects malformed URI decoding through `expo-router → query-string → decode-uri-component`. The lockfile pins the fixed `decode-uri-component@0.5.0`. Its ESM default export and removed plus-to-space behavior require the narrow `query-string@7.1.3` compatibility patch; the upstream decoder algorithm remains unchanged. Node and Metro consumers must retain the same query/fragment behavior.
 - [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) affects UUID v3/v5/v6 calls with caller-supplied buffers. The sole locked consumer, build-time `xcode@3.0.1`, uses v4 string generation without a buffer. The lockfile pins fixed, CommonJS-compatible `uuid@11.1.1`, with Xcode identifier generation covered by `test:dependency-security`.
-- `test:dependency-security` covers query/fragment decoding, malformed-input termination and the actual Xcode call site. `bun audit` reports zero advisories for the resolved graph. Retire the query-string patch when the router dependency accepts a compatible fixed decoder without it; do not remove the regression checks or substitute an unpatched vulnerable decoder.
+- `test:dependency-security` covers query/fragment decoding, malformed-input termination and the actual Xcode call site. Retire the query-string patch when the router dependency accepts a compatible fixed decoder without it; do not remove the regression checks or substitute an unpatched vulnerable decoder.
 
 ## Technology sunset review — 2026-09-09
 
 These are retained workarounds with explicit retirement conditions, not deletions performed by this review. Remove only the obsolete part; do not weaken the underlying behavior check.
+
+**Platform separation:** [Architecture §9](./architecture/architecture.md#storage-and-startup-boundaries) requires effective WAL/FULL on Native. Web uses a dedicated worker/OPFS pool, with atomic initialization and acquired-handle cleanup before retry; native WAL settings cannot be presumed for that backend. The same patch file may carry distinct native and Web obligations. Retiring the native WAL backport does not retire Web initialization recovery, nor does Web Retry qualify native durability. Retire each part only when equivalent upstream behavior and the relevant platform evidence exist. This table is a research/retirement policy, not a complete patch or feature inventory.
 
 | Current technology | Evidence and decision | Retirement condition |
 | --- | --- | --- |
@@ -132,3 +140,23 @@ These are retained workarounds with explicit retirement conditions, not deletion
 SQLite's WAL documentation also notes an August 2026 reproducer without its special fault-injection hook. Study that upstream failure mechanism when the native durability work next needs stronger evidence; do not treat either an upstream reproducer or an emulator pass as physical-device/power-loss proof.
 
 **Outcome:** the initial pass establishes concrete study and retirement triggers, not a migration mandate. No product/dependency change meets the evidence threshold in this review. Future material evidence may justify adoption, replacement, removal, or a different product priority.
+
+<a id="privacy-licensing-disposition"></a>
+## Privacy and licensing historical disposition — 2026-09-20 documentation review
+
+This is an evidence-limited reconciliation, not legal/security clearance. **resolved** requires a documented resolution; **accepted limitation** requires explicit acceptance; **open decision** means a choice is still unrecorded; **awaiting evidence** means the question is identified but supporting verification is missing. No resolved/accepted disposition is inferred from a passed host check or lack of a newly observed exposure. Organizational decision authority and decision records are **Unknown** in the reviewed set.
+
+The [data lifecycle](./architecture/architecture.md#data-lifecycle) and [open decisions](./architecture/architecture.md#15-open-decisions) define the architectural boundary. Decisions below require evidence for the intended use and distribution.
+
+| Historical concern | Disposition | Documentary basis / still required |
+| --- | --- | --- |
+| UI-source CC BY-NC attribution and intended commercial/distribution use | open decision | No applicable-license review or distribution clearance is recorded here; no infringement finding is inferred. |
+| Per-model artifact licenses and redistribution | open decision | Review each model/runtime for the intended artifacts and use. Catalog presence or downloaded bytes do not accept terms. |
+| Private SQLite data, local encryption and key recovery | open decision | Credential SecureStore is distinct from whole-DB protection; the architecture does not promise DB encryption. Threat model, retention and recoverable-key policy remain unrecorded. |
+| Browser credentials, hosting CSP/headers and public-Web protection | awaiting evidence | Historical review requested these checks; source-level/host dependency tests and scoped OPFS tests are not a current security audit. |
+| Memory deletion versus conversations, summaries, exports and re-extraction | open decision | Source deletion does not guarantee universal semantic forgetting; the architecture inventories independent copies, without inventing a purge policy. |
+| External-provider retention/caches and remote telemetry | awaiting evidence | Local-first ownership and redacted diagnostics do not establish external deletion, retention or an absence of data egress. Applicable provider evidence/consent is missing. |
+| Durable raw context-artifact retention, quotas, encryption and authorized reads | open decision | Session-only context artifacts differ from durable Tasks records. No approved expansion or general retention policy is recorded. |
+| General security / release clearance | awaiting evidence | Dependency checks and unsigned builds are scoped engineering observations, not penetration testing, risk acceptance or release approval. |
+
+Resolve these decisions for the intended release scope; passing engineering checks cannot grant legal clearance or risk acceptance.
