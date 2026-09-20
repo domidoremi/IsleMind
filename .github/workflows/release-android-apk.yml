@@ -4,13 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag. Defaults to package.json version, for example v0.0.0.
-        required: false
+        description: Existing release tag to build, for example v1.1.2.
+        required: true
         type: string
 
 permissions:
   contents: write
-  actions: write
+
+concurrency:
+  group: android-release-${{ inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
   release-android-apk:
@@ -23,6 +26,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -55,6 +61,10 @@ jobs:
             TAG="${REQUESTED_TAG}"
           else
             TAG="v${PACKAGE_VERSION}"
+          fi
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected an existing vMAJOR.MINOR.PATCH tag."
+            exit 1
           fi
           VERSION="${TAG#v}"
           if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
@@ -155,6 +165,7 @@ jobs:
               target="dist-apk/IsleMind-${VERSION}-${arch}-${model_variant}.apk"
               cp "${apks[0]}" "$target"
               sha256sum "$target" > "${target}.sha256"
+              bun scripts/write-release-source-snapshots.js "$target"
               copied=$((copied + 1))
             done
             for required_arch in universal-64 arm64-v8a x86_64 armeabi-v7a-legacy; do
@@ -165,6 +176,8 @@ jobs:
               fi
             done
           done
+          bun scripts/prepare-model-bundle.js --variant no-model
+          git restore --source=HEAD -- src/generated/modelBundle.ts
           count="$(find dist-apk -type f -name '*.apk' | wc -l | tr -d ' ')"
           if [ "$count" -lt 8 ]; then
             echo "::error::Expected 8 APK assets, found $count."
@@ -180,9 +193,6 @@ jobs:
       - name: Validate release signing
         run: bun scripts/validate-android-release-signing.js dist-apk/*.apk
 
-      - name: Write release source snapshots
-        run: bun scripts/write-release-source-snapshots.js dist-apk/*.apk
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
@@ -197,40 +207,12 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.meta.outputs.tag }}"
-          TITLE="IsleMind ${{ steps.meta.outputs.version }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$TITLE" --latest
-          else
-            gh release create "$TAG" --title "$TITLE" --generate-notes --latest
+          # Build the immutable tag, not the branch containing this workflow.
+          git fetch --no-tags origin "refs/tags/$TAG"
+          if [ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::Release tag changed during the build; refusing upload."
+            exit 1
           fi
-          gh release upload "$TAG" dist-apk/* --clobber
-
-      - name: Prune superseded build artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.meta.outputs.tag }}"
-
-          while IFS= read -r old_tag; do
-            [ -z "$old_tag" ] && continue
-            [ "$old_tag" = "$TAG" ] && continue
-            while IFS= read -r asset; do
-              [ -z "$asset" ] && continue
-              case "$asset" in
-                IsleMind-*.apk|IsleMind-*.apk.sha256|IsleMind-*.apk.source-snapshot.json)
-                  gh release delete-asset "$old_tag" "$asset" --yes
-                  ;;
-              esac
-            done < <(gh release view "$old_tag" --json assets --jq '.assets[].name')
-          done < <(gh release list --limit 100 --json tagName --jq '.[].tagName')
-
-          while IFS= read -r run_id; do
-            [ -z "$run_id" ] && continue
-            [ "$run_id" = "$GITHUB_RUN_ID" ] && continue
-            while IFS= read -r artifact_id; do
-              [ -z "$artifact_id" ] && continue
-              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
-            done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --jq '.artifacts[] | select(.name == "islemind-android-release-apks") | .id')
-          done < <(gh run list --workflow release-android-apk.yml --limit 100 --json databaseId --jq '.[].databaseId')
+          # Preserve the release notes and prerelease/latest choice made by its owner.
+          gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" dist-apk/*.apk dist-apk/*.apk.sha256

@@ -2121,6 +2121,20 @@ function assertReleaseWorkflowIntegration() {
     }
   }
 
+  const releaseWorkflow = parse(releaseWorkflowSource)
+  const releaseSteps = releaseWorkflow.jobs['release-android-apk'].steps
+  const checkout = releaseSteps.find(step => step.uses?.startsWith('actions/checkout@'))
+  assert.equal(releaseWorkflow.on.workflow_dispatch.inputs.tag.required, true, 'release builds require an explicit existing tag')
+  assert.equal(checkout.with.ref, 'refs/tags/${{ inputs.tag }}', 'build the selected tag, not the workflow branch')
+  assert.equal(checkout.with['persist-credentials'], false, 'checkout does not retain write credentials')
+  assert.equal(releaseWorkflow.permissions.actions, undefined, 'release builds do not need artifact deletion permissions')
+  assert.equal(releaseWorkflow.concurrency['cancel-in-progress'], false, 'a newer build cannot cancel publication in progress')
+  const publication = releaseSteps.find(step => step.name === 'Publish GitHub Release').run
+  assert.match(publication, /FETCH_HEAD\^\{commit\}/, 'publication rechecks the selected tag commit')
+  assert.doesNotMatch(publication, /--clobber|--latest|release (?:edit|create)/, 'builds cannot overwrite assets or change release decisions')
+  assert.doesNotMatch(releaseWorkflowSource, /delete-asset|--method DELETE|Prune superseded/, 'older releases and build artifacts remain available')
+  assert.match(publication, /dist-apk\/\*\.apk dist-apk\/\*\.apk\.sha256/, 'only APKs and checksums are public release assets')
+
   const qualityGateIndex = releaseWorkflowSource.indexOf('- name: Release quality contracts')
   const recoveryGateIndex = releaseWorkflowSource.indexOf('- name: Architecture and recovery contracts')
   const prebuildIndex = releaseWorkflowSource.indexOf('- name: Generate Android project')

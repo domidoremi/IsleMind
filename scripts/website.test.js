@@ -74,7 +74,8 @@ test('static assets resolve below the project-site base path and no unavailable 
   }
   expect(html).toContain('https://domidoremi.github.io/IsleMind/')
   expect(html).toContain(`data-release-version>v${pkg.version}`)
-  expect(html).toContain('预发布资格验证中 · 暂无 APK')
+  expect(html).toContain('预览版 · 下载请查看 Release')
+  expect(html).not.toMatch(/SOURCE QUALIFICATION|资格验证中|NOT READY/)
   expect(html).not.toMatch(/LATEST BUILD|>AVAILABLE<|下载 Android 版|releases\/download\//)
   expect(html).not.toMatch(/(?:href|src)="\/(?:assets|main\.js|styles\.css)/)
 })

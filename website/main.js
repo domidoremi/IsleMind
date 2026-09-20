@@ -191,7 +191,7 @@
       if (!response.ok) throw new Error(`Metadata request failed: ${response.status}`);
       return await response.json();
     } catch {
-      console.warn('Release metadata unavailable; showing the bundled qualification version.');
+      console.warn('Release metadata unavailable; showing the bundled version.');
       return { version: '1.1.2', versionCode: 127, status: 'prerelease-qualification' };
     }
   };
@@ -203,7 +203,7 @@
     releaseVersionCodeNodes.forEach((node) => { node.textContent = String(metadata.versionCode ?? 127); });
     releaseLinks.forEach((link) => { link.href = releaseNotesUrl; });
     document.querySelectorAll('[data-release-status]').forEach((node) => {
-      node.textContent = metadata.status === 'prerelease-qualification' ? '预发布资格验证中 · 暂无 APK' : '发布状态待确认';
+      node.textContent = metadata.status === 'prerelease-qualification' ? '预览版 · 下载请查看 Release' : '发布状态待确认';
     });
   };
 

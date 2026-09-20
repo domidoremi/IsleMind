@@ -41,30 +41,22 @@ Network access is limited to:
 - GitHub version checks
 - user-enabled networking, MCP servers, and third-party integrations
 
-## Current qualification version
+## Releases
 
 | Item | Value |
 |---|---|
-| Source version | `1.1.2` |
-| Android `versionCode` | `127` |
-| Status | Active pre-release qualification |
-| Production APK assets for `1.1.2` | Not published |
+| Version | `1.1.2` |
+| Android build | `127` |
+| Channel | Preview |
 
-`1.1.2` is undergoing qualification. Its GitHub tag and release notes do not certify a production build. The current Release has no attached APK or checksum assets. Build a local development/qualification APK from source; download a production APK only when it is explicitly attached to a qualified release.
+[Read the release notes and check available downloads](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2).
+APK downloads and their `.sha256` checksums appear as release attachments when available. Preview builds are intended for testing; back up your data before installing.
 
-Historical 1.1.1 validation (2026-09-21) produced an **unsigned** `com.islemind.app` ARM64 release APK (`1.1.1` / `126`, no-model), with matching checksum/source-input receipts and passing 16 KiB alignment checks. C4 and full-app lifecycle/recovery passed on the isolated Android 12 M2007J3SC test identity, including unchanged private-file hashes for the installed **debuggable** app. Persistent-profile Web qualification also passed. These results do not certify a production-signed installation, other devices, or private-browser retention. Legitimate signing and the applicable policy/licensing/release decisions remain outstanding: **production release readiness is NOT READY**. See [qualification boundaries](docs/architecture/architecture.md#isolated-availability-qualification).
+### What’s new
 
-- [Read the v1.1.2 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2)
-- [All releases and their actual attachments](https://github.com/domidoremi/IsleMind/releases)
-
-### 1.1.2 qualification scope
-
-This is a source-only prerelease. The 1.1.1 device/build results above are historical, not exact-artifact qualification for 1.1.2; no installable 1.1.2 APK is published.
-
-- Model execution profiles and reasoning admission use the selected provider's supported capabilities.
-- Failure disclosure distinguishes provider, model and request failures; usage displays preserve unavailable token counts.
-- Search adapters and local storage recovery have targeted regression coverage.
-- Android qualification uses an isolated test application. Production signing and non-debuggable release behavior remain unchanged.
+- Clearer activity steps and completion status in replies.
+- Smoother loading on the model-availability page.
+- Refined Android launch colors and liquid-glass input appearance.
 
 ### APK variants
 
