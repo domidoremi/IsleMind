@@ -64,7 +64,10 @@ export function copyChatMessageProcessTrace({
     return
   }
   void Clipboard.setStringAsync(traceText)
-    .then(() => dialog.toast({ title: t('common.copied'), message: t('messageBubble.copyProcessTraceCopied'), tone: 'mint' }))
+    .then((copied) => {
+      if (!copied) throw new Error('Clipboard write failed')
+      dialog.toast({ title: t('common.copied'), message: t('messageBubble.copyProcessTraceCopied'), tone: 'mint' })
+    })
     .catch(() => dialog.toast({ title: t('common.copyFailed'), message: t('chat.clipboardUnavailable'), tone: 'danger' }))
 }
 
@@ -83,7 +86,10 @@ export function copyChatMessageWorkArtifact({
     return
   }
   void Clipboard.setStringAsync(workArtifact.handoffText)
-    .then(() => dialog.toast({ title: t('common.copied'), message: t('messageBubble.copyWorkArtifactCopied'), tone: 'mint' }))
+    .then((copied) => {
+      if (!copied) throw new Error('Clipboard write failed')
+      dialog.toast({ title: t('common.copied'), message: t('messageBubble.copyWorkArtifactCopied'), tone: 'mint' })
+    })
     .catch(() => dialog.toast({ title: t('common.copyFailed'), message: t('chat.clipboardUnavailable'), tone: 'danger' }))
 }
 

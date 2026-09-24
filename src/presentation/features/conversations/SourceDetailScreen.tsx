@@ -114,7 +114,8 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
       const content = mode === 'process'
         ? buildSourceProcessTraceCopyText(traces)
         : [citation?.title, citation?.url, citation?.excerpt].filter(Boolean).join('\n\n')
-      await Clipboard.setStringAsync(content || webUrl || '')
+      const copied = await Clipboard.setStringAsync(content || webUrl || '')
+      if (!copied) throw new Error('Clipboard write failed')
       dialog.toast({ title: t('common.copied'), message: mode === 'process' ? t('source.processCopied') : t('source.sourceCopied'), tone: 'mint' })
     } catch {
       dialog.toast({ title: t('common.copyFailed'), message: t('source.clipboardUnavailable'), tone: 'danger' })

@@ -1061,6 +1061,14 @@ async function testFinalMessageClipboardAction(messageActionModule) {
   assert.equal(writes.length, 2, 'empty or whitespace-only selected text performs no clipboard write')
 
   const clipboardFailure = new Error('clipboard unavailable')
+  const deniedController = messageActionModule.createConversationMessageActionController({
+    async writeText() { return false },
+  })
+  await assert.rejects(
+    deniedController.copyFinalText({ content: 'copy me' }),
+    /clipboard/i,
+    'an explicit unsuccessful clipboard result must reach the UI failure handler',
+  )
   const failingController = messageActionModule.createConversationMessageActionController({
     async writeText() {
       throw clipboardFailure

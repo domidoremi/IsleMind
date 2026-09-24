@@ -22,7 +22,8 @@ export function createConversationMessageActionController(
       const finalText = message.responseText ?? message.content
       if (!finalText.trim()) return
 
-      await dependencies.writeText(finalText)
+      const copied = await dependencies.writeText(finalText)
+      if (copied === false) throw new Error('Clipboard write failed')
     },
   }
 }

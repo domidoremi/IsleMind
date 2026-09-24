@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react'
 import { Linking, Platform, Text } from 'react-native'
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
+import * as Clipboard from 'expo-clipboard'
 import type { KnowledgeLocalSource, KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import type { MessageCitation } from '@/types/contextContracts'
 import { createProviderCitationSupportBinder } from '@/core'
 import { CanonicalSourceReader, type CanonicalSourceReaderProps } from './CanonicalSourceReader'
 import SourceDetailScreen from './SourceDetailScreen'
 
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }))
 jest.mock('expo-router', () => ({
   useFocusEffect: (effect: () => void | (() => void)) => require('react').useEffect(effect, [effect]),
   useLocalSearchParams: jest.fn(),
@@ -179,6 +181,21 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     }))
   })
   afterEach(() => jest.restoreAllMocks())
+
+  it.each(['success', 'false', 'rejection'] as const)('reports the actual source clipboard outcome: %s', async (outcome) => {
+    const write = jest.mocked(Clipboard.setStringAsync)
+    if (outcome === 'rejection') write.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+    else write.mockResolvedValueOnce(outcome === 'success')
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockResolvedValue(documentSource())
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      title: outcome === 'success' ? 'common.copied' : 'common.copyFailed',
+      tone: outcome === 'success' ? 'mint' : 'danger',
+    })))
+    expect(write).toHaveBeenCalledWith('Cited document\n\nCaptured excerpt')
+    expect(toast).toHaveBeenCalledTimes(1)
+  })
 
   it('never substitutes the first citation when the requested identity is missing', async () => {
     useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'missing', url: 'https://example.test' })
