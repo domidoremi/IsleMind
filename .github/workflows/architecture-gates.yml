@@ -32,6 +32,11 @@ jobs:
       - name: Type check
         run: bun run type-check
 
+      - name: Offline user guide contracts
+        run: |
+          node scripts/user-guide.js --check
+          node --test scripts/user-guide-tests.js
+
       - name: Build toolchain contracts
         run: bun run test:android-build-toolchain
 

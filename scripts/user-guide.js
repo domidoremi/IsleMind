@@ -1,0 +1,96 @@
+// One source for project documentation and the offline reader. No network access.
+const fs = require('node:fs')
+const path = require('node:path')
+const crypto = require('node:crypto')
+const LANGUAGES = ['zh-CN', 'en', 'ja']
+const root = path.resolve(__dirname, '..')
+const guideRoot = path.join(root, 'docs/user-guide')
+const output = path.join(root, 'src/generated/userGuide.ts')
+function parseChapter(source, filename) {
+  const match = source.replace(/\r\n/g, '\n').match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
+  if (!match) throw Error(`Missing guide metadata: ${filename}`)
+  const metadata = Object.fromEntries(match[1].split('\n').map(line => {
+    const colon = line.indexOf(':')
+    if (colon < 1) throw Error(`Invalid metadata: ${filename}`)
+    return [line.slice(0, colon), JSON.parse(line.slice(colon + 1).trim())]
+  }))
+  const body = match[2]
+  const anchors = [...body.matchAll(/<a id="([a-z0-9-]+)"><\/a>/g)].map(match => match[1])
+  if (new Set(anchors).size !== anchors.length) throw Error(`Duplicate anchor: ${filename}`)
+  if (!/^[a-z0-9-]+$/.test(metadata.id) || metadata.slug !== path.basename(filename, '.md') || metadata.id !== metadata.slug || !metadata.title) throw Error(`Invalid chapter identity: ${filename}`)
+  for (const field of ['updatedAt', 'reviewedAt']) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(metadata[field]) || new Date(metadata[field]).toISOString().slice(0, 10) !== metadata[field]) throw Error(`Invalid ${field}: ${filename}`)
+  }
+  return { ...metadata, anchors, body }
+}
+function safeLocalPath(base, target) {
+  const resolved = path.resolve(base, decodeURIComponent(target))
+  if (!resolved.startsWith(path.resolve(base, '..') + path.sep)) throw Error(`Guide path escapes its root: ${target}`)
+  return resolved
+}
+function sourceHash(chapter, chapterDir) {
+  const hash = crypto.createHash('sha256').update(chapter.title).update('\n').update(chapter.body)
+  for (const match of chapter.body.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) hash.update(fs.readFileSync(safeLocalPath(chapterDir, match[1])))
+  return hash.digest('hex')
+}
+function loadGuide(base = guideRoot, destinations = require('../src/presentation/features/settings/settingsRegistry.ts').SETTINGS_DESTINATIONS) {
+  const chapters = {}
+  const assets = {}
+  const warnings = []
+  for (const language of LANGUAGES) {
+    const dir = path.join(base, language)
+    chapters[language] = fs.readdirSync(dir).filter(file => file.endsWith('.md')).sort().map(file => parseChapter(fs.readFileSync(path.join(dir, file), 'utf8'), file))
+    const ids = chapters[language].map(chapter => chapter.id)
+    if (new Set(ids).size !== ids.length) throw Error(`Duplicate chapter: ${language}`)
+  }
+  const expected = chapters['zh-CN'].map(chapter => chapter.id)
+  for (const language of LANGUAGES) {
+    if (JSON.stringify(chapters[language].map(chapter => chapter.id)) !== JSON.stringify(expected)) throw Error(`Missing or extra translation: ${language}`)
+    for (const chapter of chapters[language]) {
+      const source = chapters['zh-CN'].find(item => item.id === chapter.id)
+      if (JSON.stringify([...chapter.anchors].sort()) !== JSON.stringify([...source.anchors].sort())) throw Error(`Anchor mismatch: ${language}/${chapter.id}`)
+      if (language !== 'zh-CN' && chapter.reviewedSourceHash !== sourceHash(source, path.join(base, 'zh-CN'))) throw Error(`Stale translation: ${language}/${chapter.id}`)
+      if (Date.parse(source.updatedAt) - Date.parse(chapter.reviewedAt) > 14 * 86400000) warnings.push(`Review date lags source: ${language}/${chapter.id}`)
+      for (const match of chapter.body.matchAll(/(!?)\[[^\]]*\]\(([^)]+)\)/g)) {
+        const [, image, href] = match
+        if (/^https?:\/\//.test(href)) { if (image) throw Error('Remote guide images are not allowed'); continue }
+        if (/^[a-z]+:/i.test(href)) throw Error(`Unsafe guide link: ${href}`)
+        if (image) {
+          const assetPath = safeLocalPath(path.join(base, language), href)
+          const content = fs.readFileSync(assetPath, 'utf8')
+          if (!assetPath.endsWith('.svg') || /<script|<foreignObject|\bon\w+\s*=|(?:href|url)\s*[=(]/i.test(content)) throw Error(`Unsafe guide illustration: ${href}`)
+          assets[href] = content
+        } else {
+          const [file, anchor] = href.split('#')
+          const slug = file ? path.basename(file, '.md') : chapter.id
+          if (file && (!/^[a-z0-9-]+\.md$/.test(file))) throw Error(`Unsupported guide link: ${href}`)
+          const target = chapters[language].find(item => item.id === slug)
+          if (!target || (anchor && !target.anchors.includes(anchor))) throw Error(`Broken guide link: ${language}/${chapter.id} -> ${href}`)
+        }
+      }
+    }
+  }
+  for (const entry of destinations) if (!expected.includes(entry.helpTopic)) throw Error(`Unknown help topic: ${entry.id}`)
+  return { chapters, assets, warnings }
+}
+function renderBundle(guide) {
+  return '// Generated by scripts/user-guide.js. Edit docs/user-guide, not this file.\nexport const userGuide = '+JSON.stringify({ chapters: guide.chapters, assets: guide.assets }, null, 2)+' as const\n'
+}
+function writeGuide() {
+  const guide = loadGuide()
+  const bundle = renderBundle(guide)
+  if (!fs.existsSync(output) || fs.readFileSync(output, 'utf8') !== bundle) fs.writeFileSync(output, bundle)
+  return guide
+}
+if (require.main === module) {
+  try {
+    const guide = loadGuide()
+    guide.warnings.forEach(warning => process.stderr.write(`Warning: ${warning}\n`))
+    const bundle = renderBundle(guide)
+    if (process.argv.includes('--check')) {
+      if (!fs.existsSync(output) || fs.readFileSync(output, 'utf8') !== bundle) throw Error('Offline guide is stale. Run node scripts/user-guide.js')
+    } else fs.writeFileSync(output, bundle)
+    process.stdout.write(`Guide OK: ${guide.chapters['zh-CN'].length} chapters × ${LANGUAGES.length} languages\n`)
+  } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1 }
+}
+module.exports = { parseChapter, sourceHash, loadGuide, renderBundle, writeGuide }

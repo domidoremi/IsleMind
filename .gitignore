@@ -72,6 +72,10 @@ docs/*
 !docs/technology-radar.md
 !docs/architecture/
 !docs/architecture/**
+!docs/user-guide/
+!docs/user-guide/**
+!docs/release/
+!docs/release/**
 local-docs/
 local-scripts/
 .local/
