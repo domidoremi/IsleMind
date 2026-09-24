@@ -14,6 +14,8 @@ export interface ProviderExecutionIdentity {
 export interface ProviderExecutionTarget extends ProviderExecutionIdentity {
   attemptId: string
   scope?: { scopeId: string; epoch: string }
+  /** Final assembled request estimate. No prompt, media, credentials or billing claims. */
+  tokenEstimate?: { inputTokens: number; outputTokens: number; rawInputTokens?: number; calibrationKey?: string; managedTextBytes?: number }
 }
 
 /** Awaited out-of-band before output is delivered; does not commit a stream. */

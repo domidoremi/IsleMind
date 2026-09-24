@@ -1,7 +1,6 @@
 import { ragEvaluationRepository } from '@/bootstrap/ragEvaluationRepository'
 import { knowledgeRepository } from '@/bootstrap/knowledgeRepository'
 import {
-  searchAgenticKnowledgeWithScope,
   searchKnowledgeWithFallback,
 } from '@/bootstrap/knowledgeRetrievalRuntime'
 import {
@@ -18,6 +17,7 @@ import type { Conversation, Message } from '@/types/chatContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 import type { Settings } from '@/types/settingsContracts'
+import { executionResources } from './executionResources'
 import type {
   RagEvaluationResult,
   RagQueryPlan,
@@ -61,6 +61,18 @@ export interface RetrievedConversationFlareContext {
  * persistence and concrete search adapters.
  */
 export async function retrieveConversationKnowledgeContext(
+  conversation: Conversation,
+  draftMessage: Message,
+  signal?: AbortSignal,
+): Promise<RetrievedConversationKnowledgeContext> {
+  return executionResources.runLocal(signal ?? new AbortController().signal,
+    () => retrieveConversationKnowledgeContextInLocalJob(conversation, draftMessage, signal))
+}
+
+/** Bootstrap-only workflow binding: Tasks already owns the whole local RAG job.
+ * Keeping this distinct from the ordinary entry avoids nested semaphore waits;
+ * an AbortSignal is cancellation, never proof of resource admission. */
+export async function retrieveConversationKnowledgeContextInLocalJob(
   conversation: Conversation,
   draftMessage: Message,
   signal?: AbortSignal,
@@ -143,22 +155,16 @@ export async function retrieveConversationKnowledgeContext(
       retrieveKnowledge: (variant, limit, options) => searchKnowledgeWithFallback({
         query: variant,
         limit,
-        ragMode: resolveConversationKnowledgeRagMode(settings, options?.mode),
+        // Context preparation precedes root attempt admission. Never hide an
+        // embedding/model call here, including on a deep/advanced RAG profile.
+        ragMode: 'fts',
         embeddingMode: settings.embeddingMode ?? 'hybrid',
         localEmbeddingModelId: settings.localEmbeddingModelId,
         localEmbeddingModelSource: settings.localEmbeddingModelSource,
         provider: provider ?? undefined,
         knowledgeScope,
         onEmbeddingResolved: options?.onEmbeddingResolved,
-        signal: options?.signal,
-      }),
-      retrieveAgentic: (variant, plan, limit, options) => searchAgenticKnowledgeWithScope({
-        query: variant,
-        plan,
-        limit,
-        knowledgeScope,
-        onEmbeddingResolved: options?.onEmbeddingResolved,
-        signal: options?.signal,
+        signal: options?.signal ?? signal,
       }),
       signal,
     })
@@ -220,32 +226,22 @@ export async function retrieveConversationFlareContext(input: {
   )
 
   try {
-    const hits = await searchKnowledgeWithFallback({
+    const hits = await executionResources.runLocal(input.signal ?? new AbortController().signal, () => searchKnowledgeWithFallback({
       query,
       limit,
-      // FLARE is an explicit supplemental pass, so retain the configured
-      // hybrid index even when the ordinary turn uses the FTS baseline.
-      ragMode: settings.ragMode === 'fts' ? 'fts' : 'hybrid',
+      // Supplemental retrieval is not a separate model-attempt authorization.
+      ragMode: 'fts',
       embeddingMode: settings.embeddingMode ?? 'hybrid',
       localEmbeddingModelId: settings.localEmbeddingModelId,
       localEmbeddingModelSource: settings.localEmbeddingModelSource,
       provider: provider ?? undefined,
       knowledgeScope,
       signal: input.signal,
-    })
-    throwIfCancelled(input.signal)
-    const advanced = await searchAgenticKnowledgeWithScope({
-      query,
-      limit,
-      plan: { query, enabledTechniques: ['raptor', 'graphrag', 'colbert'] },
-      techniques: ['raptor', 'graphrag', 'colbert'],
-      knowledgeScope,
-      signal: input.signal,
-    })
+    }))
     throwIfCancelled(input.signal)
 
     const excluded = new Set(input.excludeChunkIds ?? [])
-    const merged = dedupeSources([...hits, ...advanced])
+    const merged = dedupeSources([...hits])
       .filter((source) => !source.chunkId || !excluded.has(source.chunkId))
       .slice(0, limit)
     const completedAt = Date.now()
@@ -271,7 +267,7 @@ export async function retrieveConversationFlareContext(input: {
       trace: [trace],
       quality: {
         sourceCount: merged.length,
-        candidateCount: hits.length + advanced.length,
+        candidateCount: hits.length,
         citationCoverage: merged.length ? 1 : 0,
         contextPrecision: merged.length
           ? Math.min(1, merged.reduce((sum, source) => sum + (source.score ?? 0), 0) / merged.length)

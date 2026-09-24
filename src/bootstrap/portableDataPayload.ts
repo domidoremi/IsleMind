@@ -17,6 +17,7 @@ import { portableKnowledgeSnapshot } from './knowledgePortableSnapshot'
 import { importPortableApplicationDataWithRecovery } from './portableImportRecovery'
 import { usagePortableSnapshotRepository } from './usageStatisticsRuntime'
 import { documentLibrary } from './documentLibrary'
+import { agentDefinitionRepository } from './agentDefinitionRepository'
 import {
   exportTavernActiveScopeLinks,
   exportTavernSnapshots,
@@ -28,6 +29,7 @@ export const portableDataPayloadRuntime = createPortableDataPayloadRuntime({
     loadSettings: () => readApplicationDataRecord<Settings>('SETTINGS'),
     loadProviders: () => readApplicationDataRecord<AIProvider[]>('PROVIDERS'),
     loadSkills: () => readApplicationDataRecord<SkillDefinition[]>('SKILLS'),
+    loadAgentDefinitions: () => agentDefinitionRepository.loadSnapshot(),
     loadMcpServers: () => readApplicationDataRecord<McpServerConfig[]>('MCP_SERVERS'),
     loadLanguagePreferenceSource,
   },

@@ -276,7 +276,7 @@ export function createContextPackingPolicy<
       80,
       budgetTokens - selectedTokens - 24,
     );
-    const summary = summarizeMessages(
+    const summary = summarizeContextPackingHistory(
       trimmed,
       summaryBudget,
       dependencies.estimateTextTokens,
@@ -386,7 +386,8 @@ function toRequestMessage(message: {
   return { role: message.role, content: message.content };
 }
 
-function summarizeMessages(
+/** Shared bounded local summary; callers retain ownership of which history is safe to replace. */
+export function summarizeContextPackingHistory(
   messages: Array<{ role: ContextPackingRole; content: string }>,
   tokenBudget: number,
   estimateTextTokens: (text: string) => number,

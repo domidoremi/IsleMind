@@ -1,7 +1,6 @@
 import { systemClock, type IdGenerator } from '@/core'
 import {
   createAssistantChatWorkflowRunRuntime,
-  createSqliteAssistantRunPersistence,
   type AssistantChatWorkflowRunRuntime,
 } from '@/modules/assistant-runtime'
 import {
@@ -15,10 +14,9 @@ import {
   type WorkflowCheckpointStore,
 } from '@/modules/tasks'
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
-import { createAppContainer } from './createAppContainer'
+import { applicationAssistantRuntime } from './applicationAssistantRuntime'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
-const runPersistence = createSqliteAssistantRunPersistence(databaseProvider)
 const contextSnapshots = createSqliteContextSnapshotRepository(databaseProvider)
 const workflowCheckpoints = createWorkflowCheckpointRuntime(databaseProvider)
 let idSequence = 0
@@ -42,12 +40,6 @@ export interface ChatWorkflowRuntime
 export function createChatWorkflowRuntime(
   options: ChatWorkflowRuntimeOptions = {},
 ): ChatWorkflowRuntime {
-  const container = createAppContainer({
-    clock: systemClock,
-    ids,
-    providerAdapters: [],
-    runPersistence,
-  })
   const contextSnapshotAssembler = createContextSnapshotAssembler({
     clock: systemClock,
     ids,
@@ -56,7 +48,7 @@ export function createChatWorkflowRuntime(
   })
   const chatWorkflows = createAssistantChatWorkflowRunRuntime({
     ids,
-    assistantRuntime: container.assistantRuntime,
+    assistantRuntime: applicationAssistantRuntime,
     contextAssembly: contextSnapshotAssembler,
   })
   return Object.assign(chatWorkflows, { workflowCheckpoints })

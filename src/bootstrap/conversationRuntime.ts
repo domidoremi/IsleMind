@@ -5,7 +5,6 @@ import {
 } from '@/core'
 import {
   buildAssistantContextPlanReceipt,
-  createSqliteAssistantRunPersistence,
   planUnifiedConversationCapabilities,
 } from '@/modules/assistant-runtime'
 import {
@@ -25,6 +24,7 @@ import {
 } from '@/modules/knowledge'
 import {
   createSameProviderFallbackResolver,
+  createProviderGateway,
   type ProviderRuntimeChatSettings,
   type SameProviderFallbackDescriptor,
   type ProviderChatExecutionConstraint,
@@ -35,7 +35,8 @@ import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import type { RetrievalSource } from '@/types/contextContracts'
 import type { Settings } from '@/types/settingsContracts'
-import { createAppContainer } from './createAppContainer'
+import { assistantRunPersistence as runPersistence, bindAssistantRuntimeGateway } from './applicationAssistantRuntime'
+import { assistantExecutionHost } from './assistantExecutionHostRuntime'
 import { buildChatContextRuntime } from './contextContributionRuntime'
 import { planChatContext } from './contextPlanning'
 import { retrieveConversationKnowledgeContext } from './knowledgeContextRuntime'
@@ -46,7 +47,6 @@ import { buildSystemPrompt } from '@/services/promptEngineering'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
-const runPersistence = createSqliteAssistantRunPersistence(databaseProvider)
 const conversations = createSqliteConversationRepository(databaseProvider)
 const contextSnapshots = createSqliteContextSnapshotRepository(databaseProvider)
 let idSequence = 0
@@ -83,15 +83,10 @@ export function getLatestConversationResponseRun(conversationId: string, respons
 export function createConversationRuntime(
   options: ConversationRuntimeOptions = {},
 ): ConversationRunUseCase {
-  const container = createAppContainer({
-    clock: systemClock,
-    ids,
-    providerAdapters: options.provider
+  const assistantRuntime = bindAssistantRuntimeGateway(createProviderGateway(options.provider
       ? [createProviderRuntimeAdapter({ provider: options.provider, ...(options.providerSettings ? { settings: options.providerSettings } : {}),
           ...(options.executionConstraint ? { executionConstraint: options.executionConstraint } : {}) })]
-      : [],
-    runPersistence,
-  })
+      : []))
   const contextSnapshotAssembler = createContextSnapshotAssembler({
     clock: systemClock,
     ids,
@@ -111,7 +106,7 @@ export function createConversationRuntime(
     clock: systemClock,
     ids,
     conversations,
-    assistantRuntime: container.assistantRuntime,
+    assistantRuntime,
     contextSnapshotAssembler,
     requestPreparation,
     ...(options.providerFallbackDescriptors?.length ? {
@@ -316,6 +311,8 @@ export async function resumeConversationModelOperation(input: {
   approved: boolean
   projection: Parameters<ConversationRunUseCase['resumeModelOperation']>[0]['projection']
 }): Promise<boolean> {
+  // This entry is invoked by the visible confirmation UI, never by a notification.
+  assistantExecutionHost.prepareUserResume(asAssistantRunId(input.runId))
   const runtime = createPlainChatRuntime(input)
   const result = await runtime.resumeModelOperation({
     runId: asAssistantRunId(input.runId),

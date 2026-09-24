@@ -86,11 +86,11 @@ const APP_ACTION_TOOLS: readonly AppActionToolDescriptor[] = [
   },
   {
     name: 'set_theme_family',
-    description: 'Set theme family to minimal, monet, material, or liquid-glass.',
+    description: 'Set theme family to minimal, monet, material, liquid-glass, or animal-island-ui.',
     permission: 'read-write',
     inputSchema: {
       type: 'object',
-      properties: { themeId: { type: 'string', enum: ['minimal', 'monet', 'material', 'liquid-glass'] } },
+      properties: { themeId: { type: 'string', enum: ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] } },
       required: ['themeId'],
     },
   },

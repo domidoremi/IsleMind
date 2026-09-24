@@ -54,6 +54,7 @@ export interface AnthropicRequestBodyBuilderDependencies<
   resolveDeclaredTools(request: Request): readonly unknown[] | undefined
   resolveNativeSearchTool(request: Request): Record<string, unknown> | undefined
   resolveStructuredOutputTool(request: Request): Record<string, unknown> | undefined
+  resolveStructuredOutputConfig?(request: Request): Record<string, unknown> | undefined
   resolveReasoningPolicy(request: Request): AnthropicRequestReasoningPolicy
   resolveRequestParameters(
     request: Request,
@@ -107,6 +108,7 @@ export function createAnthropicRequestBodyBuilder<
 
       const nativeSearchTool = dependencies.resolveNativeSearchTool(request)
       const structuredOutputTool = dependencies.resolveStructuredOutputTool(request)
+      const structuredOutputConfig = dependencies.resolveStructuredOutputConfig?.(request)
       const tools = mergeProviderToolDeclarations(
         dependencies.resolveDeclaredTools(request),
         [nativeSearchTool, structuredOutputTool].filter((tool): tool is Record<string, unknown> => !!tool),
@@ -128,7 +130,9 @@ export function createAnthropicRequestBodyBuilder<
       if (requestParameters.topP !== undefined) body.top_p = requestParameters.topP
       if (requestParameters.topK !== undefined) body.top_k = requestParameters.topK
       if (reasoning.thinkingConfig?.thinking) body.thinking = reasoning.thinkingConfig.thinking
-      if (reasoning.thinkingConfig?.outputConfig) body.output_config = reasoning.thinkingConfig.outputConfig
+      if (reasoning.thinkingConfig?.outputConfig || structuredOutputConfig) {
+        body.output_config = { ...reasoning.thinkingConfig?.outputConfig, ...structuredOutputConfig }
+      }
       if (reasoning.miniMaxThinking) body.thinking = reasoning.miniMaxThinking
       if (reasoning.mimoThinking) body.thinking = reasoning.mimoThinking
       // Official server-side compaction (beta compact-2026-01-12). Header is added in providerHeaders.

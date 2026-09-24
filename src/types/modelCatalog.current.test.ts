@@ -1,6 +1,38 @@
 import { getModelConfig } from './modelCatalog'
 
 describe('current provider model catalog', () => {
+  it.each(['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'])(
+    '%s exposes the current documented DeepSeek effort levels', (id) => {
+      // https://api-docs.deepseek.com/guides/thinking_mode/
+      expect(getModelConfig(id, 'openai-compatible').reasoningEfforts).toEqual(['none', 'low', 'high', 'max'])
+    },
+  )
+
+  it.each(['claude-opus-4-6', 'claude-sonnet-4-6'])('%s offers only documented effort levels and synchronous output limits', (id) => {
+    // https://platform.claude.com/docs/en/build-with-claude/effort
+    // The 4.6 model pages specify 128K sync output, not the 300K batch-only beta.
+    expect(getModelConfig(id, 'anthropic')).toMatchObject({
+      maxOutputTokens: 128000,
+      defaultMaxTokens: 8192,
+      reasoningEfforts: ['none', 'low', 'medium', 'high', 'max'],
+      deprecated: false,
+    })
+  })
+
+  it('offers explicit thinking off only for Claude 5 models that allow it', () => {
+    for (const id of ['claude-opus-5', 'claude-sonnet-5']) {
+      expect(getModelConfig(id, 'anthropic').reasoningEfforts).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max'])
+    }
+    expect(getModelConfig('claude-fable-5-1', 'anthropic').reasoningEfforts).not.toContain('none')
+  })
+
+  it('keeps the old DeepSeek Flash alias deprecated but exposes its current vision capability', () => {
+    expect(getModelConfig('deepseek-v4-flash', 'openai-compatible')).toMatchObject({
+      deprecated: true, supportsVision: true, contextWindow: 1000000, maxOutputTokens: 384000,
+    })
+    expect(getModelConfig('deepseek-v4-pro', 'openai-compatible')).toMatchObject({ deprecated: false, supportsVision: false })
+  })
+
   it('contains the current official flagship entries', () => {
     expect(getModelConfig('gpt-6-astra', 'openai')).toMatchObject({
       contextWindow: 1050000,

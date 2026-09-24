@@ -185,30 +185,15 @@ export function decideToolPermission(
     if (limits.allowReadWriteTools === false) {
       return decision('deny', 'permission_required', 'Read-write tool execution is disabled by policy.', evidence)
     }
-    if (limits.allowReadWriteTools === true) {
-      return decision('allow', undefined, 'Read-write tool execution is allowed by the configured permission ceiling.', evidence, context.userConfirmed ? 'user-confirmed' : 'configured-read-write')
-    }
-    if (limits.allowReadWriteTools === 'visible') {
-      if (context.userConfirmed) {
-        return decision('allow', undefined, 'Read-write tool execution was explicitly confirmed.', evidence, 'user-confirmed')
-      }
-      if (!evidence.reliable) {
-        return decision('confirm', 'evidence_insufficient', 'Read-write tool execution requires reliable evidence for the planned action.', evidence)
-      }
-      if (context.intentVisible) {
-        return decision('allow', undefined, 'Read-write tool execution is visible and backed by reliable evidence.', evidence, 'evidence-backed-visible-action')
-      }
-    }
-    return decision('confirm', 'permission_required', 'Read-write tool execution requires a visible planned action.', evidence)
+    // A visible plan, a model-supplied source, and a permission ceiling are
+    // not user approval of this concrete operation.
+    return context.userConfirmed
+      ? decision('allow', undefined, 'Read-write tool execution was explicitly confirmed.', evidence, 'user-confirmed')
+      : decision('confirm', 'permission_required', 'Read-write tool execution requires explicit confirmation.', evidence)
   }
 
   if (limits.allowDestructiveTools === false) {
     return decision('deny', 'permission_required', 'Destructive tool execution is disabled by policy.', evidence)
-  }
-  if (limits.allowDestructiveTools === true) {
-    return evidence.reliable
-      ? decision('allow', undefined, 'Destructive tool execution is allowed by the configured evidence-backed permission ceiling.', evidence, 'evidence-backed-configured-destructive')
-      : decision('confirm', 'evidence_insufficient', 'Destructive tool execution requires reliable evidence under the configured permission ceiling.', evidence)
   }
   if (!context.userConfirmed) {
     return decision('confirm', 'permission_required', 'Destructive tool execution requires explicit confirmation.', evidence)

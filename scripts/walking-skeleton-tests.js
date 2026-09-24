@@ -275,11 +275,11 @@ async function main() {
     await assertContextSnapshotPersistence(core, contextSnapshots, storage, contextSnapshot)
     assert.deepEqual(
       (await persistence.list(handle.runId)).map((entry) => entry.type),
-      ['run.created', 'run.started', 'provider.route-selected', 'stream.event', 'stream.event', 'stream.event', 'stream.event', 'run.succeeded'],
+      ['run.created', 'run.started', 'run.checkpointed', 'provider.route-selected', 'stream.event', 'stream.event', 'stream.event', 'stream.event', 'run.succeeded'],
     )
     assert.deepEqual(
       projections.map((event) => event.journalEntry?.type),
-      ['run.created', 'run.started', 'provider.route-selected', 'stream.event', 'stream.event', 'stream.event', 'stream.event', 'run.succeeded'],
+      ['run.created', 'run.started', 'run.checkpointed', 'provider.route-selected', 'stream.event', 'stream.event', 'stream.event', 'stream.event', 'run.succeeded'],
       'projection receives only states that were committed with their journal entry',
     )
 
@@ -377,7 +377,7 @@ function assertStrictChatRequestValidation(core) {
   assert.throws(() => core.freezeChatRequest({
     ...base,
     messages: [{ id: 'strict-message', role: 'user', text: () => 'not JSON' }],
-  }), /invalid/i, 'function values are rejected before request freezing')
+  }), /JSON input is not acyclic plain data/, 'function values are rejected by bounded preflight before request freezing')
   const bound = core.freezeChatRequest({
     ...base,
     providerStateBinding: { providerId: base.providerId, model: base.model },
@@ -1817,6 +1817,7 @@ async function assertRestartRecovery(core, runtimeModule, conversationsModule, p
   const runId = core.asAssistantRunId('run-recoverable')
   await persistence.save({
     id: runId,
+    engineVersion: 'islemind.harness.v1',
     kind: 'chat',
     conversationId: 'conversation-walking-skeleton',
     providerId: 'walking-provider',
@@ -1868,6 +1869,7 @@ async function assertRestartRecovery(core, runtimeModule, conversationsModule, p
   const concurrentRunId = core.asAssistantRunId('run-concurrent-recovery')
   await persistence.save({
     id: concurrentRunId,
+    engineVersion: 'islemind.harness.v1',
     kind: 'chat',
     conversationId: 'conversation-walking-skeleton',
     providerId: 'walking-provider',
@@ -2077,10 +2079,11 @@ async function assertIncrementalStreamCheckpoints(core, runtimeModule) {
         assert.equal(result.value.result.outputText, 'x'.repeat(32768))
         assert.equal((await store.get(result.value.id)).checkpoint.outputText, result.value.result.outputText)
         assert.equal(db.query('SELECT COUNT(*) AS n FROM assistant_run_checkpoint_segments').get().n, 0, 'terminal materialization clears fragments atomically')
-        assert.equal(db.query('SELECT schema FROM assistant_runs').get().schema, 'islemind.assistant-run.v1')
-        assert.equal(commits, 32768 / size + 3, 'each acknowledged event remains a distinct durable transaction')
+        assert.equal(db.query('SELECT schema FROM assistant_runs').get().schema, 'islemind.assistant-run.v3', 'new runs use a version rejected by old execution readers')
+        assert.equal((await store.get(result.value.id)).engineVersion, 'islemind.harness.v1')
+        assert.equal(commits, 32768 / size + 4, 'each event and the pre-dispatch recovery checkpoint remain distinct durable transactions')
         if (incremental) {
-          assert.equal(snapshotWrites, 3, 'only create/start/terminal write full snapshots')
+          assert.equal(snapshotWrites, 4, 'create/start/provider-checkpoint/terminal write full snapshots')
           assert.ok(checkpointBytes + segmentBytes < 262144, 'stream persistence payload stays bounded for this 32 KiB output')
           const reopened = Database.deserialize(image)
           try {
@@ -2093,7 +2096,8 @@ async function assertIncrementalStreamCheckpoints(core, runtimeModule) {
               providerGateway: { stream() { throw new Error('Recovery must not replay a provider or effect') } },
             })
             assert.equal((await recovery.recoverInterruptedRuns()).ok, true)
-            assert.equal((await restoredStore.get(result.value.id)).failure.code, 'interrupted')
+            assert.equal((await restoredStore.get(result.value.id)).status, 'paused')
+            assert.equal((await restoredStore.get(result.value.id)).lifecycleCheckpoint.recovery, 'resumable')
             assert.equal((await restoredStore.get(result.value.id)).checkpoint.outputText, 'x'.repeat(32768))
           } finally { reopened.close() }
         }

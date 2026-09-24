@@ -127,6 +127,8 @@ export function createAssistantConversationProviderStreamingRuntime<
       TTrace
     >,
   ): Promise<AssistantConversationProviderStreamingOutcome> {
+    if (isCancelled(input)) return { kind: 'cancelled' }
+
     const projection = dependencies.createProjection({
       conversationId: input.conversationId,
       responseMessageId: input.assistantMessageId,
@@ -146,12 +148,18 @@ export function createAssistantConversationProviderStreamingRuntime<
       handle = await dependencies.dispatch(
         input.request,
         (chunk) => {
+          if (terminalCallbackStarted || isCancelled(input, providerController)) return
           projection.pushText(chunk)
           input.onTextDelta?.(chunk)
         },
         (result) => {
           if (terminalCallbackStarted) return
           terminalCallbackStarted = true
+          if (isCancelled(input, providerController)) {
+            flush()
+            clearMatchingActiveStream(input.conversationId, input.assistantMessageId)
+            return
+          }
           void input.complete(result, {
             requestController: input.requestController,
             flush,
@@ -170,19 +178,22 @@ export function createAssistantConversationProviderStreamingRuntime<
           if (!isCancelled(input, providerController)) input.providerFailed(error)
         },
         (citations) => {
+          if (terminalCallbackStarted || isCancelled(input, providerController)) return
           input.citations(citations)
         },
         (trace) => {
+          if (terminalCallbackStarted || isCancelled(input, providerController)) return
           projection.pushTrace(trace)
           input.onTrace?.(trace)
         },
       )
       providerController = handle.controller
 
-      if (
-        isCancelled(input, providerController)
-      ) {
+      if (isCancelled(input, providerController)) {
+        terminalCallbackStarted = true
         handle.controller.abort()
+        flush()
+        clearMatchingActiveStream(input.conversationId, input.assistantMessageId)
         void handle.done.catch(() => undefined)
         return { kind: 'cancelled' }
       }
@@ -199,6 +210,9 @@ export function createAssistantConversationProviderStreamingRuntime<
         done: handle.done,
       })
       const settle = () => {
+        // A settled transport cannot produce more projection events, even if
+        // an adapter retained its callbacks after completion or cancellation.
+        terminalCallbackStarted = true
         flush()
         clearMatchingActiveStream(input.conversationId, input.assistantMessageId)
       }
@@ -206,15 +220,19 @@ export function createAssistantConversationProviderStreamingRuntime<
       return { kind: 'started', handle }
     } catch (error) {
       flush()
+      clearMatchingActiveStream(input.conversationId, input.assistantMessageId)
       if (error instanceof Error && error.name === 'AbortError') {
+        terminalCallbackStarted = true
         return { kind: 'cancelled' }
       }
       if (isCancelled(input, providerController)) {
+        terminalCallbackStarted = true
         return { kind: 'cancelled' }
       }
       if (terminalCallbackStarted) {
         return { kind: 'failed', error }
       }
+      terminalCallbackStarted = true
       input.startFailed(error)
       return { kind: 'failed', error }
     }

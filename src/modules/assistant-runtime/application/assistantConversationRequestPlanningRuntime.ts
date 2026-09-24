@@ -88,6 +88,7 @@ export type AssistantConversationCompactDecisionReason =
   | 'below_threshold'
   | 'provider_capability_missing'
   | 'application_model_summary'
+  | 'harness_admission_required'
   | 'native_openai_responses'
   | 'native_anthropic_messages'
 

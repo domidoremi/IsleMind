@@ -58,6 +58,9 @@ import { clearRuntimeLog } from '@/platform/native/runtimeLog'
 import { usagePortableSnapshotRepository } from './usageStatisticsRuntime'
 import { parseSavedDocuments, type SavedDocument } from '@/modules/documents'
 import { documentLibrary } from './documentLibrary'
+import { parseAgentDefinitions, type AgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
+import { agentDefinitionRepository } from './agentDefinitionRepository'
+import { AgentDefinitionConflictError } from '@/modules/assistant-runtime/agentDefinitionRepository'
 
 const PARTICIPANT_IDS = Object.freeze([
   'workspaces',
@@ -67,9 +70,11 @@ const PARTICIPANT_IDS = Object.freeze([
   'knowledge',
   'usage',
   'documents',
+  'agent_definitions',
 ] as const)
 const LEGACY_PARTICIPANT_IDS = Object.freeze(PARTICIPANT_IDS.slice(0, 5))
 const USAGE_PARTICIPANT_IDS = Object.freeze(PARTICIPANT_IDS.slice(0, 6))
+const DOCUMENT_PARTICIPANT_IDS = Object.freeze(PARTICIPANT_IDS.slice(0, 7))
 
 const APPLICATION_RECORD_KEYS = Object.freeze({
   settings: '@islemind/settings',
@@ -88,6 +93,7 @@ const KNOWLEDGE_BACKUP_SCHEMA =
 const USAGE_BACKUP_SCHEMA =
   'islemind.portable-import-usage.v1'
 const DOCUMENT_BACKUP_SCHEMA = 'islemind.portable-import-documents.v1'
+const AGENT_BACKUP_SCHEMA = 'islemind.portable-import-agent-definitions.v1'
 const WORKSPACE_PLAN_SCHEMA =
   'islemind.portable-import-workspaces.v1'
 const SECURE_MANIFEST_SCHEMA =
@@ -112,6 +118,7 @@ export interface PortableApplicationImportPlan {
   readonly knowledge: Partial<PortableKnowledgeSnapshot>
   readonly usage?: UsagePortableSnapshot
   readonly savedDocuments?: readonly SavedDocument[]
+  readonly agentDefinitions?: readonly AgentDefinition[]
   readonly tavernEntries: readonly {
     readonly scopeId?: string
     readonly snapshot: Partial<TavernSnapshot> | undefined
@@ -404,7 +411,7 @@ function isSupportedPortableImportParticipantList(
 ): boolean {
   return sameStrings(persisted, current) || (
     sameStrings(current, PARTICIPANT_IDS) &&
-    (sameStrings(persisted, LEGACY_PARTICIPANT_IDS) || sameStrings(persisted, USAGE_PARTICIPANT_IDS))
+    (sameStrings(persisted, LEGACY_PARTICIPANT_IDS) || sameStrings(persisted, USAGE_PARTICIPANT_IDS) || sameStrings(persisted, DOCUMENT_PARTICIPANT_IDS))
   )
 }
 
@@ -458,6 +465,7 @@ function createProductionParticipants(
     createKnowledgeParticipant(store),
     createUsageParticipant(store),
     createDocumentParticipant(store),
+    createAgentDefinitionParticipant(store),
   ])
 }
 
@@ -744,6 +752,64 @@ function createDocumentParticipant(
     },
     cleanup(envelope) { return store.removeBlob(envelope.operationId, id) },
   }
+}
+
+function createAgentDefinitionParticipant(store: PortableImportRecoveryStore): PortableImportRecoveryParticipant<PortableApplicationImportPlan> {
+  const id = PARTICIPANT_IDS[7]
+  return {
+    id,
+    async prepare(plan, envelope, signal) {
+      throwIfCancelled(signal)
+      let backup: AgentBackup = { schema: AGENT_BACKUP_SCHEMA, operationId: envelope.operationId, selected: false }
+      // Agent configuration belongs to settings; absent legacy snapshots never erase it.
+      if (isPortableCategorySelected(plan, 'settings') && plan.agentDefinitions !== undefined) {
+        const source = await agentDefinitionRepository.loadSnapshot()
+        const sourceById = new Map(source.map((definition) => [definition.id, definition]))
+        const imported = parseAgentDefinitions(plan.agentDefinitions).map((definition) => ({ ...definition,
+          // Replacing configuration invalidates editors opened before import.
+          revision: (sourceById.get(definition.id)?.revision ?? 0) + 1,
+          modelBinding: { ...definition.modelBinding, capabilityRevision: 'unverified' },
+        }))
+        const merged = new Map((plan.selection.mode === 'selective' ? source : []).map((definition) => [definition.id, definition]))
+        for (const definition of imported) merged.set(definition.id, definition)
+        backup = { ...backup, selected: true, source, target: parseAgentDefinitions([...merged.values()]) }
+      }
+      throwIfCancelled(signal)
+      const raw = JSON.stringify(backup)
+      await store.createBlob(envelope.operationId, id, raw)
+      return store.digest(raw)
+    },
+    async apply(envelope, signal) {
+      const backup = parseAgentBackup(await readVerifiedBlob(store, envelope, id))
+      if (backup.selected) {
+        try { await agentDefinitionRepository.replaceSnapshot(backup.target, [backup.source, backup.target], signal) }
+        catch (error) {
+          // A compare failure happens before the first write. Do not attempt
+          // restoring this participant over a concurrent editor, which would
+          // also prevent rollback of earlier participants.
+          if (error instanceof AgentDefinitionConflictError) throw new PortableImportParticipantApplyError(false)
+          throw error
+        }
+      }
+    },
+    async restore(envelope) {
+      const backup = parseAgentBackup(await readVerifiedBlob(store, envelope, id))
+      if (backup.selected) await agentDefinitionRepository.replaceSnapshot(backup.source, [backup.source, backup.target])
+    },
+    cleanup(envelope) { return store.removeBlob(envelope.operationId, id) },
+  }
+}
+
+type AgentBackup = { schema: typeof AGENT_BACKUP_SCHEMA; operationId: string } & (
+  { selected: false } | { selected: true; source: AgentDefinition[]; target: AgentDefinition[] }
+)
+
+function parseAgentBackup(raw: string): AgentBackup {
+  const value = parseJsonRecord(raw)
+  if (value.schema !== AGENT_BACKUP_SCHEMA || typeof value.operationId !== 'string' || typeof value.selected !== 'boolean') throw new Error('Invalid Agent recovery backup')
+  const identity = { schema: AGENT_BACKUP_SCHEMA, operationId: value.operationId } as const
+  return value.selected ? { ...identity, selected: true, source: parseAgentDefinitions(value.source), target: parseAgentDefinitions(value.target) }
+    : { ...identity, selected: false }
 }
 
 function createSecureStateParticipant(

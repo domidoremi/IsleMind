@@ -1,4 +1,5 @@
 import type { JsonRecord } from './json'
+import { assertJsonTraversalBudget } from './json'
 
 export const CHAT_REQUEST_SCHEMA = 'islemind.chat-request.v1'
 export const CHAT_REQUEST_MAX_SERIALIZED_CHARACTERS = 4 * 1024 * 1024
@@ -195,6 +196,7 @@ export function isChatRequest(value: unknown): value is ChatRequest {
 
 /** Validates, clones, bounds, and deeply freezes one provider-neutral request. */
 export function freezeChatRequest(value: unknown): ChatRequest {
+  assertJsonTraversalBudget(value, CHAT_REQUEST_MAX_SERIALIZED_CHARACTERS)
   if (!isChatRequest(value)) throw new Error('The provider-neutral request is invalid.')
   let serialized: string
   try {
@@ -226,9 +228,7 @@ function isChatMessageInput(value: unknown): value is ChatMessageInput {
   if (value.name !== undefined && !isBoundedIdentity(value.name)) return false
   if (value.reasoningReplay !== undefined && (
     value.role !== 'assistant'
-    || !Array.isArray(value.reasoningReplay)
-    || value.reasoningReplay.length > 32
-    || !value.reasoningReplay.every(isChatReasoningReplayPart)
+    || !isChatReasoningReplay(value.reasoningReplay)
   )) return false
   return value.toolCalls === undefined || (
     value.role === 'assistant'
@@ -247,7 +247,7 @@ function isChatToolCall(value: unknown): boolean {
     && (value.providerMetadata === undefined || isChatToolCallProviderMetadata(value.providerMetadata))
 }
 
-function isChatToolCallProviderMetadata(value: unknown): value is ChatToolCallProviderMetadata {
+export function isChatToolCallProviderMetadata(value: unknown): value is ChatToolCallProviderMetadata {
   if (!isPlainRecord(value) || !hasExactKeys(value, [], [
     'providerCallId',
     'providerCallIndex',
@@ -256,6 +256,11 @@ function isChatToolCallProviderMetadata(value: unknown): value is ChatToolCallPr
   return (value.providerCallId === undefined || isBoundedIdentity(value.providerCallId))
     && (value.providerCallIndex === undefined || isNonNegativeInteger(value.providerCallIndex))
     && (value.thoughtSignature === undefined || isBoundedString(value.thoughtSignature, 262_144))
+}
+
+/** The same lossless bounds apply to incoming continuation and outgoing requests. */
+export function isChatReasoningReplay(value: unknown): value is readonly ChatReasoningReplayPart[] {
+  return Array.isArray(value) && value.length <= 32 && value.every(isChatReasoningReplayPart)
 }
 
 function isChatReasoningReplayPart(value: unknown): value is ChatReasoningReplayPart {

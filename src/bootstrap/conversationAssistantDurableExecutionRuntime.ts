@@ -14,7 +14,6 @@ import {
 } from '@/core'
 import {
   createAssistantConversationDurableExecutionRuntime,
-  createSqliteAssistantRunPersistence,
   type AssistantContextPlanReceipt,
   type AssistantConversationWorkspaceWritebackHandoff,
   type AssistantRun,
@@ -38,7 +37,7 @@ import {
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
 import { projectConversationAssistantFailure } from '@/bootstrap/conversationAssistantMessageProjection'
 import { conversationAssistantProviderDispatchRuntime } from '@/bootstrap/conversationAssistantProviderDispatchRuntime'
-import { createAppContainer } from '@/bootstrap/createAppContainer'
+import { applicationAssistantRuntime as assistantRuntime, assistantRunPersistence as runPersistence } from './applicationAssistantRuntime'
 import { st } from '@/i18n/service'
 import type { Attachment, Message } from '@/types/chatContracts'
 import type { RetrievalSource } from '@/types/contextContracts'
@@ -47,7 +46,6 @@ import { useChatStore } from '@/store/chatStore'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
 const contextSnapshots = createSqliteContextSnapshotRepository(databaseProvider)
-const runPersistence = createSqliteAssistantRunPersistence(databaseProvider)
 let idSequence = 0
 
 const ids: IdGenerator = {
@@ -56,13 +54,6 @@ const ids: IdGenerator = {
     return `${prefix}-${Date.now().toString(36)}-${idSequence.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   },
 }
-
-const assistantRuntime = createAppContainer({
-  clock: systemClock,
-  ids,
-  providerAdapters: [],
-  runPersistence,
-}).assistantRuntime
 
 const assistantConversationDurableExecutionRuntime =
   createAssistantConversationDurableExecutionRuntime({
@@ -199,6 +190,10 @@ export function createConversationAssistantDurableExecutionRuntime(
         }
       },
       async execute({ signal, started, checkpointStreamEvent, continueProviderTurns, recordProviderExecutionTarget }) {
+        // A Harness pause aborts transport work, not the external user's cancel
+        // authority. Feeding this signal back to input.requestController would
+        // turn every pause (including budget/background pauses) into cancellation.
+        const workController = new AbortController()
         let executionTarget: ProviderExecutionTarget | undefined
         let terminalLifecycleStarted = false
         let activitySettled = false
@@ -253,7 +248,7 @@ export function createConversationAssistantDurableExecutionRuntime(
           checkpointTail = next
           void next.catch((error) => {
             checkpointFailure = error
-            input.requestController.abort(error)
+            workController.abort(error)
           })
         }
         const settleFailureAfterCheckpoint = (
@@ -275,7 +270,7 @@ export function createConversationAssistantDurableExecutionRuntime(
           }
           void checkpointTail.then(projectFailure, projectFailure)
         }
-        const abortRequest = () => input.requestController.abort(signal.reason)
+        const abortRequest = () => workController.abort(signal.reason)
         signal.addEventListener('abort', abortRequest, { once: true })
         if (signal.aborted) abortRequest()
 
@@ -283,6 +278,7 @@ export function createConversationAssistantDurableExecutionRuntime(
           const previousTargetObserver = preparedDispatch.request.onExecutionTarget
           const attributedDispatch = { ...preparedDispatch, request: {
             ...preparedDispatch.request,
+            signal: workController.signal,
             onExecutionTarget: async (target: Parameters<NonNullable<typeof recordProviderExecutionTarget>>[0]) => {
               await previousTargetObserver?.(target)
               try { await recordProviderExecutionTarget?.(target); executionTarget = target }
@@ -292,6 +288,7 @@ export function createConversationAssistantDurableExecutionRuntime(
           const providerDispatchOutcome =
             await dependencies.providerDispatchRuntime.dispatchPrepared({
               ...input,
+              requestController: workController,
               onStreamEvent: queueStreamEvent,
               buildStreamLifecycle(lifecycleInput) {
                 const lifecycle = input.buildStreamLifecycle(lifecycleInput)
@@ -321,7 +318,7 @@ export function createConversationAssistantDurableExecutionRuntime(
                           stream: createProviderRuntimeAdapter({
                             provider: continuationProvider,
                             settings: input.settings,
-                            streamChat: createRichContinuationStream(input, continuationResults),
+                            streamChat: createRichContinuationStream({ ...input, requestController: workController }, continuationResults),
                           }).stream,
                         })
                         result = {
@@ -379,7 +376,7 @@ export function createConversationAssistantDurableExecutionRuntime(
 
           const publication = started(providerDispatchOutcome)
           if (publication.kind !== 'published') {
-            input.requestController.abort()
+            workController.abort()
             failActivity(new Error(`Durable Chat start publication was rejected: ${publication.reason}`))
             return await activityCompletion
           }

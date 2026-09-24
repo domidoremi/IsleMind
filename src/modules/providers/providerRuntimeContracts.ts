@@ -15,6 +15,7 @@ import type { ProviderStreamCallbacks, ProviderStreamHandle, ProviderStreamRunti
 import type { ProviderStructuredOutputRequest } from './providerStructuredOutput'
 import type { ProviderToolCall } from './providerToolCalls'
 import type { ProviderChatExecutionConstraint } from './providerChatResolution'
+import type { ProviderLocalCompressionPrivacySettings } from './providerContextManagementPolicy'
 
 export interface ProviderRuntimeChatMessage {
   role: 'user' | 'assistant' | 'tool'
@@ -27,7 +28,7 @@ export interface ProviderRuntimeChatMessage {
   toolCalls?: ProviderToolCall[]
 }
 
-export interface ProviderRuntimeChatSettings {
+export interface ProviderRuntimeChatSettings extends ProviderLocalCompressionPrivacySettings {
   transportMode?: 'auto' | 'http' | 'websocket'
   payloadPolicyMode?: 'off' | 'warn' | 'block'
   proxyMode?: 'off' | 'custom-base-url' | 'system-detected'
@@ -43,6 +44,7 @@ export interface ProviderRuntimeChatSettings {
   sessionAffinityEnabled?: boolean
   sessionAffinityTtlMs?: number
   remoteCompactMode?: 'off' | 'auto' | 'required'
+  modelContextCompressionEnabled?: boolean
   remoteCompactThreshold?: number
   remoteCompactThresholdTokens?: number
   anthropicRemoteCompactThresholdTokens?: number

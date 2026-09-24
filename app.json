@@ -61,6 +61,7 @@
       "./plugins/android-soft-input-mode/withAndroidSoftInputMode",
       "./plugins/android-display-refresh/withAndroidDisplayRefresh",
       "./plugins/android-status-notification/withAndroidStatusNotification",
+      "./plugins/android-agent-execution/withAndroidAgentExecution",
       "./plugins/android-device-tools/withAndroidDeviceTools",
       "./plugins/android-trusted-web-fetch/withAndroidTrustedWebFetch",
       "./plugins/android-file-integrity/withAndroidFileIntegrity",

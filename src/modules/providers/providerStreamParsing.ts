@@ -20,6 +20,7 @@ import {
 import { isDoneEvent, isReasoningEventType, isToolEventType, stableTraceId } from './providerTracePolicy'
 import { extractUsage } from './providerUsage'
 import { visitProviderSseData } from './providerSseData'
+import { assertProviderResponseContextCapacity, ProviderContextCapacityError } from './providerContextCapacity'
 
 export interface ParsedProviderStreamChunk {
   text: string
@@ -35,6 +36,8 @@ export interface ParsedProviderStreamChunk {
 
 export interface ProviderStreamParseOptions {
   includeReasoning?: boolean
+  /** Internal stream assembly only; remove indexes at the completion boundary. */
+  preserveReplayIndexes?: boolean
 }
 
 export interface ProviderStreamParsingPolicyDependencies {
@@ -110,7 +113,7 @@ export function createProviderStreamParsingPolicy(
     function appendPayload(payload: string): boolean {
       try {
         const json = JSON.parse(payload)
-        const parsed = parseProviderStreamEvent(json, providerType, options)
+        const parsed = parseProviderStreamEvent(json, providerType, { ...options, preserveReplayIndexes: true })
         text += parsed.text
         traces.push(...parsed.traces)
         providerToolCalls = mergeProviderToolCallParts([
@@ -129,7 +132,8 @@ export function createProviderStreamParsingPolicy(
           ...(parsed.providerContentBlocks ?? []),
         ])
         return true
-      } catch {
+      } catch (error) {
+        if (error instanceof ProviderContextCapacityError) throw error
         return false
       }
     }
@@ -150,7 +154,9 @@ export function createProviderStreamParsingPolicy(
           providerContentBlocks: parsed.providerContentBlocks,
           terminal: false,
         }
-      } catch {}
+      } catch (error) {
+        if (error instanceof ProviderContextCapacityError) throw error
+      }
     }
     return {
       text,
@@ -163,9 +169,9 @@ export function createProviderStreamParsingPolicy(
       ...(responseItems.length ? { responseItems } : {}),
       ...(providerContentBlocks.length
         ? {
-            providerContentBlocks: sanitizeAnthropicReplayContentBlocks(
-              providerContentBlocks,
-            ),
+            providerContentBlocks: options.preserveReplayIndexes
+              ? providerContentBlocks
+              : sanitizeAnthropicReplayContentBlocks(providerContentBlocks),
           }
         : {}),
     }
@@ -176,6 +182,7 @@ export function createProviderStreamParsingPolicy(
     providerType: ProviderType,
     options: ProviderStreamParseOptions = {},
   ): ParsedProviderStreamChunk {
+    assertProviderResponseContextCapacity(json)
     const includeReasoning = options.includeReasoning !== false
     switch (providerType) {
       case 'openai':
@@ -324,7 +331,7 @@ export function createProviderStreamParsingPolicy(
           traces,
           usage: extractUsage(json, 'anthropic', { includeReasoning }),
           providerToolCalls: extractProviderToolCalls(json, 'anthropic'),
-          providerContentBlocks: extractAnthropicReplayContentBlocks(json),
+          providerContentBlocks: extractAnthropicReplayContentBlocks(json, options),
         }
       }
       case 'google': {

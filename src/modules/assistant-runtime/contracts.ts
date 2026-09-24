@@ -12,6 +12,10 @@ import type {
 } from '@/core'
 import type { ProviderExecutionTarget, ProviderExecutionTargetObserver, ProviderGateway, ProviderGatewayOptions } from '@/modules/providers'
 import type { AssistantConversationWorkspaceWritebackHandoff } from './workspaceWritebackContracts'
+import type { AgentDefinition, FrozenAgentDefinition } from './agentDefinition'
+import type { HarnessCheckpoint } from './harnessCheckpointTypes'
+import type { HarnessPauseReason } from './harnessPauseReason'
+export type { HarnessPauseReason } from './harnessPauseReason'
 
 export const CONTEXT_SNAPSHOT_SCHEMA = 'islemind.context-snapshot.v1'
 export const RUN_JOURNAL_ENTRY_SCHEMA = 'islemind.assistant-run-journal-entry.v1'
@@ -26,6 +30,7 @@ export type AssistantRunStatus =
   | 'queued'
   | 'running'
   | 'awaiting-confirmation'
+  | 'paused'
   | 'succeeded'
   | 'failed'
   | 'cancelled'
@@ -98,6 +103,16 @@ export interface AssistantRunRouteDetails extends Pick<ProviderExecutionTarget, 
 
 export interface AssistantRun {
   id: AssistantRunId
+  rootRunId?: AssistantRunId
+  parentRunId?: AssistantRunId
+  taskKind?: 'chat' | 'research' | 'artifact'
+  delegation?: AssistantDelegationState
+  /** Absent on legacy records, which cannot be resumed by the Harness. */
+  engineVersion?: 'islemind.harness.v1'
+  /** Immutable invocation binding; imported definitions never grant permissions. */
+  agentDefinition?: FrozenAgentDefinition
+  /** Exact safe continuation plus the durable effect/recovery fence. */
+  lifecycleCheckpoint?: HarnessCheckpoint
   /** The persisted invocation owner; unsupported kinds fail closed. */
   kind: 'chat'
   conversationId: string
@@ -123,6 +138,10 @@ export interface AssistantRun {
 export type RunJournalEventType =
   | 'run.created'
   | 'run.started'
+  | 'run.paused'
+  | 'run.resumed'
+  | 'run.steered'
+  | 'run.checkpointed'
   | 'provider.route-selected'
   | 'provider-continuation.started'
   | 'provider-continuation.completed'
@@ -366,12 +385,31 @@ export interface AssistantRunRepository {
   /** Includes terminal runs so a lost disposable message projection can be rebuilt. */
   getLatestForResponseMessage(conversationId: string, responseMessageId: string): Promise<AssistantRun | undefined>
   listRecoverable(): Promise<readonly AssistantRun[]>
+  /** Bounded history projection, never hydrate prompts/results for list rendering. */
+  listRuns?(input?: { conversationId?: string; limit?: number; before?: { createdAt: number; id: string } }): Promise<readonly AssistantRunSummary[]>
   save(run: AssistantRun): Promise<void>
+}
+
+export type AssistantRunSummary = Pick<AssistantRun, 'id' | 'conversationId' | 'status' | 'engineVersion' | 'createdAt' | 'providerId' | 'model' | 'rootRunId' | 'parentRunId' | 'taskKind'>
+
+export interface AssistantDelegationState {
+  readonly children: readonly { readonly runId: AssistantRunId; readonly agentId: string; readonly role: 'delegate' | 'reviewer' }[]
+  readonly reviewCount: number
+  readonly reworkCount: number
+}
+
+/** Host binding only. Model output may select an allowlisted ID, never supply this port. */
+export interface AssistantAgentResolver {
+  resolve(agentId: string): Promise<AgentDefinition | undefined>
+  bind(definition: FrozenAgentDefinition, task: string): Promise<Pick<StartAssistantRunInput,
+    'request' | 'context' | 'modelOperationSession' | 'providerGateway' | 'providerGatewayOptions'>>
 }
 
 export interface RunJournal {
   append(entry: RunJournalEntry): Promise<void>
   list(runId: AssistantRunId): Promise<readonly RunJournalEntry[]>
+  /** Bounded citation-only projection; never hydrate the full streamed journal for UI. */
+  listCitations?(runId: AssistantRunId): Promise<readonly Extract<StreamEvent, { type: 'citation' }>[]>
 }
 
 export interface AssistantRunPersistence extends AssistantRunRepository, RunJournal {
@@ -413,7 +451,10 @@ export type AssistantRuntimeErrorCode =
 
 export interface StartAssistantRunInput {
   runId?: AssistantRunId
+  taskKind?: AssistantRun['taskKind']
+  agentResolver?: AssistantAgentResolver
   request: ChatRequest
+  agentDefinition?: AgentDefinition
   context: ContextSnapshot
   /** Diagnostic-only receipt for the exact context plan used to prepare request. */
   contextReceipt?: AssistantContextPlanReceipt
@@ -421,6 +462,8 @@ export interface StartAssistantRunInput {
   cancellationSignal?: AbortSignal
   providerGatewayOptions?: Omit<ProviderGatewayOptions, 'signal'>
   modelOperationSession?: AssistantModelOperationSession
+  /** Per-invocation transport binding; does not own run state or survive persistence. */
+  providerGateway?: ProviderGateway
   onPersisted?: AssistantRunProjection
 }
 
@@ -456,6 +499,10 @@ export type AssistantModelOperationTurnOutcome =
   | Readonly<{ kind: 'cancelled'; receipt: JsonRecord }>
 
 export interface AssistantModelOperationSession {
+  /** Tasks-owned catalog/permission intersection. Absence forbids Agent tool dispatch. */
+  forAgent?(definition: FrozenAgentDefinition, options?: { independentReadOnly: boolean }): Promise<AssistantModelOperationSession | undefined>
+  /** Host-only intersection with this invocation's effective frozen authority, not a requested allowlist. */
+  forIndependentChild?(definition: FrozenAgentDefinition, candidate: AssistantModelOperationSession | undefined): Promise<AssistantModelOperationSession | undefined>
   prepareRequest(request: ChatRequest): ChatRequest
   evaluateTurn(input: AssistantModelOperationTurnInput): Promise<AssistantModelOperationTurnOutcome>
   validatePending(input: {
@@ -472,10 +519,15 @@ export interface AssistantModelOperationSession {
 
 export interface ResumePendingModelOperationInput {
   readonly runId: AssistantRunId
+  readonly agentResolver?: AssistantAgentResolver
   readonly approved: boolean
+  /** Exact persisted identity; public approve always requires both fields. */
+  readonly continuationToken?: string
+  readonly continuationDigest?: string
   readonly session: AssistantModelOperationSession
   readonly cancellationSignal?: AbortSignal
   readonly providerGatewayOptions?: Omit<ProviderGatewayOptions, 'signal'>
+  readonly providerGateway?: ProviderGateway
   readonly onPersisted?: AssistantRunProjection
 }
 
@@ -557,6 +609,8 @@ export interface StartAssistantActivityRunInput {
 
 export interface AssistantRuntimeOptions {
   maxOutputChars?: number
+  /** Rollback closes new admission; it never hands new-format runs to an old engine. */
+  newRunsEnabled?: boolean
 }
 
 export interface AssistantRuntimeDependencies {
@@ -564,16 +618,44 @@ export interface AssistantRuntimeDependencies {
   ids: IdGenerator
   providerGateway: ProviderGateway
   persistence: AssistantRunPersistence
+  governance?: AssistantRunGovernance
   options?: AssistantRuntimeOptions
 }
 
+/** Admission/accounting port; the assistant runtime remains the execution owner. */
+export interface AssistantRunGovernance {
+  created(run: AssistantRun): Promise<void>
+  lifecycle(run: AssistantRun): Promise<void>
+  beforeAttempt(run: AssistantRun, target: ProviderExecutionTarget): Promise<void>
+  admissionPauseReason?(error: unknown): HarnessPauseReason | undefined
+}
+
 export interface AssistantRuntime {
+  /** Starts the same provider loop and returns after durable admission, not completion. */
+  start(input: StartAssistantRunInput & { agentDefinition: AgentDefinition }): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
+  steer(runId: AssistantRunId, text: string): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
+  pause(runId: AssistantRunId, reason?: HarnessPauseReason): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
+  resume(input: ResumeAssistantRunInput): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
+  approve(input: ResumePendingModelOperationInput & { continuationToken: string; continuationDigest: string }): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
   execute(input: StartAssistantRunInput): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
   executeActivity(input: StartAssistantActivityRunInput): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
   resumeModelOperation(input: ResumePendingModelOperationInput): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
   cancel(runId: AssistantRunId): Promise<Result<AssistantRun, AssistantRuntimeErrorCode>>
   getRun(runId: AssistantRunId): Promise<AssistantRun | undefined>
   recoverInterruptedRuns(): Promise<Result<readonly AssistantRun[], 'persistence_failed'>>
+  /** Disposable projections only; observers cannot grant execution authority. */
+  subscribe(listener: AssistantRunProjection): () => void
+}
+
+
+export interface ResumeAssistantRunInput {
+  readonly runId: AssistantRunId
+  readonly agentResolver?: AssistantAgentResolver
+  readonly modelOperationSession?: AssistantModelOperationSession
+  readonly cancellationSignal?: AbortSignal
+  readonly providerGatewayOptions?: Omit<ProviderGatewayOptions, 'signal'>
+  readonly providerGateway?: ProviderGateway
+  readonly onPersisted?: AssistantRunProjection
 }
 
 function isReceiptBudget(value: unknown): boolean {

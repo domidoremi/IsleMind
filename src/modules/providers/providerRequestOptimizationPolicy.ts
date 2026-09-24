@@ -4,6 +4,7 @@ import type { AIProvider } from '@/types/providerContracts'
 import {
   normalizeAnthropicEffort,
   supportsAnthropicAdaptiveThinking,
+  supportsAnthropicDefaultThinking,
   usesAnthropicOutputConfigOnlyThinking,
 } from './providerAnthropicThinking'
 
@@ -75,6 +76,12 @@ export function createProviderRequestOptimizationPolicy(
   ): Record<string, unknown> {
     if (!isAnthropicWireProvider(request.provider)) return body
     if (!dependencies.providerReasoningCanBeSent(request)) return body
+
+    if (request.reasoningEffort === 'none') {
+      return supportsAnthropicDefaultThinking(request.model)
+        ? { ...body, thinking: { type: 'disabled' } }
+        : body
+    }
 
     if (usesAnthropicOutputConfigOnlyThinking(request.model)) {
       return {

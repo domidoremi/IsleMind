@@ -50,7 +50,10 @@ export function mergeOpenAIResponseReplayItems(items: Record<string, unknown>[])
   return merged
 }
 
-export function extractAnthropicReplayContentBlocks(json: any): Record<string, unknown>[] | undefined {
+export function extractAnthropicReplayContentBlocks(
+  json: any,
+  options: { preserveReplayIndexes?: boolean } = {},
+): Record<string, unknown>[] | undefined {
   const blocks: Record<string, unknown>[] = []
   if (Array.isArray(json?.content)) {
     for (const part of json.content) {
@@ -59,7 +62,7 @@ export function extractAnthropicReplayContentBlocks(json: any): Record<string, u
     }
   }
   const startedBlock = cloneAnthropicReplayContentBlock(json?.content_block)
-  if (startedBlock) blocks.push(startedBlock)
+  if (startedBlock) blocks.push(withAnthropicReplayIndex(startedBlock, numberValue(json.index)))
   const delta = asRecord(json?.delta)
   if (json?.type === 'content_block_delta' && delta) {
     const index = numberValue(json.index)
@@ -71,7 +74,9 @@ export function extractAnthropicReplayContentBlocks(json: any): Record<string, u
     }
   }
   const merged = mergeAnthropicReplayContentBlocks(blocks)
-  return merged.length ? sanitizeAnthropicReplayContentBlocks(merged) : undefined
+  return merged.length
+    ? options.preserveReplayIndexes ? merged : sanitizeAnthropicReplayContentBlocks(merged)
+    : undefined
 }
 
 export function sanitizeAnthropicReplayContentBlocks(blocks: readonly Record<string, unknown>[]): Record<string, unknown>[] {
@@ -90,8 +95,10 @@ export function mergeAnthropicReplayContentBlocks(blocks: Record<string, unknown
     const normalized = cloneAnthropicReplayContentBlock(block)
     if (!normalized) continue
     const index = numberValue(normalized.__islemindAnthropicBlockIndex)
+    // Complete blocks are independently signed. Only deltas with the same
+    // response-local index may be joined, never adjacent blocks of the same type.
     const mergeIndex = index === undefined
-      ? (merged.length && stringValue(merged[merged.length - 1].type) === stringValue(normalized.type) ? merged.length - 1 : -1)
+      ? -1
       : merged.findIndex((item) => numberValue(item.__islemindAnthropicBlockIndex) === index)
     if (mergeIndex < 0) {
       merged.push(normalized)
@@ -135,7 +142,9 @@ function mergeAnthropicReplayContentBlock(previous: Record<string, unknown>, nex
   for (const key of ['thinking', 'signature']) {
     const previousValue = stringValue(previous[key])
     const nextValue = stringValue(next[key])
-    if (previousValue && nextValue) merged[key] = `${previousValue}${nextValue}`
+    if (typeof previous[key] === 'string' && typeof next[key] === 'string') {
+      merged[key] = `${previousValue}${nextValue}`
+    }
   }
   return merged
 }

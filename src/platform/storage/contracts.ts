@@ -14,6 +14,15 @@ export interface SqliteExecutor {
 
 export interface SqliteDatabase extends SqliteExecutor {
   transaction<Value>(work: (transaction: SqliteExecutor) => Promise<Value>): Promise<Value>
+  /** Native-only, outside transactions, serialized with this file's operations. */
+  passiveCheckpoint?(): Promise<SqliteCheckpointResult>
+}
+
+export interface SqliteCheckpointResult {
+  busy: number
+  logFrames: number
+  checkpointedFrames: number
+  pageSize: number
 }
 
 export interface SqliteDatabaseProvider {

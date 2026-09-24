@@ -2,7 +2,7 @@ import { useCallback, useEffect } from 'react'
 
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { Attachment, Conversation } from '@/types/chatContracts'
-import { isConversationLocked } from '@/services/conversationLock'
+import { assertConversationUnlocked, isConversationLocked } from '@/services/conversationLock'
 
 import type { StreamingInputIntent } from './StreamingIntentSheet'
 
@@ -85,7 +85,9 @@ export async function sendActiveChatMessage({
   scrollToLatestMessage: ScrollToLatestMessage
   sendMessage: SendStreamingMessage
 }): Promise<void> {
-  if (isConversationLocked(conversation.id)) return
+  // A resolved send acknowledges acceptance to Composer and clears its draft.
+  // A lock acquired after render must reject so the optimistic draft is restored.
+  assertConversationUnlocked(conversation.id)
   scrollToLatestMessage(false, 0, { force: true, replacePending: true })
   await sendMessage({ conversation, content, attachments, requestedOutput })
 }

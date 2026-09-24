@@ -71,13 +71,14 @@ function payload(providerMetadata: unknown): string {
   })
 }
 
-function runtime(documents: SavedDocument[] = []) {
+function runtime(documents: SavedDocument[] = [], agents: import('@/modules/assistant-runtime/agentDefinition').AgentDefinition[] = []) {
   const importedPlans: PortableDataApplicationImportPlan[] = []
   const dependencies: PortableDataPayloadRuntimeDependencies = {
     records: {
       loadSettings: async () => null,
       loadProviders: async () => [],
       loadSkills: async () => [],
+      loadAgentDefinitions: async () => agents,
       loadMcpServers: async () => [],
       loadLanguagePreferenceSource: async () => 'system',
     },
@@ -107,6 +108,34 @@ function runtime(documents: SavedDocument[] = []) {
     importedPlans,
   }
 }
+
+describe('portable Agent definitions', () => {
+  const { createAgentDefinition } = require('@/modules/assistant-runtime/agentDefinition') as typeof import('@/modules/assistant-runtime/agentDefinition')
+  const agent = createAgentDefinition({ id: 'agent-1', name: 'Research', providerId: 'provider', modelId: 'model' })
+  it('exports configuration with settings, previews it, and never exports run approval state', async () => {
+    const { payloadRuntime, importedPlans } = runtime([], [agent])
+    const all = await payloadRuntime.exportPayload()
+    expect(all.agentDefinitions).toEqual([agent])
+    expect((await payloadRuntime.exportPayload({ selection: { mode: 'selective', categories: ['documents'] } })).agentDefinitions).toBeUndefined()
+    const json = (await payloadRuntime.exportJson({ selection: { mode: 'selective', categories: ['settings'] } })).json
+    expect(await payloadRuntime.importJson(json, { confirmRestore: (preview) => {
+      expect(preview.actions).toContainEqual({ category: 'settings', id: agent.id, action: 'replace' })
+      return true
+    } })).toMatchObject({ ok: true })
+    expect(importedPlans[0].agentDefinitions).toEqual([agent])
+    expect(json).not.toContain('continuationToken')
+  })
+  it('preserves absent legacy collections and rejects grants, duplicate IDs and execution credentials before writes', async () => {
+    const { payloadRuntime, importedPlans } = runtime([], [agent])
+    const legacy = JSON.parse(payload(provider()))
+    await payloadRuntime.importJson(JSON.stringify(legacy))
+    expect(importedPlans[0].agentDefinitions).toBeUndefined()
+    for (const invalid of [[agent, agent], [{ ...agent, grants: ['write'] }], [{ ...agent, continuationToken: 'not-a-capability' }]]) {
+      expect(await payloadRuntime.importJson(JSON.stringify({ ...legacy, agentDefinitions: invalid }))).toMatchObject({ ok: false, reason: 'invalid_structure' })
+    }
+    expect(importedPlans).toHaveLength(1)
+  })
+})
 
 describe('portable saved documents', () => {
   const document: SavedDocument = {

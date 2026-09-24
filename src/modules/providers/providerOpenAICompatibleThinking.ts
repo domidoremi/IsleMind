@@ -31,7 +31,7 @@ export interface OpenAICompatibleThinkingPolicyDependencies {
 export interface OpenAICompatibleThinkingPolicy {
   normalizeDeepSeekThinking(
     request: OpenAICompatibleThinkingRequestLike,
-  ): { type: 'enabled' | 'disabled'; effort?: 'high' | 'max' } | undefined
+  ): { type: 'enabled' | 'disabled'; effort?: 'low' | 'high' | 'max' } | undefined
   normalizeDashScopeThinking(
     request: OpenAICompatibleThinkingRequestLike,
   ): { enabled: boolean; budget?: number } | undefined
@@ -75,7 +75,7 @@ export function createOpenAICompatibleThinkingPolicy(
 
   function normalizeDeepSeekThinking(
     request: OpenAICompatibleThinkingRequestLike,
-  ): { type: 'enabled' | 'disabled'; effort?: 'high' | 'max' } | undefined {
+  ): { type: 'enabled' | 'disabled'; effort?: 'low' | 'high' | 'max' } | undefined {
     const modelConfig = dependencies.resolveModelConfig(request.model, request.provider)
     if (!providerReasoningCanBeSent(request, modelConfig)) return undefined
     if (
@@ -88,7 +88,8 @@ export function createOpenAICompatibleThinkingPolicy(
     if (effort === 'none' || effort === 'minimal') return { type: 'disabled' }
     return {
       type: 'enabled',
-      effort: effort === 'xhigh' || effort === 'max' ? 'max' : 'high',
+      // DeepSeek maps medium/xhigh to high; max is an explicit opt-in.
+      effort: effort === 'low' || effort === 'max' ? effort : 'high',
     }
   }
 

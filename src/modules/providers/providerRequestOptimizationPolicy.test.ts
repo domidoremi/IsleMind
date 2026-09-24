@@ -6,6 +6,25 @@ import {
 } from './providerRequestOptimizationPolicy'
 
 describe('provider request cache optimization', () => {
+  it.each(['us.anthropic.claude-opus-5-v1:0', 'us.anthropic.claude-sonnet-5-v1:0'])('keeps %s on adaptive thinking without re-enabling an explicit none', (model) => {
+    const policy = createProviderRequestOptimizationPolicy({
+      isAwsBedrockProvider: () => true,
+      isBedrockRuntimeProvider: () => true,
+      providerReasoningCanBeSent: () => true,
+    })
+    const request = {
+      provider: { id: 'bedrock', name: 'Bedrock', type: 'anthropic' as const }, model,
+      settings: { bedrockRequestOptimizerEnabled: true, thinkingOptimizerEnabled: true },
+    }
+    const body = { max_tokens: 16384, output_config: { format: { type: 'json_schema', schema: { type: 'object' } } } }
+    expect(policy.optimizeRequestBody(body, { ...request, reasoningEffort: 'xhigh' })).toMatchObject({
+      thinking: { type: 'adaptive', display: 'summarized' }, output_config: { ...body.output_config, effort: 'xhigh' },
+    })
+    expect(policy.optimizeRequestBody(body, { ...request, reasoningEffort: 'none' })).toMatchObject({
+      thinking: { type: 'disabled' }, output_config: body.output_config,
+    })
+  })
+
   it('preserves existing cache breakpoints and adds only missing text breakpoints', () => {
     const body = {
       system: 'stable system prefix',

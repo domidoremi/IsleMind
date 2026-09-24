@@ -8119,13 +8119,13 @@ async function assertUpstreamGovernanceBehavior() {
   )
   assert.equal(
     shouldReplayOpenAICompatibleReasoningContent({ provider: { id: 'deepseek-helper', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }, model: 'deepseek-v4-pro' }, {}),
-    false,
-    'OpenAI request helper does not replay DeepSeek reasoning without tool calls'
+    true,
+    'OpenAI request helper preserves DeepSeek reasoning even on assistant messages without tool calls'
   )
   assert.equal(
     shouldReplayOpenAICompatibleReasoningContent({ provider: { id: 'deepseek-helper', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }, model: 'deepseek-v4-pro' }, { toolCalls: [{ id: 'call-1' }] }),
     true,
-    'OpenAI request helper replays DeepSeek reasoning only for tool continuations'
+    'OpenAI request helper also replays DeepSeek reasoning for tool continuations'
   )
   assert.equal(
     shouldReplayOpenAICompatibleReasoningContent({ provider: { id: 'kimi-helper', type: 'openai-compatible', presetId: 'moonshot', name: 'Moonshot', apiKey: FAKE_KEY_A, models: ['kimi-k2.6'], enabled: true }, model: 'kimi-k2.6' }, {}),
@@ -8170,8 +8170,8 @@ async function assertUpstreamGovernanceBehavior() {
   )
   assert.deepEqual(
     normalizeDeepSeekThinking({ provider: { id: 'deepseek-helper', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }, model: 'deepseek-v4-pro', reasoningEffort: 'xhigh' }),
-    { type: 'enabled', effort: 'max' },
-    'OpenAI-compatible thinking helper maps DeepSeek xhigh to max effort'
+    { type: 'enabled', effort: 'high' },
+    'OpenAI-compatible thinking helper maps DeepSeek xhigh to documented high effort'
   )
   const customReasoningProvider = { id: 'custom-reasoning-static', type: 'openai-compatible', presetId: 'custom-endpoint', wireProtocol: 'openai-compatible', name: 'Custom Compatible', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }
   assert.equal(
@@ -8201,8 +8201,8 @@ async function assertUpstreamGovernanceBehavior() {
       model: 'custom/remote-deepseek-thinking',
       reasoningEffort: 'xhigh',
     }),
-    { type: 'enabled', effort: 'max' },
-    'OpenAI-compatible thinking helper allows custom endpoint reasoning from remote model metadata'
+    { type: 'enabled', effort: 'high' },
+    'OpenAI-compatible thinking helper admits remote metadata and maps legacy DeepSeek xhigh to documented high'
   )
   assert.deepEqual(
     normalizeDashScopeThinking({ provider: { id: 'qwen-helper', type: 'openai-compatible', presetId: 'dashscope', name: 'DashScope', apiKey: FAKE_KEY_A, models: ['qwen3.7-max'], enabled: true }, model: 'qwen3.7-max', reasoningEffort: 'high' }),
@@ -22044,7 +22044,7 @@ async function run() {
   assert.ok(providerResponseParsingSource.includes('function providerReasoningResponseCanBeParsed'), 'provider response parsing centralizes response-side reasoning parse eligibility')
   assert.ok(providerResponseParsingSource.includes('providerCompatibilityEvidenceHasBehavior(evidence.id, \'reasoning\')'), 'provider response parsing uses compatibility evidence before emitting reasoning traces')
   assert.ok(providerResponseParsingSource.includes("extractUsage(json, 'openai-compatible', { includeReasoning })"), 'provider response parsing gates reasoning token usage through response-side reasoning eligibility')
-  assert.ok(providerRuntimeExecutorSource.includes('const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }'), 'stream runtime passes provider reasoning parse eligibility into SSE parsing')
+  assert.ok(providerRuntimeExecutorSource.includes('const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req), preserveReplayIndexes: true }'), 'stream runtime passes reasoning eligibility and preserves replay indexes until completion')
   assert.ok(providerRuntimeExecutorSource.includes('function resolveStreamProviderCitationSource'), 'stream runtime centralizes response-side provider citation parse eligibility')
   assert.ok(providerRuntimeExecutorSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'citations')"), 'stream runtime gates provider-native citation metadata through the compatibility contract')
   await assertProviderStreamParsingMigrationBehavior()
@@ -26304,11 +26304,14 @@ https://gateway.example/messages`
 
   async function runProviderStreamStartFailure(error, cancelled = false) {
     const failureEvents = []
+    let projections = 0
+    let dispatches = 0
     const runtime = createAssistantConversationProviderStreamingRuntime({
       createProjection() {
+        projections += 1
         return { pushText() {}, pushTrace() {}, flush() { failureEvents.push('flush') } }
       },
-      async dispatch() { throw error },
+      async dispatch() { dispatches += 1; throw error },
       getActiveStream() { return undefined },
       setActiveStream() {},
       clearActiveStream() {},
@@ -26325,7 +26328,7 @@ https://gateway.example/messages`
       citations() {},
       startFailed(callbackError) { failureEvents.push('failed'); assert.equal(callbackError, error) },
     })
-    return { outcome, failureEvents }
+    return { outcome, failureEvents, projections, dispatches }
   }
   const providerAbortError = Object.assign(new Error('provider start aborted'), { name: 'AbortError' })
   const abortedProviderStart = await runProviderStreamStartFailure(providerAbortError)
@@ -26333,7 +26336,9 @@ https://gateway.example/messages`
   assert.deepEqual(abortedProviderStart.failureEvents, ['flush'], 'assistant provider start cancellation flushes without ordinary failure projection')
   const cancelledMessageStart = await runProviderStreamStartFailure(new Error('cancelled message start'), true)
   assert.equal(cancelledMessageStart.outcome.kind, 'cancelled', 'assistant provider streaming classifies cancelled-message start rejection as cancellation')
-  assert.deepEqual(cancelledMessageStart.failureEvents, ['flush'], 'assistant provider cancelled-message rejection flushes without ordinary failure projection')
+  assert.deepEqual(cancelledMessageStart.failureEvents, [], 'pre-cancelled messages never create a projection to flush')
+  assert.equal(cancelledMessageStart.projections, 0, 'pre-cancelled messages do not create stream projections')
+  assert.equal(cancelledMessageStart.dispatches, 0, 'pre-cancelled messages never dispatch a provider request')
   const ordinaryProviderStartError = new Error('ordinary provider start failure')
   const failedProviderStart = await runProviderStreamStartFailure(ordinaryProviderStartError)
   assert.equal(failedProviderStart.outcome.kind, 'failed', 'assistant provider streaming returns a typed ordinary start failure')
@@ -26722,7 +26727,7 @@ https://gateway.example/messages`
   assert.equal(getModelConfig('gpt-4.1', 'openai').supportsTools, true, 'OpenAI legacy chat models expose native tool support')
   assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').contextWindow, 1000000, 'DeepSeek V4 Pro context is official 1M')
   assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').maxOutputTokens, 384000, 'DeepSeek V4 Pro output limit is official 384K')
-  assert.deepEqual(getModelConfig('deepseek-v4-pro', 'openai-compatible').reasoningEfforts, ['none', 'high', 'xhigh'], 'DeepSeek V4 Pro exposes official high/max thinking efforts')
+  assert.deepEqual(getModelConfig('deepseek-v4-pro', 'openai-compatible').reasoningEfforts, ['none', 'low', 'high', 'max'], 'DeepSeek V4 Pro exposes official low/high/max thinking efforts')
   assert.equal(getModelConfig('deepseek-chat', 'openai-compatible').reasoningMode, undefined, 'DeepSeek Chat alias remains the official non-thinking compatibility mode')
   assert.deepEqual(getModelConfig('deepseek-reasoner', 'openai-compatible').reasoningEfforts, ['high', 'xhigh'], 'DeepSeek Reasoner exposes only enabled official thinking efforts')
   assert.equal(getModelConfig('qwen3.7-max', 'openai-compatible').contextWindow, 1000000, 'Qwen3.7 Max context uses official DashScope model metadata')
@@ -26780,7 +26785,7 @@ https://gateway.example/messages`
   assert.equal(getModelConfig('claude-opus-4-8', 'anthropic').contextWindow, 1000000, 'Claude Opus 4.8 context uses official current model overview')
   assert.deepEqual(getModelConfig('claude-opus-4-8', 'anthropic').reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'Claude Opus 4.8 exposes official output_config effort tiers')
   assert.equal(getModelConfig('claude-opus-4-7', 'anthropic').contextWindow, 1000000, 'Claude Opus 4.7 context uses official current model overview')
-  assert.equal(getModelConfig('claude-sonnet-4-6', 'anthropic').maxOutputTokens, 64000, 'Claude Sonnet 4.6 output limit uses official current model overview')
+  assert.equal(getModelConfig('claude-sonnet-4-6', 'anthropic').maxOutputTokens, 128000, 'Claude Sonnet 4.6 uses the official synchronous output limit, not the batch-only 300K beta')
   assert.equal(getModelConfig('claude-opus-4-8', 'anthropic').supportsTools, true, 'Claude current models expose native tool support')
   assert.equal(getModelConfig('gemini-3.5-flash', 'google').deprecated, false, 'Gemini 3.5 Flash is cataloged as a current default-capable model')
   assert.deepEqual(getModelConfig('gemini-3.5-flash', 'google').reasoningEfforts, ['minimal', 'low', 'medium', 'high'], 'Gemini 3.5 Flash exposes official thinking levels')
@@ -26797,7 +26802,7 @@ https://gateway.example/messages`
   assert.equal(getModelConfig('kimi-k2.6', 'openai-compatible').supportsTools, true, 'Kimi models expose native tool support')
   assert.equal(getModelConfig('MiniMax-M3', 'openai-compatible').supportsTools, true, 'MiniMax models expose native tool support')
   assert.equal(getModelConfig('grok-4.3', 'openai-compatible').supportsTools, true, 'Grok models expose native tool support')
-  assert.deepEqual(getReasoningEffortOptions(deepSeekProvider, 'deepseek-v4-pro'), ['none', 'high', 'xhigh'], 'DeepSeek thinking models expose only source-backed effort levels')
+  assert.deepEqual(getReasoningEffortOptions(deepSeekProvider, 'deepseek-v4-pro'), ['none', 'low', 'high', 'max'], 'DeepSeek thinking models expose only source-backed effort levels')
   assert.deepEqual(getReasoningEffortOptions(deepSeekProvider, 'deepseek-chat'), [], 'DeepSeek Chat compatibility alias does not expose thinking controls')
   assert.deepEqual(getReasoningEffortOptions(qwenProvider, 'qwen3.7-max'), ['none', 'low', 'medium', 'high'], 'Qwen thinking models expose DashScope thinking levels')
   assert.deepEqual(getReasoningEffortOptions(qwenProvider, 'qwen3.5-flash'), ['none', 'low', 'medium', 'high'], 'Qwen3.5 thinking models expose DashScope thinking levels')
@@ -28106,7 +28111,7 @@ https://gateway.example/messages`
     maxTokens: 999999,
   })
   assert.deepEqual(deepSeekThinkingBody.thinking, { type: 'enabled' }, 'DeepSeek thinking uses official thinking toggle')
-  assert.equal(deepSeekThinkingBody.reasoning_effort, 'max', 'DeepSeek xhigh maps to official max effort')
+  assert.equal(deepSeekThinkingBody.reasoning_effort, 'high', 'DeepSeek xhigh maps to official high effort')
   assert.equal(deepSeekThinkingBody.temperature, undefined, 'DeepSeek thinking mode omits temperature')
   assert.ok(deepSeekThinkingBody.max_tokens <= getModelConfig('deepseek-v4-pro', 'openai-compatible').maxOutputTokens, 'DeepSeek request max tokens are clamped to output limit')
   const deepSeekThinkingConformance = resolveProviderRequestConformanceForTest({
@@ -28180,7 +28185,7 @@ https://gateway.example/messages`
     maxTokens: 1024,
     stream: false,
   })
-  assert.equal(deepSeekPlainReplayBody.messages[0].reasoning_content, undefined, 'DeepSeek plain multi-turn replay omits reasoning_content when no tool call was performed')
+  assert.equal(deepSeekPlainReplayBody.messages[0].reasoning_content, 'DeepSeek plain reasoning state.', 'DeepSeek retains available reasoning across user turns; the server ignores it when tools are absent')
   const deepSeekOffBody = buildOpenAIBodyForTest({
     provider: {
       id: 'deepseek',
@@ -32703,7 +32708,7 @@ function assertDeepSeekProviderCompatibilityBehavior() {
     maxTokens: 999999,
   })
   assert.deepEqual(thinkingBody.thinking, { type: 'enabled' }, 'DeepSeek thinking still uses the official thinking toggle')
-  assert.equal(thinkingBody.reasoning_effort, 'max', 'DeepSeek xhigh still maps to official max effort')
+  assert.equal(thinkingBody.reasoning_effort, 'high', 'DeepSeek xhigh still maps to official high effort')
   const deepSeekReasoningContentChunk = parseProviderStreamChunkForTest([
     `data: ${JSON.stringify({
       choices: [{
@@ -42125,6 +42130,7 @@ function assertRuntimeControlPlanePlanAudit() {
 
 async function assertProviderStreamParsingMigrationBehavior() {
   await assertGoogleCitationStreamAssociations()
+  await assertAnthropicSignedBlockStreamReplay()
   const providerStreamParsingSource = fs.readFileSync(path.join(root, 'src/modules/providers/providerStreamParsing.ts'), 'utf8')
   const providerRuntimeExecutorSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerRuntimeExecutor.ts'), 'utf8')
   assert.ok(providerStreamParsingSource.includes('export function createProviderStreamParsingPolicy'), 'target provider module owns stream event parsing behind injected presentation dependencies')
@@ -42464,6 +42470,49 @@ async function assertProviderStreamParsingMigrationBehavior() {
     { inputTokens: 7, outputTokens: 2, totalTokens: 9, source: 'provider' },
     'done-with-value terminal completion preserves final usage',
   )
+}
+
+async function assertAnthropicSignedBlockStreamReplay() {
+  const provider = applyProviderPreset({
+    id: 'anthropic-replay-fixture', name: 'Anthropic replay fixture', type: 'anthropic',
+    apiKey: FAKE_KEY_A, models: ['claude-sonnet-4-6'], enabled: true,
+  }, 'anthropic')
+  const blocks = [
+    { type: 'thinking', thinking: '思考 😀', signature: 'signature-a' },
+    { type: 'thinking', thinking: '', signature: 'signature-b' },
+    { type: 'redacted_thinking', data: 'opaque-redacted-a' },
+    { type: 'redacted_thinking', data: 'opaque-redacted-b' },
+  ]
+  const events = blocks.flatMap((block, index) => block.type === 'thinking' ? [
+    { type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '', signature: '' } },
+    { type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: block.thinking } },
+    { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: 'signature-' } },
+    { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: block.signature.slice(-1) } },
+    { type: 'content_block_stop', index },
+  ] : [{ type: 'content_block_start', index, content_block: block }, { type: 'content_block_stop', index }])
+  events.push({ type: 'content_block_delta', index: 4, delta: { type: 'text_delta', text: 'Answer' } })
+  const raw = events.map((event) => `data: ${JSON.stringify(event)}\r\n\r\n`).join('')
+  const req = { provider, model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'Synthetic replay check' }],
+    reasoningEffort: 'high', stream: true, settings: { upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false } }
+  for (const terminal of [false, true]) {
+    const bytes = new TextEncoder().encode(raw + (terminal ? 'data: [DONE]\n\n' : ''))
+    const stream = new ReadableStream({ start(output) {
+      for (let offset = 0; offset < bytes.length; offset += 7) output.enqueue(bytes.slice(offset, offset + 7))
+      output.close()
+    } })
+    const completions = []
+    await executeHttpSseChatForTest({
+      req, url: 'https://replay-fixture.invalid/messages', headers: {}, body: '{}', stream: true, controller: new AbortController(),
+      resolveRoute: () => ({ body: {} }), onChunk: () => undefined,
+      onDone: (value) => completions.push(value), onError: (error) => { throw error },
+      transport: { requestStream: async () => new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }), readResponseText: (response) => response.text() },
+      buildFallbackCandidates: () => ({ candidates: [], evidence: [], rejectedCandidates: [] }),
+      fallbackEffects: { logDecision: async () => undefined, recordRouteFailure: async () => undefined, recordRouteSuccess: async () => undefined },
+    })
+    assert.equal(completions.length, 1, 'fragmented Anthropic SSE completes exactly once at EOF or terminal')
+    assert.equal(completions[0].text, 'Answer', 'signed block assembly does not change visible output')
+    assert.deepEqual(completions[0].providerContentBlocks, blocks, 'real SSE executor retains independent signed/omitted/redacted blocks across transport chunks and removes internal indexes')
+  }
 }
 
 async function assertGoogleCitationStreamAssociations() {

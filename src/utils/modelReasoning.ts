@@ -16,7 +16,7 @@ export function getReasoningEffortOptions(provider: AIProvider | undefined, mode
   if (canUseConfigReasoning) {
     if (config.reasoningEfforts?.length) return config.reasoningEfforts
     if (config.reasoningMode === 'openai-effort') return ['low', 'medium', 'high']
-    if (config.reasoningMode === 'deepseek-thinking') return ['none', 'low', 'medium', 'high', 'xhigh']
+    if (config.reasoningMode === 'deepseek-thinking') return ['none', 'low', 'high', 'max']
     if (config.reasoningMode === 'anthropic-thinking') return ['none', 'low', 'medium', 'high', 'xhigh', 'max']
     if (config.reasoningMode === 'dashscope-thinking') return ['none', 'low', 'medium', 'high']
     if (config.reasoningMode === 'kimi-thinking') return ['none', 'high']
@@ -43,7 +43,7 @@ export function getReasoningEffortOptions(provider: AIProvider | undefined, mode
       ? ['minimal', 'low', 'medium', 'high']
       : ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
   }
-  if (isDeepSeekThinkingModel(provider, model)) return ['none', 'low', 'medium', 'high', 'xhigh']
+  if (isDeepSeekThinkingModel(provider, model)) return ['none', 'low', 'high', 'max']
   if (isDashScopeThinkingModel(provider, model)) return ['none', 'low', 'medium', 'high']
   if (isKimiThinkingModel(provider, model)) return ['none', 'high']
   if (isMiniMaxThinkingModel(provider, model)) return ['none', 'high']
@@ -173,7 +173,7 @@ export function isDeepSeekThinkingModel(provider: AIProvider, model: string): bo
   if (remoteThinking) return true
   if (normalized === 'deepseek-chat') return false
   if (provider.presetId !== 'deepseek' && provider.detectedPresetId !== 'deepseek' && !(provider.baseUrl ?? '').toLowerCase().includes('deepseek')) return false
-  return /^deepseek-v4(?:-|$)/.test(normalized) || normalized.includes('reasoner') || normalized.includes('thinking')
+  return /^deepseek-(?:flash|v4)(?:-|$)/.test(normalized) || normalized.includes('reasoner') || normalized.includes('thinking')
 }
 
 export function isDashScopeThinkingModel(provider: AIProvider, model: string): boolean {

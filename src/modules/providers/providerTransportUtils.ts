@@ -23,7 +23,9 @@ export async function fetchProviderWithTimeout(
   const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetchImplementation(input, { ...init, signal })
+    // Never forward provider credentials or prompt bodies to a redirect target.
+    // Manual callers (e.g. quota queries) inspect the original 3xx themselves.
+    return await fetchImplementation(input, { ...init, signal, redirect: init?.redirect === 'manual' ? 'manual' : 'error' })
   } finally {
     clearTimeout(timeout)
   }
@@ -68,16 +70,55 @@ export async function fetchProviderStreamWithTimeout(
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const body = init?.body ?? undefined
-    return await fetchImplementation(input, { ...init, signal, body })
+    return await fetchImplementation(input, { ...init, signal, body, redirect: init?.redirect === 'manual' ? 'manual' : 'error' })
   } finally {
     clearTimeout(timeout)
   }
 }
 
-export async function safeProviderResponseText(response: Pick<Response, 'text'>): Promise<string> {
+export const MAX_PROVIDER_RESPONSE_CHARACTERS = 4 * 1024 * 1024
+export class ProviderResponseLimitError extends Error {
+  constructor() { super('Provider response exceeds the text parsing limit'); this.name = 'ProviderResponseLimitError' }
+}
+
+export async function safeProviderResponseText(response: Pick<Response, 'text'> & Partial<Pick<Response, 'body' | 'headers'>>): Promise<string> {
+  const contentLength = Number(response.headers?.get('content-length'))
+  if (contentLength > MAX_PROVIDER_RESPONSE_CHARACTERS * 4) {
+    void response.body?.cancel().catch(() => undefined)
+    throw new ProviderResponseLimitError()
+  }
+  const reader = response.body?.getReader?.()
   try {
-    return await response.text()
-  } catch {
+    if (!reader) {
+      // Older RN transports buffer natively. Reject before JSON parsing even
+      // when their native allocation cannot be interrupted from JavaScript.
+      const text = await response.text()
+      if (text.length > MAX_PROVIDER_RESPONSE_CHARACTERS) throw new ProviderResponseLimitError()
+      return text
+    }
+    const decoder = new TextDecoder()
+    const chunks: string[] = []
+    let characters = 0
+    let pending = ''
+    let reads = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (value && value.byteLength > MAX_PROVIDER_RESPONSE_CHARACTERS * 4) throw new ProviderResponseLimitError()
+      const chunk = done ? decoder.decode() : decoder.decode(value, { stream: true })
+      characters += chunk.length
+      if (characters > MAX_PROVIDER_RESPONSE_CHARACTERS) throw new ProviderResponseLimitError()
+      // Network chunk boundaries are untrusted. Coalesce small/empty chunks so
+      // the retained array is bounded by text size, not packet fragmentation.
+      pending += chunk
+      if (pending.length >= 4096 || done) { if (pending) chunks.push(pending); pending = '' }
+      if (done) return chunks.join('')
+      if (++reads % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+  } catch (error) {
+    if (reader) await reader.cancel().catch(() => undefined)
+    if (error instanceof ProviderResponseLimitError) throw error
     return ''
+  } finally {
+    reader?.releaseLock()
   }
 }

@@ -1,5 +1,5 @@
 import { createPortableDataResetRuntime } from '@/modules/data-management'
-import { createSqliteAssistantRunPersistence } from '@/modules/assistant-runtime'
+import { createSqliteAssistantRunPersistence, createSqliteAgentDefinitionRepository } from '@/modules/assistant-runtime'
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
 import type { AIProvider } from '@/types/providerContracts'
 import {
@@ -29,6 +29,7 @@ import {
 import { clearTavernSnapshot } from './tavernWorkspace'
 import { clearConversationComposerDraftPersistence } from './conversationComposerDrafts'
 import { documentLibrary } from './documentLibrary'
+import { assistantRunBudgetStore } from './assistantRunGovernance'
 
 interface PortableDataResetSnapshot {
   providers: readonly AIProvider[]
@@ -37,6 +38,7 @@ interface PortableDataResetSnapshot {
 const assistantRunPersistence = createSqliteAssistantRunPersistence(
   createExpoSqliteDatabaseProvider(),
 )
+const agentDefinitions = createSqliteAgentDefinitionRepository(createExpoSqliteDatabaseProvider())
 
 const RESET_RAW_STORAGE_KEYS = Object.freeze([
   ...Object.values(APPLICATION_DATA_STORAGE_KEYS),
@@ -72,6 +74,14 @@ export const portableDataResetRuntime = createPortableDataResetRuntime<PortableD
     {
       id: 'assistant-runs',
       clear: async () => assistantRunPersistence.clear(),
+    },
+    {
+      id: 'agent-definitions',
+      clear: () => agentDefinitions.clear(),
+    },
+    {
+      id: 'assistant-run-budgets',
+      clear: () => assistantRunBudgetStore.clear(),
     },
     {
       id: 'provider-health',

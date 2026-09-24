@@ -4,6 +4,7 @@ import {
   type AssistantRunPersistence,
   type AssistantRuntime,
   type AssistantRuntimeOptions,
+  type AssistantRunGovernance,
 } from '@/modules/assistant-runtime'
 import {
   createProviderGateway,
@@ -18,6 +19,7 @@ export interface AppContainerDependencies {
   providerGateway?: ProviderGateway
   runPersistence: AssistantRunPersistence
   assistantRuntimeOptions?: AssistantRuntimeOptions
+  governance?: AssistantRunGovernance
 }
 
 export interface AppContainer {
@@ -33,6 +35,7 @@ export function createAppContainer(dependencies: AppContainerDependencies): AppC
     ids: dependencies.ids,
     providerGateway,
     persistence: dependencies.runPersistence,
+    governance: dependencies.governance,
     ...(dependencies.assistantRuntimeOptions ? { options: dependencies.assistantRuntimeOptions } : {}),
   })
 

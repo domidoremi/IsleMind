@@ -23,6 +23,7 @@ import type {
   ProviderStructuredOutputRequest,
   ProviderStructuredOutputRequestShape,
 } from './providerStructuredOutput'
+import { usesAnthropicNativeJsonOutput } from './providerStructuredOutput'
 import {
   createProviderToolCapabilityPolicy,
   providerProtocolReferenceDisablesCapability,
@@ -806,12 +807,13 @@ function inferStructuredOutput(
     modelSupportsOpenAIResponseFormat(modelConfig, 'openai-compatible'),
   )
   const appRequestControl = contractClaimed && structuredOutputAppRequestControl(input, family, protocol)
+  const nativeJson = usesAnthropicNativeJsonOutput(input.provider, input.model)
   return {
     contractClaimed,
-    documentedRequestShape: contractClaimed ? inferStructuredOutputRequestShape(family, protocol) : 'none',
+    documentedRequestShape: contractClaimed ? (nativeJson ? 'anthropic-output-config' : inferStructuredOutputRequestShape(family, protocol)) : 'none',
     appRequestControl,
-    jsonObjectMode: appRequestControl,
-    strictJsonSchema: appRequestControl && (family === 'openai' || family === 'openrouter' || family === 'xai' || family === 'cerebras' || family === 'ollama' || family === 'lm-studio'),
+    jsonObjectMode: appRequestControl && !nativeJson,
+    strictJsonSchema: appRequestControl && (nativeJson || family === 'openai' || family === 'openrouter' || family === 'xai' || family === 'cerebras' || family === 'ollama' || family === 'lm-studio'),
   }
 }
 

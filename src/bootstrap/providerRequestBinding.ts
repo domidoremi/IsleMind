@@ -90,6 +90,7 @@ const anthropicRequestBodyBuilder = createAnthropicRequestBodyBuilder<ProviderRu
   resolveDeclaredTools: providerRequestShapePolicy.selectDeclaredTools,
   resolveNativeSearchTool: providerNativeSearchPolicy.anthropic,
   resolveStructuredOutputTool: providerRequestShapePolicy.buildAnthropicStructuredOutputTool,
+  resolveStructuredOutputConfig: providerRequestShapePolicy.buildAnthropicStructuredOutputConfig,
   resolveReasoningPolicy: providerRequestReasoningPolicy.anthropicReasoning,
   resolveRequestParameters(req, options) {
     return providerRequestReasoningPolicy.resolveParameters(req, {

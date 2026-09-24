@@ -48,7 +48,13 @@ function recoverOpenAIResponsesFunctionCallInputItem(
   calls: readonly ProviderToolCall[],
 ): Record<string, unknown> {
   if (item.type !== 'function_call' || calls.length === 0) return item
-  const call = calls.find((candidate) => openAIResponsesFunctionCallItemMatches(item, candidate))
+  const matches = calls.filter((candidate) => openAIResponsesFunctionCallItemMatches(item, candidate))
+  // Older partial items sometimes lack both IDs. Recover by name only when
+  // there is one possible call; parallel same-name calls must never be guessed.
+  const candidates = matches.length || item.id || item.call_id
+    ? matches
+    : calls.filter((candidate) => candidate.name && candidate.name === item.name)
+  const call = candidates.length === 1 ? candidates[0] : undefined
   if (!call) return item
   if (!item.call_id && (call.callId || call.id)) item.call_id = call.callId || call.id
   if (!item.id && call.id) item.id = call.id
@@ -61,6 +67,8 @@ function recoverOpenAIResponsesFunctionCallInputItem(
 
 function openAIResponsesFunctionCallItemMatches(item: Record<string, unknown>, call: ProviderToolCall): boolean {
   const ids = [call.callId, call.id].filter(Boolean)
+  if (item.call_id && call.callId && item.call_id !== call.callId) return false
+  if (item.id && call.id && item.id !== call.id) return false
   if (ids.some((id) => item.call_id === id || item.id === id)) return true
-  return Boolean(call.name && item.name === call.name)
+  return !item.id && !item.call_id && !ids.length && Boolean(call.name && item.name === call.name)
 }

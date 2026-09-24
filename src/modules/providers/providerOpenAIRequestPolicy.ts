@@ -273,7 +273,9 @@ export function createOpenAIRequestPolicy(dependencies: OpenAIRequestPolicyDepen
     if (isReasoningModel('xiaomi-mimo', req.provider, req.model)) return msg.toolCalls?.length ? 'reasoning_content' : undefined
     if (isReasoningModel('cerebras', req.provider, req.model)) return 'reasoning'
     if (isReasoningModel('sambanova', req.provider, req.model)) return 'reasoning'
-    if (isReasoningModel('deepseek', req.provider, req.model)) return msg.toolCalls?.length ? 'reasoning_content' : undefined
+    // With tools, DeepSeek requires reasoning from every prior assistant turn,
+    // not only messages containing calls. Without tools the server ignores it.
+    if (isReasoningModel('deepseek', req.provider, req.model)) return 'reasoning_content'
     if (isReasoningModel('fireworks', req.provider, req.model)) return msg.toolCalls?.length ? 'reasoning_content' : undefined
     if (isReasoningModel('kimi', req.provider, req.model) || isReasoningModel('xai', req.provider, req.model)) return 'reasoning_content'
     if (isProvider('moonshot', req.provider) && modelConfig.reasoningMode === 'openai-effort') return 'reasoning_content'

@@ -35,6 +35,8 @@ describe('actual attribution persistence (real SQLite)', () => {
         persistence, clock: { now: () => now++ }, ids: { next: (prefix) => `${prefix}-${now++}` },
         providerGateway: { describe: () => undefined, async *stream(_request, options) {
           await options.onExecutionTarget?.({ providerId: 'actual', model: 'upstream', protocolAdapterId: 'anthropic', endpointVariant: 'direct', credentialSource: { kind: 'primary' }, attemptId: 'attempt' })
+          yield { type: 'citation', citationId: 'official', title: 'Official source', url: 'https://example.com/source' }
+          yield { type: 'citation', citationId: 'oversized', url: `https://example.com/${'x'.repeat(2048)}` }
           yield { type: 'text-delta', text: 'durable answer' }
         } },
       })
@@ -43,6 +45,10 @@ describe('actual attribution persistence (real SQLite)', () => {
       } })
       expect(outcome.ok).toBe(true)
       const reopened = createSqliteAssistantRunPersistence(provider)
+      expect(await reopened.listCitations!(runId)).toEqual([
+        { type: 'citation', citationId: 'official', title: 'Official source', url: 'https://example.com/source' },
+        { type: 'citation', citationId: 'oversized' },
+      ])
       expect(getAssistantRunMessageAttribution((await reopened.get(runId))!)?.providerId).toBe('actual')
       expect((await reopened.getRequestSnapshot(runId))?.request).toEqual(request)
       expect((await reopened.getLatestForResponseMessage('c', 'message'))?.routeDetails?.protocolAdapterId).toBe('anthropic')

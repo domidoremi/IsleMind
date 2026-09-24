@@ -1,5 +1,7 @@
 import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
+import { checkFinalProviderRequestCapacity, prepareFinalProviderRequestCapacity } from './providerContextCapacity'
+export { checkFinalProviderRequestCapacity } from './providerContextCapacity'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
 import { chooseCredentialForModel, updateCredentialGroupHealth, providerForRuntimeFallback } from '@/modules/providers'
 import {
@@ -379,7 +381,7 @@ export async function prepareProviderRuntimePipeline(input: ProviderRuntimePipel
     requestedTransportMode: transportSelection.requestedMode,
     transportFallbackReason: transportSelection.fallbackReason,
   })
-  const rawBody = optimizeProviderRequestBody(routeResult.body, {
+  let rawBody = optimizeProviderRequestBody(routeResult.body, {
     provider: runtimeReq.provider,
     model: runtimeReq.model,
     reasoningEffort: runtimeReq.reasoningEffort,
@@ -412,6 +414,8 @@ export async function prepareProviderRuntimePipeline(input: ProviderRuntimePipel
     )
   }
 
+  rawBody = prepareFinalProviderRequestCapacity({ req: runtimeReq, body: rawBody,
+    signal: input.controller.signal, onTrace: input.onTrace }).body
   const payloadPolicy = evaluatePayloadRules({
     body: rawBody,
     messages: runtimeReq.messages,
@@ -742,12 +746,15 @@ export function prepareHttpJsonRequest(input: {
   headers: Record<string, string>
   body: Record<string, unknown>
 }): PreparedProviderHttpRequest {
+  checkFinalProviderRequestCapacity(input)
   if (isBedrockRuntimeProvider(input.provider)) {
-    return prepareBedrockRuntimeInvokeModelRequest({
+    const prepared = prepareBedrockRuntimeInvokeModelRequest({
       provider: input.provider,
       model: input.model,
       body: input.body,
     })
+    checkFinalProviderRequestCapacity({ ...input, body: prepared.body })
+    return prepared
   }
   return {
     url: input.url,

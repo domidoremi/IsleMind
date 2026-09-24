@@ -1,4 +1,5 @@
 import type { StreamEvent } from '@/core'
+import { assertJsonTraversalBudget } from '@/core'
 
 export class StreamEventBufferLimitError extends Error {
   constructor() {
@@ -29,6 +30,10 @@ export class ProviderStreamEventBuffer<Receipt = undefined> {
 
   push(event: StreamEvent, receipt: () => Receipt): Receipt {
     const count = streamEventCount(event)
+    if (event.type !== 'text-delta') {
+      try { assertJsonTraversalBudget(event, this.limits.characters - this.characters) }
+      catch { throw new StreamEventBufferLimitError() }
+    }
     const characters = event.type === 'text-delta' ? event.text.length : JSON.stringify(event).length
     const last = this.entries.at(-1)
     const merge = last?.event.type === 'text-delta' && event.type === 'text-delta'

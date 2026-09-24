@@ -9,6 +9,7 @@ export type ProviderStructuredOutputRequestShape =
   | 'openrouter-response-format'
   | 'xai-response-format'
   | 'anthropic-tool-schema'
+  | 'anthropic-output-config'
   | 'google-response-schema'
   | 'localai-grammar'
 
@@ -29,6 +30,16 @@ export interface ProviderStructuredOutputRequestPolicy {
 }
 
 const DEFAULT_STRUCTURED_OUTPUT_TOOL_NAME = 'islemind_structured_output'
+
+/** Official Claude 5 contracts verified against structured-outputs on 2026-09-22.
+ * Do not assume Anthropic-compatible proxies implement native JSON output.
+ */
+export function usesAnthropicNativeJsonOutput(provider: AIProvider, model: string): boolean {
+  return provider.type === 'anthropic' && !provider.wireProtocol && [
+    'claude-opus-5', 'claude-sonnet-5', 'claude-fable-5', 'claude-fable-5-1',
+    'claude-mythos-5', 'claude-mythos-5-1',
+  ].includes(model.toLowerCase())
+}
 
 /**
  * OpenAI-compatible Responses endpoints must explicitly declare `text.format`;

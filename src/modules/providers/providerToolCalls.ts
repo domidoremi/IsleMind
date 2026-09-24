@@ -229,6 +229,7 @@ function collectGoogleProviderToolCalls(root: Record<string, unknown>, add: (inp
     const record = asRecord(value)
     if (!record) return
     add({
+      id: stringValue(record.id),
       index,
       name: stringValue(record.name),
       rawArguments: record.args ?? record.arguments,
@@ -297,12 +298,18 @@ export function mergeProviderToolCallParts(parts: ProviderToolCall[]): ProviderT
 }
 
 function findMatchingProviderToolCallIndex(calls: ProviderToolCall[], part: ProviderToolCall): number {
+  if (part.callId) {
+    const byCallId = calls.findIndex((call) => call.callId === part.callId)
+    if (byCallId >= 0) return byCallId
+  }
   if (part.id) {
     const byId = calls.findIndex((call) => call.id === part.id)
     if (byId >= 0) return byId
   }
   if (part.index !== undefined) {
-    const byIndex = calls.findIndex((call) => call.index === part.index)
+    const byIndex = calls.findIndex((call) => call.index === part.index
+      && !(call.id && part.id && call.id !== part.id)
+      && !(call.callId && part.callId && call.callId !== part.callId))
     if (byIndex >= 0) return byIndex
   }
   if (part.name) {

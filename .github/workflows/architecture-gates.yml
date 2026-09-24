@@ -88,6 +88,9 @@ jobs:
       - name: Provider parameter transmission gate
         run: bun run test:provider-parameter-matrix
 
+      - name: Provider transport redirect security gate
+        run: bun run test:provider-transport-security
+
       - name: Reasoning runtime compatibility gate
         run: bun run test:reasoning-runtime-compatibility
 

@@ -28,6 +28,12 @@ function createDependencies(
       clear: async () => undefined,
     },
     assistantRuntime: {
+      start: async () => { throw new Error('unused') },
+      steer: async () => { throw new Error('unused') },
+      pause: async () => { throw new Error('unused') },
+      resume: async () => { throw new Error('unused') },
+      approve: async () => { throw new Error('unused') },
+      subscribe: () => () => undefined,
       execute: async () => {
         executeCalls += 1
         throw new Error('assistant runtime must not start')

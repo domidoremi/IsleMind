@@ -1,4 +1,4 @@
-import { asTaskId, freezeChatRequest, type ChatReasoningReplayPart, type ChatRequest, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
+import { asTaskId, assertJsonTraversalBudget, freezeChatRequest, type ChatReasoningReplayPart, type ChatRequest, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
 import {
   createFrozenModelOperationCatalog,
   createModelOperationTurnRuntime,
@@ -8,12 +8,15 @@ import {
   type ModelOperationPendingConfirmationState,
   type ModelOperationReceipt,
   type PendingModelOperation,
+  type FrozenAgentDefinition,
 } from '@/modules/assistant-runtime'
 import {
   admitModelOperationCall,
   parseModelOperationProposal,
   stableIdentityHash,
   validateToolInputSchema,
+  createModelOperationCatalogSnapshot,
+  formatTaggedModelOperationPrompt,
   type ConversationToolCatalogManifest,
   type ModelOperationCatalogSnapshot,
   type ModelOperationDescriptor,
@@ -34,6 +37,8 @@ import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import type { Settings } from '@/types/settingsContracts'
+import { assertAgentModelBinding } from './agentModelBinding'
+import { KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST } from '@/modules/knowledge'
 
 export interface ConversationModelOperationRuntimeInput {
   readonly conversation: Conversation
@@ -41,11 +46,13 @@ export interface ConversationModelOperationRuntimeInput {
   readonly settings: Settings
   /** Rich callback activities cannot expose a resumable confirmation surface. */
   readonly allowConfirmation?: boolean
+  /** Host-applied narrowing only; never sourced from model instructions. */
+  readonly agentScope?: FrozenAgentDefinition
+  /** Host-only independent reads. MCP/provider annotations are not trusted for this. */
+  readonly independentReadOnly?: boolean
 }
 
-interface PendingTaskReference extends JsonRecord {
-  readonly taskId: string
-}
+type PendingTaskReference = Readonly<{ taskId: string }> | Readonly<{ notDispatched: true }>
 
 interface CurrentTurn {
   readonly request: ChatRequest
@@ -53,6 +60,17 @@ interface CurrentTurn {
   readonly nativeCallIds: ReadonlySet<string>
   readonly reasoningReplay: readonly ChatReasoningReplayPart[]
 }
+
+interface IndependentParentAuthority {
+  readonly conversationId: string
+  readonly knowledgeIds: readonly string[]
+  readonly operationIdentities: ReadonlyMap<string, string>
+}
+
+// Neither model output nor a caller-created lookalike session can supply authority.
+// Candidate bindings retain their own provider/model; only the frozen parent scope crosses this port.
+const independentSessionBindings = new WeakMap<AssistantModelOperationSession,
+  (definition: FrozenAgentDefinition, parent: IndependentParentAuthority) => Promise<AssistantModelOperationSession | undefined>>()
 
 export interface ConversationModelOperationSessionDependencies {
   readonly createCatalog: typeof createConversationModelOperationCatalog
@@ -85,24 +103,34 @@ export async function createConversationModelOperationSession(
   input: ConversationModelOperationRuntimeInput,
   dependencies: ConversationModelOperationSessionDependencies = DEFAULT_MODEL_OPERATION_SESSION_DEPENDENCIES,
 ): Promise<AssistantModelOperationSession | undefined> {
+  input = { ...input, conversation: { ...input.conversation,
+    ...(input.conversation.knowledgeSources ? { knowledgeSources: [...input.conversation.knowledgeSources] } : {}) } }
   if (!input.conversation.providerId?.trim() || !input.conversation.model?.trim()) return undefined
   const created = await dependencies.createCatalog(input.settings)
   if (!created.ok) throw new Error(created.message)
   if (created.catalog.snapshot.operations.length === 0) return undefined
 
-  const { snapshot: createdSnapshot, taggedPrompt } = created.catalog
-  const snapshot = input.allowConfirmation === false
-    ? {
-        ...createdSnapshot,
-        operations: createdSnapshot.operations.filter(
-          (operation) => operation.permission !== 'destructive' && !operation.requiresConfirmation,
-        ),
-      }
-    : createdSnapshot
+  const scope = input.agentScope
+  if (scope) assertAgentModelBinding(input.provider, scope)
+  if (scope && (scope.modelBinding.providerId !== input.provider.id || scope.modelBinding.modelId !== input.conversation.model)) throw new Error('Agent model binding does not match its operation session')
+  const createdSnapshot = created.catalog.snapshot
+  const scoped = createModelOperationCatalogSnapshot(createdSnapshot.operations.filter((operation) =>
+    (input.allowConfirmation !== false || operation.permission === 'read-only' && !operation.requiresConfirmation)
+      && (!input.independentReadOnly || operation.id === KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST.id
+        && operation.executor.kind === 'rag' && operation.permission === 'read-only' && !operation.requiresConfirmation)
+      && (!scope || scope.modelBinding.actionCapability !== 'text_only' && scope.allowedToolIds.includes(operation.id))
+      && (!scope || operation.executor.kind !== 'rag' || scope.knowledgeIds.length > 0)))
+  if (!scoped.ok) throw new Error(scoped.message)
+  const snapshot = scoped.snapshot
+  const tagged = formatTaggedModelOperationPrompt(snapshot)
+  if (!tagged.ok) throw new Error(tagged.message)
+  const taggedPrompt = tagged.prompt
   if (snapshot.operations.length === 0) return undefined
   const manifests = created.catalog.manifests.filter((manifest) =>
     snapshot.operations.some((operation) => operation.id === manifest.id))
   const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]))
+  const operationIdentities = new Map(snapshot.operations.map((operation) => [operation.id,
+    stableIdentityHash({ operation, manifest: manifestById.get(operation.id) ?? null })]))
   const providerNameByOperationId = new Map(
     snapshot.operations.map((operation) => [operation.id, providerOperationName(operation.id)]),
   )
@@ -199,8 +227,13 @@ export async function createConversationModelOperationSession(
       if (!manifest) {
         return { status: 'failed', output: 'The selected operation has no bound executor.' }
       }
+      if (!dispatchInput.confirmed && (manifest.permission !== 'read-only' || manifest.requiresConfirmation)) {
+        // Persist a Harness confirmation before creating an authorized Tasks
+        // operation. Visible intent is not a Tasks attestation or effect dispatch.
+        return { status: 'pending_confirmation', output: 'Confirm this concrete operation before execution.', pending: { notDispatched: true } }
+      }
       const confirmationStatus: ModelOperationConfirmationStatus =
-        manifest.permission === 'destructive'
+        manifest.permission !== 'read-only' || manifest.requiresConfirmation
           ? dispatchInput.confirmed ? 'confirmed' : 'pending'
           : 'not-required'
       const attested = authorizationPolicy.attest({
@@ -287,7 +320,27 @@ export async function createConversationModelOperationSession(
     },
   })
 
-  return {
+  const session: AssistantModelOperationSession = {
+    async forIndependentChild(definition, candidate) {
+      if (!scope || !candidate) return undefined
+      return independentSessionBindings.get(candidate)?.(definition, {
+        conversationId: input.conversation.id, knowledgeIds: scope.knowledgeIds, operationIdentities,
+      })
+    },
+    async forAgent(definition, options) {
+      const parentKnowledge = scope?.knowledgeIds ?? input.conversation.knowledgeSources
+      const knowledgeIds = definition.knowledgeIds.filter((id) =>
+        scope ? scope.knowledgeIds.includes(id) : !parentKnowledge?.length || parentKnowledge.includes(id))
+      const narrowed = { ...definition, knowledgeIds }
+      return createConversationModelOperationSession({ ...input, agentScope: narrowed,
+        independentReadOnly: input.independentReadOnly || options?.independentReadOnly,
+        allowConfirmation: input.independentReadOnly || options?.independentReadOnly ? false : input.allowConfirmation,
+        conversation: { ...input.conversation, knowledgeSources: knowledgeIds } }, {
+        ...dependencies,
+        // Never rediscover or widen the already frozen parent catalog.
+        createCatalog: async () => ({ ok: true, catalog: { snapshot, taggedPrompt, manifests } }),
+      })
+    },
     prepareRequest(request) {
       return prepareRequest(request)
     },
@@ -380,6 +433,23 @@ export async function createConversationModelOperationSession(
       }), resumeInput.run.id, dependencies.now(), currentTurn)
     },
   }
+  independentSessionBindings.set(session, async (definition, parent) => {
+    if (parent.conversationId !== input.conversation.id) return undefined
+    const candidateKnowledge = scope?.knowledgeIds ?? input.conversation.knowledgeSources
+    const knowledgeIds = definition.knowledgeIds.filter((id) => parent.knowledgeIds.includes(id)
+      && (scope ? scope.knowledgeIds.includes(id) : !candidateKnowledge?.length || candidateKnowledge.includes(id)))
+    const shared = createModelOperationCatalogSnapshot(snapshot.operations.filter((operation) =>
+      parent.operationIdentities.get(operation.id) === operationIdentities.get(operation.id)))
+    if (!shared.ok) throw new Error(shared.message)
+    const narrowed = { ...definition, knowledgeIds }
+    return createConversationModelOperationSession({ ...input, agentScope: narrowed, independentReadOnly: true, allowConfirmation: false,
+      conversation: { ...input.conversation, knowledgeSources: knowledgeIds } }, {
+      ...dependencies,
+      createCatalog: async () => ({ ok: true, catalog: { snapshot: shared.snapshot, taggedPrompt,
+        manifests: manifests.filter((manifest) => shared.snapshot.operations.some((operation) => operation.id === manifest.id)) } }),
+    })
+  })
+  return session
 }
 
 function normalizeTurnCalls(
@@ -592,6 +662,7 @@ async function expireDeclinedModelOperationTask(
   signal: AbortSignal,
 ): Promise<{ ok: boolean; message?: string }> {
   if (signal.aborted) return { ok: false, message: 'The declined operation was cancelled before its task could be closed.' }
+  if ('notDispatched' in state.pending) return { ok: true }
   const { createTaskRuntime } = await import('@/bootstrap/taskRuntime')
   const runtime = createTaskRuntime({
     async evaluate() {
@@ -644,7 +715,7 @@ function parsePendingConfirmationState(
     !isRecord(call) || typeof call.callId !== 'string' || typeof call.operationId !== 'string' ||
     typeof call.declaredName !== 'string' || typeof call.catalogRevision !== 'string' ||
     typeof call.schemaRevision !== 'string' || !isRecord(call.arguments) ||
-    !isRecord(pending) || typeof pending.taskId !== 'string') {
+    !isRecord(pending) || !(typeof pending.taskId === 'string' || pending.notDispatched === true)) {
     return undefined
   }
   return value as unknown as ModelOperationPendingConfirmationState<PendingTaskReference>
@@ -671,9 +742,10 @@ function boundedObservationOutput(observation: {
   readonly output?: string
   readonly blocks?: readonly unknown[]
 }): string {
-  const output = observation.output?.trim()
+  const output = observation.output?.slice(0, 4_800).trim()
   if (output) return output.slice(0, 4_800)
   try {
+    assertJsonTraversalBudget(observation.blocks ?? [], 16_000)
     return JSON.stringify(observation.blocks ?? []).slice(0, 4_800)
   } catch {
     return ''
@@ -682,15 +754,14 @@ function boundedObservationOutput(observation: {
 
 async function createModelOperationConversationRagRuntime(input: ConversationModelOperationRuntimeInput) {
   const [{ createConversationRagRuntime: createKnowledgeConversationRagRuntime, buildKnowledgeScope }, {
-    searchAgenticKnowledgeWithScope,
     searchKnowledgeWithFallback,
   }] = await Promise.all([
     import('@/modules/knowledge'),
     import('@/bootstrap/knowledgeRetrievalRuntime'),
   ])
-  const knowledgeScope = buildKnowledgeScope(
-    input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources,
-  )
+  const knowledgeScope = input.agentScope
+    ? { ids: new Set(input.agentScope.knowledgeIds.map((id) => id.toLowerCase())), terms: [] }
+    : buildKnowledgeScope(input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources)
   return createKnowledgeConversationRagRuntime({
     settings: input.settings,
     conversationTitle: input.conversation.title,
@@ -703,7 +774,9 @@ async function createModelOperationConversationRagRuntime(input: ConversationMod
       return searchKnowledgeWithFallback({
         query,
         limit,
-        ragMode: input.settings.ragMode === 'hybrid' && options?.mode === 'advanced' ? 'hybrid' : 'fts',
+        // Neither roots nor children may hide model/embedding requests inside
+        // a single tool receipt. Those adapters lack root attempt accounting.
+        ragMode: 'fts',
         embeddingMode: input.settings.embeddingMode ?? 'hybrid',
         localEmbeddingModelId: input.settings.localEmbeddingModelId,
         localEmbeddingModelSource: input.settings.localEmbeddingModelSource,
@@ -713,17 +786,10 @@ async function createModelOperationConversationRagRuntime(input: ConversationMod
         signal: options?.signal,
       })
     },
-    retrieveAgentic: (query, plan, limit, options) => searchAgenticKnowledgeWithScope({
-      query,
-      plan,
-      limit,
-      knowledgeScope,
-      onEmbeddingResolved: options?.onEmbeddingResolved,
-      signal: options?.signal,
-    }),
   })
 }
 
 function toJsonRecord(value: unknown): JsonRecord {
+  assertJsonTraversalBudget(value, 256 * 1024)
   return JSON.parse(JSON.stringify(value)) as JsonRecord
 }

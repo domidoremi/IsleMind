@@ -140,6 +140,19 @@ function createSqliteDatabase(
 ): SqliteDatabase {
   const executor = createExecutor(database)
   return {
+    passiveCheckpoint() {
+      return enqueueDatabaseOperation(databaseName, async () => {
+        const mode = await executor.getFirst<{ journal_mode: string }>('PRAGMA journal_mode')
+        // OPFS/Web and other backends must not inherit native WAL assumptions.
+        if (mode?.journal_mode.toLowerCase() !== 'wal') {
+          return { busy: 0, logFrames: -1, checkpointedFrames: -1, pageSize: 0 }
+        }
+        const page = await executor.getFirst<{ page_size: number }>('PRAGMA page_size')
+        const result = await executor.getFirst<{ busy: number; log: number; checkpointed: number }>('PRAGMA wal_checkpoint(PASSIVE)')
+        if (!result || !page || page.page_size <= 0) throw new Error('Invalid SQLite checkpoint result')
+        return { busy: result.busy, logFrames: result.log, checkpointedFrames: result.checkpointed, pageSize: page.page_size }
+      })
+    },
     exec(source) {
       return enqueueDatabaseOperation(databaseName, () => executor.exec(source))
     },

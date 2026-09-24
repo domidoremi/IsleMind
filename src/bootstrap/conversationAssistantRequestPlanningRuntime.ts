@@ -24,7 +24,6 @@ import {
 import { planChatContext } from '@/bootstrap/contextPlanning'
 import { packChatMessages } from '@/bootstrap/contextPacking'
 import { conversationProviderNativeSearchAdmission } from '@/bootstrap/conversationProviderNativeSearchAdmission'
-import { runApplicationContextSummary } from '@/bootstrap/providerApplicationContextSummary'
 import { usesOpenAIResponses } from '@/bootstrap/providerRequestPolicies'
 import { providerRemoteCompactLifecycle } from '@/bootstrap/providerRemoteCompactLifecycle'
 import { recordCompactUsage } from '@/bootstrap/providerCompactUsage'
@@ -119,21 +118,6 @@ export const conversationAssistantRequestPlanningRuntime =
     planContext: planChatContext,
     packChatMessages,
     lockConversation,
-    runApplicationContextSummary(input) {
-      return runApplicationContextSummary({
-        provider: input.provider,
-        model: input.model,
-        messages: input.messages,
-        contextPrompt: input.contextPrompt,
-        settings: input.settings,
-        conversationId: input.conversationId,
-        signal: input.signal,
-        modelContextWindow: input.modelContextWindow,
-        maxInputTokens: undefined,
-        systemPrompt: input.systemPrompt,
-        maxOutputTokens: input.maxOutputTokens,
-      })
-    },
     emitRuntimeEvent,
     recordCompactUsage,
     traceId(prefix) {

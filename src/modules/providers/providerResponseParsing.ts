@@ -1,6 +1,8 @@
 import type { MessageUsage } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
 import type { AIProvider, ProviderType } from '@/types/providerContracts'
+import { MAX_PROVIDER_RESPONSE_CHARACTERS, ProviderResponseLimitError } from './providerTransportUtils'
+import { assertProviderResponseContextCapacity, ProviderContextCapacityError } from './providerContextCapacity'
 
 import {
   dedupeCitations,
@@ -130,14 +132,18 @@ export function createProviderResponseParsingPolicy(
 ): ProviderResponseParsingPolicy {
   async function readProviderResponseBody(response: Response): Promise<ProviderResponseBody> {
     const text = await dependencies.readResponseText(response)
+    if (text.length > MAX_PROVIDER_RESPONSE_CHARACTERS) throw new ProviderResponseLimitError()
     const trimmed = text.trim()
     if (!trimmed) return { text, json: null }
     if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
       return { text, json: null }
     }
     try {
-      return { text, json: JSON.parse(trimmed) }
-    } catch {
+      const json: unknown = JSON.parse(trimmed)
+      assertProviderResponseContextCapacity(json)
+      return { text, json }
+    } catch (error) {
+      if (error instanceof ProviderContextCapacityError) throw error
       return { text, json: null }
     }
   }
@@ -233,6 +239,7 @@ export function createProviderResponseParsingPolicy(
     json: any,
     request: ProviderResponseParsingRequest,
   ): ProviderResponseParsingResult {
+    assertProviderResponseContextCapacity(json)
     const providerType = getWireProviderType(request.provider)
     const includeReasoning = providerReasoningResponseCanBeParsed(request)
     switch (providerType) {
@@ -349,7 +356,8 @@ export function createProviderResponseParsingPolicy(
     if (!trimmed.startsWith('{')) return undefined
     try {
       return parseProviderChatCompletionJson(JSON.parse(trimmed), request)
-    } catch {
+    } catch (error) {
+      if (error instanceof ProviderContextCapacityError) throw error
       return undefined
     }
   }

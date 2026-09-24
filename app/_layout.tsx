@@ -7,7 +7,7 @@ import type { ErrorBoundaryProps, NativeStackNavigationOptions } from 'expo-rout
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { ActivityIndicator, Platform, Text, View } from 'react-native'
+import { ActivityIndicator, AppState, Platform, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
@@ -32,6 +32,7 @@ import {
   type AndroidNetworkState,
 } from '@/platform/native/androidCompatibilityPolicy'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
+import { assistantExecutionHost } from '@/bootstrap/assistantExecutionHostRuntime'
 
 initI18n()
 
@@ -42,6 +43,13 @@ const SETTINGS_PROVIDER_SCREEN_OPTIONS: NativeStackNavigationOptions = {
 
 export default function RootLayout() {
   const boot = useBootstrap()
+  useEffect(() => {
+    if (!boot.ready || Platform.OS !== 'android') return
+    assistantExecutionHost.start()
+    assistantExecutionHost.setVisible(AppState.currentState === 'active')
+    const listener = AppState.addEventListener('change', (state) => assistantExecutionHost.setVisible(state === 'active'))
+    return () => { listener.remove(); assistantExecutionHost.stop() }
+  }, [boot.ready])
   const { canonicalThemeId, colors, design, mode, themeAccent, backgroundEnvironment } = useAppTheme()
   const { t } = useTranslation()
   const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()

@@ -86,7 +86,7 @@ function toModelOperationDescriptor(
       additionalProperties: true,
     }) as ModelOperationDescriptor['inputSchema'],
     permission: manifest.permission,
-    requiresConfirmation: manifest.permission === 'destructive',
+    requiresConfirmation: manifest.permission !== 'read-only' || manifest.requiresConfirmation === true,
     capabilityScopes: [
       `source:${manifest.source}`,
       `permission:${manifest.permission}`,

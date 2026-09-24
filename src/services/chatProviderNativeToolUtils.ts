@@ -289,6 +289,7 @@ export function buildProviderNativeToolRevisionMessages(
     type: 'function_call',
     text: '',
     functionCall: {
+      ...(input.call.id ? { id: input.call.id } : {}),
       name: input.call.name,
       args: input.call.arguments,
     },
@@ -304,6 +305,7 @@ export function buildProviderNativeToolRevisionMessages(
         type: 'function_response',
         text: '',
         functionResponse: {
+          ...(input.call.id ? { id: input.call.id } : {}),
           name: input.call.name,
           response: {
             ok: input.ok,

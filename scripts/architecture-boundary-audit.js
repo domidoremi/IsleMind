@@ -268,7 +268,7 @@ const requiredContracts = [
       ['src/modules/assistant-runtime/application/assistantConversationRequestPlanningRuntime.ts', /\.\.\.\(usesOpenAIResponses === undefined \? \{\} : \{ usesOpenAIResponses \}\)/],
       ['src/modules/assistant-runtime/application/assistantConversationRequestPlanningRuntime.ts', /dependencies\.resolvePreviousCompactState\(\{[^]*?provider: input\.provider,[^]*?\.\.\.\(usesOpenAIResponses === undefined \? \{\} : \{ usesOpenAIResponses \}\)/],
       ['src/bootstrap/conversationAssistantRequestPlanningRuntime.ts', /resolveUsesOpenAIResponses\(input\) \{[\s\S]*?return usesOpenAIResponses\(\{[\s\S]*?provider: input\.provider[\s\S]*?model: input\.model[\s\S]*?webSearchMode: input\.webSearchMode[\s\S]*?attachments: input\.attachments/],
-      ['src/bootstrap/providerRuntimeExecutor.ts', /function normalizeRemoteCompactRoute\([\s\S]*?resolveProviderContextManagement\(\{[\s\S]*?provider: req\.provider[\s\S]*?usesOpenAIResponses: usesOpenAIResponses\(req\)[\s\S]*?\}\)\.nativeSupported[\s\S]*?if \(nativeEligible && !routeChanged\) return req[\s\S]*?messages: localFallback\.messages[\s\S]*?contextPrompt: localFallback\.contextPrompt[\s\S]*?remoteCompactEligible: false[\s\S]*?remoteCompactFallback: undefined[\s\S]*?previousResponseId: undefined/],
+      ['src/bootstrap/providerRuntimeExecutor.ts', /function normalizeRemoteCompactRoute\([\s\S]*?resolveProviderContextManagement\(\{[\s\S]*?provider: req\.provider[\s\S]*?usesOpenAIResponses: usesOpenAIResponses\(req\)[\s\S]*?\}\)\.nativeSupported[\s\S]*?if \(nativeEligible && !routeChanged\) return req[\s\S]*?const admittedFallback = providerCapacityCompressionAllowed\(req\) \? localFallback : undefined[\s\S]*?messages: admittedFallback\.messages[\s\S]*?contextPrompt: admittedFallback\.contextPrompt[\s\S]*?remoteCompactEligible: false[\s\S]*?remoteCompactFallback: undefined[\s\S]*?previousResponseId: undefined/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /const selectedReqBase:[\s\S]*?provider: selectedProvider,[\s\S]*?model: resolveProviderModelAlias\(selectedProvider, selectedRoute\.model\),[\s\S]*?(?:const|let) selectedReq = normalizeRemoteCompactRoute\(selectedReqBase, input\.req\.remoteCompactFallback, true\)/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /(?:const|let) selectedReq = normalizeRemoteCompactRoute\(selectedReqBase, input\.req\.remoteCompactFallback, true\)/],
       ['src/bootstrap/providerRuntimeExecutor.ts', /const fallbackReq = normalizeRemoteCompactRoute\([\s\S]*?req\.remoteCompactFallback/],
@@ -949,7 +949,7 @@ const requiredContracts = [
       'src/bootstrap/portableDataPayload.ts',
       'src/bootstrap/portableDataReset.ts',
       'src/presentation/features/settings/portableDataCommand.ts',
-      'src/components/main/SettingsScreenContent.tsx',
+      'src/components/settings/SystemSettingsPanelContent.tsx',
       'src/core/portableImportRecovery.ts',
       'src/core/index.ts',
       'src/platform/storage/expoSqliteDatabase.ts',
@@ -1015,7 +1015,7 @@ const requiredContracts = [
       ['src/bootstrap/portableDataReset.ts', /createPortableDataResetRuntime<[\s\S]*?prepare\(\)[\s\S]*?participants:[\s\S]*?'raw-application-records'[\s\S]*?'conversations'[\s\S]*?'knowledge'[\s\S]*?'workspaces'[\s\S]*?'provider-credentials'[\s\S]*?'observability-credentials'/],
       ['src/bootstrap/portableDataApplication.ts', /portableDataPayloadRuntime\.exportJson\(options\)[\s\S]*?portableDataResetRuntime\.clearAllData\(\)[\s\S]*?createExpoPortableDataTransferPort\(\{[\s\S]*?createPortableDataApplication\(\{[\s\S]*?payload:[\s\S]*?transfer:[\s\S]*?projections:[\s\S]*?reportProjectionRefreshFailure[\s\S]*?bindPortableDataApplication\(portableDataApplication\)/],
       ['src/presentation/features/settings/portableDataCommand.ts', /PORTABLE_DATA_RUNTIME_UNINITIALIZED_ERROR[\s\S]*?bindPortableDataApplication[\s\S]*?releasePortableDataApplication[\s\S]*?requirePortableDataApplication/],
-      ['src/components/main/SettingsScreenContent.tsx', /from ['"]@\/presentation\/features\/settings\/portableDataCommand['"]/],
+      ['src/components/settings/SystemSettingsPanelContent.tsx', /from ['"]@\/presentation\/features\/settings\/portableDataCommand['"]/],
       ['src/platform/storage/asyncStorageApplicationRecords.ts', /export interface ApplicationRecordStoragePort[\s\S]*?export function createAsyncStorageApplicationRecordStorage[\s\S]*?read:[\s\S]*?write:[\s\S]*?remove:[\s\S]*?removeMany:/],
       ['src/bootstrap/applicationDataRecords.ts', /APPLICATION_DATA_STORAGE_KEYS[\s\S]*?createApplicationDataRecordRuntime[\s\S]*?readApplicationDataRecord[\s\S]*?writeApplicationDataRecord[\s\S]*?loadApplicationDataRecord<[\s\S]*?saveApplicationDataRecord<[\s\S]*?removeApplicationDataRecord[\s\S]*?removeRawApplicationDataRecords/],
       ['src/modules/conversations/application/conversationSkillPolicy.ts', /export interface ConversationSkillRecordPort[\s\S]*?export function createConversationSkillPolicy[\s\S]*?export function createConversationSkillRepository[\s\S]*?let mutationTail = Promise\.resolve\(\)[\s\S]*?export function createConversationSkillApplication/],
@@ -1110,7 +1110,7 @@ const requiredContracts = [
     forbiddenMarkers: [
       ['src/platform/storage/expoSqliteDatabase.ts', /createSqliteWebFallbackDatabase/],
       ['src/platform/storage/expoSqliteDatabase.ts', /\.withExclusiveTransactionAsync\(/],
-      ['src/components/main/SettingsScreenContent.tsx', /from ['"]@\/services\/(?:portableData|storage)['"]/],
+      ['src/components/settings/SystemSettingsPanelContent.tsx', /from ['"]@\/services\/(?:portableData|storage)['"]/],
       ['src/bootstrap/portableDataApplication.ts', /@\/services\/portableData/],
       ['src/platform/native/expoPortableDataTransfer.ts', /@\/services\//],
       ['src/platform/storage/asyncStorageApplicationRecords.ts', /@\/(?:services|bootstrap|modules|presentation)\//],
@@ -1299,7 +1299,7 @@ const requiredContracts = [
       'src/components/chat/chatSettingsRoutes.ts',
       'src/components/chat/SkillVariableDialogBody.tsx',
       'src/components/chat/tracePresentation.ts',
-      'src/components/main/SettingsScreenContent.tsx',
+      'src/components/settings/SystemSettingsPanelContent.tsx',
       'src/components/settings/SkillSettingsContent.tsx',
       'app/settings/skills.tsx',
       'app/source.tsx',
@@ -2095,7 +2095,7 @@ const requiredContracts = [
       ['src/modules/assistant-runtime/application/assistantProviderToolTurnRuntime.ts', /buildDeclarations\(\{ manifests, target, permissionCeiling, maxTools: 64 \}\)/],
       ['src/bootstrap/conversationProviderToolTurnRuntime.ts', /export function createConversationProviderToolTurnRuntime/],
       ['src/bootstrap/conversationProviderToolTurnRuntime.ts', /return \{ admit: runtime\.admit \}/],
-      ['src/modules/assistant-runtime/runtime.ts', /async function continueActivityProviderTurns\([\s\S]*?modelOperationSession\.evaluateTurn\([\s\S]*?for await \(const event of stream/],
+      ['src/modules/assistant-runtime/runtime.ts', /async function continueActivityProviderTurns\([\s\S]*?await runProviderTurns\(active, initialRequest, undefined, modelOperationSession/],
       ['src/bootstrap/conversationAssistantDurableExecutionRuntime.ts', /input\.modelOperationSession[\s\S]*?continueProviderTurns\(\{/],
       ['src/modules/integrations/mcpToolRequest.ts', /export function parseMcpToolRequest/],
       ['src/modules/integrations/mcpToolRequest.ts', /export const MCP_TOOL_CALL_TAG = 'islemind_mcp_call'/],
@@ -2301,15 +2301,8 @@ const requiredContracts = [
       ['src/components/chat/tracePresentation.ts', /function pendingActionWorkflowMetaSummary/],
       ['src/components/chat/tracePresentation.ts', /function safeTraceStringList/],
       ['src/components/chat/tracePresentation.ts', /function cancellationProgressMetaSummary/],
-      ['src/components/main/SettingsScreenContent.tsx', /agentWorkflowMaxSteps/],
-      ['src/components/main/SettingsScreenContent.tsx', /agentWorkflowMaxToolCallsPerStep/],
-      ['src/components/main/SettingsScreenContent.tsx', /agentWorkflowOutputCharLimit/],
-      ['src/components/main/SettingsScreenContent.tsx', /agentWorkflowAllowReadOnlyTools/],
-      ['src/components/main/SettingsScreenContent.tsx', /agentWorkflowAllowReadWriteTools: \(settings\.agentWorkflowAllowReadWriteTools \?\? 'visible'\) === false \? 'visible' : false/],
-      ['src/components/main/SettingsScreenContent.tsx', /agentWorkflowAllowDestructiveTools: \(settings\.agentWorkflowAllowDestructiveTools \?\? 'confirm'\) === 'confirm' \? false : 'confirm'/],
-      ['src/components/main/SettingsScreenContent.tsx', /updatePositiveInteger\('agentWorkflowMaxSteps', value, 3, 1, 8\)/],
-      ['src/components/main/SettingsScreenContent.tsx', /updatePositiveInteger\('agentWorkflowMaxToolCallsPerStep', value, 1, 1, 3\)/],
-      ['src/components/main/SettingsScreenContent.tsx', /updatePositiveInteger\('agentWorkflowOutputCharLimit', value, 4800, 512, 12000\)/],
+      // Workflow controls now live in the dedicated preference editor. Keep the
+      // exact authorization toggles and numeric ranges checked at their owner.
       ['src/components/settings/PreferenceSettingsContent.tsx', /export function PreferenceSettingsContent/],
       ['src/components/settings/PreferenceSettingsContent.tsx', /agentWorkflowMaxSteps/],
       ['src/components/settings/PreferenceSettingsContent.tsx', /agentWorkflowMaxToolCallsPerStep/],
@@ -2428,8 +2421,8 @@ const requiredContracts = [
       ['scripts/workflow-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.maxToolCallsPerStep/],
       ['scripts/workflow-task-adapter-tests.js', /overLimit\.diagnostic\.metadata\?\.maxStepCount/],
       ['scripts/architecture-contract-tests.js', /testBootstrapInternalModelOperationChatAdmission/],
-      ['scripts/architecture-contract-tests.js', /pending model-operation admission retains the exact Chat AssistantRun/],
-      ['scripts/architecture-contract-tests.js', /approved confirmation replay retains exact Chat run attribution/],
+      ['scripts/architecture-contract-tests.js', /no authorized Task is created before user confirmation/],
+      ['scripts/architecture-contract-tests.js', /only explicit approval enters Tasks admission with exact Chat run attribution/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(destructiveConfirmedTrace\.metadata\?\.allowReason,\s*'user-confirmed'\)/],
       ['scripts/agent-tool-policy-tests.js', /assert\.equal\(destructiveConfirmedTrace\.metadata\?\.userConfirmed,\s*true\)/],
       ['scripts/agent-tool-policy-tests.js', /Android undo button must require workflow follow-up trace metadata/],
@@ -2782,7 +2775,7 @@ const requiredContracts = [
       ['src/bootstrap/tavilyRemoteWebCrawl.ts', /@\/services\/searchPolicy/],
       ['src/store/settingsStore.ts', /@\/services\/searchPolicy/],
       ['src/services/contextSelfTest.ts', /@\/services\/searchPolicy/],
-      ['src/components/main/SettingsScreenContent.tsx', /@\/services\/searchPolicy/],
+      ['src/components/settings/SystemSettingsPanelContent.tsx', /@\/services\/searchPolicy/],
       ['src/components/settings/ContextPanel.tsx', /@\/services\/searchPolicy/],
       ['src/services/contextSelfTest.ts', /@\/services\/searchAdapters/],
       ['src/bootstrap/mcpCatalog.ts', /@\/services\/searchAdapters/],
@@ -2824,7 +2817,7 @@ const requiredContracts = [
       'src/services/runtimeTimeline.ts',
       'src/bootstrap/runtimeDiagnostics.ts',
       'src/bootstrap/pluginManifest.ts',
-      'src/components/main/SettingsScreenContent.tsx',
+      'src/components/settings/SystemSettingsPanelContent.tsx',
       'src/components/settings/RuntimeDiagnosticsDetails.tsx',
       'src/components/chat/runtimeRepairReplayEvents.ts',
       'src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx',
@@ -2880,16 +2873,16 @@ const requiredContracts = [
       ['src/bootstrap/pluginManifest.ts', /decodeWorkflowDefinition\(input, \{ redactSensitiveText \}\)/],
       ['src/bootstrap/pluginManifest.ts', /decodeWorkflowDefinition\(rawEntry\?\.workflow, \{ redactSensitiveText \}\)/],
       ['src/bootstrap/pluginManifest.ts', /execution: 'noop'/],
-      ['src/components/main/SettingsScreenContent.tsx', /loadPluginManifestCatalogSnapshot/],
-      ['src/components/main/SettingsScreenContent.tsx', /emitPluginManifestCatalogSnapshotEvent/],
+      ['src/components/settings/SystemSettingsPanelContent.tsx', /loadPluginManifestCatalogSnapshot/],
+      ['src/components/settings/SystemSettingsPanelContent.tsx', /emitPluginManifestCatalogSnapshotEvent/],
       ['src/components/settings/RuntimeDiagnosticsDetails.tsx', /runtimeDiagnosticPluginCatalog/],
       ['src/components/settings/RuntimeDiagnosticsDetails.tsx', /runtimeDiagnosticPerformance/],
       ['app/settings/skills.tsx', /runtimeRepairTarget === 'plugin-settings'/],
       ['src/components/settings/SkillSettingsContent.tsx', /pluginManifestRepairTarget/],
       ['src/services/runtimeEventContract.ts', /plugin\.catalog\.snapshot\.created/],
-      ['src/components/main/SettingsScreenContent.tsx', /RuntimeRepairTaskActions/],
-      ['src/components/main/SettingsScreenContent.tsx', /openRuntimeRepairTask/],
-      ['src/components/main/SettingsScreenContent.tsx', /sessionAffinityEnabled/],
+      ['src/components/settings/SystemSettingsPanelContent.tsx', /RuntimeRepairTaskActions/],
+      ['src/components/settings/SystemSettingsPanelContent.tsx', /openRuntimeRepairTask/],
+      ['src/components/settings/SystemSettingsPanelContent.tsx', /sessionAffinityEnabled/],
       ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /export function RuntimeRepairConversationWorkspace/],
       ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /buildRuntimeRepairIntent/],
       ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /RUNTIME_REPAIR_REPLAY_PAYLOAD_SCHEMA/],
@@ -6813,7 +6806,7 @@ function runArchitectureBoundaryAuditSelfTest() {
 
     fs.writeFileSync(
       providerRuntimeExecutorPath,
-      originalProviderRuntimeExecutor.replace('messages: localFallback.messages', 'messages: req.messages'),
+      originalProviderRuntimeExecutor.replace('messages: admittedFallback.messages', 'messages: req.messages'),
       'utf8',
     )
     const missingLocalFallbackProjectionResult = collectArchitectureBoundaryAudit(tempRoot)
@@ -7803,7 +7796,7 @@ function runArchitectureBoundaryAuditSelfTest() {
     )
     fs.writeFileSync(portableDataBootstrapPath, originalPortableDataBootstrap, 'utf8')
 
-    const portableDataSettingsPath = path.join(tempRoot, 'src', 'components', 'main', 'SettingsScreenContent.tsx')
+    const portableDataSettingsPath = path.join(tempRoot, 'src', 'components', 'settings', 'SystemSettingsPanelContent.tsx')
     const originalPortableDataSettings = fs.readFileSync(portableDataSettingsPath, 'utf8')
     fs.writeFileSync(
       portableDataSettingsPath,
@@ -7818,7 +7811,7 @@ function runArchitectureBoundaryAuditSelfTest() {
       restoredPortableDataServiceImportResult.blockingIssues.some((item) =>
         item.checkId === 'migration-recovery-boundary'
         && /Forbidden compatibility marker/.test(item.issue)
-        && item.issue.includes('src/components/main/SettingsScreenContent.tsx')
+        && item.issue.includes('src/components/settings/SystemSettingsPanelContent.tsx')
       ),
       'architecture audit self-test blocks Settings presentation from restoring direct portable service imports',
     )
@@ -12349,7 +12342,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ],
     ['src/bootstrap/providerModelAccess.ts', 'createProviderModelAccessPolicy({})\nexport const PROVIDER_MODEL_ACCESS_POLICY = {}'],
     ['src/bootstrap/providerSessionLeasePool.ts', 'export const providerSessionLeasePool = createProviderSessionLeasePool()'],
-    ['src/bootstrap/providerRuntimeExecutor.ts', 'acquireProviderSessionLease({ signal: input.controller.signal })\nawait input.fallbackEffects.logDecision()\nconst TERMINAL_READER_CLOSE_GRACE_MS = 50\nlet completionDelivered = false\nif (parsed.terminal) {\n  cancelReaderAfterTerminal()\n}\nfunction cancelReader(): void {\n  if (readerCancelRequested) return\n  readerCancelRequested = true\n  void Promise.resolve(reader!.cancel()).catch(() => undefined)\n}\nfunction cancelReaderAfterTerminal(): void {\n  const cancel = cancelReader\n}\ninput.controller.signal.addEventListener(\'abort\', cancelReader, { once: true })\ninput.controller.signal.removeEventListener(\'abort\', cancelReader)\nconst closed = terminalReader.closed\nif (value) {}\nif (done) {}\nfunction normalizeRemoteCompactRoute(req, localFallback, routeChanged = false) {\n  const nativeEligible = resolveProviderContextManagement({ provider: req.provider, usesOpenAIResponses: usesOpenAIResponses(req) }).nativeSupported\n  if (nativeEligible && !routeChanged) return req\n  return { ...req, messages: localFallback.messages, contextPrompt: localFallback.contextPrompt, remoteCompactEligible: false, remoteCompactFallback: undefined, previousResponseId: undefined }\n}\nconst selectedReqBase: ProviderRuntimeChatRequest = { provider: selectedProvider, model: resolveProviderModelAlias(selectedProvider, selectedRoute.model), }\nconst selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback, true)\nconst fallbackReq = normalizeRemoteCompactRoute({ ...req }, req.remoteCompactFallback)'],
+    ['src/bootstrap/providerRuntimeExecutor.ts', 'acquireProviderSessionLease({ signal: input.controller.signal })\nawait input.fallbackEffects.logDecision()\nconst TERMINAL_READER_CLOSE_GRACE_MS = 50\nlet completionDelivered = false\nif (parsed.terminal) {\n  cancelReaderAfterTerminal()\n}\nfunction cancelReader(): void {\n  if (readerCancelRequested) return\n  readerCancelRequested = true\n  void Promise.resolve(reader!.cancel()).catch(() => undefined)\n}\nfunction cancelReaderAfterTerminal(): void {\n  const cancel = cancelReader\n}\ninput.controller.signal.addEventListener(\'abort\', cancelReader, { once: true })\ninput.controller.signal.removeEventListener(\'abort\', cancelReader)\nconst closed = terminalReader.closed\nif (value) {}\nif (done) {}\nfunction normalizeRemoteCompactRoute(req, localFallback, routeChanged = false) {\n  const nativeEligible = resolveProviderContextManagement({ provider: req.provider, usesOpenAIResponses: usesOpenAIResponses(req) }).nativeSupported\n  if (nativeEligible && !routeChanged) return req\n  const admittedFallback = providerCapacityCompressionAllowed(req) ? localFallback : undefined\n  return { ...req, messages: admittedFallback.messages, contextPrompt: admittedFallback.contextPrompt, remoteCompactEligible: false, remoteCompactFallback: undefined, previousResponseId: undefined }\n}\nconst selectedReqBase: ProviderRuntimeChatRequest = { provider: selectedProvider, model: resolveProviderModelAlias(selectedProvider, selectedRoute.model), }\nconst selectedReq = normalizeRemoteCompactRoute(selectedReqBase, input.req.remoteCompactFallback, true)\nconst fallbackReq = normalizeRemoteCompactRoute({ ...req }, req.remoteCompactFallback)'],
     ['src/modules/providers/providerRequestHardeningPolicy.ts', 'export function createProviderRequestHardeningPolicy() {}\nfunction clampTopLevelMaxTokens() {}'],
     ['src/bootstrap/providerRequestHardening.ts', 'createProviderRequestHardeningPolicy({})'],
     ['src/modules/providers/providerConformancePolicy.ts', 'export function createProviderConformancePolicy() {}\ndependencies.hardenProviderRequestBody({})'],
@@ -14982,7 +14975,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '}',
         'async recoverInterruptedRuns() {}',
         'async function continueActivityProviderTurns() {',
-        'modelOperationSession.evaluateTurn({})',
+        'await runProviderTurns(active, initialRequest, undefined, modelOperationSession)',
         'for await (const event of stream(request)) {}',
       ].join('\n'),
     ],
@@ -15792,7 +15785,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ['src/i18n/resources/zh-CN.json', '"contextCompressionStrategy"\n"contextCompressionSections"\n"currentToolCall"'],
     ['src/i18n/resources/ja.json', '"contextCompressionStrategy"\n"contextCompressionSections"\n"currentToolCall"'],
     [
-      'src/components/main/SettingsScreenContent.tsx',
+      'src/components/settings/SystemSettingsPanelContent.tsx',
       [
         "import { requirePortableDataApplication } from '@/presentation/features/settings/portableDataCommand'",
         'agentWorkflowMaxSteps',
@@ -16197,8 +16190,8 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '  the platform native adapter cleans every selected temporary copy',
         '}',
         'testBootstrapInternalModelOperationChatAdmission',
-        'pending model-operation admission retains the exact Chat AssistantRun',
-        'approved confirmation replay retains exact Chat run attribution',
+        'no authorized Task is created before user confirmation',
+        'only explicit approval enters Tasks admission with exact Chat run attribution',
       ].join('\n'),
     ],
     [

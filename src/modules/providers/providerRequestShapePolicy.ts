@@ -3,7 +3,7 @@ import { getModelConfig } from '@/types/modelCatalog'
 import type { ProviderSelectableAttachment } from './providerAttachments'
 import { selectProviderRequestAttachments } from './providerAttachments'
 import type { ProviderStructuredOutputRequest, ProviderStructuredOutputRequestShape } from './providerStructuredOutput'
-import { providerStructuredOutputToolName, providerStructuredOutputToolSchema } from './providerStructuredOutput'
+import { providerStructuredOutputToolName, providerStructuredOutputToolSchema, usesAnthropicNativeJsonOutput } from './providerStructuredOutput'
 import { selectProviderToolDeclarations } from './providerToolDeclarations'
 import { createProviderToolCapabilityPolicy } from './providerToolCapabilityPolicy'
 
@@ -107,7 +107,15 @@ export function createProviderRequestShapePolicy<Attachment extends ProviderSele
     if (!structuredOutput.schema) return undefined
     return { responseMimeType: 'application/json', responseSchema: structuredOutput.schema }
   }
-  return { resolveCapabilityManifest, requestModelCapabilityCanBeSent, selectAttachments, selectDeclaredTools, resolveStructuredOutputRequestPolicy, buildAnthropicStructuredOutputTool, buildGoogleStructuredOutputConfig }
+  function buildAnthropicStructuredOutputConfig(request: Request): Record<string, unknown> | undefined {
+    const policy = resolveStructuredOutputRequestPolicy(request)
+    if (!policy.request || !policy.appRequestControl || !policy.capabilityAllowed || policy.documentedRequestShape !== 'anthropic-output-config') return undefined
+    if (policy.request.type !== 'json_schema' || !policy.request.schema) {
+      throw new Error('This Claude model requires an explicit JSON schema for structured output; use json_schema instead of json_object.')
+    }
+    return { format: { type: 'json_schema', schema: policy.request.schema } }
+  }
+  return { resolveCapabilityManifest, requestModelCapabilityCanBeSent, selectAttachments, selectDeclaredTools, resolveStructuredOutputRequestPolicy, buildAnthropicStructuredOutputTool, buildAnthropicStructuredOutputConfig, buildGoogleStructuredOutputConfig }
 
   function resolveStructuredOutputManifest(provider: AIProvider, model: string): ProviderRequestShapeManifest['structuredOutput'] {
     const family = providerRequestFamily(provider)
@@ -116,10 +124,11 @@ export function createProviderRequestShapePolicy<Attachment extends ProviderSele
     const modelDeclared = modelDeclaresCapability(modelConfig, 'responseFormat')
     const contractClaimed = dependencies.compatibilityCapabilityCanBeSent(provider, 'structuredOutput', modelDeclared)
     const appRequestControl = contractClaimed && structuredOutputAppRequestControl(provider, modelConfig, family, protocol)
+    const nativeJson = usesAnthropicNativeJsonOutput(provider, model)
     return {
       appRequestControl,
-      documentedRequestShape: contractClaimed ? structuredOutputRequestShape(family, protocol) : 'none',
-      strictJsonSchema: appRequestControl && ['openai', 'openrouter', 'xai', 'cerebras', 'ollama', 'lm-studio'].includes(family),
+      documentedRequestShape: contractClaimed ? (nativeJson ? 'anthropic-output-config' : structuredOutputRequestShape(family, protocol)) : 'none',
+      strictJsonSchema: appRequestControl && (nativeJson || ['openai', 'openrouter', 'xai', 'cerebras', 'ollama', 'lm-studio'].includes(family)),
     }
   }
 

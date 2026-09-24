@@ -1,5 +1,6 @@
 import type { UsagePortableSnapshot } from '@/modules/diagnostics'
 import type { SavedDocument } from '@/modules/documents'
+import type { AgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
 import type { PortableKnowledgeSnapshot } from '@/modules/knowledge'
 import type {
   TavernExportAudit,
@@ -71,6 +72,8 @@ export interface PortableDataExportPayload {
   mem0?: Mem0MemoryEnvelope
   usage?: UsagePortableSnapshot
   savedDocuments?: SavedDocument[]
+  /** Data-only Agent configuration, included with the settings category. */
+  agentDefinitions?: AgentDefinition[]
   exportedAt: number
 }
 

@@ -56,6 +56,18 @@ import type { ProviderRuntimeFallbackEffects, ProviderRuntimeFallbackPlan } from
 import { assertProviderCircuitClosed, createProviderRetryAbortError, delayProviderRetry, isProviderRetryCancellation, logProviderRetryAttempt, providerCircuitKey, providerRetryDelayMs, recordProviderCircuitFailure, recordProviderCircuitSuccess, resolveProviderMaxRetries, resolveProviderRequestTimeoutMs, throwIfProviderRetryAborted } from '@/bootstrap/providerRetryRuntime'
 import { isPerplexityProvider } from '@/modules/providers'
 import { getWireProviderType, isAnthropicWireRequest } from '@/modules/providers'
+import { providerTokenCalibration } from './providerTokenCalibration'
+import { executionResources } from './executionResources'
+
+// These permits follow real transport settlement, never the caller's abort race.
+// Three input representations plus an output reservation share the application
+// text ceiling (therefore also bounding every root's concurrent attempts).
+const attemptTextReservations = new WeakMap<ProviderExecutionTarget, () => void>()
+function releaseAttemptText(target: ProviderExecutionTarget | undefined) {
+  if (!target) return
+  attemptTextReservations.get(target)?.()
+  attemptTextReservations.delete(target)
+}
 import { clampMaxTokens } from '@/bootstrap/providerRequestPolicies'
 import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/modules/providers'
 import { resolveProviderContextManagement } from '@/modules/providers'
@@ -71,6 +83,11 @@ import { recordProviderUsageAttempt } from '@/bootstrap/usageStatisticsRuntime'
 import { ProviderExecutionTargetObserverError, providerExecutionIdentityKey, reportProviderExecutionTarget, resolveProviderEndpointVariant } from '@/modules/providers'
 import { resolveProviderProtocolAdapter } from '@/bootstrap/providerRequestBinding'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { checkFinalProviderRequestCapacity } from './providerRuntimePipeline'
+import { isProviderContextOverflow, prepareFinalProviderRequestCapacity, providerCapacityCompressionAllowed } from './providerContextCapacity'
+import { ProviderContextCapacityError } from '@/modules/providers'
+import { assistantRunBudgetStore } from './assistantRunGovernance'
+import type { ProviderExecutionTarget } from '@/modules/providers'
 import { providerRequestHasRouteBoundContinuation, type ProviderFailoverRoute } from '@/modules/providers'
 
 export type { ProviderRuntimeFallbackEffects } from '@/bootstrap/providerRuntimeFallbackEffects'
@@ -81,6 +98,8 @@ const TERMINAL_READER_CLOSE_GRACE_MS = 50
 type ProviderUsageAttemptReason = 'initial' | 'retry' | 'rectification' | 'fallback'
 
 interface SuccessfulProviderUsageAttempt {
+  target: ProviderExecutionTarget
+  usageSequence: number
   startedAt: number
   attempt: number
   reason: ProviderUsageAttemptReason
@@ -229,7 +248,7 @@ export function executeProviderRuntimeChat(input: ProviderRuntimeChatExecutionIn
   }), input.onError, pipeline.credentialGroupId, input.controller.signal)
 }
 
-function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput): Promise<void> {
+function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput, capacityRecovery = false): Promise<void> {
   const {
     effectiveReq,
     runtimeReq,
@@ -243,12 +262,19 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
   return runStreamTask(async () => {
     const lease = await acquireWebSocketLease(input)
     if (!lease) return
+    let leaseReleased = false
+    const releaseLease = () => { if (!leaseReleased) { leaseReleased = true; lease.release() } }
     const signal = input.controller.signal
     let emittedText = false
     const usageStartedAt = Date.now()
     let firstTokenAt: number | undefined
     let usageRecorded = false
     let targetReported = false
+    let executionTarget: ProviderExecutionTarget | undefined
+    let usageWrite: Promise<void> = Promise.resolve()
+    let completedResult: Parameters<ProviderRuntimeDoneCallback>[0] | undefined
+    let reportedError: Error | undefined
+    let wireBody = rawBody
     const recordWebSocketUsage = (
       status: 'success' | 'failed' | 'cancelled',
       usage?: MessageUsage,
@@ -256,6 +282,10 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
     ) => {
       if (usageRecorded) return
       usageRecorded = true
+      if (executionTarget) {
+        usageWrite = settleHarnessProviderUsage(runtimeReq, executionTarget, usage, 0, true, false)
+        void usageWrite.catch(() => undefined)
+      }
       void recordProviderUsageAttempt({
         provider: runtimeReq.provider,
         credentialGroupId,
@@ -267,8 +297,8 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
         isStreaming: stream,
         startedAt: usageStartedAt,
         ...(firstTokenAt === undefined ? {} : { firstTokenAt }),
-        attempt: 0,
-        attemptReason: 'initial',
+        attempt: capacityRecovery ? 1 : 0,
+        attemptReason: capacityRecovery ? 'rectification' : 'initial',
         ...(runtimeReq.usageContext?.correlationId ? { correlationId: runtimeReq.usageContext.correlationId } : {}),
         ...(runtimeReq.conversationId ? { conversationId: runtimeReq.conversationId } : {}),
         ...(runtimeReq.usageContext?.runId ? { runId: runtimeReq.usageContext.runId } : {}),
@@ -276,13 +306,15 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
       })
     }
     try {
-      await reportRuntimeExecutionTarget(runtimeReq, signal, credentialGroupId)
+      const { stream: _stream, background: _background, ...socketBody } = rawBody
+      wireBody = prepareFinalProviderRequestCapacity({ req: runtimeReq, body: { type: 'response.create', ...socketBody }, signal, onTrace: input.onTrace }).body
+      executionTarget = await reportRuntimeExecutionTarget(runtimeReq, signal, credentialGroupId, wireBody)
       targetReported = true
       await input.responsesWebSocketTransport.run({
         req: runtimeReq,
         url: input.transport.toWebSocketUrl(proxyPolicy.effectiveUrl),
         headers,
-        body: rawBody as Record<string, unknown>,
+        body: wireBody,
         signal,
         parseEvent: parseProviderStreamEvent,
         wireProviderType: getWireProviderType(runtimeReq.provider),
@@ -315,12 +347,12 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
             responseId: result.responseId,
           }, runtimeLogOptions(runtimeReq))
           recordWebSocketUsage('success', result.usage)
-          input.onDone(withCredentialGroup(result, credentialGroupId))
+          completedResult = withCredentialGroup(result, credentialGroupId)
         },
         onError: (error) => {
           if (!signal.aborted) {
             recordWebSocketUsage('failed', undefined, error.name || 'websocket_error')
-            input.onError(error)
+            reportedError = error
           }
         },
         onCitations: (citations) => {
@@ -330,13 +362,35 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
           if (!signal.aborted) input.onTrace?.(trace)
         },
       })
+      await usageWrite
+      throwIfProviderRuntimeAborted(signal)
+      if (reportedError && isProviderContextOverflow(undefined, reportedError.message)) throw reportedError
+      if (reportedError) input.onError(reportedError)
+      else if (completedResult) input.onDone(completedResult)
     } catch (error) {
       if (signal.aborted) {
         recordWebSocketUsage('cancelled', undefined, 'cancelled')
+        await usageWrite
         throwProviderRuntimeCancellation(signal, error)
       }
-      recordWebSocketUsage('failed', undefined, error instanceof Error ? error.name : 'websocket_error')
       if (!targetReported) throw error
+      recordWebSocketUsage('failed', undefined, error instanceof Error ? error.name : 'websocket_error')
+      await usageWrite
+      if (error instanceof ProviderExecutionTargetObserverError || error instanceof ProviderContextCapacityError) throw error
+      if (isProviderContextOverflow(undefined, error instanceof Error ? error.message : '')) {
+        // Never restart a turn after visible output or completed tool delivery.
+        if (emittedText || completedResult) throw new ProviderContextCapacityError('context_capacity')
+        const recovered = prepareFinalProviderRequestCapacity({ req: runtimeReq, body: wireBody,
+          signal, onTrace: input.onTrace, trigger: 'server_overflow' })
+        const { type: _type, ...httpBody } = recovered.body
+        const prepared = prepareHttpJsonRequest({ provider: runtimeReq.provider, model: runtimeReq.model,
+          url: preparedHttpRequest.url, headers: preparedHttpRequest.headers, body: httpBody })
+        releaseAttemptText(executionTarget)
+        releaseLease()
+        await executeResponsesWebSocketChat({ ...input, pipeline: { ...input.pipeline,
+          rawBody: httpBody, preparedHttpRequest: prepared } }, true)
+        return
+      }
       if ((effectiveReq.settings?.transportMode ?? 'auto') === 'websocket' || emittedText) {
         void recordProviderRuntimeFailure({
           req: runtimeReq,
@@ -359,11 +413,14 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
         to: 'http_sse',
         reason: error instanceof Error ? error.message : 'websocket_transport_error',
       }, runtimeLogOptions(effectiveReq))
+      const { type: _type, ...fallbackBody } = wireBody
+      const fallbackPrepared = prepareHttpJsonRequest({ provider: runtimeReq.provider, model: runtimeReq.model,
+        url: preparedHttpRequest.url, headers: preparedHttpRequest.headers, body: fallbackBody })
       await executeHttpSseChat({
         req: runtimeReq,
-        url: preparedHttpRequest.url,
-        headers: preparedHttpRequest.headers,
-        body: preparedHttpRequest.body,
+        url: fallbackPrepared.url,
+        headers: fallbackPrepared.headers,
+        body: fallbackPrepared.body,
         stream,
         controller: input.controller,
         credentialGroupId,
@@ -379,7 +436,8 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput)
         initialAttemptReason: 'fallback',
       })
     } finally {
-      lease.release()
+      releaseAttemptText(executionTarget)
+      releaseLease()
     }
   }, input.onError, credentialGroupId, input.controller.signal)
 }
@@ -456,13 +514,14 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   const startedAt = Date.now()
   let streamStarted = false
   let response: Response
+  let observedUsage: MessageUsage | undefined
   try {
     response = await fetchChatStreamWithRetry(input)
   } catch (error) {
     if (input.controller.signal.aborted) {
       throwProviderRuntimeCancellation(input.controller.signal, error)
     }
-    if (error instanceof ProviderExecutionTargetObserverError) throw error
+    if (error instanceof ProviderExecutionTargetObserverError || error instanceof ProviderContextCapacityError) throw error
     void recordProviderRuntimeFailure({
       req: input.req,
       credentialGroupId: input.credentialGroupId,
@@ -472,8 +531,9 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     })
     throw error
   }
+  try {
   if (input.controller.signal.aborted) {
-    recordSuccessfulProviderUsageAttempt(response, input, undefined, 'cancelled', 'cancelled')
+    await recordSuccessfulProviderUsageAttempt(response, input, undefined, 'cancelled', 'cancelled')
   }
   throwIfProviderRuntimeAborted(input.controller.signal)
 
@@ -525,13 +585,14 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   }
 
   if (!input.stream) {
-    const result = await parseProviderNonStreamingResponse(response, input.req).catch((error) => {
-      recordSuccessfulProviderUsageAttempt(response, input, undefined, 'failed', error instanceof Error ? error.name : 'parse_failed')
+    const result = await parseProviderNonStreamingResponse(response, input.req).catch(async (error) => {
+      await recordSuccessfulProviderUsageAttempt(response, input, undefined, 'failed', error instanceof Error ? error.name : 'parse_failed')
       throw error
     })
+    observedUsage = result.usage
     throwIfProviderRuntimeAborted(input.controller.signal)
     if (!hasDeliverableProviderOutput(result)) {
-      recordSuccessfulProviderUsageAttempt(response, input, result.usage, 'failed', 'empty_response')
+      await recordSuccessfulProviderUsageAttempt(response, input, result.usage, 'failed', 'empty_response')
       const recovered = await tryRuntimeFallback({
         req: input.req,
         status: response.status,
@@ -568,7 +629,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       credentialGroupId: input.credentialGroupId,
       latencyMs: Date.now() - startedAt,
     })
-    recordSuccessfulProviderUsageAttempt(response, input, result.usage)
+    await recordSuccessfulProviderUsageAttempt(response, input, result.usage)
     void appendRuntimeLog('upstream.response', {
       conversationId: input.req.conversationId,
       providerId: input.req.provider.id,
@@ -592,8 +653,9 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     let result: ReturnType<typeof parseProviderBufferedStreamResponse>
     try {
       result = parseProviderBufferedStreamResponse(raw, input.req, getWireProviderType(input.req.provider))
+      observedUsage = result.usage
     } catch (error) {
-      recordSuccessfulProviderUsageAttempt(response, input, undefined, 'failed', error instanceof Error ? error.name : 'parse_failed')
+      await recordSuccessfulProviderUsageAttempt(response, input, undefined, 'failed', error instanceof Error ? error.name : 'parse_failed')
       throw error
     }
     if (result.text || result.providerToolCalls?.length) {
@@ -612,10 +674,10 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
         credentialGroupId: input.credentialGroupId,
         latencyMs: Date.now() - startedAt,
       })
-      recordSuccessfulProviderUsageAttempt(response, input, result.usage)
+      await recordSuccessfulProviderUsageAttempt(response, input, result.usage)
       input.onDone(withCredentialGroup(result, input.credentialGroupId))
     } else {
-      recordSuccessfulProviderUsageAttempt(response, input, result.usage, 'partial')
+      await recordSuccessfulProviderUsageAttempt(response, input, result.usage, 'partial')
       input.onTrace?.(createStreamModeTrace('buffered', st('providerTrace.streamBufferedFallback')))
       await retryWithoutStreaming(
         input.req,
@@ -646,7 +708,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   let providerContentBlocks: Record<string, unknown>[] = []
   const textToolCallFilter = createProviderTextToolCallStreamFilter()
   const wireProviderType = getWireProviderType(input.req.provider)
-  const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }
+  const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req), preserveReplayIndexes: true }
   const providerCitationSource = resolveStreamProviderCitationSource(input.req.provider, wireProviderType)
   const citationCollector = providerCitationSource ? createProviderCitationCollector(providerCitationSource) : undefined
   let completionDelivered = false
@@ -709,7 +771,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     ])
     const citations = finalResult.citations ?? []
     if (!hasDeliverableProviderOutput(finalResult)) {
-      recordSuccessfulProviderUsageAttempt(response, input, providerUsage, 'failed', 'empty_response')
+      await recordSuccessfulProviderUsageAttempt(response, input, providerUsage, 'failed', 'empty_response')
       const recovered = await tryRuntimeFallback({
         req: input.req,
         status: response.status,
@@ -738,7 +800,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       credentialGroupId: input.credentialGroupId,
       latencyMs: Date.now() - startedAt,
     })
-    recordSuccessfulProviderUsageAttempt(response, input, providerUsage)
+    await recordSuccessfulProviderUsageAttempt(response, input, providerUsage)
     void appendRuntimeLog('upstream.response', {
       conversationId: input.req.conversationId,
       providerId: input.req.provider.id,
@@ -812,7 +874,11 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
             input.onTrace?.(trace)
             throwIfProviderRuntimeAborted(input.controller.signal)
           }
-          providerUsage = parsed.usage ?? providerUsage
+          if (parsed.usage) {
+            providerUsage = { ...providerUsage, ...Object.fromEntries(Object.entries(parsed.usage).filter(([, value]) => value !== undefined)) } as MessageUsage
+            const attempt = successfulProviderUsageAttempts.get(response)
+            if (attempt) await settleHarnessProviderUsage(input.req, attempt.target, providerUsage, ++attempt.usageSequence, false)
+          }
           citationCollector?.addSse(event)
           if (parsed.terminal) {
             try {
@@ -843,16 +909,19 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     await readStream()
   } catch (error) {
     if (input.controller.signal.aborted) {
-      recordSuccessfulProviderUsageAttempt(response, input, providerUsage, 'cancelled', 'cancelled')
+      await recordSuccessfulProviderUsageAttempt(response, input, providerUsage, 'cancelled', 'cancelled')
       throwProviderRuntimeCancellation(input.controller.signal, error)
     }
-    recordSuccessfulProviderUsageAttempt(
+    await recordSuccessfulProviderUsageAttempt(
       response,
       input,
       providerUsage,
       'failed',
       error instanceof Error ? error.name : 'stream_failed',
     )
+    // An in-band error may follow partial output/protocol state. Persist the
+    // capacity pause instead of treating it as empty output and replaying a turn.
+    if (error instanceof ProviderContextCapacityError) throw error
     void recordProviderRuntimeFailure({
       req: input.req,
       credentialGroupId: input.credentialGroupId,
@@ -864,6 +933,12 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   } finally {
     input.controller.signal.removeEventListener('abort', cancelReader)
     if (!completionDelivered) cancelReader()
+  }
+  } finally {
+    // Covers body-read/parse failures, callback throws, and abort after parse.
+    // Normal settlement removes the entry; this cannot bill the same event twice.
+    await recordSuccessfulProviderUsageAttempt(response, input, observedUsage,
+      input.controller.signal.aborted ? 'cancelled' : 'failed', 'consumer_stopped')
   }
 }
 
@@ -928,7 +1003,9 @@ async function tryRemoteCompactLocalFallback(input: HttpSseExecutionInput & {
     model: fallbackReq.model,
     url: input.url,
     headers: input.headers,
-    body: optimizeRouteBody(input.resolveRoute(fallbackReq).body, fallbackReq),
+    body: prepareFinalProviderRequestCapacity({ req: fallbackReq,
+      body: optimizeRouteBody(input.resolveRoute(fallbackReq).body, fallbackReq),
+      signal: input.controller.signal, onTrace: input.onTrace }).body,
   })
   await executeHttpSseChat({
     ...input,
@@ -948,6 +1025,7 @@ async function tryRemoteCompactLocalFallback(input: HttpSseExecutionInput & {
 
 function shouldUseRemoteCompactLocalFallback(req: ProviderRuntimeChatRequest, status: number, responseText: string): boolean {
   if (!req.remoteCompactEligible || !req.remoteCompactFallback) return false
+  if (!providerCapacityCompressionAllowed(req)) return false
   if (![400, 404, 409, 413, 422].includes(status)) return false
   const text = responseText.toLowerCase()
   if (!text.trim()) return status === 400 || status === 413 || status === 422
@@ -972,12 +1050,16 @@ function normalizeRemoteCompactRoute(
     usesOpenAIResponses: usesOpenAIResponses(req),
   }).nativeSupported
   if (nativeEligible && !routeChanged) return req
+  const admittedFallback = providerCapacityCompressionAllowed(req) ? localFallback : undefined
+  // Route changes may use the prepared local transcript, but disabling that
+  // transcript is not permission to detach its opaque continuation identity.
+  if (localFallback && !admittedFallback) throw new ProviderContextCapacityError('context_capacity')
   return {
     ...req,
-    ...(localFallback
+    ...(admittedFallback
       ? {
-          messages: localFallback.messages,
-          contextPrompt: localFallback.contextPrompt,
+          messages: admittedFallback.messages,
+          contextPrompt: admittedFallback.contextPrompt,
         }
       : {}),
     remoteCompactEligible: false,
@@ -1000,6 +1082,8 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
   const circuitKey = providerCircuitKey(input.req)
   assertProviderCircuitClosed(input.req, circuitKey)
   let body = input.body
+  let url = input.url
+  let headers = input.headers
   let rectifiedRequest = false
   let mimoThinkingRectified = false
   let mimoWebSearchRectified = false
@@ -1022,13 +1106,17 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
         ? retryCount
         : 0
     let attemptObserved = false
+    const prepared = prepareCapacityRecoveryHttpRequest({ ...input, url, headers, body })
+    body = prepared.body
+    url = prepared.url
+    headers = prepared.headers
     // An attribution/durability failure is not a provider failure and cannot be retried.
-    await reportRuntimeExecutionTarget(input.req, input.controller.signal, input.credentialGroupId)
+    const target = await reportRuntimeExecutionTarget(input.req, input.controller.signal, input.credentialGroupId, body)
     try {
       throwIfProviderRetryAborted(input.controller.signal)
-      const response = await input.transport.requestStream(input.url, {
+      const response = await input.transport.requestStream(url, {
         method: 'POST',
-        headers: input.headers,
+        headers,
         body,
         signal: input.controller.signal,
       }, timeoutMs)
@@ -1036,6 +1124,8 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
 
       if (response.ok) {
         successfulProviderUsageAttempts.set(response, {
+          target,
+          usageSequence: 0,
           startedAt: attemptStartedAt,
           attempt,
           reason: attemptReason,
@@ -1058,7 +1148,9 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
         return response
       }
 
-      observeFailedProviderUsageAttempt(input, {
+      await observeFailedProviderUsageAttempt(input, {
+
+        target,
         startedAt: attemptStartedAt,
         attempt,
         reason: attemptReason,
@@ -1067,11 +1159,23 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
       })
       attemptObserved = true
 
+      const capacityErrorText = [400, 409, 413, 422].includes(response.status)
+        ? await input.transport.readResponseText(response) : undefined
+      throwIfProviderRetryAborted(input.controller.signal)
+      if (capacityErrorText !== undefined && isProviderContextOverflow(response.status, capacityErrorText)) {
+        const recovered = prepareCapacityRecoveryHttpRequest({ ...input, url, headers, body }, 'server_overflow')
+        body = recovered.body
+        url = recovered.url
+        headers = recovered.headers
+        // A separate one-shot body rectification, never the generic retry loop.
+        nextAttemptReason = 'rectification'
+        continue
+      }
       input.req.onExecutionFailure?.(classifyHttpStatus(response.status, '', input.req.model, input.req.provider))
 
       const canRetryStatus = classifyProviderHealthCheckError({ status: response.status }).retryable
       if (isAnthropicWireRequest(input.req)) {
-        const errorText = await input.transport.readResponseText(response)
+        const errorText = capacityErrorText ?? await input.transport.readResponseText(response)
         throwIfProviderRetryAborted(input.controller.signal)
         const rectified = rectifyAnthropicRequestBody({ req: input.req, body, errorText, rectified: rectifiedRequest })
         if (rectified) {
@@ -1099,7 +1203,7 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
       }
 
       if (input.req.provider.type === 'xiaomi-mimo' && input.req.provider.wireProtocol !== 'anthropic-compatible' && response.status === 400) {
-        const errorText = await input.transport.readResponseText(response)
+        const errorText = capacityErrorText ?? await input.transport.readResponseText(response)
         throwIfProviderRetryAborted(input.controller.signal)
         const rectified = rectifyXiaomiMimoThinkingRequestBody({
           req: input.req,
@@ -1136,7 +1240,7 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
       }
 
       if (input.req.provider.type === 'openai-compatible' && input.req.provider.wireProtocol !== 'anthropic-compatible' && (response.status === 400 || response.status === 422)) {
-        const errorText = await input.transport.readResponseText(response)
+        const errorText = capacityErrorText ?? await input.transport.readResponseText(response)
         throwIfProviderRetryAborted(input.controller.signal)
         const rectified = rectifyOpenAICompatibleRequestBody({
           req: input.req,
@@ -1197,15 +1301,18 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
 
       if (!canRetryStatus || retryCount >= maxRetries) {
         if (canRetryStatus) recordProviderCircuitFailure(input.req, circuitKey, input.controller.signal)
-        return response
+        return capacityErrorText === undefined ? response
+          : new Response(capacityErrorText, { status: response.status, statusText: response.statusText, headers: response.headers })
       }
       logProviderRetryAttempt(input.req, retryCount + 1, maxRetries, { status: response.status })
       retryCount += 1
       await delayProviderRetry(providerRetryDelayForResponse(response, retryCount - 1), input.controller.signal)
     } catch (error) {
+      if (error instanceof ProviderExecutionTargetObserverError || error instanceof ProviderContextCapacityError) throw error
       if (isProviderRetryCancellation(input.controller.signal)) {
         if (!attemptObserved) {
-          observeFailedProviderUsageAttempt(input, {
+          await observeFailedProviderUsageAttempt(input, {
+            target,
             startedAt: attemptStartedAt,
             attempt,
             reason: attemptReason,
@@ -1216,7 +1323,8 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
         throwProviderRuntimeCancellation(input.controller.signal, error)
       }
       if (!attemptObserved) {
-        observeFailedProviderUsageAttempt(input, {
+        await observeFailedProviderUsageAttempt(input, {
+          target,
           startedAt: attemptStartedAt,
           attempt,
           reason: attemptReason,
@@ -1234,6 +1342,18 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
       await delayProviderRetry(providerRetryDelayMs(retryCount - 1), input.controller.signal)
     }
   }
+}
+
+function prepareCapacityRecoveryHttpRequest(
+  input: Pick<FetchChatStreamWithRetryInput, 'req' | 'url' | 'headers' | 'body' | 'controller' | 'onTrace'>,
+  trigger?: 'server_overflow',
+) {
+  const admitted = prepareFinalProviderRequestCapacity({ req: input.req, body: input.body,
+    signal: input.controller.signal, onTrace: input.onTrace, trigger })
+  // Signed transports must sign the changed body, not reuse its old signature.
+  return admitted.compressed ? prepareHttpJsonRequest({ provider: input.req.provider, model: input.req.model,
+    url: input.url, headers: input.headers, body: admitted.body })
+    : { url: input.url, headers: input.headers, body: input.body }
 }
 
 function providerHealthCheckErrorInput(error: unknown): {
@@ -1261,9 +1381,10 @@ function providerRetryDelayForResponse(response: Response, attempt: number): num
   )
 }
 
-function observeFailedProviderUsageAttempt(
+async function observeFailedProviderUsageAttempt(
   input: Pick<FetchChatStreamWithRetryInput, 'req' | 'credentialGroupId' | 'stream'>,
   attempt: {
+    target: ProviderExecutionTarget
     startedAt: number
     attempt: number
     reason: ProviderUsageAttemptReason
@@ -1272,7 +1393,8 @@ function observeFailedProviderUsageAttempt(
     errorCode?: string
     cancelled?: boolean
   },
-): void {
+): Promise<void> {
+  await settleHarnessProviderUsage(input.req, attempt.target, undefined, 0, true)
   const status = attempt.cancelled
     ? 'cancelled'
     : attempt.statusCode === 429
@@ -1300,16 +1422,17 @@ function observeFailedProviderUsageAttempt(
   })
 }
 
-function recordSuccessfulProviderUsageAttempt(
+async function recordSuccessfulProviderUsageAttempt(
   response: Response,
   input: Pick<HttpSseExecutionInput, 'req' | 'credentialGroupId' | 'stream'>,
   usage: MessageUsage | undefined,
   status: 'success' | 'partial' | 'failed' | 'cancelled' = 'success',
   errorCode?: string,
-): void {
+): Promise<void> {
   const attempt = successfulProviderUsageAttempts.get(response)
   if (!attempt) return
   successfulProviderUsageAttempts.delete(response)
+  await settleHarnessProviderUsage(input.req, attempt.target, usage, ++attempt.usageSequence, true)
   void recordProviderUsageAttempt({
     provider: input.req.provider,
     credentialGroupId: input.credentialGroupId,
@@ -1331,6 +1454,25 @@ function recordSuccessfulProviderUsageAttempt(
     ...(input.req.usageContext?.runId ? { runId: input.req.usageContext.runId } : {}),
     ...(usage ? { usage } : {}),
   })
+}
+
+async function settleHarnessProviderUsage(req: ProviderRuntimeChatRequest, target: ProviderExecutionTarget,
+  usage: MessageUsage | undefined, sequence: number, settled: boolean, releaseText = true): Promise<void> {
+  try {
+    if (!req.onExecutionTarget) return
+    await assistantRunBudgetStore.settle({ attemptId: target.attemptId, sequence, settled, usage,
+      complete: settled && usage?.source === 'provider' && usage.inputTokens !== undefined && usage.outputTokens !== undefined })
+    if (settled && usage?.source === 'provider' && usage.inputTokens !== undefined && usage.outputTokens !== undefined
+      && target.tokenEstimate?.calibrationKey && target.tokenEstimate.rawInputTokens !== undefined) {
+      providerTokenCalibration.observe({ key: target.tokenEstimate.calibrationKey, attemptId: target.attemptId,
+        rawInputTokens: target.tokenEstimate.rawInputTokens, actualInputTokens: usage.inputTokens })
+    }
+  } catch (error) {
+    // A failed receipt cannot be repaired by dispatching another paid request.
+    throw new ProviderExecutionTargetObserverError(error)
+  } finally {
+    if (settled && releaseText) releaseAttemptText(target)
+  }
 }
 
 function markProviderUsageFirstToken(response: Response): void {
@@ -1733,11 +1875,15 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     return false
   }
   selectedReq = selectedPipeline.runtimeReq
-  const selectedPreparedRequest = selectedPipeline.preparedHttpRequest
+  let selectedPreparedRequest = selectedPipeline.preparedHttpRequest
   throwIfProviderRetryAborted(input.controller.signal)
-  const selectedAttemptStartedAt = Date.now()
+  let selectedAttemptStartedAt: number
   let selectedResponse: Response
-  await reportRuntimeExecutionTarget(selectedReq, input.controller.signal, selectedRoute.credentialGroupId)
+  let selectedTarget: ProviderExecutionTarget
+  let selectedAttempt = 0
+  while (true) {
+  selectedAttemptStartedAt = Date.now()
+  selectedTarget = await reportRuntimeExecutionTarget(selectedReq, input.controller.signal, selectedRoute.credentialGroupId, selectedPreparedRequest.body)
   try {
     selectedResponse = await input.transport.request(
       selectedPreparedRequest.url,
@@ -1750,6 +1896,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       CHAT_REQUEST_TIMEOUT_MS,
     )
   } catch (error) {
+    await settleHarnessProviderUsage(selectedReq, selectedTarget, undefined, 0, true)
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
@@ -1763,7 +1910,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
         : error instanceof Error ? error.name : 'request_failed',
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
-      attempt: 0,
+      attempt: selectedAttempt,
       attemptReason: 'fallback',
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
@@ -1775,6 +1922,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     throw error
   }
   if (input.controller.signal.aborted) {
+    await settleHarnessProviderUsage(selectedReq, selectedTarget, undefined, 0, true)
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
@@ -1787,7 +1935,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       errorCode: 'cancelled',
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
-      attempt: 0,
+      attempt: selectedAttempt,
       attemptReason: 'fallback',
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
@@ -1796,6 +1944,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     throwIfProviderRetryAborted(input.controller.signal)
   }
   if (!selectedResponse.ok) {
+    await settleHarnessProviderUsage(selectedReq, selectedTarget, undefined, 0, true)
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
@@ -1808,7 +1957,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       errorCode: `http_${selectedResponse.status}`,
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
-      attempt: 0,
+      attempt: selectedAttempt,
       attemptReason: 'fallback',
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
@@ -1816,6 +1965,12 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     })
     const selectedResponseText = await input.transport.readResponseText(selectedResponse)
     throwIfProviderRetryAborted(input.controller.signal)
+    if (isProviderContextOverflow(selectedResponse.status, selectedResponseText)) {
+      selectedPreparedRequest = prepareCapacityRecoveryHttpRequest({ req: selectedReq, ...selectedPreparedRequest,
+        controller: input.controller, onTrace: input.onTrace }, 'server_overflow')
+      selectedAttempt += 1
+      continue
+    }
     selectedReq.onExecutionFailure?.(classifyHttpStatus(selectedResponse.status, selectedResponseText, selectedReq.model, selectedReq.provider))
     await input.fallbackEffects.recordRouteFailure(
       selectedRoute,
@@ -1834,8 +1989,11 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'error', `upstream_${selectedResponse.status}`))
     return false
   }
+  break
+  }
 
-  const selectedResult = await parseProviderNonStreamingResponse(selectedResponse, selectedReq).catch((error) => {
+  const selectedResult = await parseProviderNonStreamingResponse(selectedResponse, selectedReq).catch(async (error) => {
+    await settleHarnessProviderUsage(selectedReq, selectedTarget, undefined, 0, true)
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
@@ -1850,7 +2008,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
         : error instanceof Error ? error.name : 'parse_failed',
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
-      attempt: 0,
+      attempt: selectedAttempt,
       attemptReason: 'fallback',
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
@@ -1861,6 +2019,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     }
     throw error
   })
+  await settleHarnessProviderUsage(selectedReq, selectedTarget, selectedResult.usage, 0, true)
   if (!hasDeliverableProviderOutput(selectedResult)) {
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
@@ -1874,7 +2033,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       errorCode: 'empty_response',
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
-      attempt: 0,
+      attempt: selectedAttempt,
       attemptReason: 'fallback',
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
@@ -1903,7 +2062,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     statusCode: selectedResponse.status,
     isStreaming: false,
     startedAt: selectedAttemptStartedAt,
-    attempt: 0,
+    attempt: selectedAttempt,
     attemptReason: 'fallback',
     ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
     ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
@@ -1951,18 +2110,23 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   return true
 }
 
-async function reportRuntimeExecutionTarget(req: ProviderRuntimeChatRequest, signal: AbortSignal, credentialGroupId?: string): Promise<void> {
+async function reportRuntimeExecutionTarget(req: ProviderRuntimeChatRequest, signal: AbortSignal, credentialGroupId: string | undefined, body: Record<string, unknown> | string): Promise<ProviderExecutionTarget> {
+  const capacity = checkFinalProviderRequestCapacity({ provider: req.provider, model: req.model, body })
+  const releaseText = executionResources.reserveText(capacity.managedTextBytes * 3 + capacity.reservedOutputTokens * 8)
   const group = req.provider.credentialGroups?.find((item) => item.id === credentialGroupId)
   const credentialSource = req.provider.apiKeySource ?? (group?.apiKey?.trim()
     ? group.source ?? { kind: 'group' as const, groupId: group.id }
     : req.provider.apiKey?.trim() ? { kind: 'primary' as const } : { kind: 'none' as const })
-  await reportProviderExecutionTarget({
+  try {
+  const target = await reportProviderExecutionTarget({
     providerId: req.provider.id,
     model: req.model,
     credentialSource,
     protocolAdapterId: resolveProviderProtocolAdapter(req).id,
     endpointVariant: resolveProviderEndpointVariant(req.provider),
   }, signal, async (target) => {
+    target.tokenEstimate = { inputTokens: capacity.estimatedInputTokens, outputTokens: capacity.reservedOutputTokens,
+      rawInputTokens: capacity.rawInputTokens, calibrationKey: capacity.calibrationKey, managedTextBytes: capacity.managedTextBytes }
     if (req.executionConstraint) {
       const [{ providerModelAvailabilityRuntime }, { providerChatResolutionRuntime }] = await Promise.all([
         import('./providerModelAvailabilityRuntime'), import('./providerChatResolutionRuntime'),
@@ -1982,6 +2146,9 @@ async function reportRuntimeExecutionTarget(req: ProviderRuntimeChatRequest, sig
     }
     await req.onExecutionTarget?.(target)
   })
+  attemptTextReservations.set(target, releaseText)
+  return target
+  } catch (error) { releaseText(); throw error }
 }
 
 function throwIfProviderRuntimeAborted(signal: AbortSignal): void {
@@ -2135,12 +2302,16 @@ async function retryWithoutStreaming(
   credentialGroupId?: string,
 ): Promise<void> {
   const startedAt = Date.now()
+  let response: Response | undefined
+  let observedUsage: MessageUsage | undefined
+  let responseRequest = req
   try {
     throwIfProviderRetryAborted(controller.signal)
     const fallbackReq = normalizeRemoteCompactRoute(
       { ...req, stream: false, signal: controller.signal },
       req.remoteCompactFallback,
     )
+    responseRequest = fallbackReq
     const url = transport.resolveEndpoint({
       provider: fallbackReq.provider,
       model: fallbackReq.model,
@@ -2155,9 +2326,10 @@ async function retryWithoutStreaming(
         remoteCompactEligible: fallbackReq.remoteCompactEligible === true,
         model: fallbackReq.model,
       }),
-      body: resolveRoute(fallbackReq).body,
+      body: prepareFinalProviderRequestCapacity({ req: fallbackReq, body: resolveRoute(fallbackReq).body,
+        signal: controller.signal, onTrace }).body,
     })
-    const response = await fetchChatStreamWithRetry({
+    response = await fetchChatStreamWithRetry({
       req: fallbackReq,
       url: fallbackPreparedRequest.url,
       headers: fallbackPreparedRequest.headers,
@@ -2198,17 +2370,18 @@ async function retryWithoutStreaming(
       ))
       return
     }
-    const result = await parseProviderNonStreamingResponse(response, fallbackReq).catch((error) => {
-      recordSuccessfulProviderUsageAttempt(response, {
+    const result = await parseProviderNonStreamingResponse(response, fallbackReq).catch(async (error) => {
+      await recordSuccessfulProviderUsageAttempt(response!, {
         req: fallbackReq,
         credentialGroupId,
         stream: false,
       }, undefined, 'failed', error instanceof Error ? error.name : 'parse_failed')
       throw error
     })
+    observedUsage = result.usage
     throwIfProviderRetryAborted(controller.signal)
     if (!hasDeliverableProviderOutput(result)) {
-      recordSuccessfulProviderUsageAttempt(response, {
+      await recordSuccessfulProviderUsageAttempt(response, {
         req: fallbackReq,
         credentialGroupId,
         stream: false,
@@ -2248,7 +2421,7 @@ async function retryWithoutStreaming(
       credentialGroupId,
       latencyMs: Date.now() - startedAt,
     })
-    recordSuccessfulProviderUsageAttempt(response, {
+    await recordSuccessfulProviderUsageAttempt(response, {
       req: fallbackReq,
       credentialGroupId,
       stream: false,
@@ -2279,6 +2452,9 @@ async function retryWithoutStreaming(
     const runtimeError = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError(st('providerOperation.requestFailed'))
     runtimeError.credentialGroupId = runtimeError.credentialGroupId ?? credentialGroupId
     onError(runtimeError)
+  } finally {
+    if (response) await recordSuccessfulProviderUsageAttempt(response, { req: responseRequest, credentialGroupId, stream: false }, observedUsage,
+      controller.signal.aborted ? 'cancelled' : 'failed', 'consumer_stopped')
   }
 }
 

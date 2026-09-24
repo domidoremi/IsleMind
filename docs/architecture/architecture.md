@@ -123,6 +123,9 @@ Conversation -> AssistantRun -> ContextSnapshot -> ProviderGateway
 - All I/O accepts `AbortSignal`. The runtime coordinates timeouts, retry admission, cancellation, cleanup and terminal projection; screens do not duplicate this authority.
 - Streaming HTTP separates the header deadline from the open request lifetime. Expo's `AbortSignal.any` composes timeout and caller signals; clearing the header timer must leave caller cancellation attached without aborting siblings. The executor also cancels its acquired reader to settle pending reads, with idempotent cleanup. Reader cancellation alone need not close a blocked Android native socket. Normal terminal EOF retains its 50-ms native close grace.
 - Provider protocols enter one Providers-owned gateway. Provider-native and MCP continuations preserve cancellation, task identity, terminal receipts, usage, trace and replay semantics.
+- Provider HTTP requests never automatically follow redirects: both buffered and streaming calls use Expo fetch so the policy is enforceable on native as well as Web. Manual quota-query callers may inspect the original 3xx; credentials and prompt bodies must not be forwarded. Configure the final API URL directly if an endpoint redirects. `test:provider-transport-security` exercises loopback redirects, deadlines and cancellation without live credentials.
+- Current Claude 5 request controls follow the [migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide) and [structured-output contract](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) (checked 2026-09-22). Opus/Sonnet 5 use adaptive thinking, preserve `xhigh`, and map explicit `none` to `thinking.type=disabled`; Fable/Mythos remain always-on. Official Claude 5 JSON output uses `output_config.format` merged with effort, not a forced synthetic tool (rejected by Fable 5.1). It requires an explicit JSON schema; schema-free `json_object` fails locally. Older Claude and compatible proxies retain their existing tool-schema mapping. Catalog metadata and wire-level tests must change together; documentation checks are not live API certification.
+- Claude Opus/Sonnet 4.6 offer `low`, `medium`, `high`, `max` and thinking-off, not `xhigh`, per the [effort contract](https://platform.claude.com/docs/en/build-with-claude/effort). The [Sonnet 4.6 model page](https://platform.claude.com/docs/en/models/sonnet-4-6/overview) specifies 128K synchronous output (checked 2026-09-23); the 300K batch-only beta is not a Chat limit. Default output remains 8192. Older saved `xhigh` values retain their existing `max` wire mapping rather than sending an unsupported value.
 - Model availability evidence is not provider health, credential status, policy or network status. Unknown availability does not block execution or grant capabilities. Operational errors preserve trusted model state; retirement requires classified scoped lifecycle evidence, never a generic 404/410 or catalog omission. Existing failover policy ranks candidates before the existing candidate cap, with complete credential/protocol/endpoint route identity when resolved. The out-of-band actual execution target contract cannot itself commit a stream or become a second persisted Conversation preference.
 - Each wire attempt awaits actual-target reporting before dispatch, including hidden executor fallback and WebSocket/HTTP paths. Observer failure is not a provider health failure or a retry opportunity. The runtime adapter forwards the target out-of-band and binds continuation state to its actual provider/upstream model. Hydrated credential provenance is explicit and removed alongside keys before provider metadata persistence; it is never reconstructed by comparing secrets.
 - Conversation preference is the existing providerId/model/providerModelMode triple. Reading legacy unbound history never assigns a provider; full-save and first-reply barriers still govern dispatch. Explicit selections are manual and remember the versioned global pair in Settings, while inherited setup and temporary execution routing do not update that global memory. No cross-store atomicity is claimed. Conversations migration 3 preserves existing values and message bytes; snapshot v3 retains old readers, and portable payload v2 retains v1 import without changing the backup envelope.
@@ -181,6 +184,12 @@ Untrusted manifests, persisted rows, native results, tool arguments, URLs, paths
 Static metadata with no user-state access may run without a durable task only when it is explicitly classified as pure and still observes cancellation. **Reads of user data, mutations, external effects, and long-running work require task admission.** This retains the broad normative requirement; it is not a claim that implementation satisfies it. Model/tool-triggered operations are an unambiguously covered subset, not a replacement scope. How the separately documented direct interactive workflows satisfy this requirement is **not established**, as recorded below. This inventory neither narrows the rule nor creates exceptions nor verifies an authorization bypass. Existing checks must not be removed on the strength of this matrix.
 
 Native and web capabilities are advertised only when every required concrete port is bound. A manifest alone never proves runtime availability.
+
+Provider continuation serialization preserves protocol identity rather than matching tool names. Anthropic SSE thinking/signature deltas are assembled by response-local block index; complete signed, omitted-text and redacted blocks remain separate, and internal indexes are removed before completion/wire output. OpenAI Responses parallel calls match stable item/call IDs, with name-only repair limited to unambiguous legacy items. Gemini GenerateContent echoes a returned `FunctionCall.id` on its matching `FunctionResponse`, retaining thought signatures on their original function-call parts; locally synthesized IDs are not sent as server IDs. DeepSeek Flash/V4 exposes `low`, `high`, `max` plus thinking-off; saved `medium`/`xhigh` map to `high`. Available assistant `reasoning_content` is replayed even without a tool call on that message, as required when tools are enabled. These rules operate on admitted provider/model-bound continuation state, not diagnostic traces or permission to replay interrupted effects.
+
+Rich and Plain completion bridges share `bootstrap/providerContinuationReplay.ts`. Signed thinking (including empty-text blocks), signatures, ciphertext and reasoning whitespace remain exact; display/log truncation is not applied to replay. Both bridges validate against the existing Core request bounds before emitting continuation or tool events. Oversized blocks, summaries, signatures or lists fail explicitly instead of silently sending a truncated prefix. Journals still retain only redacted lifecycle metadata; this does not expand persistent storage or authorize replay after restart.
+
+Protocol references (checked 2026-09-23): [Anthropic thinking](https://platform.claude.com/docs/en/build-with-claude/thinking), [OpenAI reasoning context](https://developers.openai.com/api/docs/guides/reasoning#keeping-reasoning-items-in-context), [Gemini function IDs](https://ai.google.dev/api/generate-content#FunctionCall), [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/thought-signatures), [DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/).
 
 Network adapters enforce public HTTPS, bounded redirects, bytes and time, structured parsing, and cancellation. A locally admitted native crawl does not fall through to a vendor after a local trust or fetch failure. Workspace paths stay inside durable namespaces with revision and idempotency checks.
 
@@ -332,14 +341,33 @@ These rules describe required/documented behavior, not newly executed failure ca
 - Nested Rich provider turns persist bounded started/completed continuation identities. Restart attaches unmatched identities to interrupted failure with `resume: new-turn-only`, terminalizes safely and never replays provider requests or tool effects. Unsupported/incomplete rows are terminal decode-only no-replay inputs. Recovery does not infer effect authority unless an awaited durable final-output/success barrier exists.
 - Recovery never assumes an external effect occurred. Unknown cleanup/commit state is fenced for explicit retry, repair or quarantine. Concurrent callers are idempotent: stale terminal writes re-read durable disposition without replaying or overwriting already recovered runs. Genuine read/write failures stay retryable failures, not fabricated success.
 - Acknowledged `cancellationRequestedAt` survives process death and terminalizes run/task recovery as cancelled, not interrupted/failed. Queued tasks remain queued; interrupted confirmation expires; unknown in-flight effects fail interrupted without replay. Competing writes re-read durable terminal disposition.
+- The provider callback bridge rejects pre-cancelled dispatch and fences text, trace, citation and completion callbacks after cancellation or transport termination. Already accepted buffers are flushed; aborted/failed dispatch releases its matching active stream without clearing a newer reply. Presentation send promises must reject unaccepted sends (including a newly acquired conversation lock), so Composer restores rather than clears the unsent draft.
 - Startup requires Chat hydration, then run recovery, workflow checkpoint reconciliation, workspace receipt reconciliation and task recovery before Chat admission. Hydration or run/task recovery failure blocks through startup Retry. Active registries are runtime-instance-local, not cross-instance liveness oracles. Later recovery cannot compensate for failed projection loading; AppState background/resume notifications cannot guarantee execution or a final flush before OS process death.
 - Terminal run persistence and message projection are separate commits. Succeeded runs are absent from `listRecoverable`; orphan reconstruction also needs Assistant Runtime's read-only `getLatestForResponseMessage(conversationId, responseMessageId)`, bounded by the response-message index (migration v10). Bootstrap exposes the binding; presentation neither opens SQLite nor resumes effects. After awaits, recheck live/cancelled/terminal state, project authoritative output only onto orphaned sending/streaming placeholders, and await message persistence. Missing owners use orphan cancellation; unavailable owner reads do not. Cancelled messages cannot be reinterpreted as successes.
 
 ## 10. Presentation And Mobile Quality
 
+### Settings editing and offline help
+
+- `settingsRegistry.ts` owns navigation IDs, categories, aliases and help topics, not defaults or user data. Old settings routes remain valid. Search is isolated from Store subscribers and debounced; results do not mount editors.
+- `SettingsEditBoundary` coordinates explicit navigation, native removal/back and Web unload. A busy save blocks departure. Confirmed discard clears parent-owned drafts even if a route remains mounted. Drafts never enter Store, URL, logs or persistent caches; process-death recovery is not promised.
+- API, MCP, Skill and advanced text fields explicitly save. `SettingsFieldSession` retains governance text drafts outside conditional sections. Check the current committed value before applying a draft, use the existing persistence queue, and announce Saved only after it completes. Failed writes retain input; committed memory and durable storage are distinct, and secure-store multi-key writes are not transactional.
+- Reversible preferences use field-scoped undo revisions. Later edits, including value changes away and back, must not be overwritten. Permissions, imports and deletion have no generic undo. Sliders preview locally and commit on release, not each frame.
+- The contextual guide is a full-screen reading layer owned by its editor. Opening it dismisses the keyboard without submitting forms. Closing restores the trigger, not input focus. `/help` and `/help/[slug]` reuse the reader independently. Markdown under `docs/user-guide` is the single source; see the documentation index for fingerprint review and CI generation rules.
+- Field location waits for page focus, transition and measured layout. Request identity, leaving, unmounting or user dragging invalidates stale callbacks. Font/width changes use a visible anchor and relative offset; unchanged layouts are not forcibly restored. Native focus, keyboard, large-text and performance claims require platform evidence, not typechecking alone.
+- Android system font changes may still recreate the Activity and discard local editors. Adding `fontScale` to the manifest alone is not a safe retention fix: native text measurement must also update without clipping. Keep the existing native window policy until both layout and editor lifetime are verified together.
+
 Presentation owns routing, screens, feature controllers, localization binding, and reusable visual components. Domain and application layers emit stable codes and parameters, not translated strings.
 
 The design system owns semantic typography, color, spacing, radius, border, shadow, icon, control, feedback, loading, empty, and error primitives. Feature screens do not create parallel token systems.
+
+Animal Island UI is supplied by the sibling `animal-island-ui-rn` workspace (`../animal-island-ui`, branch `rn`), not an app-owned RN port. The fork owns generic rendering, assets and native fixes; IsleMind owns settings, semantic role projection, localization and business adapters. Metro shares host runtimes and watches the fork source. See [UI integration](../../src/components/ui/isle/README.md) for installation and CI/EAS boundaries. Release freshness snapshots include the fork sources.
+
+Explicit appearance selections use `useThemeSelection` and the fork's root `ThemeTransitionProvider`: a browser snapshot ripple or native-driver cover/reveal keeps the live application tree mounted. Rapid family/mode/accent requests preserve each mutation in order; selecting the current value is a no-op. The existing settings store remains the persistence authority. Hydration, system appearance changes and programmatic settings actions stay immediate, and the OS reduced-motion preference bypasses the reveal. The web token bridge commits in a layout effect so snapshots contain the matching CSS and React theme. Appearance cards reserve stable spacing/borders; the web selection hook restores the initiating control's viewport position after themed header changes without moving focus. Individual theme-specific input adapters may replace their internal native node, but their controlled draft remains outside the adapter. Transitions must not reset drafts or navigation.
+
+`SettingsThemeAccentControl` owns local editing and contrast-adjusted preview rendering, so typing does not update settings or rerender the full settings page. Its draft and last applied custom color survive foldout closure within the page session, but are not persisted. Preset selections never overwrite a manually edited draft; the custom radio recalls its displayed, previously applied color rather than applying an unseen draft. Apply/Enter validates and normalizes the color; blur only validates. Success is shown only when the settings value confirms application. Validation is associated with the input, and compact layouts stack the input and action with a stable feedback area. These are application-level settings semantics; input/button rendering and theme transition effects continue to come from the shared RN fork when Animal Island is selected.
+
+Settings radio layouts use the fork's unstyled `RadioGroup` across all five themes. On Web it owns a single Tab entry, wrapping arrow navigation, Space activation on release, Home/End, disabled-option skipping and RTL direction. It activates existing press handlers rather than writing checked state, so fast keyboard selections still use the same theme-transition and persistence path. Nested editors keep their input keys. Native radio nodes remain independently accessible; Web keyboard tests are not evidence of native screen-reader behavior.
 
 Mobile behavior must cover:
 
@@ -352,10 +380,38 @@ Mobile behavior must cover:
 
 Animation communicates state or spatial continuity, completes quickly, respects reduced motion, and never delays a control, error, cancellation, or durable effect.
 
+Native stack, main-pager navigation and bounded control/overlay interactions follow the system motion preference across all themes. Android starts conservatively until the accessibility query resolves; continuous scenic decoration retains its separate conservative/lifecycle budget. Settings catalog changes mount readable incoming content without waiting for an exit animation. Closing a system detail or changing catalogs resets its scroll offset and cancels pending reveal callbacks; reselecting the current tab or returning to the retained Settings page preserves its position. The animated settings scroll tree must not use native clipped-subview removal.
+
+`useThemeMotion` resolves semantic roles (`page`, `section`, `accent`, `overlay`, `scenic`) from `themeMotion.ts`, with memoized frames and easing. Use it for state changes rather than adding per-screen timers or replaying entrances when text/streaming data updates. `IsleMotionFrame` defaults page/section/overlay content to a readable first frame (opacity at least 0.65); use the same `readable` option for custom critical-content containers. Reduced motion removes entrance translation/scale and staggering, using a short opacity change; no-motion starts settled. Stateful knobs/chevrons snap under reduced motion. Native-stack transitions use platform presets and platform-controlled timing, not a simulated JS page replacement.
+
+Motion dependencies point inward: `themeMotion.ts` owns `MotionIntensity`, declarative profiles and the pure frame resolver; `useMotionPreference` adapts platform accessibility, and `useThemeMotion` adds the Reanimated easing implementation and React memoization. Theme modules must not import application hooks, even for types; the theme audit checks this boundary. The hook retains a type-only compatibility export, but internal consumers import the contract from its theme owner. Base durations have one authority, `THEME_MOTION_DURATIONS`: `page` uses `page`, `section`/`overlay`/`scenic` use `panel`, and `accent` uses `emphasis`. Profiles retain geometry, curve identity and bounded staggering, not copied duration numbers. Native stack and JS page motion read the same page token. Continuous ambient cycle periods and physical spring parameters describe different effects and are not base transition durations. Do not create new registries or engines to tune an individual screen.
+
+| Theme | Interaction vocabulary |
+| --- | --- |
+| Minimal | Short cubic easing, restrained press opacity, focus-rule reveal, quiet page fade |
+| Monet | Sinusoidal easing, soft wash/edge focus, gentle lifted sections and sheets |
+| Material 3 | Emphasized easing, indicator expansion, shared-axis sections, native horizontal navigation |
+| Liquid Glass | Fluid easing, bounded press/switch spring, rim focus, lifted overlays |
+| Animal Island UI | Fork-owned playful controls and appearance reveal; app-owned navigation/feedback uses the island profile |
+
+Inputs animate their decorative layers, not their editable native node. Press effects reset when disabled or interrupted by an accessibility preference change. Dropdowns remove their options immediately on close/disable so exiting controls cannot accept stale actions. Dialog confirmations, errors, toast actions and sheet dismissal never wait for animation completion. Keep one page-level transition owner: do not wrap every native-stack screen or virtualized/streaming row in another keyed entrance. New effects must preserve focus, drafts, scroll restoration, touch targets and hidden-page lifecycle boundaries; do not enable unbounded background loops simply to make navigation feel animated.
+
+Liquid Glass uses a shared material renderer in `src/components/ui/isle/GlassSurface.tsx`. Each `IsleScreen` owns one full-screen environmental backdrop target; headers, composers and navigation are siblings of that target, not its descendants. Never put application content or a `BlurView` inside the target: Android targeted blur can otherwise sample itself recursively. A surface owns one clipped blur, tint and rounded optical rim; nested glass reuses the parent material instead of adding another blur pass. The optical geometry follows measured layout, avoiding stale Android SVG percentage bounds when the composer expands. Retained inactive pages disable their blur passes without remounting content. Content frames and the native composer input stay transparent, without Android elevation or inset rectangular highlight layers; keyboard focus highlights the outer curved rim. Message bodies retain their readable content treatment.
+
+The fluid environment uses one analytic GPU liquid-lens pass (`LiquidGlassScene` / `liquidGlassRenderer`): merging contours change thickness and surface normals, driving environmental refraction, Fresnel reflection and edge caustics together. Native `expo-gl` submits frames on the Reanimated UI runtime; Web uses the same shader in WebGL. The decorative framebuffer has a 960-physical-pixel longest-edge budget, scaled back to the full window; text, glass rims and blur targets retain native resolution. It follows each display VSync without a 30/60 FPS application cap. Actual performance depends on the device and must be measured, not inferred from scheduling. Motion/intensity preferences remain authoritative, typing stays restrained, reduced motion/static mode draws a still surface, app inactivity pauses the clock, and hidden routes release GPU resources without remounting content. Three bounded transform-only SVG light layers remain the startup/failure/unavailable-GPU fallback (Android soft-field raster budget: 1024 physical pixels). Only Liquid Glass opts into Android's actual system motion preference after the native query; other families retain their conservative default. Android API 31+ uses the environmental blur target, Web uses supported backdrop filtering, and iOS uses `expo-blur`. Reduced-transparency/high-contrast preferences use a readable solid material. Native binaries need a rebuild for `expo-gl`; older binaries retain the fallback. This is procedural environmental optical approximation, not a fluid simulation, screen-content refraction or native iOS Liquid Glass.
+
+Android's `android-display-refresh` config plugin owns a temporary high-refresh window hint and VSync composition callback while visible Liquid Glass is animating. It chooses the fastest supported mode at the current physical resolution, without writing device settings or overriding another feature's explicit mode. The composition callback keeps asynchronous `TextureView` buffer arrival from leaving the root traversal at half cadence; it does not advance the shader clock or repeat animation phases. `useDisplayRefreshRate` shares this ownership across overlapping routes and bridges short route handovers. Static/reduced motion, reduced transparency, app pause and teardown release the hint and callback, restoring the prior window preference. Existing binaries without the module remain compatible but require rebuilding to gain this scheduling fix. OS refresh limits and power/thermal policy still take precedence. Native GL submits with `endFrameEXP` only, since that operation already flushes and presents the command batch.
+
+For Android performance validation, distinguish application rendering from frame presentation. Perfetto's app FrameTimeline slice ends at GPU completion or buffer submission, not on-screen presentation; correlate its display-frame token with SurfaceFlinger's actual timeline when measuring presentation. `Buffer Stuffing` can add latency while motion remains smooth, so neither discard it nor equate it with missed rendering deadlines. Compare warm release builds, static backgrounds and a non-glass theme without changing device refresh settings. Treat unresolved `gfxinfo` completion timestamps (`9223372036854775807`) as unavailable measurements, not real multi-second stalls or passing samples. Frame timing alone does not establish touch-to-display latency. See the [FrameTimeline semantics](https://perfetto.dev/docs/data-sources/frametimeline).
+
+Narrow composers use an explicit input/control-row stack, not percentage-width flex wrapping: the controls must contribute their full height to native Yoga measurement and remain above the IME. The keyed input parent stays mounted across wide/narrow and focus changes to preserve drafts and selection.
+
 <a id="platform-acceptance"></a>
 ### Platform and design acceptance reference
 
 Composer size state is independent of focus: automatic Compact/Review transitions use 4/2-line hysteresis and Review/Large transitions use 8/5 lines; blur and keyboard dismissal preserve long-draft size. Manual expansion/collapse and invalid transient measurements follow the [size-state contract tests](../../src/components/chat/composerLongDraftState.test.ts). Model, input and send controls must remain independently usable without losing draft, selection or focus. Interaction surfaces and active blur passes are different counts. Host state tests do not establish native layout, IME synchronization or platform acceptance.
+
+When the actual composer width is below 420dp, the draft occupies a full row and model/tool/send controls wrap below it instead of compressing the text column. The input parent stays mounted across resizing and focus changes; stacked controls are included in the Large editor's height budget. Wide canvases retain inline controls. Geometry tests cover both arrangements; browser layout checks do not establish native IME behavior.
 
 - Web source preview uses a terminal unsupported notice with explicit safe-link activation; no automatic WebView, iframe or proxy. Native preview attempts are identity-scoped so obsolete callbacks cannot affect another source.
 - Glass qualification requires matched content, position, tint and logical dimensions for no-tint, tint-only and blur-plus-tint controls. Tint alone reduces edge variance: under constant-alpha linear blending, Laplacian variance scales by `(1 - alpha)^2`. A lower variance does not establish convolution blur.
@@ -478,3 +534,101 @@ The architecture remains healthy when:
 | Privacy, deletion/retention and intended distribution licensing | Current threat/retention decisions, applicable UI/model license review and documented disposition; see [Privacy/licensing decisions](../technology-radar.md#privacy-licensing-disposition) |
 
 No open decision blocks local module ownership, strict boundaries, or deletion of proven dead compatibility code.
+
+## 16. Agent Harness
+
+The application-scoped `applicationAssistantRuntime` owns new Chat, Rich continuation,
+workflow and Agent execution. Provider adapters supply model events; the Harness owns
+the loop and durable lifecycle; Tasks remains the authority for concrete effects.
+The native service is a resource host, not another executor or a second Hermes runtime.
+No arbitrary plugin code or mandatory backend is introduced.
+
+### Definitions, delegation and authorization
+
+- Agent definitions are strict, revisioned records with instructions, model/capability
+  binding, tool/knowledge scopes, Skills, delegates, review policy and budgets. Runs
+  freeze the definition. JSON mode alone does not qualify a model for action output.
+- Imported definitions configure neither endpoints nor credentials and grant no
+  authority. They are included in the Settings backup category; restored capability
+  revisions are unverified. Concurrent edits conflict rather than being overwritten.
+- Delegation is depth one, at most two concurrent children and six children per root;
+  reviewers consume the same quota. The actual child's authority intersects the
+  parent's frozen effective catalog, schema and knowledge scope, including when the
+  child selects a different model. Independent children use host-vetted local reads,
+  not a remote tool's self-declared safety annotation.
+- Ordinary chat does not add a review request. Research/artifact review is opt-in,
+  read-only and bounded to two reviews/reworks. A final revised answer is not a promise
+  of a third review. Child results and review JSON never grant permissions.
+- Writes require exact pending-operation confirmation, bound to run, catalog,
+  parameters and continuation digest. Visibility of a plan is not approval. Notification
+  navigation never approves or resumes a run. Documents still require explicit save.
+
+### Budgets, context and interruption
+
+The default shared root budget is 24 actual model attempts, 48 tool executions,
+120,000 cumulative tokens and 30 active minutes (overlapping children count once;
+human waiting does not count). Attempt IDs atomically reserve and settle SQLite
+records. Repeated cumulative usage replaces a record rather than adding it; complete
+usage replaces estimates, partial usage retains outstanding reservation, and cancelled
+or failed requests are not free. Unknown prices stay unknown and cannot satisfy an
+amount cap. These are dispatch limits, not an exact billing ceiling or remote rollback.
+
+Context packing remains at 70%. The final assembled wire envelope, including tools,
+system instructions, protocol fields, media and normalized output/reasoning reserves,
+must fit within 85% of the selected model window. Actual usage calibrates estimates by
+provider/model/protocol; the 15% margin is not a mathematical error bound. Automatic
+compression being off does not disable this gate. The user's current Agent task is
+never truncated merely to admit a smaller model.
+
+Until their adapters carry root attempt reservations, pre-run application-model
+summaries are downgraded to local structured packing (`harness_admission_required`),
+and model-operation/pre-run/FLARE retrieval uses FTS, not hidden provider embeddings
+or agentic-index inference. This is a deliberate capability restriction, not a claim
+that those independent model paths already participate in the shared ledger.
+
+Application-wide local-heavy admission is bounded, fair and cancellable. Managed text
+has an 8 MiB admission budget; this is not a measurement of Hermes heap or native
+tensors. Wire-attempt copies and response reserves are retained until transport
+settlement, including cancellation. JSON is bounded before cloning/parsing; fragmented
+response bodies are coalesced rather than retaining one buffer per packet. Cache-only
+trims do not cancel active inference; critical pressure retires resources and prevents
+new dispatch. In-flight native sessions release only after completion. No explicit GC
+is used, and no system memory-recovery callback is assumed.
+
+The SQLite engine keeps WAL/FULL and short same-file serialized transactions. An
+external-effect intent is committed before dispatch, the Tasks receipt before Harness
+advancement. An interrupted/uncertain effect is not automatically retried. SQLite,
+files and remote services do not share an exactly-once transaction. Legacy v1/v2 runs
+remain read-only; new v3/v4 runs cannot be interpreted by old readers. A new run from
+an old conversation does not inherit its approval.
+
+For a rollback build, set `ISLEMIND_AGENT_HARNESS_ENABLED=0` before bundling. This
+closes new Chat/Rich/Agent run admission before persistence/dispatch; it does not
+delete data, rewrite engine versions or activate the legacy executor. Invalid values
+fail configuration. Existing records remain readable in the compatible build.
+
+### Android and maintenance
+
+Background execution requires per-run foreground opt-in. The dedicated `dataSync`
+service uses 15-second leases with 5-second renewal and native generation/start/token
+fencing. Waiting releases CPU leases independently of uninterruptible-operation
+cleanup. Notification identity and immutable explicit PendingIntent are retained
+through `STOP_FOREGROUND_DETACH`; a stale stop cannot dispose a new start. This reduces
+the app-created notification gap, not OEM process-kill risk. `UI_HIDDEN` is cache-only;
+[Android 14+ does not deliver all running-memory warnings](https://developer.android.com/reference/android/content/ComponentCallbacks2).
+
+Wait/terminal transitions request coalesced, transaction-external WAL maintenance,
+without waiting for disk work before releasing leases. The minimum normal interval is
+30 seconds. [PASSIVE](https://www.sqlite.org/c3ref/wal_checkpoint_v2.html) may leave frames
+pending: pressure uses `(logFrames - checkpointedFrames) * pageSize`, with 16 MiB warning
+and 64 MiB new-work blocking, not the physical WAL length. No lock retry loop, blocking
+checkpoint escalation or WAL deletion is performed. Web storage is not assumed to be WAL.
+
+### Qualification boundary
+
+Host SQLite tests, transport/permission fault schedules, native-template compilation
+and rendered web UI are separate evidence classes. They do not establish Android
+notification click races, OEM survival, Android 15 service deadlines, lock-screen
+power, startup p95, sustained Hermes memory or a real-model research/write workflow.
+Use isolated application data and an explicitly authorized provider/cost cap for those
+checks. Do not describe Phase 1–5 as qualified solely because static and unit checks pass.

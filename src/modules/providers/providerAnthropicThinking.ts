@@ -36,7 +36,6 @@ export function createAnthropicThinkingPolicy(
     normalizeAnthropicThinking(request) {
       if (
         !request.reasoningEffort ||
-        request.reasoningEffort === 'none' ||
         request.reasoningEffort === 'minimal'
       ) {
         return undefined
@@ -61,6 +60,14 @@ export function createAnthropicThinkingPolicy(
         !dependencies.isClaudeThinkingModel(request.provider, request.model)
       ) {
         return undefined
+      }
+
+      if (request.reasoningEffort === 'none') {
+        // Opus/Sonnet 5 think by default; omitting the field does not turn it off.
+        // Fable/Mythos are always-on and must never receive type: disabled.
+        return supportsAnthropicDefaultThinking(request.model)
+          ? { thinking: { type: 'disabled' } }
+          : undefined
       }
 
       if (usesAnthropicOutputConfigOnlyThinking(request.model)) {
@@ -91,9 +98,13 @@ export function createAnthropicThinkingPolicy(
 }
 
 export function supportsAnthropicAdaptiveThinking(modelId: string): boolean {
-  return /claude-(mythos-preview|opus-4-8|opus-4-7|opus-4-6|sonnet-4-6)/.test(
+  return supportsAnthropicDefaultThinking(modelId) || /claude-(mythos-preview|opus-4-8|opus-4-7|opus-4-6|sonnet-4-6)/.test(
     modelId.toLowerCase(),
   )
+}
+
+export function supportsAnthropicDefaultThinking(modelId: string): boolean {
+  return /claude-(opus|sonnet)-5(?:$|[-.:])/i.test(modelId)
 }
 
 export function usesAnthropicOutputConfigOnlyThinking(modelId: string): boolean {
@@ -108,7 +119,7 @@ export function normalizeAnthropicEffort(
   if (effort === 'low') return 'low'
   if (effort === 'medium') return 'medium'
   if (effort === 'xhigh') {
-    return /claude-(fable-5|mythos-5|opus-4-[78])/i.test(modelId) ? 'xhigh' : 'max'
+    return supportsAnthropicDefaultThinking(modelId) || /claude-(fable-5|mythos-5|opus-4-[78])/i.test(modelId) ? 'xhigh' : 'max'
   }
   return 'high'
 }

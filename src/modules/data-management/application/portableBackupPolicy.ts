@@ -81,6 +81,7 @@ export function selectPortableDataPayload(
     version: payload.version,
     conversations: has('conversations') ? payload.conversations : [],
     settings: has('settings') ? payload.settings : null,
+    ...(has('settings') && payload.agentDefinitions ? { agentDefinitions: payload.agentDefinitions } : {}),
     ...(has('settings') && payload.languagePreferenceSource ? { languagePreferenceSource: payload.languagePreferenceSource } : {}),
     providers,
     skills: has('skills') ? payload.skills : [],
@@ -161,6 +162,9 @@ export function planPortableBackupRestore(input: {
     }
   }
   if (selection.categories.includes('settings') && payload.settings) actions.push({ category: 'settings', action: conflictMode === 'skip' ? 'skip' : conflictMode === 'replace' ? 'replace' : 'merge' })
+  if (selection.categories.includes('settings')) {
+    for (const definition of payload.agentDefinitions ?? []) actions.push({ category: 'settings', action: 'replace', id: definition.id })
+  }
   if (selection.categories.includes('workspaces')) {
     for (const id of Object.keys(payload.tavernSnapshots ?? {})) addAction('workspaces', id, existing.workspaceIds, conflictMode, conflicts, actions)
   }
@@ -201,7 +205,7 @@ export function planPortableBackupRestore(input: {
 
 function countPayloadCategories(payload: PortableDataExportPayload): Record<PortableBackupCategory, number> {
   return {
-    settings: payload.settings ? 1 : 0,
+    settings: (payload.settings ? 1 : 0) + (payload.agentDefinitions?.length ?? 0),
     providers: payload.providers.length,
     models: payload.providers.reduce((count, provider) => count + (provider.modelConfigs?.length ?? 0), 0),
     conversations: payload.conversations.length,

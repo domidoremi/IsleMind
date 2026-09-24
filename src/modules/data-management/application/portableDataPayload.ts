@@ -1,3 +1,4 @@
+import { parseAgentDefinitions, type AgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
 import {
   PROVIDER_PLATFORM_DEFAULT_TEMPERATURE,
   defaultProviderCredentialMode,
@@ -92,6 +93,7 @@ export interface PortableDataRecordSourcePort {
   loadSettings(): Promise<Settings | null>
   loadProviders(): Promise<AIProvider[] | null>
   loadSkills(): Promise<SkillDefinition[] | null>
+  loadAgentDefinitions?(): Promise<AgentDefinition[]>
   loadMcpServers(): Promise<McpServerConfig[] | null>
   loadLanguagePreferenceSource(): Promise<PortableDataLanguagePreferenceSource>
 }
@@ -139,6 +141,7 @@ export interface PortableDataApplicationImportPlan {
   readonly knowledge: Partial<PortableKnowledgeSnapshot>
   readonly usage?: UsagePortableSnapshot
   readonly savedDocuments?: readonly SavedDocument[]
+  readonly agentDefinitions?: readonly AgentDefinition[]
   readonly tavernEntries: readonly {
     readonly scopeId?: string
     readonly snapshot: Partial<TavernSnapshot> | undefined
@@ -203,6 +206,7 @@ export function createPortableDataPayloadRuntime(
       context,
       usage,
       savedDocuments,
+      agentDefinitions,
     ] = await Promise.all([
       dependencies.conversations.loadAll(),
       dependencies.records.loadSettings(),
@@ -213,6 +217,8 @@ export function createPortableDataPayloadRuntime(
       dependencies.knowledge.exportSnapshot(),
       includeUsage ? dependencies.usage.load() : Promise.resolve(undefined),
       includeDocuments ? dependencies.documents.loadSnapshot() : Promise.resolve(undefined),
+      selection.mode === 'full' || selection.categories.includes('settings')
+        ? dependencies.records.loadAgentDefinitions?.() : Promise.resolve(undefined),
     ])
     const conversationIds = conversations.map((conversation) => conversation.id)
     const allScopeIds = await dependencies.workspaces.listScopeIds()
@@ -268,6 +274,7 @@ export function createPortableDataPayloadRuntime(
       ),
       ...(usage ? { usage } : {}),
       ...(savedDocuments ? { savedDocuments } : {}),
+      ...(agentDefinitions ? { agentDefinitions: parseAgentDefinitions(agentDefinitions) } : {}),
       exportedAt,
     }
     return selectPortableDataPayload(payload, options.selection)
@@ -310,7 +317,9 @@ export function createPortableDataPayloadRuntime(
       const selection = normalizePortableBackupSelection(backup.selection)
       let importedUsage: UsagePortableSnapshot | undefined
       let importedDocuments: SavedDocument[] | undefined
+      let importedAgents: AgentDefinition[] | undefined
       try {
+        importedAgents = payload.agentDefinitions === undefined ? undefined : parseAgentDefinitions(payload.agentDefinitions)
         importedDocuments = payload.savedDocuments === undefined ? undefined : parseSavedDocuments(payload.savedDocuments)
         if (selection.mode === 'selective' && selection.categories.includes('documents') && importedDocuments === undefined) {
           throw new Error('The selected document snapshot is missing.')
@@ -463,6 +472,7 @@ export function createPortableDataPayloadRuntime(
           knowledge,
           usage: importedUsage,
           savedDocuments: importedDocuments,
+          agentDefinitions: importedAgents,
           tavernEntries,
           tavernActiveScopeLinks,
           conversationIds: normalizedConversations.map((conversation) => conversation.id),

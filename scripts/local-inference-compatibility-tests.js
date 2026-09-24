@@ -247,7 +247,7 @@ async function runOnnxInitializationRecoveryTests() {
   }
 
   try {
-    const { createOnnxEmbeddingProvider, releaseOnnxEmbeddingResources } = require('../src/bootstrap/knowledgeEmbeddingProvider.ts')
+    const { createOnnxEmbeddingProvider, releaseOnnxEmbeddingResources, trimIdleOnnxEmbeddingResources } = require('../src/bootstrap/knowledgeEmbeddingProvider.ts')
     const tokenizerProvider = await createOnnxEmbeddingProvider({ localEmbeddingModelId: 'retry-tokenizer', localEmbeddingModelSource: 'downloaded' })
     assert.equal(await tokenizerProvider.available(), false, 'a tokenizer read failure makes the provider temporarily unavailable')
     assert.equal(tokenizerReads, 1, 'availability attempts the tokenizer read')
@@ -299,6 +299,10 @@ async function runOnnxInitializationRecoveryTests() {
     const started = new Promise(resolve => { runStarted = resolve })
     const pending = cls.embed('hello', { signal: during.signal })
     await started
+    const releasesBeforeCacheTrim = released.length
+    await trimIdleOnnxEmbeddingResources()
+    await trimIdleOnnxEmbeddingResources()
+    assert.equal(released.length, releasesBeforeCacheTrim, 'cache-only and repeated trims leave active inference intact')
     during.abort()
     const releasesBefore = released.length
     const disposalsBefore = tensorDisposals
@@ -460,6 +464,11 @@ async function runOnnxInitializationRecoveryTests() {
     assert.equal(sessionCreates, beforeSharedInitialization.creates + 1, 'cancelled initialization cannot poison its healthy peer')
     assert.deepEqual(Array.from(lastFeeds.input_ids.data, Number), [0, 9, 11, 2])
     assert.match(unigram.model, /:onnx-unigram-v1:mean$/)
+
+    const idleReleases = released.length
+    await trimIdleOnnxEmbeddingResources()
+    await trimIdleOnnxEmbeddingResources()
+    assert.equal(released.length, idleReleases + 1, 'idle cache trim disposes a cached session exactly once')
 
     const retired = await createOnnxEmbeddingProvider({ localEmbeddingModelId: 'unigram-retired-init', localEmbeddingModelSource: 'downloaded' })
     let retiredReady, finishRetiredRead

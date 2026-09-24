@@ -1,5 +1,5 @@
 import { resolveConversationChatWorkflowAssistantMessage } from '@/bootstrap/conversationChatWorkflowResolutionRuntime'
-import { retrieveConversationKnowledgeContext } from '@/bootstrap/knowledgeContextRuntime'
+import { retrieveConversationKnowledgeContextInLocalJob } from '@/bootstrap/knowledgeContextRuntime'
 import { createChatWorkflowRuntime } from '@/bootstrap/chatWorkflowRuntime'
 import { systemClock } from '@/core'
 import { st } from '@/i18n/service'
@@ -105,7 +105,8 @@ const startConversationChatWorkflowReply = createConversationChatWorkflowReplySt
   },
   readSettings: () => useSettingsStore.getState().settings,
   resolveRunLimits: resolveWorkflowRunLimitsFromSettings,
-  retrieveContext: retrieveConversationKnowledgeContext,
+  // The task-bound RAG adapter admits this whole workflow job once.
+  retrieveContext: retrieveConversationKnowledgeContextInLocalJob,
   createChatWorkflowRuntime: createChatWorkflowRuntime,
   startChatWorkflowRun({ runtime, controller, ...input }) {
     return runtime.start({

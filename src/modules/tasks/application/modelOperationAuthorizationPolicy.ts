@@ -115,7 +115,7 @@ export function createModelOperationAuthorizationPolicy(
         return { ok: false, code: 'permission_denied' }
       }
       if (context.confirmationStatus === 'denied') return { ok: false, code: 'permission_denied' }
-      if (operation.permission === 'destructive' &&
+      if (operation.permission !== 'read-only' &&
         context.confirmationStatus !== 'pending' && context.confirmationStatus !== 'confirmed') {
         return { ok: false, code: 'confirmation_required' }
       }

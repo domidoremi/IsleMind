@@ -990,7 +990,10 @@ async function testPortableDataApplication(dataManagementModule, commandModule) 
 
   const root = path.join(__dirname, '..')
   const moduleIndexSource = fs.readFileSync(path.join(root, 'src/modules/data-management/index.ts'), 'utf8')
-  const settingsSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const settingsSource = [
+    'src/components/main/SettingsScreenContent.tsx',
+    'src/components/settings/SystemSettingsPanelContent.tsx',
+  ].map((file) => fs.readFileSync(path.join(root, file), 'utf8')).join('\n')
   const portableTransferSource = fs.readFileSync(path.join(root, 'src/platform/native/expoPortableDataTransfer.ts'), 'utf8')
   const bootstrapSource = fs.readFileSync(path.join(root, 'src/bootstrap/portableDataApplication.ts'), 'utf8')
   const payloadSource = fs.readFileSync(path.join(root, 'src/modules/data-management/application/portableDataPayload.ts'), 'utf8')
@@ -3089,7 +3092,8 @@ function testProviderHeaderPolicy(providerModule) {
   assert.match(providerIndexSource, /export \* from '\.\/providerClientSimulationPolicy'/, 'client compatibility contracts are exported only through the Providers public entry point')
   assert.match(headerSource, /if \(isBedrockRuntimeProvider\(provider\)\) return headers[\s\S]*applyProviderClientSimulationHeaders/, 'Bedrock isolation remains before compatibility header application')
   assert.match(pipelineSource, /getHeaders\(runtimeReq\.provider,\s*\{[\s\S]*?model:\s*runtimeReq\.model/, 'pipeline must forward the selected model to provider headers')
-  assert.match(executorSource, /prepareProviderRuntimePipeline\(\{ req: selectedReq,[\s\S]*?selectedReq = selectedPipeline\.runtimeReq[\s\S]*?const selectedPreparedRequest = selectedPipeline\.preparedHttpRequest/, 'executor must use the selected model and headers from the complete governed pipeline')
+  assert.match(executorSource, /prepareProviderRuntimePipeline\(\{ req: selectedReq,[\s\S]*?selectedReq = selectedPipeline\.runtimeReq[\s\S]*?(?:const|let) selectedPreparedRequest = selectedPipeline\.preparedHttpRequest/, 'executor must use the selected model and headers from the complete governed pipeline')
+  assert.match(executorSource, /admitted\.compressed\s*\?\s*prepareHttpJsonRequest\(\{ provider: input\.req\.provider, model: input\.req\.model/, 'capacity recovery must re-prepare changed bodies with the selected provider rather than reuse a stale signature')
   assert.match(executorSource, /getHeaders\(fallbackReq\.provider,\s*\{[\s\S]*?model:\s*fallbackReq\.model/, 'fallback execution must recompute UA from its selected model')
   assert.match(runtimeSource, /headers:\s*getHeaders\(provider,\s*\{\s*model\s*\}\)/, 'prepared provider requests must forward their selected model to provider headers')
 }
@@ -3219,22 +3223,23 @@ function testToolPermissionPolicy(integrationsModule) {
   assert.equal(decide(tool('read-only')).decision, 'allow')
   assert.equal(decide(tool('read-only'), {}, { allowReadOnlyTools: false }).decision, 'deny')
 
-  assert.equal(decide(tool('read-write'), { intentVisible: true }).code, 'evidence_insufficient')
+  assert.equal(decide(tool('read-write'), { intentVisible: true }).code, 'permission_required')
   const visibleWrite = decide(tool('read-write'), {
     intentVisible: true,
     evidenceSources: ['test:permission-matrix'],
   })
-  assert.equal(visibleWrite.decision, 'allow')
-  assert.equal(visibleWrite.allowReason, 'evidence-backed-visible-action')
+  assert.equal(visibleWrite.decision, 'confirm', 'a visible plan and evidence do not approve a concrete write')
+  assert.equal(visibleWrite.code, 'permission_required')
   assert.equal(decide(tool('read-write'), { userConfirmed: true }, { allowReadWriteTools: true }).decision, 'allow')
   assert.equal(decide(tool('read-write'), { evidenceSources: ['test:permission-matrix'] }, { allowReadWriteTools: false }).decision, 'deny')
 
   assert.equal(decide(tool('destructive'), { evidenceSources: ['test:permission-matrix'] }).decision, 'confirm')
   assert.equal(decide(tool('destructive'), { userConfirmed: true }).decision, 'allow')
-  assert.equal(decide(tool('destructive'), {}, { allowDestructiveTools: true }).code, 'evidence_insufficient')
+  assert.equal(decide(tool('destructive'), {}, { allowDestructiveTools: true }).code, 'permission_required')
   assert.equal(
     decide(tool('destructive'), { evidenceSources: ['runtime:verified-state'] }, { allowDestructiveTools: true }).decision,
-    'allow',
+    'confirm',
+    'a permissive ceiling and evidence never replace explicit destructive-operation confirmation',
   )
 
   const manifests = [
@@ -3449,14 +3454,18 @@ async function testModelOperationResumeLifecycle(core, runtimeModule, storeModul
     assert.deepEqual((await store.list(runId)).map((entry) => entry.type), [
       'run.created',
       'run.started',
+      'run.checkpointed',
       'provider.route-selected',
       'stream.event',
-      'model-operation.selected',
+      'run.checkpointed',
       'run.awaiting-confirmation',
       'run.confirmation-resolved',
       'model-operation.selected',
+      'run.checkpointed',
       'provider.route-selected',
       'stream.event',
+      'run.checkpointed',
+      'run.checkpointed',
       'run.succeeded',
     ])
   }
@@ -4109,6 +4118,7 @@ async function testBootstrapModelOperationConfirmation(
       },
       executeExternal,
       async declinePendingTask(state) {
+        if (state.pending.notDispatched === true) return { ok: true }
         const current = await taskRuntime.getTask(core.asTaskId(state.pending.taskId))
         if (!current || current.runId !== state.turnId || current.toolId !== state.call.operationId ||
           current.idempotencyKey !== state.idempotencyKey || current.status !== 'awaiting-confirmation') {
@@ -4188,14 +4198,12 @@ async function testBootstrapModelOperationConfirmation(
     assert.equal(pending.ok, true)
     if (!pending.ok) throw new Error(pending.error.message)
     assert.equal(pending.value.status, 'awaiting-confirmation')
-    assert.equal(task.status, 'awaiting-confirmation')
-    assert.equal(task.runId, runId)
-    assert.deepEqual(executionRunIds, [runId], 'pending model-operation admission retains the exact Chat AssistantRun')
-    assert.equal(
-      pending.value.pendingModelOperation.continuationState.idempotencyKey,
-      task.idempotencyKey,
-      'the pending confirmation binds the exact durable task idempotency identity',
-    )
+    assert.equal(task, undefined, 'no authorized Task is created before user confirmation')
+    assert.deepEqual(executionRunIds, [], 'visible intent alone cannot enter the Tasks executor')
+    assert.equal(pending.value.pendingModelOperation.runId, runId)
+    assert.equal(pending.value.pendingModelOperation.continuationState.pending.notDispatched, true)
+    assert.equal(pending.value.pendingModelOperation.continuationState.idempotencyKey,
+      pending.value.pendingModelOperation.idempotencyKey, 'the durable intent binds the future Tasks operation identity')
     assert.equal(pending.value.pendingModelOperation.continuationRequest.systemPrompt, conversation.systemPrompt)
     assert.equal(pending.value.pendingModelOperation.continuationMode, 'native')
     assert.deepEqual(
@@ -4224,9 +4232,9 @@ async function testBootstrapModelOperationConfirmation(
       assert.equal(rejected.error.code, 'run_not_active')
       assert.equal(providerRequests.length, 1, 'tampering cannot start provider continuation')
       assert.equal(executionCount, 0, 'tampering cannot execute the pending task')
-      assert.deepEqual(executionRunIds, [runId], 'tampered replay cannot start a second Chat task admission')
+      assert.deepEqual(executionRunIds, [], 'tampered replay cannot enter Tasks admission')
       assert.equal((await runStore.get(runId)).status, 'awaiting-confirmation')
-      assert.equal((await taskRuntime.getTask(task.id)).status, 'awaiting-confirmation')
+      assert.equal(task, undefined)
       assert.equal((await runStore.list(runId)).at(-1).type, 'run.awaiting-confirmation')
       continue
     }
@@ -4293,8 +4301,8 @@ async function testBootstrapModelOperationConfirmation(
     assert.equal(executionCount, approved ? 1 : 0)
     assert.deepEqual(
       executionRunIds,
-      approved ? [runId, runId] : [runId],
-      'approved confirmation replay retains exact Chat run attribution while rejection performs no second execution admission',
+      approved ? [runId] : [],
+      'only explicit approval enters Tasks admission with exact Chat run attribution',
     )
     const modelOperationReceipts = (await runStore.list(runId))
       .filter((entry) => entry.type === 'model-operation.selected')
@@ -4304,12 +4312,14 @@ async function testBootstrapModelOperationConfirmation(
       approved ? 'ok' : 'confirmation_declined',
       'confirmation resolves through the expected terminal model-operation receipt',
     )
-    const terminalTask = await taskRuntime.getTask(task.id)
-    assert.equal(terminalTask.status, approved ? 'succeeded' : 'expired')
-    assert.equal(terminalTask.id, task.id, 'approval or rejection terminalizes the same durable task')
-    assert.deepEqual((await taskStore.list(terminalTask.id)).map((entry) => entry.type), approved
-      ? ['task.created', 'task.confirmed', 'task.started', 'task.succeeded']
-      : ['task.created', 'task.expired'])
+    if (approved) {
+      const terminalTask = await taskRuntime.getTask(task.id)
+      assert.equal(terminalTask.status, 'succeeded')
+      assert.equal(terminalTask.id, task.id)
+      assert.equal(terminalTask.idempotencyKey, pending.value.pendingModelOperation.idempotencyKey)
+      assert.deepEqual((await taskStore.list(terminalTask.id)).map((entry) => entry.type),
+        ['task.created', 'task.confirmed', 'task.started', 'task.succeeded'])
+    } else assert.equal(task, undefined, 'decline creates neither a Task nor a fabricated receipt identity')
   }
 }
 
@@ -4370,7 +4380,7 @@ async function testMalformedProviderContinuationEvent(core, runtimeModule, store
   assert.deepEqual(
     (await store.list(core.asAssistantRunId('run-malformed-provider-continuation')))
       .map((entry) => entry.type),
-    ['run.created', 'run.started', 'provider.route-selected', 'run.failed'],
+    ['run.created', 'run.started', 'run.checkpointed', 'provider.route-selected', 'run.failed'],
     'malformed continuation leaves no durable stream event or tool execution evidence',
   )
 }
@@ -4576,10 +4586,11 @@ async function testSuccessfulRun(core, runtimeModule, storeModule, providerModul
   assert.equal(result.value.result.streamEventCount, 4)
 
   const entries = await store.list(runId)
-  assert.deepEqual(entries.map((entry) => entry.sequence), [1, 2, 3, 4, 5, 6, 7, 8])
+  assert.deepEqual(entries.map((entry) => entry.sequence), [1, 2, 3, 4, 5, 6, 7, 8, 9])
   assert.deepEqual(entries.map((entry) => entry.type), [
     'run.created',
     'run.started',
+    'run.checkpointed',
     'provider.route-selected',
     'stream.event',
     'stream.event',
@@ -4678,6 +4689,7 @@ async function testCancellation(core, runtimeModule, storeModule, providerModule
   assert.deepEqual((await store.list(runId)).map((entry) => entry.type), [
     'run.created',
     'run.started',
+    'run.checkpointed',
     'provider.route-selected',
     'stream.event',
     'run.cancellation-requested',
@@ -4717,6 +4729,7 @@ async function testExternalCancellation(core, runtimeModule, storeModule, provid
   assert.deepEqual((await store.list(runId)).map((entry) => entry.type), [
     'run.created',
     'run.started',
+    'run.checkpointed',
     'provider.route-selected',
     'stream.event',
     'run.cancellation-requested',
@@ -4781,27 +4794,18 @@ async function testRestartRecovery(core, runtimeModule, storeModule, providerMod
   })
 
   const recovery = await runtime.recoverInterruptedRuns()
-  assert.equal(recovery.ok, true, 'restart recovery safely terminates interrupted runs')
+  assert.equal(recovery.ok, true, 'restart recovery leaves legacy execution read-only')
   if (!recovery.ok) throw new Error(recovery.error.message)
-  assert.equal(recovery.value.length, 1)
-  assert.equal(recovery.value[0].status, 'failed')
-  assert.equal(recovery.value[0].failure.code, 'interrupted')
-  assert.equal(recovery.value[0].checkpoint.outputText, 'Checkpointed output')
+  assert.equal(recovery.value.length, 0)
+  const legacy = await store.get(runId)
+  assert.equal(legacy.engineVersion, undefined)
+  assert.equal(legacy.status, 'running')
+  assert.equal(legacy.checkpoint.outputText, 'Checkpointed output')
   const recoveryEntries = await store.list(runId)
-  assert.equal(
-    recoveryEntries.at(-1).data.requestSnapshotIdentity.requestHash,
-    recoveryRequestSnapshot.requestHash,
-    'restart recovery carries the persisted request hash as diagnostic evidence',
-  )
-  assert.equal(
-    recoveryEntries.at(-1).data.requestSnapshotIdentity.capabilityRevision,
-    recoveryRequestSnapshot.capabilityRevision,
-    'restart recovery carries the persisted capability revision as diagnostic evidence',
-  )
+  assert.equal((await store.getRequestSnapshot(runId)).requestHash, recoveryRequestSnapshot.requestHash)
   assert.deepEqual(recoveryEntries.map((entry) => entry.type), [
     'run.created',
     'run.started',
-    'run.failed',
   ])
 }
 
@@ -5006,6 +5010,7 @@ async function testRichContinuationRecoveryIdentity(core, runtimeModule, storeMo
     const hasMismatchedCompletion = familyIndex === 0
     await store.save({
       id: runId,
+      engineVersion: 'islemind.harness.v1',
       kind: 'chat',
       conversationId: 'conversation-1',
       providerId,
@@ -5065,6 +5070,7 @@ async function testRichContinuationRecoveryIdentity(core, runtimeModule, storeMo
   }
   await completedStore.save({
     id: completedRunId,
+    engineVersion: 'islemind.harness.v1',
     kind: 'chat',
     conversationId: 'conversation-1',
     providerId: completedProviderId,
@@ -5230,6 +5236,7 @@ async function testRuntimeProviderFallbackRoute(core, runtimeModule, storeModule
   assert.deepEqual((await store.list(result.value.id)).map((entry) => entry.type), [
     'run.created',
     'run.started',
+    'run.checkpointed',
     'provider.route-selected',
     'provider.route-selected',
     'stream.event',

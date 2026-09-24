@@ -1,4 +1,6 @@
 import { createTaskRuntime } from '@/bootstrap/taskRuntime'
+import { executionResources, assertExecutionResourcesAvailable } from '@/bootstrap/executionResources'
+import { assistantExecutionHost } from './assistantExecutionHostRuntime'
 import type { AssistantRunId, JsonRecord, TaskId } from '@/core'
 import {
   createLocalToolAdapter,
@@ -99,6 +101,7 @@ export interface TaskBoundExternalToolExecutionOptions {
 }
 
 export interface TaskBoundToolRuntimeDependencies {
+  beforeTaskExecution?(input: ExecuteTaskBoundToolInput, task: Task): Promise<void>
   createTaskRuntime(policyEvaluator: TaskPolicyEvaluator): TaskRuntime
   ragReplaySnapshotRepository?: KnowledgeRagReplaySnapshotRepository
   listToolManifests(): Promise<readonly ConversationToolCatalogManifest[]>
@@ -318,7 +321,7 @@ export function createTaskBoundToolRuntime(
       if (task.status !== 'queued') {
         return toolTaskFailureOutcome(tool, mapTaskRuntimeFailure('task_not_active'), 'The durable tool task is not executable.', task)
       }
-
+      await dependencies.beforeTaskExecution?.(input, task)
 
       if (ragAdapter) {
         let ragSnapshot: KnowledgeRagReplaySnapshot | undefined
@@ -327,12 +330,12 @@ export function createTaskBoundToolRuntime(
           async execute(activeTask, options) {
             let execution
             try {
-              execution = await ragAdapter.execute(
+              execution = await executionResources.runLocal(options.signal, () => ragAdapter.execute(
                 toolArguments,
                 activeTask.id,
                 activeTask.startedAt ?? Date.now(),
                 options.signal,
-              )
+              ))
             } catch (error) {
               if (isAbortError(error)) throw error
               ragFailureMessage = clampTraceText(
@@ -1397,6 +1400,17 @@ async function loadDefaultDependencies(): Promise<TaskBoundToolRuntimeDependenci
   }
   return {
     createTaskRuntime: createTaskRuntime,
+    async beforeTaskExecution(input, task) {
+      assertExecutionResourcesAvailable()
+      if (!input.assistantRunId) return
+      const { assistantRunBudgetStore } = await import('./assistantRunGovernance')
+      // Existing non-run context acquisition retains its own admission boundary.
+      const budget = await assistantRunBudgetStore.get(input.assistantRunId)
+      assistantExecutionHost.assertAdmission(budget?.rootRunId ?? input.assistantRunId)
+      if (budget) {
+        await assistantRunBudgetStore.reserveTool(budget.rootRunId, task.id, Date.now())
+      }
+    },
     listToolManifests: () => listConversationToolCatalog(catalogSources, {
       internalTools: [KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST, WORK_ARTIFACT_TOOL_MANIFEST],
     }),

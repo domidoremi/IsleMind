@@ -10,14 +10,13 @@ import type {
 import type { MessageCitation } from '@/types/contextContracts'
 import type {
   ChatProviderStateBinding,
-  ChatReasoningReplayPart,
-  ChatToolCallProviderMetadata,
   JsonRecord,
   ProcessTrace,
   StreamEvent,
 } from '@/core'
 import { parseToolArguments } from '@/modules/integrations'
 import { streamProviderChat } from '@/bootstrap/providerRuntime'
+import { toProviderContinuationReplay, toProviderToolCallMetadata } from './providerContinuationReplay'
 import {
   clearActiveStream,
   getActiveStream,
@@ -159,7 +158,6 @@ export const conversationProviderStreamingRuntime = {
 const MAX_DURABLE_TRACE_EVENTS = 128
 const DURABLE_EVENT_TEXT_LIMIT = 512
 const MAX_DURABLE_TOOL_ARGUMENTS_CHARACTERS = 32 * 1024
-const MAX_REASONING_REPLAY_TEXT_CHARACTERS = 262_144
 
 export interface RichStreamEventReporterOptions {
   readonly binding?: ChatProviderStateBinding
@@ -235,16 +233,16 @@ export function createRichStreamEventReporter(
     })
   }
   const complete = (result: ProviderRuntimeCompletionResult): void => {
-    if (!result || typeof result !== 'object') return
+    if (!onStreamEvent || !result || typeof result !== 'object') return
     const calls = (Array.isArray(result.providerToolCalls) ? result.providerToolCalls : [])
       .flatMap((call, index) => {
         if (!call || typeof call !== 'object') return []
         const toolCallId = boundedText(call.callId || call.id || `tool-call-${index}`)
         const toolName = boundedText(call.name)
         if (!toolCallId || !toolName) return []
-        return [{ call, toolCallId, toolName }]
+        return [{ call, toolCallId, toolName, providerMetadata: toProviderToolCallMetadata(call) }]
       })
-    const reasoningReplay = toRichReasoningReplay(result)
+    const reasoningReplay = toProviderContinuationReplay(result)
     if (binding && (reasoningReplay.length || calls.length)) {
       emit({
         type: 'provider-continuation-state',
@@ -252,11 +250,10 @@ export function createRichStreamEventReporter(
         reasoningReplay,
       })
     }
-    for (const { call, toolCallId, toolName } of calls) {
+    for (const { call, toolCallId, toolName, providerMetadata } of calls) {
       const dedupeKey = `${toolCallId}\u0000${toolName}`
       if (toolCallIds.has(dedupeKey)) continue
       toolCallIds.add(dedupeKey)
-      const providerMetadata = richProviderMetadata(call)
       emit({
         type: 'tool-call',
         toolCallId,
@@ -272,26 +269,6 @@ export function createRichStreamEventReporter(
   }
 
   return { text, citations, trace, complete, setBinding(value: ChatProviderStateBinding) { binding = value } }
-}
-
-function richProviderMetadata(call: {
-  readonly id?: string
-  readonly thoughtSignature?: string
-  readonly index?: number
-}): ChatToolCallProviderMetadata | undefined {
-  const providerCallId = boundedText(call.id)
-  const thoughtSignature = boundedReasoningText(call.thoughtSignature)
-  const providerCallIndex = typeof call.index === 'number'
-    && Number.isSafeInteger(call.index)
-    && call.index >= 0
-    ? call.index
-    : undefined
-  const metadata: ChatToolCallProviderMetadata = {
-    ...(providerCallId ? { providerCallId } : {}),
-    ...(providerCallIndex === undefined ? {} : { providerCallIndex }),
-    ...(thoughtSignature ? { thoughtSignature } : {}),
-  }
-  return Object.keys(metadata).length ? metadata : undefined
 }
 
 function boundedToolArguments(value: unknown): JsonRecord {
@@ -313,48 +290,6 @@ function boundedToolArguments(value: unknown): JsonRecord {
   } catch {
     return {}
   }
-}
-
-function toRichReasoningReplay(
-  result: ProviderRuntimeCompletionResult,
-): readonly ChatReasoningReplayPart[] {
-  const replay: ChatReasoningReplayPart[] = []
-  const reasoningContent = boundedReasoningText(result.reasoningContent)
-  if (reasoningContent) replay.push({ kind: 'text', text: reasoningContent })
-  for (const item of result.responseItems ?? []) {
-    if (item.type !== 'reasoning'
-      || typeof item.id !== 'string'
-      || typeof item.encrypted_content !== 'string') continue
-    const id = boundedText(item.id)
-    const data = boundedReasoningText(item.encrypted_content)
-    if (!id || !data) continue
-    const summary = Array.isArray(item.summary)
-      ? item.summary.flatMap((entry) => {
-          const text = typeof entry === 'string'
-            ? entry
-            : entry && typeof entry === 'object' && !Array.isArray(entry)
-              && typeof entry.text === 'string'
-              ? entry.text
-              : undefined
-          const bounded = boundedReasoningText(text)
-          return bounded ? [bounded] : []
-        }).slice(0, 64)
-      : []
-    replay.push({ kind: 'encrypted', id, data, ...(summary.length ? { summary } : {}) })
-  }
-  for (const block of result.providerContentBlocks ?? []) {
-    if (block.type === 'thinking' && typeof block.thinking === 'string') {
-      const text = boundedReasoningText(block.thinking)
-      if (text) {
-        const signature = boundedReasoningText(block.signature)
-        replay.push({ kind: 'thinking', text, ...(signature ? { signature } : {}) })
-      }
-    } else if (block.type === 'redacted_thinking' && typeof block.data === 'string') {
-      const data = boundedReasoningText(block.data)
-      if (data) replay.push({ kind: 'redacted', data })
-    }
-  }
-  return replay.slice(0, 32)
 }
 
 function streamUsageEvent(
@@ -394,15 +329,6 @@ function boundedText(value: unknown): string | undefined {
   return normalized.length <= DURABLE_EVENT_TEXT_LIMIT
     ? normalized
     : normalized.slice(0, DURABLE_EVENT_TEXT_LIMIT)
-}
-
-function boundedReasoningText(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim()
-  if (!normalized) return undefined
-  return normalized.length <= MAX_REASONING_REPLAY_TEXT_CHARACTERS
-    ? normalized
-    : normalized.slice(0, MAX_REASONING_REPLAY_TEXT_CHARACTERS)
 }
 
 function sanitizeCitationUrl(value: unknown): string | undefined {

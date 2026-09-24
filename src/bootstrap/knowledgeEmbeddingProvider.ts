@@ -4,6 +4,9 @@ import { resolveConfiguredLocalEmbeddingModel } from '@/bootstrap/localModelCata
 import { logContextOperation } from '@/services/runtimeHealthLog'
 import type { EmbeddingProvider, LocalEmbeddingModel, LocalEmbeddingTokenizer } from '@/modules/knowledge'
 import { parseXlmRobertaTokenizer, type XlmRobertaTokenizer } from '@/platform/localModels/xlmRobertaTokenizer'
+import { executionResources } from './executionResources'
+
+const MAX_EMBEDDING_INPUT_CHARACTERS = 32_768
 
 export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'localEmbeddingModelId' | 'localEmbeddingModelSource'>): Promise<EmbeddingProvider | null> {
   if (settings.localEmbeddingModelSource === 'none') return null
@@ -34,8 +37,9 @@ export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'loca
       const pipeline = model.tokenizer === 'unigram' ? 'onnx-unigram-v1' : 'onnx-pipeline-v3'
       return `${model.id}@${model.version}:${pipeline}:${model.pooling ?? 'mean'}`
     },
-    available: async (options = {}) => {
+    available: async (options = {}) => executionResources.runLocal(options.signal ?? new AbortController().signal, async () => {
       throwIfAborted(options.signal)
+      const admissionEpoch = resourceEpoch
       try {
         const active = await loadModelOnDemand(options.signal)
         if (!supportsTokenizer(active.model.tokenizer)) return false
@@ -43,7 +47,7 @@ export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'loca
         await getOnnxRuntime()
         throwIfAborted(options.signal)
         await loadTokenizer(active.model, active.directoryUri)
-        throwIfAborted(options.signal)
+        assertOnnxAdmission(options.signal, admissionEpoch)
         return true
       } catch (error) {
         throwIfAborted(options.signal)
@@ -57,18 +61,26 @@ export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'loca
         })
         return false
       }
-    },
+    }),
     embed: async (text: string, options = {}) => {
       throwIfAborted(options.signal)
-      const active = await loadModelOnDemand(options.signal)
-      throwIfAborted(options.signal)
-
-      if (!supportsTokenizer(active.model.tokenizer)) {
-        throw new Error(`Tokenizer ${active.model.tokenizer} is not supported in this build.`)
+      if (typeof text !== 'string' || text.length > MAX_EMBEDDING_INPUT_CHARACTERS) {
+        throw new Error('Embedding input exceeds its managed text bound.')
       }
-
-      const vector = await embedWithOnnx(active.model, active.directoryUri, text, options.signal)
-      return vector
+      // Cover queued source text plus bounded normalization working copies. The
+      // vocabulary and single native model have their own catalogue/file limits.
+      const releaseText = executionResources.reserveText(text.length * 16)
+      try {
+        return await executionResources.runLocal(options.signal ?? new AbortController().signal, async () => {
+          const admissionEpoch = resourceEpoch
+          const active = await loadModelOnDemand(options.signal)
+          assertOnnxAdmission(options.signal, admissionEpoch)
+          if (!supportsTokenizer(active.model.tokenizer)) {
+            throw new Error(`Tokenizer ${active.model.tokenizer} is not supported in this build.`)
+          }
+          return embedWithOnnx(active.model, active.directoryUri, text, options.signal, admissionEpoch)
+        })
+      } finally { releaseText() }
     },
   }
 }
@@ -96,26 +108,24 @@ interface SessionEntry { promise: Promise<OrtSession>; users: number; retired?: 
 const sessionCache = new Map<string, SessionEntry>()
 const tokenizerCache = new Map<string, Promise<TokenizerState | XlmRobertaTokenizer>>()
 let resourceEpoch = 0
+// A trim can remove an idle entry while native release is still pending. New
+// model initialization must wait for that real disposal, not just Map deletion.
+let sessionDisposal: Promise<void> = Promise.resolve()
 
 async function getOnnxRuntime(): Promise<OrtModule> {
   return import('onnxruntime-react-native')
 }
 
-async function embedWithOnnx(model: LocalEmbeddingModel, directoryUri: string, text: string, signal?: AbortSignal): Promise<number[]> {
+async function embedWithOnnx(model: LocalEmbeddingModel, directoryUri: string, text: string, signal?: AbortSignal, admissionEpoch = resourceEpoch): Promise<number[]> {
   throwIfAborted(signal)
-  const admissionEpoch = resourceEpoch
   const tokenizer = await loadTokenizer(model, directoryUri)
   throwIfAborted(signal)
   // Validate preprocessing and its input bounds before allocating a native
   // model session. Unsupported/oversized input must not load model weights.
   const tokens = await encodeText(tokenizer, text, model.maxTokens, signal)
   throwIfAborted(signal)
-  if (admissionEpoch !== resourceEpoch) {
-    // A delete/retirement during preprocessing must not allocate a new session
-    // after releaseOnnxEmbeddingResources has already retired the old resources.
-    throw Object.assign(new Error('ONNX embedding resources were retired during admission.'), { name: 'AbortError' })
-  }
-  const entry = acquireSession(model, directoryUri)
+  assertOnnxAdmission(signal, admissionEpoch)
+  const entry = await acquireSession(model, directoryUri, signal, admissionEpoch)
   const feeds: Record<string, InstanceType<OrtModule['Tensor']>> = {}
   let results: Awaited<ReturnType<OrtSession['run']>> | undefined
   try {
@@ -163,8 +173,14 @@ async function embedWithOnnx(model: LocalEmbeddingModel, directoryUri: string, t
   }
 }
 
-function acquireSession(model: LocalEmbeddingModel, directoryUri: string): SessionEntry {
+async function acquireSession(model: LocalEmbeddingModel, directoryUri: string, signal: AbortSignal | undefined, admissionEpoch: number): Promise<SessionEntry> {
   const key = `${model.id}:${model.version}:${directoryUri}`
+  // Whole-embedding admission is serialized, but idle weights are still native
+  // allocations. Retire the previous model BEFORE allocating another one.
+  for (const [cachedKey, cached] of sessionCache) if (cachedKey !== key) cached.retired = true
+  await pruneSessions()
+  await sessionDisposal
+  assertOnnxAdmission(signal, admissionEpoch)
   let entry = sessionCache.get(key)
   if (!entry) {
     const promise = (async () => {
@@ -193,13 +209,24 @@ async function pruneSessions(): Promise<void> {
   for (const [key, entry] of sessionCache) {
     if (entry.users || (!entry.retired && sessionCache.size <= 1)) continue
     sessionCache.delete(key)
-    const session = await entry.promise.catch(() => undefined)
-    if (!session) continue
-    try { await session.release() } catch (error) {
-      // Cleanup diagnostics must not change the outcome of a completed run.
-      await logContextOperation({ phase: 'knowledge_embedding', status: 'error', detail: 'onnx_session_release_failed', sourceType: 'text', error }).catch(() => undefined)
-    }
+    sessionDisposal = sessionDisposal.then(async () => {
+      const session = await entry.promise.catch(() => undefined)
+      if (!session) return
+      try { await session.release() } catch (error) {
+        // Cleanup diagnostics must not change the outcome of a completed run.
+        await logContextOperation({ phase: 'knowledge_embedding', status: 'error', detail: 'onnx_session_release_failed', sourceType: 'text', error }).catch(() => undefined)
+      }
+    })
   }
+  await sessionDisposal
+}
+
+function assertOnnxAdmission(signal: AbortSignal | undefined, admissionEpoch: number): void {
+  throwIfAborted(signal)
+  if (admissionEpoch !== resourceEpoch) {
+    throw Object.assign(new Error('ONNX embedding resources were retired during admission.'), { name: 'AbortError' })
+  }
+  executionResources.assertAdmission()
 }
 
 /** Retire idle native resources; in-flight sessions release only after completion. */
@@ -207,6 +234,13 @@ export async function releaseOnnxEmbeddingResources(): Promise<void> {
   resourceEpoch += 1
   tokenizerCache.clear()
   for (const entry of sessionCache.values()) entry.retired = true
+  await pruneSessions()
+}
+
+/** A cache-only trim must not invalidate preprocessing or an active inference. */
+export async function trimIdleOnnxEmbeddingResources(): Promise<void> {
+  tokenizerCache.clear()
+  for (const entry of sessionCache.values()) if (!entry.users) entry.retired = true
   await pruneSessions()
 }
 

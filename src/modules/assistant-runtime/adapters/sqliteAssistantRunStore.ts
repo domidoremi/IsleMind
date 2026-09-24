@@ -44,12 +44,17 @@ import {
   type AssistantConversationWorkspaceWritebackPolicy,
 } from '../workspaceWritebackContracts'
 import { decodeAssistantRunRouteDetails } from '../application/actualExecutionAttribution'
+import { HARNESS_ENGINE_VERSION } from '../application/runBudget'
+import { decodeHarnessState } from '../harnessCheckpoint'
 
 const MIGRATION_SCOPE = 'assistant-runtime'
 const RUN_SCHEMA = 'islemind.assistant-run.v1'
 // Old readers reject this in-flight representation instead of recovering an
 // incomplete prefix. Lifecycle barriers still materialize the v1 snapshot.
 const STREAM_RUN_SCHEMA = 'islemind.assistant-run.v2'
+// Old binaries reject these envelopes rather than executing a new-format run.
+const HARNESS_RUN_SCHEMA = 'islemind.assistant-run.v3'
+const HARNESS_STREAM_RUN_SCHEMA = 'islemind.assistant-run.v4'
 const WORKSPACE_WRITEBACK_IDENTITY_MAX_CHARACTERS = 256
 const WORKSPACE_WRITEBACK_INPUT_MAX_CHARACTERS = 262_144
 const WORKSPACE_WRITEBACK_MAX_SELECTED_CHARACTERS = 64
@@ -57,6 +62,7 @@ const WORKSPACE_WRITEBACK_IDEMPOTENCY_KEY_PATTERN =
   /^islemind\.chat-workspace-writeback\.v1:sha256:[0-9a-f]{64}$/
 
 interface AssistantRunRow {
+  harnessStateJson?: string | null
   routeDetailsJson?: string | null
   id: string
   kind: string
@@ -287,6 +293,14 @@ export function createSqliteAssistantRunPersistence(
           await transaction.exec('ALTER TABLE assistant_runs ADD COLUMN routeDetailsJson TEXT;')
         },
       },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 12,
+        name: 'harness-lifecycle-checkpoint',
+        async up(transaction) {
+          await transaction.exec('ALTER TABLE assistant_runs ADD COLUMN harnessStateJson TEXT;')
+        },
+      },
     ]).catch((error) => {
       initialized = undefined
       throw error
@@ -302,7 +316,7 @@ export function createSqliteAssistantRunPersistence(
         `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
                 providerId, model, contextSnapshotId, status, createdAt,
                 startedAt, cancellationRequestedAt, completedAt, journalSequence,
-                checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson
+                checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson, harnessStateJson
          FROM assistant_runs WHERE id = ?`,
         [runId],
       )
@@ -316,7 +330,7 @@ export function createSqliteAssistantRunPersistence(
           `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
                   providerId, model, contextSnapshotId, status, createdAt,
                   startedAt, cancellationRequestedAt, completedAt, journalSequence,
-                  checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson
+                  checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson, harnessStateJson
            FROM assistant_runs
            WHERE conversationId = ? AND responseMessageId = ?
            ORDER BY createdAt DESC, id DESC LIMIT 1`,
@@ -332,7 +346,7 @@ export function createSqliteAssistantRunPersistence(
         `SELECT id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
                 providerId, model, contextSnapshotId, status, createdAt,
                 startedAt, cancellationRequestedAt, completedAt, journalSequence,
-                checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson
+                checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson, harnessStateJson
          FROM assistant_runs
          WHERE status IN ('queued', 'running', 'awaiting-confirmation')
          ORDER BY createdAt ASC`,
@@ -340,6 +354,31 @@ export function createSqliteAssistantRunPersistence(
       const runs: AssistantRun[] = []
       for (const row of rows) runs.push(await readRun(transaction, row))
       return runs
+      })
+    },
+
+    async listRuns({ conversationId, limit = 20, before } = {}) {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || conversationId !== undefined && !isNonEmptyString(conversationId)
+        || before && (!isNonNegativeInteger(before.createdAt) || !isNonEmptyString(before.id))) throw new Error('Invalid run history query')
+      const rows = await (await database()).getAll<Pick<AssistantRunRow, 'id' | 'conversationId' | 'status' | 'createdAt' | 'providerId' | 'model' | 'schema'> & { ownershipJson: string }>(
+        `SELECT id, conversationId, status, createdAt, providerId, model, schema,
+          json_object('rootRunId', json_extract(harnessStateJson, '$.rootRunId'),
+            'parentRunId', json_extract(harnessStateJson, '$.parentRunId'), 'taskKind', json_extract(harnessStateJson, '$.taskKind')) AS ownershipJson FROM assistant_runs
+         WHERE (? IS NULL OR conversationId = ?) AND (? IS NULL OR createdAt < ? OR (createdAt = ? AND id < ?))
+         ORDER BY createdAt DESC, id DESC LIMIT ?`,
+        [conversationId ?? null, conversationId ?? null, before?.createdAt ?? null, before?.createdAt ?? null,
+          before?.createdAt ?? null, before?.id ?? null, limit])
+      return rows.map((row) => {
+        if (![RUN_SCHEMA, STREAM_RUN_SCHEMA, HARNESS_RUN_SCHEMA, HARNESS_STREAM_RUN_SCHEMA].includes(row.schema)
+          || !isNonEmptyString(row.id) || !isNonEmptyString(row.conversationId) || !isNonEmptyString(row.providerId)
+          || !isNonEmptyString(row.model) || !isRunStatus(row.status) || !isNonNegativeInteger(row.createdAt)) {
+          throw new AssistantRunPersistenceDataError('Invalid run history record')
+        }
+        const ownership = JSON.parse(row.ownershipJson) as Record<string, unknown>
+        for (const key of Object.keys(ownership)) if (ownership[key] === null) delete ownership[key]
+        return { ...decodeHarnessState(JSON.stringify(ownership)), id: asAssistantRunId(row.id), conversationId: row.conversationId, status: row.status,
+          createdAt: row.createdAt, providerId: row.providerId, model: row.model,
+          ...(row.schema === HARNESS_RUN_SCHEMA || row.schema === HARNESS_STREAM_RUN_SCHEMA ? { engineVersion: HARNESS_ENGINE_VERSION } : {}) }
       })
     },
 
@@ -364,6 +403,27 @@ export function createSqliteAssistantRunPersistence(
         [runId],
       )
       return rows.map(parseJournalEntry)
+    },
+
+    async listCitations(runId) {
+      const rows = await (await database()).getAll<{ dataJson: string }>(
+        `SELECT dataJson FROM assistant_run_journal WHERE runId = ? AND type = 'stream.event'
+         AND json_extract(dataJson, '$.eventType') = 'citation' ORDER BY sequence DESC LIMIT 64`, [runId])
+      const seen = new Set<string>()
+      return [...rows].reverse().flatMap(({ dataJson }) => {
+        if (dataJson.length > 8192) throw new AssistantRunPersistenceDataError('Citation exceeds limit')
+        const item = JSON.parse(dataJson) as Record<string, unknown>
+        if (typeof item.citationId !== 'string' || item.citationId.length > 512
+          || item.title !== undefined && (typeof item.title !== 'string' || item.title.length > 512)
+          || item.url !== undefined && (typeof item.url !== 'string' || item.url.length > 2048)) {
+          throw new AssistantRunPersistenceDataError('Invalid citation')
+        }
+        if (seen.has(item.citationId)) return []
+        seen.add(item.citationId)
+        return [{ type: 'citation' as const, citationId: item.citationId,
+          ...(typeof item.title === 'string' ? { title: item.title } : {}),
+          ...(typeof item.url === 'string' ? { url: item.url } : {}) }]
+      })
     },
 
     async getRequestSnapshot(runId) {
@@ -490,13 +550,13 @@ async function saveStreamCheckpoint(
   if (!row || row.journalSequence !== previousRun.journalSequence) {
     throw new AssistantRunPersistenceDataError('An assistant checkpoint predecessor is stale.')
   }
-  if (row.schema === STREAM_RUN_SCHEMA) {
+  if (row.schema === STREAM_RUN_SCHEMA || row.schema === HARNESS_STREAM_RUN_SCHEMA) {
     const header = parseStreamCheckpointHeader(row.checkpointJson)
     if (header.outputLength !== previous.outputText.length
       || header.streamEventCount !== previous.streamEventCount) {
       throw new AssistantRunPersistenceDataError('An assistant checkpoint predecessor is invalid.')
     }
-  } else if (row.schema === RUN_SCHEMA) {
+  } else if (row.schema === RUN_SCHEMA || row.schema === HARNESS_RUN_SCHEMA) {
     const saved = parseCheckpoint(row.checkpointJson) ?? { outputText: '', streamEventCount: 0 }
     // Standalone save() deliberately resets the incremental representation.
     // An independently replaced predecessor must not be used as a delta base.
@@ -518,7 +578,7 @@ async function saveStreamCheckpoint(
       outputText: '',
       streamEventCount: checkpoint.streamEventCount,
       outputLength: checkpoint.outputText.length,
-    }), STREAM_RUN_SCHEMA, run.id, previousRun.journalSequence],
+    }), run.engineVersion === HARNESS_ENGINE_VERSION ? HARNESS_STREAM_RUN_SCHEMA : STREAM_RUN_SCHEMA, run.id, previousRun.journalSequence],
   )
   if (updated.changes !== 1) throw new AssistantRunPersistenceDataError('An assistant checkpoint predecessor is stale.')
   return true
@@ -545,11 +605,11 @@ function parseStreamCheckpointHeader(value: string | null): { outputLength: numb
 }
 
 async function readRun(database: SqliteExecutor, row: AssistantRunRow): Promise<AssistantRun> {
-  if (row.schema !== STREAM_RUN_SCHEMA) return parseRun(row)
+  if (row.schema !== STREAM_RUN_SCHEMA && row.schema !== HARNESS_STREAM_RUN_SCHEMA) return parseRun(row)
   const header = parseStreamCheckpointHeader(row.checkpointJson)
   // Validate the envelope before reading segments; keep all reads on the same
   // transaction snapshot so a concurrent terminal/materialization cannot tear it.
-  const run = parseRun({ ...row, schema: RUN_SCHEMA })
+  const run = parseRun({ ...row, schema: row.schema === HARNESS_STREAM_RUN_SCHEMA ? HARNESS_RUN_SCHEMA : RUN_SCHEMA })
   if (run.status !== 'running') throw new AssistantRunPersistenceDataError('An incremental assistant run is not running.')
   let outputText = ''
   let after = -1
@@ -583,8 +643,8 @@ async function saveRun(database: SqliteExecutor, run: AssistantRun): Promise<voi
        id, kind, conversationId, responseMessageId, workspaceWritebackHandoffJson,
        providerId, model, contextSnapshotId, status, createdAt,
        startedAt, cancellationRequestedAt, completedAt, journalSequence,
-       checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       checkpointJson, resultJson, failureJson, pendingModelOperationJson, schema, routeDetailsJson, harnessStateJson
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        kind = excluded.kind,
        conversationId = excluded.conversationId,
@@ -604,7 +664,8 @@ async function saveRun(database: SqliteExecutor, run: AssistantRun): Promise<voi
        failureJson = excluded.failureJson,
        pendingModelOperationJson = excluded.pendingModelOperationJson,
        schema = excluded.schema,
-       routeDetailsJson = excluded.routeDetailsJson`,
+       routeDetailsJson = excluded.routeDetailsJson,
+       harnessStateJson = excluded.harnessStateJson`,
     [
       run.id,
       run.kind,
@@ -626,8 +687,10 @@ async function saveRun(database: SqliteExecutor, run: AssistantRun): Promise<voi
       run.result ? JSON.stringify(run.result) : null,
       run.failure ? JSON.stringify(run.failure) : null,
       run.pendingModelOperation ? JSON.stringify(run.pendingModelOperation) : null,
-      RUN_SCHEMA,
+      run.engineVersion === HARNESS_ENGINE_VERSION ? HARNESS_RUN_SCHEMA : RUN_SCHEMA,
       run.routeDetails ? JSON.stringify(decodeAssistantRunRouteDetails(run.routeDetails)) : null,
+      run.agentDefinition || run.lifecycleCheckpoint ? JSON.stringify(decodeHarnessState(JSON.stringify({ agentDefinition: run.agentDefinition, lifecycleCheckpoint: run.lifecycleCheckpoint,
+        rootRunId: run.rootRunId, parentRunId: run.parentRunId, taskKind: run.taskKind, delegation: run.delegation }))) : null,
     ],
   )
 }
@@ -655,7 +718,7 @@ async function appendJournalEntry(database: SqliteExecutor, entry: RunJournalEnt
 
 function parseRun(row: AssistantRunRow): AssistantRun {
   const kind = parseRunKind(row.kind)
-  if (row.schema !== RUN_SCHEMA || !isNonEmptyString(row.id) || !isNonEmptyString(row.conversationId) ||
+  if ((row.schema !== RUN_SCHEMA && row.schema !== HARNESS_RUN_SCHEMA) || !isNonEmptyString(row.id) || !isNonEmptyString(row.conversationId) ||
     !isNonEmptyString(row.providerId) || !isNonEmptyString(row.model) || !isNonEmptyString(row.contextSnapshotId) ||
     !isRunStatus(row.status) || !isNonNegativeInteger(row.createdAt) || !isNonNegativeInteger(row.journalSequence)) {
     throw new AssistantRunPersistenceDataError('An assistant run record is invalid.')
@@ -693,7 +756,9 @@ function parseRun(row: AssistantRunRow): AssistantRun {
   }
 
   return {
+    ...decodeHarnessState(row.harnessStateJson),
     id: asAssistantRunId(row.id),
+    ...(row.schema === HARNESS_RUN_SCHEMA ? { engineVersion: HARNESS_ENGINE_VERSION } : {}),
     kind,
     conversationId: row.conversationId,
     ...(responseMessageId ? { responseMessageId } : {}),
@@ -1168,7 +1233,7 @@ function parseJson(value: string | null): unknown {
 }
 
 function isRunStatus(value: string): value is AssistantRunStatus {
-  return value === 'queued' || value === 'running' || value === 'awaiting-confirmation' ||
+  return value === 'paused' || value === 'queued' || value === 'running' || value === 'awaiting-confirmation' ||
     value === 'succeeded' || value === 'failed' || value === 'cancelled'
 }
 
@@ -1178,7 +1243,8 @@ function parseRunKind(value: string): AssistantRun['kind'] {
 }
 
 function isRunJournalEventType(value: string): value is RunJournalEventType {
-  return value === 'run.created' || value === 'run.started' || value === 'stream.event' ||
+  return value === 'run.paused' || value === 'run.resumed' || value === 'run.steered' || value === 'run.checkpointed' ||
+    value === 'run.created' || value === 'run.started' || value === 'stream.event' ||
     value === 'provider.route-selected' || value === 'provider-continuation.started' ||
     value === 'provider-continuation.completed' || value === 'model-operation.selected' ||
     value === 'run.awaiting-confirmation' || value === 'run.confirmation-resolved' ||
