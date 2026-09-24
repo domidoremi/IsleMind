@@ -93,6 +93,7 @@ export function ConversationNavigationRail({
     ? design.semantic.surface.elevated
     : design.semantic.surface.floating
   const grammar = {
+    'animal-island-ui': 'organic',
     minimal: 'precision',
     monet: 'organic',
     material: 'material',

@@ -1,66 +1,140 @@
 #!/usr/bin/env node
-
+const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
+const { parse } = require('@babel/parser')
+const { prepareAnimalIslandUi } = require('./prepare-animal-island-ui')
+const { collectReleaseInputFiles } = require('./release-freshness-contract')
 
 const root = path.resolve(__dirname, '..')
-const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8')
+const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
+const manifest = JSON.parse(read('package.json'))
+const fork = path.dirname(require.resolve('animal-island-ui-rn/package.json'))
+const forkManifest = require(path.join(fork, 'package.json'))
+const readFork = (file) => fs.readFileSync(path.join(fork, file), 'utf8')
 const checks = []
-
-function check(name, condition, detail) {
-  checks.push({ name, ok: Boolean(condition), detail })
+function check(name, run) {
+  try { run(); checks.push({ name, ok: true }) } catch (error) { checks.push({ name, ok: false, detail: error.message }) }
 }
 
-const isleKit = read('src/components/ui/isle/IsleKit.tsx')
-const isleIndex = read('src/components/ui/isle/index.ts')
-const tag = read('src/components/ui/isle/Tag.tsx')
-const skeleton = read('src/components/ui/isle/Skeleton.tsx')
-const image = read('src/components/ui/isle/Image.tsx')
-const backTop = read('src/components/ui/isle/BackTop.tsx')
-const readme = read('src/components/ui/isle/README.md')
-const themeContract = read('src/theme/animalIslandUiContract.ts')
-const themeMotion = read('src/theme/themeMotion.ts')
-const locales = ['en.json', 'zh-CN.json', 'ja.json'].map((name) => JSON.parse(read(`src/i18n/resources/${name}`)))
+check('workspace resolves directly to the sibling RN fork', () => {
+  assert.equal(manifest.dependencies['animal-island-ui-rn'], 'workspace:*')
+  assert.ok(manifest.workspaces.includes('../animal-island-ui'))
+  assert.equal(fs.realpathSync(fork), fs.realpathSync(path.resolve(root, '../animal-island-ui')))
+  assert.equal(forkManifest['react-native'], 'src/index.ts')
+  assert.equal(forkManifest.exports['.'].browser, './src/index.ts')
+  assert.equal(forkManifest.exports['./theme']['react-native'], './src/theme/index.ts')
+})
 
-for (const name of ['Tag', 'Image', 'Skeleton', 'BackTop']) {
-  check(`registry includes ${name}`, new RegExp(`['\"]${name}['\"]`).test(isleKit), 'ISLE_UI_COMPONENTS must advertise every synchronized upstream component')
+for (const name of ['Tag', 'Skeleton', 'Image', 'BackTop']) {
+  check(name + ' is a fork re-export, not a maintained local port', () => {
+    const source = read('src/components/ui/isle/' + name + '.tsx')
+    const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
+    assert.ok(ast.program.body.length > 0)
+    assert.ok(ast.program.body.every((node) => node.type === 'ExportNamedDeclaration' && node.source?.value === 'animal-island-ui-rn'))
+    assert.ok(read('src/components/ui/isle/index.ts').includes("export * from './" + name + "'"))
+  })
 }
 
-for (const file of ['Tag', 'Skeleton', 'Image', 'BackTop']) {
-  check(`barrel exports ${file}`, isleIndex.includes(`export * from './${file}'`), 'the public Isle UI barrel must expose synchronized components')
-}
+check('customized application controls dispatch to the fork', () => {
+  const kit = read('src/components/ui/isle/IsleKit.tsx')
+  for (const name of ['Button', 'Input', 'Switch', 'Card', 'Select', 'Progress']) assert.ok(kit.includes('<Native' + name + ' '))
+  for (const name of ['Title', 'Collapse', 'Modal', 'Table', 'Time', 'Checkbox', 'Tabs']) {
+    assert.ok(kit.includes(name + ' as Isle' + name))
+    assert.ok(!kit.includes('export function Isle' + name + '('))
+  }
+  assert.ok(read('src/components/ui/isle/IsleThemeProvider.tsx').includes('ThemeProvider mode={mode} accent={themeAccent} reducedMotion='))
+  assert.ok(read('src/theme/themeTokens.ts').includes("from 'animal-island-ui-rn/theme'"))
+  assert.ok(read('src/components/ui/isle/Dialog.tsx').includes('<NativeModal'))
+})
 
-check('sync status pins npm 1.5.1', /npm `1\.5\.1`/.test(readme), 'sync documentation must identify the reviewed package version')
-check('sync status pins upstream commit', /commit `803cffa`/.test(readme), 'sync documentation must identify the reviewed upstream commit')
-check('central contract pins the live upstream review', /reviewedVersion: '1\.5\.1'/.test(themeContract) && /reviewedCommit: '803cffa/.test(themeContract) && /reviewedAt: '2026-08-07'/.test(themeContract), 'the central contract must move with every upstream review')
-check('all themes retain Animal Island contracts', ['minimal', 'monet', 'material', "'liquid-glass'"].every((theme) => themeContract.includes(theme)) && /Record<CanonicalThemeId, AnimalIslandUiThemeSupport>/.test(themeContract), 'all canonical themes keep the adapted Isle primitive contract')
-check('tag defaults to soft and exposes close semantics', /variant = 'soft'/.test(tag) && /closeAccessibilityLabel/.test(tag) && /accessibilityRole="button"/.test(tag), 'Tag.soft, close labeling, and interactive semantics must remain explicit')
-check('skeleton respects reduced motion and stays hidden from accessibility', /useMotionPreference/.test(skeleton) && /accessibilityElementsHidden/.test(skeleton) && /importantForAccessibility="no-hide-descendants"/.test(skeleton), 'skeleton animation must respect motion preference and avoid noisy accessibility output')
-check('image uses native preview safety contracts', /from 'expo-image'/.test(image) && /onRequestClose/.test(image) && /useSafeAreaInsets/.test(image) && /accessibilityRole="image"/.test(image), 'image preview must use Expo Image, Android Back handling, safe areas, and image semantics')
-check('back top uses owner supplied scroll authority', /target: \(\) => IsleScrollToTopTarget/.test(backTop) && /scrollToOffset/.test(backTop) && /scrollTo\?\./.test(backTop), 'BackTop must not assume a global DOM scroll target')
-check('time supports the upstream game and hud layouts', /export type IsleTimeType = 'hud' \| 'game'/.test(isleKit) && /type = 'game'/.test(isleKit) && /Intl\.DateTimeFormat/.test(isleKit), 'Time.type must default to the native localized game layout while retaining hud')
-check('input resting border follows the theme expression', /fieldExpression\?\.border === 'none'[\s\S]*?'transparent'[\s\S]*?: input\.border/.test(isleKit), 'Minimal can retain the upstream borderless treatment while outlined and edge-highlight families own an explicit resting boundary')
-check('input clear behavior supports controlled and uncontrolled values', /const controlled = value !== undefined/.test(isleKit) && /setUncontrolledValue\(''\)/.test(isleKit) && /onClear\?\.\(\)/.test(isleKit), 'Input clear behavior must preserve both React Native control modes')
-check('input exposes invalid and disabled accessibility state', /aria-invalid=\{status === 'error' \|\| undefined\}/.test(isleKit) && /accessibilityState=\{disabled/.test(isleKit), 'Input status must remain available to native and web accessibility consumers')
+check('Metro shares host runtimes and preserves platform resolution', () => {
+  const config = require('../metro.config')
+  assert.ok(config.watchFolders.some((folder) => fs.realpathSync(folder) === fs.realpathSync(fork)))
+  for (const platform of ['android', 'ios', 'web']) {
+    for (const name of ['react', 'react/jsx-runtime', 'react-native', 'react-native/Libraries/Utilities/Platform', 'react-native-svg']) {
+      let received
+      const resolution = { type: 'sourceFile', filePath: 'host-runtime' }
+      const context = { originModulePath: path.join(fork, 'src/index.ts'), resolveRequest: (...args) => { received = args; return resolution } }
+      assert.equal(config.resolver.resolveRequest(context, name, platform), resolution)
+      assert.equal(received[0].originModulePath, path.join(root, 'node_modules/expo/package.json'))
+      assert.equal(received[1], name)
+      assert.equal(received[2], platform)
+    }
+  }
+  // Expo skips declaration aliases, never execute @types/react.
+  assert.ok(JSON.parse(read('tsconfig.json')).compilerOptions.paths.react.every((target) => target.endsWith('.d.ts')))
+})
 
-for (const [index, locale] of locales.entries()) {
-  check(`locale ${index + 1} has image labels`, ['openImagePreview', 'closeImagePreview', 'imageLoadFailed'].every((key) => typeof locale.common?.[key] === 'string' && locale.common[key].length > 0), 'every supported locale needs image preview and failure labels')
-}
+check('theme transition rendering belongs to the fork, not a duplicate app port', () => {
+  assert.ok(readFork('src/index.ts').includes('ThemeTransitionProvider, useThemeTransition'))
+  assert.ok(read('src/components/ui/isle/IsleThemeProvider.tsx').includes('<ThemeTransitionProvider reducedMotion='))
+  const selection = read('src/hooks/useThemeSelection.ts')
+  assert.ok(selection.includes("import { useThemeTransition } from 'animal-island-ui-rn'"))
+  assert.ok(selection.includes('useSettingsStore.getState().updateSettings(selection)'))
+  assert.doesNotMatch(selection, /startViewTransition|Animated\.timing/, 'app owns selection/scroll intent, not transition rendering')
+})
 
-const synchronizedSource = tag + skeleton + image + backTop
-for (const forbidden of ['react-dom', 'classnames', '.module.less', 'base64?raw']) {
-  check(`native sync excludes ${forbidden}`, !synchronizedSource.includes(forbidden), 'React DOM, Less, and upstream bitmap assets must stay outside IsleMind')
-}
+check('custom settings radios share the fork keyboard group without a local implementation', () => {
+  assert.ok(readFork('src/components/Radio/Radio.tsx').includes('<RadioGroup'))
+  const group = readFork('src/components/Radio/RadioGroup.tsx')
+  assert.ok(group.includes("Platform.OS === 'web'"))
+  assert.ok(group.includes('accessible={false}'))
+  for (const file of ['src/components/main/SettingsScreenContent.tsx', 'src/components/settings/SettingsThemeAccentControl.tsx']) {
+    const source = read(file)
+    assert.ok(source.includes("import { RadioGroup } from 'animal-island-ui-rn'"))
+    assert.ok(source.includes('<RadioGroup'))
+    assert.doesNotMatch(source, /addEventListener\(['"]keydown|querySelectorAll\(['"]\[role/, 'radio DOM navigation belongs to the fork')
+  }
+})
 
-const failures = checks.filter((item) => !item.ok)
-for (const item of checks) {
-  console.log(`${item.ok ? 'PASS' : 'FAIL'} ${item.name}`)
-  if (!item.ok) console.log(`  ${item.detail}`)
-}
+check('library owns native overlay safety, disabled options and motion', () => {
+  const modal = readFork('src/components/Modal/Modal.tsx')
+  for (const value of ['onRequestClose={onClose}', 'accessibilityViewIsModal', '<ScrollView', 'keyboardShouldPersistTaps="handled"', 'contentInsets']) assert.ok(modal.includes(value), value)
+  assert.ok(readFork('src/components/Input/Input.tsx').includes('inputRef'))
+  assert.ok(readFork('src/components/Select/Select.tsx').includes('disabled={option.disabled}'))
+  for (const name of ['Button', 'Switch', 'Card', 'Modal', 'Progress', 'Select', 'Tooltip']) {
+    const source = readFork('src/components/' + name + '/' + name + '.tsx')
+    assert.ok(source.includes('useTheme'))
+    assert.ok(source.includes('reducedMotion'))
+  }
+})
 
-if (failures.length) {
-  console.error(`isle ui upstream sync failed: ${failures.length} issue(s)`)
-  process.exit(1)
-}
+check('install builds declarations and release freshness includes the fork', () => {
+  assert.ok(manifest.scripts.postinstall.includes('build:ui'))
+  assert.ok(manifest.scripts['build:ui'].includes('--cwd ../animal-island-ui build'))
+  assert.equal(manifest.scripts['eas-build-pre-install'], 'node scripts/prepare-animal-island-ui.js')
+  for (const workflow of ['architecture-gates', 'runner-android-apk', 'release-android-apk', 'eas-android-apk']) {
+    const source = read('.github/workflows/' + workflow + '.yml')
+    const prepare = source.indexOf('node scripts/prepare-animal-island-ui.js')
+    assert.ok(prepare >= 0 && prepare < source.indexOf('bun install --frozen-lockfile'))
+  }
+  assert.ok(collectReleaseInputFiles(root).includes(path.resolve(fork, 'src/components/Button/Button.tsx')))
+})
 
-console.log(`isle ui upstream sync passed: ${checks.length} checks`)
+check('CI bootstrap preserves existing work and rejects the Web branch', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-ui-contract-'))
+  const app = path.join(temp, 'app')
+  const sibling = path.join(temp, 'animal-island-ui')
+  try {
+    fs.mkdirSync(app)
+    fs.mkdirSync(sibling)
+    const manifestPath = path.join(sibling, 'package.json')
+    fs.writeFileSync(manifestPath, JSON.stringify({ name: 'animal-island-ui' }))
+    const git = (...args) => { assert.deepEqual(args.slice(0, 2), ['git', ['-C', sibling, 'rev-parse', 'HEAD']]); return 'a'.repeat(40) }
+    assert.throws(() => prepareAnimalIslandUi({ root: app, git }), /Use the rn branch/)
+    fs.writeFileSync(manifestPath, JSON.stringify(forkManifest))
+    assert.equal(prepareAnimalIslandUi({ root: app, git }), sibling)
+    assert.throws(() => prepareAnimalIslandUi({ root: app, ref: 'b'.repeat(40), git }), /left untouched/)
+    assert.deepEqual(JSON.parse(fs.readFileSync(manifestPath)), forkManifest)
+  } finally {
+    assert.equal(path.dirname(temp), path.resolve(os.tmpdir()))
+    assert.ok(path.basename(temp).startsWith('islemind-ui-contract-'))
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+for (const item of checks) console.log((item.ok ? 'PASS ' : 'FAIL ') + item.name + (item.detail ? ': ' + item.detail : ''))
+if (checks.some((item) => !item.ok)) process.exit(1)
+console.log('isle ui fork integration passed: ' + checks.length + ' checks')

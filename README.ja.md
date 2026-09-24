@@ -24,7 +24,7 @@ IsleMind は、モデルプロバイダー、会話、ナレッジとメモリ�
 - **ナレッジと個人コンテキスト**－ナレッジ文書を取り込み、個人メモリと会話コンテキストを管理し、ローカルインデックスと embedding モデルで検索拡張を行います。
 - **エージェントとタスク実行**－ステップ状態、キャンセルと復旧、ツール認可、実行証跡を扱います。構造化された作業成果物には、品質ゲート、コピー可能な引き継ぎ、継続プロンプトが含まれます。
 - **ツールと連携**－MCP、Skills、内蔵ワークスペースツール、Web 検索、音声、Android 端末機能に対応します。ネットワーク機能はユーザーが設定または明示的に有効化します。
-- **テーマと言語**－ミニマル、モネ、Material 3、リキッドグラスの各テーマで、ライト、ダーク、システム連動、カスタムアクセントを選べます。画面表示は簡体中文、English、日本語に対応します。
+- **テーマと言語**－ミニマル、モネ、Material 3、リキッドグラス、Animal Island UI の各テーマで、ライト、ダーク、システム連動、カスタムアクセントを選べます。画面表示は簡体中文、English、日本語に対応します。
 - **Android 体験**－セーフエリアとキーボードへの対応、バックグラウンド状態通知、アプリ内更新確認、ランタイム診断、復旧用の導線を備えています。
 
 ## データとネットワークの境界
@@ -75,11 +75,14 @@ IsleMind は、モデルプロバイダー、会話、ナレッジとメモリ�
 ## ソースコードの取得
 
 ```powershell
+git clone --branch rn https://github.com/domidoremi/animal-island-ui.git
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
 bun install
 bun run doctor
 ```
+
+RN テーマ fork は IsleMind と同じ親ディレクトリに配置します。`bun install` がリンクと型宣言のビルドを行います。汎用テーマ修正は fork 側で行い、IsleMind に再移植しません。[UI 連携](src/components/ui/isle/README.md)に責務と CI/EAS の設定を記載しています。
 
 ## Android で実行
 

@@ -12,8 +12,12 @@ export function IslePressable(props: Parameters<typeof PressableScale>[0]) {
 }
 
 export function IsleOverlayPressable(props: PressableProps) {
+  const { isLiquidGlass } = useAppTheme()
   const accessibilityState = props.disabled
     ? { ...props.accessibilityState, disabled: true }
     : props.accessibilityState
+  if (isLiquidGlass && props.accessible !== false && props.accessibilityRole !== 'none') {
+    return <PressableScale interactionProfile="fluid" {...props} accessibilityState={accessibilityState} />
+  }
   return <Pressable accessibilityRole="button" {...props} accessibilityState={accessibilityState} />
 }

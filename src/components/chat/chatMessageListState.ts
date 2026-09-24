@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import type { ConversationTaskActivityRecord } from '@/modules/tasks'
 import {
   LONG_MESSAGE_LIST_ANIMATION_THRESHOLD,

@@ -37,6 +37,7 @@ export const DEFAULT_BACKGROUND_MOTION: ThemeBackgroundMotion = 'subtle'
 export const DEFAULT_BACKGROUND_INTENSITY: ThemeBackgroundIntensity = 'low'
 
 const DEFAULT_MOTION_BY_FAMILY: Readonly<Record<CanonicalThemeId, ThemeBackgroundMotion>> = Object.freeze({
+  'animal-island-ui': 'static',
   minimal: 'static',
   monet: 'subtle',
   material: 'static',
@@ -44,6 +45,7 @@ const DEFAULT_MOTION_BY_FAMILY: Readonly<Record<CanonicalThemeId, ThemeBackgroun
 })
 
 const KIND_BY_FAMILY: Readonly<Record<CanonicalThemeId, BackgroundEnvironmentKind>> = Object.freeze({
+  'animal-island-ui': 'atmospheric',
   minimal: 'minimal',
   monet: 'atmospheric',
   material: 'tonal',
@@ -54,7 +56,7 @@ const LAYER_BUDGET: Readonly<Record<BackgroundEnvironmentKind, Readonly<Record<T
   minimal: Object.freeze({ static: 1, subtle: 1, dynamic: 2, immersive: 2 }),
   atmospheric: Object.freeze({ static: 3, subtle: 3, dynamic: 4, immersive: 5 }),
   tonal: Object.freeze({ static: 2, subtle: 2, dynamic: 3, immersive: 3 }),
-  fluid: Object.freeze({ static: 3, subtle: 4, dynamic: 5, immersive: 6 }),
+  fluid: Object.freeze({ static: 3, subtle: 3, dynamic: 3, immersive: 3 }),
 })
 
 const INTENSITY_SCALE: Readonly<Record<ThemeBackgroundIntensity, number>> = Object.freeze({
@@ -74,7 +76,7 @@ const CYCLE_MS: Readonly<Record<BackgroundEnvironmentKind, number>> = Object.fre
   minimal: 96_000,
   atmospheric: 72_000,
   tonal: 88_000,
-  fluid: 64_000,
+  fluid: 24_000,
 })
 
 /**
@@ -103,10 +105,10 @@ export function resolveBackgroundEnvironment(input: ResolveBackgroundEnvironment
     seed,
     preset,
     layerCount: LAYER_BUDGET[kind][motion],
-    visualIntensity: familyAmplitude * INTENSITY_SCALE[intensity],
-    amplitude: familyAmplitude * INTENSITY_SCALE[intensity] * MOTION_SCALE[motion],
-    cycleMs: CYCLE_MS[kind],
-    grainOpacity: kind === 'fluid' ? 0.018 * INTENSITY_SCALE[intensity] : 0,
+    visualIntensity: kind === 'fluid' ? 0.78 + INTENSITY_SCALE[intensity] * 0.22 : familyAmplitude * INTENSITY_SCALE[intensity],
+    amplitude: (kind === 'fluid' ? 1 : familyAmplitude * INTENSITY_SCALE[intensity]) * MOTION_SCALE[motion],
+    cycleMs: kind === 'fluid' && motion === 'subtle' ? 32_000 : kind === 'fluid' && motion === 'immersive' ? 18_000 : CYCLE_MS[kind],
+    grainOpacity: 0,
   })
 }
 

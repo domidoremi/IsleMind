@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Platform } from 'react-native'
+import { AccessibilityInfo, Platform } from 'react-native'
 
 interface ThemeMediaQueryList {
   matches: boolean
@@ -23,6 +23,18 @@ export function useTransparencyPreference(): boolean {
   const [reduced, setReduced] = useState(readTransparencyPreference)
 
   useEffect(() => {
+    if (Platform.OS === 'ios') {
+      let active = true
+      let eventSeen = false
+      const subscription = AccessibilityInfo.addEventListener('reduceTransparencyChanged', (enabled) => {
+        eventSeen = true
+        if (active) setReduced(enabled)
+      })
+      void AccessibilityInfo.isReduceTransparencyEnabled()
+        .then((enabled) => { if (active && !eventSeen) setReduced(enabled) })
+        .catch(() => undefined)
+      return () => { active = false; subscription.remove() }
+    }
     if (Platform.OS !== 'web') return undefined
     const matchMedia = resolveThemeWindow()?.matchMedia
     if (!matchMedia) return undefined
@@ -45,6 +57,7 @@ export function useTransparencyPreference(): boolean {
 }
 
 function readTransparencyPreference(): boolean {
+  if (Platform.OS === 'android') return false
   if (Platform.OS !== 'web') return true
   const matchMedia = resolveThemeWindow()?.matchMedia
   return matchMedia ? TRANSPARENCY_FALLBACK_QUERIES.some((query) => matchMedia(query).matches) : true

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import { StyleSheet, View } from 'react-native'
+import { MotiView } from 'moti'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
@@ -83,6 +85,8 @@ export function ThemeButtonExpressionBody({ family, colors, icon, content, prima
 }
 
 export function ThemeInputExpressionBody({ family, colors, prefix, input, suffix, focused, multiline }: InputExpressionBodyProps) {
+  const focusMotion = useThemeMotion('accent', { themeId: family })
+  const spatial = focusMotion.intensity === 'full'
   const content = (
     <View style={[styles.inputRow, multiline ? styles.inputRowMultiline : null]}>
       {prefix}
@@ -99,6 +103,13 @@ export function ThemeInputExpressionBody({ family, colors, prefix, input, suffix
           {...decorativeAccessibility}
           style={[styles.minimalInputRule, { backgroundColor: focused ? colors.ui.input.focus : colors.ui.input.border }]}
         />
+        <MotiView
+          {...decorativeAccessibility}
+          testID="theme-input-focus-minimal"
+          animate={{ opacity: focused ? 1 : 0, scaleX: spatial && !focused ? 0.35 : 1 }}
+          transition={focusMotion.transition}
+          style={[styles.minimalInputRule, { backgroundColor: colors.ui.input.focus }]}
+        />
       </View>
     )
   }
@@ -106,8 +117,8 @@ export function ThemeInputExpressionBody({ family, colors, prefix, input, suffix
   if (family === 'monet') {
     return (
       <View testID="theme-input-body-monet" style={styles.inputBody}>
-        <View {...decorativeAccessibility} style={[styles.monetInputWash, { backgroundColor: colors.ui.icon.accentBackground, opacity: focused ? 0.16 : 0.08 }]} />
-        <View {...decorativeAccessibility} style={[styles.monetInputEdge, { borderColor: colors.ui.control.focus, opacity: focused ? 0.5 : 0.24 }]} />
+        <MotiView {...decorativeAccessibility} testID="theme-input-focus-monet" animate={{ opacity: focused ? 0.18 : 0.06, scale: spatial && focused ? 1.03 : 1 }} transition={focusMotion.transition} style={[styles.monetInputWash, { backgroundColor: colors.ui.icon.accentBackground }]} />
+        <MotiView {...decorativeAccessibility} animate={{ opacity: focused ? 0.5 : 0.24 }} transition={focusMotion.transition} style={[styles.monetInputEdge, { borderColor: colors.ui.control.focus }]} />
         {content}
       </View>
     )
@@ -117,14 +128,15 @@ export function ThemeInputExpressionBody({ family, colors, prefix, input, suffix
     return (
       <View testID="theme-input-body-material" style={styles.inputBody}>
         {content}
-        <View {...decorativeAccessibility} style={[styles.materialInputIndicator, { backgroundColor: colors.primary, opacity: focused ? 1 : 0.44 }]} />
+        <View {...decorativeAccessibility} style={[styles.materialInputIndicator, { backgroundColor: colors.ui.input.border, opacity: 0.44 }]} />
+        <MotiView {...decorativeAccessibility} testID="theme-input-focus-material" animate={{ opacity: focused ? 1 : 0, scaleX: spatial && !focused ? 0.2 : 1 }} transition={focusMotion.transition} style={[styles.materialInputIndicator, { backgroundColor: colors.primary }]} />
       </View>
     )
   }
 
   return (
     <View testID="theme-input-body-liquid-glass" style={styles.inputBody}>
-      <View {...decorativeAccessibility} style={[styles.glassInputPlane, { borderColor: colors.ui.actionBar.itemBorder,
+      <MotiView {...decorativeAccessibility} testID="theme-input-focus-liquid-glass" animate={{ borderColor: focused ? colors.ui.control.focus : colors.ui.actionBar.itemBorder, opacity: focused ? 1 : 0.6 }} transition={focusMotion.transition} style={[styles.glassInputPlane, {
         borderRadius: multiline ? colors.ui.radius.controlLarge : 999, left: -8, right: -8 }]} />
       {content}
     </View>

@@ -3,7 +3,7 @@ export type ThemeBackgroundVariation = 'fixed' | 'random' | 'startup' | 'daily' 
 export type ThemeBackgroundMotion = 'static' | 'subtle' | 'dynamic' | 'immersive'
 export type ThemeBackgroundIntensity = 'low' | 'medium' | 'high'
 /** The only product theme identities accepted by storage, tools, and runtime code. */
-export type CanonicalThemeId = 'minimal' | 'monet' | 'material' | 'liquid-glass'
+export type CanonicalThemeId = 'minimal' | 'monet' | 'material' | 'liquid-glass' | 'animal-island-ui'
 export type ThemeId = CanonicalThemeId
 
 /**
@@ -11,7 +11,7 @@ export type ThemeId = CanonicalThemeId
  * identity. Presentation code consumes the same values without an alias or
  * presentation-id translation layer.
  */
-export const CANONICAL_THEME_IDS = ['minimal', 'monet', 'material', 'liquid-glass'] as const satisfies readonly CanonicalThemeId[]
+export const CANONICAL_THEME_IDS = ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const satisfies readonly CanonicalThemeId[]
 export const THEME_MODE_VALUES = ['light', 'dark', 'system'] as const satisfies readonly ThemeMode[]
 export const THEME_TOKEN_MODE_VALUES = ['light', 'dark'] as const satisfies readonly Exclude<ThemeMode, 'system'>[]
 

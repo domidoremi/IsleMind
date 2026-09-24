@@ -145,6 +145,8 @@ describe('FloatingComposerSurfaces', () => {
     expect(compactStyle.paddingBottom).toBe(0)
     expect(compactStyle.textAlignVertical).toBe('center')
     expect(compactStyle.height).toBe(48)
+    expect(compactStyle.backgroundColor).toBe('transparent')
+    expect(input.props.underlineColorAndroid).toBe('transparent')
     await screen.rerender(
       <MessageInput
         {...inputProps}
@@ -161,6 +163,9 @@ describe('FloatingComposerSurfaces', () => {
     expect(expandedStyle.paddingBottom).toBe(8)
     expect(expandedStyle.textAlignVertical).toBe('top')
     expect(expandedStyle.height).toBe(184)
+    expect(expandedStyle.backgroundColor).toBe('transparent')
+    expect(expandedInput.props.value).toBe('draft')
+    expect(expandedInput.props.selection).toEqual(inputProps.selection)
   })
 
   it('centers all independent surfaces on the overlay row', async () => {

@@ -6,7 +6,6 @@ import {
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { ThemeExpressionSurface } from '@/components/ui/isle/ThemeExpressionSurface'
-import { GlassSurface, useGlassBackdrop } from '../glass'
 
 type ThemeColors = ReturnType<typeof useAppTheme>['colors']
 
@@ -24,24 +23,28 @@ type ThemeSurfaceKind = 'composer' | 'chrome' | 'message' | 'message-content'
 
 const CHAT_SURFACE_TEST_IDS = {
   composer: {
+    'animal-island-ui': 'chat-composer-surface-animal-island-ui',
     minimal: 'chat-composer-surface-minimal',
     monet: 'chat-composer-surface-monet',
     material: 'chat-composer-surface-material',
     'liquid-glass': 'chat-composer-surface-liquid-glass',
   },
   chrome: {
+    'animal-island-ui': 'chat-chrome-surface-animal-island-ui',
     minimal: 'chat-chrome-surface-minimal',
     monet: 'chat-chrome-surface-monet',
     material: 'chat-chrome-surface-material',
     'liquid-glass': 'chat-chrome-surface-liquid-glass',
   },
   message: {
+    'animal-island-ui': 'chat-message-surface-animal-island-ui',
     minimal: 'chat-message-surface-minimal',
     monet: 'chat-message-surface-monet',
     material: 'chat-message-surface-material',
     'liquid-glass': 'chat-message-surface-liquid-glass',
   },
   'message-content': {
+    'animal-island-ui': 'chat-message-content-surface-animal-island-ui',
     minimal: 'chat-message-content-surface-minimal',
     monet: 'chat-message-content-surface-monet',
     material: 'chat-message-content-surface-material',
@@ -53,22 +56,10 @@ export function ChatComposerThemeSurface({
   themeId,
   colors,
   horizontalPadding,
+  focused,
   children,
-}: ThemeSurfaceProps & { horizontalPadding: number }) {
-  const { realtimeBlurSupported } = useGlassBackdrop()
-  const surface = <ThemeExpressionSurface family={themeId} colors={colors} kind="composer" horizontalPadding={horizontalPadding} testID={CHAT_SURFACE_TEST_IDS.composer[themeId]}>{children}</ThemeExpressionSurface>
-  if (themeId !== 'liquid-glass') return surface
-  return (
-    <GlassSurface
-      enabled
-      variant="chrome"
-      tint="default"
-      borderRadius={colors.design?.semantic.radius.large ?? 16}
-      style={{ width: '100%' }}
-    >
-      <ThemeExpressionSurface family={themeId} colors={colors} kind="composer" horizontalPadding={horizontalPadding} backdropProvided={realtimeBlurSupported} testID={CHAT_SURFACE_TEST_IDS.composer[themeId]}>{children}</ThemeExpressionSurface>
-    </GlassSurface>
-  )
+}: ThemeSurfaceProps & { horizontalPadding: number; focused?: boolean }) {
+  return <ThemeExpressionSurface family={themeId} colors={colors} kind="composer" horizontalPadding={horizontalPadding} focused={focused} testID={CHAT_SURFACE_TEST_IDS.composer[themeId]}>{children}</ThemeExpressionSurface>
 }
 
 export function ChatChromeThemeSurface({
@@ -81,20 +72,7 @@ export function ChatChromeThemeSurface({
   alertBorder?: string
   onLayout?: (event: LayoutChangeEvent) => void
 }) {
-  const { realtimeBlurSupported } = useGlassBackdrop()
-  const surface = <ThemeExpressionSurface family={themeId} colors={colors} kind="chrome" alertBorder={alertBorder} onLayout={onLayout} testID={CHAT_SURFACE_TEST_IDS.chrome[themeId]}>{children}</ThemeExpressionSurface>
-  if (themeId !== 'liquid-glass') return surface
-  return (
-    <GlassSurface
-      enabled
-      variant="chrome"
-      tint="default"
-      borderRadius={colors.design?.semantic.radius.large ?? 16}
-      style={{ width: '100%' }}
-    >
-      <ThemeExpressionSurface family={themeId} colors={colors} kind="chrome" alertBorder={alertBorder} onLayout={onLayout} backdropProvided={realtimeBlurSupported} testID={CHAT_SURFACE_TEST_IDS.chrome[themeId]}>{children}</ThemeExpressionSurface>
-    </GlassSurface>
-  )
+  return <ThemeExpressionSurface family={themeId} colors={colors} kind="chrome" alertBorder={alertBorder} onLayout={onLayout} testID={CHAT_SURFACE_TEST_IDS.chrome[themeId]}>{children}</ThemeExpressionSurface>
 }
 
 export function MessageBubbleThemeSurface({

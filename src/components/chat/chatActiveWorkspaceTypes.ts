@@ -5,7 +5,7 @@ import type { EdgeInsets } from 'react-native-safe-area-context'
 import type { useIsleDialog, IsleBackgroundState } from '@/components/ui/isle'
 import type { ComposerCommand } from '@/components/chat/Composer'
 import type { useAppTheme } from '@/hooks/useAppTheme'
-import type { useMotionPreference } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { ConversationMetrics } from '@/modules/conversations'
 import type { useSettingsStore } from '@/store/settingsStore'
@@ -89,7 +89,7 @@ export interface ChatActiveWorkspaceProps {
   setComposerPanel: Dispatch<SetStateAction<ComposerPanel>>
   setComposerHeight: Dispatch<SetStateAction<number>>
   collapseQuickTools: () => void
-  motion: ReturnType<typeof useMotionPreference>
+  motion: MotionIntensity
   markChromeActive: () => void
   restoreChrome: () => void
   lastScrollOffset: MutableRefObject<number>

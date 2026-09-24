@@ -67,7 +67,7 @@ export function ChatPersistentHeader({
 }: ChatPersistentHeaderProps) {
   const { t } = useTranslation()
   const { width: viewportWidth } = useWindowDimensions()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(themeId === 'liquid-glass')
   const { active: leadingActive, running: leadingRunning, trigger: triggerLeading } = useNavigationTrigger(onLeadingPress)
   const minimal = themeId === 'minimal'
   const monet = themeId === 'monet'

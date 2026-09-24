@@ -6,6 +6,7 @@
  * selecting a raw colour or geometry value for a particular family.
  */
 
+import { appearanceColors as animalIslandColors, defaultTheme as animalIslandTheme } from 'animal-island-ui-rn/theme'
 import {
   CANONICAL_THEME_IDS,
   THEME_TOKEN_MODE_VALUES,
@@ -106,6 +107,7 @@ export const THEME_MOTION_DURATIONS: Readonly<Record<ThemeFamily, Readonly<Theme
   monet: Object.freeze({ instant: 0, interaction: 110, emphasis: 180, panel: 260, page: 300 }),
   material: Object.freeze({ instant: 0, interaction: 120, emphasis: 160, panel: 240, page: 300 }),
   'liquid-glass': Object.freeze({ instant: 0, interaction: 130, emphasis: 200, panel: 280, page: 320 }),
+  'animal-island-ui': Object.freeze({ instant: 0, interaction: animalIslandTheme.duration.fast, emphasis: animalIslandTheme.duration.base, panel: animalIslandTheme.duration.slow, page: animalIslandTheme.duration.slow }),
 })
 
 export function resolveThemeMotionDurations(family: ThemeFamily): ThemeMotionDurationTokens {
@@ -286,6 +288,11 @@ const type = (fontSize: number, lineHeight: number, fontWeight: ThemeTypographyT
 })
 
 const typographyFor = (family: ThemeFamily): ThemeTypographyTokens => {
+  if (family === 'animal-island-ui') return {
+    display: type(32, 40, '800'), headline: type(24, 32, '700'), title: type(20, 28, '700'),
+    body: type(animalIslandTheme.fontSize.base, 22, '500'), label: type(animalIslandTheme.fontSize.base, 20, '600'), caption: type(animalIslandTheme.fontSize.sm, 18, '500'),
+    code: { ...type(13, 20, '500'), fontFamily: 'monospace' },
+  }
   if (family === 'minimal') return {
     display: type(30, 36, '700'), headline: type(22, 28, '700'), title: type(17, 22, '700'),
     body: type(14, 20, '400'), label: type(12, 16, '600'), caption: type(11, 15, '500'),
@@ -587,6 +594,12 @@ const componentsFor = (
   surface: ThemeSurfaceMaterialTokens,
 ): ThemeComponentTokens => {
   const base = baseComponents(color, radius, surface, family === 'liquid-glass')
+  if (family === 'animal-island-ui') return {
+    ...base,
+    button: { ...base.button, radius: radius.pill, minHeight: animalIslandTheme.controlHeight.lg },
+    field: { ...base.field, radius: radius.pill, minHeight: animalIslandTheme.controlHeight.lg },
+    panel: { ...base.panel, radius: animalIslandTheme.radius.lg, blur: false },
+  }
   if (family === 'minimal') return {
     ...base,
     // Minimal keeps the canvas continuous. Boundaries are communicated by
@@ -663,9 +676,10 @@ const componentsFor = (
 }
 
 const radiusFor = (family: ThemeFamily): ThemeRadiusTokens => {
+  if (family === 'animal-island-ui') return { none: 0, small: animalIslandTheme.radius.sm, medium: animalIslandTheme.radius.base, large: animalIslandTheme.radius.lg, extraLarge: animalIslandTheme.radius.lg, pill: 999 }
   if (family === 'minimal') return { none: 0, small: 2, medium: 4, large: 6, extraLarge: 8, pill: 999 }
   if (family === 'material') return { none: 0, small: 4, medium: 8, large: 12, extraLarge: 16, pill: 999 }
-  if (family === 'liquid-glass') return { none: 0, small: 8, medium: 12, large: 16, extraLarge: 22, pill: 999 }
+  if (family === 'liquid-glass') return { none: 0, small: 10, medium: 16, large: 22, extraLarge: 28, pill: 999 }
   return { none: 0, small: 6, medium: 10, large: 14, extraLarge: 18, pill: 999 }
 }
 
@@ -743,7 +757,7 @@ function surfaceMaterialsFor(
     return {
       background: surfaceMaterial(color.canvas, color.onSurface),
       chrome: surfaceMaterial(
-        light ? 'rgba(255, 255, 255, 0.42)' : 'rgba(22, 39, 54, 0.5)',
+        light ? 'rgba(255, 255, 255, 0.16)' : 'rgba(14, 30, 46, 0.22)',
         color.onSurface,
         color.border,
         {
@@ -766,7 +780,7 @@ function surfaceMaterialsFor(
         elevation: elevation.level1,
       }),
       floating: surfaceMaterial(
-        light ? 'rgba(255, 255, 255, 0.6)' : 'rgba(25, 44, 60, 0.64)',
+        light ? 'rgba(255, 255, 255, 0.34)' : 'rgba(20, 37, 55, 0.46)',
         color.onSurface,
         color.borderStrong,
         {
@@ -818,7 +832,9 @@ function surfaceMaterialsFor(
 }
 
 function makeTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignTokens {
-  const colors = family === 'monet'
+  const colors = family === 'animal-island-ui'
+    ? animalIslandColors[mode]
+    : family === 'monet'
     ? palette(mode, monetLight, monetDark)
     : family === 'material'
       ? palette(mode, materialLight, materialDark)
@@ -901,6 +917,7 @@ function deepFreeze<T>(value: T): T {
  * change into every screen that renders the same family/mode.
  */
 export const THEME_DESIGN_TOKENS: Readonly<Record<ThemeFamily, Readonly<Record<ThemeTokenMode, ThemeDesignTokens>>>> = deepFreeze({
+  'animal-island-ui': Object.freeze({ light: makeTokens('animal-island-ui', 'light'), dark: makeTokens('animal-island-ui', 'dark') }),
   minimal: Object.freeze({ light: makeTokens('minimal', 'light'), dark: makeTokens('minimal', 'dark') }),
   monet: Object.freeze({ light: makeTokens('monet', 'light'), dark: makeTokens('monet', 'dark') }),
   material: Object.freeze({ light: makeTokens('material', 'light'), dark: makeTokens('material', 'dark') }),

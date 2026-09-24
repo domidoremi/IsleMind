@@ -94,6 +94,9 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare RN theme workspace
+        run: node scripts/prepare-animal-island-ui.js
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 

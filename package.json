@@ -2,13 +2,18 @@
   "name": "islemind",
   "version": "1.1.2",
   "packageManager": "bun@1.4.2",
+  "workspaces": ["../animal-island-ui"],
   "main": "expo-router/entry",
   "bin": {
     "islemind": "scripts/islemind-cli.js"
   },
   "scripts": {
+    "guide:generate": "node scripts/user-guide.js",
+    "guide:check": "node scripts/user-guide.js --check && node --test scripts/user-guide-tests.js",
     "start": "node node_modules/expo/bin/cli start",
-    "postinstall": "node scripts/patch-onnxruntime-16kb.js",
+    "postinstall": "bun run build:ui && node scripts/patch-onnxruntime-16kb.js",
+    "build:ui": "bun run --cwd ../animal-island-ui build",
+    "eas-build-pre-install": "node scripts/prepare-animal-island-ui.js",
     "android": "node node_modules/expo/bin/cli run:android",
     "ios": "node node_modules/expo/bin/cli run:ios",
     "test": "bun --no-env-file run test:sqlite && jest",
@@ -46,6 +51,7 @@
     "test:web-style-runtime-boundary": "node scripts/web-style-runtime-boundary-tests.js",
     "test:android-release-hardening": "node scripts/android-release-hardening-tests.js",
     "test:android-build-toolchain": "node scripts/android-build-toolchain-tests.js",
+    "test:android-display-refresh": "node scripts/android-display-refresh-tests.js",
     "test:dependency-security": "node scripts/dependency-security-tests.js",
     "test:product-mobile-web-render-evidence": "node scripts/product-mobile-web-render-evidence-tests.js",
     "test:product-mobile-native-evidence": "node scripts/product-mobile-native-evidence-tests.js",
@@ -155,6 +161,7 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "@shopify/flash-list": "2.0.2",
+    "animal-island-ui-rn": "workspace:*",
     "expo": "57.0.24",
     "expo-application": "57.0.3",
     "expo-asset": "57.0.18",
@@ -167,6 +174,7 @@
     "expo-document-picker": "57.0.2",
     "expo-file-system": "57.0.7",
     "expo-font": "57.0.4",
+    "expo-gl": "57.0.2",
     "expo-haptics": "57.0.3",
     "expo-image": "57.0.5",
     "expo-image-manipulator": "57.0.19",
@@ -241,8 +249,17 @@
   },
   "jest": {
     "preset": "jest-expo",
+    "moduleNameMapper": {
+      "^react$": "<rootDir>/node_modules/react",
+      "^react/(.*)$": "<rootDir>/node_modules/react/$1",
+      "^react-native$": "<rootDir>/node_modules/react-native",
+      "^react-native/(.*)$": "<rootDir>/node_modules/react-native/$1",
+      "^react-native-svg$": "<rootDir>/node_modules/react-native-svg",
+      "^animal-island-ui-rn$": "<rootDir>/../animal-island-ui/dist/index.js",
+      "^animal-island-ui-rn/theme$": "<rootDir>/../animal-island-ui/dist/theme/index.js"
+    },
     "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|moti|yaml|decode-uri-component)"
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|jest-expo|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|moti|yaml|decode-uri-component)"
     ],
     "collectCoverageFrom": [
       "src/**/*.{ts,tsx}",

@@ -2,7 +2,7 @@ import type { Dispatch, RefObject, SetStateAction } from 'react'
 import type { FlashListRef } from '@shopify/flash-list'
 
 import type { useIsleDialog } from '@/components/ui/isle'
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import type { ConversationTaskActivityRecord } from '@/modules/tasks'
 import type { ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
 import type { ProductMobileMessageListLayout } from '@/presentation/layout/productMobileLayout'

@@ -6,7 +6,7 @@ import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIco
 import type { Attachment, CommandReference } from '@/types/chatContracts'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { normalizeSearchText } from '@/utils/text'
@@ -29,6 +29,7 @@ import { useComposerLongDraftEditor } from './useComposerLongDraftEditor'
 import type { ComposerSizeMode } from './composerLongDraftState'
 import {
   COMPOSER_INPUT_MIN_HEIGHT,
+  COMPOSER_CONTROL_ROW_GAP,
   resolveFloatingComposerGeometry,
   type ComposerActivityState,
 } from './floatingComposerGeometry'
@@ -438,7 +439,8 @@ export function Composer({
 
   async function copyEntireDraft() {
     try {
-      await Clipboard.setStringAsync(editor.currentText())
+      const copied = await Clipboard.setStringAsync(editor.currentText())
+      if (!copied) throw new Error('Clipboard write failed')
       dialog.toast({
         title: t('common.copied'),
         tone: 'mint',
@@ -498,7 +500,7 @@ export function Composer({
   }
 
   return (
-    <ChatComposerThemeSurface themeId={canonicalThemeId} colors={colors} horizontalPadding={horizontalPadding}>
+    <ChatComposerThemeSurface themeId={canonicalThemeId} colors={colors} horizontalPadding={horizontalPadding} focused={focused}>
       <View style={{ width: '100%', position: 'relative', backgroundColor: 'transparent' }}>
       {attachments.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}>
@@ -648,9 +650,10 @@ export function Composer({
           </View>
         </View>
       ) : null}
-      <View style={{ minHeight: COMPOSER_INPUT_MIN_HEIGHT + 6, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 0, paddingTop: 0, paddingBottom: bottomAccessory ? 4 : 2, gap: activityState === 'idle' ? 8 : 6 }}>
-        {leadingAccessory ? <View style={{ flexShrink: 0, minWidth: 0, alignSelf: 'center' }}>{leadingAccessory}</View> : null}
-        <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+      <View testID="composer-input-dock" style={{ minHeight: COMPOSER_INPUT_MIN_HEIGHT + 6, flexDirection: composerGeometry.controlsStacked ? 'column' : 'row', alignItems: composerGeometry.controlsStacked ? 'stretch' : 'center', paddingHorizontal: 0, paddingTop: 0, paddingBottom: bottomAccessory ? 4 : 2, columnGap: activityState === 'idle' ? 8 : 6, rowGap: COMPOSER_CONTROL_ROW_GAP }}>
+        {!composerGeometry.controlsStacked && leadingAccessory ? <View key="leading-accessory" style={{ flexShrink: 0, minWidth: 0, alignSelf: 'center' }}>{leadingAccessory}</View> : null}
+        {/* Keep this input parent mounted through width/focus changes; only its flex geometry changes. */}
+        <View key="message-input" style={{ flex: composerGeometry.controlsStacked ? undefined : 1, width: composerGeometry.controlsStacked ? '100%' : undefined, minWidth: 0, justifyContent: 'center' }}>
           <MessageInput
             value={content}
             onChangeText={editor.changeText}
@@ -734,14 +737,64 @@ export function Composer({
             inputProps={COMPOSER_INPUT_WEB_SCROLLBAR_PROPS}
           />
         </View>
-        {showInlineUtilities ? (
-          <IslePressable
+        {/* An explicit row contributes its full height to Yoga measurement;
+            wrapping percentage-width input siblings can undermeasure the dock. */}
+        <View testID="composer-control-row" style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 0, width: composerGeometry.controlsStacked ? '100%' : undefined, gap: activityState === 'idle' ? 8 : 6 }}>
+          {composerGeometry.controlsStacked && leadingAccessory ? <View key="leading-accessory" style={{ flexShrink: 0, minWidth: 0, alignSelf: 'center' }}>{leadingAccessory}</View> : null}
+          {showInlineUtilities ? (
+            <IslePressable
+              haptic
+              onPress={() => setAttachmentsOpen((value) => !value)}
+              accessibilityRole="button"
+              accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
+              accessibilityHint={attachmentsOpen ? t('chat.collapseAttachmentsAccessibilityHint') : t('chat.expandAttachmentsAccessibilityHint')}
+              accessibilityState={{ expanded: attachmentsOpen }}
+              hitSlop={COMPOSER_CONTROL_HIT_SLOP}
+              style={{
+                width: utilityControlWidth,
+                height: COMPOSER_DOCK_CONTROL_SIZE,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: compactControlRadius,
+                backgroundColor: attachmentsOpen ? colors.ui.actionBar.itemActiveBackground : 'transparent',
+                borderWidth: attachmentsOpen ? subtleBorderWidth : 0,
+                borderColor: attachmentsOpen ? colors.ui.control.primaryBorder : raisedBorder,
+              }}
+            >
+              {attachmentsOpen ? <AppIcon name="collapse" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="add" color={colors.textSecondary} size={16} />}
+            </IslePressable>
+          ) : null}
+          {showCommandAction ? (
+            <IslePressable
+              haptic
+              onPress={openCommandEntry}
+              accessibilityRole="button"
+              accessibilityLabel={t('chat.openCommandPanel')}
+              accessibilityHint={t('chat.openCommandPanelAccessibilityHint')}
+              hitSlop={COMPOSER_CONTROL_HIT_SLOP}
+              style={{
+                width: utilityControlWidth,
+                height: COMPOSER_DOCK_CONTROL_SIZE,
+                borderRadius: compactControlRadius,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'transparent',
+                borderWidth: 0,
+                borderColor: raisedBorder,
+              }}
+            >
+              <AppIcon name="slash-command" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
+            </IslePressable>
+          ) : null}
+          {composerGeometry.controlsStacked || showInlineUtilities || showCommandAction ? <View style={{ flex: 1, minWidth: 0 }} /> : null}
+          {showInlineVoice ? <IslePressable
             haptic
-            onPress={() => setAttachmentsOpen((value) => !value)}
+            onPress={() => void (recording ? voiceInput.stop() : voiceInput.begin())}
+            disabled={voiceControlDisabled || (!recording && !isMultimodalEntryAvailable('voice'))}
             accessibilityRole="button"
-            accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
-            accessibilityHint={attachmentsOpen ? t('chat.collapseAttachmentsAccessibilityHint') : t('chat.expandAttachmentsAccessibilityHint')}
-            accessibilityState={{ expanded: attachmentsOpen }}
+            accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
+            accessibilityHint={recording ? t('chat.stopRecordingAccessibilityHint') : multimodalAccessibilityHint('voice', 'chat.voiceInputAccessibilityHint')}
+            accessibilityState={{ selected: recording, busy: voiceBusy, disabled: voiceControlDisabled }}
             hitSlop={COMPOSER_CONTROL_HIT_SLOP}
             style={{
               width: utilityControlWidth,
@@ -749,76 +802,31 @@ export function Composer({
               alignItems: 'center',
               justifyContent: 'center',
               borderRadius: compactControlRadius,
-              backgroundColor: attachmentsOpen ? colors.ui.actionBar.itemActiveBackground : 'transparent',
-              borderWidth: attachmentsOpen ? subtleBorderWidth : 0,
-              borderColor: attachmentsOpen ? colors.ui.control.primaryBorder : raisedBorder,
+              backgroundColor: recording ? colors.ui.tone.danger.background : 'transparent',
+              borderWidth: recording ? subtleBorderWidth : 0,
+              borderColor: recording ? colors.ui.tone.danger.border : 'transparent',
+              opacity: voiceControlDisabled ? 0.5 : 1,
             }}
-          >
-            {attachmentsOpen ? <AppIcon name="collapse" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="add" color={colors.textSecondary} size={16} />}
-          </IslePressable>
-        ) : null}
-        {showCommandAction ? (
-          <IslePressable
-            haptic
-            onPress={openCommandEntry}
-            accessibilityRole="button"
-            accessibilityLabel={t('chat.openCommandPanel')}
-            accessibilityHint={t('chat.openCommandPanelAccessibilityHint')}
-            hitSlop={COMPOSER_CONTROL_HIT_SLOP}
-            style={{
-              width: utilityControlWidth,
-              height: COMPOSER_DOCK_CONTROL_SIZE,
-              borderRadius: compactControlRadius,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: 'transparent',
-              borderWidth: 0,
-              borderColor: raisedBorder,
-            }}
-          >
-            <AppIcon name="slash-command" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
-          </IslePressable>
-        ) : null}
-        {showInlineUtilities || showCommandAction ? <View style={{ flex: 1, minWidth: 0 }} /> : null}
-        {showInlineVoice ? <IslePressable
-          haptic
-          onPress={() => void (recording ? voiceInput.stop() : voiceInput.begin())}
-          disabled={voiceControlDisabled || (!recording && !isMultimodalEntryAvailable('voice'))}
-          accessibilityRole="button"
-          accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
-          accessibilityHint={recording ? t('chat.stopRecordingAccessibilityHint') : multimodalAccessibilityHint('voice', 'chat.voiceInputAccessibilityHint')}
-          accessibilityState={{ selected: recording, busy: voiceBusy, disabled: voiceControlDisabled }}
-          hitSlop={COMPOSER_CONTROL_HIT_SLOP}
-          style={{
-            width: utilityControlWidth,
-            height: COMPOSER_DOCK_CONTROL_SIZE,
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: compactControlRadius,
-            backgroundColor: recording ? colors.ui.tone.danger.background : 'transparent',
-            borderWidth: recording ? subtleBorderWidth : 0,
-            borderColor: recording ? colors.ui.tone.danger.border : 'transparent',
-            opacity: voiceControlDisabled ? 0.5 : 1,
-          }}
-          >
-            <AppIcon name="microphone" color={recording ? colors.ui.tone.danger.foreground : isMultimodalEntryAvailable('voice') ? colors.textSecondary : colors.ui.control.disabledForeground} size={16} />
-          </IslePressable> : null}
-        {trailingAccessory ? <View style={{ flexShrink: 0 }}>{trailingAccessory}</View> : null}
-        <SendButton
-          visible={showSendAction}
-          disabled={disabled}
-          canSend={canSend}
-          sending={sending}
-          streaming={streaming}
-          hasSendableDraft={hasSendableDraft}
-          activityState={activityState}
-          motion={motion}
-          onSend={() => void submit()}
-          onStop={onStop}
-          colors={colors}
-          accessibilityLabel={streaming && !hasSendableDraft ? t('chat.stopGenerating') : t('chat.sendMessage')}
-          accessibilityHint={sendButtonAccessibilityHint}
-        />
+            >
+              <AppIcon name="microphone" color={recording ? colors.ui.tone.danger.foreground : isMultimodalEntryAvailable('voice') ? colors.textSecondary : colors.ui.control.disabledForeground} size={16} />
+            </IslePressable> : null}
+          {trailingAccessory ? <View style={{ flexShrink: 0 }}>{trailingAccessory}</View> : null}
+          <SendButton
+            visible={showSendAction}
+            disabled={disabled}
+            canSend={canSend}
+            sending={sending}
+            streaming={streaming}
+            hasSendableDraft={hasSendableDraft}
+            activityState={activityState}
+            motion={motion}
+            onSend={() => void submit()}
+            onStop={onStop}
+            colors={colors}
+            accessibilityLabel={streaming && !hasSendableDraft ? t('chat.stopGenerating') : t('chat.sendMessage')}
+            accessibilityHint={sendButtonAccessibilityHint}
+          />
+        </View>
       </View>
       {floatingAccessory ? (
         <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, minHeight: ISLE_MIN_TOUCH_TARGET, zIndex: 2 }}>

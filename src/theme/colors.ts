@@ -1,3 +1,4 @@
+import { resolveNativeTheme } from 'animal-island-ui-rn/theme'
 import {
   normalizeThemeAccentValue,
   normalizeThemeFamilyValue,
@@ -346,6 +347,15 @@ const THEME_FOOTER_TOKENS: Record<ThemeFamily, Record<ResolvedThemeMode, ThemeUi
     light: { sea: ['#d9e9e5', '#b7d4ce', '#8fb9b0'], tree: ['#dfe8df', '#cbd9ca', '#b4c7b5'] },
     dark: { sea: ['#1f3f46', '#335c63', '#46737a'], tree: ['#24322f', '#33453f', '#42584f'] },
   },
+  'animal-island-ui': {
+    light: projectNativeFooter('light'),
+    dark: projectNativeFooter('dark'),
+  },
+}
+
+function projectNativeFooter(mode: ResolvedThemeMode): ThemeUiTokens['footer'] {
+  const { colors } = resolveNativeTheme(mode)
+  return { sea: [colors.primaryBg, colors.primary, colors.primaryActive], tree: [colors.bgSecondary, colors.success, colors.successActive] }
 }
 
 function resolveThemeCardColors(family: ThemeFamily): CardColorMap {
@@ -375,7 +385,9 @@ function projectDesignPalette(
       ? { layout: 'editorial', navigation: 'route', background: 'road', transition: 'travel', density: 'airy' }
       : material
         ? { layout: 'structured', navigation: 'material', background: 'tonal', transition: 'shared-axis', density: 'compact' }
-        : { layout: 'layered', navigation: 'glass', background: 'glass', transition: 'fluid', density: 'balanced' }
+        : liquidGlass
+          ? { layout: 'layered', navigation: 'glass', background: 'glass', transition: 'fluid', density: 'balanced' }
+          : { layout: 'editorial', navigation: 'route', background: 'road', transition: 'fade', density: 'balanced' }
   const backgroundMode: ThemeBackgroundMode = minimal ? 'plain' : material ? 'surface' : 'ambient'
   const softShadowOpacity = elevation.shadowOpacity * 0.55
   const mediumShadowOpacity = elevation.shadowOpacity * 0.78
@@ -645,6 +657,10 @@ const palettePair = (
 
 /** The only runtime palette registry. Every key is a canonical family. */
 export const THEME_PALETTE_REGISTRY: Readonly<Record<CanonicalThemeId, ThemePalettePair>> = freezeThemeValue({
+  'animal-island-ui': palettePair(
+    projectDesignPalette('animal-island-ui', 'light'),
+    projectDesignPalette('animal-island-ui', 'dark'),
+  ),
   minimal: palettePair(
     projectDesignPalette('minimal', 'light'),
     projectDesignPalette('minimal', 'dark'),

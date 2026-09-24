@@ -4,9 +4,10 @@ import { StyleSheet, Text, View } from 'react-native'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable, IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 
 type ThemeDetailFrameProps = {
-  kind: 'source' | 'missing-chat' | 'providers' | 'usage' | 'documents'
+  kind: 'source' | 'missing-chat' | 'providers' | 'usage' | 'documents' | 'agents'
   title: string
   subtitle?: string
   onBack: () => void
@@ -154,7 +155,7 @@ function LiquidGlassDetailFrame(props: ThemeDetailFrameProps) {
     <IsleScreen padded={false} background={props.kind === 'source' ? 'focus' : 'surface'} backgroundState={props.backgroundState}>
       <View style={styles.glassFrame} testID={`theme-detail-liquid-glass-${props.kind}`}>
         {props.headerMode === 'full' ? (
-          <View style={[styles.glassHeader, { backgroundColor: colors.ui.semantic.chrome.background, borderColor: colors.ui.semantic.chrome.border }]}>
+          <GlassSurface colors={colors} style={styles.glassHeader}>
             <IslePressable accessibilityRole="button" accessibilityLabel={props.backLabel} onPress={props.onBack} style={styles.routeBack}>
               <AppIcon name={props.leadingIcon ?? 'back-previous'} color={colors.text} size={18} strokeWidth={appIconStroke.strong} />
             </IslePressable>
@@ -163,9 +164,9 @@ function LiquidGlassDetailFrame(props: ThemeDetailFrameProps) {
               {props.subtitle ? <Text numberOfLines={1} style={[styles.routeSubtitle, { color: colors.textSecondary }]}>{props.subtitle}</Text> : null}
             </View>
             {props.actions}
-          </View>
+          </GlassSurface>
         ) : null}
-        <View style={[styles.glassContent, { backgroundColor: colors.ui.semantic.surface.canvas }]}>{props.children}</View>
+        <View style={styles.glassContent}>{props.children}</View>
       </View>
     </IsleScreen>
   )
@@ -205,7 +206,7 @@ const styles = StyleSheet.create({
   materialTitle: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
   materialContent: { flex: 1, minHeight: 0, paddingHorizontal: 8, paddingTop: 8 },
   glassFrame: { flex: 1, overflow: 'hidden' },
-  glassHeader: { minHeight: 62, marginHorizontal: 6, marginTop: 6, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 26, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  glassHeader: { minHeight: 62, marginHorizontal: 6, marginTop: 6, paddingHorizontal: 8, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 8 },
   glassTitle: { fontSize: 18, lineHeight: 24, fontWeight: '700' },
   glassContent: { flex: 1, minHeight: 0, marginTop: 10, borderRadius: 26, overflow: 'hidden' },
 })

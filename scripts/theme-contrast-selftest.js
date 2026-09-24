@@ -18,7 +18,7 @@ const {
   THEME_EXPRESSION_REGISTRY,
 } = await import('../src/theme/themeExpression')
 const { collectThemeMotionProfileIssues, resolveThemeMotion } = await import('../src/theme/themeMotion')
-const { resolveThemeDesignTokens, THEME_DESIGN_TOKENS } = await import('../src/theme/themeTokens')
+const { resolveThemeDesignTokens, THEME_DESIGN_TOKENS, THEME_MOTION_DURATIONS } = await import('../src/theme/themeTokens')
 const {
   CANONICAL_THEME_IDS,
   normalizeThemeFamilyValue,
@@ -237,7 +237,7 @@ const invalidMotion = resolveThemeMotion({
   order: Number.NaN,
 })
 if (collectThemeMotionProfileIssues().length
-  || invalidMotion.transition.duration !== 136
+  || invalidMotion.transition.duration !== THEME_MOTION_DURATIONS.minimal.panel
   || invalidMotion.transition.delay !== 0) {
   throw new Error('theme motion profiles are invalid or do not fail closed')
 }

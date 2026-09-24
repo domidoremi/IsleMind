@@ -5,7 +5,7 @@ import { router } from 'expo-router'
 
 import type { useIsleDialog } from '@/components/ui/isle'
 import { resolveProviderBrand } from '@/components/ui/ProviderBrandIcon'
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import {
   regenerateLastConversationAssistant,
   retryConversationMessage,

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { AccessibilityInfo, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
 import { AnimatePresence, MotiView } from 'moti'
+import { Modal as NativeModal } from 'animal-island-ui-rn'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
@@ -20,8 +21,8 @@ import {
 } from '@/components/ui/appFeedbackState'
 import { resolveAppFeedbackTimeout } from '@/components/ui/appFeedbackTimeout'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
-import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
+import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 
 type DialogTone = AppFeedbackTone
 
@@ -111,7 +112,9 @@ function dialogBorderWidth(colors: ReturnType<typeof useAppTheme>['colors']) {
 
 export function IsleDialogProvider({ children, updateNotice }: { children: ReactNode; updateNotice?: string | null }) {
   const { colors, canonicalThemeId, design } = useAppTheme()
-  const motion = useMotionPreference()
+  const overlayMotion = useThemeMotion('overlay', { readable: true })
+  const feedbackMotion = useThemeMotion('accent', { readable: true })
+  const motion = overlayMotion.intensity
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
   const { height, width } = useWindowDimensions()
@@ -122,7 +125,6 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const dialogMaxHeight = Math.max(240, height - modalPaddingTop - modalPaddingBottom)
   const routeDialog = canonicalThemeId === 'monet'
   const toastMaxWidth = Math.min(design.component.toast.maxWidth, Math.max(240, width - 32))
-  const themeExpression = resolveThemeExpression(canonicalThemeId)
   const dialogExpression = resolveThemeComponentExpression(canonicalThemeId, 'dialog')
   const toastExpression = resolveThemeComponentExpression(canonicalThemeId, 'toast')
   const dialogEnter = dialogExpression.motion === 'precision'
@@ -255,6 +257,25 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   return (
     <IsleDialogContext.Provider value={api}>
       {children}
+      {/* Mount on demand so Web's portal is above already-open editor modals. */}
+      {dialog && (canonicalThemeId === 'animal-island-ui' ? (
+        <NativeModal open={!!dialog} variant="game" typewriter={false} title={dialog?.title}
+          onClose={() => closeDialog(false)} testID="animal-island-dialog"
+          contentInsets={{ top: modalPaddingTop, right: modalPaddingHorizontal, bottom: modalPaddingBottom, left: modalPaddingHorizontal }}
+          width={dialogMaxWidth} style={{ maxHeight: dialogMaxHeight }}
+          footer={dialog ? <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            {dialog.kind === 'confirm' ? <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => closeDialog(false)} /> : null}
+            <IsleButton label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
+              tone={dialogActionTone(dialog)} onPress={() => closeDialog(true)} />
+          </View> : null}>
+          {dialog ? <View accessibilityRole="alert" style={{ gap: 10, width: '100%' }}>
+            {dialog.message ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }}>{dialog.message}</Text> : null}
+            {dialog.chips?.map((chip, index) => <DialogChip key={index} chip={chip} />)}
+            {dialog.renderBody?.()}
+            {dialog.metrics?.map((metric, index) => <DialogMetricRow key={index} metric={metric} />)}
+          </View> : null}
+        </NativeModal>
+      ) : (
       <Modal
         transparent
         visible={!!dialog}
@@ -282,9 +303,9 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
           {dialog ? (
             <MotiView
               key={dialog.id}
-              from={motion === 'full' ? dialogEnter : { opacity: 1, translateY: 0, scale: 1 }}
-              animate={{ opacity: 1, translateY: 0, scale: 1 }}
-              transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.panel : 1 }}
+              from={motion === 'full' ? { ...dialogEnter, opacity: overlayMotion.from.opacity } : overlayMotion.from}
+              animate={overlayMotion.animate}
+              transition={overlayMotion.transition}
               style={{ width: '100%', maxWidth: routeDialog ? Math.min(520, width - modalPaddingHorizontal * 2) : dialogMaxWidth, maxHeight: dialogMaxHeight, alignSelf: 'center' }}
             >
               <View accessibilityViewIsModal style={{ maxHeight: '100%' }}>
@@ -294,6 +315,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
           ) : null}
         </KeyboardAvoidingView>
       </Modal>
+      ))}
       <AppBannerViewport
         banners={banners}
         onAction={(banner) => {
@@ -326,10 +348,10 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
             <MotiView
               key={item.id}
               from={index === 0 && motion === 'full'
-                ? { opacity: 0, translateY: toastPosition === 'top' ? -toastTravel : toastTravel, scale: toastScale }
-                : { opacity: index === 0 ? 1 : 0.72, translateY: 0, scale: index === 0 ? 1 : 0.98 }}
-              animate={{ opacity: index === 0 ? 1 : 0.72, translateY: 0, scale: index === 0 ? 1 : 0.98 }}
-              transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.emphasis : 1 }}
+                ? { opacity: feedbackMotion.from.opacity, translateY: toastPosition === 'top' ? -toastTravel : toastTravel, scale: toastScale }
+                : { opacity: index === 0 ? feedbackMotion.from.opacity : 0.72, translateY: 0, scale: index === 0 || motion !== 'full' ? 1 : 0.98 }}
+              animate={{ opacity: index === 0 ? 1 : 0.72, translateY: 0, scale: index === 0 || motion !== 'full' ? 1 : 0.98 }}
+              transition={feedbackMotion.transition}
               style={{ width: '100%', maxWidth: toastMaxWidth }}
             >
               <AppToastSurface
@@ -463,20 +485,19 @@ function AppBannerViewport({
   onDismiss: (banner: BannerState) => void
 }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const feedbackMotion = useThemeMotion('accent', { readable: true })
   const insets = useSafeAreaInsets()
   const { t } = useTranslation()
 
   return (
-    <AnimatePresence>
+    <>
       {banners.length ? (
         <MotiView
           key="app-feedback-banners"
           pointerEvents="box-none"
-          from={motion === 'full' ? { opacity: 0, translateY: 10 } : { opacity: 1, translateY: 0 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          exit={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
-          transition={{ type: 'timing', duration: motion === 'full' ? 140 : 1 }}
+          from={feedbackMotion.from}
+          animate={feedbackMotion.animate}
+          transition={feedbackMotion.transition}
           style={{ position: 'absolute', bottom: insets.bottom + 14, left: 0, right: 0, zIndex: 980, elevation: 11, alignItems: 'center', paddingHorizontal: 16, gap: 8 }}
         >
           {banners.map((banner) => {
@@ -508,7 +529,7 @@ function AppBannerViewport({
           })}
         </MotiView>
       ) : null}
-    </AnimatePresence>
+    </>
   )
 }
 

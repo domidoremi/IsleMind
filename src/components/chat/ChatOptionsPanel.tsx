@@ -1,6 +1,6 @@
 import { getConversationReasoningEffortOptions as getReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import { Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useNetworkState } from 'expo-network'
@@ -410,6 +410,11 @@ export function ChatOptionsPanel({
             </IslePressable>
           ) : null}
         </View>
+        {scope === 'full' ? <IslePressable accessibilityRole="button" accessibilityLabel={t('agentTasks.title')}
+          onPress={() => { onClose(); router.push({ pathname: '/agent', params: { conversationId: conversation.id } }) }}
+          style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center', padding: 12, marginBottom: 12 }}>
+          <Text style={{ color: colors.text, fontWeight: '700' }}>{t('agentTasks.title')}</Text>
+        </IslePressable> : null}
         <View testID="chat-ai-model-selection-section">
         {showPickerEmptyState ? (
           <PickerEmptyState title={pickerEmptyTitle} description={pickerEmptyDescription} minHeight={pickerEmptyMinHeight} />
@@ -578,6 +583,8 @@ export function ChatOptionsPanel({
                     accessibilityLabel={t('chat.reasoningChip', { value: t(`chat.reasoningEffort.${effort}`) })}
                     accessibilityHint={t('chat.reasoningEffortAccessibilityHint', { value: t(`chat.reasoningEffort.${effort}`) })}
                     accessibilityState={{ selected: selectedReasoningControlValue === effort }}
+                    // RN Web no longer maps accessibilityState; buttons expose toggles through aria-pressed.
+                    {...(Platform.OS === 'web' ? { 'aria-pressed': selectedReasoningControlValue === effort } : {})}
                     hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
                     style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
                   >

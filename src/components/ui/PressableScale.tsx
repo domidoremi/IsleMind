@@ -1,12 +1,12 @@
-import type { ReactNode } from 'react'
+import { useEffect } from 'react'
 import { Pressable, type PressableProps, type PressableStateCallbackType } from 'react-native'
 import * as Haptics from 'expo-haptics'
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
+import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 
 interface PressableScaleProps extends PressableProps {
-  children?: ReactNode
+  children?: PressableProps['children']
   scaleTo?: number
   haptic?: boolean
   interactionProfile?: PressableInteractionProfile
@@ -124,7 +124,7 @@ export function PressableScale({
   ...props
 }: PressableScaleProps) {
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const profile = PRESSABLE_INTERACTION_TOKENS[interactionProfile]
   const resolvedScaleTo = scaleTo ?? profile.scaleTo
   const resolvedPressedOpacity = pressedOpacity ?? profile.pressedOpacity
@@ -139,6 +139,15 @@ export function PressableScale({
   const pressProgress = useSharedValue(0)
   const hoverProgress = useSharedValue(0)
   const focusProgress = useSharedValue(0)
+  useEffect(() => {
+    if (!disabled && motion === 'full') return
+    // A loading/disabled transition or OS preference change can interrupt a
+    // press before onPressOut arrives. Never leave a recycled control depressed.
+    for (const progress of [pressProgress, hoverProgress, focusProgress]) {
+      cancelAnimation(progress)
+      progress.value = 0
+    }
+  }, [disabled, motion, pressProgress, hoverProgress, focusProgress])
   const animatedStyle = useAnimatedStyle(() => {
     const transformEnabled = motion === 'full'
     const pressScale = transformEnabled ? 1 - (1 - resolvedScaleTo) * pressProgress.value : 1

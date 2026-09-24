@@ -4,7 +4,7 @@ import 'react-native-gesture-handler'
 import * as Clipboard from 'expo-clipboard'
 import * as Network from 'expo-network'
 import type { ErrorBoundaryProps, NativeStackNavigationOptions } from 'expo-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { ActivityIndicator, Platform, Text, View } from 'react-native'
@@ -16,10 +16,13 @@ import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { AppStatusSurface } from '@/components/ui/AppStatusSurface'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { resolveStackTransitionOptions } from '@/presentation/app-shell/stackTransitionOptions'
 import { IsleScreen } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { IsleDialogProvider } from '@/components/ui/isle'
+import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
 import { initI18n } from '@/i18n'
 import { GlobalGenerationStatusLayer } from '@/components/ui/GlobalGenerationStatusLayer'
 import { GlobalSystemStatusNotificationLayer } from '@/components/ui/GlobalSystemStatusNotificationLayer'
@@ -44,7 +47,8 @@ export default function RootLayout() {
   const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()
   const qaUpdateVersion = firstQueryParam(params.qaUpdateNotice)
   const qaUpdateMessage = qaUpdateVersion ? t('updates.available', { version: qaUpdateVersion === '1' ? 'QA' : qaUpdateVersion }) : null
-  const stackTransitionOptions = resolveStackTransitionOptions()
+  const motion = useMotionPreference(true)
+  const stackTransitionOptions = resolveStackTransitionOptions(Platform.OS, motion, canonicalThemeId)
   useWebThemeBridge({
     canonicalThemeId,
     colors,
@@ -59,6 +63,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
+      <IsleThemeProvider>
       <IsleDialogProvider updateNotice={boot.ready ? boot.updateNotice ?? qaUpdateMessage : null}>
         {boot.ready ? (
           <Stack
@@ -83,6 +88,7 @@ export default function RootLayout() {
         {boot.ready ? <GlobalGenerationStatusLayer /> : null}
         {boot.ready ? <AndroidNetworkRecoverySurface recovery={networkRecovery} /> : null}
       </IsleDialogProvider>
+      </IsleThemeProvider>
     </GestureHandlerRootView>
   )
 }
@@ -264,16 +270,6 @@ function BootFallback({
   )
 }
 
-function resolveStackTransitionOptions(): NativeStackNavigationOptions {
-  return {
-    animation: 'none',
-    animationDuration: 0,
-    gestureEnabled: false,
-    fullScreenGestureEnabled: false,
-    animationMatchesGesture: false,
-  }
-}
-
 type WebThemeRoot = {
   setAttribute: (name: string, value: string) => void
   style: {
@@ -294,7 +290,7 @@ function useWebThemeBridge({
   themeAccent,
   backgroundEnvironment,
 }: Pick<ReturnType<typeof useAppTheme>, 'canonicalThemeId' | 'colors' | 'design' | 'mode' | 'themeAccent' | 'backgroundEnvironment'> & { ready: boolean }) {
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (Platform.OS !== 'web' || !ready) return
     const documentRef = (globalThis as typeof globalThis & { document?: WebDocumentLike }).document
     const root = documentRef?.documentElement

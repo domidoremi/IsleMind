@@ -245,11 +245,16 @@ function assertSourceIntegration() {
   assert.match(usageStatisticsSource, /function UsageSheet[\s\S]*?<Pressable accessible=\{false\} accessibilityRole="none" style=\{StyleSheet\.absoluteFill\} onPress=\{onClose\}/, 'usage sheets announce only their visible close control')
   assert.match(usageStatisticsSource, /function UsageSheet[\s\S]*?<MotiView[\s\S]*?accessibilityViewIsModal/, 'usage sheets isolate screen-reader focus inside the modal surface')
   const isleKitSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/IsleKit.tsx'), 'utf8')
-  assert.match(isleKitSource, /export function IsleModal[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?backgroundColor: palette\.colors\.backdrop/, 'shared IsleModal keeps its optional touch-dismiss mask out of the accessibility tree')
-  assert.match(isleKitSource, /export function IsleModal[\s\S]*?<View accessibilityViewIsModal style=/, 'shared IsleModal isolates screen-reader focus inside the modal surface')
+  assert.match(isleKitSource, /Modal as IsleModal/, 'shared modal is the RN fork implementation')
+  const forkRoot = path.dirname(require.resolve('animal-island-ui-rn/package.json'))
+  const forkModalSource = fs.readFileSync(path.join(forkRoot, 'src/components/Modal/Modal.tsx'), 'utf8')
+  assert.match(forkModalSource, /<Pressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"/, 'fork modal keeps its touch-dismiss mask out of the accessibility tree')
+  assert.match(forkModalSource, /accessibilityViewIsModal/, 'fork modal isolates screen-reader focus')
   const isleImageSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/Image.tsx'), 'utf8')
-  assert.match(isleImageSource, /<IsleOverlayPressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?setPreviewOpen\(false\)/, 'image preview announces only its visible close control')
-  assert.match(isleImageSource, /<Modal[\s\S]*?<View accessibilityViewIsModal style=/, 'image preview isolates screen-reader focus inside the modal surface')
+  assert.match(isleImageSource, /Image as IsleImage.*from 'animal-island-ui-rn'/, 'image preview is the RN fork implementation')
+  const forkImageSource = fs.readFileSync(path.join(forkRoot, 'src/components/Image/Image.tsx'), 'utf8')
+  assert.match(forkImageSource, /<Pressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?setPreviewOpen\(false\)/, 'fork image preview announces only its visible close control')
+  assert.match(forkImageSource, /<Modal[\s\S]*?accessibilityViewIsModal/, 'fork image preview isolates screen-reader focus inside the modal surface')
 
   const providerPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
   assert.ok(
@@ -350,6 +355,7 @@ function assertSourceIntegration() {
 
   const chatOptionsSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatOptionsPanel.tsx'), 'utf8')
   assert.ok(chatOptionsSource.includes('showTemperatureControl') && chatOptionsSource.includes('showTopKControl'), 'chat options hide controls through capability-driven flags')
+  assert.match(chatOptionsSource, /'aria-pressed': selectedReasoningControlValue === effort/, 'reasoning toggle buttons expose their selected state on Web, where accessibilityState alone is ignored')
   assert.ok(chatOptionsSource.includes('upsertSettingsModelDisplayAlias') && chatOptionsSource.includes('conversation.model'), 'chat options persist model display aliases against stable provider and model identity')
 
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
@@ -472,7 +478,8 @@ function assertSourceIntegration() {
   assert.ok(dialogSource.includes('accessibilityViewIsModal'), 'shared dialogs expose modal accessibility containment')
   assert.match(dialogSource, /<Pressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?onPress=\{\(\) => closeDialog\(false\)\}[\s\S]*?backgroundColor: colors\.backdrop/, 'the touch-dismiss backdrop stays out of the accessibility tree because every dialog exposes explicit close and action controls')
   assert.doesNotMatch(dialogSource, /<Pressable[\s\S]*?accessibilityLabel=\{t\('dialog\.closeLayer'\)\}[\s\S]*?closeDialog\(false\)/, 'shared dialogs do not announce an unreachable duplicate backdrop close button')
-  assert.equal((dialogSource.match(/<DialogScrollableContent/g) ?? []).length, 4, 'all four canonical theme dialogs keep long content scrollable above fixed actions')
+  assert.equal((dialogSource.match(/<DialogScrollableContent/g) ?? []).length, 4, 'the four app-owned dialogs retain scrollable bodies')
+  assert.match(dialogSource, /<NativeModal[\s\S]*?contentInsets=[\s\S]*?footer=/, 'the fork-owned fifth dialog uses the library scroll body and fixed actions')
   assert.match(dialogSource, /function DialogScrollableContent[\s\S]*keyboardDismissMode="on-drag"[\s\S]*keyboardShouldPersistTaps="handled"[\s\S]*style=\{\{ flexShrink: 1 \}\}/, 'dialog content scrolls without blocking embedded form controls')
   assert.match(dialogSource, /resolveAppFeedbackTimeout\(durationMs, AccessibilityInfo\)[\s\S]*setTimeout\(\(\) => dismissToast\(activeToast\.id\), recommendedDurationMs\)/, 'toast dismissal resolves the system accessibility timeout before scheduling dismissal')
   assert.doesNotMatch(dialogSource, /AccessibilityInfo\.getRecommendedTimeoutMillis\(/, 'the Dialog provider does not directly call an optional platform accessibility method')

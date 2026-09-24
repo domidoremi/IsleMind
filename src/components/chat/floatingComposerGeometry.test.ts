@@ -23,6 +23,23 @@ const base = {
 } as const
 
 describe('resolveFloatingComposerGeometry', () => {
+  it.each([320, 360])('moves controls below the input at %spx in every activity state', (viewportWidth) => {
+    for (const activityState of ['idle', 'focused', 'typing', 'sending'] as const) {
+      const geometry = resolveFloatingComposerGeometry({ ...base, viewportWidth, sizeMode: 'compact', activityState })
+      expect(geometry.controlsStacked).toBe(true)
+      expect(geometry.controlRowHeight).toBeGreaterThanOrEqual(44)
+      expect(geometry.overlayWidth - 32).toBeGreaterThanOrEqual(200)
+    }
+  })
+
+  it('keeps controls inline on a wide canvas and reserves stacked controls in the large height cap', () => {
+    const narrow = resolveFloatingComposerGeometry({ ...base, sizeMode: 'large', activityState: 'typing', measuredContentHeight: 2000 })
+    const wide = resolveFloatingComposerGeometry({ ...base, viewportWidth: 1280, sizeMode: 'large', activityState: 'typing', measuredContentHeight: 2000 })
+    expect(wide.controlsStacked).toBe(false)
+    expect(wide.controlRowHeight).toBe(0)
+    expect(narrow.largeHeightCap + narrow.controlRowHeight).toBeCloseTo(wide.largeHeightCap)
+  })
+
   it('centers a visibly compact Idle composer and expands Focused', () => {
     const idle = resolveFloatingComposerGeometry({
       ...base,

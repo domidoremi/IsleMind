@@ -6,6 +6,8 @@ import { Easing } from 'react-native-reanimated'
 import type { AppPalette, ThemeBackgroundMode } from '@/theme/colors'
 import { hashEnvironmentSeed, seededEnvironmentValue, type BackgroundEnvironmentConfig } from '@/theme/backgroundEnvironment'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { FluidBackdrop } from './FluidBackdrop'
+import { Background as NativeBackground } from 'animal-island-ui-rn'
 
 export type IsleBackgroundMode = 'default' | ThemeBackgroundMode | 'none'
 export type IsleBackgroundState = 'idle' | 'active' | 'input' | 'modal' | 'error'
@@ -36,7 +38,7 @@ interface AmbientField {
 export function IsleBackground({ colors, environment, mode = 'default', state = 'idle', intensity = 1 }: IsleBackgroundProps) {
   const resolvedMode = resolveBackgroundMode(colors, mode)
   const experienceBackground = colors.ui.experience.background
-  const motionPreference = useMotionPreference()
+  const motionPreference = useMotionPreference(environment.kind === 'fluid')
   const appActive = useAppActive()
   const variationEpoch = useEnvironmentVariationEpoch(environment.variation)
   const seed = environment.variation === 'random' || environment.variation === 'daily'
@@ -47,23 +49,30 @@ export function IsleBackground({ colors, environment, mode = 'default', state = 
     && appActive
     && motionPreference === 'full'
     && environment.motion !== 'static'
-    && (state === 'idle' || state === 'active')
+    && (state === 'idle' || state === 'active' || environment.kind === 'fluid' && state === 'input')
   const fields = useMemo(
     () => buildAmbientFields(colors, environment, seed, profile.environmentOpacity),
     [colors, environment, profile.environmentOpacity, seed],
   )
 
   if (resolvedMode === 'none') return null
+  if (environment.family === 'animal-island-ui') {
+    return <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.backdrop}>
+      <NativeBackground type="default" testID="theme-background-animal-island-ui" style={StyleSheet.absoluteFill} />
+    </View>
+  }
 
   return (
-    <View pointerEvents="none" testID={`theme-background-${experienceBackground}-${environment.kind}`} style={styles.backdrop}>
+    <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" testID={`theme-background-${experienceBackground}-${environment.kind}`} style={styles.backdrop}>
       <View style={[StyleSheet.absoluteFill, { backgroundColor: profile.canvas }]} />
-      {environment.kind === 'minimal' ? (
+      {environment.kind === 'fluid' ? (
+        <FluidBackdrop colors={colors} environment={environment} seed={seed} animated={animated} opacity={profile.environmentOpacity} canvasColor={profile.canvas} />
+      ) : environment.kind === 'minimal' ? (
         <MinimalEnvironment fields={fields} animated={animated} amplitude={environment.amplitude} />
       ) : environment.kind === 'tonal' ? (
         <TonalEnvironment fields={fields} animated={animated} amplitude={environment.amplitude} grid={colors.background.grid} />
       ) : (
-        <AmbientEnvironment fields={fields} animated={animated} amplitude={environment.amplitude} fluid={environment.kind === 'fluid'} />
+        <AmbientEnvironment fields={fields} animated={animated} amplitude={environment.amplitude} />
       )}
       {environment.kind === 'fluid' && environment.grainOpacity > 0 ? (
         <EnvironmentGrain seed={seed} opacity={environment.grainOpacity * profile.stateScale} color={colors.text} />
@@ -86,11 +95,10 @@ function TonalEnvironment({ fields, animated, amplitude, grid }: { fields: Ambie
   )
 }
 
-function AmbientEnvironment({ fields, animated, amplitude, fluid }: { fields: AmbientField[]; animated: boolean; amplitude: number; fluid: boolean }) {
+function AmbientEnvironment({ fields, animated, amplitude }: { fields: AmbientField[]; animated: boolean; amplitude: number }) {
   return (
     <View style={styles.fieldLayer}>
       {fields.map((field) => <EnvironmentField key={field.id} field={field} animated={animated} amplitude={amplitude} />)}
-      {fluid ? <FluidLightDirection field={fields[0]} animated={animated} amplitude={amplitude} /> : null}
     </View>
   )
 }
@@ -121,33 +129,6 @@ function EnvironmentField({ field, animated, amplitude }: { field: AmbientField;
   )
 }
 
-function FluidLightDirection({ field, animated, amplitude }: { field?: AmbientField; animated: boolean; amplitude: number }) {
-  if (!field) return null
-  const light = (
-    <Svg width="100%" height="100%" viewBox="0 0 1000 1000" preserveAspectRatio="none">
-      <Defs>
-        <RadialGradient id="fluid-light" cx="50%" cy="50%" rx="50%" ry="50%">
-          <Stop offset="0%" stopColor="#FFFFFF" stopOpacity={0.34} />
-          <Stop offset="55%" stopColor="#FFFFFF" stopOpacity={0.09} />
-          <Stop offset="100%" stopColor="#FFFFFF" stopOpacity={0} />
-        </RadialGradient>
-      </Defs>
-      <Ellipse cx={field.x} cy={field.y} rx={field.radiusX * 0.66} ry={field.radiusY * 0.54} fill="url(#fluid-light)" />
-    </Svg>
-  )
-  if (!animated || amplitude <= 0) return <View style={[styles.fieldLayer, { opacity: 0.16 }]}>{light}</View>
-  return (
-    <MotiView
-      from={{ opacity: 0.08, translateX: -18 * amplitude, translateY: 10 * amplitude }}
-      animate={{ opacity: 0.18, translateX: 24 * amplitude, translateY: -16 * amplitude }}
-      transition={{ type: 'timing', duration: field.duration * 1.37, easing: Easing.inOut(Easing.sin), loop: true }}
-      style={styles.fieldLayer}
-    >
-      {light}
-    </MotiView>
-  )
-}
-
 function EnvironmentGrain({ seed, opacity, color }: { seed: number; opacity: number; color: string }) {
   const points = Array.from({ length: 34 }, (_, index) => ({
     x: seededEnvironmentValue(seed, 100 + index * 3) * 1000,
@@ -169,6 +150,7 @@ export function resolveBackgroundMode(colors: AppPalette, mode: IsleBackgroundMo
 }
 
 export function resolveBackgroundCanvas(colors: AppPalette, mode: IsleBackgroundMode = 'default') {
+  if (colors.ui.liquidGlass) return colors.background.canvas
   const resolvedMode = resolveBackgroundMode(colors, mode)
   if (resolvedMode === 'focus') return colors.background.focusCanvas
   if (resolvedMode === 'surface') return colors.background.surfaceCanvas
@@ -200,9 +182,9 @@ function buildAmbientFields(colors: AppPalette, environment: BackgroundEnvironme
 
 function backgroundProfile(colors: AppPalette, mode: ThemeBackgroundMode, state: IsleBackgroundState, intensity: number, visualIntensity: number) {
   const normalizedIntensity = Math.max(0, Math.min(1.2, intensity))
-  const modeScale = mode === 'ambient' ? 1 : mode === 'focus' ? 0.66 : mode === 'surface' ? 0.5 : 0.36
-  const stateScale = state === 'active' ? 1.08 : state === 'error' ? 0.78 : state === 'input' ? 0.58 : state === 'modal' ? 0.38 : 1
-  const canvas = mode === 'focus' ? colors.background.focusCanvas : mode === 'surface' ? colors.background.surfaceCanvas : colors.background.canvas
+  const modeScale = colors.ui.liquidGlass ? 1 : mode === 'ambient' ? 1 : mode === 'focus' ? 0.66 : mode === 'surface' ? 0.5 : 0.36
+  const stateScale = state === 'active' ? 1.08 : state === 'error' ? 0.78 : state === 'input' ? (colors.ui.liquidGlass ? 0.88 : 0.58) : state === 'modal' ? 0.38 : 1
+  const canvas = resolveBackgroundCanvas(colors, mode)
   return {
     canvas,
     stateScale,

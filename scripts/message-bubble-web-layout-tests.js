@@ -44,7 +44,9 @@ const stubs = {
   },
   '@/presentation/features/conversations/workflowSkillSuggestionSelector': { getWorkflowSkillSuggestionFromMessage: empty },
   './MessageSources': { MessageSources: empty },
-  '../glass': { useGlassBackdrop: () => ({ realtimeBlurSupported: false }), GlassSurface: passthrough },
+  './GlassSurface': { GlassSurface: passthrough },
+  // The separate RN-library family is outside this four-family layout matrix.
+  'animal-island-ui-rn': { Card: web.View },
 }
 
 Module._resolveFilename = function (request, parent, ...rest) {
@@ -61,7 +63,10 @@ require.extensions['.js'] = (module, filename) => /react-native-markdown-display
   ? compile(module, filename) : originalJs(module, filename)
 
 async function main() {
-  stubs['@/modules/conversations'] = require('../src/modules/conversations/application/responseLifecycle.ts')
+  stubs['@/modules/conversations'] = {
+    ...require('../src/modules/conversations/application/responseLifecycle.ts'),
+    ...require('../src/modules/conversations/application/lifecycleActivityTimeline.ts'),
+  }
   const { getColors } = require('../src/theme/colors.ts')
   const { MessageBubble } = require('../src/components/chat/MessageBubble.tsx')
   const cases = ['好的', '你好', '中文测试', 'OK', '继续 please', '这是一段需要正常换行的中文消息。'.repeat(12)]

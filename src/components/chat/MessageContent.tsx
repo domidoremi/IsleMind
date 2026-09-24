@@ -1160,12 +1160,14 @@ function CardHeader({
   }
 
   function runAction(action: RichCardAction) {
-    return () => {
-      const result = action.onPress()
-      if (action.kind !== 'copy') return
-      void Promise.resolve(result)
-        .then(() => showActionFeedback(action, t('common.copied')))
-        .catch(() => showActionFeedback(action, t('common.copyFailed'), true))
+    return async () => {
+      try {
+        const copied = await action.onPress()
+        if (copied === false) throw new Error('Clipboard write failed')
+        showActionFeedback(action, t('common.copied'))
+      } catch {
+        showActionFeedback(action, t('common.copyFailed'), true)
+      }
     }
   }
 

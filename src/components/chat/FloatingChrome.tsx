@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { MotiView } from 'moti'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
-import type { useMotionPreference } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { ConversationMetrics } from '@/modules/conversations'
@@ -78,7 +78,7 @@ export function FloatingChrome({
   onSwitchModel: (provider: AIProvider, model: string) => void
   switchableProviders: AIProvider[]
   onLayoutHeight: (height: number) => void
-  motion: ReturnType<typeof useMotionPreference>
+  motion: MotionIntensity
   modelAccessSettings: ModelAccessSettings
   settingsTransitionActive: boolean
   optionsPanelHeight: number

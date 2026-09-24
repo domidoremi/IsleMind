@@ -8,6 +8,9 @@ export const COMPOSER_LARGE_HEADER_HEIGHT = 30
 export const COMPOSER_TOOLBAR_HEIGHT = 40
 export const COMPOSER_TOOLBAR_BOTTOM_PADDING = 6
 export const COMPOSER_LARGE_MAX_VIEWPORT_RATIO = 0.46
+// Leave room for a readable draft beside the model rail, tools and send target.
+const COMPOSER_INLINE_MIN_WIDTH = 420
+export const COMPOSER_CONTROL_ROW_GAP = 8
 
 interface FloatingComposerGeometryInput {
   viewportWidth: number
@@ -44,6 +47,8 @@ export interface FloatingComposerGeometry {
   largeHeightCap: number
   sideControlSize: number
   sideControlTop: number
+  controlsStacked: boolean
+  controlRowHeight: number
 }
 
 interface FloatingComposerWidthInput {
@@ -82,6 +87,8 @@ export function resolveFloatingComposerGeometry(
   input: FloatingComposerGeometryInput,
 ): FloatingComposerGeometry {
   const overlayWidth = resolveFloatingComposerWidth(input)
+  const controlsStacked = overlayWidth < COMPOSER_INLINE_MIN_WIDTH
+  const controlRowHeight = controlsStacked ? COMPOSER_SIDE_CONTROL_SIZE + COMPOSER_CONTROL_ROW_GAP : 0
   const horizontalInset = Math.max(0, (input.viewportWidth - overlayWidth) / 2)
   const contentHeight = Number.isFinite(input.measuredContentHeight) &&
     input.measuredContentHeight > 0
@@ -101,9 +108,9 @@ export function resolveFloatingComposerGeometry(
       input.safeAreaBottom -
       Math.max(0, input.keyboardLift),
   )
-  const ratioCap = availableViewportHeight * COMPOSER_LARGE_MAX_VIEWPORT_RATIO
+  const ratioCap = availableViewportHeight * COMPOSER_LARGE_MAX_VIEWPORT_RATIO - controlRowHeight
   const messageAreaCap =
-    availableViewportHeight - input.minimumMessageAreaHeight - 16
+    availableViewportHeight - input.minimumMessageAreaHeight - 16 - controlRowHeight
   const largeHeightCap = Math.max(
     largeChromeHeight + COMPOSER_INPUT_MIN_HEIGHT,
     Math.min(ratioCap, messageAreaCap),
@@ -151,6 +158,8 @@ export function resolveFloatingComposerGeometry(
     largeHeightCap,
     sideControlSize: COMPOSER_SIDE_CONTROL_SIZE,
     sideControlTop: (messageInputHeight - COMPOSER_SIDE_CONTROL_SIZE) / 2,
+    controlsStacked,
+    controlRowHeight,
   }
 }
 

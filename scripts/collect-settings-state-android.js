@@ -20,6 +20,18 @@ const portableLargeBackupMinJsonBytes = 12 * 1024 * 1024
 const hapticLabels = ['Haptic Feedback', 'Haptics', '触觉反馈', '触感反馈', '触覚フィードバック']
 const appearanceThemeLocaleCases = [
   {
+    Step: 'appearance-animal-island-ui-light',
+    family: { value: 'animal-island-ui', labels: ['Animal Island UI'] },
+    mode: { value: 'light', labels: ['浅色', 'Light', 'ライト'] },
+    accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
+  },
+  {
+    Step: 'appearance-animal-island-ui-dark',
+    family: { value: 'animal-island-ui', labels: ['Animal Island UI'] },
+    mode: { value: 'dark', labels: ['深色', 'Dark', 'ダーク'] },
+    accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
+  },
+  {
     Step: 'appearance-minimal-light',
     family: { value: 'minimal', labels: ['极简主题', 'Minimal', 'ミニマル'] },
     mode: { value: 'light', labels: ['浅色', 'Light', 'ライト'] },

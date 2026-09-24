@@ -2,14 +2,14 @@ import type { ReactNode } from 'react'
 import { Platform, type StyleProp, type ViewProps, type ViewStyle } from 'react-native'
 import { MotiView } from 'moti'
 
-import { useAppTheme } from '@/hooks/useAppTheme'
-import { useMotionPreference, type MotionIntensity } from '@/hooks/useMotionPreference'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
 import {
-  resolveThemeMotion,
+  type MotionIntensity,
   type ThemeMotionDirection,
   type ThemeMotionRole,
 } from '@/theme/themeMotion'
 import type { ThemeId } from '@/types/settingsContracts'
+import { GlassSurfaceActivity } from './GlassSurface'
 
 export interface IsleMotionFrameProps extends Pick<
   ViewProps,
@@ -22,6 +22,7 @@ export interface IsleMotionFrameProps extends Pick<
   order?: number
   motion?: MotionIntensity
   themeId?: ThemeId
+  readable?: boolean
   style?: StyleProp<ViewStyle>
   'aria-hidden'?: boolean
 }
@@ -34,6 +35,7 @@ export function IsleMotionFrame({
   order = 0,
   motion,
   themeId,
+  readable = role === 'page' || role === 'section' || role === 'overlay',
   style,
   accessibilityElementsHidden,
   importantForAccessibility,
@@ -41,21 +43,18 @@ export function IsleMotionFrame({
   testID,
   'aria-hidden': ariaHidden,
 }: IsleMotionFrameProps) {
-  const appTheme = useAppTheme()
-  const preferredMotion = useMotionPreference()
-  const resolved = resolveThemeMotion({
-    // Every motion consumer resolves against the canonical four-family identity.
-    themeId: themeId ?? appTheme.canonicalThemeId,
-    role,
-    intensity: motion ?? preferredMotion,
+  const resolved = useThemeMotion(role, {
+    themeId,
+    motion,
     direction,
     order,
+    readable,
   })
   const nativeAccessibilityProps = Platform.OS === 'web'
     ? {}
     : { accessibilityElementsHidden }
 
-  return (
+  const frame = (
     <MotiView
       aria-hidden={ariaHidden ?? accessibilityElementsHidden}
       {...nativeAccessibilityProps}
@@ -71,4 +70,5 @@ export function IsleMotionFrame({
       {children}
     </MotiView>
   )
+  return role === 'page' ? <GlassSurfaceActivity active={active}>{frame}</GlassSurfaceActivity> : frame
 }

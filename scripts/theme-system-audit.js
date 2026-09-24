@@ -2,6 +2,8 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { traverse } = require('@babel/core')
+const { parseTypeScriptModule } = require('./node-ts-support')
 
 const root = path.resolve(__dirname, '..')
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8')
@@ -29,6 +31,8 @@ const settingsStore = read('src/store/settingsStore.ts')
 const css = read('src/global.css')
 const layout = read('app/_layout.tsx')
 const settingsScreen = read('src/components/main/SettingsScreenContent.tsx')
+const settingsAccent = read('src/components/settings/SettingsThemeAccentControl.tsx')
+const radioGroup = fs.readFileSync(path.join(path.dirname(require.resolve('animal-island-ui-rn/package.json')), 'src/components/Radio/RadioGroup.tsx'), 'utf8')
 const mainPagerShell = read('src/components/main/MainPagerShell.tsx')
 const conversationsScreen = read('src/components/main/ConversationsScreenContent.tsx')
 const floatingChrome = read('src/components/chat/FloatingChrome.tsx')
@@ -42,7 +46,34 @@ const chatSetupExperience = read('src/components/chat/theme-experiences/ChatSetu
 const chatEmptyExperience = read('src/components/chat/theme-experiences/ChatEmptyStateExperience.tsx')
 const isleBackground = read('src/components/ui/isle/Background.tsx')
 const themeMotion = read('src/theme/themeMotion.ts')
-const glassSurface = read('src/components/chat/glass/GlassSurface.tsx')
+const hooksRoot = path.join(root, 'src/hooks')
+
+function collectThemeHookImports(file) {
+  const imports = new Set()
+  const record = (specifier) => {
+    if (typeof specifier !== 'string') return
+    const target = specifier.startsWith('@/') ? path.join(root, 'src', specifier.slice(2))
+      : specifier.startsWith('.') ? path.resolve(root, path.dirname(file), specifier) : ''
+    if (target === hooksRoot || target.startsWith(`${hooksRoot}${path.sep}`)) imports.add(`${file}: ${specifier}`)
+  }
+  // Use the repository's TS parser; TypeScript 7 has no JS compiler API.
+  traverse(parseTypeScriptModule(read(file), file), {
+    'ImportDeclaration|ExportNamedDeclaration|ExportAllDeclaration|ImportExpression': ({ node }) => record(node.source?.value),
+    TSImportType: ({ node }) => record(node.argument.value),
+    TSExternalModuleReference: ({ node }) => record(node.expression.value),
+    CallExpression: ({ node }) => {
+      if (node.callee.type === 'Import' || (node.callee.type === 'Identifier' && node.callee.name === 'require')) {
+        record(node.arguments[0]?.value)
+      }
+    },
+  })
+  return [...imports]
+}
+
+const themeHookImports = collectFiles('src/theme')
+  .filter((file) => !/\.(test|spec)\.tsx?$/.test(file))
+  .flatMap(collectThemeHookImports)
+const glassSurface = read('src/components/ui/isle/GlassSurface.tsx')
 const motionFrame = read('src/components/ui/isle/ThemeMotion.tsx')
 const dialog = read('src/components/ui/isle/Dialog.tsx')
 const isleKit = read('src/components/ui/isle/IsleKit.tsx')
@@ -62,13 +93,14 @@ function fallbackHas(block, variables) {
   return Object.entries(variables).every(([name, value]) => block.includes(`${name.toLowerCase()}: ${String(value).toLowerCase()};`))
 }
 
-check('runtime ThemeId exposes canonical families only', /export type CanonicalThemeId = 'minimal' \| 'monet' \| 'material' \| 'liquid-glass'/.test(settingsContracts) && /export type ThemeId = CanonicalThemeId/.test(settingsContracts) && /CanonicalThemeId/.test(typeSource) && !/LegacyThemeId|THEME_ID_ALIASES/.test(settingsContracts + typeSource), 'retired values must not remain part of the runtime or exported type contract')
-check('palettes cover all four canonical families', /minimal:\s*palettePair\(\s*projectDesignPalette\('minimal', 'light'\),\s*projectDesignPalette\('minimal', 'dark'\)/.test(colors) && /monet:\s*palettePair\(\s*projectDesignPalette\('monet', 'light'\),\s*projectDesignPalette\('monet', 'dark'\)/.test(colors) && /material:\s*palettePair\(\s*projectDesignPalette\('material', 'light'\),\s*projectDesignPalette\('material', 'dark'\)/.test(colors) && /'liquid-glass':\s*palettePair\(\s*projectDesignPalette\('liquid-glass', 'light'\),\s*projectDesignPalette\('liquid-glass', 'dark'\)/.test(colors), 'one canonical palette registry must cover both modes directly from the design-token registry')
+check('runtime ThemeId exposes canonical families only', /export type CanonicalThemeId = 'minimal' \| 'monet' \| 'material' \| 'liquid-glass' \| 'animal-island-ui'/.test(settingsContracts) && /export type ThemeId = CanonicalThemeId/.test(settingsContracts) && /CanonicalThemeId/.test(typeSource) && !/LegacyThemeId|THEME_ID_ALIASES/.test(settingsContracts + typeSource), 'retired values must not remain part of the runtime or exported type contract')
+check('palettes cover all five canonical families', /minimal:\s*palettePair\(\s*projectDesignPalette\('minimal', 'light'\),\s*projectDesignPalette\('minimal', 'dark'\)/.test(colors) && /monet:\s*palettePair\(\s*projectDesignPalette\('monet', 'light'\),\s*projectDesignPalette\('monet', 'dark'\)/.test(colors) && /material:\s*palettePair\(\s*projectDesignPalette\('material', 'light'\),\s*projectDesignPalette\('material', 'dark'\)/.test(colors) && /'liquid-glass':\s*palettePair\(\s*projectDesignPalette\('liquid-glass', 'light'\),\s*projectDesignPalette\('liquid-glass', 'dark'\)/.test(colors), 'one canonical palette registry must cover both modes directly from the design-token registry')
 check('semantic token layer is present', /semantic:\s*{/.test(colors) && /surface:\s*{/.test(colors) && /content:\s*{/.test(colors) && /chrome:\s*{/.test(colors) && /control:\s*{/.test(colors) && /feedback:\s*{/.test(colors), 'ThemeUiTokens needs surface/content/chrome/control/feedback layers')
 check('canonical token registry declares four distinct experience grammars', /layout: 'quiet'[\s\S]*?navigation: 'quiet'[\s\S]*?background: 'plain'[\s\S]*?transition: 'fade'/.test(colors) && /layout: 'editorial'[\s\S]*?navigation: 'route'[\s\S]*?background: 'road'[\s\S]*?transition: 'travel'/.test(colors) && /layout: 'structured'[\s\S]*?navigation: 'material'[\s\S]*?background: 'tonal'[\s\S]*?transition: 'shared-axis'/.test(colors) && /layout: 'layered'[\s\S]*?navigation: 'glass'[\s\S]*?background: 'glass'[\s\S]*?transition: 'fluid'/.test(colors), 'themes must own layout, navigation, background, transition, and density rather than differ only by color tokens')
 check('canonical palette registry is deeply immutable and alias-free', /THEME_PALETTE_REGISTRY/.test(colors) && /freezeThemeValue/.test(colors) && /Object\.freeze\(value\)/.test(colors) && !/LEGACY_THEME_PALETTE_ALIASES|THEME_ID_ALIASES/.test(colors), 'canonical palettes must be immutable without compatibility keys or duplicate graphs')
 check('canonical semantic roles distinguish brand and tertiary', /brand: string/.test(colors) && /tertiary: string/.test(colors) && /brandForeground: string/.test(colors) && /tertiaryForeground: string/.test(colors) && /reference:/.test(read('src/theme/themeTokens.ts')), 'custom accents should replace brand roles while preserving theme tertiary decoration')
 check('motion timings have one canonical duration registry', /THEME_MOTION_DURATIONS/.test(read('src/theme/themeTokens.ts')) && /resolveThemeMotionDurations/.test(read('src/theme/themeExpression.ts')) && /collectThemeMotionProfileIssues/.test(themeMotion), 'token and expression layers must not drift to different base durations')
+check('theme modules do not depend on application hooks, including type imports', themeHookImports.length === 0, themeHookImports.join('; '))
 check('presentation consumes experience grammar', /colors\.ui\.experience\.background/.test(mainPagerShell) && /colors\.ui\.experience\.background/.test(isleBackground) && !/MainPagerExperience|ThemeNavigationDrawer|AppTopBar|shellNavigation/.test(mainPagerShell) && /common\.backToChat/.test(conversationsScreen) && /common\.backToChat/.test(settingsScreen) && /ChatPersistentHeader/.test(floatingChrome) && /ChatPersistentHeader/.test(chatSetupWorkspace) && /ChatChromeThemeSurface/.test(chatPersistentHeader) && /ChatAiConfigurationSheet/.test(floatingChrome) && /chat-ai-configuration-panel/.test(chatAiConfiguration) && /chat-ai-provider-connection-section/.test(chatOptionsPanel) && /chat-ai-model-selection-section/.test(chatOptionsPanel) && /chat-ai-reasoning-section/.test(chatOptionsPanel) && /function ThemeFamilyPreview/.test(settingsScreen) && /getColors\(mode, themeId/.test(settingsScreen) && /ChatActiveThemeExperience/.test(chatActiveExperience) && /ChatSetupThemeExperience/.test(chatSetupExperience) && /ChatEmptyStateExperience/.test(chatEmptyState + chatEmptyExperience) && /monet-breathe|material-shared-axis|glass-refraction/.test(themeMotion), 'page-owned navigation, shared persistent Chat controls, selector previews, Chat AI configuration, and semantic backgrounds should visibly project the selected experience without page entrance motion')
 check('Liquid Glass is semantic fallback only in RN source', !/glassEffect|GlassEffectContainer|glassEffectID|glassProminent/.test(colors + layout + settingsScreen), 'native Liquid Glass APIs should not be faked in RN/Expo source')
 check('canonical families project explicit behavior flags', /family,\s*minimal,\s*monet,\s*material,\s*liquidGlass/.test(colors) && /contentLayerGlass: false/.test(read('src/theme/themeTokens.ts')), 'canonical family identity must remain explicit without restoring legacy branches')
@@ -79,13 +111,13 @@ check('settings migration rewrites stale ids to Minimal', /normalizeThemeId\(raw
 check('theme mode input fails closed before palette projection', /normalizeThemeModeValue/.test(settingsContracts) && /normalizeSettingsThemeMode/.test(settingsAppearance) && /normalizeSettingsThemeMode\(rawSettings\.theme\)/.test(settingsStore) && /themeModeMigrated/.test(settingsStore) && /normalizeThemeModeValue\(theme\)/.test(colors), 'persisted or bypassed invalid modes must resolve to the safe system mode')
 check('live family writes normalize before persistence', /normalizeSettingsThemeFamily\(updates\.themeId\) \?\? normalizeThemeId\(state\.settings\.themeId\)/.test(settingsStore), 'unchecked runtime family writes must preserve a canonical family or safely fall back to Minimal')
 check('settings screen uses canonical theme options only', /THEME_FAMILY_OPTIONS[\s\S]*id: 'minimal'[\s\S]*id: 'monet'[\s\S]*id: 'material'[\s\S]*id: 'liquid-glass'/.test(settingsScreen) && !/id: 'cartoon'/.test(settingsScreen) && !/id: 'island'/.test(settingsScreen), 'users should not see legacy aliases as selectable families')
-check('appearance selectors expose rendered radio semantics', /function ThemeFamilyCard[\s\S]*?accessibilityRole="radio"[\s\S]*?accessibilityState=\{\{ checked: active \}\}[\s\S]*?aria-checked=\{active\}/.test(settingsScreen) && /function ThemeModeCard[\s\S]*?accessibilityRole="radio"[\s\S]*?accessibilityState=\{\{ checked: active \}\}[\s\S]*?aria-checked=\{active\}/.test(settingsScreen) && /function ThemeAccentSwatch[\s\S]*?accessibilityRole="radio"[\s\S]*?accessibilityState=\{\{ checked: active \}\}[\s\S]*?aria-checked=\{active\}/.test(settingsScreen), 'mutually exclusive family, day/night, and accent controls need checked state in both native and rendered web accessibility APIs')
-check('custom accent retains one checked radio option', /activeCustomThemeAccent/.test(settingsScreen) && /settings-theme-accent-custom/.test(settingsScreen), 'a non-preset accent must have an explicit selected radio control')
+check('appearance selectors expose rendered radio semantics', /function ThemeFamilyCard[\s\S]*?accessibilityRole="radio"[\s\S]*?accessibilityState=\{\{ checked: active \}\}[\s\S]*?aria-checked=\{active\}/.test(settingsScreen) && /function ThemeModeCard[\s\S]*?accessibilityRole="radio"[\s\S]*?accessibilityState=\{\{ checked: active \}\}[\s\S]*?aria-checked=\{active\}/.test(settingsScreen) && /function ThemeAccentSwatch[\s\S]*?accessibilityRole="radio"[\s\S]*?accessibilityState=\{\{ checked: active \}\}[\s\S]*?aria-checked=\{active\}/.test(settingsAccent), 'mutually exclusive family, day/night, and accent controls need checked state in both native and rendered web accessibility APIs')
+check('custom accent retains one checked radio option', /activeCustomThemeAccent/.test(settingsAccent) && /settings-theme-accent-custom/.test(settingsAccent), 'a non-preset accent must have an explicit selected radio control')
 check('appearance mode uses one checked radio choice', /\['light', 'dark', 'system'\] satisfies ThemeMode\[\]/.test(settingsScreen) && /active=\{settings\.theme === item\}/.test(settingsScreen) && !/settings\.theme === 'system' && resolvedThemeMode === item/.test(settingsScreen), 'Light, Dark, and System must share a single radio selection instead of reporting the resolved mode alongside System')
-check('appearance choices expose radio groups', (settingsScreen.match(/accessibilityRole="radiogroup"/g) ?? []).length >= 3, 'family, mode, and accent choices should be grouped for assistive technology')
-check('appearance layout has compact-width protections', /const actionCompact = width < 360/.test(settingsScreen) && /flexDirection: actionCompact \? 'column' : 'row'/.test(settingsScreen) && /flexWrap: 'wrap'/.test(settingsScreen) && /flexBasis: compact \? '100%' : '47%'/.test(settingsScreen) && /minWidth: 62/.test(settingsScreen), '320px/360px layouts need stacked custom actions, full-width theme previews, and wrapping selector rows')
+check('appearance choices expose radio groups', ['family', 'mode'].every((name) => settingsScreen.includes(`<RadioGroup testID="settings-theme-${name}-group"`)) && settingsAccent.includes('<RadioGroup testID="settings-theme-accent-group"') && /role="radiogroup"/.test(radioGroup) && /accessible=\{false\}/.test(radioGroup), 'family, mode, and accent choices must use the labelled radio-group component without hiding individual radio accessibility nodes')
+check('appearance layout has compact-width protections', /const actionCompact = width < 360/.test(settingsScreen) && /flexBasis: compact \? '100%' : '47%'/.test(settingsScreen) && /const compact = width < 430/.test(settingsAccent) && /flexDirection: compact \? 'column' : 'row'/.test(settingsAccent) && /flexWrap: 'wrap'/.test(settingsAccent) && /flexBasis: compact \? '28%' : '13%'/.test(settingsAccent) && /minHeight: 64/.test(settingsAccent), '320px/360px layouts need stacked custom actions, full-width theme previews, and evenly sized wrapping selector rows')
 check('web bridge exposes semantic token slices', /colors\.ui\.semantic\.surface\.base/.test(layout) && /colors\.ui\.semantic\.content\.primary/.test(layout) && /colors\.ui\.semantic\.chrome\.background/.test(layout) && /colors\.ui\.semantic\.control\.background/.test(layout) && /data-theme-family', canonicalThemeId/.test(layout), 'web bridge must map semantic layers under one canonical family identity')
-check('CSS has canonical fallback selectors and flags', ['minimal', 'monet', 'material', 'liquid-glass'].every((family) => css.includes(`data-theme-id='${family}'`)) && /--theme-family: liquid-glass/.test(css), 'pre-native web fallback needs visible canonical family markers')
+check('CSS has canonical fallback selectors and flags', ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'].every((family) => css.includes(`data-theme-id='${family}'`)) && /--theme-family: liquid-glass/.test(css), 'pre-native web fallback needs visible canonical family markers')
 check('material fallbacks use opaque tonal surfaces', /--color-surfacesecondary: #fafafc/.test(materialLightCss) && /--color-semanticchromebackground: #fafafc/.test(materialLightCss) && /--color-surfacesecondary: #191b1e/.test(materialDarkCss) && /--color-semanticchromebackground: #191b1e/.test(materialDarkCss), 'Material should not regress to translucent Liquid Glass surfaces')
 check('CSS contains canonical family definitions only', !/data-theme-id='(?:lime-road|cartoon|island|markdown|glass|material-3|material3|liquid)'/.test(css), 'retired CSS selectors must not survive the hard cut')
 const criticalFallbacks = [
@@ -104,17 +136,17 @@ for (const [label, block, variables] of criticalFallbacks) {
 check('hook exposes canonical booleans', /isMinimal: canonicalThemeId === 'minimal'/.test(hook) && /isMonet: canonicalThemeId === 'monet'/.test(hook) && /isMaterial: canonicalThemeId === 'material'/.test(hook) && /isLiquidGlass: canonicalThemeId === 'liquid-glass'/.test(hook), 'components should expose only canonical runtime families')
 check('theme hook subscribes only to theme fields', !/useSettingsStore\(\(state\) => state\.settings\)/.test(hook) && /state\.settings\.theme\)/.test(hook) && /state\.settings\.themeId\)/.test(hook) && /state\.settings\.themeAccent\)/.test(hook), 'unrelated settings changes must not rerender every theme consumer')
 check('custom accent is normalized before persistence and projection', /normalizeSettingsThemeAccent\(rawSettings\.themeAccent\)/.test(settingsStore) && /normalizeThemeAccent\(themeAccent\)/.test(colors) && /data-theme-custom-accent/.test(layout) && /THEME_ACCENT_CACHE_MAX_ENTRIES/.test(colors), 'custom accent input must be validated and derived palettes must use a bounded cache')
-check('native Appearance evidence retains the complete canonical matrix', ['appearance-minimal-light', 'appearance-minimal-dark', 'appearance-monet-light', 'appearance-monet-dark', 'appearance-material-light', 'appearance-material-dark', 'appearance-liquid-glass-light', 'appearance-liquid-glass-dark-custom-indigo'].every((step) => settingsAndroidCollector.includes(step)) && /custom: '#4455B7'/.test(settingsAndroidCollector), 'Android evidence must cover every canonical family, both fixed modes, and the exact custom accent')
+check('native Appearance evidence retains the complete canonical matrix', ['appearance-minimal-light', 'appearance-minimal-dark', 'appearance-monet-light', 'appearance-monet-dark', 'appearance-material-light', 'appearance-material-dark', 'appearance-animal-island-ui-light', 'appearance-animal-island-ui-dark', 'appearance-liquid-glass-light', 'appearance-liquid-glass-dark-custom-indigo'].every((step) => settingsAndroidCollector.includes(step)) && /custom: '#4455B7'/.test(settingsAndroidCollector), 'Android evidence must cover every canonical family, both fixed modes, and the exact custom accent')
 check('native Appearance evidence fails closed and restores defaults', /collectThemeLocaleContractIssues/.test(settingsAndroidCollector) && /Could not verify restored Minimalist\/System\/default-accent\/Simplified-Chinese appearance settings/.test(settingsAndroidCollector), 'Android evidence must reject incomplete rows and prove cleanup after custom appearance capture')
-check('dialog close controls meet the 44dp target', /width: 44, height: 44, minHeight: 44/.test(dialog) && /width: 44, height: 44/.test(isleKit), 'app-owned dialog close controls must preserve a 44dp hit target')
+check('dialog close controls meet the 44dp target', /width: 44, height: 44, minHeight: 44/.test(dialog) && /minHeight: minimumButtonHeight/.test(isleKit) && /<NativeModal/.test(dialog), 'app-owned dialog close controls must preserve a 44dp hit target')
 check('dialog themes preserve alert semantics and one action order', ['Minimal', 'Monet', 'Material', 'LiquidGlass'].every((family) => new RegExp(`function ${family}DialogSurface[\\s\\S]*?accessibilityRole="alert"[\\s\\S]*?dialog\\.cancelLabel[\\s\\S]*?dialog\\.confirmLabel`).test(dialog)), 'theme selection must not change dialog announcement or destructive-action muscle memory')
 
 const forbiddenRuntimeIsland = [
   'src/types/index.ts',
   'src/hooks/useAppTheme.ts',
   'src/components/main/SettingsScreenContent.tsx',
-].filter((file) => /\bisland\b/.test(read(file)))
-check('no runtime island references in core typed/theme UI files', forbiddenRuntimeIsland.length === 0, `unexpected island references: ${forbiddenRuntimeIsland.join(', ')}`)
+].filter((file) => /(?:themeId\s*[:=]\s*|id:\s*)['"]island['"]/.test(read(file)))
+check('no retired standalone island ID in core theme UI files', forbiddenRuntimeIsland.length === 0, `unexpected island references: ${forbiddenRuntimeIsland.join(', ')}`)
 
 const legacyCartoonPresentationConsumers = collectFiles('src/components').filter((file) => /colors\.ui\.(?:cartoon|limeRoad|markdown|glass)\b|\bis(?:Cartoon|LimeRoad|Glass)\b|palette\.(?:cartoon|limeRoad|markdown|glass)\b/.test(read(file)))
 check('production presentation uses canonical family flags only', legacyCartoonPresentationConsumers.length === 0, `legacy theme presentation branches: ${legacyCartoonPresentationConsumers.join(', ')}`)

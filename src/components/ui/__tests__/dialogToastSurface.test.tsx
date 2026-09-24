@@ -4,18 +4,23 @@ import { Pressable, StyleSheet, Text } from 'react-native'
 import { getColors } from '@/theme/colors'
 import { IsleDialogProvider, useIsleDialog } from '../isle/Dialog'
 
+let mockMotion = 'none'
+let mockTheme = 'minimal'
+
 jest.mock('@/hooks/useAppTheme', () => ({
   useAppTheme: () => {
-    const colors = require('@/theme/colors').getColors('light', 'minimal')
-    return { colors, design: colors.design, canonicalThemeId: 'minimal', isLiquidGlass: false }
+    const colors = require('@/theme/colors').getColors('light', mockTheme)
+    return { colors, design: colors.design, canonicalThemeId: mockTheme, isLiquidGlass: mockTheme === 'liquid-glass' }
   },
 }))
-jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
+jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockMotion }))
 jest.mock('@/hooks/useTransparencyPreference', () => ({ useTransparencyPreference: () => false }))
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 jest.mock('moti', () => ({ MotiView: require('react-native').View, AnimatePresence: require('react').Fragment }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke: {} }))
+
+beforeEach(() => { mockMotion = 'none'; mockTheme = 'minimal' })
 
 function Trigger() {
   const dialog = useIsleDialog()
@@ -46,4 +51,25 @@ it('dismisses only the cancelled pending confirmation and settles it false', asy
   expect(await outcome).toBe(false)
   expect(view.queryByText('Use another provider?')).toBeNull()
   await view.unmount()
+})
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass'])('%s confirmation remains readable and settles without waiting for its animation', async (theme) => {
+  mockTheme = theme
+  mockMotion = 'full'
+  let outcome: Promise<boolean> | undefined
+  function TriggerConfirm() {
+    const dialog = useIsleDialog()
+    return <Pressable accessibilityLabel="Ask" onPress={() => { outcome = dialog.confirm({ title: 'Continue?' }) }} />
+  }
+  const screen = await render(<IsleDialogProvider><TriggerConfirm /></IsleDialogProvider>)
+  // Hidden Web Modal portals otherwise precede, and sit behind, later editor sheets.
+  expect(screen.container.queryAll(node => node.props.animationType === 'none' && node.props.transparent === true)).toHaveLength(0)
+  await fireEvent.press(screen.getByLabelText('Ask'))
+  expect(screen.getByText('Continue?')).toBeTruthy()
+  const entrance = screen.container.queryAll(node => node.props.from?.opacity === 0.65 && node.props.transition?.duration > 1)
+  expect(entrance.length).toBeGreaterThan(0)
+  await fireEvent.press(screen.getByText('common.confirm'))
+  expect(await outcome).toBe(true)
+  expect(screen.queryByText('Continue?')).toBeNull()
+  expect(screen.container.queryAll(node => node.props.animationType === 'none' && node.props.transparent === true)).toHaveLength(0)
 })

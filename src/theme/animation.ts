@@ -1,5 +1,5 @@
 import { Easing } from 'react-native-reanimated'
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 export const timing = {
   fast: { duration: 144, easing: Easing.out(Easing.cubic) },
   normal: { duration: 224, easing: Easing.out(Easing.cubic) },

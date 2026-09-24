@@ -1855,7 +1855,7 @@ function assertSourceIntegration() {
   assert.ok(retainedFatalEvidence.includes(longFatalEvidenceFixture.at(-1)), 'fatal evidence retention preserves the tombstone tail')
 
   const rootLayoutSource = fs.readFileSync(path.join(root, 'app/_layout.tsx'), 'utf8')
-  const bootFallbackSource = rootLayoutSource.match(/function BootFallback\([\s\S]*?\n}\n\nfunction resolveStackTransitionOptions/)?.[0] ?? ''
+  const bootFallbackSource = rootLayoutSource.match(/function BootFallback\([\s\S]*?\n}\n\ntype WebThemeRoot/)?.[0] ?? ''
   const useBootstrapSource = fs.readFileSync(path.join(root, 'src/hooks/useBootstrap.ts'), 'utf8')
   assert.match(bootFallbackSource, /<SafeAreaView\b/, 'cold-start fallback owns a static native safe-area surface')
   assert.match(bootFallbackSource, /<ActivityIndicator\b/, 'cold-start fallback uses the native activity indicator')
@@ -1976,6 +1976,29 @@ async function assertMotionPreferenceRuntimeContract() {
   await flushMicrotasks()
   assert.equal(android.store.getSnapshot(), 'reduced', 'a late Android query cannot mutate the store after teardown')
 
+  const glass = loadMotionPreferenceHarness('android')
+  let glassNotifications = 0
+  const stopGlass = glass.systemStore.subscribe(() => { glassNotifications += 1 })
+  const stopConservative = glass.store.subscribe(() => undefined)
+  assert.equal(glass.systemStore.getSnapshot(), 'reduced', 'glass preserves the conservative Android cold start')
+  await flushMicrotasks()
+  assert.equal(glass.queryCount(), 1, 'system-motion and conservative consumers share one native query')
+  assert.equal(glass.addCount(), 1, 'system-motion and conservative consumers share one native listener')
+  glass.resolveQuery(0, false)
+  await flushMicrotasks()
+  assert.equal(glass.systemStore.getSnapshot(), 'full', 'glass can animate after the OS explicitly permits motion')
+  assert.equal(glass.store.getSnapshot(), 'reduced', 'other Android themes keep their conservative policy')
+  assert.equal(glassNotifications, 1, 'the opt-in consumer sees a system-only preference change')
+  glass.emit(0, true)
+  assert.equal(glass.systemStore.getSnapshot(), 'reduced', 'system reduced motion immediately freezes glass')
+  glass.emit(0, false)
+  assert.equal(glass.systemStore.getSnapshot(), 'full', 'glass resumes when the OS permits motion again')
+  stopGlass()
+  stopConservative()
+  assert.equal(glass.removeCount(), 1, 'the mixed consumers tear down their single native subscription')
+  glass.emit(0, true)
+  assert.equal(glass.systemStore.getSnapshot(), 'full', 'stale events cannot update unmounted system-motion consumers')
+
   const ios = loadMotionPreferenceHarness('ios')
   assert.equal(ios.initialValue, 'full', 'non-Android motion preserves the full-motion default')
   let firstNotifications = 0
@@ -2064,9 +2087,13 @@ function loadMotionPreferenceHarness(platform) {
     const { useMotionPreference } = require(hookPath)
     const initialValue = useMotionPreference()
     assert.ok(store, 'motion preference hook supplies the external-store contract')
+    const conservativeStore = store
+    useMotionPreference(true)
+    const systemStore = store
     return {
       initialValue,
-      store,
+      store: conservativeStore,
+      systemStore,
       queryCount: () => nativeQueryCount,
       addCount: () => nativeAddCount,
       removeCount: () => nativeRemoveCount,

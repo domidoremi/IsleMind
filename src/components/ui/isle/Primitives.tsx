@@ -4,12 +4,13 @@ import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
-import { motionTokens } from '@/theme/animation'
-import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
+import { Switch as NativeSwitch } from 'animal-island-ui-rn'
+import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { IslePanel, type IsleMaterial } from './Panel'
 import { IsleButton, IsleInput, IsleSwitch as IsleStyledSwitch } from './IsleKit'
+import { GlassSurface } from './GlassSurface'
 export type IsleTone = 'default' | 'mint' | 'amber' | 'danger' | 'sky' | 'ink'
 export type IsleSize = 'sm' | 'md' | 'lg'
 
@@ -59,6 +60,24 @@ export function IsleIconButton({
   const webLensStyle = tone === 'default' && iconButtonExpression.surface === 'lens' && Platform.OS === 'web'
     ? ({ backdropFilter: 'blur(10px) saturate(1.06)', WebkitBackdropFilter: 'blur(10px) saturate(1.06)' } as unknown as ViewStyle)
     : undefined
+  if (canonicalThemeId === 'liquid-glass' && tone === 'default') {
+    return (
+      <PressableScale
+        haptic
+        interactionProfile="fluid"
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        disabled={disabled}
+        onPress={onPress}
+        testID={`theme-icon-button-${canonicalThemeId}-${size}`}
+        style={[{ width: dimension, height: dimension, minHeight: dimension, borderRadius: radius }, style]}
+      >
+        <GlassSurface colors={colors} variant="navigation" borderRadius={radius} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          {children}
+        </GlassSurface>
+      </PressableScale>
+    )
+  }
   return (
     <IsleButton
       type={tone === 'ink' || tone === 'mint' || tone === 'amber' ? 'primary' : 'default'}
@@ -165,7 +184,7 @@ export function IsleField({
         size="middle"
         inputStyle={inputProps.style}
       />
-      {note ? <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6, includeFontPadding: false }}>{note}</Text> : null}
+      {note ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 6, includeFontPadding: false }}>{note}</Text> : null}
     </View>
   )
 }
@@ -184,7 +203,7 @@ export function IsleToggle({
   onPress: () => void
 }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const accentMotion = useThemeMotion('accent')
   const playful = colors.ui.monet && colors.ui.ornamented
   const family = colors.design?.family ?? 'minimal'
   const toggleSurface = active
@@ -226,7 +245,7 @@ export function IsleToggle({
           borderColor: toggleBorder,
           translateY: 0,
         }}
-        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+        transition={accentMotion.transition}
         style={{
           minHeight: 56,
            borderRadius: family === 'liquid-glass' ? colors.ui.radius.panel : (colors.design?.semantic.radius.small ?? colors.ui.radius.controlSmall),
@@ -246,7 +265,7 @@ export function IsleToggle({
           {icon ? (
             <MotiView
               animate={{ backgroundColor: iconBackground, rotate: '0deg' }}
-              transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+              transition={accentMotion.transition}
               style={{ width: 32, height: 32, borderRadius: family === 'minimal' ? 2 : Math.min(colors.ui.radius.controlLarge, 10), alignItems: 'center', justifyContent: 'center' }}
             >
               {icon}
@@ -267,7 +286,10 @@ export function IsleToggle({
 
 export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: () => void }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const accentMotion = useThemeMotion('accent')
+  if (colors.ui.family === 'animal-island-ui') {
+    return <NativeSwitch checked={active} onChange={onChange} hitSlop={12} />
+  }
   const switchTokens = colors.ui.switch
   if (onChange) return <IsleStyledSwitch checked={active} onChange={() => onChange()} />
   const width = 52
@@ -292,12 +314,12 @@ export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: (
           backgroundColor: active ? switchTokens.trackOn : switchTokens.trackOff,
           borderColor: active ? switchTokens.trackOnBorder : switchTokens.trackOffBorder,
         }}
-        transition={motion === 'full' ? { type: 'timing', duration: motionTokens.duration.fast } : { type: 'timing', duration: 1 }}
+        transition={accentMotion.transition}
         style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: height / 2, borderWidth }}
       />
       <MotiView
         animate={{ translateX: active ? thumbTravel : 0 }}
-        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+        transition={accentMotion.intensity === 'full' ? accentMotion.transition : { type: 'timing', duration: 1 }}
         style={{
           position: 'absolute',
           top: thumbInset,
@@ -378,6 +400,7 @@ export function IsleListItem({
       <PressableScale
         haptic
         onPress={onPress}
+        interactionProfile={resolveThemeComponentExpression(family, 'button').motion}
         accessibilityLabel={description ? `${title}. ${description}` : title}
         style={[
           {
@@ -474,12 +497,11 @@ export function IsleSheet({
   style?: StyleProp<ViewStyle>
   contentStyle?: StyleProp<ViewStyle>
 }) {
-  const motion = useMotionPreference()
+  const overlayMotion = useThemeMotion('overlay', { readable: true })
   const { colors, canonicalThemeId } = useAppTheme()
   const sheetMaterial = colors.material.sheet
   const sheetExpression = resolveThemeComponentExpression(canonicalThemeId, 'bottomSheet')
-  const themeExpression = resolveThemeExpression(canonicalThemeId)
-  const fullMotion = motion === 'full'
+  const fullMotion = overlayMotion.intensity === 'full'
   const enterFrame = sheetExpression.motion === 'organic'
     ? { opacity: 0, translateY: 18, scale: 0.99 }
     : sheetExpression.motion === 'material'
@@ -509,12 +531,9 @@ export function IsleSheet({
   return (
     <MotiView
       testID={`theme-bottom-sheet-${canonicalThemeId}`}
-      from={fullMotion ? enterFrame : { opacity: 0, translateY: 0, scale: 1 }}
-      animate={{ opacity: 1, translateY: 0, scale: 1 }}
-      transition={{
-        type: 'timing',
-        duration: fullMotion ? themeExpression.motion.duration.panel : motion === 'reduced' ? 120 : 1,
-      }}
+      from={fullMotion ? { ...enterFrame, opacity: overlayMotion.from.opacity } : overlayMotion.from}
+      animate={overlayMotion.animate}
+      transition={overlayMotion.transition}
       style={style}
     >
       <IslePanel
@@ -558,7 +577,8 @@ export function IsleDisclosure({
   danger?: boolean
 }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const accentMotion = useThemeMotion('accent')
+  const summaryMotion = useThemeMotion('section', { readable: true })
   const { t } = useTranslation()
   const playful = colors.ui.monet && colors.ui.ornamented
   const collapsedBackground = danger
@@ -580,6 +600,7 @@ export function IsleDisclosure({
     <PressableScale
       haptic
       onPress={onPress}
+      interactionProfile={resolveThemeComponentExpression(colors.design?.family ?? 'minimal', 'button').motion}
       accessibilityLabel={`${expanded ? t('common.collapse') : t('common.expand')}${title}`}
       accessibilityState={{ expanded }}
       style={{
@@ -591,7 +612,7 @@ export function IsleDisclosure({
           backgroundColor: expanded ? expandedBackground : collapsedBackground,
           borderColor: danger ? colors.ui.tone.danger.border : expanded ? colors.ui.control.primaryBorder : collapsedBorderColor,
         }}
-        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+        transition={accentMotion.transition}
         style={{
           minHeight: 48,
           borderRadius: Math.min(colors.ui.radius.panel, 8),
@@ -606,7 +627,7 @@ export function IsleDisclosure({
           <Text numberOfLines={1} style={{ color: danger ? colors.ui.tone.danger.foreground : colors.text, fontSize: 15, lineHeight: 21, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
           {summary && !expanded ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{summary}</Text> : null}
         </View>
-        <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
+        <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={accentMotion.intensity === 'full' ? accentMotion.transition : { type: 'timing', duration: 1 }}>
           <AppIcon name="collapse" color={danger ? colors.ui.tone.danger.foreground : colors.textTertiary} size={19} />
         </MotiView>
       </View>
@@ -614,10 +635,10 @@ export function IsleDisclosure({
         {expanded && summary ? (
           <MotiView
             key="isle-disclosure-summary"
-            from={motion === 'full' ? { opacity: 0, translateY: 6 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateY: 0 }}
-            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
-            transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+            from={summaryMotion.from}
+            animate={summaryMotion.animate}
+            exit={summaryMotion.exit}
+            transition={summaryMotion.transition}
           >
             <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 8, includeFontPadding: false, textAlignVertical: 'center' }}>{summary}</Text>
           </MotiView>

@@ -7,6 +7,10 @@
       "node"
     ],
     "paths": {
+      "react-native": ["./node_modules/react-native/types/index.d.ts"],
+      "react": ["./node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime.d.ts"],
+      "react-native-svg": ["./node_modules/react-native-svg/lib/typescript/index.d.ts"],
       "@/*": [
         "./src/*"
       ]

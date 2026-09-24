@@ -356,7 +356,11 @@ function assertSourceIntegration() {
   assert.match(isleKitSource, /export function IsleInput\([\s\S]*const inputMinimumHeight = multiline \? 76 : Math\.max\(height, ISLE_MIN_TOUCH_TARGET\)[\s\S]*minHeight: Math\.max\(inputMinimumHeight, fieldTokens\?\.minHeight \?\? inputMinimumHeight\)/, 'single-line input shells expose a physical 44dp minimum before applying a larger theme-owned field height')
   assert.match(isleKitSource, /ISLE_INPUT_CLEAR_BUTTON_SIZE = 26[\s\S]*width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET[\s\S]*width: ISLE_INPUT_CLEAR_BUTTON_SIZE, height: ISLE_INPUT_CLEAR_BUTTON_SIZE/, 'input clear actions wrap a compact visual icon in a physical 44dp control')
   assert.match(isleKitSource, /export function IsleSwitch\([\s\S]*const touchWidth = Math\.max\(width, ISLE_MIN_TOUCH_TARGET\)[\s\S]*width: touchWidth,[\s\S]*height: ISLE_MIN_TOUCH_TARGET[\s\S]*top: trackTop, left: trackLeft, width, height/, 'shared switches preserve compact track geometry inside a physical 44dp control')
-  assert.match(isleKitSource, /export function IsleCollapse\([\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'shared collapse headers expose a physical 44dp target')
+  assert.match(isleKitSource, /Collapse as IsleCollapse/, 'collapse implementation belongs to the RN fork')
+  const forkRoot = path.dirname(require.resolve('animal-island-ui-rn/package.json'))
+  const collapseSource = fs.readFileSync(path.join(forkRoot, 'src/components/Collapse/Collapse.tsx'), 'utf8')
+  assert.match(collapseSource, /header: \{[\s\S]*paddingVertical: spacing\.lg/, 'fork collapse keeps its large padded touch target')
+  assert.match(fs.readFileSync(path.join(forkRoot, 'src/theme/tokens.ts'), 'utf8'), /lg: 24/, 'collapse vertical padding alone supplies a 48dp hit area')
   assert.match(isleKitSource, /export function IsleSelect\([\s\S]*style=\{\{ minHeight: ISLE_MIN_TOUCH_TARGET/, 'shared select options expose a physical 44dp target')
 
   const switchToSource = mainPagerSource.match(/function switchTo\(next: MainPagerPage\) \{[\s\S]*?\n  \}/)?.[0] ?? ''
@@ -369,7 +373,9 @@ function assertSourceIntegration() {
   assert.match(mainPagerSource, /<RetainedConversationsScreenContent[\s\S]*onHome=\{showHome\}/, 'History keeps its direct Home-return action')
   assert.match(mainPagerSource, /<RetainedSettingsScreenContent onHome=\{showHome\} \/>/, 'Settings keeps a stable direct Home-return action without visibility-driven re-renders')
   assert.match(settingsScreenSource, /export const SettingsScreenContent = memo\(function SettingsScreenContent/, 'the retained Settings tree memoizes parent-only pager updates')
-  assert.doesNotMatch(settingsScreenSource, /usePathname|scrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/, 'returning to Settings preserves scroll context instead of forcing duplicate top resets')
+  assert.doesNotMatch(settingsScreenSource, /usePathname/, 'returning to Settings does not introduce route-driven scroll resets')
+  assert.match(settingsScreenSource, /const resetControlScroll = useCallback\([\s\S]*?scrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/, 'explicit catalog/detail changes reset stale offsets before the content shrinks')
+  assert.match(settingsScreenSource, /const toggleControlView = useCallback\([\s\S]*?if \(nextView === controlView\) return[\s\S]*?resetControlScroll\(\)/, 'reselecting the current tab preserves the current scroll context')
   assert.match(settingsScreenSource, /if \(!expandedGroups\.advanced\) return[\s\S]*refreshSystemStatusNotificationStatus/, 'native notification status loads only when its panel is disclosed')
   assert.match(settingsScreenSource, /if \(!expandedGroups\.governance \|\| !expandedGovernanceGroups\.observability\) return[\s\S]*getObservabilitySinkApiKey/, 'secure observability credentials load only when their disclosure is visible')
 
@@ -650,6 +656,9 @@ function assertSourceIntegration() {
     'composer separates the full-width draft from stable lower dock actions',
   )
   assert.ok(composerSource.includes('COMPOSER_DOCK_CONTROL_SIZE = ISLE_MIN_TOUCH_TARGET'), 'composer dock actions consume the shared 44dp touch geometry')
+  assert.match(composerSource, /flexDirection: composerGeometry.controlsStacked \? 'column' : 'row'/, 'narrow composer explicitly stacks its measured input and control rows')
+  assert.match(composerSource, /testID="composer-control-row"[^>]*flexDirection: 'row'[^>]*width: composerGeometry.controlsStacked \? '100%' : undefined/, 'the full-width native control row contributes its own height instead of overflowing a wrapped dock')
+  assert.match(composerSource, /key="message-input"[^>]*width: composerGeometry.controlsStacked \? '100%' : undefined/, 'the input keeps a stable keyed parent and receives the full narrow row')
   assert.ok(composerSource.includes('composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT'), 'composer attachment density shares the tested compact breakpoint with its context rail')
   assert.ok(composerSource.includes('const showSendAction = true'), 'Composer keeps a visible disabled send surface before a draft exists')
   assert.match(composerSource, /removeAttachment[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]*composer-attachment-\$\{canonicalThemeId\}[\s\S]*minHeight: attachmentGrammar === 'precision' \? 26 : 30/, 'attachment removal keeps a themed compact visual chip inside a real 44dp target')

@@ -1,4 +1,4 @@
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 
 export type AppStatusTone = 'info' | 'success' | 'warning' | 'danger'
 export type AppStatusSafeAreaEdge = 'none' | 'top' | 'bottom'

@@ -45,6 +45,10 @@ jobs:
           eas-version: 24.3.0
           token: ${{ secrets.EAS_TOKEN }}
 
+      - name: Prepare RN theme workspace
+        if: steps.eas-config.outputs.configured == 'true'
+        run: node scripts/prepare-animal-island-ui.js
+
       - name: Install dependencies
         if: steps.eas-config.outputs.configured == 'true'
         run: bun install --frozen-lockfile

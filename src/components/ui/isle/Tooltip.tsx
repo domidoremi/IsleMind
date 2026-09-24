@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native'
 import { AnimatePresence, MotiView } from 'moti'
+import { Tooltip as NativeTooltip } from 'animal-island-ui-rn'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 
@@ -24,6 +25,7 @@ const TOOLTIP_METRICS: Readonly<Record<CanonicalThemeId, Readonly<{
   fontSize: number
   fontWeight: '600' | '700' | '800'
 }>>> = Object.freeze({
+  'animal-island-ui': { radius: 16, paddingHorizontal: 10, paddingVertical: 7, offset: 8, fontSize: 12, fontWeight: '600' },
   minimal: { radius: 2, paddingHorizontal: 7, paddingVertical: 4, offset: 5, fontSize: 10, fontWeight: '700' },
   monet: { radius: 12, paddingHorizontal: 10, paddingVertical: 7, offset: 8, fontSize: 11, fontWeight: '600' },
   material: { radius: 8, paddingHorizontal: 9, paddingVertical: 6, offset: 7, fontSize: 11, fontWeight: '700' },
@@ -39,7 +41,10 @@ export function IsleTooltip({
   testID,
 }: IsleTooltipProps) {
   const { colors, canonicalThemeId, design } = useAppTheme()
-  const motion = useMotionPreference()
+  const tooltipMotion = useThemeMotion('accent', { readable: true })
+  if (canonicalThemeId === 'animal-island-ui') {
+    return <NativeTooltip title={label} open={visible} placement={placement} testID={testID}><View>{children}</View></NativeTooltip>
+  }
   const expression = resolveThemeComponentExpression(canonicalThemeId, 'tooltip')
   const metrics = TOOLTIP_METRICS[canonicalThemeId]
   const glass = canonicalThemeId === 'liquid-glass'
@@ -57,20 +62,6 @@ export function IsleTooltip({
     : glass
       ? colors.ui.actionBar.itemBorder
       : colors.ui.semantic.chrome.border
-  const animatedFrom = motion === 'full'
-    ? expression.motion === 'precision'
-      ? { opacity: 0, translateY: placement === 'top' ? 2 : -2 }
-      : expression.motion === 'organic'
-        ? { opacity: 0, translateY: placement === 'top' ? 5 : -5, scale: 0.98 }
-        : expression.motion === 'material'
-          ? { opacity: 0, translateY: placement === 'top' ? 4 : -4, scale: 0.96 }
-          : { opacity: 0, translateY: placement === 'top' ? 6 : -6, scale: 0.94 }
-    : { opacity: 0 }
-  const transition = motion !== 'full'
-    ? { type: 'timing' as const, duration: 1 }
-    : expression.motion === 'fluid'
-      ? { type: 'spring' as const, damping: 20, stiffness: 260, mass: 0.72 }
-      : { type: 'timing' as const, duration: expression.motion === 'precision' ? 90 : expression.motion === 'organic' ? 220 : 160 }
   const webGlassStyle = glass
     ? ({ backdropFilter: 'blur(14px) saturate(1.12)', WebkitBackdropFilter: 'blur(14px) saturate(1.12)' } as unknown as ViewStyle)
     : undefined
@@ -87,10 +78,10 @@ export function IsleTooltip({
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
             pointerEvents="none"
-            from={animatedFrom}
-            animate={{ opacity: 1, translateY: 0, scale: 1 }}
-            exit={motion === 'full' ? { opacity: 0, scale: expression.motion === 'precision' ? 1 : 0.98 } : { opacity: 0 }}
-            transition={transition}
+            from={{ ...tooltipMotion.from, translateY: tooltipMotion.from.translateY * (placement === 'top' ? 1 : -1) }}
+            animate={tooltipMotion.animate}
+            exit={tooltipMotion.exit}
+            transition={tooltipMotion.transition}
             style={[
               {
                 position: 'absolute',

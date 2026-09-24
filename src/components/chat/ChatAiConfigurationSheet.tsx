@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { MotiView } from 'moti'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveProductMobileChatConfigurationSheetLayout } from '@/presentation/layout/productMobileLayout'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
@@ -55,6 +57,7 @@ export function ChatAiConfigurationSheet({
   onClose,
 }: ChatAiConfigurationSheetProps) {
   const { colors } = useAppTheme()
+  const sheetMotion = useThemeMotion('overlay', { readable: true })
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
   const [view, setView] = useState<'configuration' | 'providers'>(initialView)
@@ -105,7 +108,11 @@ export function ChatAiConfigurationSheet({
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1, justifyContent: 'flex-end' }}
         >
-          <View
+          <MotiView
+            testID="chat-ai-configuration-motion"
+            from={sheetMotion.from}
+            animate={sheetMotion.animate}
+            transition={sheetMotion.transition}
             style={{
               height: sheetLayout.height,
               maxHeight: '100%',
@@ -145,7 +152,7 @@ export function ChatAiConfigurationSheet({
                 onDraftChange={onDraftChange}
               />
             )}
-          </View>
+          </MotiView>
         </KeyboardAvoidingView>
       </View>
     </Modal>

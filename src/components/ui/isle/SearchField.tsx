@@ -10,11 +10,12 @@ import {
   type ViewStyle,
 } from 'react-native'
 import { MotiView } from 'moti'
+import { Input as NativeInput } from 'animal-island-ui-rn'
 
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 
@@ -43,6 +44,7 @@ const SEARCH_METRICS: Readonly<Record<CanonicalThemeId, Readonly<{
   fontWeight: '500' | '600' | '700'
   radius: number
 }>>> = Object.freeze({
+  'animal-island-ui': { minHeight: 48, horizontalPadding: 16, gap: 8, iconSize: 18, fontSize: 14, fontWeight: '500', radius: 50 },
   minimal: { minHeight: 44, horizontalPadding: 2, gap: 9, iconSize: 16, fontSize: 14, fontWeight: '500', radius: 0 },
   monet: { minHeight: 48, horizontalPadding: 12, gap: 10, iconSize: 17, fontSize: 15, fontWeight: '600', radius: 14 },
   material: { minHeight: 52, horizontalPadding: 16, gap: 12, iconSize: 18, fontSize: 15, fontWeight: '500', radius: 24 },
@@ -60,6 +62,7 @@ export function IsleSearchField({
   clearAccessibilityHint,
   onClear,
   value,
+  defaultValue,
   editable = true,
   onChangeText,
   onFocus,
@@ -69,9 +72,16 @@ export function IsleSearchField({
   ...props
 }: IsleSearchFieldProps) {
   const { colors, canonicalThemeId, design } = useAppTheme()
-  const motion = useMotionPreference()
+  const focusMotion = useThemeMotion('accent')
   const [focused, setFocused] = useState(false)
   const [clearHintVisible, setClearHintVisible] = useState(false)
+  if (canonicalThemeId === 'animal-island-ui') {
+    return <NativeInput value={value} defaultValue={defaultValue} disabled={!editable} onChangeText={onChangeText} onFocus={onFocus} onBlur={onBlur}
+      allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={inputStyle}
+      inputProps={{ ...props, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={inputRef} style={[{ minHeight: 44 }, containerStyle]}
+      prefix={<AppIcon name="search" color={colors.textSecondary} size={18} />}
+      suffix={pending ? <HighFrameSpinner color={colors.textSecondary} size={16} /> : undefined} />
+  }
   const expression = resolveThemeComponentExpression(canonicalThemeId, 'search')
   const metrics = SEARCH_METRICS[canonicalThemeId]
   const minimal = canonicalThemeId === 'minimal'
@@ -104,20 +114,6 @@ export function IsleSearchField({
         : glass
           ? colors.ui.actionBar.itemBorder
           : colors.ui.input.border
-  const focusScale = motion === 'full'
-    ? focused
-      ? expression.motion === 'organic'
-        ? 1.008
-        : expression.motion === 'fluid'
-          ? 1.006
-          : 1
-      : 1
-    : 1
-  const transition = motion !== 'full'
-    ? { type: 'timing' as const, duration: 1 }
-    : expression.motion === 'fluid'
-      ? { type: 'spring' as const, damping: 22, stiffness: 250, mass: 0.74 }
-      : { type: 'timing' as const, duration: expression.motion === 'precision' ? 110 : expression.motion === 'organic' ? 260 : 180 }
   const webGlassStyle = glass && Platform.OS === 'web'
     ? ({ backdropFilter: 'blur(16px) saturate(1.12)', WebkitBackdropFilter: 'blur(16px) saturate(1.12)' } as unknown as ViewStyle)
     : undefined
@@ -125,8 +121,8 @@ export function IsleSearchField({
   return (
     <MotiView
       testID={testID ?? `theme-search-${canonicalThemeId}`}
-      animate={{ backgroundColor, borderColor, scale: focusScale }}
-      transition={transition}
+      animate={{ backgroundColor, borderColor }}
+      transition={focusMotion.transition}
       style={[
         {
           position: 'relative',
@@ -185,6 +181,7 @@ export function IsleSearchField({
         {...props}
         ref={inputRef}
         value={value}
+        defaultValue={defaultValue}
         editable={editable}
         onChangeText={onChangeText}
         onFocus={(event) => {

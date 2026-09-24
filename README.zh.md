@@ -24,7 +24,7 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 - **知识与个人上下文**——导入知识文档，维护个人记忆和对话上下文，并通过本地索引与 embedding 模型完成检索增强。
 - **Agent 与任务执行**——提供步骤状态、取消与恢复、工具授权、执行证据，以及结构化工作产物的质量门槛、复制交接和继续提示。
 - **工具与集成**——支持 MCP、Skills、内置工作区工具、联网检索、语音和 Android 设备能力；网络能力由用户配置或显式启用。
-- **主题与语言**——提供极简、莫奈、Material 3、液态玻璃主题，支持浅色、深色、跟随系统和自定义强调色；界面支持简体中文、English 和日本語。
+- **主题与语言**——提供极简、莫奈、Material 3、液态玻璃和 Animal Island UI 主题，支持浅色、深色、跟随系统和自定义强调色；界面支持简体中文、English 和日本語。
 - **Android 体验**——包含安全区与键盘适配、后台状态通知、应用内更新检查、运行时诊断和故障恢复入口。
 
 ## 数据与网络边界
@@ -75,11 +75,14 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 ## 获取源码
 
 ```powershell
+git clone --branch rn https://github.com/domidoremi/animal-island-ui.git
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
 bun install
 bun run doctor
 ```
+
+RN 主题 fork 必须与 IsleMind 位于同级目录。`bun install` 直接链接并构建其声明；通用主题组件问题在 fork 修复，不在 IsleMind 重复移植。职责边界与 CI/EAS 配置见 [UI 接入说明](src/components/ui/isle/README.md)。
 
 ## 运行 Android
 

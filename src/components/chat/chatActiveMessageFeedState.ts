@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Platform } from 'react-native'
 import { useTranslation } from 'react-i18next'
 
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import type { ConversationTaskActivityRecord } from '@/modules/tasks'
 import type { Conversation } from '@/types/chatContracts'
 

@@ -24,7 +24,7 @@ IsleMind is a React Native + Expo Android app that puts model providers, convers
 - **Knowledge and context** – Import documents, manage personal memory and conversation context, run retrieval-augmented generation with local embedding models.
 - **Agents and tasks** – Step state, cancel/resume, tool authorization, execution evidence; structured artifacts include quality gates, copyable handoffs, and continuation prompts.
 - **Tools and integrations** – MCP, Skills, built-in workspace tools, web retrieval, speech, and Android device capabilities. Network features are user-configured or explicitly enabled.
-- **Themes and languages** – Minimal, Monet, Material 3, and Liquid Glass themes with light, dark, system, and custom-accent modes. The UI ships in English, Simplified Chinese, and Japanese.
+- **Themes and languages** – Minimal, Monet, Material 3, Liquid Glass, and Animal Island UI themes with light, dark, system, and custom-accent modes. The UI ships in English, Simplified Chinese, and Japanese.
 - **Android experience** – Safe-area and keyboard handling, background notifications, in-app update checks, runtime diagnostics, and recovery entry points.
 
 ## Data and network boundaries
@@ -87,11 +87,14 @@ distribution checksum again after native regeneration.
 ## Get the source
 
 ```bash
+git clone --branch rn https://github.com/domidoremi/animal-island-ui.git
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
 bun install
 bun run doctor
 ```
+
+The RN theme fork must be a sibling directory. `bun install` links it and builds its declarations; fix reusable theme components in that fork, not in IsleMind. See [UI integration](src/components/ui/isle/README.md) for ownership and CI/EAS setup.
 
 ## Run on Android
 

@@ -1,50 +1,37 @@
-# Isle UI Kit
+# Isle UI integration
 
-Isle UI is IsleMind's canonical React Native component system. It recreates the Animal Island interaction language for mobile without vendoring the upstream React DOM package, CSS modules, fonts, or image assets.
+IsleMind consumes the React Native fork at `../animal-island-ui` (Windows: `G:\Project\animal-island-ui`, branch `rn`) as the Bun workspace package `animal-island-ui-rn`.
+It does **not** maintain a second RN port. Do not copy the fork's components, assets, palette or native fixes into this directory.
 
-## Upstream Fork Usage
+## Ownership
 
-- The local upstream fork lives outside this Expo app at `G:\Project\forks\animal-island-ui-islemind`.
-- Treat it as a design/API reference only; React DOM components, Less modules, web fonts, and upstream images are not imported into IsleMind.
-- Port only the interaction contract and token intent into React Native `Isle*` primitives, then verify mobile accessibility, reduced motion, Android Back/safe-area behavior, and bundle impact.
-- Architecture and design-system boundaries: `docs/architecture/architecture.md`.
+- **Fork:** generic RN components, artwork, theme tokens, light/dark rendering, native accessibility and motion behavior.
+- **IsleMind:** persisted `animal-island-ui` selection, localization, semantic app-token projection, safe-area authority, dialog queues, navigation and application prop adapters.
+- `IsleThemeProvider` forwards the resolved mode, custom accent and motion preference to the fork. Buttons, inputs, switches, cards, selects, progress, backgrounds and dialogs dispatch to fork components for this theme.
+- Uncustomized controls are direct exports. Their API is the fork API, not the removed local replica API; inspect its TypeScript declarations before use.
+- Minimal, Monet, Material 3 and Liquid Glass retain their application implementations. Minimal remains the default.
+- Web prepaint colors are projections for the pre-JavaScript frame, not another component implementation.
 
-## Upstream Sync Status
+## Setup and changes
 
-- Synced on 2026-08-07 against npm `1.5.1` and upstream `main` commit `803cffa`.
-- Upstream `Tag.soft` maps to `IsleTag` and remains the default tag variant.
-- Upstream `Skeleton` maps to `IsleSkeleton` plus explicit Button, Input, and Avatar helpers; animation follows the system reduced-motion preference.
-- Upstream `Image` maps to `IsleImage`, backed by Expo Image with a native preview modal, Android Back handling, safe-area controls, and no vendored bitmap assets.
-- Upstream `BackTop` maps to `IsleBackTop`; React Native owners supply the scroll handle and current offset instead of relying on a global DOM scroll target.
-- Upstream `Time.type` maps to `IsleTimeType = 'hud' | 'game'`; `game` is the default vertical clock and uses the active app locale instead of hard-coded upstream copy.
-- The upstream borderless Input treatment maps to a transparent resting border in `IsleInput`; focus, error, and warning borders remain visible.
-- Upstream `Progress` maps to `IsleProgress` and is included in the public component registry.
-- Upstream `Footer.seamless` maps to `IsleFooter.seamless`, defaulting to `true`.
-- Upstream opt-in `Card.hoverable` maps to `IsleCard.hoverable`; interactive cards use the React Native `onPress` contract.
-- The Cursor base64 fallback is intentionally not ported because IsleMind does not vendor the upstream cursor bitmap or CSS; `IsleCursor` remains a platform-neutral motion wrapper.
+Clone the fork beside IsleMind before `bun install`. Installation builds the fork's ignored `dist/` declarations/CommonJS entry. Metro consumes and watches its `src/` directly, so component edits refresh without copying. After public API/token changes, run `bun run build:ui` before TypeScript/Jest or Node-based checks.
 
-## Continuous Theme Support
+Metro and Jest use the host app's React, React Native and SVG runtime; the fork can keep a different standalone development/test toolchain. Type-only aliases end in `.d.ts` so Expo does not treat them as runtime modules.
 
-- `src/theme/animalIslandUiContract.ts` is the reviewed upstream contract. Every future upstream sync updates its version, commit, review date, README notes, component registry, and `scripts/isle-ui-upstream-sync-tests.js` together.
-- All canonical themes continue to support the public `Isle*` interaction and accessibility contracts. `lime-road` additionally fuses the Animal Island foundation with the permanent `summer-road` experience layer; Minimal and Markdown adapt the same primitives to their own visual grammar.
-- `src/theme/themeMotion.ts` owns pure, theme-keyed motion data. Themes select semantic roles (`page`, `section`, `scenic`, `accent`, and `overlay`) rather than embedding Moti durations and transforms in feature screens.
-- `full` motion may use camera pan, scale, staged entrances, and scenic parallax metadata. `reduced` is opacity-only, while `none` is immediate. Reading content, inputs, buttons, tables, cancellation, and error visibility must never depend on decorative motion finishing.
-- Seasonal layers may change composition, copy, decoration, and motion profiles, but they do not vendor official characters, logos, title lettering, music, fonts, or bitmap assets and do not create short-lived persisted theme IDs.
+Run `bun run test:isle-ui-upstream-sync`, `bun run type-check` and the affected tests in **both** repositories. The historical sync test now enforces package ownership, direct exports, runtime resolution and clean-install preparation, not a copied-component version registry.
 
-## Naming
+CI and the EAS pre-install hook run `scripts/prepare-animal-island-ui.js`: clone `rn` only when the sibling is absent, and never update/reset an existing checkout. `ANIMAL_ISLAND_UI_REF` can pin a full commit SHA; otherwise it follows the current remote `rn`. Set the same SHA in CI and the EAS build environment for reproducible remote builds. Commit/push compatible fork changes before remote builds; uncommitted local changes and the sibling directory are **not** included in an IsleMind-only EAS upload. Cloud builds and native-device rendering require their own verification.
 
-- Public app components use the `Isle*` prefix.
-- Feature screens import from `@/components/ui/isle`.
-- Legacy names such as `Animal*`, `Island*`, `Pill`, and `MiniStat` are not allowed in feature code.
-- `PressableScale` remains a private low-level primitive; feature code uses `IslePressable` only when no semantic `Isle*` component fits.
+## Application conventions
 
-## Visual Rules
+Feature code imports semantic `Isle*` adapters from `@/components/ui/isle`. Keep touch targets, business state, localization and cancellation in the app; fix reusable rendering behavior in the fork. Read the fork's `RN-PORT.md` for native API differences and verification limits. The fork is CC BY-NC 4.0; direct consumption does not change that license.
 
-- Warm paper surfaces, lagoon/mint primary actions, sky secondary accents, sunlight focus accents, readable green-brown ink, and capsule controls.
-- Interactive controls use restrained press feedback through transform/opacity and tokenized shadow, without restoring heavy ornamental depth.
-- All overlays need a readable scrim, close affordance, safe-area padding, and Android Back compatibility.
-- Reduced motion must remove loops and large movement while preserving state feedback.
+`IsleScreen` draws its theme canvas and glass backdrop target across the full window, behind the transparent status bar. Only the foreground content belongs inside `SafeAreaView`; moving the background inside it creates a solid strip above animated/artwork themes. Keep caller-owned `edges` unchanged (Chat handles its own top inset), and keep glass consumers outside the backdrop target. Status-bar icon contrast follows the resolved light/dark mode. Native system-bar rendering still requires Android/device verification; Web screenshots do not qualify it.
 
-## Component Coverage
+## Liquid Glass environment
 
-The kit covers BackTop, Button, Card, Checkbox, CodeBlock, Collapse, Divider, focus/cursor affordance, Icon, Image, Input, Loading, Modal/Dialog, Phone/Sheet, Progress, Select, Skeleton, Switch, Table/List, Tabs, Tag, Time, Typewriter, plus IsleMind-specific Composer, Provider, Model, Citation, Metric, Chip, Toolbar, and Toast primitives as needed.
+`FluidBackdrop` delegates to `LiquidGlassScene`: one GPU pass renders merging liquid contours, rounded thickness, refracted environmental colors, Fresnel reflection and moving edge caustics. The shared shader lives in `liquidGlassRenderer.ts`; native uses `expo-gl` on the Reanimated UI runtime, Web uses a WebGL canvas. This is an analytic optical approximation, not a fluid simulation, native iOS Liquid Glass, or refraction of captured application text. `GlassSurface` continues to own the foreground blur/tint/rim; content never enters the environmental blur target.
+
+Only the decorative framebuffer is capped at a 960-physical-pixel longest edge. Text and control geometry remain native-resolution. Motion follows display VSync without a fixed FPS cap, existing intensity/motion preferences, and app activity. Reduced motion/static mode draws a still liquid surface; hidden routes release their GPU context. Reduced transparency, older native binaries, Android below API 31 and failed/unavailable GPUs retain the bounded SVG/solid fallback. The fallback remains visible until the first successful frame. No page content is remounted when the material becomes ready or fails.
+
+Native installations must be rebuilt to include `expo-gl`; a JavaScript-only update to an older binary retains the fallback. Validate shader and lifecycle changes with the colocated `liquidGlassRenderer`, `LiquidGlassCanvas`, `LiquidGlassScene`, `FluidBackdrop`, `Background`, `GlassSurface` and `Screen` tests, plus rendered light/dark and native blur checks. Host tests alone do not establish GPU/device performance.

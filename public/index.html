@@ -13,7 +13,7 @@
         try {
           var persisted = JSON.parse(window.localStorage.getItem('@islemind/settings') || '{}');
           var candidateFamily = persisted.themeId;
-          if (candidateFamily === 'minimal' || candidateFamily === 'monet' || candidateFamily === 'material' || candidateFamily === 'liquid-glass') {
+          if (candidateFamily === 'minimal' || candidateFamily === 'monet' || candidateFamily === 'material' || candidateFamily === 'liquid-glass' || candidateFamily === 'animal-island-ui') {
             family = candidateFamily;
           }
           if (persisted.theme === 'light' || persisted.theme === 'dark' || persisted.theme === 'system') {
@@ -41,7 +41,9 @@
           'material:light': ['#FAFAFC', '#1B1D20'],
           'material:dark': ['#191B1E', '#E2E4E7'],
           'liquid-glass:light': ['#EAF2F8', '#152331'],
-          'liquid-glass:dark': ['#0D1722', '#EFF8FF']
+          'liquid-glass:dark': ['#0D1722', '#EFF8FF'],
+          'animal-island-ui:light': ['#f8f8f0', '#794f27'],
+          'animal-island-ui:dark': ['#20251e', '#f4ebdd']
         }[family + ':' + mode];
         root.setAttribute('data-theme-id', family);
         root.setAttribute('data-theme-family', family);

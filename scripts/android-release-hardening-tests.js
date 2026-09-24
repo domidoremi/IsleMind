@@ -21,10 +21,11 @@ const root = path.resolve(__dirname, '..')
 function withLocalBuildFixture(options, check) {
   // Execute the actual builder/generator with closed subprocess effects and an owned filesystem.
   // Never require their entry points: both execute main() unconditionally.
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-build-source-test-'))
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-build-source-test-'))
+  const temporaryRoot = path.join(sandboxRoot, 'IsleMind')
   const inside = (target) => {
     const resolved = path.resolve(target)
-    assert.ok(resolved === temporaryRoot || resolved.startsWith(`${temporaryRoot}${path.sep}`), `fixture access escaped its root: ${target}`)
+    assert.ok(resolved === sandboxRoot || resolved.startsWith(`${sandboxRoot}${path.sep}`), `fixture access escaped its root: ${target}`)
     return resolved
   }
   const write = (name, content) => {
@@ -51,7 +52,7 @@ function withLocalBuildFixture(options, check) {
   for (const name of ['existsSync', 'statSync', 'readFileSync', 'readdirSync', 'mkdirSync', 'rmdirSync', 'unlinkSync', 'rmSync', 'writeFileSync']) {
     filesystem[name] = (target, ...args) => {
       // The optional host-JDK discovery is deliberately unavailable inside this fixture.
-      if (name === 'readdirSync' && !path.resolve(target).startsWith(`${temporaryRoot}${path.sep}`) && path.resolve(target) !== temporaryRoot) {
+      if (name === 'readdirSync' && !path.resolve(target).startsWith(`${sandboxRoot}${path.sep}`) && path.resolve(target) !== sandboxRoot) {
         const error = new Error('fixture has no host JDK directory')
         error.code = 'ENOENT'
         throw error
@@ -203,8 +204,8 @@ function withLocalBuildFixture(options, check) {
     check(state)
   } finally {
     const temporaryBase = `${path.resolve(os.tmpdir())}${path.sep}`
-    assert.ok(temporaryRoot.startsWith(temporaryBase), 'cleanup stays in the owned OS-temporary root')
-    fs.rmSync(inside(temporaryRoot), { recursive: true, force: true })
+    assert.ok(sandboxRoot.startsWith(temporaryBase), 'cleanup stays in the owned OS-temporary root')
+    fs.rmSync(inside(sandboxRoot), { recursive: true, force: true })
   }
 }
 
@@ -251,6 +252,33 @@ function assertLocalBuildSourceCapture() {
     }
   }
   test('variant attribution', {}, (result) => assertCaptured(result, 2, 'no-model'))
+  const setupThemeWorkspace = (state) => {
+    state.write('../animal-island-ui/package.json', JSON.stringify({ name: 'animal-island-ui-rn' }))
+    state.write('../animal-island-ui/src/theme.ts', 'export const accent = "blue"\n')
+    state.write('../animal-island-ui/src/leaf.svg', '<svg />\n')
+  }
+  test('sibling UI sources and assets are part of every variant capture', { setup: setupThemeWorkspace }, (result) => {
+    assertCaptured(result, 2, 'no-model')
+    for (const snapshot of result.snapshots) {
+      for (const relative of ['../animal-island-ui/src/theme.ts', '../animal-island-ui/src/leaf.svg']) {
+        assert.equal(snapshot.payload.build.inputs.find((input) => input.path === relative)?.sha256,
+          result.digest(fs.readFileSync(path.resolve(result.root, relative))))
+      }
+    }
+  })
+  for (const file of ['theme.ts', 'leaf.svg']) {
+    test(`sibling UI ${file} edit during compilation rejects publication`, {
+      args: singleVariantArgs,
+      setup: setupThemeWorkspace,
+      onEvent(kind, state) {
+        if (kind !== 'after-gradle') return
+        const target = path.resolve(state.root, '../animal-island-ui/src', file)
+        const before = fs.statSync(target)
+        fs.appendFileSync(target, 'changed during compilation\n')
+        fs.utimesSync(target, before.atime, before.mtime)
+      },
+    }, (result) => assertRejected(result, /source inputs changed/, 1))
+  }
   test('all release variants and ABI passes', { args: ['--release', '--all-variants'] }, (result) => {
     assertCaptured(result, 8, 'no-model')
     assert.equal(result.compilations.length, 8)
@@ -580,7 +608,13 @@ V2 Signer: certificate SHA-256 digest: ${releaseDigest}
   assert.ok(workflowSource.includes('bun run test:android-release-hardening'))
   assert.ok(workflowSource.includes('ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_STORE_PASSWORD'))
   assert.ok(workflowSource.includes('bun scripts/validate-android-release-signing.js dist-apk/*.apk'))
-  assert.ok(workflowSource.includes('bun scripts/write-release-source-snapshots.js dist-apk/*.apk'))
+  // Capture each copied APK before switching model variants. A wildcard capture
+  // after restoring no-model would attribute bundled-model APKs to the wrong inputs.
+  assert.match(
+    workflowSource,
+    /cp "\$\{apks\[0\]\}" "\$target"\s+sha256sum "\$target" > "\$\{target\}\.sha256"\s+bun scripts\/write-release-source-snapshots\.js "\$target"/,
+    'each release APK is hashed and source-bound immediately after copying, within its model-variant build',
+  )
   assert.ok(workflowSource.includes('validate-android-16kb-apk.js --strict'))
   assert.ok(workflowSource.includes('-PhermesEnabled=true'))
   for (const gradleArg of androidReleaseOptimizationGradleArgs) {

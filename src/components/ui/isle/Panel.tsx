@@ -1,7 +1,8 @@
 import type { PropsWithChildren } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useTransparencyPreference } from '@/hooks/useTransparencyPreference'
+import { GlassSurface } from './GlassSurface'
+import { Card as NativeCard } from 'animal-island-ui-rn'
 export type IsleMaterial = 'paper' | 'raised' | 'muted' | 'glass' | 'chrome' | 'field' | 'transparent'
 
 interface IslePanelProps extends PropsWithChildren {
@@ -27,23 +28,18 @@ export function IslePanel({
   interactive = false,
 }: IslePanelProps) {
   const { colors, design, isLiquidGlass } = useAppTheme()
-  const reduceTransparency = useTransparencyPreference()
   const resolvedMaterial = material ?? (blur ? 'glass' : 'paper')
+  if (design.family === 'animal-island-ui' && resolvedMaterial !== 'transparent') {
+    return <NativeCard style={[style, contentStyle]}>{children}</NativeCard>
+  }
   const resolvedRadius = Math.min(radius ?? colors.ui.radius.panel, colors.ui.radius.panel)
   const functionalMaterial = isLiquidGlass && (blur || resolvedMaterial === 'glass' || resolvedMaterial === 'chrome')
-  const webBlurEnabled = functionalMaterial && Platform.OS === 'web' && !reduceTransparency && supportsBackdropFilter()
   const tokenBackground = panelBackground(resolvedMaterial, colors)
   // Minimal paper panels are layout aids, not nested cards. Keep a real
   // surface for dialogs/raised sheets while allowing ordinary sections to
   // remain on the continuous canvas.
   const backgroundColor = resolvedMaterial === 'paper' && design.component.panel.background === 'transparent'
     ? 'transparent'
-    : functionalMaterial
-    ? webBlurEnabled
-      ? design.semantic.color.surfaceOverlay
-      : reduceTransparency
-        ? design.semantic.color.surfaceElevated
-        : design.semantic.surface.floating.background
     : tokenBackground
   const borderColor = panelBorder(resolvedMaterial, colors)
   const shouldElevate = elevated && resolvedMaterial !== 'transparent' && (resolvedMaterial === 'raised' || resolvedMaterial === 'glass' || resolvedMaterial === 'chrome')
@@ -52,18 +48,6 @@ export function IslePanel({
     : 0
   const shadowRadius = shouldElevate ? Math.min(16, design.semantic.elevation.shadowBlur) : 0
   const shadowOffsetY = shouldElevate ? Math.min(4, design.semantic.elevation.shadowOffsetY) : 0
-  const functionalMaterialStyle = functionalMaterial
-    ? {
-        backgroundColor,
-        ...(webBlurEnabled
-          ? {
-              backdropFilter: `blur(${design.semantic.blur.radius}px) saturate(1.18)`,
-              boxShadow: `0 ${Math.max(2, design.semantic.elevation.shadowOffsetY)}px ${Math.max(12, design.semantic.elevation.shadowBlur)}px ${design.semantic.elevation.shadowColor}33`,
-            }
-          : null),
-      } as ViewStyle
-    : null
-  void intensity
   const panelStyle: StyleProp<ViewStyle> = [
     styles.panel,
     {
@@ -82,14 +66,22 @@ export function IslePanel({
       }),
     },
     style,
-    functionalMaterialStyle,
-  ]
-  const resolvedContentStyle: StyleProp<ViewStyle> = [
-    contentStyle,
-    functionalMaterialStyle ? { backgroundColor } : null,
   ]
 
-  return <View style={[panelStyle, resolvedContentStyle]}>{children}</View>
+  if (functionalMaterial) {
+    return (
+      <GlassSurface
+        colors={colors}
+        variant={resolvedMaterial === 'chrome' ? 'chrome' : 'floating'}
+        intensity={intensity}
+        borderRadius={resolvedRadius}
+        style={[panelStyle, contentStyle, { borderWidth: 0 }]}
+      >
+        {children}
+      </GlassSurface>
+    )
+  }
+  return <View style={[panelStyle, contentStyle]}>{children}</View>
 }
 
 const styles = StyleSheet.create({
@@ -117,11 +109,6 @@ function panelBackground(material: IsleMaterial, colors: ReturnType<typeof useAp
     default:
       return colors.ui.semantic.surface.base
   }
-}
-
-function supportsBackdropFilter(): boolean {
-  const css = (globalThis as typeof globalThis & { CSS?: { supports?: (property: string, value: string) => boolean } }).CSS
-  return css?.supports?.('backdrop-filter', 'blur(1px)') === true
 }
 
 function panelBorder(material: IsleMaterial, colors: ReturnType<typeof useAppTheme>['colors']) {

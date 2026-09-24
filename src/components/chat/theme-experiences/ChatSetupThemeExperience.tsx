@@ -3,7 +3,6 @@ import { StyleSheet, View } from 'react-native'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
-import { GlassBackdropProvider, GlassBackdropTarget } from '../glass'
 
 type ChatThemeColors = ReturnType<typeof useAppTheme>['colors']
 
@@ -80,17 +79,15 @@ function MaterialSetupExperience({ colors, chrome, status, content, controls, co
 
 function LiquidGlassSetupExperience({ chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
   return (
-    <GlassBackdropProvider>
-      <View testID="chat-setup-experience-liquid-glass" style={styles.root}>
-        <View style={styles.glassLayer}>{chrome}</View>
-        <View style={styles.glassStatusLayer}>{status}</View>
-        <View style={styles.glassSetupCanvas}>
-          <GlassBackdropTarget style={styles.glassSetupColumn}>{content}</GlassBackdropTarget>
-        </View>
-        {controls}
-        <View style={styles.glassLayer}>{composer}</View>
+    <View testID="chat-setup-experience-liquid-glass" style={styles.root}>
+      <View style={styles.glassLayer}>{chrome}</View>
+      <View style={styles.glassStatusLayer}>{status}</View>
+      <View style={styles.glassSetupCanvas}>
+        <View style={styles.glassSetupColumn}>{content}</View>
       </View>
-    </GlassBackdropProvider>
+      {controls}
+      <View style={styles.glassLayer}>{composer}</View>
+    </View>
   )
 }
 
@@ -113,5 +110,5 @@ const styles = StyleSheet.create({
   glassLayer: { zIndex: 2 },
   glassStatusLayer: { zIndex: 1, paddingHorizontal: 4 },
   glassSetupCanvas: { flex: 1, position: 'relative', overflow: 'hidden', paddingHorizontal: 3 },
-  glassSetupColumn: { flex: 1, minWidth: 0, marginHorizontal: 8, paddingHorizontal: 4, borderLeftWidth: 1, borderRightWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  glassSetupColumn: { flex: 1, minHeight: 0, minWidth: 0, paddingHorizontal: 4 },
 })

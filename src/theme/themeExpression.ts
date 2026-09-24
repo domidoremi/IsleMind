@@ -303,6 +303,23 @@ const deepFreeze = <T,>(value: T): T => {
 }
 
 export const THEME_EXPRESSION_REGISTRY: Readonly<Record<ThemeFamily, ThemeExpression>> = deepFreeze({
+  'animal-island-ui': {
+    family: 'animal-island-ui',
+    name: 'Animal Island UI',
+    philosophy: 'Consume the RN fork directly; the library owns its component skin and interaction behavior.',
+    emotion: 'warm / playful / natural',
+    userFeeling: 'A cozy island workspace with tactile controls.',
+    visual: { hierarchy: 'warm paper and mint accents', rhythm: 'comfortable rounded controls', typography: 'readable rounded labels', iconography: 'library-owned decoration and app utility icons' },
+    spatial: { layout: 'readable content with playful controls', density: 'balanced', alignment: 'stable application layout', containerPolicy: 'library cards for surfaces, no duplicated component skin' },
+    material: { surface: 'warm opaque paper', border: 'rounded outlines', elevation: 'library primary-button depth', background: 'library wallpaper', fallback: 'opaque readable paper' },
+    interaction: { grammar: 'physical', press: 'library press feedback', hover: 'library behavior', focus: 'warm visible focus', disabled: 'library disabled state', selection: 'mint accent' },
+    motion: { grammar: 'organic', duration: resolveThemeMotionDurations('animal-island-ui'), easing: 'library standard easing', reducedMotion: 'disable decorative animation', ambient: 'static wallpaper' },
+    navigation: 'list',
+    components: Object.fromEntries(THEME_COMPONENT_IDS.map((id) => [id, component(
+      `RN fork ${id} with application content`, 'boundary', 'capsule', 'balanced', 'outline', 'none', 'physical', 'organic',
+      'library warm focus', 'mint selection', 'readable muted content',
+    )])) as Record<ThemeComponentId, ThemeComponentExpression>,
+  },
   minimal: {
     family: 'minimal',
     name: 'Minimal',
@@ -355,7 +372,7 @@ export const THEME_EXPRESSION_REGISTRY: Readonly<Record<ThemeFamily, ThemeExpres
     spatial: { layout: 'floating planes over a bounded environment', density: 'balanced', alignment: 'nested layers with explicit z-order', containerPolicy: 'one blur layer per region; content remains opaque/readable' },
     material: { surface: 'translucent lens with reflection and environmental tint', border: 'specular edge highlight plus contrast boundary', elevation: 'layered depth with restrained shadow/glow', background: 'bounded environmental field; no unbounded blur', fallback: 'reduced-glass opaque tonal surface on unsupported devices' },
     interaction: { grammar: 'physical', press: 'instant flex/lift and highlight response', hover: 'light bends toward pointer', focus: 'interior glow plus edge contrast', disabled: 'opaque fallback surface with preserved semantics', selection: 'lifted lens and light concentration' },
-    motion: { grammar: 'fluid', duration: resolveThemeMotionDurations('liquid-glass'), easing: 'spring with bounded translation and no infinite loops', reducedMotion: 'remove parallax/blur interpolation; keep opacity and focus', ambient: 'optional low-amplitude light movement, one layer per region' },
+    motion: { grammar: 'fluid', duration: resolveThemeMotionDurations('liquid-glass'), easing: 'bounded spring interactions; one shared ambient clock', reducedMotion: 'freeze environmental drift; keep opacity and focus', ambient: 'three transform-only flowing-light layers, suspended in background and static mode' },
     navigation: 'floating',
     components: GLASS_COMPONENTS,
   },
@@ -386,6 +403,7 @@ export const THEME_IDENTITY_SIGNATURES: Readonly<Record<ThemeFamily, Readonly<{
   interaction: readonly string[]
   emotion: string
 }>>> = deepFreeze({
+  'animal-island-ui': { grayscale: ['pill', 'paper', 'button-depth', 'wallpaper'], interaction: ['press', 'cozy', 'tactile'], emotion: 'warm / playful / natural' },
   minimal: { grayscale: ['rules', 'alignment', 'text-first', 'flat'], interaction: ['short', 'direct', 'quiet'], emotion: 'calm / efficient / precise' },
   monet: { grayscale: ['wash', 'soft-edge', 'organic-offset', 'breathing'], interaction: ['light-drift', 'halo', 'slow'], emotion: 'gentle / natural / dreamy' },
   material: { grayscale: ['tonal-levels', 'state-layer', 'indicator', 'standard-shape'], interaction: ['ripple', 'shared-axis', 'predictable'], emotion: 'reliable / structured / clear' },

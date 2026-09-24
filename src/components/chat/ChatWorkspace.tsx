@@ -82,15 +82,15 @@ interface ChatWorkspaceProps {
 }
 
 export function ChatWorkspace({ conversation, active = true, showBack = false, embedded = false, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty, initialRequestedOutputMode = 'auto', shellNavigation = false, topChromeInset = 0, showSetupEmptyState = true, runtimeRepairIntent, settingsTransitionActive = false, onHistory, onSettings }: ChatWorkspaceProps) {
-  const { colors } = useAppTheme()
+  const { colors, isLiquidGlass } = useAppTheme()
   const { t } = useTranslation()
   const chatSystemPromptPlaceholder = t(CHAT_PRESENTATION_CATALOG.systemPromptPlaceholderKey)
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
   const visualTopInset = embedded ? 0 : Math.max(insets.top, 0)
   const { height: windowHeight, width: windowWidth } = useWindowDimensions()
-  const motion = useMotionPreference()
-  const chatMotion = Platform.OS === 'android' && motion === 'full' ? 'reduced' : motion
+  const motion = useMotionPreference(isLiquidGlass)
+  const chatMotion = Platform.OS === 'android' && !isLiquidGlass && motion === 'full' ? 'reduced' : motion
   const updateConversation = useChatStore((state) => state.updateConversation)
   const switchConversationModel = useChatStore((state) => state.switchConversationModel)
   const removeMessage = useChatStore((state) => state.removeMessage)

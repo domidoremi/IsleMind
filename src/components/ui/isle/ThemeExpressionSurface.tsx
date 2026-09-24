@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react'
 import { StyleSheet, View, type LayoutChangeEvent } from 'react-native'
-import { MotiView } from 'moti'
-import { Easing } from 'react-native-reanimated'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
-import { useMotionPreference, type MotionIntensity } from '@/hooks/useMotionPreference'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { resolveThemeExpression, type ThemeComponentId, type ThemeExpression } from '@/theme/themeExpression'
 import type { ThemeSurfaceMaterialToken } from '@/theme/themeTokens'
+import { GlassSurface } from './GlassSurface'
+import { Card as NativeCard } from 'animal-island-ui-rn'
 
 type ThemeColors = ReturnType<typeof useAppTheme>['colors']
 export type ThemeExpressionSurfaceKind = 'composer' | 'chrome' | 'message' | 'message-content' | 'markdown' | 'code-block'
@@ -20,13 +21,12 @@ export interface ThemeExpressionSurfaceProps {
   horizontalPadding?: number
   isUser?: boolean
   selected?: boolean
+  focused?: boolean
   alertBorder?: string
   onLayout?: (event: LayoutChangeEvent) => void
   testID?: string
   /** Resolved motion preference; glass flowing light only runs at full motion. */
   motion?: MotionIntensity
-  /** The parent GlassSurface owns the live backdrop and this lens only adds edge treatment. */
-  backdropProvided?: boolean
 }
 
 const COMPONENT_BY_SURFACE: Record<ThemeExpressionSurfaceKind, ThemeComponentId> = {
@@ -99,15 +99,26 @@ function surfaceMaterialFor(props: ThemeExpressionSurfaceProps): ThemeSurfaceMat
  * selected here.
  */
 const RENDERERS: Record<CanonicalThemeId, Renderer> = {
+  'animal-island-ui': renderAnimalIsland,
   minimal: renderMinimal,
   monet: renderMonet,
   material: renderMaterial,
   'liquid-glass': renderLiquidGlass,
 }
 
+function renderAnimalIsland(props: ThemeExpressionSurfaceProps) {
+  const content = props.kind === 'message-content' || props.kind === 'markdown' || props.kind === 'code-block'
+  if (content) return <View testID={props.testID} style={{ backgroundColor: 'transparent', minWidth: 0 }}>{props.children}</View>
+  return <View onLayout={props.onLayout} style={{ minWidth: 0, maxWidth: '100%', alignSelf: props.kind === 'message' && props.isUser ? 'flex-end' : 'stretch' }}>
+    <NativeCard testID={props.testID} style={{ padding: props.kind === 'message' ? 12 : props.horizontalPadding ?? 12, minWidth: 0, maxWidth: '100%' }}>
+      {props.children}
+    </NativeCard>
+  </View>
+}
+
 export function ThemeExpressionSurface(props: ThemeExpressionSurfaceProps) {
   const expression = resolveThemeExpression(props.family)
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(props.family === 'liquid-glass')
   const testID = props.testID ?? `theme-expression-${props.kind}-${props.family}`
   return RENDERERS[props.family]({ ...props, motion, testID, children: props.children }, expression)
 }
@@ -282,19 +293,31 @@ function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExp
 }
 
 function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: ThemeExpression) {
+  if (props.kind === 'chrome' || props.kind === 'composer') {
+    return (
+      <GlassSurface
+        colors={props.colors}
+        variant="chrome"
+        focused={props.focused}
+        testID={props.testID}
+        onLayout={props.onLayout}
+        borderRadius={props.colors.design?.semantic.radius.extraLarge ?? 28}
+        style={[
+          props.kind === 'chrome' ? styles.glassChrome : styles.glassComposer,
+          { width: '100%', minWidth: 0, borderWidth: props.alertBorder ? 1 : 0, borderColor: props.alertBorder ?? 'transparent' },
+        ]}
+      >
+        {props.children}
+      </GlassSurface>
+    )
+  }
   const material = surfaceMaterialFor(props)
   const isMessage = props.kind === 'message'
   const isContent = props.kind === 'message-content'
   const isMarkdown = props.kind === 'markdown'
   const isCodeBlock = props.kind === 'code-block'
   const isNestedRichContent = props.kind === 'code-block'
-  // Only top-level chrome is a live lens. Rich reading surfaces stay opaque,
-  // and message bodies remain on the ambient conversation plane.
-  const glassLens = props.kind === 'chrome' || props.kind === 'composer'
   const userSurface = rgbaColor(props.colors.ui.message.userBackground, 0.74)
-  // Ambient light drift: the lens border breathes with a slow opacity cycle
-  // instead of sliding a rectangle across the surface.
-  const flowingLight = glassLens && props.motion === 'full'
   return (
     <View
       testID={props.testID}
@@ -304,85 +327,28 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
         isContent ? styles.glassContent : null,
         isMarkdown ? styles.glassMarkdown : null,
         isCodeBlock ? styles.glassCodeBlock : null,
-        props.kind === 'chrome' ? styles.glassChrome : null,
         isMessage && props.isUser ? styles.glassUserMessage : null,
         isMessage && !props.isUser ? styles.glassAssistantMessage : null,
-        props.kind === 'composer' ? styles.glassComposer : null,
         {
-          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? userSurface : isNestedRichContent && props.isUser ? rgbaColor(props.colors.ui.message.userActionBackground, 0.74) : props.backdropProvided && glassLens ? 'transparent' : material.background,
+          backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? userSurface : isNestedRichContent && props.isUser ? rgbaColor(props.colors.ui.message.userActionBackground, 0.74) : material.background,
           borderColor: props.alertBorder ?? material.border,
           borderWidth: isContent || isMarkdown || isMessage && !props.isUser ? 0 : props.selected ? 2 : material.border !== 'transparent' ? StyleSheet.hairlineWidth : 0,
           shadowColor: material.shadowColor,
-          shadowOpacity: glassLens || isCodeBlock || isMessage && props.isUser ? material.shadowOpacity : 0,
-          shadowRadius: glassLens || isCodeBlock || isMessage && props.isUser ? material.shadowBlur : 0,
-          shadowOffset: { width: 0, height: glassLens || isCodeBlock || isMessage && props.isUser ? material.shadowOffsetY : 0 },
-          elevation: glassLens || isCodeBlock ? material.elevation : 0,
+          shadowOpacity: isCodeBlock || isMessage && props.isUser ? material.shadowOpacity : 0,
+          shadowRadius: isCodeBlock || isMessage && props.isUser ? material.shadowBlur : 0,
+          shadowOffset: { width: 0, height: isCodeBlock || isMessage && props.isUser ? material.shadowOffsetY : 0 },
+          elevation: isCodeBlock ? material.elevation : 0,
         },
       ]}
     >
-      {glassLens ? (
-        // Edge light, clipped to the lens shape: a top inner arc (stronger at
-        // the corners, fading toward the center) and a faint bottom rim. No
-        // rectangular bands, no full-width specular strips.
-        <>
-          <GlassEdgeLight
-            highlight={material.highlight}
-            style={{ top: 0, right: 1, left: 1, height: 10, borderTopWidth: 1, borderBottomWidth: 0, opacity: 0.85 }}
-          />
-          <GlassEdgeLight
-            highlight={material.highlight}
-            style={{ right: 3, bottom: 0, left: 3, height: 5, borderTopWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, opacity: 0.28 }}
-          />
-          {flowingLight ? (
-            <MotiView
-              accessible={false}
-              pointerEvents="none"
-              importantForAccessibility="no-hide-descendants"
-              from={{ opacity: 0.4 }}
-              animate={{ opacity: 1 }}
-              transition={{ type: 'timing', duration: 6400, easing: Easing.inOut(Easing.quad), loop: true }}
-              style={[styles.glassPerimeter, { borderColor: material.highlight }]}
-            />
-          ) : null}
-        </>
-      ) : null}
       <View style={[
         styles.glassContentFrame,
-        props.kind === 'composer' ? styles.glassComposerFrame : null,
         isMessage && props.isUser ? styles.glassUserContentFrame : null,
         isMessage && !props.isUser ? styles.glassAssistantContentFrame : null,
       ]}>
         {props.children}
       </View>
     </View>
-  )
-}
-
-/**
- * A rounded-rectangle rim whose border carries the edge highlight. The center
- * stays empty, so the light lives only on the glass edge and is clipped by
- * the lens's own border radius.
- */
-function GlassEdgeLight({ highlight, style }: {
-  highlight: string
-  style: {
-    top?: number
-    right?: number
-    bottom?: number
-    left?: number
-    height?: number
-    borderTopWidth?: number
-    borderBottomWidth?: number
-    opacity?: number
-  }
-}) {
-  return (
-    <View
-      accessible={false}
-      pointerEvents="none"
-      importantForAccessibility="no-hide-descendants"
-      style={[{ position: 'absolute', borderRadius: 999, borderColor: highlight, borderWidth: 0 }, style]}
-    />
   )
 }
 
@@ -443,16 +409,14 @@ const styles = StyleSheet.create({
   materialAssistantContentFrame: { paddingHorizontal: 0 },
   materialCodeContentFrame: { paddingLeft: 30 },
   glassBase: { minHeight: 50, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, position: 'relative' },
-  glassChrome: { minHeight: 50, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 16 },
-  glassComposer: { marginHorizontal: 0, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 16 },
+  glassChrome: { minHeight: 50, paddingHorizontal: 2, paddingVertical: 1, justifyContent: 'center' },
+  glassComposer: { marginHorizontal: 0, paddingHorizontal: 8, paddingVertical: 7, justifyContent: 'center' },
   glassUserMessage: { alignSelf: 'flex-end', marginRight: 4, marginVertical: 4, borderRadius: 20 },
   glassAssistantMessage: { width: '100%', alignSelf: 'flex-start', marginTop: 2, marginBottom: 2, borderRadius: 14, paddingHorizontal: 0, paddingTop: 8, paddingBottom: 4, backgroundColor: 'transparent' },
   glassContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
   glassMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   glassCodeBlock: { width: '100%', minHeight: 0, borderRadius: 14, padding: 0 },
-  glassPerimeter: { ...StyleSheet.absoluteFill, borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, opacity: 0.3 },
   glassContentFrame: { position: 'relative', zIndex: 1 },
-  glassComposerFrame: { paddingHorizontal: 0, paddingVertical: 0 },
   glassUserContentFrame: { minWidth: 0, paddingLeft: 3, paddingRight: 2 },
   glassAssistantContentFrame: { paddingHorizontal: 0 },
 })

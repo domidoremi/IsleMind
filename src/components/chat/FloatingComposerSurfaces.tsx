@@ -27,7 +27,7 @@ import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ProviderBrandIcon, type ProviderBrand } from '@/components/ui/ProviderBrandIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { IslePressable } from '@/components/ui/isle'
-import type { MotionIntensity } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/theme/themeMotion'
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import { PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH } from '@/presentation/layout/productMobileLayout'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
@@ -556,6 +556,7 @@ export function MessageInput({
         onSubmitEditing={onSubmitEditing}
         placeholder={placeholder}
         placeholderTextColor={colors.ui.input.placeholderForeground}
+        underlineColorAndroid="transparent"
         onContentSizeChange={onContentSizeChange}
         onFocus={onFocus}
         onBlur={onBlur}
@@ -564,6 +565,7 @@ export function MessageInput({
           {
             height: bodyHeight,
             color: colors.text,
+            backgroundColor: 'transparent',
             paddingTop: singleLineInput ? 0 : paddingVertical,
             paddingBottom: singleLineInput ? 0 : paddingVertical,
             textAlignVertical: singleLineInput ? 'center' : 'top',

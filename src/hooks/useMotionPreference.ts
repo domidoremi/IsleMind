@@ -1,17 +1,23 @@
 import { useSyncExternalStore } from 'react'
 import { AccessibilityInfo, Platform } from 'react-native'
-export type MotionIntensity = 'full' | 'reduced' | 'none'
+import type { MotionIntensity } from '@/theme/themeMotion'
+
+// Preserve the hook's existing type export; the contract is owned by the theme.
+export type { MotionIntensity } from '@/theme/themeMotion'
 
 const DEFAULT_MOTION_INTENSITY: MotionIntensity = Platform.OS === 'android' ? 'reduced' : 'full'
 const motionListeners = new Set<() => void>()
 let currentMotionIntensity: MotionIntensity = DEFAULT_MOTION_INTENSITY
+// Keep Android's conservative cold-start policy. Bounded interaction/navigation
+// and the glass theme follow the OS once reduced motion is explicitly off.
+let currentSystemMotionIntensity: MotionIntensity = DEFAULT_MOTION_INTENSITY
 let motionPreferenceSubscription: { remove(): void } | null = null
 let motionPreferenceEpoch = 0
 
-export function useMotionPreference(): MotionIntensity {
+export function useMotionPreference(followSystem = false): MotionIntensity {
   return useSyncExternalStore(
     subscribeMotionPreference,
-    getMotionPreferenceSnapshot,
+    followSystem ? getSystemMotionPreferenceSnapshot : getMotionPreferenceSnapshot,
     getServerMotionPreferenceSnapshot,
   )
 }
@@ -35,6 +41,10 @@ function subscribeMotionPreference(listener: () => void): () => void {
 
 function getMotionPreferenceSnapshot(): MotionIntensity {
   return currentMotionIntensity
+}
+
+function getSystemMotionPreferenceSnapshot(): MotionIntensity {
+  return currentSystemMotionIntensity
 }
 
 function getServerMotionPreferenceSnapshot(): MotionIntensity {
@@ -89,7 +99,9 @@ function stopMotionPreferenceSubscription() {
 
 function updateMotionPreferenceFromReduceMotion(enabled: boolean) {
   const next: MotionIntensity = enabled ? 'reduced' : DEFAULT_MOTION_INTENSITY
-  if (currentMotionIntensity === next) return
+  const systemNext: MotionIntensity = enabled ? 'reduced' : 'full'
+  if (currentMotionIntensity === next && currentSystemMotionIntensity === systemNext) return
   currentMotionIntensity = next
+  currentSystemMotionIntensity = systemNext
   for (const listener of motionListeners) listener()
 }

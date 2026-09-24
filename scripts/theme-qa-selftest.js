@@ -91,13 +91,13 @@ check(
   releaseGate.issues.join('; ') || 'theme release gate should pass package/file checks',
 )
 check(
-  'four canonical tokens reject retired families safely',
+  'five canonical tokens reject retired families safely',
   /family,\s*minimal,\s*monet,\s*material,\s*liquidGlass/.test(colors)
     && !/THEME_ID_ALIASES|LegacyThemeId/.test(settingsAppearance + read('src/types/settingsContracts.ts'))
     && /normalizeThemeFamilyValue\(value\)/.test(settingsAppearance)
     && /normalizeThemeFamilyValue\(value\) \?\? DEFAULT_THEME_ID/.test(colors)
     && /DEFAULT_THEME_ID: CanonicalThemeId = 'minimal'/.test(colors),
-  'Minimal, Monet, Material, and Liquid Glass must be the only runtime families; stale values fall back to Minimal',
+  'Minimal, Monet, Material, Liquid Glass, and Animal Island UI must be the only runtime families; stale values fall back to Minimal',
 )
 check(
   'Monet control tokens keep tactile depth restrained',
@@ -166,13 +166,13 @@ check(
   'the named preferences route should still resolve to the settings preference content shell',
 )
 check(
-  'theme app actions recognize the four canonical families',
+  'theme app actions recognize the five canonical families',
   /SETTINGS_THEME_FAMILIES = CANONICAL_THEME_IDS/.test(settingsActionContracts),
   'structured Settings actions should stay aligned with the canonical theme families',
 )
 check(
   'builtin tools expose canonical families only',
-  /enum: \['minimal', 'monet', 'material', 'liquid-glass'\]/.test(applicationBuiltinCatalog) && !/lime-road|material-3|material3|Legacy .*migrated/.test(applicationBuiltinCatalog),
+  /enum: \['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'\]/.test(applicationBuiltinCatalog) && !/lime-road|material-3|material3|Legacy .*migrated/.test(applicationBuiltinCatalog),
   'builtins should reject retired values at the schema boundary',
 )
 check(
@@ -257,17 +257,14 @@ check(
   'selected stars and stop controls should render filled icons instead of silently dropping fill props',
 )
 check(
-  'IsleKit demo surfaces stay plain-content first',
-  /const tableBackground = palette\.liquidGlass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
-    && /const frameBackground = palette\.liquidGlass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
-    && /const phoneSurface = palette\.liquidGlass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
-    && /const ornamentedTitle = palette\.monet && palette\.ui\.ornamented/.test(isleKit)
-    && /const titleShadowOpacity = ornamentedTitle \? \(palette\.isDark \? 0\.08 : 0\.05\) : 0/.test(isleKit),
-  'table, time, phone, and title chrome should stay quieter than the primary content layer',
+  'uncustomized demo controls are fork exports, not local replicas',
+  ['Table', 'Time', 'Title', 'Collapse', 'Checkbox'].every((name) => isleKit.includes(name + ' as Isle' + name))
+    && /from 'animal-island-ui-rn'/.test(isleKit),
+  'the RN fork owns demo/control implementations; the app keeps its integration adapters',
 )
 check(
   'web fallback contains canonical family selectors only',
-  ['minimal', 'monet', 'material', 'liquid-glass'].every((family) => globalCss.includes(`data-theme-id='${family}'`))
+  ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'].every((family) => globalCss.includes(`data-theme-id='${family}'`))
     && !/data-theme-id='(?:lime-road|cartoon|island|markdown|glass|material-3|material3|liquid)'/.test(globalCss),
   'web fallback should cover all canonical runtime families without retired aliases',
 )
@@ -312,13 +309,13 @@ check(
   'high-frequency composer and input controls should use semantic weak-state colors instead of blanket dimming',
 )
 check(
-  'shared choice controls avoid blanket disabled opacity',
+  'app-owned choice controls use semantic disabled colors; other choices are fork-owned',
   /const switchTextColor = disabled \? disabledStyle\.foreground/.test(isleKit)
     && /backgroundColor: disabled \? disabledStyle\.backgroundColor : active \? switchTokens\.trackOn : switchTokens\.trackOff/.test(isleKit)
-    && /const questionColor = disabled \? disabledStyle\.foreground : palette\.text/.test(isleKit)
+    && /Collapse as IsleCollapse/.test(isleKit)
     && /const optionDisabled = !!option\.disabled/.test(isleKit)
     && /backgroundColor: optionDisabled \? disabledStyle\.backgroundColor : optionActive \? activeOptionBackground : 'transparent'/.test(isleKit)
-    && /const boxBackground = optionDisabled \? disabledStyle\.backgroundColor : active \? activeBoxBackground : inactiveBoxBackground/.test(isleKit)
+    && /Checkbox as IsleCheckbox/.test(isleKit)
     && !/opacity: disabled \? 0\.55 : 1/.test(isleKit)
     && !/opacity: option\.disabled \? 0\.45 : 1/.test(isleKit)
     && !/opacity: disabled \|\| option\.disabled \? 0\.55 : 1/.test(isleKit),

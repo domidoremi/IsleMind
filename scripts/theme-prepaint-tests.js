@@ -13,6 +13,8 @@ const prepaintSource = html.match(/<script>\s*(\(function prepaintIsleMindTheme\
 assert.ok(prepaintSource, 'public index contains the inline prepaint bootstrap')
 
 const palettes = {
+  'animal-island-ui:light': ['#f8f8f0', '#794f27'],
+  'animal-island-ui:dark': ['#20251e', '#f4ebdd'],
   'minimal:light': ['#F8FAF9', '#17201D'],
   'minimal:dark': ['#101513', '#ECF4F0'],
   'monet:light': ['#F4F6F2', '#17201D'],
@@ -65,7 +67,7 @@ function runPrepaint({ persisted, systemDark = false, storageThrows = false } = 
 }
 
 function testMatrix() {
-  for (const family of ['minimal', 'monet', 'material', 'liquid-glass']) {
+  for (const family of ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui']) {
     for (const mode of ['light', 'dark']) {
       const result = runPrepaint({ persisted: JSON.stringify({ themeId: family, theme: mode }) })
       assert.equal(result.attributes['data-theme-id'], family, `${family}/${mode} keeps the canonical family`)
@@ -141,4 +143,4 @@ testRetiredAndInvalidRecords()
 testAccentValidation()
 testRevealContract()
 
-console.log('theme prepaint tests passed: 8 canonical states, system-dark, retired-id rejection, corrupt storage, accent validation, and reveal contract')
+console.log('theme prepaint tests passed: 10 canonical states, system-dark, retired-id rejection, corrupt storage, accent validation, and reveal contract')

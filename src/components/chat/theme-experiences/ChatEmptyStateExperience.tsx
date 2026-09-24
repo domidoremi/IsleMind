@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import { View } from 'react-native'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
@@ -72,9 +73,9 @@ function LiquidGlassEmptyStateExperience({ colors, intro, boundary, starter, act
       {starter}
       {boundary}
       {action ? (
-        <View style={[styles.glassActionBar, { backgroundColor: colors.ui.semantic.chrome.background, borderColor: colors.ui.semantic.chrome.border }]}>
+        <GlassSurface colors={colors} variant="navigation" style={styles.glassActionBar}>
           {action}
-        </View>
+        </GlassSurface>
       ) : null}
     </View>
   )
@@ -90,5 +91,5 @@ const styles = {
   materialRoot: { width: '100%', maxWidth: 760, alignSelf: 'center' as const, gap: 12, padding: 16, borderRadius: 18, borderWidth: 0 } as const,
   materialActionRow: { alignItems: 'flex-start' as const } as const,
   glassRoot: { width: '100%', maxWidth: 780, alignSelf: 'center' as const, gap: 12 } as const,
-  glassActionBar: { minHeight: 54, alignItems: 'flex-start' as const, justifyContent: 'center' as const, padding: 6, borderRadius: 26, borderWidth: 1 } as const,
+  glassActionBar: { minHeight: 54, alignSelf: 'center' as const, alignItems: 'center' as const, justifyContent: 'center' as const, padding: 6 } as const,
 }

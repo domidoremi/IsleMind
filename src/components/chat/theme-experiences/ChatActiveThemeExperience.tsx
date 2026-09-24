@@ -3,7 +3,6 @@ import { View } from 'react-native'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
-import { GlassBackdropProvider, GlassBackdropTarget } from '../glass'
 
 type ChatThemeColors = ReturnType<typeof useAppTheme>['colors']
 
@@ -78,19 +77,17 @@ function MaterialActiveExperience({ colors, chrome, status, messageList, control
 
 function LiquidGlassActiveExperience({ chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
-    <GlassBackdropProvider>
-      <View testID="chat-active-experience-liquid-glass" style={styles.root}>
-        <View style={styles.glassChromeLayer}>{chrome}</View>
-        <View style={styles.glassStatusLayer}>{status}</View>
-        <View style={styles.glassCanvas}>
-          <GlassBackdropTarget style={styles.glassMessageColumnWrap}>
-            <View style={styles.glassMessageColumn}>{messageList}</View>
-          </GlassBackdropTarget>
+    <View testID="chat-active-experience-liquid-glass" style={styles.root}>
+      <View style={styles.glassChromeLayer}>{chrome}</View>
+      <View style={styles.glassStatusLayer}>{status}</View>
+      <View style={styles.glassCanvas}>
+        <View style={styles.glassMessageColumnWrap}>
+          <View style={styles.glassMessageColumn}>{messageList}</View>
         </View>
-        {controls}
-        <View style={styles.glassComposerLayer}>{composer}</View>
       </View>
-    </GlassBackdropProvider>
+      {controls}
+      <View style={styles.glassComposerLayer}>{composer}</View>
+    </View>
   )
 }
 
@@ -126,8 +123,8 @@ const styles = {
   materialComposerDock: {} as const,
   glassChromeLayer: { zIndex: 2 } as const,
   glassStatusLayer: { zIndex: 1, paddingHorizontal: 4 } as const,
-  glassCanvas: { flex: 1, position: 'relative' } as const,
-  glassMessageColumnWrap: { flex: 1 } as const,
+  glassCanvas: { flex: 1, minHeight: 0, position: 'relative' } as const,
+  glassMessageColumnWrap: { flex: 1, minHeight: 0 } as const,
   glassMessageColumn: { flex: 1, minWidth: 0, marginHorizontal: 4 } as const,
   glassComposerLayer: { zIndex: 2 } as const,
 }

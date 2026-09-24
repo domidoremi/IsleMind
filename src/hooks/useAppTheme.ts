@@ -46,5 +46,6 @@ export function useAppTheme() {
     isMonet: canonicalThemeId === 'monet',
     isMaterial: canonicalThemeId === 'material',
     isLiquidGlass: canonicalThemeId === 'liquid-glass',
+    isAnimalIsland: canonicalThemeId === 'animal-island-ui',
   }
 }
