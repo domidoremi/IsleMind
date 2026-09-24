@@ -1,3 +1,6 @@
+import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
+import { SettingsEditBoundary, useSettingsDraft, useSettingsLeave } from '@/components/settings/SettingsEditBoundary'
+import { SettingsHelpButton } from '@/components/settings/SettingsHelp'
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AppState, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type KeyboardEvent, type LayoutChangeEvent } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
@@ -175,13 +178,17 @@ interface ProviderSettingsContentProps {
   onBackgroundStateChange?: (state: IsleBackgroundState) => void
 }
 
-export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
+export function ProviderSettingsContent(props: ProviderSettingsContentProps) {
+  return <SettingsEditBoundary><ProviderSettingsBody {...props} /></SettingsEditBoundary>
+}
+
+function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const motion = useMotionPreference()
   const insets = useSafeAreaInsets()
-  const { width } = useWindowDimensions()
+  const { width, fontScale } = useWindowDimensions()
   const compactWidth = width < 430
   const veryCompactWidth = width < 360
   const pagePadding = compactWidth ? 12 : 16
@@ -424,39 +431,18 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
   const batchActionsExpanded = batchActionsOpen || batchActionsActive
   const providerActionButtonStyle = { flexGrow: 1, flexShrink: 1, flexBasis: veryCompactWidth ? '100%' : '48%', minWidth: 0, minHeight: 44 } as const
   async function addProviderFromForm(provider: AIProvider) {
+    // Saving configuration is not authorization to probe or test a paid model.
+    const store = useSettingsStore.getState()
+    const previousDefault = store.settings.defaultProvider
+    if (store.providers.some(item => item.id === provider.id)) await store.updateProvider(provider.id, provider)
+    else await addProvider(provider)
+    if (!previousDefault) store.updateSettings({ defaultProvider: null })
+    await store.flushProviderPersistence()
+    await flushPersistedSettings()
     setAddOpen(false)
-    const previousDefaultProvider = settings.defaultProvider
-    const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
-    dialog.toast({
-      title: t('providerSettings.autoDetect'),
-      message: providerDisplayName,
-      tone: 'mint',
-      durationMs: 1400,
-    })
-    const probeApiKey = provider.apiKey.trim()
-      || provider.credentialGroups?.find((group) => group.enabled && group.apiKey?.trim())?.apiKey?.trim()
-      || provider.credentialGroups?.find((group) => group.apiKey?.trim())?.apiKey?.trim()
-      || ''
-    const detection = await probeProviderPreset({
-      baseUrl: provider.baseUrl,
-      name: provider.name,
-      apiKey: probeApiKey,
-    }, { timeoutMs: 2500 })
-    const detectedProvider = applyProviderPreset({
-      ...provider,
-      presetId: detection.presetId,
-      detectedPresetId: detection.presetId,
-      wireProtocol: detection.presetId === DEFAULT_PROVIDER_PRESET_ID
-        ? detection.wireProtocol ?? provider.wireProtocol ?? DEFAULT_PROVIDER_WIRE_PROTOCOL
-        : provider.wireProtocol,
-      detectionStatus: 'detected',
-    }, detection.presetId)
-    await addProvider(detectedProvider)
-    if (!previousDefaultProvider) updateSettings({ defaultProvider: null })
-    setExpandedProviderId(detectedProvider.id)
+    setExpandedProviderId(provider.id)
     setSortMode('manual')
     setModelFilter('')
-    await activateProviders([detectedProvider.id], 'single')
   }
 
   async function publishImportProgress(progress: ProviderImportProgress, options: { waitForNotification?: boolean; owner?: string } = {}) {
@@ -737,7 +723,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
                     autoCorrect={false}
                     placeholder={t('providerSettings.filterModels')}
                     placeholderTextColor={colors.textTertiary}
-                    style={{ flex: 1, minWidth: 0, minHeight: ISLE_MIN_TOUCH_TARGET, padding: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}
+                    style={{ flex: 1, minWidth: 0, minHeight: ISLE_MIN_TOUCH_TARGET, padding: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}
                   />
                   {modelFilter ? (
                     <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: mutedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
@@ -748,7 +734,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
                 {!manualOrdering ? (
                   <IslePressable haptic accessibilityLabel={t('providerSettings.switchToManualSort')} onPress={() => setSortMode('manual')} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: raisedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
                     <AppIcon name="grab" color={colors.textSecondary} size={14} />
-                    <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: '800' }}>{t('providerSettings.sort.manual')}</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('providerSettings.sort.manual')}</Text>
                   </IslePressable>
                 ) : null}
               </View>
@@ -905,9 +891,9 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
                 <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={15} />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{groupLabel}</Text>
-                <Text numberOfLines={1} style={{ marginTop: 1, color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>{groupStateSummary}</Text>
-                {groupUsageSummary ? <Text testID={`provider-usage-group-${group.id}`} numberOfLines={1} style={{ marginTop: 1, color: groupUsageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>{groupUsageSummary}</Text> : null}
+                <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{groupLabel}</Text>
+                <Text style={{ marginTop: 1, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{groupStateSummary}</Text>
+                {groupUsageSummary ? <Text testID={`provider-usage-group-${group.id}`} style={{ marginTop: 1, color: groupUsageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{groupUsageSummary}</Text> : null}
               </View>
               {groupDeleting ? (
                 <View accessibilityLabel={t('providerSettings.deleteSupplierStarted')} style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}>
@@ -915,7 +901,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
                 </View>
               ) : disclosure.expandable ? (
                 <View style={{ minWidth: 30, height: 30, borderRadius: Math.min(colors.ui.radius.controlSmall, 8), paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: raisedSurface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.section.divider }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 14, fontWeight: '900' }}>{group.providers.length}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{group.providers.length}</Text>
                   <AppIcon name="collapse" color={colors.textTertiary} size={14} style={{ transform: [{ rotate: groupExpanded ? '180deg' : '0deg' }] }} />
                 </View>
               ) : (
@@ -937,8 +923,8 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
     </View>
   ) : colors.ui.family === 'material' ? (
     <View testID="provider-empty-material" style={{ minHeight: 84, paddingHorizontal: 12, paddingVertical: 10, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider, backgroundColor: colors.ui.semantic.surface.muted }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
-      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
+      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
+      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
     </View>
   ) : colors.ui.family === 'monet' ? (
     <View testID="provider-empty-monet" style={{ minHeight: 96, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: colors.material.stroke }}>
@@ -947,14 +933,14 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
         <View style={{ width: 2, height: 30, backgroundColor: colors.material.stroke }} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
-      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
+        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
+      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
       </View>
     </View>
   ) : (
     <View testID="provider-empty-minimal" style={{ minHeight: providers.length ? 54 : 76, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
-      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '500' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
+      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
+      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
     </View>
   )
 
@@ -995,7 +981,7 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
       <ProviderFormModal
         visible={addOpen}
         onClose={() => setAddOpen(false)}
-        onSubmit={(provider) => void addProviderFromForm(provider)}
+        onSubmit={addProviderFromForm}
       />
       <ProviderImportModal
         visible={importOpen}
@@ -1053,31 +1039,14 @@ function ProviderConfigurationSheet({
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
-  const [usageEditorDirty, setUsageEditorDirty] = useState(false)
+  const leave = useSettingsLeave()
   const { handleRequestClose } = useKeyboardAwareModalRequestClose(() => {
     void requestSheetClose()
   })
   const sheetHeight = Math.max(360, Math.min(Math.round(height * 0.9), height - Math.max(insets.top, 12) - 8))
   const providerName = provider ? resolveProviderDisplayName(provider, t('providerSettings.customProvider')) : ''
 
-  useEffect(() => {
-    setUsageEditorDirty(false)
-  }, [provider?.id, visible])
-
-  async function requestSheetClose() {
-    if (!usageEditorDirty) {
-      onClose()
-      return
-    }
-    const discard = await dialog.confirm({
-      title: t('providerSettings.usageQueryDiscardTitle'),
-      message: t('providerSettings.usageQueryDiscardMessage'),
-      confirmLabel: t('providerSettings.usageQueryDiscardConfirm'),
-      cancelLabel: t('common.cancel'),
-      tone: 'amber',
-    })
-    if (discard) onClose()
-  }
+  async function requestSheetClose() { await leave(onClose) }
 
   return (
     <Modal transparent visible={visible && Boolean(provider)} animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={handleRequestClose}>
@@ -1092,7 +1061,7 @@ function ProviderConfigurationSheet({
               <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
                 <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={16} />
               </View>
-              <Text numberOfLines={1} ellipsizeMode="tail" style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
+              <Text ellipsizeMode="tail" style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
                 {providerName}
               </Text>
               <IslePressable haptic accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={() => void requestSheetClose()} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
@@ -1100,6 +1069,7 @@ function ProviderConfigurationSheet({
               </IslePressable>
             </View>
             <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 18) + 20 }}>
+              <SettingsHelpButton topic="models" />
               {sortControl ? <View style={{ marginBottom: 10 }}>{sortControl}</View> : null}
               {provider ? (
                 <>
@@ -1112,7 +1082,7 @@ function ProviderConfigurationSheet({
                     }}
                     deferMount={deferMount}
                   />
-                  <ProviderUsageQueryEditor provider={provider} onDirtyChange={setUsageEditorDirty} />
+                  <ProviderUsageQueryEditor key={provider.id} provider={provider} />
                 </>
               ) : null}
             </ScrollView>
@@ -1139,8 +1109,8 @@ function ProviderToolbarDisclosureRow({ title, detail, icon, open, tone, onPress
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={{ color: textColor, fontSize: 12.5, lineHeight: 16, fontWeight: '800' }}>{title}</Text>
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1, fontWeight: '700' }}>{detail}</Text>
+        <Text style={{ color: textColor, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1, fontWeight: '700' }}>{detail}</Text>
       </View>
       <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
         <AppIcon name="collapse" color={colors.textTertiary} size={16} />
@@ -1413,13 +1383,13 @@ function ProviderListRow({
           accessibilityState={{ expanded }}
           style={{ minHeight: 68, paddingHorizontal: 12, paddingRight: batchMode ? 54 : 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}
         >
-          <Text style={{ width: 23, color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '800' }}>{String(position).padStart(2, '0')}</Text>
+          <Text style={{ width: 23, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{String(position).padStart(2, '0')}</Text>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={{ marginTop: 2, color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '600', includeFontPadding: false }}>{providerUrl}</Text>
-            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} numberOfLines={1} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
+            <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
+            <Text ellipsizeMode="tail" style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600', includeFontPadding: false }}>{providerUrl}</Text>
+            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
           </View>
-          <Text style={{ color: provider.enabled ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '800' }}>{providerStateLabel}</Text>
+          <Text style={{ color: provider.enabled ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{providerStateLabel}</Text>
           {!batchMode ? <AppIcon name="back-next" color={colors.textTertiary} size={14} /> : null}
         </IslePressable>
         {selectionControl}
@@ -1443,9 +1413,9 @@ function ProviderListRow({
             <AppIcon name="provider-key" color={provider.enabled ? colors.ui.icon.accentForeground : colors.textSecondary} size={17} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 13.5, lineHeight: 18, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
-             <Text numberOfLines={1} ellipsizeMode="tail" style={{ marginTop: 2, color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '600', includeFontPadding: false }}>{providerUrl}</Text>
-             {usageSummary ? <Text testID={`provider-usage-${provider.id}`} numberOfLines={1} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
+            <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
+             <Text ellipsizeMode="tail" style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600', includeFontPadding: false }}>{providerUrl}</Text>
+             {usageSummary ? <Text testID={`provider-usage-${provider.id}`} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
           </View>
           {!batchMode ? (
             <AppIcon name="back-next" color={colors.textTertiary} size={14} />
@@ -1468,13 +1438,13 @@ function ProviderListRow({
           accessibilityState={{ expanded }}
           style={{ minHeight: 66, paddingHorizontal: 8, paddingRight: batchMode ? 52 : 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}
         >
-          <Text style={{ width: 24, color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>{String(position).padStart(2, '0')}</Text>
+          <Text style={{ width: 24, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{String(position).padStart(2, '0')}</Text>
           <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 12.5, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
-            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} numberOfLines={1} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
+            <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
+            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
           </View>
            {!batchMode ? (
-             <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: 142, color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '600' }}>{providerUrl}</Text>
+             <Text ellipsizeMode="tail" style={{ maxWidth: 142, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{providerUrl}</Text>
           ) : null}
           {!batchMode ? <AppIcon name="back-next" color={colors.textTertiary} size={14} /> : null}
         </IslePressable>
@@ -1499,13 +1469,13 @@ function ProviderListRow({
             <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={21} />
           </View>
           <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', includeFontPadding: false }}>
+            <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', includeFontPadding: false }}>
               {providerDisplayName}
             </Text>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700', includeFontPadding: false }}>
+            <Text ellipsizeMode="tail" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>
                {providerUrl}
             </Text>
-            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} numberOfLines={1} ellipsizeMode="tail" style={{ color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
+            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} ellipsizeMode="tail" style={{ color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
           </View>
           {!batchMode ? (
             <View style={{ alignItems: 'flex-end' }}>
@@ -1546,14 +1516,14 @@ function ProviderListRow({
           </View>
           <AppIcon name="back-next" color={colors.textTertiary} size={14} />
         </View>
-        <Text numberOfLines={2} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900', includeFontPadding: false }}>
+        <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '900', includeFontPadding: false }}>
           {providerDisplayName}
         </Text>
         <View style={{ gap: 5 }}>
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '800', includeFontPadding: false }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
              {providerUrl}
           </Text>
-          {usageSummary ? <Text testID={`provider-usage-${provider.id}`} numberOfLines={1} style={{ color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
+          {usageSummary ? <Text testID={`provider-usage-${provider.id}`} style={{ color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
         </View>
       </IslePressable>
       {selectionControl}
@@ -1637,7 +1607,7 @@ function DeferredProviderDetails({
           }}
         >
           <HighFrameSpinner color={colors.textTertiary} size={16} />
-          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 14, fontWeight: '800', includeFontPadding: false }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
             {t('common.loading')}
           </Text>
         </View>
@@ -1753,7 +1723,7 @@ function DragRail({
           >
             <AppIcon name="grab" color={disabled ? colors.textTertiary : colors.ui.control.primaryForeground} size={15} />
           </MotiView>
-          <Text style={{ color: disabled ? colors.textTertiary : colors.textSecondary, fontSize: 10, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
+          <Text style={{ color: disabled ? colors.textTertiary : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
             {position}
           </Text>
         </Animated.View>
@@ -1810,7 +1780,7 @@ function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boo
         transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
         style={{ minHeight: 40, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', borderWidth: subtleBorderWidth }}
       >
-        <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11.5, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
+        <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
       </MotiView>
     </IslePressable>
   )
@@ -1835,7 +1805,7 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
             <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>
               {title}
             </Text>
-            <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2, fontWeight: '800' }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '800' }}>
               {job.stage ?? job.currentName ?? t('providerSettings.activationQueued')}
             </Text>
           </View>
@@ -1853,7 +1823,7 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
         {showProviderItems ? <ActivationProviderProgressList items={providerItems} /> : null}
         {done && job.issueGroups?.length ? <ActivationIssueGroupList groups={job.issueGroups} /> : null}
         <IsleProgress percent={progress * 100} size="middle" showInfo={false} fillColor={job.failed ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground} />
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '700' }}>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>
           {t('providerSettings.activationProgressMessage', { completed: job.completed, total: job.total, synced: job.synced, tested: job.tested, failed: job.failed })}
         </Text>
       </View>
@@ -1868,10 +1838,10 @@ function ActivationIssueGroupList({ groups }: { groups: NonNullable<ActivationJo
     <View style={{ gap: 6 }}>
       {groups.map((group) => (
         <View key={`${group.key}-${group.count}`} style={{ borderRadius: Math.min(colors.ui.radius.card, 8), paddingVertical: 7, paddingHorizontal: 9, backgroundColor: colors.ui.tone.warning.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.warning.border }}>
-          <Text numberOfLines={2} style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
+          <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
             {group.line}
           </Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, marginTop: 2, fontWeight: '800' }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '800' }}>
             {group.providerNames.join(', ')}{group.hiddenProviderCount ? ` +${group.hiddenProviderCount}` : ''}
           </Text>
         </View>
@@ -1892,14 +1862,14 @@ function ActivationProviderProgressList({ items }: { items: ActivationJobItemSta
         return (
           <View key={item.providerId} style={{ gap: 5 }}>
             <View style={{ minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>{item.providerName}</Text>
-              <Text numberOfLines={1} style={{ color: warning ? colors.ui.tone.warning.foreground : ready ? colors.ui.control.link : colors.textSecondary, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>
+              <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{item.providerName}</Text>
+              <Text style={{ color: warning ? colors.ui.tone.warning.foreground : ready ? colors.ui.control.link : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
                 {activationItemStatusLabel(item, t)}
               </Text>
             </View>
             <IsleProgress percent={progress * 100} size="small" showInfo={false} durationMs={1} fillColor={warning ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground} />
             {item.stage ? (
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>{item.stage}</Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{item.stage}</Text>
             ) : null}
           </View>
         )
@@ -1920,7 +1890,7 @@ function ActivationProgressPill({ label, tone = 'default' }: { label: string; to
         : colors.ui.tone.neutral
   return (
     <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: subtleBorderWidth, borderColor: toneToken.border }}>
-      <Text numberOfLines={1} style={{ color: toneToken.foreground, fontSize: 11, fontWeight: '800' }}>{label}</Text>
+      <Text style={{ color: toneToken.foreground, fontSize: 14, fontWeight: '800' }}>{label}</Text>
     </View>
   )
 }
@@ -1941,17 +1911,17 @@ function ProviderImportProgressCard({ progress }: { progress: ProviderImportProg
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <HighFrameSpinner color={colors.ui.icon.accentForeground} size={16} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>
+            <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
               {t(`providerSettings.importProgress.${progress.stage}`)}
             </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '800' }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '800' }}>
               {detail}
             </Text>
           </View>
         </View>
         <IsleProgress percent={progressValue * 100} size="small" showInfo={false} indeterminate={!determinate} />
         {progress.currentProviderName ? (
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '800' }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
             {t('providerSettings.importProgressCurrent', { name: progress.currentProviderName })}
           </Text>
         ) : null}
@@ -2000,7 +1970,7 @@ function ProviderFormModal({
 }: {
   visible: boolean
   onClose: () => void
-  onSubmit: (provider: AIProvider) => void
+  onSubmit: (provider: AIProvider) => Promise<void>
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -2013,6 +1983,9 @@ function ProviderFormModal({
   const focusedFieldRef = useRef<ProviderFormFieldId | null>(null)
   const [presetId, setPresetId] = useState<ProviderPresetId>(DEFAULT_PROVIDER_PRESET_ID)
   const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const saveLock = useRef(false)
+  const pendingProvider = useRef<AIProvider | null>(null)
   const [baseUrl, setBaseUrl] = useState('')
   const [nameDirty, setNameDirty] = useState(false)
   const [baseUrlDirty, setBaseUrlDirty] = useState(false)
@@ -2071,6 +2044,7 @@ function ProviderFormModal({
   }
 
   function resetDraft() {
+    pendingProvider.current = null
     setName('')
     setBaseUrl('')
     setNameDirty(false)
@@ -2084,10 +2058,8 @@ function ProviderFormModal({
     setWireProtocol(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   }
 
-  function closeWithoutSubmit() {
-    resetDraft()
-    onClose()
-  }
+  const requestDiscard = useSettingsDraft(visible && Boolean(name || baseUrl || keysText || modelsText || presetId !== DEFAULT_PROVIDER_PRESET_ID), saving, resetDraft)
+  function closeWithoutSubmit() { void requestDiscard(onClose) }
 
   const keyboardRequestClose = useKeyboardAwareModalRequestClose(closeWithoutSubmit)
 
@@ -2170,11 +2142,11 @@ function ProviderFormModal({
     setTimeout(scheduleFocusedFieldScroll, 176)
   }
 
-  function submit() {
-    if (providerConfigIssue) return
+  async function submit() {
+    if (providerConfigIssue || saveLock.current) return
     const modelList = parseModels(modelsText)
     const provider = applyProviderPreset({
-      id: `custom-${Date.now().toString(36)}`,
+      id: pendingProvider.current?.id ?? `custom-${Date.now().toString(36)}`,
       presetId,
       detectedPresetId: presetId,
       detectionStatus: 'manual',
@@ -2189,8 +2161,13 @@ function ProviderFormModal({
       models: modelList,
       enabled: false,
     } satisfies AIProvider, presetId)
-    onSubmit(provider)
-    resetDraft()
+    pendingProvider.current = provider
+    Keyboard.dismiss()
+    saveLock.current = true
+    setSaving(true)
+    try { await onSubmit(provider); resetDraft() }
+    catch { dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
+    finally { saveLock.current = false; setSaving(false) }
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
@@ -2288,7 +2265,7 @@ function ProviderFormModal({
 
   return (
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
-      <View style={{ flex: 1 }}>
+      <View pointerEvents={saving ? 'none' : 'auto'} style={{ flex: 1 }}>
         <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
           <IsleOverlayPressable accessible={false} accessibilityRole="none" onPress={closeWithoutSubmit} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </View>
@@ -2301,7 +2278,7 @@ function ProviderFormModal({
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('settings.addProvider')}</Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.addSubtitle')}</Text>
+                  <SettingsHelpButton topic="models" />
                 </View>
                 <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit}>
                   <AppIcon name="close" color={colors.textSecondary} size={18} />
@@ -2327,10 +2304,17 @@ function ProviderFormModal({
               style={{ flexShrink: 1 }}
               contentContainerStyle={{ gap: 8, paddingHorizontal: modalPadding, paddingBottom: 10, backgroundColor: sheetMaterial.body }}
             >
+              <Text accessibilityRole="header" style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>1 · {t('settingsWorkspace.stepProvider')}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                    {PROVIDER_VENDOR_PRESETS.map((item) => (
+                      <ChoiceIsleChip key={item.id} label={item.name} active={presetId === item.id} onPress={() => selectPreset(item.id)} />
+                    ))}
+                  </ScrollView>
+              <Text accessibilityRole="header" style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>2 · {t('settingsWorkspace.stepConnection')}</Text>
               <View onLayout={rememberFieldLayout('baseUrl')}>
                 <IsleField
                   label={t('providerSettings.baseUrl')}
-                  inputProps={{
+                  inputProps={{ editable: !saving,
                     value: baseUrl,
                     onFocus: () => markInputFocused('baseUrl'),
                     onChangeText: handleBaseUrlText,
@@ -2345,15 +2329,23 @@ function ProviderFormModal({
                     testID="provider-form-base-url-error"
                     accessibilityRole="alert"
                     accessibilityLiveRegion="polite"
-                    style={{ marginTop: 6, color: colors.ui.tone.danger.foreground, fontSize: 11, lineHeight: 16, fontWeight: '700' }}
+                    style={{ marginTop: 6, color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '700' }}
                   >
                     {providerConfigIssueMessage}
                   </Text>
                 ) : null}
               </View>
               <View onLayout={rememberFieldLayout('tokens')}>
-                <ProviderTokenField value={keysText} onChangeText={handleKeysText} onFocus={() => markInputFocused('tokens')} />
+                <ProviderTokenField editable={!saving} value={keysText} onChangeText={handleKeysText} onFocus={() => markInputFocused('tokens')} />
               </View>
+              <Text accessibilityRole="header" style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>3 · {t('settingsWorkspace.stepModel')}</Text>
+                  <View onLayout={rememberFieldLayout('models')}>
+                    <IsleField
+                      label={t('settings.models')}
+                      note={t('providerSettings.modelsNote')}
+                      inputProps={{ editable: !saving, value: modelsText, onChangeText: setModelsText, onFocus: () => markInputFocused('models'), placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
+                    />
+                  </View>
               <IslePressable
                 haptic
                 accessibilityRole="button"
@@ -2362,7 +2354,7 @@ function ProviderFormModal({
                 onPress={() => setAdvancedOpen((value) => !value)}
                 style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}
               >
-                <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('providerSettings.advancedInterfaceSettings')}</Text>
+                <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('providerSettings.advancedInterfaceSettings')}</Text>
                 <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
                   <AppIcon name="collapse" color={colors.textTertiary} size={16} />
                 </MotiView>
@@ -2370,16 +2362,12 @@ function ProviderFormModal({
               {advancedOpen ? (
                 <View style={{ gap: 8 }}>
                   <View onLayout={rememberFieldLayout('name')}>
-                    <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: (value) => {
+                    <IsleField label={t('providerSettings.name')} inputProps={{ editable: !saving, value: name, onChangeText: (value) => {
                       setName(value)
                       setNameDirty(true)
                     }, onFocus: () => markInputFocused('name'), placeholder: presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProviderNamePlaceholder') : preset.name, autoCapitalize: 'none' }} />
                   </View>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                    {PROVIDER_VENDOR_PRESETS.map((item) => (
-                      <ChoiceIsleChip key={item.id} label={item.name} active={presetId === item.id} onPress={() => selectPreset(item.id)} />
-                    ))}
-                  </ScrollView>
+
                   {providerConfigDraft.isProtocolSelectable ? (
                     <View style={{ gap: 8 }}>
                       <ProviderToolbarDisclosureRow
@@ -2405,18 +2393,12 @@ function ProviderFormModal({
                               <ChoiceIsleChip key={protocol} active={wireProtocol === protocol} label={t(`providerSettings.protocol.${protocol}`)} onPress={() => selectWireProtocol(protocol)} />
                             ))}
                           </View>
-                          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.endpointNote')}</Text>
+                          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{t('providerSettings.protocol.endpointNote')}</Text>
                         </MotiView>
                       ) : null}
                     </View>
                   ) : null}
-                  <View onLayout={rememberFieldLayout('models')}>
-                    <IsleField
-                      label={t('settings.models')}
-                      note={t('providerSettings.modelsNote')}
-                      inputProps={{ value: modelsText, onChangeText: setModelsText, onFocus: () => markInputFocused('models'), placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
-                    />
-                  </View>
+
                 </View>
               ) : null}
             </ScrollView>
@@ -2425,10 +2407,10 @@ function ProviderFormModal({
                 <IsleButton label={t('common.cancel')} onPress={closeWithoutSubmit} style={modalActionStyle} />
                 <IsleButton
                   testID="provider-form-submit"
-                  label={t('providerSettings.addAndConnect')}
+                  label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')}
                   tone="primary"
-                  onPress={submit}
-                  disabled={clipboardBusy || Boolean(providerConfigIssue)}
+                  onPress={() => void submit()}
+                  disabled={saving || clipboardBusy || Boolean(providerConfigIssue)}
                   style={modalActionStyle}
                 />
               </View>
@@ -2712,7 +2694,7 @@ function ProviderImportModal({
             >
               <View>
                 <View style={{ marginBottom: 10 }}>
-                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800', marginBottom: 7 }}>{t('providerSettings.importSources')}</Text>
+                  <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginBottom: 7 }}>{t('providerSettings.importSources')}</Text>
                   <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 8 }}>
                     <IsleButton
                       label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
@@ -2733,7 +2715,7 @@ function ProviderImportModal({
                   </View>
                 </View>
                 {importProgress ? <ProviderImportProgressCard progress={importProgress} /> : null}
-                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{t('providerSettings.importContent')}</Text>
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginBottom: 6 }}>{t('providerSettings.importContent')}</Text>
                 <View
                   style={{
                     height: inputHeight,
@@ -2778,7 +2760,7 @@ function ProviderImportModal({
                     }}
                   />
                 </View>
-                <Text style={{ color: detectedImportCount ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8, fontWeight: detectedImportCount ? '900' : '700' }}>
+                <Text style={{ color: detectedImportCount ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 8, fontWeight: detectedImportCount ? '900' : '700' }}>
                   {input.trim()
                     ? detectionLimited
                       ? t('providerSettings.importDetectionLimited')

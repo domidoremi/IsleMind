@@ -128,8 +128,8 @@ export function MemoryReviewSection({
           >
             <AppIcon name="memory-brain" color={colors.textTertiary} size={15} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>{t('contextPanel.memoryReviewQueue')}</Text>
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.memoryReviewQueue')}</Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>
                 {t('contextPanel.memoryReviewCollapsedDetail', { pending: pendingMemories.length, low: memoryReviewSummary.lowConfidenceCount, confidence: averageConfidenceLabel })}
               </Text>
             </View>
@@ -140,7 +140,7 @@ export function MemoryReviewSection({
           {reviewVisible ? (
             <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
               <View testID="memory-review-summary" style={{ marginBottom: 10 }}>
-                <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>
+                <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>
                   {t('contextPanel.memoryReviewSummary')}
                 </Text>
                 <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
@@ -189,7 +189,7 @@ export function MemoryReviewSection({
                   accessibilityState={confirmingMemories ? { busy: true } : undefined}
                   style={{ ...fullWidthActionStyle, ...secondaryActionSurface(), marginBottom: 10, opacity: confirmingMemories ? 0.65 : 1 }}
                 >
-                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>
                     {confirmingMemories ? t('contextPanel.confirmingPendingMemories') : t('contextPanel.confirmFilteredPendingMemories', { count: filteredPendingMemories.length })}
                   </Text>
                 </IslePressable>
@@ -203,7 +203,7 @@ export function MemoryReviewSection({
                   accessibilityState={confirmingMemories ? { busy: true } : undefined}
                   style={{ ...fullWidthActionStyle, ...secondaryActionSurface(), marginBottom: 10, borderColor: colors.ui.tone.danger.border, opacity: confirmingMemories ? 0.65 : 1 }}
                 >
-                  <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 13, fontWeight: '800' }}>
+                  <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>
                     {confirmingMemories ? t('contextPanel.confirmingPendingMemories') : t('contextPanel.rejectFilteredPendingMemories', { count: filteredPendingMemories.length })}
                   </Text>
                 </IslePressable>
@@ -217,7 +217,7 @@ export function MemoryReviewSection({
                   accessibilityState={confirmingMemories ? { busy: true } : undefined}
                   style={{ ...fullWidthActionStyle, ...primaryActionSurface(), marginBottom: 10, opacity: confirmingMemories ? 0.65 : 1 }}
                 >
-                  <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 13, fontWeight: '800' }}>
+                  <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>
                     {confirmingMemories ? t('contextPanel.confirmingPendingMemories') : t('contextPanel.confirmPendingMemories', { count: pendingMemories.length })}
                   </Text>
                 </IslePressable>
@@ -239,8 +239,8 @@ export function MemoryReviewSection({
           >
             <AppIcon name="filter" color={colors.textTertiary} size={15} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>{t('contextPanel.memoryFilters')}</Text>
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.memoryFilters')}</Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>
                 {hasMemoryFilters ? t('contextPanel.memoryFilterSummary', { count: filteredMemories.length, total: memories.length }) : t('contextPanel.memoryFiltersHint')}
               </Text>
             </View>
@@ -284,7 +284,7 @@ export function MemoryReviewSection({
                 }}
               />
               <View testID="memory-sort-mode" style={{ marginBottom: 10 }}>
-                <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>{t('contextPanel.memorySort')}</Text>
+                <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>{t('contextPanel.memorySort')}</Text>
                 <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                   {([
                     ['updated', t('contextPanel.memorySortUpdated')],
@@ -303,7 +303,7 @@ export function MemoryReviewSection({
       ) : null}
       {hasMemoryFilters ? (
         <View testID="memory-filter-summary" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1, minWidth: 0 }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, flex: 1, minWidth: 0 }}>
             {t('contextPanel.memoryFilterSummary', { count: filteredMemories.length, total: memories.length })}
           </Text>
           <IslePressable
@@ -312,17 +312,17 @@ export function MemoryReviewSection({
             accessibilityLabel={t('contextPanel.clearMemoryFilters')}
             style={{ ...itemRowActionStyle, ...rowActionSurface() }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.clearMemoryFilters')}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.clearMemoryFilters')}</Text>
           </IslePressable>
         </View>
       ) : null}
       {filteredMemories.length > memoryPreviewLimit ? (
-        <Text testID="memory-list-showing-count" style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
+        <Text testID="memory-list-showing-count" style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginBottom: 8 }}>
           {t('contextPanel.memoryListShowing', { shown: visibleMemories.length, total: filteredMemories.length })}
         </Text>
       ) : null}
       {hasMemoryFilters && !filteredMemories.length ? (
-        <Text testID="memory-filter-empty" style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginBottom: 8 }}>
+        <Text testID="memory-filter-empty" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginBottom: 8 }}>
           {memoryEmptyMessage}
         </Text>
       ) : null}
@@ -344,7 +344,7 @@ export function MemoryReviewSection({
           testID="memory-list-toggle"
           style={{ ...fullWidthActionStyle, ...secondaryActionSurface(), marginTop: 10 }}
         >
-          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>
             {showAllMemories
               ? t('contextPanel.showFewerMemories')
               : t('contextPanel.showMoreMemories', { count: filteredMemories.length - visibleMemories.length })}

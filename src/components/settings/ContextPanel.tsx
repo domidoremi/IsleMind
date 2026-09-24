@@ -1,3 +1,6 @@
+import { SettingsSection, useSettingsTarget } from './SettingsSection'
+import { useSettingsDraft } from './SettingsEditBoundary'
+import { SettingsHelpButton } from './SettingsHelp'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
@@ -34,7 +37,7 @@ import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_OPTIONS, legacySearchModeForPr
 import { SEARCH_PROVIDER_CREDENTIAL_FIELDS, searchProviderCredentialPresentation, searchProviderLabel } from '@/presentation/features/settings/searchProviderPresentation'
 import { filterAndSortKnowledgeDocuments, filterAndSortMemories, hasKnowledgeAssetFilters, hasMemoryAssetFilters, knowledgeAssetEmptyMessage, memoryAssetEmptyMessage, type KnowledgeSortMode, type KnowledgeStatusFocus, type MemorySortMode, type MemoryStatusFocus } from '@/services/contextAssetFilters'
 import { capabilityLabel, formatKnowledgeMeta, formatMemoryMeta, memoryReviewFocusKey } from '@/services/contextAssetFormatters'
-import { ISLE_MIN_TOUCH_TARGET, IsleChip, IsleField, IslePressable, IsleProgress, IsleToggle, useIsleDialog } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IsleField, IslePressable, IsleProgress, IsleToggle, useIsleDialog } from '@/components/ui/isle'
 import { getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
 import { filterPendingMemoriesForReview, buildMemoryReviewSummary, type MemoryReviewQueueFocus } from '@/utils/memoryReview'
 import { buildKnowledgeRecoverySummary } from '@/utils/knowledgeRecovery'
@@ -171,8 +174,8 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const motion = useMotionPreference()
-  const { width } = useWindowDimensions()
-  const compact = width < 390
+  const { width, fontScale } = useWindowDimensions()
+  const compact = width / fontScale < 390
   void providers
   const settings = useSettingsStore((state) => state.settings)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
@@ -193,6 +196,20 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const [customSearchEndpointDraft, setCustomSearchEndpointDraft] = useState(settings.customSearchEndpoint ?? '')
   const [localModelMirrorDraft, setLocalModelMirrorDraft] = useState(settings.localModelDownloadMirrorBaseUrl ?? '')
   const [saved, setSaved] = useState(false)
+  const [keysReady, setKeysReady] = useState(false)
+  const [keysLoadError, setKeysLoadError] = useState(false)
+  const [keysLoadRequest, setKeysLoadRequest] = useState(0)
+  const [keysSaving, setKeysSaving] = useState(false)
+  const keysSaveLock = useRef(false)
+  const keysBaseline = useRef<string[]>([])
+  const keysDraft = [tavilyKey, googleSearchKey, bingSearchKey, customSearchKey, googleSearchCxDraft, customSearchEndpointDraft]
+  const keysDirty = keysReady && keysDraft.some((value, index) => value !== keysBaseline.current[index])
+  function discardSearchDraft() {
+    const [tavily = '', google = '', bing = '', custom = '', cx = '', endpoint = ''] = keysBaseline.current
+    setTavilyKey(tavily); setGoogleSearchKey(google); setBingSearchKey(bing); setCustomSearchKey(custom)
+    setGoogleSearchCxDraft(cx); setCustomSearchEndpointDraft(endpoint)
+  }
+  const requestSearchDiscard = useSettingsDraft(keysDirty, keysSaving, discardSearchDraft)
   const savedResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [memories, setMemories] = useState<MemoryItem[]>([])
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
@@ -223,12 +240,18 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const [plainTitle, setPlainTitle] = useState('')
   const [plainText, setPlainText] = useState('')
   const [activeContextSection, setActiveContextSection] = useState<'search' | 'rag' | 'credentials' | null>(null)
+  const target = useSettingsTarget()
+  useEffect(() => {
+    if (target === 'rag-profile') setActiveContextSection('rag')
+    if (target === 'search-provider') setActiveContextSection('search')
+  }, [target])
   const [ragTechniquesOpen, setRagTechniquesOpen] = useState(false)
   const [localModelsOpen, setLocalModelsOpen] = useState(false)
   const [knowledgeToolsOpen, setKnowledgeToolsOpen] = useState(false)
   const showContext = section === 'all' || section === 'context'
   const showMemory = section === 'all' || section === 'memory'
   const showKnowledge = section === 'all' || section === 'knowledge'
+  useSettingsDraft(showKnowledge && Boolean(plainTitle || plainText), false, () => { setPlainTitle(''); setPlainText('') })
   const shouldPromoteKnowledgeImport = showKnowledge && section === 'knowledge' && focus === 'import'
   const pendingMemories = useMemo(() => memories.filter((memory) => memory.status === 'pending'), [memories])
   const memoryReviewSummary = useMemo(() => buildMemoryReviewSummary(memories), [memories])
@@ -255,8 +278,8 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     if (savedResetTimerRef.current) clearTimeout(savedResetTimerRef.current)
     savedResetTimerRef.current = null
   }, [])
-  useEffect(() => setGoogleSearchCxDraft(settings.googleSearchCx ?? ''), [settings.googleSearchCx])
-  useEffect(() => setCustomSearchEndpointDraft(settings.customSearchEndpoint ?? ''), [settings.customSearchEndpoint])
+  useEffect(() => { if (!keysDirty) { keysBaseline.current[4] = settings.googleSearchCx ?? ''; setGoogleSearchCxDraft(settings.googleSearchCx ?? '') } }, [settings.googleSearchCx])
+  useEffect(() => { if (!keysDirty) { keysBaseline.current[5] = settings.customSearchEndpoint ?? ''; setCustomSearchEndpointDraft(settings.customSearchEndpoint ?? '') } }, [settings.customSearchEndpoint])
   useEffect(() => setLocalModelMirrorDraft(settings.localModelDownloadMirrorBaseUrl ?? ''), [settings.localModelDownloadMirrorBaseUrl])
   const filteredMemories = sortedMemories
   const filteredDocuments = sortedDocuments
@@ -444,12 +467,19 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   }
 
   useEffect(() => {
-    void getTavilyApiKey().then((key) => setTavilyKey(key ?? ''))
-    void getGoogleSearchApiKey().then((key) => setGoogleSearchKey(key ?? ''))
-    void getBingSearchApiKey().then((key) => setBingSearchKey(key ?? ''))
-    void getCustomSearchApiKey().then((key) => setCustomSearchKey(key ?? ''))
+    let cancelled = false
+    setKeysReady(false)
+    setKeysLoadError(false)
+    void Promise.all([getTavilyApiKey(), getGoogleSearchApiKey(), getBingSearchApiKey(), getCustomSearchApiKey()]).then(keys => {
+      if (cancelled) return
+      const current = useSettingsStore.getState().settings
+      keysBaseline.current = [...keys.map(key => key ?? ''), current.googleSearchCx ?? '', current.customSearchEndpoint ?? '']
+      discardSearchDraft()
+      setKeysReady(true)
+    }).catch(() => { if (!cancelled) setKeysLoadError(true) })
     void refresh()
-  }, [getBingSearchApiKey, getCustomSearchApiKey, getGoogleSearchApiKey, getTavilyApiKey])
+    return () => { cancelled = true }
+  }, [getBingSearchApiKey, getCustomSearchApiKey, getGoogleSearchApiKey, getTavilyApiKey, keysLoadRequest])
 
   useEffect(() => {
     if (section !== 'memory' || focus !== 'review') return
@@ -460,6 +490,17 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   }, [focus, section])
 
   async function saveTavilyKey() {
+    if (!keysReady || keysSaveLock.current) return
+    keysSaveLock.current = true
+    setKeysSaving(true)
+    try {
+    const currentKeys = await Promise.all([getTavilyApiKey(), getGoogleSearchApiKey(), getBingSearchApiKey(), getCustomSearchApiKey()])
+    const currentSettings = useSettingsStore.getState().settings
+    const current = [...currentKeys.map(key => key ?? ''), currentSettings.googleSearchCx ?? '', currentSettings.customSearchEndpoint ?? '']
+    if (current.some((value, index) => value !== keysBaseline.current[index] && value !== keysDraft[index].trim())) {
+      dialog.toast({ title: t('settingsWorkspace.conflict'), tone: 'amber' })
+      return
+    }
     const nextGoogleSearchCx = googleSearchCxDraft.trim()
     const nextCustomSearchEndpoint = customSearchEndpointDraft.trim()
     await Promise.all([
@@ -473,15 +514,19 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     if ((settings.customSearchEndpoint ?? '') !== nextCustomSearchEndpoint) settingsUpdates.customSearchEndpoint = nextCustomSearchEndpoint
     if (Object.keys(settingsUpdates).length) {
       updateSettings(settingsUpdates)
+      }
       await flushPersistedSettings()
-    }
 
+    keysBaseline.current = [tavilyKey.trim(), googleSearchKey.trim(), bingSearchKey.trim(), customSearchKey.trim(), nextGoogleSearchCx, nextCustomSearchEndpoint]
+    discardSearchDraft()
     if (savedResetTimerRef.current) clearTimeout(savedResetTimerRef.current)
     setSaved(true)
     savedResetTimerRef.current = setTimeout(() => {
       savedResetTimerRef.current = null
       setSaved(false)
     }, 1408)
+    } catch { dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
+    finally { keysSaveLock.current = false; setKeysSaving(false) }
   }
 
   function commitLocalModelMirror() {
@@ -501,9 +546,11 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   }
 
   function selectSearchProvider(provider: typeof SEARCH_PROVIDER_OPTIONS[number]) {
-    updateSettings({ searchProvider: provider, webSearchMode: legacySearchModeForProvider(provider), webSearchEnabled: provider !== 'off' })
-    const credentials = searchProviderCredentialPresentation(provider)
-    setActiveContextSection(credentials.fields.length || credentials.showEndpoint || credentials.showBearerKey ? 'credentials' : 'search')
+    void requestSearchDiscard(() => {
+      updateSettings({ searchProvider: provider, webSearchMode: legacySearchModeForProvider(provider), webSearchEnabled: provider !== 'off' })
+      const credentials = searchProviderCredentialPresentation(provider)
+      setActiveContextSection(credentials.fields.length || credentials.showEndpoint || credentials.showBearerKey ? 'credentials' : 'search')
+    })
   }
 
   function searchCredentialFieldValue(fieldId: typeof SEARCH_PROVIDER_CREDENTIAL_FIELDS[number]['id']): string {
@@ -577,7 +624,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       if (controller.signal.aborted) return
       const result = await importKnowledgePlainText(plainTitle, plainText, provider ?? undefined, { signal: controller.signal })
       dialog.toast({ title: result.ok ? t('contextPanel.knowledgeUpdated') : t('settings.importSkipped'), message: result.message, tone: result.ok ? 'mint' : 'amber' })
-      if (result.ok) setPlainText('')
+      if (result.ok) { setPlainTitle(''); setPlainText('') }
       await refresh()
     } catch (error) {
       if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return
@@ -817,7 +864,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     <View style={{ paddingBottom: showKnowledge ? 12 : 0 }}>
       <Lead section={section} summary={summary} toggles={toggles} compact={compact} />
       {showContext && Platform.OS === 'web' ? (
-        <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 18, marginTop: 10 }}>
+        <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, marginTop: 10 }}>
           {t('contextPanel.webCompactStorageWarning')}
         </Text>
       ) : null}
@@ -834,24 +881,24 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           >
             <AppIcon name="context-globe" color={colors.textTertiary} size={16} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('settings.search')}</Text>
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{searchProviderLabel(searchProvider)} · {settings.webSearchEnabled ? t('settings.enabledState') : t('settings.disabledState')}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('settings.search')}</Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{searchProviderLabel(searchProvider)} · {settings.webSearchEnabled ? t('settings.enabledState') : t('settings.disabledState')}</Text>
             </View>
             <MotiView animate={{ rotate: searchProviderOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
               <AppIcon name="collapse" color={colors.textTertiary} size={16} />
             </MotiView>
           </IslePressable>
           {searchProviderOpen ? (
-            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+            <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+              <SettingsSection id="search-provider"><View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                 {SEARCH_PROVIDER_OPTIONS.map((mode) => (
                   <IslePressable key={mode} haptic accessibilityLabel={searchProviderLabel(mode)} accessibilityState={{ selected: searchProvider === mode }} onPress={() => selectSearchProvider(mode)} style={contextChipPressableStyle}>
                     <IsleChip active={searchProvider === mode}>{searchProviderLabel(mode)}</IsleChip>
                   </IslePressable>
                 ))}
-              </View>
+              </View></SettingsSection>
               {Platform.OS === 'web' && searchProvider === 'islemind' ? (
-                <Text accessibilityRole="alert" style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 8 }}>
+                <Text accessibilityRole="alert" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 8 }}>
                   {t('search.failure.browser_transport_required')}
                 </Text>
               ) : null}
@@ -874,18 +921,18 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           >
             <AppIcon name="search-check" color={colors.textTertiary} size={16} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('contextPanel.ragMode')}</Text>
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{ragSettingsSummary}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.ragMode')}</Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{ragSettingsSummary}</Text>
             </View>
             <MotiView animate={{ rotate: ragSettingsExpanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
               <AppIcon name="collapse" color={colors.textTertiary} size={16} />
             </MotiView>
           </IslePressable>
           {ragSettingsExpanded ? (
-            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
+            <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
               <ContextFoldoutHeader title={t('contextPanel.ragMode')} detail={ragSettingsSummary} />
         {embeddingJobs ? (
-          <Text style={{ color: embeddingJobs.error ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
+          <Text style={{ color: embeddingJobs.error ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 6 }}>
             {t('contextPanel.embeddingStatus', { running: embeddingJobs.running, failed: embeddingJobs.error })}
           </Text>
         ) : null}
@@ -897,13 +944,14 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           ))}
         </View>
         <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginTop: 10 }}>{t('contextPanel.ragProfile')}</Text>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+        <SettingsSection id="rag-profile"><View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {(['fast', 'balanced', 'deep', 'offline'] as const).map((profile) => (
-            <IslePressable key={profile} haptic accessibilityLabel={t(`contextPanel.ragProfiles.${profile}`)} accessibilityState={{ selected: (settings.ragProfile ?? 'balanced') === profile }} onPress={() => updateSettings({ ragProfile: profile })} style={contextChipPressableStyle}>
-              <IsleChip active={(settings.ragProfile ?? 'balanced') === profile}>{t(`contextPanel.ragProfiles.${profile}`)}</IsleChip>
+            <IslePressable key={profile} haptic accessibilityLabel={t(`contextPanel.ragProfiles.${profile}`)} accessibilityState={{ selected: (settings.ragProfile ?? 'balanced') === profile }} onPress={() => updateSettings({ ragProfile: profile })} style={{ flexBasis: compact ? '46%' : '22%', flexGrow: 1, minHeight: 92, padding: 14, borderRadius: 14, gap: 12, borderWidth: 2, borderColor: (settings.ragProfile ?? 'balanced') === profile ? colors.primary : colors.ui.semantic.chrome.border, backgroundColor: colors.ui.semantic.surface.base }}>
+              <AppIcon name={({ fast: 'activity', balanced: 'layers', deep: 'search-check', offline: 'device' } as const)[profile]} color={colors.primary} size={26} />
+              <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700' }}>{t(`contextPanel.ragProfiles.${profile}`)}</Text>
             </IslePressable>
           ))}
-        </View>
+        </View></SettingsSection>
         <IslePressable
           haptic
           accessibilityRole="button"
@@ -914,16 +962,16 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         >
           <AppIcon name="workflow" color={colors.textTertiary} size={16} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('contextPanel.agenticTechniques')}</Text>
-            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{t('contextPanel.agenticTechniquesCollapsedDetail', { count: enabledTechniqueCount })}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.agenticTechniques')}</Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{t('contextPanel.agenticTechniquesCollapsedDetail', { count: enabledTechniqueCount })}</Text>
           </View>
           <MotiView animate={{ rotate: ragTechniquesOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
             <AppIcon name="collapse" color={colors.textTertiary} size={16} />
           </MotiView>
         </IslePressable>
         {ragTechniquesOpen ? (
-          <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 10 }}>
+          <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 10 }}>
               {t('contextPanel.agenticTechniquesHelp')}
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
@@ -966,19 +1014,19 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         >
           <AppIcon name="device" color={colors.textTertiary} size={16} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('contextPanel.localModel.title')}</Text>
-            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.localModel.title')}</Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}</Text>
           </View>
           <MotiView animate={{ rotate: localModelsOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
             <AppIcon name="collapse" color={colors.textTertiary} size={16} />
           </MotiView>
         </IslePressable>
         {localModelsOpen ? (
-          <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>
+          <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>
               {t('contextPanel.localModel.priority')}
             </Text>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>
               {t('contextPanel.localModel.capabilityNotice')}
             </Text>
             <IsleField
@@ -999,7 +1047,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             <View style={{ marginTop: 10, gap: 10 }}>
               {downloadableLocalModels.length ? (
                 <View style={{ gap: 8 }}>
-                  <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700' }}>{t('contextPanel.localModel.downloadableModels')}</Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700' }}>{t('contextPanel.localModel.downloadableModels')}</Text>
                   {downloadableLocalModels.map((view, index) => (
                     <MotiView
                       key={view.model.id}
@@ -1020,12 +1068,12 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                   ))}
                 </View>
               ) : (
-                <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('contextPanel.localModel.noDownloadableModels')}</Text>
+                <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{t('contextPanel.localModel.noDownloadableModels')}</Text>
               )}
               {plannedLocalCapabilities.length ? (
                 <View style={{ gap: 8 }}>
-                  <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700' }}>{t('contextPanel.localModel.capabilityStatus')}</Text>
-                  <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('contextPanel.localModel.capabilityStatusHelp')}</Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700' }}>{t('contextPanel.localModel.capabilityStatus')}</Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{t('contextPanel.localModel.capabilityStatusHelp')}</Text>
                   {plannedLocalCapabilities.map((view) => (
                     <LocalCapabilityRow
                       key={view.model.id}
@@ -1044,7 +1092,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
               disabled={rebuilding}
               style={{ marginTop: 10, minHeight: 44, ...secondaryActionSurface(colors), alignItems: 'center', justifyContent: 'center', opacity: rebuilding ? 0.65 : 1 }}
             >
-              <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.localModel.rebuildIndex')}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.localModel.rebuildIndex')}</Text>
             </IslePressable>
           </MotiView>
         ) : null}
@@ -1057,7 +1105,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           }}
           style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginTop: 10 }}
         >
-          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>{t('contextPanel.clearRagCache')}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.clearRagCache')}</Text>
         </IslePressable>
         <ContextDiagnosticsSection
           selfTesting={selfTesting}
@@ -1087,21 +1135,23 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           onPress={() => toggleContextSection('credentials')}
         />
         {searchCredentialsExpanded ? (
-          <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
+          <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
             <ContextFoldoutHeader
               title={searchProviderLabel(searchProvider)}
               detail={searchCredentialsConfiguredCount
                 ? t('contextPanel.searchApiActiveDetail', { count: searchCredentialsConfiguredCount })
                 : t('contextPanel.searchApiCollapsedDetail')}
             />
+            {keysLoadError ? <IsleButton label={t('common.retry')} onPress={() => setKeysLoadRequest(value => value + 1)} /> : null}
             {searchCredentialPresentation.fields.map((field) => (
-              <IsleField key={field.id} label={field.label} style={{ marginTop: 10 }} inputProps={{ value: searchCredentialFieldValue(field.id), onChangeText: searchCredentialFieldUpdater(field.id), secureTextEntry: field.secureTextEntry, autoCapitalize: 'none', autoCorrect: false, placeholder: field.placeholder }} />
+              <IsleField key={field.id} label={field.label} style={{ marginTop: 10 }} inputProps={{ value: searchCredentialFieldValue(field.id), editable: keysReady && !keysSaving, onChangeText: searchCredentialFieldUpdater(field.id), secureTextEntry: field.secureTextEntry, autoCapitalize: 'none', autoCorrect: false, placeholder: field.placeholder }} />
             ))}
-            {searchCredentialPresentation.showEndpoint ? <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: customSearchEndpointDraft, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchEndpointDraft(value) }, autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} /> : null}
-            {searchCredentialPresentation.showBearerKey ? <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchKey(value) }, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} /> : null}
-            <IslePressable haptic accessibilityLabel={saved ? t('common.saved') : t('contextPanel.saveSearchConfig')} onPress={saveTavilyKey} style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10 }}>
+            {searchCredentialPresentation.showEndpoint ? <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: customSearchEndpointDraft, editable: keysReady && !keysSaving, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchEndpointDraft(value) }, autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} /> : null}
+            {searchCredentialPresentation.showBearerKey ? <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, editable: keysReady && !keysSaving, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchKey(value) }, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} /> : null}
+            <IslePressable haptic accessibilityLabel={saved ? t('common.saved') : t('contextPanel.saveSearchConfig')} disabled={!keysReady || keysSaving} onPress={() => void saveTavilyKey()} style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10 }}>
               <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{saved ? t('common.saved') : t('contextPanel.saveSearchConfig')}</Text>
-            </IslePressable>
+              </IslePressable>
+              {keysReady ? <IsleButton label={t('settingsWorkspace.reload')} disabled={keysSaving} onPress={() => void requestSearchDiscard(() => { setSaved(false); setKeysLoadRequest(value => value + 1) })} /> : null}
           </MotiView>
         ) : null}
       </View> : null}
@@ -1199,7 +1249,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
               onPress={() => setKnowledgeToolsOpen((value) => !value)}
             />
             {knowledgeToolsVisible ? (
-              <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10 }}>
+              <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10 }}>
                 <View testID="knowledge-readiness-summary" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                   <DebugStat label={t('contextPanel.knowledgeReadyCount')} value={String(knowledgeStatusCounts.ready)} />
                   <DebugStat label={t('contextPanel.knowledgeIndexingCount')} value={String(knowledgeStatusCounts.indexing)} />
@@ -1220,7 +1270,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                   ))}
                 </View>
                 {knowledgeStatusCounts.failed || knowledgeStatusCounts.empty ? (
-                  <Text testID="knowledge-readiness-warning" style={{ color: knowledgeStatusCounts.failed ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
+                  <Text testID="knowledge-readiness-warning" style={{ color: knowledgeStatusCounts.failed ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, marginBottom: 10 }}>
                     {knowledgeStatusCounts.failed && knowledgeStatusCounts.empty
                       ? t('contextPanel.knowledgeReadinessWarning', { failed: knowledgeStatusCounts.failed, empty: knowledgeStatusCounts.empty })
                       : knowledgeStatusCounts.failed
@@ -1230,8 +1280,8 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                 ) : null}
                 {knowledgeRecoverySummary.recoverableDocuments || knowledgeRecoverySummary.failedJobs ? (
                   <View testID="knowledge-recovery-summary" style={{ marginBottom: 10, padding: 10, ...assetCardSurface(colors, knowledgeRecoverySummary.failedDocuments || knowledgeRecoverySummary.failedJobs ? colors.ui.tone.danger.border : colors.ui.tone.warning.border) }}>
-                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryTitle')}</Text>
-                    <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryTitle')}</Text>
+                    <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>
                       {t('contextPanel.knowledgeRecoverySummary', {
                         failed: knowledgeRecoverySummary.failedDocuments,
                         empty: knowledgeRecoverySummary.emptyDocuments,
@@ -1239,23 +1289,23 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                       })}
                     </Text>
                     {knowledgeRecoverySummary.lastError ? (
-                      <Text numberOfLines={2} style={{ color: colors.ui.tone.danger.foreground, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
+                      <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, marginTop: 6 }}>
                         {t('contextPanel.knowledgeRecoveryLastError', { error: knowledgeRecoverySummary.lastError })}
                       </Text>
                     ) : null}
                     <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                       {knowledgeRecoverySummary.failedDocuments ? (
                         <IslePressable haptic accessibilityLabel={t('contextPanel.knowledgeRecoveryShowFailed')} onPress={() => focusKnowledgeRecovery('error')} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-                          <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryShowFailed')}</Text>
+                          <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryShowFailed')}</Text>
                         </IslePressable>
                       ) : null}
                       {knowledgeRecoverySummary.emptyDocuments ? (
                         <IslePressable haptic accessibilityLabel={t('contextPanel.knowledgeRecoveryShowEmpty')} onPress={() => focusKnowledgeRecovery('empty')} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-                          <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryShowEmpty')}</Text>
+                          <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryShowEmpty')}</Text>
                         </IslePressable>
                       ) : null}
                       <IslePressable haptic accessibilityLabel={rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')} accessibilityState={rebuilding ? { busy: true } : undefined} onPress={() => void rebuildIndex()} disabled={rebuilding} style={{ ...itemRowActionStyle, ...primaryActionSurface(colors), opacity: rebuilding ? 0.65 : 1 }}>
-                        <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 12, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')}</Text>
+                        <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')}</Text>
                       </IslePressable>
                     </View>
                   </View>
@@ -1272,7 +1322,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                   }}
                 />
                 <View testID="knowledge-sort-mode" style={{ marginBottom: 10 }}>
-                  <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>{t('contextPanel.knowledgeSort')}</Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>{t('contextPanel.knowledgeSort')}</Text>
                   <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                     {([
                       ['updated', t('contextPanel.knowledgeSortUpdated')],
@@ -1292,7 +1342,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         ) : null}
         {hasKnowledgeFilters ? (
           <View testID="knowledge-filter-summary" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1, minWidth: 0 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, flex: 1, minWidth: 0 }}>
               {t('contextPanel.knowledgeFilterSummary', { count: filteredDocuments.length, total: documents.length })}
             </Text>
             <IslePressable
@@ -1305,17 +1355,17 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
               accessibilityLabel={t('contextPanel.clearKnowledgeFilters')}
               style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}
             >
-              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.clearKnowledgeFilters')}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.clearKnowledgeFilters')}</Text>
             </IslePressable>
           </View>
         ) : null}
         {filteredDocuments.length > knowledgePreviewLimit ? (
-          <Text testID="knowledge-list-showing-count" style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
+          <Text testID="knowledge-list-showing-count" style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginBottom: 8 }}>
             {t('contextPanel.knowledgeListShowing', { shown: visibleDocuments.length, total: filteredDocuments.length })}
           </Text>
         ) : null}
         {hasKnowledgeFilters && !filteredDocuments.length ? (
-          <Text testID="knowledge-filter-empty" style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginBottom: 8 }}>
+          <Text testID="knowledge-filter-empty" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginBottom: 8 }}>
             {knowledgeEmptyMessage}
           </Text>
         ) : null}
@@ -1340,7 +1390,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             testID="knowledge-list-toggle"
             style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginTop: 10 }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>
               {showAllKnowledge
                 ? t('contextPanel.showFewerKnowledge')
                 : t('contextPanel.showMoreKnowledge', { count: filteredDocuments.length - visibleDocuments.length })}
@@ -1356,11 +1406,11 @@ function ContextFoldoutHeader({ title, detail }: { title: string; detail?: strin
   const { colors } = useAppTheme()
   return (
     <View style={{ marginBottom: 10 }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
         {title}
       </Text>
       {detail ? (
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
           {detail}
         </Text>
       ) : null}
@@ -1374,10 +1424,10 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 50, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12.5, lineHeight: 17, fontWeight: '700' }}>{title}</Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
+          <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{title}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
         </View>
-        <Text style={{ color: colors.textTertiary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{open ? '−' : '+'}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{open ? '−' : '+'}</Text>
       </IslePressable>
     )
   }
@@ -1386,8 +1436,8 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 48, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: open ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.section.divider, borderRadius: 4 }}>
         {icon}
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11.5, lineHeight: 16, fontWeight: '800' }}>{title}</Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
+          <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
         </View>
       </IslePressable>
     )
@@ -1404,8 +1454,8 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
       >
         {icon}
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{detail}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{detail}</Text>
         </View>
         <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
           <AppIcon name="collapse" color={colors.textTertiary} size={16} />
@@ -1424,8 +1474,8 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{detail}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{detail}</Text>
       </View>
       <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
         <AppIcon name="collapse" color={colors.textTertiary} size={16} />
@@ -1459,15 +1509,15 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
     return (
       <View style={{ marginTop: 16 }}>
         <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
-          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>{title}</Text>
+          <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
           <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center', opacity: emptyVisible ? 0.45 : 1 }}>
-            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 10.5, lineHeight: 14, fontWeight: '800' }}>{t('contextPanel.clear')}</Text>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.clear')}</Text>
           </IslePressable>
         </View>
         {emptyVisible ? (
           <View style={{ minHeight: emptyDetail ? 58 : 44, paddingVertical: 9, justifyContent: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>{empty}</Text>
-            {emptyDetail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, marginTop: 2, fontWeight: '500' }}>{emptyDetail}</Text> : null}
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{empty}</Text>
+            {emptyDetail ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '500' }}>{emptyDetail}</Text> : null}
           </View>
         ) : children}
       </View>
@@ -1477,15 +1527,15 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
     return (
       <View style={{ marginTop: 16, gap: 8 }}>
         <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
-          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800' }}>{title}</Text>
+          <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
           <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center', opacity: emptyVisible ? 0.45 : 1 }}>
-            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>{t('contextPanel.clear')}</Text>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.clear')}</Text>
           </IslePressable>
         </View>
         {emptyVisible ? (
           <View style={{ minHeight: emptyDetail ? 58 : 44, paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: '700' }}>{empty}</Text>
-            {emptyDetail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, marginTop: 2, fontWeight: '500' }}>{emptyDetail}</Text> : null}
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{empty}</Text>
+            {emptyDetail ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '500' }}>{emptyDetail}</Text> : null}
           </View>
         ) : children}
       </View>
@@ -1495,15 +1545,15 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
     return (
       <View style={{ marginTop: 12, gap: 8 }}>
         <View style={{ minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2 }}>
-          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800' }}>{title}</Text>
+          <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
           <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, opacity: emptyVisible ? 0.45 : 1 }}>
             <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
           </IslePressable>
         </View>
         {emptyVisible ? (
           <View style={{ minHeight: emptyDetail ? 64 : 48, borderRadius: colors.ui.radius.panel, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: emptySurface, borderWidth: 1, borderColor, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.14, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>{empty}</Text>
-            {emptyDetail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '600', includeFontPadding: false }}>{emptyDetail}</Text> : null}
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{empty}</Text>
+            {emptyDetail ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '600', includeFontPadding: false }}>{emptyDetail}</Text> : null}
           </View>
         ) : children}
       </View>
@@ -1513,7 +1563,7 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
     <View style={{ marginTop: 10, gap: 7 }}>
       <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 2 }}>
         <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 18, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+          <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
         </View>
         <IslePressable
           onPress={confirmClear}
@@ -1526,9 +1576,9 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
       </View>
       {emptyVisible ? (
         <View style={{ minHeight: emptyDetail ? 58 : 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 9, paddingVertical: 8, justifyContent: 'center', backgroundColor: emptySurface, borderWidth: subtleBorderWidth, borderColor }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>{empty}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{empty}</Text>
           {emptyDetail ? (
-            <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
               {emptyDetail}
             </Text>
           ) : null}
@@ -1587,26 +1637,26 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
           {view.active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.textTertiary} size={16} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{view.model.name}</Text>
-          <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2 }}>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{view.model.name}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2 }}>
             {modelMeta}
           </Text>
         </View>
-        <Text style={{ color: view.active ? colors.ui.control.link : colors.textTertiary, fontSize: 11, fontWeight: '800' }}>{statusLabel}</Text>
+        <Text style={{ color: view.active ? colors.ui.control.link : colors.textTertiary, fontSize: 14, fontWeight: '800' }}>{statusLabel}</Text>
       </View>
-      <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{view.model.useCase}</Text>
-      {view.model.experimental ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{t('contextPanel.localModel.experimentalNotice')}</Text> : null}
-      <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 8 }}>{view.model.useCase}</Text>
+      {view.model.experimental ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, marginTop: 6 }}>{t('contextPanel.localModel.experimentalNotice')}</Text> : null}
+      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 6 }}>
         {view.model.publisher ?? view.model.upstreamModel ?? '-'} · {view.model.license ?? '-'}
       </Text>
       {progress ? (
         <View style={{ marginTop: 10, gap: 6 }}>
           <IsleProgress percent={progressPercent} size="small" showInfo={false} fillColor={colors.ui.control.primaryBackground} />
-          <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
             {progressText}
           </Text>
           {progress.sourceUrl ? (
-            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '700' }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700' }}>
               {progress.sourceUrl}
             </Text>
           ) : null}
@@ -1616,22 +1666,22 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
         {!view.downloaded && !view.bundled && downloadable ? (
           <IslePressable haptic disabled={busy} accessibilityLabel={t('contextPanel.localModel.download')} accessibilityState={busy ? { busy: true } : undefined} onPress={onDownload} style={{ ...localModelActionStyle, ...primaryActionSurface(colors), flexDirection: 'row', gap: 6, opacity: busy ? 0.65 : 1 }}>
             <AppIcon name="download" color={colors.ui.control.primaryForeground} size={13} />
-            <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 12, fontWeight: '800' }}>{busy && progress ? `${progress.percent}%` : busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
+            <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{busy && progress ? `${progress.percent}%` : busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
           </IslePressable>
         ) : null}
         {!downloadable ? (
           <IslePressable haptic onPress={onDetails} accessibilityLabel={t('contextPanel.localModel.detailsFor', { name: view.model.name })} style={{ ...localModelActionStyle, ...rowActionSurface(colors) }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.localModel.details')}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.localModel.details')}</Text>
           </IslePressable>
         ) : null}
         {canEnable && !view.active ? (
           <IslePressable haptic disabled={busy} accessibilityLabel={t('contextPanel.localModel.enable')} accessibilityState={busy ? { busy: true } : undefined} onPress={onEnable} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.localModel.enable')}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.localModel.enable')}</Text>
           </IslePressable>
         ) : null}
         {view.downloaded ? (
           <IslePressable haptic disabled={busy} accessibilityLabel={t('common.delete')} accessibilityState={busy ? { busy: true } : undefined} onPress={onDelete} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
-            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text>
           </IslePressable>
         ) : null}
       </View>
@@ -1661,25 +1711,25 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
           {active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.ui.tone.warning.foreground} size={16} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{view.model.name}</Text>
-          <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2 }}>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{view.model.name}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2 }}>
             {modelMeta}
           </Text>
         </View>
         <IsleChip tone={active ? 'mint' : 'amber'}>{active ? t('contextPanel.localModel.strategyOn') : t('contextPanel.localModel.strategyOff')}</IsleChip>
       </View>
-      <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 8 }}>
         {t(`contextPanel.localModel.fallbackStrategies.${capability}`)}
       </Text>
-      <Text style={{ color: active ? colors.textSecondary : colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 16, marginTop: 6, fontWeight: '800' }}>
+      <Text style={{ color: active ? colors.textSecondary : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, marginTop: 6, fontWeight: '800' }}>
         {active ? t('contextPanel.localModel.runtimeBoundaryOn') : t('contextPanel.localModel.runtimeBoundaryOff')}
       </Text>
-      <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 6 }}>
         {view.model.publisher ?? view.model.upstreamModel ?? '-'} · {view.model.license ?? '-'}
       </Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         <IslePressable haptic onPress={onDetails} accessibilityLabel={t('contextPanel.localModel.detailsFor', { name: view.model.name })} style={{ ...localModelActionStyle, ...rowActionSurface(colors) }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.localModel.details')}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.localModel.details')}</Text>
         </IslePressable>
       </View>
     </View>
@@ -1715,12 +1765,12 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
   if (canonicalThemeId === 'minimal') {
     return (
       <View style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
-        <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>{title}</Text>
-        <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, marginTop: 3 }}>{description}</Text>
-        {meta ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, marginTop: 4 }}>{meta}</Text> : null}
+        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 3 }}>{description}</Text>
+        {meta ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>{meta}</Text> : null}
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
-          {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: '800' }}>{trailing}</Text></IslePressable> : null}
-          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 10.5, fontWeight: '800' }}>{t('common.delete')}</Text></IslePressable>
+          {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{trailing}</Text></IslePressable> : null}
+          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text></IslePressable>
         </View>
       </View>
     )
@@ -1728,12 +1778,12 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
   if (canonicalThemeId === 'material') {
     return (
       <View style={{ paddingHorizontal: 9, paddingVertical: 9, marginBottom: 6, backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider }}>
-        <Text style={{ color: colors.text, fontSize: 11.5, lineHeight: 16, fontWeight: '800' }}>{`- ${title}`}</Text>
-        <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 15, marginTop: 3 }}>{description}</Text>
-        {meta ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, marginTop: 4 }}>{`  ${meta}`}</Text> : null}
+        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{`- ${title}`}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 3 }}>{description}</Text>
+        {meta ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>{`  ${meta}`}</Text> : null}
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 7, flexWrap: 'wrap' }}>
-          {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 9.5, fontWeight: '800' }}>{`toggle(${trailing})`}</Text></IslePressable> : null}
-          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 9.5, fontWeight: '800' }}>delete()</Text></IslePressable>
+          {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{`toggle(${trailing})`}</Text></IslePressable> : null}
+          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>delete()</Text></IslePressable>
         </View>
       </View>
     )
@@ -1742,16 +1792,16 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
     return (
       <View style={{ padding: 12, marginBottom: 9, borderRadius: colors.ui.radius.panel, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.14, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 }}>
         <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{title}</Text>
-        <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>{description}</Text>
-        {meta ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{meta}</Text> : null}
+        <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>{description}</Text>
+        {meta ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 6 }}>{meta}</Text> : null}
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           {trailing && onToggle ? (
             <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ ...itemRowActionStyle, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, borderRadius: colors.ui.radius.controlMiddle }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{trailing}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{trailing}</Text>
             </IslePressable>
           ) : null}
           <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, borderRadius: colors.ui.radius.controlMiddle }}>
-            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text>
           </IslePressable>
         </View>
       </View>
@@ -1760,16 +1810,16 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
   return (
     <View style={{ padding: 10, marginBottom: 8, ...assetCardSurface(colors) }}>
       <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{title}</Text>
-      <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>{description}</Text>
-      {meta ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{meta}</Text> : null}
+      <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>{description}</Text>
+      {meta ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 6 }}>{meta}</Text> : null}
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
         {trailing && onToggle ? (
           <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{trailing}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{trailing}</Text>
           </IslePressable>
         ) : null}
         <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-          <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
+          <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text>
         </IslePressable>
       </View>
     </View>
@@ -1778,35 +1828,35 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
 
 function DebugStat({ label, value }: { label: string; value: string }) {
   const { colors, canonicalThemeId } = useAppTheme()
-  const { width } = useWindowDimensions()
+  const { width, fontScale } = useWindowDimensions()
   const statMinWidth = width < 390 ? 64 : 74
   if (canonicalThemeId === 'minimal') {
     return (
       <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 4, justifyContent: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
-        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{value}</Text>
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, fontWeight: '600' }}>{label}</Text>
+        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{value}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '600' }}>{label}</Text>
       </View>
     )
   }
   if (canonicalThemeId === 'material') {
     return (
       <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 8, justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 2, borderLeftColor: colors.ui.section.divider }}>
-        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 9.5, fontWeight: '700' }}>{`${label}: ${value}`}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '700' }}>{`${label}: ${value}`}</Text>
       </View>
     )
   }
   if (canonicalThemeId === 'liquid-glass') {
     return (
       <View style={{ minHeight: 38, minWidth: statMinWidth, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlMiddle, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder }}>
-        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{value}</Text>
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>{label}</Text>
+        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{value}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '800' }}>{label}</Text>
       </View>
     )
   }
   return (
     <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', ...rowActionSurface(colors) }}>
-      <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{value}</Text>
-      <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>{label}</Text>
+      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{value}</Text>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '800' }}>{label}</Text>
     </View>
   )
 }

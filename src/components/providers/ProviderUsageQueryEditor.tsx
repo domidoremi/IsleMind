@@ -17,6 +17,7 @@ import {
 } from '@/modules/providers'
 import { invalidateProviderUsage, queryProviderUsage } from '@/bootstrap/providerUsageRuntime'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
+import { useSettingsDraft } from '@/components/settings/SettingsEditBoundary'
 
 type UsageQueryEditorTask = 'idle' | 'saving' | 'refreshing'
 
@@ -39,10 +40,20 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
   const [referenceOpen, setReferenceOpen] = useState(false)
   const refreshController = useRef<AbortController | null>(null)
   const activeProviderId = useRef(provider.id)
-
-  useEffect(() => {
+  const saveLock = useRef(false)
+  const baseline = useRef({ fingerprint: configurationFingerprint, enabled: configuration.enabled, text: baselineText })
+  const dirty = enabled !== baseline.current.enabled || editorText.trim() !== baseline.current.text.trim()
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+  function resetDraft() {
+    baseline.current = { fingerprint: configurationFingerprint, enabled: configuration.enabled, text: baselineText }
     setEnabled(configuration.enabled)
     setEditorText(baselineText)
+  }
+  useSettingsDraft(dirty, task !== 'idle', resetDraft)
+
+  useEffect(() => {
+    if (!dirtyRef.current && !saveLock.current) resetDraft()
   }, [baselineText, configuration.enabled, provider.id])
 
   useEffect(() => {
@@ -57,7 +68,6 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
   }, [provider.id])
 
   const validation = useMemo(() => validateEditorText(enabled, editorText), [editorText, enabled])
-  const dirty = enabled !== configuration.enabled || editorText.trim() !== baselineText.trim()
   const busy = task !== 'idle'
   const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
 
@@ -88,8 +98,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
 
   function restoreSavedConfiguration() {
     if (busy || !dirty) return
-    setEnabled(configuration.enabled)
-    setEditorText(baselineText)
+    resetDraft()
     dialog.toast({
       title: t('providerSettings.usageQueryChangesDiscarded'),
       message: providerDisplayName,
@@ -108,7 +117,12 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
   }
 
   async function saveAndRefresh() {
-    if (busy || !dirty) return
+    if (busy || saveLock.current || !dirty) return
+    const latest = useSettingsStore.getState().providers.find(item => item.id === provider.id)
+    if (!latest || providerUsageQueryConfigurationFingerprint(latest.usageQueryConfiguration) !== baseline.current.fingerprint) {
+      dialog.toast({ title: t('settingsWorkspace.conflict'), tone: 'amber' })
+      return
+    }
     let recipes: readonly ProviderUsageQueryRecipe[]
     if (enabled) {
       if (!validation.valid) {
@@ -125,6 +139,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
     }
 
     const nextConfiguration = createProviderUsageQueryConfiguration(enabled, recipes)
+    saveLock.current = true
     setTask('saving')
     dialog.toast({
       title: t('providerSettings.usageQuerySaving'),
@@ -134,7 +149,12 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
     })
     try {
       await updateProvider(provider.id, { usageQueryConfiguration: nextConfiguration })
+      baseline.current.fingerprint = providerUsageQueryConfigurationFingerprint(nextConfiguration)
+      await useSettingsStore.getState().flushProviderPersistence()
+      baseline.current = { fingerprint: providerUsageQueryConfigurationFingerprint(nextConfiguration), enabled, text: editorText }
+      dirtyRef.current = false
     } catch {
+      saveLock.current = false
       if (activeProviderId.current !== provider.id) return
       setTask('idle')
       dialog.notice({
@@ -144,6 +164,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
       })
       return
     }
+    saveLock.current = false
     if (activeProviderId.current !== provider.id) return
 
     invalidateProviderUsage(provider.id)
@@ -211,11 +232,11 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
           <AppIcon name="chart" color={colors.ui.icon.accentForeground} size={15} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{t('providerSettings.usageQueryTitle')}</Text>
-          <Text style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, fontWeight: '600' }}>{t('providerSettings.usageQuerySubtitle')}</Text>
+          <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{t('providerSettings.usageQueryTitle')}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{t('providerSettings.usageQuerySubtitle')}</Text>
         </View>
         <View accessibilityLiveRegion="polite" style={{ minHeight: 26, maxWidth: 132, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: StyleSheet.hairlineWidth, borderColor: validationColor }}>
-          <Text numberOfLines={1} style={{ color: validationColor, fontSize: 9.5, lineHeight: 13, fontWeight: '900' }}>{status.label}</Text>
+          <Text style={{ color: validationColor, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{status.label}</Text>
         </View>
       </View>
 
@@ -244,12 +265,12 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
               placeholder={t('providerSettings.usageQueryJsonPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               textAlignVertical="top"
-              style={{ minHeight: 210, maxHeight: 320, paddingHorizontal: 12, paddingVertical: 11, color: colors.text, fontSize: 11, lineHeight: 16, fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }), includeFontPadding: false }}
+              style={{ minHeight: 210, maxHeight: 320, paddingHorizontal: 12, paddingVertical: 11, color: colors.text, fontSize: 14, lineHeight: 20, fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }), includeFontPadding: false }}
             />
           </View>
           <View accessibilityLiveRegion="polite" style={{ minHeight: 30, flexDirection: 'row', alignItems: 'flex-start', gap: 7 }}>
             <AppIcon name={validation.valid ? 'check' : 'warning'} color={validation.valid ? colors.ui.tone.success.foreground : colors.ui.tone.danger.foreground} size={14} style={{ marginTop: 1 }} />
-            <Text style={{ flex: 1, minWidth: 0, color: validation.valid ? colors.textSecondary : colors.ui.tone.danger.foreground, fontSize: 10.5, lineHeight: 15, fontWeight: '700' }}>
+            <Text style={{ flex: 1, minWidth: 0, color: validation.valid ? colors.textSecondary : colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>
               {validation.valid ? t('providerSettings.usageQueryValid', { count: validation.recipes.length }) : t('providerSettings.usageQueryInvalidDetail')}
             </Text>
           </View>
@@ -260,7 +281,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
               icon={<AppIcon name="json" color={colors.textSecondary} size={14} />}
               onPress={applySafeExample}
               disabled={busy}
-              style={{ minHeight: 40 }}
+              style={{ minHeight: 44 }}
             />
             {dirty ? (
               <IsleButton
@@ -269,7 +290,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
                 icon={<AppIcon name="undo" color={colors.textSecondary} size={14} />}
                 onPress={restoreSavedConfiguration}
                 disabled={busy}
-                style={{ minHeight: 40 }}
+                style={{ minHeight: 44 }}
               />
             ) : null}
             <IsleButton
@@ -281,13 +302,13 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
               icon={<AppIcon name="refresh" color={colors.ui.control.primaryForeground} size={14} />}
               onPress={() => void saveAndRefresh()}
               disabled={!dirty || busy || !validation.valid}
-              style={{ minHeight: 40, flexGrow: 1 }}
+              style={{ minHeight: 44, flexGrow: 1 }}
             />
           </View>
         </View>
       ) : (
         <View style={{ gap: 8 }}>
-          <Text style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, fontWeight: '600' }}>{t('providerSettings.usageQueryDisabledDetail')}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{t('providerSettings.usageQueryDisabledDetail')}</Text>
           {dirty ? (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               <IsleButton
@@ -296,7 +317,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
                 icon={<AppIcon name="undo" color={colors.textSecondary} size={14} />}
                 onPress={restoreSavedConfiguration}
                 disabled={busy}
-                style={{ minHeight: 40 }}
+                style={{ minHeight: 44 }}
               />
               <IsleButton
                 testID="provider-usage-query-save"
@@ -307,7 +328,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
                 icon={<AppIcon name="refresh" color={colors.ui.control.primaryForeground} size={14} />}
                 onPress={() => void saveAndRefresh()}
                 disabled={busy}
-                style={{ minHeight: 40, flexGrow: 1 }}
+                style={{ minHeight: 44, flexGrow: 1 }}
               />
             </View>
           ) : null}
@@ -323,14 +344,14 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
         style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 8, backgroundColor: colors.ui.semantic.surface.muted }}
       >
         <AppIcon name="info" color={colors.textTertiary} size={14} />
-        <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>{t('providerSettings.usageQueryReference')}</Text>
+        <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('providerSettings.usageQueryReference')}</Text>
         <AppIcon name="collapse" color={colors.textTertiary} size={14} style={{ transform: [{ rotate: referenceOpen ? '180deg' : '0deg' }] }} />
       </IslePressable>
       {referenceOpen ? (
         <View style={{ gap: 6 }}>
-          <Text style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, fontWeight: '600' }}>{t('providerSettings.usageQueryReferenceDetail')}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{t('providerSettings.usageQueryReferenceDetail')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator>
-            <Text selectable style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 15, fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }), paddingVertical: 6 }}>
+            <Text selectable style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }), paddingVertical: 6 }}>
               {PROVIDER_USAGE_QUERY_EXAMPLE}
             </Text>
           </ScrollView>

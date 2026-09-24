@@ -57,7 +57,7 @@ export function ContextDiagnosticsSection({
         testID="context-self-test-button"
         style={{ ...primaryActionStyle, marginTop: 10, opacity: selfTesting ? 0.65 : 1 }}
       >
-        <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 13, fontWeight: '800' }}>
+        <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>
           {selfTesting ? t('contextPanel.selfTesting') : t('contextPanel.runSelfTest')}
         </Text>
       </IslePressable>
@@ -74,14 +74,14 @@ export function ContextDiagnosticsSection({
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <AppIcon name="health" color={selfTestFailed ? colors.ui.tone.danger.foreground : selfTestWarnings ? colors.ui.tone.warning.foreground : colors.ui.tone.success.foreground} size={16} />
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>
+                <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
                   {t('contextPanel.lastSelfTest', { time: new Date(selfTestResult.ranAt).toLocaleTimeString() })}
                 </Text>
-                <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2 }}>
+                <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2 }}>
                   {t('contextPanel.selfTestSummary', { ok: selfTestPassed, warn: selfTestWarnings, fail: selfTestFailed })}
                 </Text>
               </View>
-              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800' }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>
                 {selfTestDetailsOpen ? t('contextPanel.hideDiagnosticDetails') : t('contextPanel.showDiagnosticDetails')}
               </Text>
               <MotiView animate={{ rotate: selfTestDetailsOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
@@ -102,7 +102,7 @@ export function ContextDiagnosticsSection({
       ) : null}
       <View style={{ marginTop: 10 }}>
         <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.ragDebug.title')}</Text>
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>{t('contextPanel.ragDebug.subtitle')}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 3 }}>{t('contextPanel.ragDebug.subtitle')}</Text>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
           <DebugStat label={t('contextPanel.ragDebug.logs')} value={String(ragLogs.length)} />
           <DebugStat label={t('contextPanel.ragDebug.indexJobs')} value={String(indexingJobs.length)} />
@@ -117,7 +117,7 @@ export function ContextDiagnosticsSection({
           testID="context-rag-evaluation-button"
           style={{ ...primaryActionStyle, marginTop: 8, opacity: ragEvaluating ? 0.65 : 1 }}
         >
-          <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 13, fontWeight: '800' }}>
+          <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>
             {ragEvaluating ? t('contextPanel.ragDebug.evaluating') : t('contextPanel.ragDebug.runEvaluation')}
           </Text>
         </IslePressable>
@@ -138,10 +138,10 @@ export function ContextDiagnosticsSection({
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <AppIcon name="trace" color={failedIndexingJobs ? colors.ui.tone.danger.foreground : colors.textTertiary} size={16} />
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>
+                <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
                   {ragActivityOpen ? t('contextPanel.ragDebug.hideActivity') : t('contextPanel.ragDebug.showActivity')}
                 </Text>
-                <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2 }}>
+                <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2 }}>
                   {t('contextPanel.ragDebug.activitySummary', { logs: Math.min(ragLogs.length, 3), jobs: Math.min(indexingJobs.length, 4), failed: failedIndexingJobs })}
                 </Text>
               </View>
@@ -202,13 +202,13 @@ function SelfTestRow({ step, assetCardSurface }: { step: ContextSelfTestStep; as
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor }} />
-        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800', flex: 1, minWidth: 0 }}>{step.name}</Text>
-        <Text style={{ color: statusColor, fontSize: 11, fontWeight: '800' }}>{statusText}</Text>
+        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', flex: 1, minWidth: 0 }}>{step.name}</Text>
+        <Text style={{ color: statusColor, fontSize: 14, fontWeight: '800' }}>{statusText}</Text>
       </View>
       {expanded || step.status === 'ok' ? (
-        <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 5 }}>{step.detail}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 5 }}>{step.detail}</Text>
       ) : (
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 5 }}>{t('contextPanel.selfTest.tapForDetails')}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 5 }}>{t('contextPanel.selfTest.tapForDetails')}</Text>
       )}
     </IslePressable>
   )
@@ -219,14 +219,14 @@ function RagEvaluationCard({ run, assetCardSurface }: { run: RagEvaluationRun; a
   const { t } = useTranslation()
   return (
     <View style={{ marginTop: 10, padding: 10, ...assetCardSurface() }}>
-      <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('contextPanel.ragDebug.lastEvaluation')}</Text>
+      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.ragDebug.lastEvaluation')}</Text>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
         <DebugStat label={t('contextPanel.ragDebug.confidence')} value={`${Math.round(run.averageConfidence * 100)}%`} />
         <DebugStat label={t('contextPanel.ragDebug.citation')} value={`${Math.round(run.averageCitationCoverage * 100)}%`} />
         <DebugStat label={t('contextPanel.ragDebug.precision')} value={`${Math.round(run.averageContextPrecision * 100)}%`} />
       </View>
       {run.fallbackReasons.length ? (
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{t('contextPanel.ragDebug.fallbacks', { value: run.fallbackReasons.slice(0, 3).join(', ') })}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 8 }}>{t('contextPanel.ragDebug.fallbacks', { value: run.fallbackReasons.slice(0, 3).join(', ') })}</Text>
       ) : null}
     </View>
   )
@@ -238,8 +238,8 @@ function RagLogRow({ log, assetCardSurface }: { log: RagEvaluationLog; assetCard
   const quality = log.quality
   return (
     <View style={{ marginTop: 8, padding: 10, ...assetCardSurface() }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{log.query}</Text>
-      <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{log.query}</Text>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>
         {t('contextPanel.ragDebug.logMeta', {
           profile: log.plan?.profile ?? '-',
           sources: log.sourceCount,
@@ -255,8 +255,8 @@ function IndexingJobRow({ job, assetCardSurface }: { job: RagIndexingJobStatus; 
   const { colors } = useAppTheme()
   return (
     <View style={{ marginTop: 8, padding: 10, ...assetCardSurface(job.status === 'error' ? colors.ui.tone.danger.border : colors.material.stroke) }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{job.kind}</Text>
-      <Text numberOfLines={2} style={{ color: job.status === 'error' ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{job.kind}</Text>
+      <Text style={{ color: job.status === 'error' ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>
         {job.status}{job.progress !== undefined ? ` · ${Math.round((job.progress ?? 0) * 100)}%` : ''}{job.error ? ` · ${job.error}` : ''}
       </Text>
     </View>
@@ -265,7 +265,7 @@ function IndexingJobRow({ job, assetCardSurface }: { job: RagIndexingJobStatus; 
 
 function DebugStat({ label, value }: { label: string; value: string }) {
   const { colors } = useAppTheme()
-  const { width } = useWindowDimensions()
+  const { width, fontScale } = useWindowDimensions()
   const statMinWidth = width < 390 ? 64 : 74
   const backgroundColor = colors.ui.liquidGlass
     ? colors.ui.actionBar.itemBackground
@@ -279,8 +279,8 @@ function DebugStat({ label, value }: { label: string; value: string }) {
       : colors.ui.semantic.chrome.border
   return (
     <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), backgroundColor, borderWidth: StyleSheet.hairlineWidth, borderColor }}>
-      <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{value}</Text>
-      <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>{label}</Text>
+      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{value}</Text>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '800' }}>{label}</Text>
     </View>
   )
 }

@@ -87,10 +87,10 @@ export function KnowledgeImportSection({
       >
         <AppIcon name="edit" color={colors.textTertiary} size={16} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
             {t('contextPanel.pasteTextKnowledge')}
           </Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>
             {plainText.trim() ? t('contextPanel.pasteTextDraftReady', { count: plainText.trim().length }) : t('contextPanel.pasteTextCollapsedHint')}
           </Text>
         </View>
@@ -153,10 +153,10 @@ function KnowledgeImportFoldoutHeader({ title, detail }: { title: string; detail
   const { colors } = useAppTheme()
   return (
     <View style={{ marginBottom: 10 }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
         {title}
       </Text>
-      <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
         {detail}
       </Text>
     </View>

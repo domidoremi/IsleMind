@@ -33,5 +33,6 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 - [Architecture](./architecture/architecture.md): module ownership, trust, persistence, recovery, platform constraints and open decisions.
 - [Module public API](./architecture/module-public-api.md): supported entry points and caller contracts.
 - [Technology radar](./technology-radar.md): adoption criteria, dated technology decisions and unresolved privacy/licensing questions.
+- [Google Play preparation](./release/google-play.md): store build channel, submission prerequisites, listing/privacy drafts and verification requirements.
 
 Architecture owns [qualification requirements and current limitations](./architecture/architecture.md#qualification-reference). Test results do not grant policy exceptions or release approval.

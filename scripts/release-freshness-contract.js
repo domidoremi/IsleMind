@@ -9,6 +9,8 @@ const generatedModelBundlePath = 'src/generated/modelBundle.ts'
 const releaseFreshnessToleranceMs = 2000
 const releaseSourceExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.kt'])
 const releaseBuildInputPaths = [
+  'app.config.js',
+  'eas.json',
   'package.json',
   'bun.lock',
   'mise.toml',
@@ -27,6 +29,7 @@ const releaseBuildInputPaths = [
   'scripts/model-catalog.js',
   'scripts/prepare-model-bundle.js',
   'scripts/patch-onnxruntime-16kb.js',
+  'scripts/prepare-animal-island-ui.js',
   'scripts/release-apk-paths.js',
   'scripts/release-freshness-contract.js',
   'scripts/validate-android-release-signing.js',
@@ -135,6 +138,15 @@ function collectReleaseInputFiles(root) {
     for (const file of listFiles(dir)) {
       const ext = path.extname(file)
       if (releaseSourceExtensions.has(ext) || ext === '.json') files.push(file)
+    }
+  }
+  // The theme is compiled directly from the sibling fork. A theme edit must
+  // invalidate APK evidence just like an application source edit does.
+  const fork = path.resolve(root, '../animal-island-ui')
+  if (fs.existsSync(path.join(fork, 'package.json'))) {
+    files.push(path.join(fork, 'package.json'))
+    for (const file of listFiles(path.join(fork, 'src'))) {
+      if (/\.(?:[jt]sx?|json|svg|png|jpe?g|webp|ttf|otf)$/.test(file) && !/\.test\.[jt]sx?$/.test(file)) files.push(file)
     }
   }
   return files.sort((left, right) => left.localeCompare(right))

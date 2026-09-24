@@ -16,6 +16,7 @@ import {
 import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/platform/native/runtimeLog'
 import { discardDownloadedApk, markDownloadedApkForCleanup } from '@/services/apkInstallCache'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
+import { isGooglePlayDistribution } from './appDistribution'
 export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'error'
 export type ApkUpdateReason = 'network' | 'rate_limited' | 'manifest_invalid' | 'checksum_mismatch' | 'installer_failed'
 export type ApkAssetVariant = 'no-model' | 'with-model-small' | 'universal'
@@ -24,7 +25,7 @@ export type ApkInstallProgressStage = 'downloading' | 'verifying' | 'opening-ins
 export interface VersionSnapshot {
   appVersion: string
   buildVersion: string
-  updateMode: 'apk'
+  updateMode: 'apk' | 'google-play'
   hotUpdateMode: 'disabled'
 }
 
@@ -97,12 +98,13 @@ export function getVersionSnapshot(): VersionSnapshot {
   return {
     appVersion: Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '1.0.0',
     buildVersion: Application.nativeBuildVersion ?? String(Constants.expoConfig?.android?.versionCode ?? Constants.platform?.android?.versionCode ?? sourceAppConfig.expo.android.versionCode),
-    updateMode: 'apk',
+    updateMode: isGooglePlayDistribution() ? 'google-play' : 'apk',
     hotUpdateMode: 'disabled',
   }
 }
 
 export function shouldAutoCheckApkUpdate(lastCheckedAt: number | undefined, now = Date.now()): boolean {
+  if (isGooglePlayDistribution()) return false
   if (!lastCheckedAt) return true
   return now - lastCheckedAt >= APK_AUTO_CHECK_INTERVAL_MS
 }
@@ -127,6 +129,9 @@ export function formatUpdateCheckTime(value: number | undefined): string {
 }
 
 export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
+  if (isGooglePlayDistribution()) {
+    return { status: 'unsupported', message: st('updates.googlePlayManaged') }
+  }
   if (Platform.OS !== 'android') {
     const result = { status: 'unsupported', message: st('updates.androidOnly') } satisfies ApkUpdateResult
     await logAppUpdateEvent('check', result)
@@ -173,6 +178,9 @@ export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
 }
 
 export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, options: ApkInstallOptions = {}): Promise<ApkUpdateResult> {
+  if (isGooglePlayDistribution()) {
+    return { status: 'unsupported', message: st('updates.googlePlayManaged') }
+  }
   if (Platform.OS !== 'android') {
     const result = { status: 'unsupported', message: st('updates.androidOnly'), release } satisfies ApkUpdateResult
     await logAppUpdateEvent('install', result)

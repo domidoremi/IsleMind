@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 
 export interface SettingsPageExperienceProps {
   title: string
@@ -29,7 +30,7 @@ export function MinimalSettingsPageExperience({
         {leading}
         <View pointerEvents="none" style={[styles.minimalSectionMark, { backgroundColor: colors.ui.control.primaryBackground }]} />
         <View style={styles.titleBlock}>
-          <Text accessibilityRole="header" numberOfLines={1} style={[styles.minimalTitle, { color: colors.text }]}>{title}</Text>
+          <Text accessibilityRole="header" style={[styles.minimalTitle, { color: colors.text }]}>{title}</Text>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textTertiary }]}>{subtitle}</Text> : null}
         </View>
       </View>
@@ -50,14 +51,13 @@ export function LiquidGlassSettingsPageExperience({
   const { colors } = useAppTheme()
   return (
     <View testID="settings-page-experience-liquid-glass" style={styles.glassRoot}>
-      <View style={[styles.glassHeader, { backgroundColor: colors.ui.semantic.chrome.background, borderColor: colors.ui.semantic.chrome.border }]}>
-        <View pointerEvents="none" style={[styles.glassHeaderPlane, { borderColor: colors.ui.actionBar.itemBorder }]} />
+      <GlassSurface colors={colors} style={styles.glassHeader}>
         {leading}
         <View style={styles.titleBlock}>
-          <Text accessibilityRole="header" numberOfLines={1} style={[styles.glassTitle, { color: colors.text }]}>{title}</Text>
+          <Text accessibilityRole="header" style={[styles.glassTitle, { color: colors.text }]}>{title}</Text>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
         </View>
-      </View>
+      </GlassSurface>
       <View testID="settings-detail-surface-liquid-glass" style={[styles.glassContent, { borderColor: colors.ui.actionBar.itemBorder }]}>
         {children}
       </View>
@@ -81,7 +81,7 @@ export function MonetSettingsPageExperience({
         <View pointerEvents="none" style={[styles.monetHeaderWash, { backgroundColor: colors.ui.icon.accentBackground }]} />
         {leading}
         <View style={styles.titleBlock}>
-          <Text accessibilityRole="header" numberOfLines={1} style={[styles.monetTitle, { color: colors.text }]}>{title}</Text>
+          <Text accessibilityRole="header" style={[styles.monetTitle, { color: colors.text }]}>{title}</Text>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
           <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.monetBrushRow}>
             <View style={[styles.monetBrushLong, { backgroundColor: colors.primary }]} />
@@ -113,7 +113,7 @@ export function MaterialSettingsPageExperience({
       <View style={[styles.materialHeader, { minHeight: compact ? 58 : 64, backgroundColor: colors.ui.semantic.surface.muted, borderBottomColor: colors.ui.section.divider }]}>
         <View style={[styles.materialLeadingSlot, { backgroundColor: colors.ui.semantic.surface.raised }]}>{leading}</View>
         <View style={styles.titleBlock}>
-          <Text accessibilityRole="header" numberOfLines={1} style={[styles.materialTitle, { color: colors.text }]}>{title}</Text>
+          <Text accessibilityRole="header" style={[styles.materialTitle, { color: colors.text }]}>{title}</Text>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
         </View>
         <View pointerEvents="none" style={[styles.materialHeaderIndicator, { backgroundColor: colors.primary }]} />
@@ -135,12 +135,11 @@ const styles = StyleSheet.create({
   minimalSectionMark: { width: 2, height: 22, opacity: 0.72 },
   titleBlock: { flex: 1, minWidth: 0 },
   minimalTitle: { fontSize: 18, lineHeight: 23, fontWeight: '800', includeFontPadding: false },
-  subtitle: { marginTop: 1, fontSize: 11, lineHeight: 15, fontWeight: '500', includeFontPadding: false },
+  subtitle: { marginTop: 1, fontSize: 14, lineHeight: 20, fontWeight: '500', includeFontPadding: false },
   content: { minWidth: 0, gap: 9 },
-  glassHeader: { position: 'relative', minHeight: 58, paddingHorizontal: 7, paddingVertical: 7, borderRadius: 22, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 10, overflow: 'hidden' },
-  glassHeaderPlane: { position: 'absolute', top: 2, right: 2, bottom: 2, left: 2, borderRadius: 19, borderWidth: StyleSheet.hairlineWidth, opacity: 0.42 },
+  glassHeader: { position: 'relative', minHeight: 58, paddingHorizontal: 7, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 10 },
   glassTitle: { fontSize: 18, lineHeight: 24, fontWeight: '700', includeFontPadding: false },
-  glassContent: { position: 'relative', marginTop: 12, minWidth: 0, gap: 10, paddingHorizontal: 8, paddingTop: 8, borderLeftWidth: StyleSheet.hairlineWidth, borderRightWidth: StyleSheet.hairlineWidth },
+  glassContent: { position: 'relative', marginTop: 12, minWidth: 0, gap: 10, paddingHorizontal: 8, paddingTop: 8 },
   monetHeader: { position: 'relative', paddingHorizontal: 5, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 10, overflow: 'hidden' },
   monetHeaderWash: { position: 'absolute', top: -20, right: -18, width: 176, height: 76, borderBottomLeftRadius: 62, opacity: 0.2, transform: [{ rotate: '-3deg' }] },
   monetTitle: { fontSize: 21, lineHeight: 28, fontWeight: '600', includeFontPadding: false },

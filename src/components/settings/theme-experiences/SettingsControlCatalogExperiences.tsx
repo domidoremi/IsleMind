@@ -1,8 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native'
 import { AppIcon, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 
@@ -54,7 +55,7 @@ export function SettingsControlCatalog({
 
 function MinimalControlNavigation({ value, onChange }: { value: SettingsControlView | null; onChange: (value: SettingsControlView) => void }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const accentMotion = useThemeMotion('accent')
   const { t } = useTranslation()
   const tabs = controlTabs(t)
   return (
@@ -72,8 +73,8 @@ function MinimalControlNavigation({ value, onChange }: { value: SettingsControlV
             onPress={() => onChange(tab.value)}
             style={{ minHeight: 44, flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderBottomWidth: active ? 2 : 0, borderBottomColor: colors.text }}
           >
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: active ? 0 : 1, scale: active ? 1 : 0.98 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
-              <Text numberOfLines={1} style={{ color: active ? colors.text : colors.textTertiary, fontSize: 12, lineHeight: 16, fontWeight: active ? '800' : '600' }}>{tab.label}</Text>
+            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: accentMotion.intensity === 'full' && !active ? accentMotion.from.translateY : 0, scale: accentMotion.intensity === 'full' && !active ? accentMotion.from.scale : 1 }} transition={accentMotion.transition}>
+              <Text style={{ color: active ? colors.text : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: active ? '800' : '600' }}>{tab.label}</Text>
             </MotiView>
           </IslePressable>
         )
@@ -84,7 +85,7 @@ function MinimalControlNavigation({ value, onChange }: { value: SettingsControlV
 
 function MonetControlNavigation({ value, onChange }: { value: SettingsControlView | null; onChange: (value: SettingsControlView) => void }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const accentMotion = useThemeMotion('accent')
   const { t } = useTranslation()
   const tabs = controlTabs(t)
   return (
@@ -94,9 +95,9 @@ function MonetControlNavigation({ value, onChange }: { value: SettingsControlVie
         return (
           <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ position: 'relative', minHeight: active ? 52 : 46, flex: 1, minWidth: 0, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, overflow: 'hidden', borderTopLeftRadius: index ? 9 : 18, borderTopRightRadius: index ? 18 : 10, borderBottomRightRadius: index ? 11 : 20, borderBottomLeftRadius: index ? 20 : 12, backgroundColor: active ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: StyleSheet.hairlineWidth, borderColor: active ? colors.primary : colors.ui.semantic.chrome.border }}>
             <View pointerEvents="none" style={{ position: 'absolute', top: -18, right: -16, width: 76, height: 52, borderBottomLeftRadius: 46, backgroundColor: active ? colors.ui.icon.accentBackground : colors.ui.semantic.surface.muted, opacity: active ? 0.28 : 0.14 }} />
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: active ? 0 : 1, scale: active ? 1 : 0.98 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: accentMotion.intensity === 'full' && !active ? accentMotion.from.translateY : 0, scale: accentMotion.intensity === 'full' && !active ? accentMotion.from.scale : 1 }} transition={accentMotion.transition} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <AppIcon name={tab.icon} color={active ? colors.primary : colors.textTertiary} size={16} />
-              <Text numberOfLines={1} style={{ color: active ? colors.text : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
+              <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
             </MotiView>
           </IslePressable>
         )
@@ -107,7 +108,7 @@ function MonetControlNavigation({ value, onChange }: { value: SettingsControlVie
 
 function MaterialControlNavigation({ value, onChange }: { value: SettingsControlView | null; onChange: (value: SettingsControlView) => void }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const accentMotion = useThemeMotion('accent')
   const { t } = useTranslation()
   const tabs = controlTabs(t)
   return (
@@ -116,9 +117,9 @@ function MaterialControlNavigation({ value, onChange }: { value: SettingsControl
         const active = value === tab.value
         return (
           <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 58, flex: 1, minWidth: 0, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: active ? colors.ui.control.primaryBackground : 'transparent' }}>
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: active ? 0 : 1, scale: active ? 1 : 0.98 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }} style={{ alignItems: 'center', gap: 3 }}>
+            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: accentMotion.intensity === 'full' && !active ? accentMotion.from.translateY : 0, scale: accentMotion.intensity === 'full' && !active ? accentMotion.from.scale : 1 }} transition={accentMotion.transition} style={{ alignItems: 'center', gap: 3 }}>
               <AppIcon name={tab.icon} color={active ? colors.ui.control.primaryForeground : colors.textSecondary} size={15} />
-              <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
+              <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
             </MotiView>
           </IslePressable>
         )
@@ -129,23 +130,23 @@ function MaterialControlNavigation({ value, onChange }: { value: SettingsControl
 
 function LiquidGlassControlNavigation({ value, onChange }: { value: SettingsControlView | null; onChange: (value: SettingsControlView) => void }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const accentMotion = useThemeMotion('accent')
   const { t } = useTranslation()
   const tabs = controlTabs(t)
   return (
-    <View testID="settings-control-navigation-liquid-glass" accessibilityRole="tablist" style={{ position: 'relative', flexDirection: 'row', gap: 6, padding: 5, borderRadius: 26, overflow: 'hidden', backgroundColor: colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border }}>
+    <GlassSurface colors={colors} variant="navigation" borderRadius={28} testID="settings-control-navigation-liquid-glass" accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 6, padding: 5 }}>
       {tabs.map((tab) => {
         const active = value === tab.value
         return (
           <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 42, flex: 1, minWidth: 0, borderRadius: 21, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: active ? colors.ui.semantic.surface.raised : 'transparent', borderWidth: active ? 1 : StyleSheet.hairlineWidth, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: active ? 0 : 1, scale: active ? 1 : 0.98 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: accentMotion.intensity === 'full' && !active ? accentMotion.from.translateY : 0, scale: accentMotion.intensity === 'full' && !active ? accentMotion.from.scale : 1 }} transition={accentMotion.transition} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
               <AppIcon name={tab.icon} color={active ? colors.ui.control.link : colors.textTertiary} size={15} />
-              <Text numberOfLines={1} style={{ color: active ? colors.text : colors.textSecondary, fontSize: 11.5, lineHeight: 15, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
+              <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
             </MotiView>
           </IslePressable>
         )
       })}
-    </View>
+    </GlassSurface>
   )
 }
 
@@ -169,8 +170,8 @@ function MinimalControlCatalog({ entries }: { entries: SettingsControlExperience
             <View style={{ width: 4, alignSelf: 'stretch', borderRadius: 2, backgroundColor: entry.active || entry.tone ? tone.foreground : 'transparent' }} />
             <AppIcon name={entry.icon} color={entry.active || entry.tone ? tone.foreground : colors.textTertiary} size={17} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700' }}>{entry.title}</Text>
-              <Text numberOfLines={2} style={{ marginTop: 2, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '500' }}>{entry.detail}</Text>
+              <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{entry.title}</Text>
+              <Text style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{entry.detail}</Text>
             </View>
           </IslePressable>
         )
@@ -190,8 +191,8 @@ function MonetControlCatalog({ entries, compact }: { entries: SettingsControlExp
             <View pointerEvents="none" style={{ position: 'absolute', top: -20, right: -16, width: 92, height: 62, borderBottomLeftRadius: 56, backgroundColor: entry.active || entry.tone ? tone.background : colors.ui.icon.accentBackground, opacity: 0.24 }} />
             <View testID={`settings-control-icon-monet-${entry.key}`} style={{ width: 32, height: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 0 }}><AppIcon name={entry.icon} color={tone.foreground} size={16} /></View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700' }}>{entry.title}</Text>
-              <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '500' }}>{entry.detail}</Text>
+              <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{entry.title}</Text>
+              <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{entry.detail}</Text>
             </View>
             <View style={{ width: 22, height: 4, borderRadius: 2, backgroundColor: entry.active || entry.tone ? tone.foreground : colors.ui.semantic.chrome.border, opacity: 0.66 }} />
           </IslePressable>
@@ -215,8 +216,8 @@ function MaterialControlCatalog({ entries, compact }: { entries: SettingsControl
               <AppIcon name="arrow-right" color={colors.textTertiary} size={15} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ marginTop: 7, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700' }}>{entry.title}</Text>
-              <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '500' }}>{entry.detail}</Text>
+              <Text style={{ marginTop: 7, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{entry.title}</Text>
+              <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{entry.detail}</Text>
             </View>
           </IslePressable>
         )
@@ -228,21 +229,21 @@ function MaterialControlCatalog({ entries, compact }: { entries: SettingsControl
 function LiquidGlassControlCatalog({ entries, compact }: { entries: SettingsControlExperienceEntry[]; compact: boolean }) {
   const { colors } = useAppTheme()
   return (
-    <View testID="settings-control-catalog-liquid-glass" style={{ gap: 8 }}>
+    <GlassSurface colors={colors} testID="settings-control-catalog-liquid-glass" style={{ gap: 3, padding: 5 }}>
       {entries.map((entry) => {
         const tone = controlTone(colors, entry)
         return (
-          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ position: 'relative', minHeight: compact ? 62 : 68, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 10, overflow: 'hidden', borderRadius: 22, backgroundColor: entry.active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: entry.active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
+          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ position: 'relative', minHeight: compact ? 62 : 68, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 10, overflow: 'hidden', borderRadius: 22, backgroundColor: entry.active ? colors.ui.actionBar.itemActiveBackground : 'transparent', borderWidth: 1, borderColor: entry.active ? colors.ui.control.primaryBorder : 'transparent' }}>
             <View testID={`settings-control-icon-liquid-glass-${entry.key}`} style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 0 }}><AppIcon name={entry.icon} color={tone.foreground} size={16} /></View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '700' }}>{entry.title}</Text>
-              <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '500' }}>{entry.detail}</Text>
+              <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{entry.title}</Text>
+              <Text numberOfLines={compact ? 1 : 2} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{entry.detail}</Text>
             </View>
             <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.actionBar.itemBorder }}><AppIcon name="arrow-right" color={colors.textTertiary} size={14} /></View>
           </IslePressable>
         )
       })}
-    </View>
+    </GlassSurface>
   )
 }
 

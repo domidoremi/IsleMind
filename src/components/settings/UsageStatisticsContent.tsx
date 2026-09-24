@@ -369,8 +369,8 @@ export function UsageStatisticsContent({
 }: UsageStatisticsContentProps) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
-  const { width, height } = useWindowDimensions()
-  const compact = width < 430
+  const { width, height, fontScale } = useWindowDimensions()
+  const compact = width / fontScale < 430
   const narrow = width < 360
   const copy = useMemo(() => ({ ...DEFAULT_USAGE_STATISTICS_COPY, ...copyOverrides }), [copyOverrides])
   const [filterSheet, setFilterSheet] = useState<FilterKey | null>(null)
@@ -477,9 +477,9 @@ export function UsageStatisticsContent({
             >
               <View style={styles.summaryLabelRow}>
                 <AppIcon name={item.icon} color={colors.textTertiary} size={13} />
-                <Text numberOfLines={1} style={[styles.summaryLabel, { color: colors.textTertiary }]}>{item.label}</Text>
+                <Text style={[styles.summaryLabel, { color: colors.textTertiary }]}>{item.label}</Text>
               </View>
-              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78} style={[styles.summaryValue, { color: colors.text }]}>{item.value}</Text>
+              <Text adjustsFontSizeToFit minimumFontScale={0.78} style={[styles.summaryValue, { color: colors.text }]}>{item.value}</Text>
             </View>
           ))}
         </View>
@@ -494,7 +494,7 @@ export function UsageStatisticsContent({
               {statusDistribution.map((item) => (
                 <View key={item.id} style={styles.statusLegendItem}>
                   <View style={[styles.statusLegendDot, { backgroundColor: statusToneForSlice(item.tone, colors) }]} />
-                  <Text numberOfLines={1} style={[styles.statusLegendText, { color: colors.textTertiary }]}>{item.label} {item.value}</Text>
+                  <Text style={[styles.statusLegendText, { color: colors.textTertiary }]}>{item.label} {item.value}</Text>
                 </View>
               ))}
             </View>
@@ -609,12 +609,12 @@ export function UsageStatisticsContent({
             {pricingOverrides.map((item, index) => (
               <View key={item.id} style={[styles.pricingRow, compact && styles.pricingRowCompact, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderColor }]}>
                 <View style={styles.pricingIdentity}>
-                  <Text numberOfLines={1} style={[styles.rowTitle, { color: colors.text }]}>{item.modelLabel}</Text>
-                  <Text numberOfLines={1} style={[styles.rowMeta, { color: colors.textSecondary }]}>{item.providerLabel}</Text>
+                  <Text style={[styles.rowTitle, { color: colors.text }]}>{item.modelLabel}</Text>
+                  <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>{item.providerLabel}</Text>
                 </View>
                 <View style={[styles.pricingValues, compact && styles.pricingValuesCompact]}>
-                  <Text numberOfLines={1} style={[styles.pricingValue, { color: colors.text }]}>{item.inputPricePerMillion} / {item.outputPricePerMillion}</Text>
-                  <Text numberOfLines={1} style={[styles.rowMeta, { color: colors.textTertiary }]}>{item.currencyLabel} · {copy.perMillionTokens}</Text>
+                  <Text style={[styles.pricingValue, { color: colors.text }]}>{item.inputPricePerMillion} / {item.outputPricePerMillion}</Text>
+                  <Text style={[styles.rowMeta, { color: colors.textTertiary }]}>{item.currencyLabel} · {copy.perMillionTokens}</Text>
                 </View>
                 <View style={[styles.rowActions, compact && styles.rowActionsCompact]}>
                   <IsleButton compact label={copy.editOverride} icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => openExistingPricingOverride(item)} />
@@ -791,10 +791,10 @@ function TrendItem({ trend, compact }: { trend: UsageTrendSeries; compact: boole
       ]}
     >
       <View style={styles.trendHeading}>
-        <Text numberOfLines={1} style={[styles.trendLabel, { color: colors.textTertiary }]}>{trend.label}</Text>
-        {trend.change ? <Text numberOfLines={1} style={[styles.trendChange, { color: directionTone }]}>{trend.change}</Text> : null}
+        <Text style={[styles.trendLabel, { color: colors.textTertiary }]}>{trend.label}</Text>
+        {trend.change ? <Text style={[styles.trendChange, { color: directionTone }]}>{trend.change}</Text> : null}
       </View>
-      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={[styles.trendValue, { color: colors.text }]}>{trend.value}</Text>
+      <Text adjustsFontSizeToFit minimumFontScale={0.8} style={[styles.trendValue, { color: colors.text }]}>{trend.value}</Text>
       <View style={styles.trendBars} accessible={false}>
         {trend.points.slice(-14).map((point, index) => (
           <View key={`${trend.id}:${index}`} style={styles.trendBarTrack}>
@@ -817,8 +817,8 @@ function FilterButton({ label, value, icon, onPress }: { label: string; value: s
     >
       <AppIcon name={icon} color={colors.textTertiary} size={14} />
       <View style={styles.filterText}>
-        <Text numberOfLines={1} style={[styles.filterLabel, { color: colors.textTertiary }]}>{label}</Text>
-        <Text numberOfLines={1} style={[styles.filterValue, { color: colors.text }]}>{value}</Text>
+        <Text style={[styles.filterLabel, { color: colors.textTertiary }]}>{label}</Text>
+        <Text style={[styles.filterValue, { color: colors.text }]}>{value}</Text>
       </View>
       <AppIcon name="collapse" color={colors.textTertiary} size={14} />
     </IslePressable>
@@ -836,7 +836,7 @@ function UsageTabButton({ active, label, icon, onPress }: { active: boolean; lab
       style={[styles.tabButton, active && { backgroundColor: colors.ui.control.primaryBackground }]}
     >
       <AppIcon name={icon} color={active ? colors.ui.control.primaryForeground : colors.textSecondary} size={15} />
-      <Text numberOfLines={1} style={[styles.tabLabel, { color: active ? colors.ui.control.primaryForeground : colors.textSecondary }]}>{label}</Text>
+      <Text style={[styles.tabLabel, { color: active ? colors.ui.control.primaryForeground : colors.textSecondary }]}>{label}</Text>
     </IslePressable>
   )
 }
@@ -848,15 +848,15 @@ function RequestRow({ item, compact, includeEstimates, accessibilityLabel, onPre
     <IslePressable accessibilityLabel={accessibilityLabel} onPress={onPress} style={[styles.requestRow, compact && { flexWrap: 'wrap' }, { minHeight: compact ? 94 : 82 }]}>
       <View style={styles.requestPrimary}>
         <View style={styles.rowTitleLine}>
-          <Text numberOfLines={1} style={[styles.rowTitle, { color: colors.text }]}>{item.modelLabel}</Text>
+          <Text style={[styles.rowTitle, { color: colors.text }]}>{item.modelLabel}</Text>
           <View style={[styles.statusDot, { backgroundColor: tone }]} />
-          <Text numberOfLines={1} style={[styles.statusLabel, { color: tone }]}>{item.statusLabel}</Text>
+          <Text style={[styles.statusLabel, { color: tone }]}>{item.statusLabel}</Text>
         </View>
-        <Text numberOfLines={1} style={[styles.rowMeta, { color: colors.textSecondary }]}>{item.providerLabel} · {item.sourceLabel}</Text>
-        {item.measurementLabel ? <Text numberOfLines={1} style={[styles.rowMeta, { color: colors.textTertiary }]}>{item.measurementLabel}</Text> : null}
+        <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>{item.providerLabel} · {item.sourceLabel}</Text>
+        {item.measurementLabel ? <Text style={[styles.rowMeta, { color: colors.textTertiary }]}>{item.measurementLabel}</Text> : null}
       </View>
       <View style={styles.requestTime}>
-        <Text numberOfLines={1} style={[styles.timeLabel, { color: colors.textTertiary }]}>{item.timestampLabel}</Text>
+        <Text style={[styles.timeLabel, { color: colors.textTertiary }]}>{item.timestampLabel}</Text>
         <AppIcon name="arrow-right" color={colors.textTertiary} size={15} />
       </View>
       <View style={[styles.requestMetrics, compact && styles.requestMetricsCompact]}>
@@ -882,16 +882,16 @@ function BreakdownRow({ item, includeEstimates }: { item: UsageBreakdownRow; inc
     <View accessible accessibilityLabel={[item.label, item.secondaryLabel, item.requestCountLabel, item.tokensLabel, includeEstimates ? item.estimatedCostLabel : undefined].filter(Boolean).join('. ')} style={styles.breakdownRow}>
       <View style={styles.breakdownHeading}>
         <View style={styles.pricingIdentity}>
-          <Text numberOfLines={1} style={[styles.rowTitle, { color: colors.text }]}>{item.label}</Text>
-          {item.secondaryLabel ? <Text numberOfLines={1} style={[styles.rowMeta, { color: colors.textSecondary }]}>{item.secondaryLabel}</Text> : null}
+          <Text style={[styles.rowTitle, { color: colors.text }]}>{item.label}</Text>
+          {item.secondaryLabel ? <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>{item.secondaryLabel}</Text> : null}
         </View>
         <View style={styles.breakdownMetrics}>
-          <Text numberOfLines={1} style={[styles.metricText, { color: colors.textSecondary }]}>{item.requestCountLabel}</Text>
-          <Text numberOfLines={1} style={[styles.metricText, { color: colors.textSecondary }]}>{item.tokensLabel}</Text>
-          {item.successRateLabel ? <Text numberOfLines={1} style={[styles.metricText, { color: colors.textTertiary }]}>{item.successRateLabel}</Text> : null}
-          {item.averageLatencyLabel ? <Text numberOfLines={1} style={[styles.metricText, { color: colors.textTertiary }]}>{item.averageLatencyLabel}</Text> : null}
-          {item.cacheHitRateLabel ? <Text numberOfLines={1} style={[styles.metricText, { color: colors.textTertiary }]}>{item.cacheHitRateLabel}</Text> : null}
-          {includeEstimates && item.estimatedCostLabel ? <Text numberOfLines={1} style={[styles.metricText, { color: colors.textSecondary }]}>{item.estimatedCostLabel}</Text> : null}
+          <Text style={[styles.metricText, { color: colors.textSecondary }]}>{item.requestCountLabel}</Text>
+          <Text style={[styles.metricText, { color: colors.textSecondary }]}>{item.tokensLabel}</Text>
+          {item.successRateLabel ? <Text style={[styles.metricText, { color: colors.textTertiary }]}>{item.successRateLabel}</Text> : null}
+          {item.averageLatencyLabel ? <Text style={[styles.metricText, { color: colors.textTertiary }]}>{item.averageLatencyLabel}</Text> : null}
+          {item.cacheHitRateLabel ? <Text style={[styles.metricText, { color: colors.textTertiary }]}>{item.cacheHitRateLabel}</Text> : null}
+          {includeEstimates && item.estimatedCostLabel ? <Text style={[styles.metricText, { color: colors.textSecondary }]}>{item.estimatedCostLabel}</Text> : null}
         </View>
       </View>
       <View style={[styles.shareTrack, { backgroundColor: colors.ui.semantic.surface.muted }]}>
@@ -908,8 +908,8 @@ function RequestDetail({ detail, redactedLabel }: { detail: RedactedUsageRequest
     <View>
       <View style={styles.detailHeading}>
         <View style={styles.detailTitleBlock}>
-          <Text numberOfLines={2} style={[styles.sheetTitle, { color: colors.text }]}>{detail.title}</Text>
-          {detail.subtitle ? <Text numberOfLines={2} style={[styles.rowMeta, { color: colors.textSecondary }]}>{detail.subtitle}</Text> : null}
+          <Text style={[styles.sheetTitle, { color: colors.text }]}>{detail.title}</Text>
+          {detail.subtitle ? <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>{detail.subtitle}</Text> : null}
         </View>
         <IsleChip tone="default">{redactedLabel}</IsleChip>
       </View>
@@ -952,7 +952,7 @@ function UsageSheet({ visible, title, closeLabel, onClose, children, keyboardAwa
         accessibilityViewIsModal
       >
         <View style={styles.modalHeader}>
-          <Text numberOfLines={2} style={[styles.sheetTitle, { color: colors.text }]}>{title}</Text>
+          <Text style={[styles.sheetTitle, { color: colors.text }]}>{title}</Text>
           <IsleButton compact label={closeLabel} icon={<AppIcon name="close" color={colors.textSecondary} size={15} />} onPress={onClose} />
         </View>
         <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled contentContainerStyle={styles.modalContent}>
@@ -1072,7 +1072,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     fontSize: 14,
-    lineHeight: 19,
+    lineHeight: 20,
     fontWeight: '800',
     letterSpacing: 0,
     includeFontPadding: false,
@@ -1104,15 +1104,15 @@ const styles = StyleSheet.create({
   summaryLabel: {
     flex: 1,
     minWidth: 0,
-    fontSize: 9.5,
-    lineHeight: 12,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     letterSpacing: 0,
     includeFontPadding: false,
   },
   summaryValue: {
     fontSize: 14,
-    lineHeight: 18,
+    lineHeight: 20,
     fontWeight: '900',
     letterSpacing: 0,
     includeFontPadding: false,
@@ -1137,21 +1137,21 @@ const styles = StyleSheet.create({
   trendLabel: {
     flex: 1,
     minWidth: 0,
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
   },
   trendChange: {
     maxWidth: 64,
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
   },
   trendValue: {
     fontSize: 15,
-    lineHeight: 19,
+    lineHeight: 20,
     fontWeight: '900',
     marginTop: 2,
     includeFontPadding: false,
@@ -1195,8 +1195,8 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   statusLegendText: {
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '700',
     includeFontPadding: false,
   },
@@ -1232,14 +1232,14 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   filterLabel: {
-    fontSize: 9.5,
-    lineHeight: 12,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
   },
   filterValue: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
     marginTop: 1,
@@ -1265,8 +1265,8 @@ const styles = StyleSheet.create({
   },
   tabLabel: {
     maxWidth: '76%',
-    fontSize: 11.5,
-    lineHeight: 15,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
   },
@@ -1300,14 +1300,14 @@ const styles = StyleSheet.create({
   rowTitle: {
     flexShrink: 1,
     minWidth: 0,
-    fontSize: 13,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
   },
   rowMeta: {
-    fontSize: 10.5,
-    lineHeight: 14,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '600',
     includeFontPadding: false,
     marginTop: 2,
@@ -1321,8 +1321,8 @@ const styles = StyleSheet.create({
   statusLabel: {
     flexShrink: 0,
     maxWidth: 88,
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
   },
@@ -1339,8 +1339,8 @@ const styles = StyleSheet.create({
   },
   metricText: {
     maxWidth: '100%',
-    fontSize: 10.5,
-    lineHeight: 14,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '700',
     includeFontPadding: false,
   },
@@ -1355,8 +1355,8 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     textAlign: 'right',
-    fontSize: 9.5,
-    lineHeight: 13,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '700',
     includeFontPadding: false,
   },
@@ -1409,8 +1409,8 @@ const styles = StyleSheet.create({
   },
   pricingValue: {
     maxWidth: '100%',
-    fontSize: 11,
-    lineHeight: 15,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
   },
@@ -1491,8 +1491,8 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
   },
   sheetBody: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '500',
     includeFontPadding: false,
   },
@@ -1515,8 +1515,8 @@ const styles = StyleSheet.create({
   optionLabel: {
     flex: 1,
     minWidth: 0,
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '700',
     includeFontPadding: false,
   },
@@ -1544,14 +1544,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   detailLabel: {
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
   },
   detailValue: {
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '600',
     includeFontPadding: false,
     marginTop: 3,
@@ -1560,8 +1560,8 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   fieldLabel: {
-    fontSize: 11,
-    lineHeight: 15,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
     marginBottom: 6,
@@ -1589,13 +1589,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 14,
-    lineHeight: 19,
+    lineHeight: 20,
     fontWeight: '700',
     letterSpacing: 0,
   },
   fieldSuffix: {
-    fontSize: 10,
-    lineHeight: 14,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '600',
     includeFontPadding: false,
     marginTop: 4,
@@ -1614,8 +1614,8 @@ const styles = StyleSheet.create({
   stateLabel: {
     maxWidth: 360,
     textAlign: 'center',
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '700',
     includeFontPadding: false,
   },
@@ -1626,8 +1626,8 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   emptyTitle: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     includeFontPadding: false,
     marginTop: 8,
@@ -1635,8 +1635,8 @@ const styles = StyleSheet.create({
   emptyDetail: {
     maxWidth: 300,
     textAlign: 'center',
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '500',
     includeFontPadding: false,
     marginTop: 3,

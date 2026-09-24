@@ -1,3 +1,7 @@
+import { usePreferenceUndo } from './usePreferenceUndo'
+import { SettingsValueSlider } from './SettingsValueSlider'
+import { SettingsSection, useSettingsTarget } from './SettingsSection'
+import { IsleButton } from '@/components/ui/isle'
 import { useEffect, useRef, useState } from 'react'
 import { StyleSheet, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
 import { MotiView } from 'moti'
@@ -28,10 +32,12 @@ export function PreferenceSettingsContent() {
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const settings = useSettingsStore((state) => state.settings)
-  const updateSettings = useSettingsStore((state) => state.updateSettings)
-  const { width } = useWindowDimensions()
+  const { updateSettings, undo, canUndo } = usePreferenceUndo()
+  const { width, fontScale } = useWindowDimensions()
   const [workflowOpen, setWorkflowOpen] = useState(false)
-  const compact = width < 430
+  const target = useSettingsTarget()
+  useEffect(() => { if (target === 'workflow') setWorkflowOpen(true) }, [target])
+  const compact = width / fontScale < 430
   const fieldRowStyle = { flexDirection: compact ? 'column' : 'row', gap: 10, marginBottom: 8 } as const
   const fieldFlexStyle = compact ? undefined : { flex: 1, minWidth: 0 }
   const foldoutCardStyle = {
@@ -63,26 +69,28 @@ export function PreferenceSettingsContent() {
       <View testID="preference-section-generation">
         <PreferenceSectionHeading icon="settings-sliders" title={t('preferences.generation')} detail={t('preferences.generationSubtitle')} />
         <View style={[fieldRowStyle, { marginTop: 10, marginBottom: 0 }]}>
-          <PreferenceNumericField
+          <SettingsSection id="generation-temperature"><PreferenceNumericField
             label={t('chat.temperature')}
             style={fieldFlexStyle}
             value={settings.defaultTemperature}
+            onReset={() => updateSettings({ defaultTemperature: undefined })}
             range={{ min: PROVIDER_PLATFORM_MIN_TEMPERATURE, max: PROVIDER_PLATFORM_MAX_TEMPERATURE }}
             kind="decimal"
             placeholder={t('preferences.followModel')}
             normalize={clampProviderPlatformTemperature}
             onCommit={(value) => updateSettings({ defaultTemperature: value })}
-          />
-          <PreferenceNumericField
+          /></SettingsSection>
+          <SettingsSection id="generation-tokens"><PreferenceNumericField
             label={t('chat.maxTokens')}
             style={fieldFlexStyle}
             value={settings.defaultMaxTokens}
+            onReset={() => updateSettings({ defaultMaxTokens: undefined })}
             range={{ min: PROVIDER_PLATFORM_MIN_CONFIGURED_OUTPUT_TOKENS, max: PROVIDER_PLATFORM_MAX_OUTPUT_TOKENS }}
             kind="integer"
             placeholder={t('preferences.followModel')}
             normalize={clampProviderPlatformOutputTokens}
             onCommit={(value) => updateSettings({ defaultMaxTokens: value })}
-          />
+          /></SettingsSection>
         </View>
       </View>
   )
@@ -104,20 +112,8 @@ export function PreferenceSettingsContent() {
             width={capabilityTileWidth}
             onPress={() => updateSettings({ commandPaletteEnabled: !(settings.commandPaletteEnabled ?? true) })}
           />
-          <PreferenceCapabilityTile
-            icon="spark"
-            title={t('settings.skills')}
-            active={settings.skillsEnabled ?? true}
-            width={capabilityTileWidth}
-            onPress={() => updateSettings({ skillsEnabled: !(settings.skillsEnabled ?? true) })}
-          />
-          <PreferenceCapabilityTile
-            icon="network"
-            title={t('settings.mcp')}
-            active={settings.mcpEnabled ?? true}
-            width={capabilityTileWidth}
-            onPress={() => updateSettings({ mcpEnabled: !(settings.mcpEnabled ?? true) })}
-          />
+
+
         </View>
       </View>
   )
@@ -144,15 +140,15 @@ export function PreferenceSettingsContent() {
       >
         <AppIcon name="workflow" color={colors.textTertiary} size={16} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('preferences.agentWorkflow')}</Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{t('preferences.agentWorkflowCollapsedDetail', { steps: workflowMaxSteps, tools: workflowMaxToolCalls, limit: workflowOutputLimit })}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('preferences.agentWorkflow')}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{t('preferences.agentWorkflowCollapsedDetail', { steps: workflowMaxSteps, tools: workflowMaxToolCalls, limit: workflowOutputLimit })}</Text>
         </View>
         <MotiView animate={{ rotate: workflowOpen && motion === 'full' ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
           <AppIcon name="collapse" color={colors.textTertiary} size={16} />
         </MotiView>
       </IslePressable>
       {workflowOpen ? (
-        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : { opacity: 0 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={[foldoutCardStyle, canonicalThemeId === 'material' ? { borderRadius: 4, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider } : canonicalThemeId === 'liquid-glass' ? { borderRadius: colors.ui.radius.panel, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border } : null]}>
+        <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={[foldoutCardStyle, canonicalThemeId === 'material' ? { borderRadius: 4, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider } : canonicalThemeId === 'liquid-glass' ? { borderRadius: colors.ui.radius.panel, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border } : null]}>
           <PreferenceFoldoutHeader title={t('preferences.agentWorkflow')} description={t('preferences.agentWorkflowSubtitle')} />
           <View style={fieldRowStyle}>
             <PreferenceNumericField
@@ -217,11 +213,13 @@ export function PreferenceSettingsContent() {
         ? LiquidGlassPreferenceSettingsExperience
         : MinimalPreferenceSettingsExperience
   return (
+    <>
+    {canUndo ? <IsleButton label={t('settingsWorkspace.undo')} onPress={undo} /> : null}
     <Experience
-      identity={identitySection}
-      generation={generationSection}
-      interaction={interactionSection}
-      workflow={workflowSection}
+      identity={<SettingsSection id="identity">{identitySection}</SettingsSection>}
+      generation={<SettingsSection id="generation">{generationSection}</SettingsSection>}
+      interaction={<SettingsSection id="interaction">{interactionSection}</SettingsSection>}
+      workflow={<SettingsSection id="workflow">{workflowSection}</SettingsSection>}
       labels={{
         identity: t('preferences.identity'),
         generation: t('preferences.generation'),
@@ -230,6 +228,7 @@ export function PreferenceSettingsContent() {
       }}
       compact={compact}
     />
+    </>
   )
 }
 
@@ -246,16 +245,16 @@ function PreferenceSectionHeading({
   if (canonicalThemeId === 'minimal') {
     return (
       <View style={{ paddingBottom: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
-        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13.5, lineHeight: 18, fontWeight: '800' }}>{title}</Text>
-        {detail ? <Text numberOfLines={2} style={{ marginTop: 2, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '500' }}>{detail}</Text> : null}
+        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+        {detail ? <Text style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{detail}</Text> : null}
       </View>
     )
   }
   if (canonicalThemeId === 'material') {
     return (
       <View style={{ gap: 2 }}>
-        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800' }}>{title}</Text>
-        {detail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, fontWeight: '500' }}>{detail}</Text> : null}
+        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+        {detail ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{detail}</Text> : null}
       </View>
     )
   }
@@ -265,8 +264,8 @@ function PreferenceSectionHeading({
         <AppIcon name={icon} color={colors.textSecondary} size={16} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800', includeFontPadding: false }}>{title}</Text>
-        {detail ? <Text numberOfLines={2} style={{ marginTop: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '600', includeFontPadding: false }}>{detail}</Text> : null}
+        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{title}</Text>
+        {detail ? <Text style={{ marginTop: 1, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600', includeFontPadding: false }}>{detail}</Text> : null}
       </View>
     </View>
   )
@@ -298,8 +297,8 @@ function PreferenceCapabilityTile({
         style={{ flexGrow: 1, flexBasis: width, minWidth: 0, minHeight: 52, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}
       >
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: active ? colors.ui.tone.success.foreground : colors.ui.semantic.chrome.border }} />
-        <Text numberOfLines={2} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '700' }}>{title}</Text>
-        <Text style={{ color: active ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '800' }}>{active ? t('settings.enabled') : t('settings.disabled')}</Text>
+        <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{title}</Text>
+        <Text style={{ color: active ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{active ? t('settings.enabled') : t('settings.disabled')}</Text>
       </IslePressable>
     )
   }
@@ -314,8 +313,8 @@ function PreferenceCapabilityTile({
         style={{ minHeight: 46, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.semantic.surface.muted, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}
       >
         <AppIcon name={icon} color={active ? colors.ui.tone.success.foreground : colors.textTertiary} size={15} />
-        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 11.5, lineHeight: 16, fontWeight: '700' }}>{title}</Text>
-        <Text style={{ color: active ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '700' }}>{active ? t('settings.enabled') : t('settings.disabled')}</Text>
+        <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{title}</Text>
+        <Text style={{ color: active ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{active ? t('settings.enabled') : t('settings.disabled')}</Text>
       </IslePressable>
     )
   }
@@ -343,8 +342,8 @@ function PreferenceCapabilityTile({
         <AppIcon name={icon} color={active ? colors.ui.control.primaryForeground : colors.textTertiary} size={17} />
         <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? colors.ui.control.primaryForeground : colors.ui.semantic.chrome.border }} />
       </View>
-      <Text numberOfLines={2} style={{ marginTop: 9, color: active ? colors.ui.control.primaryForeground : colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}>{title}</Text>
-      <Text numberOfLines={1} style={{ marginTop: 2, color: active ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700', includeFontPadding: false }}>
+      <Text style={{ marginTop: 9, color: active ? colors.ui.control.primaryForeground : colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{title}</Text>
+      <Text style={{ marginTop: 2, color: active ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>
         {active ? t('settings.enabled') : t('settings.disabled')}
       </Text>
     </IslePressable>
@@ -398,80 +397,76 @@ function PreferenceIdentityField({
   )
 }
 
-function PreferenceNumericField({
-  label,
-  note,
-  value,
-  range,
-  kind,
-  placeholder,
-  normalize,
-  onCommit,
-  style,
-}: {
-  label: string
-  note?: string
-  value: number | undefined
-  range: NumericDraftRange
-  kind: NumericDraftKind
-  placeholder?: string
-  normalize?: (value: number) => number
-  onCommit: (value: number) => void
-  style?: StyleProp<ViewStyle>
+function PreferenceNumericField({ label, value, range, kind, placeholder, normalize, onCommit, onReset, style }: {
+  label: string; note?: string; value: number | undefined; range: NumericDraftRange; kind: NumericDraftKind; placeholder?: string;
+  normalize?: (value: number) => number; onCommit: (value: number) => void; onReset?: () => void; style?: StyleProp<ViewStyle>
 }) {
+  const { t } = useTranslation()
+  const { colors } = useAppTheme()
   const externalDraft = typeof value === 'number' && Number.isFinite(value) ? String(value) : ''
   const [draft, setDraft] = useState(externalDraft)
+  const [custom, setCustom] = useState(!onReset || value !== undefined)
   const commitPending = useRef(false)
-
   useEffect(() => {
-    setDraft(externalDraft)
-    commitPending.current = false
-  }, [externalDraft])
-
+    if (!commitPending.current) { setDraft(externalDraft); setCustom(!onReset || value !== undefined) }
+  }, [externalDraft, value])
   function commit() {
     if (!commitPending.current) return
     commitPending.current = false
     const parsed = commitNumericDraft(draft, range, kind)
-    if (parsed === undefined) {
-      setDraft(externalDraft)
-      return
-    }
+    if (parsed === undefined) { setDraft(externalDraft); return }
     const next = normalize ? normalize(parsed) : parsed
     setDraft(String(next))
     onCommit(next)
   }
-
-  return (
-    <IsleField
-      label={label}
-      note={note}
-      style={style}
-      inputProps={{
-        value: draft,
-        onChangeText: (next) => {
-          const accepted = acceptNumericDraft(draft, next, kind)
-          if (accepted === draft) return
-          commitPending.current = true
-          setDraft(accepted)
-        },
-        onBlur: commit,
-        onSubmitEditing: commit,
-        keyboardType: kind === 'integer' ? 'number-pad' : 'decimal-pad',
-        placeholder,
-      }}
-    />
-  )
+  function step(direction: number) {
+    const amount = kind === 'decimal' ? 0.1 : range.max > 1000 ? 256 : 1
+    const next = commitNumericDraft(String(Math.max(range.min, Math.min(range.max, Math.round(((Number(draft) || value || range.min) + direction * amount) * 10) / 10))), range, kind)
+    if (next === undefined) return
+    commitPending.current = false
+    setDraft(String(next))
+    onCommit(normalize ? normalize(next) : next)
+  }
+  return <View style={[style, { gap: 8 }]}>
+    {onReset ? <>
+      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{label}</Text>
+      <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {[false, true].map(option => <IslePressable key={String(option)} accessibilityRole="radio" accessibilityState={{ checked: custom === option }} onPress={() => {
+          setCustom(option)
+          if (!option) { commitPending.current = false; setDraft(''); onReset() }
+        }} style={{ minHeight: 44, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, backgroundColor: custom === option ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.muted }}>
+          <Text style={{ fontSize: 14, color: custom === option ? colors.ui.control.primaryForeground : colors.text }}>{t(option ? 'settingsWorkspace.customValue' : 'settingsWorkspace.modelDefault')}</Text>
+        </IslePressable>)}
+      </View>
+    </> : null}
+    {custom ? <>
+      {onReset && value === undefined ? <Text style={{ fontSize: 14, color: colors.textSecondary }}>{t('settingsWorkspace.chooseValue')}</Text> : null}
+      {onReset ? <SettingsValueSlider label={label} value={value ?? range.min} min={range.min} max={range.max} step={kind === 'decimal' ? 0.1 : 1} logarithmic={kind === 'integer' && range.min > 0} onCommit={next => {
+        commitPending.current = false
+        setDraft(String(next))
+        onCommit(normalize ? normalize(next) : next)
+      }} /> : null}
+      <IsleField label={onReset ? '' : label} inputProps={{ accessibilityLabel: label, value: draft, onChangeText: next => {
+        const accepted = acceptNumericDraft(draft, next, kind)
+        if (accepted !== draft) { commitPending.current = true; setDraft(accepted) }
+      }, onBlur: commit, onSubmitEditing: commit, keyboardType: kind === 'integer' ? 'number-pad' : 'decimal-pad', placeholder: onReset ? t('settingsWorkspace.chooseValue') : placeholder }} />
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <IsleButton label="−" accessibilityLabel={label + ' −'} onPress={() => step(-1)} />
+        <IsleButton label="+" accessibilityLabel={label + ' +'} onPress={() => step(1)}/>
+      </View>
+    </> : null}
+  </View>
 }
 
 function PreferenceFoldoutHeader({ title, description }: { title: string; description?: string }) {
   const { colors } = useAppTheme()
   return (
     <View style={{ marginBottom: 10 }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
         {title}
       </Text>
       {description ? (
-        <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
           {description}
         </Text>
       ) : null}

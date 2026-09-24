@@ -19,13 +19,14 @@ export interface McpSettingsExperienceProps {
 }
 
 export function MinimalMcpSettingsExperience(props: McpSettingsExperienceProps) {
+  const { t } = useTranslation()
   const { colors } = useAppTheme()
   return (
     <View testID="mcp-settings-experience-minimal" style={{ gap: 10 }}>
       <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>MCP</Text>
-          <Text style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '500' }}>{`${props.servers.length} endpoints`}</Text>
+          <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>MCP</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{`${props.servers.length} · ${t('mcp.overviewExternal')}`}</Text>
         </View>
         {props.managementTrigger}
       </View>
@@ -54,7 +55,7 @@ function CanonicalMcpExperience({ family, props }: { family: CanonicalMcpFamily;
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ color: colors.text, fontSize: design.semantic.typography.title.fontSize, lineHeight: design.semantic.typography.title.lineHeight, fontWeight: design.semantic.typography.title.fontWeight }}>MCP</Text>
-          <Text numberOfLines={1} style={{ marginTop: 1, color: colors.textTertiary, fontSize: design.semantic.typography.caption.fontSize, lineHeight: design.semantic.typography.caption.lineHeight, fontWeight: '500' }}>{`${props.servers.length} endpoints`}</Text>
+          <Text style={{ marginTop: 1, color: colors.textTertiary, fontSize: design.semantic.typography.caption.fontSize, lineHeight: design.semantic.typography.caption.lineHeight, fontWeight: '500' }}>{`${props.servers.length} · ${t('mcp.overviewExternal')}`}</Text>
         </View>
         {props.managementTrigger}
       </View>
@@ -76,10 +77,10 @@ function CanonicalMcpExperience({ family, props }: { family: CanonicalMcpFamily;
                 <IslePressable haptic disabled={pending} accessibilityRole="switch" accessibilityLabel={`${server.name}. ${t(enabled ? 'settings.enabledState' : 'settings.disabledState')}`} accessibilityState={{ checked: enabled, disabled: pending }} onPress={() => props.onToggle(server)} style={{ flex: 1, minHeight: 44, justifyContent: 'center', gap: 5 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: enabled ? colors.ui.tone.success.foreground : colors.ui.semantic.chrome.border }} />
-                    <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: cardForeground, fontSize: design.semantic.typography.label.fontSize, lineHeight: design.semantic.typography.label.lineHeight, fontWeight: '700' }}>{server.name}</Text>
+                    <Text style={{ flex: 1, minWidth: 0, color: cardForeground, fontSize: design.semantic.typography.label.fontSize, lineHeight: design.semantic.typography.label.lineHeight, fontWeight: '700' }}>{server.name}</Text>
                     <AppIcon name={enabled ? 'check' : 'back-next'} color={enabled ? colors.ui.tone.success.foreground : colors.textTertiary} size={15} />
                   </View>
-                  <Text numberOfLines={1} style={{ color: enabled ? design.semantic.color.onPrimaryContainer : colors.textTertiary, fontSize: design.semantic.typography.caption.fontSize, lineHeight: design.semantic.typography.caption.lineHeight, fontWeight: '500' }}>{pending ? t('mcp.refreshing') : `${t(`mcp.status.${server.status}`)} · ${server.tools.length} tools`}</Text>
+                  <Text style={{ color: enabled ? design.semantic.color.onPrimaryContainer : colors.textTertiary, fontSize: design.semantic.typography.caption.fontSize, lineHeight: design.semantic.typography.caption.lineHeight, fontWeight: '500' }}>{pending ? t('mcp.refreshing') : `${t(`mcp.status.${server.status}`)} · ${server.tools.length} · ${t('mcp.overviewTools')}`}</Text>
                 </IslePressable>
                 <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${server.name}. ${t('mcp.showDetails')}`} onPress={() => props.onOpenDetails(server.id)} style={{ position: 'absolute', right: family === 'material' ? 10 : 8, top: family === 'material' ? 8 : 5, minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
                   <AppIcon name="settings" color={enabled ? design.semantic.color.onPrimaryContainer : colors.textSecondary} size={16} />
@@ -126,12 +127,12 @@ function MinimalMcpCatalog({ servers, pendingServerId, emptyState, onToggle, onO
             >
               <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: server.enabled ? colors.ui.tone.success.foreground : colors.ui.semantic.chrome.border }} />
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12.5, lineHeight: 17, fontWeight: '700' }}>{server.name}</Text>
-                <Text numberOfLines={1} style={{ marginTop: 2, color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '500' }}>{`${t(`mcp.status.${server.status}`)} · ${server.tools.length} tools`}</Text>
+                <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{server.name}</Text>
+                <Text style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{`${t(`mcp.status.${server.status}`)} · ${server.tools.length} · ${t('mcp.overviewTools')}`}</Text>
               </View>
             </IslePressable>
             <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${server.name}. ${t('mcp.showDetails')}`} onPress={() => onOpenDetails(server.id)} style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '800' }}>{t('mcp.showDetails')}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('mcp.showDetails')}</Text>
             </IslePressable>
           </View>
         )

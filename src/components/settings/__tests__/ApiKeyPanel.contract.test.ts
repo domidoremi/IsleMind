@@ -18,8 +18,11 @@ describe('ApiKeyPanel provider workspace contract', () => {
       'function applyProviderImportDraftText(',
     )
 
-    expect(tokenSaveSource).toContain('await updateProvider(provider.id, { credentialGroups })')
-    expect(tokenSaveSource).toContain("dialog.toast({ title: t('apiKeyPanel.tokensSaved'")
+    expect(tokenSaveSource).toContain('await save()')
+    const saveSource = sourceBetween('async function save(showNotice', 'async function selectClientCompatibilityMode')
+    expect(saveSource).toContain('await updateProvider(provider.id, {')
+    expect(saveSource).toContain('await useSettingsStore.getState().flushProviderPersistence()')
+    expect(saveSource).toContain("dialog.toast({ title: t('apiKeyPanel.providerSaved'")
     expect(tokenSaveSource).not.toContain('dialog.notice(')
     expect(tokenSaveSource).not.toContain('setNotice(')
   })

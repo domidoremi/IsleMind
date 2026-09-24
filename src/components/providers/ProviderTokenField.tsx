@@ -4,7 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { IsleField, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
-export function ProviderTokenField({ value, onChangeText, onFocus }: {
+export function ProviderTokenField({ value, onChangeText, onFocus, editable = true }: {
+  editable?: boolean
   value: string
   onChangeText(value: string): void
   onFocus(): void
@@ -21,7 +22,7 @@ export function ProviderTokenField({ value, onChangeText, onFocus }: {
     <View>
       <IsleField label={t('providerSettings.tokens')}
         note={t(multiline ? 'providerSettings.batchTokensVisible' : 'providerSettings.singleTokenHint')}
-        inputProps={{ value, onChangeText, onFocus, placeholder: multiline ? 'sk-...\nsk-...' : 'sk-...',
+        inputProps={{ editable, value, onChangeText, onFocus, placeholder: multiline ? 'sk-...\nsk-...' : 'sk-...',
           autoCapitalize: 'none', autoCorrect: false, autoComplete: 'off',
           multiline, secureTextEntry: !multiline && !revealed }} />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>

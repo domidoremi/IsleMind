@@ -16,10 +16,10 @@ export function MinimalSkillSettingsLead({ saved, workflows, enabledWorkflows, t
   const { colors } = useAppTheme()
   return (
     <View testID="skill-settings-experience-minimal" style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
-      <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>{`${saved} skills`}</Text>
-      <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '600' }}>{`${enabledWorkflows}/${workflows} workflows`}</Text>
-      <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '600' }}>{`${templates} templates`}</Text>
-      {review ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>{`${review} review`}</Text> : null}
+      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{`${saved} skills`}</Text>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{`${enabledWorkflows}/${workflows} workflows`}</Text>
+      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{`${templates} templates`}</Text>
+      {review ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{`${review} review`}</Text> : null}
     </View>
   )
 }

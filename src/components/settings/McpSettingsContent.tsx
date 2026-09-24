@@ -1,3 +1,9 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useSettingsStore } from '@/store/settingsStore'
+import { useRef } from 'react'
+import { SettingsSection, useSettingsTarget } from './SettingsSection'
+import { useSettingsDraft } from './SettingsEditBoundary'
+import { SettingsHelpButton } from './SettingsHelp'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
@@ -33,13 +39,20 @@ function hostFromUrl(value: string): string {
 
 export function McpSettingsContent() {
   const { colors, canonicalThemeId } = useAppTheme()
+  const motion = useMotionPreference()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
-  const { width } = useWindowDimensions()
-  const compact = width < 430
+  const { width, fontScale } = useWindowDimensions()
+  const compact = width / fontScale < 430
   const actionCompact = width < 360
+  const enabled = useSettingsStore(state => state.settings.mcpEnabled ?? true)
+  const updateSettings = useSettingsStore(state => state.updateSettings)
   const [servers, setServers] = useState<McpServerConfig[]>([])
   const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const saveLock = useRef(false)
+  const draftServerId = useRef<string | null>(null)
+  const target = useSettingsTarget()
   const [url, setUrl] = useState('')
   const [managementOpen, setManagementOpen] = useState(false)
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null)
@@ -48,6 +61,9 @@ export function McpSettingsContent() {
   const [addOpen, setAddOpen] = useState(false)
   const [builtInOpen, setBuiltInOpen] = useState(false)
   const [installingPresetId, setInstallingPresetId] = useState<string | null>(null)
+  const discardDraft = () => { draftServerId.current = null; setName(''); setUrl(''); setAddOpen(false) }
+  const requestCloseDraft = useSettingsDraft(Boolean(name || url), saving, discardDraft)
+  useEffect(() => { if (target === 'mcp-add') { setManagementOpen(true); setAddOpen(true) } }, [target])
   const remotePresets = useMemo(() => listMcpRemotePresets(), [])
   const userServers = useMemo(() => servers.filter((server) => server.id !== 'islemind-builtins'), [servers])
   const installedPresetIds = useMemo(() => new Set(remotePresets.flatMap((preset) => (
@@ -79,9 +95,14 @@ export function McpSettingsContent() {
       dialog.toast({ title: t('mcp.urlRequired'), tone: 'amber' })
       return
     }
+    if (saveLock.current) return
+    saveLock.current = true
+    setSaving(true)
+    try {
     const now = Date.now()
+    draftServerId.current ??= `mcp-${now}-${Math.random().toString(36).slice(2, 8)}`
     const server = await upsertMcpServer({
-      id: `mcp-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      id: draftServerId.current,
       name: name.trim() || hostFromUrl(endpoint),
       url: endpoint,
       transport: 'streamable-http',
@@ -95,11 +116,12 @@ export function McpSettingsContent() {
       createdAt: now,
       updatedAt: now,
     })
-    setName('')
-    setUrl('')
-    setAddOpen(false)
-    await refresh()
+    discardDraft()
+    setServers(current => [...current.filter(item => item.id !== server.id), server])
     dialog.toast({ title: t('mcp.added'), message: server.name, tone: 'mint' })
+    } catch {
+      dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
+    } finally { saveLock.current = false; setSaving(false) }
   }
 
   async function installPreset(preset: McpRemotePreset) {
@@ -207,7 +229,7 @@ export function McpSettingsContent() {
                 onPress={() => setPresetsOpen((value) => !value)}
               />
               {presetsOpen ? (
-                <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={foldoutPanelStyle}>
+                <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
                   <McpFoldoutHeader title={t('mcp.presetsTitle')} description={t('mcp.presetsSubtitle')} />
                   <View style={{ gap: 8 }}>
                     {remotePresets.map((preset) => {
@@ -239,7 +261,7 @@ export function McpSettingsContent() {
     </>
   )
   const addSection = (
-    <>
+    <SettingsSection id="mcp-add">
       <McpDisclosureRow
         title={t('mcp.addServer')}
         detail={url.trim() ? hostFromUrl(url.trim()) : t('mcp.addServerCollapsedHint')}
@@ -248,16 +270,17 @@ export function McpSettingsContent() {
         onPress={() => setAddOpen((value) => !value)}
       />
       {addOpen ? (
-        <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={foldoutPanelStyle}>
-          <McpFoldoutHeader title={t('mcp.addServer')} description={t('mcp.addServerSubtitle')} />
+        <View style={foldoutPanelStyle}>
+          <SettingsHelpButton topic="tools" />
           <View style={{ gap: 10 }}>
-            <IsleField label={t('mcp.name')} inputProps={{ value: name, onChangeText: setName, placeholder: 'Local tools' }} />
-            <IsleField label={t('mcp.url')} inputProps={{ value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', autoCapitalize: 'none', autoCorrect: false }} />
-            <IsleButton label={t('mcp.add')} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
+            <IsleField label={t('mcp.name')} inputProps={{ editable: !saving, value: name, onChangeText: setName, placeholder: 'Local tools' }} />
+            <IsleField label={t('mcp.url')} inputProps={{ editable: !saving, value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', autoCapitalize: 'none', autoCorrect: false }} />
+            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={saving} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
+            <IsleButton label={t('settingsWorkspace.cancel')} disabled={saving} onPress={() => void requestCloseDraft(() => undefined)} />
           </View>
-        </MotiView>
+        </View>
       ) : null}
-    </>
+    </SettingsSection>
   )
   const builtInSection = builtInServer ? (
     <>
@@ -269,7 +292,7 @@ export function McpSettingsContent() {
                     onPress={() => setBuiltInOpen((value) => !value)}
                   />
                   {builtInOpen ? (
-                    <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+                    <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}>
                       <McpServerDetails server={builtInServer} readonly onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
                     </MotiView>
                   ) : null}
@@ -281,7 +304,7 @@ export function McpSettingsContent() {
       ? <>{addSection}{presetsSection}{builtInSection}</>
       : <>{presetsSection}{addSection}{builtInSection}</>
   const management = (
-    <MotiView from={{ opacity: 0, translateY: -5 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ gap: 10 }}>
+    <MotiView from={{ opacity: 0, translateY: -5 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ gap: 10 }}>
       {selectedServer ? (
         <McpServerDetails server={selectedServer} onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
       ) : managementSections}
@@ -295,6 +318,8 @@ export function McpSettingsContent() {
         ? LiquidGlassMcpSettingsExperience
         : MinimalMcpSettingsExperience
   return (
+    <>
+    <IsleToggle title={t('settings.mcp')} active={enabled} onPress={() => updateSettings({ mcpEnabled: !enabled })} />
     <Experience
       managementOpen={managementOpen}
       managementTrigger={managementTrigger}
@@ -305,10 +330,10 @@ export function McpSettingsContent() {
       compact={compact}
       onToggle={(server) => void toggleServer(server)}
       onOpenDetails={(serverId) => {
-        setSelectedServerId(serverId)
-        setManagementOpen(true)
+        void requestCloseDraft(() => { setSelectedServerId(serverId); setManagementOpen(true) })
       }}
     />
+    </>
   )
 }
 
@@ -316,11 +341,11 @@ function McpFoldoutHeader({ title, description }: { title: string; description?:
   const { colors } = useAppTheme()
   return (
     <View style={{ marginBottom: 10 }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
         {title}
       </Text>
       {description ? (
-        <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
           {description}
         </Text>
       ) : null}
@@ -335,11 +360,11 @@ function McpEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string; 
     <View style={{ minHeight: detail ? 60 : 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor }}>
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
           {label}
         </Text>
         {detail ? (
-          <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
             {detail}
           </Text>
         ) : null}
@@ -363,10 +388,11 @@ function McpServerDetails({
   onToggleTool: (server: McpServerConfig, tool: McpToolManifest) => Promise<void>
   onDelete: (server: McpServerConfig) => Promise<void>
 }) {
+  const motion = useMotionPreference()
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const { width } = useWindowDimensions()
-  const compact = width < 430
+  const { width, fontScale } = useWindowDimensions()
+  const compact = width / fontScale < 430
   const actionCompact = width < 360
   const [toolsOpen, setToolsOpen] = useState(false)
   const [resourcesOpen, setResourcesOpen] = useState(false)
@@ -428,8 +454,8 @@ function McpServerDetails({
       {actions}
       <View style={{ gap: 8 }}>
           <View style={{ borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), padding: 8, gap: 4, backgroundColor: mutedSurface, borderWidth: subtleBorderWidth, borderColor: pluginValidation.ok ? cardBorder : colors.ui.tone.warning.border }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 13, fontWeight: '700', includeFontPadding: false }}>{t('mcp.pluginManifest')}</Text>
-            <Text style={{ color: pluginValidation.ok ? colors.textTertiary : colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}>{pluginPreview}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{t('mcp.pluginManifest')}</Text>
+            <Text style={{ color: pluginValidation.ok ? colors.textTertiary : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{pluginPreview}</Text>
           </View>
           <McpDisclosureRow
             title={t('mcp.toolsTitle', { count: server.tools.length })}
@@ -439,7 +465,7 @@ function McpServerDetails({
             onPress={() => setToolsOpen((value) => !value)}
           />
           {toolsOpen ? (
-            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ gap: 8 }}>
+            <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ gap: 8 }}>
               {server.tools.map((tool) => (
                 <IsleToggle
                   key={tool.name}
@@ -461,7 +487,7 @@ function McpServerDetails({
             onPress={() => setResourcesOpen((value) => !value)}
           />
           {resourcesOpen ? (
-            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ gap: 8 }}>
+            <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ gap: 8 }}>
               {resourceItems.map((resource) => (
                 <IsleListItem
                   key={resource.key}
@@ -481,7 +507,7 @@ function McpServerDetails({
             onPress={() => setPromptsOpen((value) => !value)}
           />
           {promptsOpen ? (
-            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ gap: 8 }}>
+            <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ gap: 8 }}>
               {promptItems.map((prompt) => (
                 <IsleListItem
                   key={prompt.key}
@@ -499,6 +525,7 @@ function McpServerDetails({
 }
 
 function McpDisclosureRow({ title, detail, icon, open, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; onPress: () => void }) {
+  const motion = useMotionPreference()
   const { colors } = useAppTheme()
   return (
     <IslePressable
@@ -511,10 +538,10 @@ function McpDisclosureRow({ title, detail, icon, open, onPress }: { title: strin
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{detail}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{detail}</Text>
       </View>
-      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
         <AppIcon name="collapse" color={colors.textTertiary} size={16} />
       </MotiView>
     </IslePressable>

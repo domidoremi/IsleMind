@@ -1,3 +1,10 @@
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useRef } from 'react'
+import { Keyboard } from 'react-native'
+import { useSettingsDraft } from './SettingsEditBoundary'
+import { SettingsHelpButton } from './SettingsHelp'
+import { useSettingsStore } from '@/store/settingsStore'
+import { IsleToggle } from '@/components/ui/isle'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
@@ -81,10 +88,11 @@ interface SkillSettingsContentProps {
 
 export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: SkillSettingsContentProps = {}) {
   const { colors, canonicalThemeId } = useAppTheme()
+  const motion = useMotionPreference()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
-  const { width } = useWindowDimensions()
-  const compact = width < 430
+  const { width, fontScale } = useWindowDimensions()
+  const compact = width / fontScale < 430
   const actionCompact = width < 360
   const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const fieldRowStyle = { flexDirection: compact ? 'column' : 'row', gap: 10 } as const
@@ -124,6 +132,18 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   const [templatesOpen, setTemplatesOpen] = useState(false)
   const [workflowsOpen, setWorkflowsOpen] = useState(false)
   const [savedOpen, setSavedOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const saveLock = useRef(false)
+  const pendingId = useRef<string | undefined>(undefined)
+  const editingVersion = useRef<number | undefined>(undefined)
+  const enabled = useSettingsStore(state => state.settings.skillsEnabled ?? true)
+  const updateSettings = useSettingsStore(state => state.updateSettings)
+  const formSnapshot = JSON.stringify([name, description, systemPrompt, tags, layer, priority, providerId, model, temperature, maxTokens, enabledTools, knowledgeSources, firstUserMessage, expectedReplyFormat, variablesJson, stackPolicy])
+  const emptySnapshot = useRef(formSnapshot)
+  const baseline = useRef(formSnapshot)
+  const dirty = baseline.current !== formSnapshot
+  const requestDiscard = useSettingsDraft(dirty, saving, resetForm)
   const sortedSkills = useMemo(() => [...skills].sort((a, b) => b.updatedAt - a.updatedAt), [skills])
   const workflowSkills = useMemo(() => sortedSkills.filter(isWorkflowSkill), [sortedSkills])
   const regularSkills = useMemo(() => sortedSkills.filter((skill) => !isWorkflowSkill(skill)), [sortedSkills])
@@ -219,12 +239,21 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }
 
   async function saveSkill() {
+    if (saveLock.current) return
+    saveLock.current = true
+    setSaving(true)
+    Keyboard.dismiss()
+    try {
     const prompt = systemPrompt.trim()
     if (!prompt) {
       dialog.toast({ title: t('skills.promptRequired'), tone: 'amber' })
       return
     }
     const editing = editingSkillId ? skills.find((skill) => skill.id === editingSkillId) : undefined
+    if (editingSkillId) {
+      const latest = (await listSkills()).find(skill => skill.id === editingSkillId)
+      if (!latest || latest.updatedAt !== editingVersion.current) { dialog.toast({ title: t('settingsWorkspace.conflict'), tone: 'amber' }); return }
+    }
     const parsedVariables = parseVariablesJson(variablesJson)
     if (parsedVariables === null) {
       dialog.toast({ title: t('skills.variablesInvalid'), tone: 'amber' })
@@ -233,7 +262,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
     const safeTags = mergeWorkflowSkillEditTags(editing, parseList(tags))
     const nextPriority = parseBoundedNumber(priority, -1000, 1000) ?? (layer === 'base' ? 0 : layer === 'advanced' ? 20 : 40)
     const draftSkill = createBaseSkill({
-      id: editing?.id,
+      id: editing?.id ?? pendingId.current,
       createdAt: editing?.createdAt,
       version: editing?.version,
       name: name.trim() || t('skills.untitled'),
@@ -253,11 +282,14 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       variables: parsedVariables,
       stackPolicy,
     })
+    pendingId.current = draftSkill.id
     const skill = await upsertSkill(buildWorkflowSkillReviewRequiredEdit(editing, draftSkill))
     resetForm()
     setFormOpen(false)
-    await refresh()
+    setSkills(current => [...current.filter(item => item.id !== skill.id), skill])
     dialog.toast({ title: editing ? t('skills.updated') : t('skills.created'), message: skill.name, tone: 'mint' })
+    } catch { dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
+    finally { saveLock.current = false; setSaving(false) }
   }
 
   async function importFromClipboard() {
@@ -435,6 +467,8 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }
 
   function editSkill(skill: SkillDefinition) {
+    editingVersion.current = skill.updatedAt
+    baseline.current = JSON.stringify([skill.name, skill.description ?? '', skill.systemPrompt, skill.tags.join(', '), skill.layer, String(skill.priority ?? ''), skill.providerId ?? '', skill.model ?? '', typeof skill.temperature === 'number' ? String(skill.temperature) : '', typeof skill.maxTokens === 'number' ? String(skill.maxTokens) : '', (skill.enabledTools ?? []).join('\n'), (skill.knowledgeSources ?? []).join('\n'), skill.firstUserMessage ?? '', skill.expectedReplyFormat ?? '', skill.variables?.length ? JSON.stringify(skill.variables, null, 2) : '', skill.stackPolicy ?? 'append'])
     setFormOpen(true)
     setEditingSkillId(skill.id)
     setName(skill.name)
@@ -456,6 +490,10 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }
 
   function resetForm() {
+    baseline.current = emptySnapshot.current
+    pendingId.current = undefined
+    editingVersion.current = undefined
+    setAdvancedOpen(false)
     setEditingSkillId(null)
     setFormOpen(false)
     setName('')
@@ -520,6 +558,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         : MinimalSkillSettingsLead
   return (
     <View style={{ gap: 10 }}>
+      <IsleToggle title={t('settings.skills')} active={enabled} onPress={() => updateSettings({ skillsEnabled: !enabled })} />
       <Lead
         saved={regularSkills.length}
         workflows={workflowSkills.length}
@@ -533,32 +572,33 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         title={editingSkillId ? t('skills.edit') : t('skills.create')}
         detail={t('skills.createSubtitle')}
         icon={<AppIcon name="spark" color={colors.textTertiary} size={16} />}
-        open={formOpen || Boolean(editingSkillId)}
+        open={formOpen}
         onPress={() => {
-          if (editingSkillId) resetForm()
-          else setFormOpen((value) => !value)
+          setFormOpen((value) => !value)
         }}
       />
-      {formOpen || editingSkillId ? (
-        <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={foldoutPanelStyle}>
-          <SkillFoldoutHeader title={editingSkillId ? t('skills.edit') : t('skills.create')} description={t('skills.createSubtitle')} />
+      {formOpen ? (
+        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
+          <SettingsHelpButton topic="tools" />
           <View style={{ gap: 10 }}>
-          <IsleField label={t('skills.name')} inputProps={{ value: name, onChangeText: setName, placeholder: t('skills.namePlaceholder') }} />
-          <IsleField label={t('skills.description')} inputProps={{ value: description, onChangeText: setDescription, placeholder: t('skills.descriptionPlaceholder') }} />
+          <IsleField label={t('skills.name')} inputProps={{ editable: !saving, value: name, onChangeText: setName, placeholder: t('skills.namePlaceholder') }} />
+          <IsleField label={t('skills.description')} inputProps={{ editable: !saving, value: description, onChangeText: setDescription, placeholder: t('skills.descriptionPlaceholder') }} />
           <IsleField
             label={t('skills.systemPrompt')}
-            inputProps={{ value: systemPrompt, onChangeText: setSystemPrompt, placeholder: t('skills.promptPlaceholder'), multiline: true, style: { minHeight: 80, maxHeight: 132 } }}
+            inputProps={{ editable: !saving, value: systemPrompt, onChangeText: setSystemPrompt, placeholder: t('skills.promptPlaceholder'), multiline: true, style: { minHeight: 80, maxHeight: 132 } }}
           />
-          <IsleField label={t('skills.tags')} inputProps={{ value: tags, onChangeText: setTags, placeholder: 'review, zh-CN' }} />
+          <SkillDisclosureRow title={t('settingsWorkspace.advanced')} detail={t(parseVariablesJson(variablesJson) === null ? 'settingsWorkspace.error' : tags || priority || providerId || model || temperature || maxTokens || enabledTools || knowledgeSources || firstUserMessage || expectedReplyFormat || variablesJson || layer !== 'base' || stackPolicy !== 'append' ? 'settingsWorkspace.custom' : 'settingsWorkspace.default')} open={advancedOpen} onPress={() => setAdvancedOpen(value => !value)} icon={<AppIcon name="settings-sliders" size={18} color={colors.textSecondary} />} />
+          {advancedOpen ? <View style={{ gap: 10 }}>
+          <IsleField label={t('skills.tags')} inputProps={{ editable: !saving, value: tags, onChangeText: setTags, placeholder: 'review, zh-CN' }} />
           <View style={fieldRowStyle}>
-            <IsleField style={fieldFlexStyle} label={t('skills.priority')} inputProps={{ value: priority, onChangeText: setPriority, placeholder: '20', keyboardType: 'numeric' }} />
-            <IsleField style={fieldFlexStyle} label={t('skills.temperature')} inputProps={{ value: temperature, onChangeText: setTemperature, placeholder: '0.3', keyboardType: 'decimal-pad' }} />
+            <IsleField style={fieldFlexStyle} label={t('skills.priority')} inputProps={{ editable: !saving, value: priority, onChangeText: setPriority, placeholder: '20', keyboardType: 'numeric' }} />
+            <IsleField style={fieldFlexStyle} label={t('skills.temperature')} inputProps={{ editable: !saving, value: temperature, onChangeText: setTemperature, placeholder: '0.3', keyboardType: 'decimal-pad' }} />
           </View>
           <View style={fieldRowStyle}>
-            <IsleField style={fieldFlexStyle} label={t('skills.providerId')} inputProps={{ value: providerId, onChangeText: setProviderId, placeholder: 'provider-id' }} />
-            <IsleField style={fieldFlexStyle} label={t('skills.model')} inputProps={{ value: model, onChangeText: setModel, placeholder: 'model-id' }} />
+            <IsleField style={fieldFlexStyle} label={t('skills.providerId')} inputProps={{ editable: !saving, value: providerId, onChangeText: setProviderId, placeholder: 'provider-id' }} />
+            <IsleField style={fieldFlexStyle} label={t('skills.model')} inputProps={{ editable: !saving, value: model, onChangeText: setModel, placeholder: 'model-id' }} />
           </View>
-          <IsleField label={t('skills.maxTokens')} inputProps={{ value: maxTokens, onChangeText: setMaxTokens, placeholder: '4096', keyboardType: 'numeric' }} />
+          <IsleField label={t('skills.maxTokens')} inputProps={{ editable: !saving, value: maxTokens, onChangeText: setMaxTokens, placeholder: '4096', keyboardType: 'numeric' }} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
             {SKILL_LAYERS.map((item) => (
               <IsleButton key={item} label={t(`skills.layer.${item}`)} compact tone={layer === item ? 'mint' : 'soft'} onPress={() => setLayer(item)} />
@@ -572,29 +612,30 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
           <IsleField
             label={t('skills.enabledTools')}
             note={t('skills.listFieldNote')}
-            inputProps={{ value: enabledTools, onChangeText: setEnabledTools, placeholder: 'islemind-builtins:search_web', multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
+            inputProps={{ editable: !saving, value: enabledTools, onChangeText: setEnabledTools, placeholder: 'islemind-builtins:search_web', multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
           />
           <IsleField
             label={t('skills.knowledgeSources')}
             note={t('skills.listFieldNote')}
-            inputProps={{ value: knowledgeSources, onChangeText: setKnowledgeSources, placeholder: 'project-docs', multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
+            inputProps={{ editable: !saving, value: knowledgeSources, onChangeText: setKnowledgeSources, placeholder: 'project-docs', multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
           />
           <IsleField
             label={t('skills.firstUserMessage')}
-            inputProps={{ value: firstUserMessage, onChangeText: setFirstUserMessage, placeholder: t('skills.firstUserMessagePlaceholder'), multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
+            inputProps={{ editable: !saving, value: firstUserMessage, onChangeText: setFirstUserMessage, placeholder: t('skills.firstUserMessagePlaceholder'), multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
           />
           <IsleField
             label={t('skills.expectedReplyFormat')}
-            inputProps={{ value: expectedReplyFormat, onChangeText: setExpectedReplyFormat, placeholder: t('skills.expectedReplyFormatPlaceholder'), multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
+            inputProps={{ editable: !saving, value: expectedReplyFormat, onChangeText: setExpectedReplyFormat, placeholder: t('skills.expectedReplyFormatPlaceholder'), multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
           />
           <IsleField
             label={t('skills.variables')}
             note={t('skills.variablesJsonNote')}
-            inputProps={{ value: variablesJson, onChangeText: setVariablesJson, placeholder: '[{\"name\":\"topic\",\"type\":\"text\"}]', multiline: true, style: { minHeight: 60, maxHeight: 108 } }}
+            inputProps={{ editable: !saving, value: variablesJson, onChangeText: setVariablesJson, placeholder: '[{\"name\":\"topic\",\"type\":\"text\"}]', multiline: true, style: { minHeight: 60, maxHeight: 108 } }}
           />
+          </View> : null}
           <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 10 }}>
-            {editingSkillId ? <IsleButton label={t('common.cancel')} onPress={resetForm} style={actionButtonStyle} /> : null}
-            <IsleButton label={t('skills.saveSkill')} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void saveSkill()} style={actionButtonStyle} />
+            <IsleButton label={t('common.cancel')} disabled={saving} onPress={() => void requestDiscard(() => undefined)} style={actionButtonStyle} />
+            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'skills.saveSkill')} disabled={saving} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void saveSkill()} style={actionButtonStyle} />
           </View>
           </View>
         </MotiView>
@@ -608,7 +649,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         onPress={() => setImportExportOpen((value) => !value)}
       />
       {importExportOpen ? (
-        <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={foldoutPanelStyle}>
+        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <SkillFoldoutHeader title={t('skills.importExport')} />
           <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 10 }}>
             <IsleButton label={t('skills.importClipboard')} icon={<AppIcon name="upload" color={colors.textSecondary} size={16} />} onPress={() => void importFromClipboard()} style={actionButtonStyle} />
@@ -625,7 +666,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         onPress={() => setTemplatesOpen((value) => !value)}
       />
       {templatesOpen ? (
-        <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={foldoutPanelStyle}>
+        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <SkillFoldoutHeader title={t('skills.workflowTemplates')} description={t('skills.workflowTemplatesSubtitle')} />
           <View style={{ gap: 8 }}>
             {workflowTemplates.map((workflow) => {
@@ -662,7 +703,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         onPress={() => setWorkflowsOpen((value) => !value)}
       />
       {workflowsOpen ? (
-        <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={foldoutPanelStyle}>
+        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <SkillFoldoutHeader title={`${t('skills.agentWorkflows')} ${workflowSkills.length}`} description={t('skills.agentWorkflowsSubtitle')} />
           <View style={{ gap: 8 }}>
           {safePluginManifestFocus ? (
@@ -685,22 +726,22 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                 ) : null}
               </View>
               {pluginManifestFocusMeta ? (
-                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>
+                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
                   {t('skills.pluginManifestRepairMeta', { meta: pluginManifestFocusMeta })}
                 </Text>
               ) : null}
               {pluginManifestFocusIssueCodes.length ? (
-                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>
+                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
                   {t('skills.pluginManifestRepairIssues', { issueCodes: pluginManifestFocusIssueCodes.join(', ') })}
                 </Text>
               ) : null}
               {safePluginManifestFocus.summary ? (
-                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>
+                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
                   {t('skills.pluginManifestRepairSummary', { summary: safePluginManifestFocus.summary })}
                 </Text>
               ) : null}
               {pluginManifestFocusEvents ? (
-                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
                   {t('skills.pluginManifestRepairEvents', { events: pluginManifestFocusEvents })}
                 </Text>
               ) : null}
@@ -719,7 +760,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                 {workflowFocusStatusLabel}
               </IsleChip>
               {workflowFocusContext ? (
-                <Text style={{ color: focusedWorkflowSkill ? colors.ui.tone.success.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>
+                <Text style={{ color: focusedWorkflowSkill ? colors.ui.tone.success.foreground : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
                   {t('skills.agentWorkflowRecoveryTargetDescription', { context: workflowFocusContext })}
                 </Text>
               ) : null}
@@ -759,7 +800,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                       onPress={() => void updateWorkflowSkillState(skill)}
                       style={actionButtonStyle}
                     />
-                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => editSkill(skill)} style={actionButtonStyle} />
+                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
                     <IsleButton label={t('common.share')} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} style={actionButtonStyle} />
                     <IsleButton label={t('common.delete')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void removeSkill(skill)} style={actionButtonStyle} />
                   </View>
@@ -780,7 +821,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         onPress={() => setSavedOpen((value) => !value)}
       />
       {savedOpen ? (
-        <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={foldoutPanelStyle}>
+        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <SkillFoldoutHeader title={`${t('skills.saved')} ${regularSkills.length}`} />
           <View style={{ gap: 8 }}>
           {regularSkills.map((skill) => (
@@ -792,7 +833,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                 trailing={
                   <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, alignItems: actionCompact ? 'stretch' : 'center' }}>
                     {!registeredToolchainSkillIds.has(createPortableSkillToolchainManifest(skill).id) ? <IsleButton label={t('skills.registerToolchain')} compact icon={<AppIcon name="workflow" color={colors.textSecondary} size={14} />} onPress={() => void registerSkillInToolchain(skill)} style={actionButtonStyle} /> : <IsleChip active tone="mint">{t('skills.toolchainRegistered')}</IsleChip>}
-                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => editSkill(skill)} style={actionButtonStyle} />
+                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
                     <IsleButton label={t('common.share')} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} style={actionButtonStyle} />
                     <IsleButton label={t('common.delete')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void removeSkill(skill)} style={actionButtonStyle} />
                   </View>
@@ -811,11 +852,11 @@ function SkillFoldoutHeader({ title, description }: { title: string; description
   const { colors } = useAppTheme()
   return (
     <View style={{ marginBottom: 10 }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
         {title}
       </Text>
       {description ? (
-        <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
           {description}
         </Text>
       ) : null}
@@ -825,14 +866,15 @@ function SkillFoldoutHeader({ title, description }: { title: string; description
 
 function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string; detail?: string }) {
   const { colors, canonicalThemeId } = useAppTheme()
+  const motion = useMotionPreference()
   const borderColor = canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBorder : canonicalThemeId === 'monet' ? colors.material.stroke : colors.ui.semantic.chrome.border
   if (canonicalThemeId === 'minimal') {
     return (
       <View style={{ minHeight: detail ? 58 : 44, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.ui.semantic.chrome.border }} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>{label}</Text>
-          {detail ? <Text style={{ marginTop: 2, color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, fontWeight: '500' }}>{detail}</Text> : null}
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{label}</Text>
+          {detail ? <Text style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{detail}</Text> : null}
         </View>
       </View>
     )
@@ -840,8 +882,8 @@ function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string
   if (canonicalThemeId === 'material') {
     return (
       <View style={{ minHeight: detail ? 58 : 44, paddingHorizontal: 9, paddingVertical: 8, backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: '700' }}>{label}</Text>
-        {detail ? <Text style={{ marginTop: 2, color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, fontWeight: '500' }}>{detail}</Text> : null}
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{label}</Text>
+        {detail ? <Text style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{detail}</Text> : null}
       </View>
     )
   }
@@ -850,10 +892,10 @@ function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string
       <View style={{ minHeight: detail ? 64 : 48, borderRadius: colors.ui.radius.panel, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder }}>
         {icon}
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
             {label}
           </Text>
-          {detail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '600', includeFontPadding: false }}>{detail}</Text> : null}
+          {detail ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '600', includeFontPadding: false }}>{detail}</Text> : null}
         </View>
       </View>
     )
@@ -862,11 +904,11 @@ function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string
     <View style={{ minHeight: detail ? 60 : 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: 1, borderColor }}>
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
           {label}
         </Text>
         {detail ? (
-          <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
             {detail}
           </Text>
         ) : null}
@@ -877,25 +919,26 @@ function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string
 
 function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; tone?: 'amber'; onPress: () => void }) {
   const { colors, canonicalThemeId } = useAppTheme()
+  const motion = useMotionPreference()
   const borderColor = tone === 'amber' ? colors.ui.tone.warning.border : canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const backgroundColor = tone === 'amber' ? colors.ui.tone.warning.background : canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const textColor = tone === 'amber' ? colors.ui.tone.warning.foreground : colors.textSecondary
   if (canonicalThemeId === 'minimal') {
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 48, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: tone === 'amber' ? colors.ui.tone.warning.border : colors.ui.semantic.chrome.border }}>
-        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: tone === 'amber' ? colors.ui.tone.warning.foreground : colors.text, fontSize: 12.5, lineHeight: 17, fontWeight: '700' }}>{title}</Text>
-        <Text numberOfLines={1} style={{ maxWidth: '45%', color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '500' }}>{detail}</Text>
-        <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>{open ? '−' : '+'}</Text>
+        <Text style={{ flex: 1, minWidth: 0, color: tone === 'amber' ? colors.ui.tone.warning.foreground : colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{title}</Text>
+        <Text style={{ maxWidth: '45%', color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{detail}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{open ? '−' : '+'}</Text>
       </IslePressable>
     )
   }
   if (canonicalThemeId === 'material') {
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 46, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: open ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted, borderWidth: StyleSheet.hairlineWidth, borderColor: tone === 'amber' ? colors.ui.tone.warning.border : colors.ui.section.divider, borderRadius: 4 }}>
-        <Text style={{ color: tone === 'amber' ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '900' }}>{open ? '[-]' : '[+]'}</Text>
+        <Text style={{ color: tone === 'amber' ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{open ? '[-]' : '[+]'}</Text>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: textColor, fontSize: 11.5, lineHeight: 16, fontWeight: '800' }}>{title}</Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
+          <Text style={{ color: textColor, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
         </View>
       </IslePressable>
     )
@@ -912,10 +955,10 @@ function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { titl
       >
         {icon}
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: textColor, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{detail}</Text>
+          <Text style={{ color: textColor, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{detail}</Text>
         </View>
-        <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+        <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
           <AppIcon name="collapse" color={colors.textTertiary} size={16} />
         </MotiView>
       </IslePressable>
@@ -932,10 +975,10 @@ function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { titl
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={{ color: textColor, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{detail}</Text>
+        <Text style={{ color: textColor, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{detail}</Text>
       </View>
-      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
         <AppIcon name="collapse" color={colors.textTertiary} size={16} />
       </MotiView>
     </IslePressable>

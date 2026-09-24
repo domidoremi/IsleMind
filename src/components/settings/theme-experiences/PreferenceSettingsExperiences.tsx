@@ -149,7 +149,7 @@ export function MonetPreferenceSettingsExperience({
       <View testID="preference-settings-layout-monet" style={{ gap: 18 }}>
         {stops.map((stop, index) => (
           <View key={stop.key} style={{ minWidth: 0, paddingBottom: index === stops.length - 1 ? 0 : 18, borderBottomWidth: index === stops.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: colors.material.stroke }}>
-            <Text numberOfLines={1} style={{ marginBottom: 8, color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '900', letterSpacing: 0.55, textTransform: 'uppercase' }}>{stop.label}</Text>
+            <Text style={{ marginBottom: 8, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '900', letterSpacing: 0.55, textTransform: 'uppercase' }}>{stop.label}</Text>
             {stop.node}
           </View>
         ))}

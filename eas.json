@@ -14,6 +14,16 @@
       "distribution": "internal",
       "developmentClient": false
     },
+    "google-play": {
+      "extends": "production",
+      "distribution": "store",
+      "env": {
+        "ISLEMIND_DISTRIBUTION": "google-play"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
     "production": {
       "node": "24.21.0",
       "bun": "1.4.2",
@@ -26,6 +36,12 @@
     }
   },
   "submit": {
+    "google-play": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    },
     "production": {}
   }
 }

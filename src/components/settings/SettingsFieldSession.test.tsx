@@ -1,0 +1,36 @@
+import { act, renderHook } from '@testing-library/react-native'
+import { useSettingsFieldSession } from './SettingsFieldSession'
+let mockSettings: Record<string, unknown>
+const mockFlush = jest.fn()
+const mockToast = jest.fn()
+jest.mock('@/store/settingsStore', () => ({ useSettingsStore: { getState: () => ({ settings: mockSettings }) } }))
+jest.mock('@/presentation/features/settings/settingsStorePersistenceCommand', () => ({ flushPersistedSettings: () => mockFlush() }))
+jest.mock('./SettingsEditBoundary', () => ({ useSettingsDraft: jest.fn() }))
+jest.mock('@/components/ui/isle', () => ({ useIsleDialog: () => ({ toast: mockToast }) }))
+jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+beforeEach(() => { jest.clearAllMocks(); mockSettings = {}; mockFlush.mockResolvedValue(undefined) })
+it('retains parent-owned input and detects an external change from an undefined baseline', async () => {
+  const hook = await renderHook(useSettingsFieldSession)
+  await act(() => hook.result.current.edit('proxyBaseUrl', 'https://draft.invalid', ''))
+  mockSettings.proxyBaseUrl = 'https://external.invalid'
+  await act(() => hook.result.current.edit('proxyBaseUrl', 'https://draft.invalid/v1', 'https://external.invalid'))
+  const commit = jest.fn()
+  await act(() => hook.result.current.save('proxyBaseUrl', commit, value => value))
+  expect(commit).not.toHaveBeenCalled()
+  expect(hook.result.current.entries.proxyBaseUrl?.draft).toBe('https://draft.invalid/v1')
+  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.conflict' }))
+})
+it('preserves failed writes for retry, and resets explicitly without committing', async () => {
+  const hook = await renderHook(useSettingsFieldSession)
+  await act(() => hook.result.current.edit('proxyBaseUrl', 'https://draft.invalid', ''))
+  const commit = jest.fn(value => { mockSettings.proxyBaseUrl = value })
+  mockFlush.mockRejectedValueOnce(new Error('disk unavailable'))
+  await act(() => hook.result.current.save('proxyBaseUrl', commit, value => value))
+  expect(hook.result.current.entries.proxyBaseUrl).toBeDefined()
+  await act(() => hook.result.current.save('proxyBaseUrl', commit, value => value))
+  expect(hook.result.current.entries.proxyBaseUrl).toBeUndefined()
+  await act(() => hook.result.current.edit('proxyBaseUrl', 'another input', 'https://draft.invalid'))
+  await act(() => hook.result.current.discard('proxyBaseUrl'))
+  expect(commit).toHaveBeenCalledTimes(2)
+  expect(hook.result.current.entries.proxyBaseUrl).toBeUndefined()
+})
