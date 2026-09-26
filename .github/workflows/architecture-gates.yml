@@ -12,6 +12,8 @@ jobs:
     name: Type and Architecture Contracts
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -42,6 +44,12 @@ jobs:
 
       - name: Build toolchain contracts
         run: bun run test:android-build-toolchain
+
+      - name: Android accessibility focus plugin
+        run: bun run test:android-accessibility-focus
+
+      - name: Android dynamic font-scale plugin
+        run: bun run test:android-font-scale
 
       - name: Dependency-cycle gate
         run: bun run test:architecture-dependencies

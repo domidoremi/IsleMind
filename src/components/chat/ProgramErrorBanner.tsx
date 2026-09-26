@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 
 export function ProgramErrorBanner({
@@ -55,6 +56,7 @@ export function ProgramErrorBanner({
           shadowRadius: glass ? 14 : monet ? 9 : 0,
           shadowOffset: { width: 0, height: 5 },
           elevation: glass ? 3 : monet ? 1 : 0,
+          ...(glass ? glassShadowStyle(colors) : {}),
           overflow: 'hidden',
         }}
       >

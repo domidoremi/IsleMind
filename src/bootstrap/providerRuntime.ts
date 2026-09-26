@@ -1023,7 +1023,10 @@ export function toRuntimeChatRequest(
     ...(request.topK === undefined ? {} : { topK: request.topK }),
     ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
     ...(request.maxTokens === undefined ? {} : { maxTokens: request.maxTokens }),
-    generationParameterSources: request.generationParameterSources,
+    // Harness requests need a wire output bound. Provider defaults intentionally
+    // omit it in the general serializer, which is not safe for run reservations.
+    generationParameterSources: { ...request.generationParameterSources,
+      maxTokens: request.generationParameterSources?.maxTokens === 'explicit' ? 'explicit' : 'internal-policy' },
     ...(options.executionConstraint && !request.providerStateBinding ? { executionConstraint: options.executionConstraint } : {}),
     failoverPolicy: { mode: 'ask-before-cross-provider' },
     ...(request.providerStateBinding ? { allowFallback: false } : {}),

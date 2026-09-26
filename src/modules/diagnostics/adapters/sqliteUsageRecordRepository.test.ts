@@ -6,7 +6,7 @@ import type {
   SqliteValue,
 } from '@/platform/storage'
 import type { UsagePortableSnapshot } from '../contracts'
-import { createSqliteUsagePortableSnapshotRepository } from './sqliteUsageRecordRepository'
+import { createSqliteUsagePortableSnapshotRepository, createSqliteUsageRecordRepository } from './sqliteUsageRecordRepository'
 
 interface BunQuery {
   run(...parameters: unknown[]): { changes: number; lastInsertRowid: number | bigint }
@@ -139,6 +139,33 @@ const snapshot: UsagePortableSnapshot = {
 const describeWithBunSqlite = process.versions.bun ? describe : describe.skip
 
 describeWithBunSqlite('SQLite usage portable snapshots', () => {
+  it('saves a matching pricing revision atomically and rejects stale, imported or deleted baselines', async () => {
+    const fixture = createBunSqliteFixture()
+    try {
+      const repository = createSqliteUsageRecordRepository(fixture.provider)
+      const original = snapshot.pricingEntries[0]
+      await repository.savePricingEntry(original)
+      const baseline = JSON.stringify((await repository.listPricingEntries())[0])
+      const edited = { ...original, rates: { ...original.rates, inputNanodollarsPerMillionTokens: 7 } }
+      await repository.savePricingEntry(edited, baseline)
+      await expect(repository.listPricingEntries()).resolves.toEqual([edited])
+      await expect(repository.savePricingEntry(original, baseline)).rejects.toThrow('usage_pricing_conflict')
+      // Restored data can keep the same version string with different prices.
+      const imported = { ...original, rates: { ...original.rates, inputNanodollarsPerMillionTokens: 9 } }
+      await createSqliteUsagePortableSnapshotRepository(fixture.provider).replace({ ...snapshot, pricingEntries: [imported] })
+      await expect(repository.savePricingEntry(edited, baseline)).rejects.toThrow('usage_pricing_conflict')
+      await expect(repository.listPricingEntries()).resolves.toEqual([imported])
+      const latest = JSON.stringify((await repository.listPricingEntries())[0])
+      await fixture.database.exec("CREATE TRIGGER fail_pricing_write BEFORE UPDATE ON usage_pricing_entries BEGIN SELECT RAISE(ABORT, 'disk failure'); END")
+      await expect(repository.savePricingEntry(edited, latest)).rejects.toThrow('disk failure')
+      await expect(repository.listPricingEntries()).resolves.toEqual([imported])
+      await fixture.database.exec('DROP TRIGGER fail_pricing_write')
+      await repository.deletePricingEntry(original.id)
+      await expect(repository.savePricingEntry(edited, latest)).rejects.toThrow('usage_pricing_conflict')
+      await expect(repository.listPricingEntries()).resolves.toEqual([])
+    } finally { fixture.close() }
+  })
+
   it('round-trips estimated records and atomically replaces all persisted usage state', async () => {
     const fixture = createBunSqliteFixture()
     try {

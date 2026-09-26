@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import type { AIProvider, ProviderCapabilities, ProviderPresetId, ProviderType, ProviderWireProtocol } from '@/types/providerContracts'
 import { getProviderRequestHeaders } from './providerHeaders'
 import { isGitHubModelsProvider } from './providerIdentityPolicy'
@@ -115,14 +116,14 @@ export function createProviderRegistryPolicy(dependencies: ProviderRegistryPolic
 async function probeModelsEndpoint(fetcher: typeof fetch, endpoint: string, headers: Record<string, string>, timeoutMs: number, signal?: AbortSignal): Promise<{ ok: boolean; status?: number }> {
   const controller = new AbortController(); const forwardAbort = () => controller.abort()
   if (signal?.aborted) controller.abort(); signal?.addEventListener('abort', forwardAbort, { once: true })
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const timeout = setExecutionTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetcher(endpoint, { method: 'GET', headers, signal: controller.signal })
     if (!response.ok) return { ok: false, status: response.status }
     const data = await response.json().catch(() => null)
     return { ok: Array.isArray((data as { data?: unknown[] } | null)?.data) || Array.isArray((data as { models?: unknown[] } | null)?.models), status: response.status }
   } catch { return { ok: false } }
-  finally { clearTimeout(timeout); signal?.removeEventListener('abort', forwardAbort) }
+  finally { clearExecutionTimeout(timeout); signal?.removeEventListener('abort', forwardAbort) }
 }
 function getHost(value: string): string { try { return new URL(value).host } catch { return value.replace(/^https?:\/\//i, '').split('/')[0] ?? '' } }
 function normalizeProbeBaseUrl(value: string): string { const trimmed = value.trim().replace(/\/+$/, ''); return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}` }

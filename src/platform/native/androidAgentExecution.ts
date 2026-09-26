@@ -1,3 +1,6 @@
+import { bindExecutionTimerMirror } from '@/core/executionTimers'
+import { ANDROID_EXECUTION_TIMER_EVENT, createAndroidExecutionTimerMirror, type AndroidExecutionTimerModule } from './androidExecutionTimers'
+
 /** Native resource leases are not run/effect authorization or durable recovery state. */
 export const ANDROID_AGENT_LEASE_TTL_MS = 15_000
 export const ANDROID_AGENT_LEASE_RENEW_INTERVAL_MS = 5_000
@@ -103,7 +106,7 @@ const RESULT_REASONS: readonly AndroidAgentExecutionResultReason[] = [
 ]
 const RELEASE_REASONS: readonly AndroidAgentExecutionReleaseReason[] = ['waiting', 'completed', 'cancelled', 'pressure', 'shutdown']
 
-/** Constructed by bootstrap. No module-load bridge access, timers, or headless JS. */
+/** Constructed by bootstrap. No module-load bridge access or automatic execution. */
 export function createExpoAndroidAgentExecutionPort(
   dependencies?: AndroidAgentExecutionAdapterDependencies,
 ): AndroidAgentExecutionPort {
@@ -185,10 +188,31 @@ export function createExpoAndroidAgentExecutionPort(
   }
 }
 
+let leaseTimerTaskRegistered = false
 function loadDefaultDependencies(): AndroidAgentExecutionAdapterDependencies {
   try {
-    const { NativeModules, NativeEventEmitter, Platform } = require('react-native') as typeof import('react-native')
+    const { AppRegistry, NativeModules, NativeEventEmitter, Platform } = require('react-native') as typeof import('react-native')
     const nativeModule = Platform.OS === 'android' ? NativeModules.AndroidAgentExecution : undefined
+    if (isNativeModule(nativeModule) && !isTimerNativeModule(nativeModule)) {
+      return { platform: { os: Platform.OS, version: Platform.Version } }
+    }
+    if (isTimerNativeModule(nativeModule) && !leaseTimerTaskRegistered) {
+      // This task has no executor, captured run or retained resolver. Native owns
+      // its lifetime: last-lease disposal/expiry finishes the RN scheduler scope.
+      // Merely registering it grants no CPU, replay or background-start authority.
+      AppRegistry.registerHeadlessTask('IsleMindAgentExecutionLease', () => () => new Promise<void>(() => undefined))
+      const timerEmitter = new NativeEventEmitter(nativeModule)
+      const timers = createAndroidExecutionTimerMirror({
+        native: nativeModule,
+        subscribe: listener => {
+          const subscription = timerEmitter.addListener(ANDROID_EXECUTION_TIMER_EVENT, listener)
+          return () => subscription.remove()
+        },
+      })
+      try { bindExecutionTimerMirror(timers.mirror) }
+      catch (error) { timers.dispose(); throw error }
+      leaseTimerTaskRegistered = true
+    }
     let emitter: InstanceType<typeof NativeEventEmitter> | undefined
     return {
       platform: { os: Platform.OS, version: Platform.Version },
@@ -208,6 +232,14 @@ function loadDefaultDependencies(): AndroidAgentExecutionAdapterDependencies {
 function isNativeModule(value: unknown): value is AndroidAgentExecutionNativeModule {
   if (!value || typeof value !== 'object') return false
   return ['getState', 'acquire', 'renew', 'release'].every(key => typeof (value as Record<string, unknown>)[key] === 'function')
+}
+
+function isTimerNativeModule(value: unknown): value is AndroidAgentExecutionNativeModule & AndroidExecutionTimerModule & {
+  addListener(eventType: string): void
+  removeListeners(count: number): void
+} {
+  return isNativeModule(value) && ['scheduleExecutionTimer', 'cancelExecutionTimer', 'addListener', 'removeListeners']
+    .every(key => typeof (value as unknown as Record<string, unknown>)[key] === 'function')
 }
 
 function normalizeResult(value: unknown, operation: 'acquire' | 'renew' | 'release'): AndroidAgentExecutionResult {

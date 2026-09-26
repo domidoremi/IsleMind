@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Pressable, type PressableProps, type PressableStateCallbackType } from 'react-native'
+import { Platform, Pressable, type PressableProps, type PressableStateCallbackType } from 'react-native'
 import * as Haptics from 'expo-haptics'
 import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -226,6 +226,13 @@ export function PressableScale({
       accessibilityRole="button"
       {...props}
       accessibilityState={accessibilityState}
+      // RN Web accepts ARIA state props, but does not expand accessibilityState.
+      {...(Platform.OS === 'web' ? {
+        'aria-busy': props['aria-busy'] ?? accessibilityState?.busy,
+        'aria-checked': props['aria-checked'] ?? accessibilityState?.checked,
+        'aria-expanded': props['aria-expanded'] ?? accessibilityState?.expanded,
+        'aria-selected': props['aria-selected'] ?? accessibilityState?.selected,
+      } : {})}
       onPressIn={(event) => {
         if (disabled) return
         setPressed(true)

@@ -13,6 +13,22 @@ const provider = (type: AIProvider['type'], model: string, presetId?: AIProvider
   id: `${type}-replay`, type, presetId, name: type, enabled: true, models: [model], apiKey: 'test-only',
 })
 
+test.each(['openai', 'anthropic', 'google'] as const)('Harness %s requests serialize an output cap without changing explicit settings', (type) => {
+  const p = provider(type, type === 'openai' ? 'gpt-4o' : type === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gemini-2.5-flash')
+  const request: ChatRequest = { schema: CHAT_REQUEST_SCHEMA, conversationId: 'output-cap', providerId: p.id, model: p.models[0],
+    messages: [{ id: 'u1', role: 'user', text: 'hello' }], generationParameterSources: { maxTokens: 'provider-default' } }
+  const runtime = toRuntimeChatRequest({ provider: p }, request)
+  expect(runtime.generationParameterSources?.maxTokens).toBe('internal-policy')
+  const body = buildProviderProtocolRequestBody(runtime)
+  const cap = body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens
+    ?? (body.generationConfig as { maxOutputTokens?: number })?.maxOutputTokens
+  expect(typeof cap).toBe('number')
+  expect(cap).toBeGreaterThan(0)
+  const explicit = toRuntimeChatRequest({ provider: p }, { ...request, maxTokens: 1024, generationParameterSources: { maxTokens: 'explicit' } })
+  expect(explicit.maxTokens).toBe(1024)
+  expect(explicit.generationParameterSources?.maxTokens).toBe('explicit')
+})
+
 async function completionEvents(p: AIProvider, result: ProviderRuntimeCompletionResult, path: 'plain' | 'rich') {
   const events: StreamEvent[] = []
   if (path === 'rich') {

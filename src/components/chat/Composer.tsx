@@ -6,6 +6,7 @@ import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIco
 import type { Attachment, CommandReference } from '@/types/chatContracts'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
@@ -533,6 +534,7 @@ export function Composer({
                   shadowRadius: attachmentGrammar === 'fluid' ? 8 : 5,
                   shadowOffset: { width: 0, height: 3 },
                   elevation: attachmentGrammar === 'fluid' ? 1 : 0,
+                  ...(attachmentGrammar === 'fluid' ? glassShadowStyle(colors, 'control') : {}),
                   overflow: 'hidden',
                 }}
               >
@@ -1180,6 +1182,7 @@ function AttachmentChip({ label, accessibilityHint, active = false, disabled = f
         shadowRadius: grammar === 'fluid' ? 8 : 5,
         shadowOffset: { width: 0, height: 3 },
         elevation: grammar === 'fluid' ? 2 : 0,
+        ...(grammar === 'fluid' ? glassShadowStyle(colors, 'control') : {}),
         overflow: 'hidden',
       }}
     >

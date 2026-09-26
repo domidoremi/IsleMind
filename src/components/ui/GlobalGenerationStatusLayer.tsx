@@ -7,10 +7,12 @@ import { AppStatusSurface } from './AppStatusSurface'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import { resolveGlobalGenerationStatus } from './globalGenerationStatusState'
+import { useAppTheme } from '@/hooks/useAppTheme'
 
 /** A small, non-blocking handoff surface for streams that outlive the chat page. */
 export function GlobalGenerationStatusLayer() {
   const { t } = useTranslation()
+  const { isLiquidGlass } = useAppTheme()
   const pathname = usePathname()
   const activeStreams = useChatStreamingStore((state) => state.activeStreams)
   const selectConversation = useChatStore((state) => state.select)
@@ -23,7 +25,7 @@ export function GlobalGenerationStatusLayer() {
     <>
       {status && !onConversationSurface ? (
         <View
-          style={styles.positioner}
+          style={[styles.positioner, isLiquidGlass ? { elevation: 0 } : null]}
           pointerEvents="box-none"
         >
           <AppStatusSurface

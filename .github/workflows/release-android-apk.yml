@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}
       REQUESTED_TAG: ${{ github.event.inputs.tag }}
       JAVA_TOOL_OPTIONS: --enable-native-access=ALL-UNNAMED
     steps:

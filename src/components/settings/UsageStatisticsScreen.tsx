@@ -25,6 +25,7 @@ import type {
   UsageRecordStatus,
   UsageStatisticsSnapshot,
 } from '@/modules/diagnostics'
+import { USAGE_PRICING_CONFLICT } from '@/modules/diagnostics'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { useSettingsStore } from '@/store/settingsStore'
 import { getProviderSelectableModels } from '@/utils/providerModels'
@@ -219,6 +220,7 @@ export function UsageStatisticsScreen() {
       inputPricePerMillion: formatPricingRate(entry.rates.inputNanodollarsPerMillionTokens),
       outputPricePerMillion: formatPricingRate(entry.rates.outputNanodollarsPerMillionTokens),
       currencyLabel: 'USD',
+      sourceRevision: JSON.stringify(entry),
     })), [modelDisplayAliases, pricingEntries, providerById, t])
   const pricingProviderOptions = useMemo<UsageFilterOption[]>(() => providers.map((provider) => ({
     value: provider.id,
@@ -241,12 +243,19 @@ export function UsageStatisticsScreen() {
     setRequestDetail({ status: 'ready', detail: mapRequestDetail(record, providerById, modelDisplayAliases, i18n.language, t) })
   }
 
-  async function savePricingOverride(draft: UsagePricingOverrideDraft) {
+  async function savePricingOverride(draft: UsagePricingOverrideDraft, expectedRevision?: string) {
     const saveId = draft.id ?? 'new'
     setSavingPricingOverrideId(saveId)
     try {
       const inputRate = parsePricingRate(draft.inputPricePerMillion)
       const outputRate = parsePricingRate(draft.outputPricePerMillion)
+      if (draft.id) {
+        const latest = await listUsagePricingEntries()
+        if (JSON.stringify(latest.find(item => item.id === draft.id)) !== expectedRevision) {
+          setPricingEntries(latest)
+          throw new Error(USAGE_PRICING_CONFLICT)
+        }
+      }
       const provider = providerById.get(draft.providerId)
       const entry: UsagePricingEntry = {
         id: draft.id ?? `manual:${draft.providerId}:${draft.modelId}:${Date.now()}`,
@@ -262,8 +271,13 @@ export function UsageStatisticsScreen() {
           reasoningBilling: 'included-in-output',
         },
       }
-      await saveUsagePricingEntry(entry)
+      await saveUsagePricingEntry(entry, expectedRevision)
       await refresh(true)
+    } catch (error) {
+      if (error instanceof Error && error.message === USAGE_PRICING_CONFLICT) {
+        try { setPricingEntries(await listUsagePricingEntries()) } catch { /* Keep the draft and conflict if refresh is unavailable. */ }
+      }
+      throw error
     } finally {
       setSavingPricingOverrideId(null)
     }

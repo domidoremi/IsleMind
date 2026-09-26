@@ -17,7 +17,7 @@ import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/platform/native
 import { discardDownloadedApk, markDownloadedApkForCleanup } from '@/services/apkInstallCache'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
 import { isGooglePlayDistribution } from './appDistribution'
-export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'error'
+export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'cancelled' | 'busy' | 'error'
 export type ApkUpdateReason = 'network' | 'rate_limited' | 'manifest_invalid' | 'checksum_mismatch' | 'installer_failed'
 export type ApkAssetVariant = 'no-model' | 'with-model-small' | 'universal'
 export type ApkInstallProgressStage = 'downloading' | 'verifying' | 'opening-installer'
@@ -80,12 +80,22 @@ export interface ApkInstallProgress {
 
 export interface ApkInstallOptions {
   onProgress?: (progress: ApkInstallProgress) => void
+  signal?: AbortSignal
 }
 
 const APK_MIME_TYPE = 'application/vnd.android.package-archive'
 const ANDROID_GRANT_READ_URI_PERMISSION = 1
 const localModelFileIntegrityPort = createExpoLocalModelFileIntegrityPort()
 export const APK_AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
+const APK_PROGRESS_INTERVAL_MS = 250
+let pendingUpdateCheck: Promise<ApkUpdateResult> | undefined
+let installInProgress = false
+
+class ApkUpdateCancelledError extends Error {}
+
+function assertInstallActive(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new ApkUpdateCancelledError('APK update cancelled')
+}
 
 class ApkUpdateError extends Error {
   constructor(readonly reason: ApkUpdateReason, message: string) {
@@ -138,6 +148,18 @@ export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
     return result
   }
 
+  // Startup and manual checks share only in-flight work, never a cached failure.
+  if (pendingUpdateCheck) return pendingUpdateCheck
+  const pending = performApkUpdateCheck()
+  pendingUpdateCheck = pending
+  try {
+    return await pending
+  } finally {
+    if (pendingUpdateCheck === pending) pendingUpdateCheck = undefined
+  }
+}
+
+async function performApkUpdateCheck(): Promise<ApkUpdateResult> {
   try {
     const snapshot = getVersionSnapshot()
     const tag = await fetchLatestGithubTagVersionSnapshot()
@@ -187,6 +209,18 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, optio
     return result
   }
 
+  if (options.signal?.aborted) return { status: 'cancelled', message: st('updates.cancelled'), release }
+  // A second screen/caller must not overwrite the active file or launch another installer.
+  if (installInProgress) return { status: 'busy', message: st('updates.installInProgress'), release }
+  installInProgress = true
+  try {
+    return await installApkRelease({ ...release }, options)
+  } finally {
+    installInProgress = false
+  }
+}
+
+async function installApkRelease(release: ApkReleaseInfo, options: ApkInstallOptions): Promise<ApkUpdateResult> {
   const cacheDirectory = FileSystem.cacheDirectory
   if (!cacheDirectory) {
     const result = { status: 'error', message: st('updates.cacheUnavailable'), release } satisfies ApkUpdateResult
@@ -196,7 +230,12 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, optio
 
   let localUri: string | undefined
   let installerPhase = false
+  let installerHandedOff = false
   try {
+    assertInstallActive(options.signal)
+    // Revalidate at the effect boundary, not only when parsing remote metadata.
+    release.sha256 = readRequiredSha256({ sha256: release.sha256 }, 'sha256')
+    readRequiredPositiveInteger({ sizeBytes: release.sizeBytes }, 'sizeBytes')
     const apkUrl = safeHttpUrl(release.apkUrl)
     if (!apkUrl) {
       const result = {
@@ -208,10 +247,12 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, optio
       await logAppUpdateEvent('install', result)
       return result
     }
-    const safeName = release.apkName.replace(/[^\w.-]+/g, '-')
+    const safeName = readRequiredString({ apkName: release.apkName }, 'apkName').replace(/[^\w.-]+/g, '-')
+    if (!/^[\w][\w.-]*\.apk$/i.test(safeName)) throw createUpdateError('manifest_invalid', 'Invalid APK filename')
     localUri = `${cacheDirectory}${safeName}`
     options.onProgress?.({ stage: 'downloading', release, localUri })
     const download = await downloadApkWithProgress(apkUrl, localUri, release, options)
+    assertInstallActive(options.signal)
     if (download.status < 200 || download.status >= 300) {
       await discardDownloadedApk(download.uri)
       const result = {
@@ -225,15 +266,19 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, optio
     }
 
     options.onProgress?.({ stage: 'verifying', release, localUri: download.uri })
-    const verificationFailure = await verifyDownloadedApk(release, download.uri)
+    const verificationFailure = await verifyDownloadedApk(release, download.uri, options.signal)
+    assertInstallActive(options.signal)
     if (verificationFailure) {
       await logAppUpdateEvent('install', verificationFailure)
       return verificationFailure
     }
 
-    installerPhase = true
     options.onProgress?.({ stage: 'opening-installer', release, localUri: download.uri })
+    installerPhase = true
     const contentUri = await FileSystem.getContentUriAsync(download.uri)
+    assertInstallActive(options.signal)
+    // After this handoff cancellation cannot revoke the system installer's action.
+    installerHandedOff = true
     await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
       data: contentUri,
       type: APK_MIME_TYPE,
@@ -253,11 +298,14 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, optio
     if (localUri) {
       await discardDownloadedApk(localUri)
     }
-    const reason = installerPhase ? 'installer_failed' : 'network'
+    if (!installerHandedOff && (options.signal?.aborted || error instanceof ApkUpdateCancelledError)) {
+      return { status: 'cancelled', message: st('updates.cancelled'), release }
+    }
+    const reason = installerPhase ? 'installer_failed' : getUpdateReason(error) ?? 'network'
     const result = {
       status: 'error',
       reason,
-      message: reason === 'installer_failed'
+      message: reason === 'manifest_invalid' ? formatUpdateErrorMessage(reason, error) : reason === 'installer_failed'
         ? st('updates.installerFailed', { error: formatError(error) })
         : st('updates.downloadOrOpenFailed', { error: formatError(error) }),
       release,
@@ -386,7 +434,8 @@ function selectApkAsset(assets: readonly ApkManifestAsset[], supportedCpuArchite
     if (match) return match
   }
 
-  const universalNoModel = candidates.find((asset) => asset.abi === 'universal-64' && asset.variant === preferredVariant)
+  const supportsUniversal64 = preferredAbis.some(abi => abi === 'arm64-v8a' || abi === 'x86_64')
+  const universalNoModel = supportsUniversal64 && candidates.find((asset) => asset.abi === 'universal-64' && asset.variant === preferredVariant)
   if (universalNoModel) return universalNoModel
 
   for (const abi of preferredAbis) {
@@ -394,10 +443,10 @@ function selectApkAsset(assets: readonly ApkManifestAsset[], supportedCpuArchite
     if (match) return match
   }
 
-  const universal = candidates.find((asset) => asset.abi === 'universal-64')
+  const universal = supportsUniversal64 && candidates.find((asset) => asset.abi === 'universal-64')
   if (universal) return universal
 
-  return candidates.find((asset) => asset.variant === preferredVariant) ?? candidates[0]
+  return null
 }
 
 function normalizeSupportedAbis(values: readonly string[]): string[] {
@@ -421,8 +470,10 @@ function compareReleaseToSnapshot(release: Pick<ApkReleaseInfo, 'version' | 'ver
   return compareVersions(normalizeVersion(release.version), normalizeVersion(snapshot.appVersion))
 }
 
-async function verifyDownloadedApk(release: ApkReleaseInfo, uri: string): Promise<ApkUpdateResult | null> {
+async function verifyDownloadedApk(release: ApkReleaseInfo, uri: string, signal?: AbortSignal): Promise<ApkUpdateResult | null> {
+  assertInstallActive(signal)
   const info = await FileSystem.getInfoAsync(uri)
+  assertInstallActive(signal)
   if (!info.exists) {
     await discardDownloadedApk(uri)
     return {
@@ -447,7 +498,8 @@ async function verifyDownloadedApk(release: ApkReleaseInfo, uri: string): Promis
   }
 
   if (release.sha256) {
-    const actualSha256 = await localModelFileIntegrityPort.sha256File(uri)
+    const actualSha256 = await localModelFileIntegrityPort.sha256File(uri, signal)
+    assertInstallActive(signal)
     if (actualSha256.toLowerCase() !== release.sha256.toLowerCase()) {
       await discardDownloadedApk(uri)
       return {
@@ -468,10 +520,22 @@ async function downloadApkWithProgress(
   release: ApkReleaseInfo,
   options: ApkInstallOptions
 ): Promise<FileSystem.FileSystemDownloadResult> {
+  assertInstallActive(options.signal)
   if (typeof FileSystem.createDownloadResumable === 'function') {
+    let acceptingProgress = true
+    let lastProgressAt = -Infinity
+    let lastBytes = -1
+    let lastExpected: number | undefined
     const download = FileSystem.createDownloadResumable(apkUrl, localUri, {}, (progress) => {
-      const bytesWritten = progress.totalBytesWritten
-      const bytesExpected = progress.totalBytesExpectedToWrite > 0 ? progress.totalBytesExpectedToWrite : undefined
+      if (!acceptingProgress || options.signal?.aborted) return
+      const bytesWritten = Math.max(0, progress.totalBytesWritten)
+      const bytesExpected = progress.totalBytesExpectedToWrite > 0 ? progress.totalBytesExpectedToWrite : release.sizeBytes
+      const now = Date.now()
+      if (bytesWritten === lastBytes && bytesExpected === lastExpected) return
+      if (now - lastProgressAt < APK_PROGRESS_INTERVAL_MS && !(bytesExpected && bytesWritten >= bytesExpected)) return
+      lastProgressAt = now
+      lastBytes = bytesWritten
+      lastExpected = bytesExpected
       options.onProgress?.({
         stage: 'downloading',
         release,
@@ -481,10 +545,26 @@ async function downloadApkWithProgress(
         percent: bytesExpected ? Math.min(100, Math.max(0, Math.round((bytesWritten / bytesExpected) * 100))) : undefined,
       })
     })
-    const result = await download.downloadAsync()
-    if (result) return result
+    let cancellation: Promise<void> | undefined
+    const cancel = () => { cancellation ??= download.cancelAsync().catch(() => undefined) }
+    assertInstallActive(options.signal)
+    const pending = download.downloadAsync()
+    options.signal?.addEventListener('abort', cancel, { once: true })
+    if (options.signal?.aborted) cancel()
+    try {
+      const result = await pending
+      assertInstallActive(options.signal)
+      // Expo returns undefined for a cancelled task; never silently redownload it.
+      if (!result) throw new ApkUpdateCancelledError('Native APK download cancelled')
+      return result
+    } finally {
+      acceptingProgress = false
+      options.signal?.removeEventListener('abort', cancel)
+      await cancellation
+    }
   }
   const result = await FileSystem.downloadAsync(apkUrl, localUri)
+  assertInstallActive(options.signal)
   if (result.status >= 200 && result.status < 300 && release.sizeBytes != null) {
     options.onProgress?.({
       stage: 'downloading',
@@ -576,7 +656,7 @@ function readRequiredWebUrl(record: Record<string, unknown>, key: string): strin
 
 function readOptionalPositiveInteger(value: unknown): number | undefined {
   if (value == null || value === '') return undefined
-  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) return undefined
   return value
 }
 
@@ -624,17 +704,21 @@ function formatError(error: unknown): string {
 }
 
 async function logAppUpdateEvent(phase: 'check' | 'install', result: ApkUpdateResult, error?: unknown): Promise<void> {
-  const options = await readStoredRuntimeLogOptions()
-  return appendRuntimeLog('app.update', {
-    phase,
-    status: result.status,
-    reason: result.reason,
-    message: result.message,
-    release: summarizeReleaseForLog(result.release),
-    localUri: result.localUri,
-    errorName: error instanceof Error ? error.name : undefined,
-    errorText: error instanceof Error ? error.message : undefined,
-  }, options)
+  try {
+    const options = await readStoredRuntimeLogOptions()
+    await appendRuntimeLog('app.update', {
+      phase,
+      status: result.status,
+      reason: result.reason,
+      message: result.message,
+      release: summarizeReleaseForLog(result.release),
+      localUri: result.localUri,
+      errorName: error instanceof Error ? error.name : undefined,
+      errorText: error instanceof Error ? error.message : undefined,
+    }, options)
+  } catch {
+    // Optional diagnostics must not turn a verified download/installer handoff into failure.
+  }
 }
 
 function summarizeReleaseForLog(release: ApkReleaseInfo | undefined): Record<string, unknown> | undefined {

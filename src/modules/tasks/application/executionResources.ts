@@ -2,6 +2,9 @@
 export interface ExecutionResources {
   runLocal<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T>
   reserveText(bytes: number): () => void
+  /** Existing-run pause/cancel persistence only: ignores pressure admission,
+   * never the shared text cap. This does not authorize new work. */
+  reserveStopText(bytes: number): () => void
   setPressure(critical: boolean): void
   assertAdmission(): void
   readonly retainedTextBytes: number
@@ -27,6 +30,14 @@ export function createExecutionResources(options: {
   const queue: Waiter[] = []
   const assertAdmission = () => {
     if (pressure) throw new ExecutionResourceError('memory_pressure')
+  }
+  function reserveTextBytes(size: number): () => void {
+    if (!Number.isSafeInteger(size) || size < 0 || size > maxBytes - bytes) {
+      throw new ExecutionResourceError('text_budget')
+    }
+    bytes += size
+    let released = false
+    return () => { if (!released) { released = true; bytes -= size } }
   }
   function release() {
     occupied = false
@@ -66,13 +77,9 @@ export function createExecutionResources(options: {
     },
     reserveText(size) {
       assertAdmission()
-      if (!Number.isSafeInteger(size) || size < 0 || size > maxBytes - bytes) {
-        throw new ExecutionResourceError('text_budget')
-      }
-      bytes += size
-      let released = false
-      return () => { if (!released) { released = true; bytes -= size } }
+      return reserveTextBytes(size)
     },
+    reserveStopText: reserveTextBytes,
     setPressure(critical) {
       pressure = critical
       if (critical) {

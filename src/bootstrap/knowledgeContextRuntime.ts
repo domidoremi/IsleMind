@@ -216,8 +216,6 @@ export async function retrieveConversationFlareContext(input: {
     return { sources: [], prompt: '', trace: [] }
   }
 
-  const provider = input.conversation.providerId ? await useSettingsStore.getState().hydrateProviderKey(input.conversation.providerId) : null
-  throwIfCancelled(input.signal)
   const startedAt = Date.now()
   const query = input.followupQuery || input.query
   const limit = input.limit ?? 4
@@ -230,11 +228,11 @@ export async function retrieveConversationFlareContext(input: {
       query,
       limit,
       // Supplemental retrieval is not a separate model-attempt authorization.
+      // Local FTS needs no provider credentials or model initialization.
       ragMode: 'fts',
       embeddingMode: settings.embeddingMode ?? 'hybrid',
       localEmbeddingModelId: settings.localEmbeddingModelId,
       localEmbeddingModelSource: settings.localEmbeddingModelSource,
-      provider: provider ?? undefined,
       knowledgeScope,
       signal: input.signal,
     }))

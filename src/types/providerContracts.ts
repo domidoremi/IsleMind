@@ -202,6 +202,8 @@ export interface AIModel {
   /** Legacy alias for contextWindow; retained by provider-intelligence contract tests. */
   maxTokens: number
   maxOutputTokens: number
+  /** Original provider/catalog output bound, never an app default or context-clamped display value. */
+  outputTokenLimit?: { tokens: number; source: 'provider' | 'catalog' }
   defaultMaxTokens: number
   defaultTemperature?: number
   maxTemperature?: number

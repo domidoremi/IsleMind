@@ -6,6 +6,7 @@ import {
   createSqliteBuiltInWorkspaceFilePort,
   normalizeWorkspaceRelativePath,
   type BuiltInWorkspaceFilePort,
+  type BuiltInWorkspaceFileQueryPort,
   type BuiltInWorkspaceFileReadPort,
 } from '@/modules/integrations'
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
@@ -32,7 +33,7 @@ export function createBuiltInWorkspaceFileReadRouter(
   }
 }
 
-export const builtInWritableWorkspaceFilePort: BuiltInWorkspaceFilePort | undefined = Platform.OS === 'web'
+export const builtInWritableWorkspaceFilePort: (BuiltInWorkspaceFilePort & BuiltInWorkspaceFileQueryPort) | undefined = Platform.OS === 'web'
   ? undefined
   : createSqliteBuiltInWorkspaceFilePort({
       databaseProvider: createExpoSqliteDatabaseProvider(),

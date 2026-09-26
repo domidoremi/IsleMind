@@ -6,6 +6,8 @@ const pluginRoot = __dirname
 const moduleFiles = [
   'AndroidDeviceToolsModule.kt',
   'AndroidDeviceToolsPackage.kt',
+  'BoundedFileOperationExecutor.kt',
+  'AndroidSafFileOperations.kt',
 ]
 const packageRegistration = 'add(AndroidDeviceToolsPackage())'
 

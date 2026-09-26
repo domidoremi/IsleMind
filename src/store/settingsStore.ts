@@ -228,6 +228,7 @@ let pendingProviderPersistenceSnapshot: AIProvider[] | null = null
 let providerPersistenceTimer: ReturnType<typeof setTimeout> | null = null
 let providerPersistenceQueue = Promise.resolve()
 let latestProviderPersistence = Promise.resolve()
+let latestProviderPersistenceFailed = false
 
 const TAVILY_KEY = 'islemind.key.tavily'
 const GOOGLE_SEARCH_KEY = 'islemind.key.google-search'
@@ -268,7 +269,8 @@ async function flushPendingProviderPersistence(snapshot?: AIProvider[]): Promise
     clearTimeout(providerPersistenceTimer)
     providerPersistenceTimer = null
   }
-  const nextSnapshot = snapshot ?? pendingProviderPersistenceSnapshot
+  const nextSnapshot = snapshot ?? pendingProviderPersistenceSnapshot ??
+    (latestProviderPersistenceFailed ? useSettingsStore.getState().providers : null)
   pendingProviderPersistenceSnapshot = null
   if (nextSnapshot) {
     await enqueueProviderPersistence(nextSnapshot)
@@ -281,6 +283,12 @@ function enqueueProviderPersistence(providers: AIProvider[]): Promise<void> {
   const write = providerPersistenceQueue.then(() => savePersistedProviderMetadata(providers))
   providerPersistenceQueue = write.catch(() => undefined)
   latestProviderPersistence = write
+  latestProviderPersistenceFailed = false
+  void write.catch(() => {
+    // An explicit retry must write again, not just await the rejected promise.
+    // Retry current state; never retain an old snapshot across reloads/edits.
+    if (latestProviderPersistence === write) latestProviderPersistenceFailed = true
+  })
   return write
 }
 

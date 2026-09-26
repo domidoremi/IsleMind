@@ -35,8 +35,8 @@ export function RuntimeDiagnosticsDetails({
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const { colors } = useAppTheme()
-  const { width } = useWindowDimensions()
-  const compact = width < 430
+  const { width, fontScale } = useWindowDimensions()
+  const compact = width / fontScale < 600
   const [showAll, setShowAll] = useState(false)
   const diagnosticRows = useMemo(
     () => buildDiagnosticRows(diagnostics, t, pluginCatalog),
@@ -100,7 +100,7 @@ export function RuntimeDiagnosticsDetails({
             backgroundColor: colors.ui.semantic.surface.muted,
           }}
         >
-          <Text style={{ color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>
+          <Text style={{ flex: 1, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
             {showAll
               ? t('settings.runtimeDiagnosticShowCore')
               : t('settings.runtimeDiagnosticShowAll', { count: hiddenRowCount })}
@@ -682,9 +682,9 @@ function DiagnosticPill({
     <View style={{ minHeight: 58, minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', borderRadius: Math.min(colors.ui.radius.card, 8), padding: 9, backgroundColor: toneToken.background, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: toneToken.foreground }} />
-        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+        <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
       </View>
-      <Text numberOfLines={compact ? 3 : 2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 5, includeFontPadding: false, textAlignVertical: 'center' }}>{value}</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600', marginTop: 5, includeFontPadding: false, textAlignVertical: 'center' }}>{value}</Text>
     </View>
   )
 }

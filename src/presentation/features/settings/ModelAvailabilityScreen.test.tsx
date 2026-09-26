@@ -99,6 +99,8 @@ it('keeps offline state separate, never dispatches a probe offline, and aborts a
   const view = await render(<ModelAvailabilityScreen {...screenProps} initialProviderId="p" />)
   await waitFor(() => expect(view.getByText('model-2')).toBeTruthy())
   expect(view.getByText(/modelAvailability.offlineHint/)).toBeTruthy()
+  expect(view.getByText('modelAvailability.historyHint')).toHaveStyle({ fontSize: 14, lineHeight: 20 })
+  expect(view.getByText('modelAvailability.historyHint').props.numberOfLines).toBeUndefined()
   await fireEvent.press(view.getByRole('button', { name: 'modelAvailability.retestProvider' }))
   expect(mockRetest).not.toHaveBeenCalled()
   mockNetwork.isConnected = true

@@ -4,9 +4,9 @@ import { useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IslePanel } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import type { AgentTaskRuntime } from '@/bootstrap/agentTaskRuntime'
+import type { AgentTaskPort } from './agentTaskPort'
 import type { AssistantRun } from '@/modules/assistant-runtime'
-import { runBudgetTotals, type RunBudgetSnapshot } from '@/modules/assistant-runtime/application/runBudget'
+import { runBudgetTotals, type RunBudgetSnapshot } from '@/modules/assistant-runtime'
 import { assertJsonTraversalBudget, redactSensitiveText } from '@/core'
 
 const PAGE = 6_000
@@ -21,11 +21,11 @@ function confirmationPreview(run: AssistantRun) {
 }
 
 export function AgentRunScreen({ runtime, runId, onFreshRun, onOpenRun }: {
-  runtime: AgentTaskRuntime; runId: string; onFreshRun(conversationId: string): void; onOpenRun(id: string): void
+  runtime: AgentTaskPort; runId: string; onFreshRun(conversationId: string): void; onOpenRun(id: string): void
 }) {
   const { t } = useTranslation(); const { colors } = useAppTheme()
   const [run, setRun] = useState<AssistantRun>(); const [budget, setBudget] = useState<RunBudgetSnapshot>()
-  const [sources, setSources] = useState<Awaited<ReturnType<AgentTaskRuntime['sources']>>>([])
+  const [sources, setSources] = useState<Awaited<ReturnType<AgentTaskPort['sources']>>>([])
   const [loading, setLoading] = useState(true); const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false); const [feedback, setFeedback] = useState('')
   const [steering, setSteering] = useState(''); const [title, setTitle] = useState(''); const [page, setPage] = useState(0)

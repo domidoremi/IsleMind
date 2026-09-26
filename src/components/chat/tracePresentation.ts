@@ -48,13 +48,12 @@ function resolveTraceDisplayOrder(trace: ProcessTrace, fallback: number): number
 }
 
 export function normalizeTraceStatuses(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace[] {
-  const messageSettled = messageStatus !== 'streaming'
+  const messageSettled = messageStatus !== 'streaming' && messageStatus !== 'sending'
   return traces.map((trace) => {
-    if ((trace.status === 'running' || trace.status === 'pending') && trace.completedAt) {
-      return { ...trace, status: 'done' as const }
-    }
     if (messageSettled && (trace.status === 'running' || trace.status === 'pending')) {
-      const nextStatus = trace.content ? 'done' : 'skipped'
+      // Output and end timestamps are also present on failures/cancellation.
+      // Only a recorded successful status is evidence of success.
+      const nextStatus = messageStatus === 'cancelled' ? 'cancelled' : messageStatus === 'error' ? 'error' : 'skipped'
       return { ...trace, status: nextStatus }
     }
     return trace

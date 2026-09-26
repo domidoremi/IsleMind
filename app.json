@@ -60,6 +60,8 @@
       "expo-asset",
       "./plugins/android-soft-input-mode/withAndroidSoftInputMode",
       "./plugins/android-display-refresh/withAndroidDisplayRefresh",
+      "./plugins/android-accessibility-focus/withAndroidAccessibilityFocus",
+      "./plugins/android-font-scale/withAndroidFontScale",
       "./plugins/android-status-notification/withAndroidStatusNotification",
       "./plugins/android-agent-execution/withAndroidAgentExecution",
       "./plugins/android-device-tools/withAndroidDeviceTools",

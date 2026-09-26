@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 
 export interface ContextSettingsLeadProps {
   section: 'all' | 'context' | 'memory' | 'knowledge'
@@ -43,8 +44,8 @@ export function LiquidGlassContextSettingsLead({ summary, toggles }: ContextSett
   const { colors, design } = useAppTheme()
   return (
     <View testID="context-settings-experience-liquid-glass" style={{ gap: design.semantic.spacing.md }}>
-      {summary ? <View style={{ padding: design.semantic.spacing.md, borderRadius: design.semantic.radius.extraLarge, backgroundColor: colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border }}>{summary}</View> : null}
-      <View style={{ padding: design.semantic.spacing.md, borderRadius: design.semantic.radius.extraLarge, backgroundColor: colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, shadowColor: design.semantic.elevation.shadowColor, shadowOpacity: design.semantic.elevation.shadowOpacity, shadowRadius: design.semantic.elevation.shadowBlur, shadowOffset: { width: 0, height: design.semantic.elevation.shadowOffsetY }, elevation: design.semantic.elevation.level2 }}>{toggles}</View>
+      {summary ? <GlassSurface colors={colors} style={{ padding: design.semantic.spacing.md, borderRadius: design.semantic.radius.extraLarge }}>{summary}</GlassSurface> : null}
+      <GlassSurface colors={colors} style={{ padding: design.semantic.spacing.md, borderRadius: design.semantic.radius.extraLarge }}>{toggles}</GlassSurface>
     </View>
   )
 }

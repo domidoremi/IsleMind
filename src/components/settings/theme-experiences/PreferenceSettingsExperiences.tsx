@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 
 export interface PreferenceSettingsExperienceProps {
   identity: ReactNode
@@ -76,27 +77,19 @@ function PreferenceSectionBand({
   }
   if (family === 'liquid-glass') {
     return (
-      <View
+      <GlassSurface colors={colors}
         style={{
           flex: compact ? undefined : 1,
           width: compact ? '100%' : undefined,
           minWidth: 0,
           padding: design.semantic.spacing.md,
           borderRadius: design.semantic.radius.extraLarge,
-          backgroundColor: colors.ui.semantic.chrome.background,
-          borderWidth: 1,
-          borderColor: colors.ui.semantic.chrome.border,
-          shadowColor: design.semantic.elevation.shadowColor,
-          shadowOpacity: design.semantic.elevation.shadowOpacity,
-          shadowRadius: design.semantic.elevation.shadowBlur,
-          shadowOffset: { width: 0, height: design.semantic.elevation.shadowOffsetY },
-          elevation: design.semantic.elevation.level2,
         }}
       >
         <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: 3, width: 42, marginBottom: design.semantic.spacing.sm, borderRadius: design.semantic.radius.pill, backgroundColor: index % 2 === 0 ? colors.primary : colors.tertiary }} />
         <Text style={{ marginBottom: design.semantic.spacing.sm, color: colors.textSecondary, fontSize: design.semantic.typography.label.fontSize, lineHeight: design.semantic.typography.label.lineHeight, fontWeight: '600' }}>{label}</Text>
         {node}
-      </View>
+      </GlassSurface>
     )
   }
   return (

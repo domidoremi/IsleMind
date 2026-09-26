@@ -1,8 +1,10 @@
 import { usePreferenceUndo } from './usePreferenceUndo'
 import { SettingsValueSlider } from './SettingsValueSlider'
+import { SavedSettingsField, useSettingsFieldSession } from './SettingsFieldSession'
 import { SettingsSection, useSettingsTarget } from './SettingsSection'
 import { IsleButton } from '@/components/ui/isle'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { Settings } from '@/types/settingsContracts'
 import { StyleSheet, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
@@ -35,8 +37,9 @@ export function PreferenceSettingsContent() {
   const { updateSettings, undo, canUndo } = usePreferenceUndo()
   const { width, fontScale } = useWindowDimensions()
   const [workflowOpen, setWorkflowOpen] = useState(false)
+  const fieldSession = useSettingsFieldSession()
   const target = useSettingsTarget()
-  useEffect(() => { if (target === 'workflow') setWorkflowOpen(true) }, [target])
+  useEffect(() => { if (target === 'workflow' || target?.startsWith('workflow-')) setWorkflowOpen(true) }, [target])
   const compact = width / fontScale < 430
   const fieldRowStyle = { flexDirection: compact ? 'column' : 'row', gap: 10, marginBottom: 8 } as const
   const fieldFlexStyle = compact ? undefined : { flex: 1, minWidth: 0 }
@@ -56,11 +59,13 @@ export function PreferenceSettingsContent() {
       <View testID="preference-section-identity">
         <PreferenceSectionHeading icon="bot" title={t('preferences.identity')} detail={settings.assistantDisplayName ?? t('preferences.identityDefault')} />
         <View style={{ marginTop: 10 }}>
-          <PreferenceIdentityField
+          <SavedSettingsField
+            session={fieldSession}
+            settingKey="assistantDisplayName"
             label={t('preferences.assistantDisplayName')}
-            placeholder={t('preferences.assistantDisplayNamePlaceholder')}
-            value={settings.assistantDisplayName}
-            onCommit={(assistantDisplayName) => updateSettings({ assistantDisplayName })}
+            value={settings.assistantDisplayName ?? ''}
+            inputProps={{ placeholder: t('preferences.assistantDisplayNamePlaceholder'), maxLength: SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH * 2, autoCorrect: false }}
+            onCommit={(value) => updateSettings({ assistantDisplayName: normalizeSettingsIdentityDisplayName(value) })}
           />
         </View>
       </View>
@@ -69,9 +74,9 @@ export function PreferenceSettingsContent() {
       <View testID="preference-section-generation">
         <PreferenceSectionHeading icon="settings-sliders" title={t('preferences.generation')} detail={t('preferences.generationSubtitle')} />
         <View style={[fieldRowStyle, { marginTop: 10, marginBottom: 0 }]}>
-          <SettingsSection id="generation-temperature"><PreferenceNumericField
+          <SettingsSection id="generation-temperature" style={fieldFlexStyle}><PreferenceNumericField
+            session={fieldSession} settingKey="defaultTemperature"
             label={t('chat.temperature')}
-            style={fieldFlexStyle}
             value={settings.defaultTemperature}
             onReset={() => updateSettings({ defaultTemperature: undefined })}
             range={{ min: PROVIDER_PLATFORM_MIN_TEMPERATURE, max: PROVIDER_PLATFORM_MAX_TEMPERATURE }}
@@ -80,9 +85,9 @@ export function PreferenceSettingsContent() {
             normalize={clampProviderPlatformTemperature}
             onCommit={(value) => updateSettings({ defaultTemperature: value })}
           /></SettingsSection>
-          <SettingsSection id="generation-tokens"><PreferenceNumericField
+          <SettingsSection id="generation-tokens" style={fieldFlexStyle}><PreferenceNumericField
+            session={fieldSession} settingKey="defaultMaxTokens"
             label={t('chat.maxTokens')}
-            style={fieldFlexStyle}
             value={settings.defaultMaxTokens}
             onReset={() => updateSettings({ defaultMaxTokens: undefined })}
             range={{ min: PROVIDER_PLATFORM_MIN_CONFIGURED_OUTPUT_TOKENS, max: PROVIDER_PLATFORM_MAX_OUTPUT_TOKENS }}
@@ -142,6 +147,7 @@ export function PreferenceSettingsContent() {
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('preferences.agentWorkflow')}</Text>
           <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{t('preferences.agentWorkflowCollapsedDetail', { steps: workflowMaxSteps, tools: workflowMaxToolCalls, limit: workflowOutputLimit })}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t(Object.entries(fieldSession.entries).some(([key, entry]) => key.startsWith('agentWorkflow') && entry?.error) ? 'settingsWorkspace.error' : Object.keys(fieldSession.entries).some(key => key.startsWith('agentWorkflow')) ? 'settingsWorkspace.unsaved' : workflowMaxSteps !== 3 || workflowMaxToolCalls !== 1 || workflowOutputLimit !== 4800 || settings.agentWorkflowAllowReadOnlyTools === false || (settings.agentWorkflowAllowReadWriteTools ?? 'visible') !== 'visible' || (settings.agentWorkflowAllowDestructiveTools ?? 'confirm') !== 'confirm' ? 'settingsWorkspace.custom' : 'settingsWorkspace.default')}</Text>
         </View>
         <MotiView animate={{ rotate: workflowOpen && motion === 'full' ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
           <AppIcon name="collapse" color={colors.textTertiary} size={16} />
@@ -151,33 +157,34 @@ export function PreferenceSettingsContent() {
         <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={[foldoutCardStyle, canonicalThemeId === 'material' ? { borderRadius: 4, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider } : canonicalThemeId === 'liquid-glass' ? { borderRadius: colors.ui.radius.panel, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border } : null]}>
           <PreferenceFoldoutHeader title={t('preferences.agentWorkflow')} description={t('preferences.agentWorkflowSubtitle')} />
           <View style={fieldRowStyle}>
-            <PreferenceNumericField
+            <SettingsSection id="workflow-steps" style={fieldFlexStyle}><PreferenceNumericField
+              session={fieldSession} settingKey="agentWorkflowMaxSteps"
               label={t('preferences.agentWorkflowMaxSteps')}
               note={t('preferences.agentWorkflowMaxStepsNote')}
-              style={fieldFlexStyle}
               value={settings.agentWorkflowMaxSteps ?? 3}
               range={{ min: 1, max: 8 }}
               kind="integer"
               onCommit={(value) => updateSettings({ agentWorkflowMaxSteps: value })}
-            />
-            <PreferenceNumericField
+            /></SettingsSection>
+            <SettingsSection id="workflow-tools" style={fieldFlexStyle}><PreferenceNumericField
+              session={fieldSession} settingKey="agentWorkflowMaxToolCallsPerStep"
               label={t('preferences.agentWorkflowMaxToolCalls')}
               note={t('preferences.agentWorkflowMaxToolCallsNote')}
-              style={fieldFlexStyle}
               value={settings.agentWorkflowMaxToolCallsPerStep ?? 1}
               range={{ min: 1, max: 3 }}
               kind="integer"
               onCommit={(value) => updateSettings({ agentWorkflowMaxToolCallsPerStep: value })}
-            />
+            /></SettingsSection>
           </View>
-          <PreferenceNumericField
+          <SettingsSection id="workflow-output"><PreferenceNumericField
+            session={fieldSession} settingKey="agentWorkflowOutputCharLimit"
             label={t('preferences.agentWorkflowOutputLimit')}
             note={t('preferences.agentWorkflowOutputLimitNote')}
             value={settings.agentWorkflowOutputCharLimit ?? 4800}
             range={{ min: 512, max: 12000 }}
             kind="integer"
             onCommit={(value) => updateSettings({ agentWorkflowOutputCharLimit: value })}
-          />
+          /></SettingsSection>
           <View style={{ gap: 8, marginTop: 10 }}>
             <IsleToggle
               icon={<AppIcon name="shield" color={colors.text} size={18} />}
@@ -350,109 +357,57 @@ function PreferenceCapabilityTile({
   )
 }
 
-function PreferenceIdentityField({
-  label,
-  placeholder,
-  value,
-  onCommit,
-}: {
-  label: string
-  placeholder: string
-  value: string | undefined
-  onCommit: (value: string | undefined) => void
-}) {
-  const externalDraft = value ?? ''
-  const [draft, setDraft] = useState(externalDraft)
-  const commitPending = useRef(false)
-
-  useEffect(() => {
-    setDraft(externalDraft)
-    commitPending.current = false
-  }, [externalDraft])
-
-  function commit() {
-    if (!commitPending.current) return
-    commitPending.current = false
-    const normalized = normalizeSettingsIdentityDisplayName(draft)
-    setDraft(normalized ?? '')
-    onCommit(normalized)
-  }
-
-  return (
-    <IsleField
-      label={label}
-      inputProps={{
-        value: draft,
-        onChangeText: (next) => {
-          commitPending.current = true
-          setDraft(next)
-        },
-        onBlur: commit,
-        onSubmitEditing: commit,
-        maxLength: SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH * 2,
-        placeholder,
-        autoCorrect: false,
-      }}
-    />
-  )
-}
-
-function PreferenceNumericField({ label, value, range, kind, placeholder, normalize, onCommit, onReset, style }: {
+function PreferenceNumericField({ session, settingKey, label, value, range, kind, placeholder, normalize, onCommit, onReset, style }: {
+  session: ReturnType<typeof useSettingsFieldSession>; settingKey: keyof Settings;
   label: string; note?: string; value: number | undefined; range: NumericDraftRange; kind: NumericDraftKind; placeholder?: string;
   normalize?: (value: number) => number; onCommit: (value: number) => void; onReset?: () => void; style?: StyleProp<ViewStyle>
 }) {
   const { t } = useTranslation()
   const { colors } = useAppTheme()
-  const externalDraft = typeof value === 'number' && Number.isFinite(value) ? String(value) : ''
-  const [draft, setDraft] = useState(externalDraft)
+  const saved = typeof value === 'number' && Number.isFinite(value) ? String(value) : ''
+  const entry = session.entries[settingKey]
+  const draft = entry?.draft ?? saved
   const [custom, setCustom] = useState(!onReset || value !== undefined)
-  const commitPending = useRef(false)
-  useEffect(() => {
-    if (!commitPending.current) { setDraft(externalDraft); setCustom(!onReset || value !== undefined) }
-  }, [externalDraft, value])
-  function commit() {
-    if (!commitPending.current) return
-    commitPending.current = false
-    const parsed = commitNumericDraft(draft, range, kind)
-    if (parsed === undefined) { setDraft(externalDraft); return }
-    const next = normalize ? normalize(parsed) : parsed
-    setDraft(String(next))
-    onCommit(next)
-  }
+  useEffect(() => { setCustom(!onReset || value !== undefined || Boolean(entry)) }, [value, Boolean(entry)])
+  const parsed = commitNumericDraft(draft, range, kind)
+  const invalid = Boolean(entry) && parsed === undefined
+  function apply(next: number) { onCommit(normalize ? normalize(next) : next) }
   function step(direction: number) {
     const amount = kind === 'decimal' ? 0.1 : range.max > 1000 ? 256 : 1
-    const next = commitNumericDraft(String(Math.max(range.min, Math.min(range.max, Math.round(((Number(draft) || value || range.min) + direction * amount) * 10) / 10))), range, kind)
-    if (next === undefined) return
-    commitPending.current = false
-    setDraft(String(next))
-    onCommit(normalize ? normalize(next) : next)
+    const next = commitNumericDraft(String(Math.round(((value ?? range.min) + direction * amount) * 10) / 10), range, kind)
+    if (next !== undefined) apply(next)
   }
+  const locked = session.busy || Boolean(entry)
   return <View style={[style, { gap: 8 }]}>
     {onReset ? <>
       <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{label}</Text>
       <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {[false, true].map(option => <IslePressable key={String(option)} accessibilityRole="radio" accessibilityState={{ checked: custom === option }} onPress={() => {
+        {[false, true].map(option => <IslePressable key={String(option)} disabled={locked} accessibilityRole="radio" accessibilityState={{ checked: custom === option, disabled: locked }} onPress={() => {
           setCustom(option)
-          if (!option) { commitPending.current = false; setDraft(''); onReset() }
+          if (!option) onReset()
         }} style={{ minHeight: 44, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, backgroundColor: custom === option ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.muted }}>
           <Text style={{ fontSize: 14, color: custom === option ? colors.ui.control.primaryForeground : colors.text }}>{t(option ? 'settingsWorkspace.customValue' : 'settingsWorkspace.modelDefault')}</Text>
         </IslePressable>)}
       </View>
     </> : null}
     {custom ? <>
-      {onReset && value === undefined ? <Text style={{ fontSize: 14, color: colors.textSecondary }}>{t('settingsWorkspace.chooseValue')}</Text> : null}
-      {onReset ? <SettingsValueSlider label={label} value={value ?? range.min} min={range.min} max={range.max} step={kind === 'decimal' ? 0.1 : 1} logarithmic={kind === 'integer' && range.min > 0} onCommit={next => {
-        commitPending.current = false
-        setDraft(String(next))
-        onCommit(normalize ? normalize(next) : next)
-      }} /> : null}
-      <IsleField label={onReset ? '' : label} inputProps={{ accessibilityLabel: label, value: draft, onChangeText: next => {
+      {onReset && value === undefined && !entry ? <Text style={{ fontSize: 14, color: colors.textSecondary }}>{t('settingsWorkspace.chooseValue')}</Text> : null}
+      {onReset && !locked ? <SettingsValueSlider label={label} value={value ?? range.min} min={range.min} max={range.max} step={kind === 'decimal' ? 0.1 : 1} logarithmic={kind === 'integer' && range.min > 0} onCommit={apply} /> : null}
+      <IsleField label={onReset ? '' : label} inputProps={{ accessibilityLabel: label, value: draft, editable: !session.busy, onChangeText: next => {
         const accepted = acceptNumericDraft(draft, next, kind)
-        if (accepted !== draft) { commitPending.current = true; setDraft(accepted) }
-      }, onBlur: commit, onSubmitEditing: commit, keyboardType: kind === 'integer' ? 'number-pad' : 'decimal-pad', placeholder: onReset ? t('settingsWorkspace.chooseValue') : placeholder }} />
+        if (accepted !== draft) session.edit(settingKey, accepted, saved)
+      }, keyboardType: kind === 'integer' ? 'number-pad' : 'decimal-pad', placeholder: onReset ? t('settingsWorkspace.chooseValue') : placeholder }} />
+      {entry ? <>
+        <Text accessibilityLiveRegion="polite" style={{ fontSize: 14, color: colors.textSecondary }}>{t(invalid ? 'settingsWorkspace.error' : entry.error ? `settingsWorkspace.${entry.error}` : 'settingsWorkspace.unsaved')}</Text>
+        <Text style={{ fontSize: 14, color: colors.textSecondary }}>{range.min}–{range.max}</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <IsleButton label={t(session.busy ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={session.busy || invalid} onPress={() => void session.save(settingKey, text => apply(commitNumericDraft(text, range, kind)!), text => text)} />
+          <IsleButton label={t('settingsWorkspace.reload')} disabled={session.busy} onPress={() => session.discard(settingKey)} />
+        </View>
+      </> : null}
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <IsleButton label="−" accessibilityLabel={label + ' −'} onPress={() => step(-1)} />
-        <IsleButton label="+" accessibilityLabel={label + ' +'} onPress={() => step(1)}/>
+        <IsleButton label="−" accessibilityLabel={label + ' −'} disabled={locked} onPress={() => step(-1)} />
+        <IsleButton label="+" accessibilityLabel={label + ' +'} disabled={locked} onPress={() => step(1)} />
       </View>
     </> : null}
   </View>

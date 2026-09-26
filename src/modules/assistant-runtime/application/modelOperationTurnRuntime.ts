@@ -93,7 +93,7 @@ export interface ModelOperationPendingConfirmationState<TPending = unknown> {
 
 export type ModelOperationDispatchResult<TPending = unknown> =
   | {
-      readonly status: 'succeeded' | 'failed'
+      readonly status: 'succeeded' | 'failed' | 'cancelled'
       readonly output: string
       readonly code?: string
     }
@@ -442,7 +442,7 @@ export function createModelOperationTurnRuntime<
       confirmed: input.confirmed,
       ...(input.pending === undefined ? {} : { pending: input.pending }),
     })
-    if (input.signal.aborted) {
+    if (input.signal.aborted || result.status === 'cancelled') {
       return cancelledOutcome(
         input.turnId,
         input.stepIndex,

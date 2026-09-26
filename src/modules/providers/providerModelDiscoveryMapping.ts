@@ -94,6 +94,19 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
       const supportsTools = supportsToolsFromOpenAIModel(remote)
       const supportedParameters = supportedParametersFromOpenAIModel(remote)
       const preferredEndpoint = preferredEndpointFromOpenAIModel(remote)
+      const outputTokenLimit = providerOutputTokenLimit(
+        remote.max_output_length,
+        remote.max_output_tokens,
+        remote.maxOutputTokens,
+        remote.max_completion_tokens,
+        remote.max_tokens,
+        remote.metadata?.max_output_length,
+        remote.metadata?.max_output_tokens,
+        remote.metadata?.maxOutputTokens,
+        remote.metadata?.max_completion_tokens,
+        remote.metadata?.max_tokens,
+        remote.metadata?.output_token_limit,
+      )
       const merged = mergeModelConfig(id, providerType, {
         name: normalizeRemoteModelDisplayName(remote?.id ?? id, id, remote, providerType),
         contextWindow: firstNumber(
@@ -108,19 +121,8 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
           getNumber(remote?.metadata, 'max_context_length'),
           getNumber(remote?.metadata, 'context_size')
         ),
-        maxOutputTokens: firstNumber(
-          remote?.max_output_length,
-          remote?.max_output_tokens,
-          remote?.maxOutputTokens,
-          remote?.max_completion_tokens,
-          remote?.max_tokens,
-          getNumber(remote?.metadata, 'max_output_length'),
-          getNumber(remote?.metadata, 'max_output_tokens'),
-          getNumber(remote?.metadata, 'maxOutputTokens'),
-          getNumber(remote?.metadata, 'max_completion_tokens'),
-          getNumber(remote?.metadata, 'max_tokens'),
-          getNumber(remote?.metadata, 'output_token_limit')
-        ),
+        maxOutputTokens: outputTokenLimit?.tokens,
+        outputTokenLimit,
         supportsVision,
         supportsFiles,
         supportsTools,
@@ -155,10 +157,12 @@ export function mapAnthropicModels(json: AnthropicModelListResponse): AIModel[] 
   }
   return sortModelConfigs(
     Array.from(itemsById.entries()).map(([id, remote]) => {
+      const outputTokenLimit = providerOutputTokenLimit(remote.max_tokens)
       return mergeModelConfig(id, 'anthropic', {
         name: remote?.display_name,
         contextWindow: remote?.max_input_tokens,
-        maxOutputTokens: remote?.max_tokens,
+        maxOutputTokens: outputTokenLimit?.tokens,
+        outputTokenLimit,
         defaultMaxTokens: remote?.max_tokens ? Math.min(8192, remote.max_tokens) : undefined,
         reasoningMode: anthropicCapabilitiesIncludeThinking(remote?.capabilities) ? 'anthropic-thinking' : undefined,
         source: 'remote',
@@ -184,10 +188,12 @@ export function mapGoogleModels(json: GoogleModelListResponse): AIModel[] {
   }
   return sortModelConfigs(
     Array.from(remoteModelsById.entries()).map(([id, remote]) => {
+      const outputTokenLimit = providerOutputTokenLimit(remote.maxOutputTokens)
       return mergeModelConfig(id, 'google', {
         name: remote?.name,
         contextWindow: remote?.contextWindow,
-        maxOutputTokens: remote?.maxOutputTokens,
+        maxOutputTokens: outputTokenLimit?.tokens,
+        outputTokenLimit,
         defaultMaxTokens: remote?.maxOutputTokens ? Math.min(8192, remote.maxOutputTokens) : undefined,
         supportsVision: true,
         supportsFiles: true,
@@ -522,6 +528,18 @@ function anthropicCapabilitiesIncludeThinking(capabilities: AnthropicModelListIt
     return Object.entries(capabilities).some(([key, value]) => /thinking|reasoning/i.test(key) && value !== false)
   }
   return false
+}
+
+function providerOutputTokenLimit(...values: unknown[]): AIModel['outputTokenLimit'] {
+  for (const value of values) {
+    // Do not truncate malformed strings, decimals or exponent notation with
+    // parseInt: a smaller number would under-reserve uncapped model output.
+    const tokens = typeof value === 'string' && value.trim() ? Number(value) : value
+    if (typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens > 0) {
+      return { tokens, source: 'provider' }
+    }
+  }
+  return undefined
 }
 
 export function firstNumber(...values: (number | undefined)[]): number | undefined {

@@ -37,6 +37,7 @@ export * from './application/assistantConversationWorkspaceWritebackHandoffRunti
 export * from './application/assistantChatWorkflowRunRuntime'
 export * from './adapters/sqliteAssistantRunStore'
 export * from './application/runBudget'
+export * from './application/runBudgetDeadline'
 export * from './adapters/sqliteRunBudgetStore'
 export * from './agentDefinition'
 export * from './agentDefinitionRepository'

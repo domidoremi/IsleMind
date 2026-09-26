@@ -6,6 +6,7 @@ import {
   Text,
   TextInput,
   View,
+  type PressableProps,
   type StyleProp,
   type TextInputProps,
   type TextStyle,
@@ -23,6 +24,8 @@ import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import { resolveMinimumTouchTargetHeight } from './touchTarget'
+import { glassShadowStyle } from './glassShadowStyle'
+import { GlassSurface } from './GlassSurface'
 import {
   ThemeButtonExpressionBody,
   ThemeCardExpressionLayers,
@@ -156,7 +159,7 @@ export function IsleButton({
   block?: boolean
   loading?: boolean
   disabled?: boolean
-  onPress?: () => void
+  onPress?: NonNullable<PressableProps['onPress']>
   style?: StyleProp<ViewStyle>
   textStyle?: StyleProp<TextStyle>
 }) {
@@ -294,6 +297,7 @@ export function IsleButton({
           }),
         },
         style,
+        palette.liquidGlass ? glassShadowStyle(palette.colors, ghost || text ? 'none' : 'control') : null,
         { minHeight: minimumButtonHeight },
       ]}
     >
@@ -367,7 +371,7 @@ export function IsleInput({
   const statusShadow = status === 'error' ? palette.ui.tone.danger.foreground : status === 'warning' ? palette.ui.tone.warning.foreground : input.shadow
   const shadowEnabled = shadow || !!status
   const height = controlHeight(size)
-  const inputBorderWidth = status
+  const inputBorderWidth = status || fieldFamily === 'liquid-glass'
     ? 1
     : fieldFamily === 'material'
       ? fieldExpression?.border === 'none' ? 0 : 1
@@ -424,6 +428,7 @@ export function IsleInput({
     <View style={wrapperStyle}>
       {label ? <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{label}</Text> : null}
       <MotiView
+        testID={palette.liquidGlass ? 'theme-input-focus-liquid-glass' : undefined}
         animate={{
           backgroundColor: disabled
             ? input.disabledBackground
@@ -448,6 +453,7 @@ export function IsleInput({
           shadowRadius: inputShadowRadius,
           shadowOffset: { width: 0, height: 0 },
           elevation: inputElevation,
+          ...(palette.liquidGlass ? glassShadowStyle(palette.colors, shadowEnabled ? 'control' : 'none') : {}),
         }}
       >
         <ThemeInputExpressionBody
@@ -459,6 +465,7 @@ export function IsleInput({
           input={(
             <TextInput
               {...props}
+              underlineColorAndroid={palette.liquidGlass ? 'transparent' : props.underlineColorAndroid}
               value={currentValue}
               onChangeText={(nextValue) => {
                 if (!controlled) setUncontrolledValue(nextValue)
@@ -499,6 +506,7 @@ export function IsleInput({
                   includeFontPadding: false,
                 },
                 inputStyle,
+                palette.liquidGlass ? { backgroundColor: 'transparent', borderWidth: 0, elevation: 0 } : null,
               ]}
             />
           )}
@@ -632,6 +640,7 @@ export function IsleSwitch({
             shadowRadius: switchGrammar === 'fluid' ? 6 : switchGrammar === 'organic' ? 4 : 0,
             shadowOffset: { width: 0, height: switchGrammar === 'fluid' ? 3 : 2 },
             elevation: switchGrammar === 'fluid' ? 2 : 0,
+            ...(palette.liquidGlass ? glassShadowStyle(palette.colors, 'control') : {}),
           }}
         />
         {checkedChildren || unCheckedChildren ? (
@@ -749,6 +758,7 @@ export function IsleCard({
     },
     style,
     contentStyle,
+    palette.liquidGlass ? { ...glassShadowStyle(palette.colors), borderWidth: type === 'dashed' ? StyleSheet.hairlineWidth : 0 } : null,
   ]
 
   const cardLayers = (
@@ -760,10 +770,11 @@ export function IsleCard({
     />
   )
 
-  if (!interactive) return <View style={cardStyle}>{cardLayers}{children}</View>
-
   return (
-    <Pressable
+    <GlassSurface
+      colors={palette.colors}
+      enabled={palette.liquidGlass && !explicitColor}
+      interactive={interactive}
       accessibilityRole={onPress ? 'button' : undefined}
       accessibilityLabel={accessibilityLabel}
       accessibilityState={disabled ? { disabled: true } : undefined}
@@ -777,7 +788,7 @@ export function IsleCard({
     >
       {cardLayers}
       {children}
-    </Pressable>
+    </GlassSurface>
   )
 }
 
@@ -930,7 +941,7 @@ function renderThemeLoadingIndicator({
       ? ({ backdropFilter: 'blur(14px) saturate(1.14)' } as unknown as ViewStyle)
       : null
     return (
-      <View style={[{ width: 76, height: 38, borderRadius: palette.ui.radius.chip, justifyContent: 'center', overflow: 'hidden', backgroundColor: background, borderWidth: 1, borderColor: border, shadowColor: palette.shadow, shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 2 }, glassStyle]}>
+      <View style={[{ width: 76, height: 38, borderRadius: palette.ui.radius.chip, justifyContent: 'center', overflow: 'hidden', backgroundColor: background, borderWidth: 1, borderColor: border }, glassStyle, glassShadowStyle(palette.colors, 'control')]}>
         <View style={{ height: 6, marginHorizontal: 10, borderRadius: 6, overflow: 'hidden', backgroundColor: palette.ui.semantic.surface.muted }}>
           <MotiView
             from={{ translateX: -24, opacity: 0.28, scaleX: 0.72 }}

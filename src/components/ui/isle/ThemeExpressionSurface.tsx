@@ -8,6 +8,7 @@ import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { resolveThemeExpression, type ThemeComponentId, type ThemeExpression } from '@/theme/themeExpression'
 import type { ThemeSurfaceMaterialToken } from '@/theme/themeTokens'
 import { GlassSurface } from './GlassSurface'
+import { glassShadowStyle } from './glassShadowStyle'
 import { Card as NativeCard } from 'animal-island-ui-rn'
 
 type ThemeColors = ReturnType<typeof useAppTheme>['colors']
@@ -333,11 +334,7 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
           backgroundColor: isContent || isMarkdown ? 'transparent' : isMessage && props.isUser ? userSurface : isNestedRichContent && props.isUser ? rgbaColor(props.colors.ui.message.userActionBackground, 0.74) : material.background,
           borderColor: props.alertBorder ?? material.border,
           borderWidth: isContent || isMarkdown || isMessage && !props.isUser ? 0 : props.selected ? 2 : material.border !== 'transparent' ? StyleSheet.hairlineWidth : 0,
-          shadowColor: material.shadowColor,
-          shadowOpacity: isCodeBlock || isMessage && props.isUser ? material.shadowOpacity : 0,
-          shadowRadius: isCodeBlock || isMessage && props.isUser ? material.shadowBlur : 0,
-          shadowOffset: { width: 0, height: isCodeBlock || isMessage && props.isUser ? material.shadowOffsetY : 0 },
-          elevation: isCodeBlock ? material.elevation : 0,
+          ...glassShadowStyle(props.colors, isCodeBlock || isMessage && props.isUser ? 'control' : 'none'),
         },
       ]}
     >

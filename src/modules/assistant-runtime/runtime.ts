@@ -2,7 +2,9 @@ import {
   createAssistantRunId,
   err,
   freezeChatRequest,
+  measureJsonCharacters,
   ok,
+  sanitizeTraceDisplayText,
   type AssistantRunId,
   type ChatReasoningReplayPart,
   type ChatToolCallProviderMetadata,
@@ -59,6 +61,8 @@ class PersistenceFailure extends Error {
 }
 
 interface ActiveRun {
+  releaseExecution?: () => void
+  text: ManagedRunText
   agentResolver?: import('./contracts').AssistantAgentResolver
   pauseRequested?: boolean
   completingTurn?: boolean
@@ -89,6 +93,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
   // Private one-shot admissions: public start/execute cannot invent a parent identity.
   const childAdmissions = new Map<AssistantRunId, { rootRunId: AssistantRunId; parentRunId: AssistantRunId }>()
   const maxOutputChars = normalizeMaxOutputChars(dependencies.options?.maxOutputChars)
+  const createText = (stopping = false) => new ManagedRunText(stopping
+    ? dependencies.governance?.reserveStopText ?? dependencies.governance?.reserveText
+    : dependencies.governance?.reserveText)
 
   const runtime: AssistantRuntime = {
     subscribe(listener) { subscribers.add(listener); return () => { subscribers.delete(listener) } },
@@ -118,7 +125,17 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       return controlRun(runId, async (active) => {
         if (active.run.status === 'paused' || active.run.status === 'awaiting-confirmation') return ok(active.run)
         active.pauseRequested = true
+        active.releaseExecution?.()
+        // A child stop revokes the root subtree before any persistence or
+        // uninterruptible operation can delay it. Do not let the parent's abort
+        // turn this explicit child pause into cancellation.
+        if (active.run.parentRunId) active.detachExternalCancellation?.()
         active.controller.abort()
+        const parentPause = pauseParent(active, reason)
+        const childrenStopped = stopChildren(active, 'cancel')
+        const relatedStops = Promise.all([parentPause, childrenStopped])
+        // Attach rejection handling now, even if this run's own write fails.
+        void relatedStops.catch(() => undefined)
         const paused = await record(active, 'run.paused', { reason }, (run) => {
           const checkpoint = run.lifecycleCheckpoint
           return {
@@ -131,9 +148,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           } } : {}),
           }
         })
-        await stopChildren(active, 'cancel')
+        await relatedStops
         return ok(paused)
-      })
+      }, true)
     },
     resume(input) { return launch((onPersisted) => resumePaused({ ...input, onPersisted }), input.onPersisted) },
     approve(input) {
@@ -168,7 +185,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       let contextReceipt: AssistantContextPlanReceipt | undefined
       let definition: FrozenAgentDefinition | undefined
       let operationSession = input.modelOperationSession
+      const text = createText()
       try {
+        text.retainJson('source', { request: input.request, contextReceipt: input.contextReceipt, agentDefinition: input.agentDefinition })
         definition = input.agentDefinition ? freezeAgentDefinition(input.agentDefinition) : undefined
         if (definition) {
           if (definition.modelBinding.providerId !== input.request.providerId || definition.modelBinding.modelId !== input.request.model) {
@@ -181,7 +200,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           systemPrompt: [input.request.systemPrompt, definition.instructions].filter(Boolean).join('\n\n'),
           ...(definition.modelBinding.actionCapability === 'text_only' ? { toolDefinitions: [] } : {}),
         } : input.request
-        request = freezeChatRequest(
+        request = captureRequest(text,
           operationSession && !input.cancellationSignal?.aborted
             ? operationSession.prepareRequest(sourceRequest)
             : sourceRequest,
@@ -190,6 +209,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           ? freezeContextPlanReceipt(input.contextReceipt)
           : undefined
       } catch {
+        text.close()
         return err('provider_failed', 'The provider-neutral request could not be frozen.', {
           retryable: true,
           details: { runId },
@@ -197,6 +217,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       }
 
       const active: ActiveRun = {
+        text,
         agentResolver: relation ? undefined : input.agentResolver,
         controller: new AbortController(),
         now: dependencies.clock.now,
@@ -215,6 +236,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         writeTail: Promise.resolve(),
       }
       try {
+        active.releaseExecution = startExecution(active)
         await record(active, 'run.created', {
           conversationId: request.conversationId,
           contextSnapshotId: input.context.id,
@@ -273,6 +295,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           return err('persistence_failed', 'The failed assistant run could not be recorded.', { retryable: true })
         }
       } finally {
+        active.releaseExecution?.()
+        active.text.close()
         releaseExternalCancellation(active)
         activeRuns.delete(runId)
       }
@@ -306,9 +330,11 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
 
       let capturedRequest: StartAssistantRunInput['request'] | undefined
       let contextReceipt: AssistantContextPlanReceipt | undefined
+      const text = createText()
       try {
+        text.retainJson('source', { request: input.request, contextReceipt: input.contextReceipt })
         if (input.request) {
-          const request = freezeChatRequest(input.request)
+          const request = captureRequest(text, input.request)
           if (
             request.conversationId !== input.conversationId
             || (input.providerId !== undefined && request.providerId !== input.providerId)
@@ -321,6 +347,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             : undefined
         }
       } catch {
+        text.close()
         return err('activity_failed', 'The Chat activity request could not be frozen.', {
           retryable: false,
           details: { runId },
@@ -335,6 +362,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             outputText: '', streamEventCount: 0, phase: 'provider', effectCertainty: 'none', recovery: 'resumable',
             requiresOperationSession: !!capturedRequest.toolDefinitions?.length, steering: [] }) } : {}),
         },
+        text,
         outputText: '',
         streamEventCount: 0,
         cancellationRequested: false,
@@ -342,6 +370,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         writeTail: Promise.resolve(),
       }
       try {
+        active.releaseExecution = startExecution(active)
         await record(active, 'run.created', {
           conversationId: input.conversationId,
           contextSnapshotId: input.context.id,
@@ -412,7 +441,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         const checkpointStreamEvent = (event: StreamEvent): Promise<void> => {
           if (checkpointsClosed) return Promise.reject(new Error('The activity checkpoint stream is closed.'))
           if (checkpointStreamEventFailure || active.controller.signal.aborted) return flushCheckpoints()
+          let release = () => undefined as void
           try {
+            release = active.text.temporary(event)
             const receipt = checkpoints.push(event, () => {
               let resolve!: () => void
               let reject!: (error: unknown) => void
@@ -423,8 +454,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
               return { promise, resolve, reject }
             })
             startCheckpointWorker()
+            void receipt.promise.then(release, release)
             return receipt.promise
           } catch (error) {
+            release()
             failCheckpoints(error)
             return flushCheckpoints()
           }
@@ -437,6 +470,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         let execution: AssistantActivityExecutionResult
         try {
           try {
+            active.text.assertAdmission()
             execution = await input.executor.execute({
               run: active.run,
               signal: active.controller.signal,
@@ -523,7 +557,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             details: { runId: failed.id },
           })
         }
-        if (normalized.outputText !== undefined) active.outputText = normalized.outputText
+        if (normalized.outputText !== undefined) {
+          active.text.retainOutput(normalized.outputText)
+          active.outputText = normalized.outputText
+        }
         if (normalized.eventCount !== undefined) active.streamEventCount = normalized.eventCount
         if (active.outputText.length > maxOutputChars) {
           const failed = await finishFailed(active, 'output_limit_exceeded', 'The assistant activity output exceeded the configured run limit.')
@@ -543,6 +580,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         return ok(await finishSucceeded(active))
       } catch (error) {
         if ((active.run.status === 'awaiting-confirmation' || active.pauseRequested) && !(error instanceof PersistenceFailure)) return await pausedResult(active)
+        const admissionPause = await pauseForAdmission(active, error)
+        if (admissionPause) return admissionPause
         if (error instanceof PersistenceFailure) {
           return err('persistence_failed', 'The assistant run could not be checkpointed.', { retryable: true })
         }
@@ -567,6 +606,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           return err('persistence_failed', 'The failed assistant run could not be recorded.', { retryable: true })
         }
       } finally {
+        active.releaseExecution?.()
+        active.text.close()
         releaseExternalCancellation(active)
         activeRuns.delete(runId)
       }
@@ -611,6 +652,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         controller: new AbortController(),
         now: dependencies.clock.now,
         run: saved,
+        text: createText(),
         agentResolver: input.agentResolver,
         outputText: saved.checkpoint?.outputText ?? '',
         streamEventCount: saved.checkpoint?.streamEventCount ?? 0,
@@ -619,8 +661,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         writeTail: Promise.resolve(),
       }
       activeRuns.set(saved.id, active)
-      attachExternalCancellation(active, input.cancellationSignal)
       try {
+        active.releaseExecution = startExecution(active)
+        attachExternalCancellation(active, input.cancellationSignal)
+        active.text.retainRun(active.run, active.outputText)
         const session = await bindAgentSession(saved.agentDefinition, input.session)
         if (!session) return err('run_not_active', 'The operation session is unavailable.', { retryable: false })
         active.operationSession = session
@@ -645,21 +689,25 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         }, {
           status: 'running',
           pendingModelOperation: undefined,
-          lifecycleCheckpoint: createHarnessCheckpoint({ request: pending.continuationRequest,
+          lifecycleCheckpoint: captureCheckpoint(active.text, { request: pending.continuationRequest,
             stepIndex: pending.stepIndex, outputText: active.outputText, streamEventCount: active.streamEventCount,
             phase: 'operation', effectCertainty: 'uncertain', recovery: 'reconciliation-required',
             requiresOperationSession: true, steering: saved.lifecycleCheckpoint?.steering ?? [] }),
         })
         if (active.cancellationRequested) return cancelledResult(active)
         if (active.pauseRequested) return await pausedResult(active)
+        active.text.assertAdmission()
         active.operationDispatched = true
         const resumed = await session.resume({
           run: active.run,
           pending,
           approved: input.approved,
           signal: active.controller.signal,
+          onOperationStarted: (operation) => recordOperationStarted(active, operation),
         })
         if (active.cancellationRequested) return cancelledResult(active)
+        if (active.pauseRequested) return await settlePausedOperation(active, resumed, pending.stepIndex)
+        active.text.retainJson('outcome', resumed)
         if (resumed.kind === 'cancelled') {
           const cancelled = await finishCancelled(active)
           return err('cancelled', 'The assistant run was cancelled.', {
@@ -689,7 +737,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         if (active.pauseRequested) return await pausedResult(active)
         return await runProviderTurns(
           active,
-          freezeChatRequest(resumed.request),
+          captureRequest(active.text, resumed.request),
           input.providerGatewayOptions,
           session,
           pending.stepIndex + 1,
@@ -723,6 +771,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           return err('persistence_failed', 'The failed assistant run could not be recorded.', { retryable: true })
         }
       } finally {
+        active.releaseExecution?.()
+        active.text.close()
         releaseExternalCancellation(active)
         activeRuns.delete(saved.id)
         releaseControl(input.runId)
@@ -731,10 +781,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
 
     async cancel(runId) {
       return controlRun(runId, async (active) => {
-        await requestCancellation(active, 'caller_requested')
-        await stopChildren(active, 'cancel')
+        const cancellation = requestCancellation(active, 'caller_requested')
+        await Promise.all([cancellation, pauseParent(active, 'caller_requested'), stopChildren(active, 'cancel')])
         return ok(await finishCancelled(active))
-      })
+      }, true)
     },
 
     getRun(runId) {
@@ -742,9 +792,19 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     },
 
     async recoverInterruptedRuns() {
+      const isActiveRoot = (rootRunId: string) => {
+        for (const active of activeRuns.values()) {
+          if ((active.run.rootRunId ?? active.run.id) === rootRunId) return true
+        }
+        for (const id of resumingRuns) {
+          if (id === rootRunId || childAdmissions.get(id)?.rootRunId === rootRunId) return true
+        }
+        return false
+      }
       let recoverableRuns: readonly AssistantRun[]
       try {
         recoverableRuns = await dependencies.persistence.listRecoverable()
+        await dependencies.governance?.recoverInterrupted?.(isActiveRoot)
       } catch {
         return err('persistence_failed', 'Interrupted assistant runs could not be loaded for recovery.', { retryable: true })
       }
@@ -752,7 +812,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       const recovered: AssistantRun[] = []
         for (const run of recoverableRuns) {
           if (run.engineVersion !== HARNESS_ENGINE_VERSION) continue
-        if (activeRuns.has(run.id)) continue
+        if (isActiveRoot(run.rootRunId ?? run.id)) continue
         let continuation: AssistantActivityContinuationIdentity | undefined
         let requestSnapshotIdentity:
           | { readonly requestHash: string; readonly capabilityRevision: string }
@@ -775,6 +835,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           controller: new AbortController(),
           now: dependencies.clock.now,
           run,
+          text: createText(),
           outputText: run.checkpoint?.outputText ?? '',
           streamEventCount: run.checkpoint?.streamEventCount ?? 0,
           cancellationRequested: false,
@@ -851,7 +912,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             // read cannot establish the concurrent writer's disposition.
           }
           return err('persistence_failed', 'An interrupted assistant run could not be safely recovered.', { retryable: true })
-        }
+        } finally { active.text.close() }
       }
       return ok(recovered)
     },
@@ -859,16 +920,42 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
 
   return runtime
 
+  function startExecution(active: ActiveRun): () => void {
+    // The token belongs to this invocation, not the run ID: old cleanup can
+    // never revoke a later resume. Text resources intentionally have a longer
+    // lifetime when native work ignores abort.
+    const dispose = dependencies.governance?.executionStarted?.({ runId: active.run.id, rootRunId: active.run.rootRunId ?? active.run.id })
+    let released = false
+    const release = () => {
+      if (released) return
+      released = true
+      active.controller.signal.removeEventListener('abort', release)
+      dispose?.()
+    }
+    if (active.controller.signal.aborted) release()
+    else active.controller.signal.addEventListener('abort', release, { once: true })
+    return release
+  }
+
+  function pauseParent(active: ActiveRun, reason: import('./harnessPauseReason').HarnessPauseReason) {
+    const parentId = active.run.parentRunId
+    // Root-initiated cascading cancellation must not reverse direction. A
+    // direct child stop, however, cannot leave the root waiting on its drain.
+    if (parentId && !activeRuns.get(parentId)?.controller.signal.aborted) return runtime.pause(parentId, reason)
+  }
+
   async function stopChildren(active: ActiveRun, command: 'cancel') {
     await Promise.all((active.run.delegation?.children ?? []).map(async ({ runId }) => {
-      const child = activeRuns.get(runId)?.run ?? await dependencies.persistence.get(runId)
+      const childActive = activeRuns.get(runId)
+      if (active.pauseRequested && childActive?.pauseRequested) return
+      const child = childActive?.run ?? await dependencies.persistence.get(runId)
       if (child && !isTerminal(child)) await runtime[command](runId)
     }))
   }
 
   async function collaborationFence(active: ActiveRun, request: StartAssistantRunInput['request'], stepIndex: number, outputStart: number) {
     await record(active, 'run.checkpointed', { phase: 'operation', collaboration: true }, {
-      lifecycleCheckpoint: createHarnessCheckpoint({ request, stepIndex, outputText: active.outputText.slice(0, outputStart),
+      lifecycleCheckpoint: captureCheckpoint(active.text, { request, stepIndex, outputText: active.outputText.slice(0, outputStart),
         streamEventCount: active.streamEventCount, phase: 'operation', effectCertainty: 'uncertain',
         recovery: 'reconciliation-required', requiresOperationSession: !!active.operationSession,
         steering: active.run.lifecycleCheckpoint?.steering ?? [] }),
@@ -940,12 +1027,12 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     await record(active, 'run.checkpointed', { reviewRunId: review.runId, rework }, (run) => ({
       delegation: { ...run.delegation!, reworkCount: run.delegation!.reworkCount + (rework ? 1 : 0) },
       checkpoint: { outputText: active.outputText, streamEventCount: active.streamEventCount },
-      lifecycleCheckpoint: createHarnessCheckpoint({ request: continuation, stepIndex: stepIndex + 1,
+      lifecycleCheckpoint: captureCheckpoint(active.text, { request: continuation, stepIndex: stepIndex + 1,
         outputText: active.outputText, streamEventCount: active.streamEventCount, phase: 'ready', effectCertainty: 'settled',
         recovery: 'resumable', requiresOperationSession: !!active.operationSession, steering: run.lifecycleCheckpoint?.steering ?? [] }),
     }))
     active.operationDispatched = false
-    return rework ? freezeChatRequest(continuation) : undefined
+    return rework ? captureRequest(active.text, continuation) : undefined
   }
 
   async function bindAgentSession(
@@ -972,14 +1059,15 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     })
   }
 
-  function restoreActive(run: AssistantRun, onPersisted?: AssistantRunProjection): ActiveRun {
-    return { controller: new AbortController(), now: dependencies.clock.now, run,
+  function restoreActive(run: AssistantRun, onPersisted?: AssistantRunProjection, stopping = false): ActiveRun {
+    return { text: createText(stopping), controller: new AbortController(), now: dependencies.clock.now, run,
       outputText: run.checkpoint?.outputText ?? '', streamEventCount: run.checkpoint?.streamEventCount ?? 0,
       cancellationRequested: false, writeTail: Promise.resolve(), onPersisted }
   }
 
   async function controlRun(
     runId: AssistantRunId, work: (active: ActiveRun) => ReturnType<AssistantRuntime['execute']>,
+    stopping = false,
   ): ReturnType<AssistantRuntime['execute']> {
     let active = activeRuns.get(runId)
     let acquired = false
@@ -990,7 +1078,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         acquired = true
         const run = await dependencies.persistence.get(runId)
         if (!run) return err('run_not_found', 'The assistant run does not exist.', { retryable: false })
-        active = restoreActive(run)
+        // Only existing-run pause/cancel can borrow the pressure-tolerant
+        // reservation path. Steer, resume and new invocations never use it.
+        active = restoreActive(run, undefined, stopping)
       }
       if (active.run.engineVersion !== HARNESS_ENGINE_VERSION || isTerminal(active.run)) {
         return err('run_not_active', 'The run is terminal or legacy read-only.', { retryable: false })
@@ -999,6 +1089,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     } catch {
       return err('persistence_failed', 'The run state could not be persisted.', { retryable: true })
     } finally {
+      if (acquired) active?.text.close()
       if (acquired) releaseControl(runId)
     }
   }
@@ -1022,12 +1113,14 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         return err('run_not_active', 'Resume requires a fresh validated operation session.', { retryable: false })
       }
       active = restoreActive(run, input.onPersisted)
+      active.text.retainRun(run, checkpoint.outputText)
       active.agentResolver = input.agentResolver
       active.operationSession = session
       // Discard partial provider text. The exact pre-dispatch baseline contains
       // completed tool receipts, so only a model request (never a tool) is retried.
       active.outputText = checkpoint.outputText
       activeRuns.set(run.id, active)
+      active.releaseExecution = startExecution(active)
       attachExternalCancellation(active, input.cancellationSignal)
       if (active.cancellationRequested) return cancelledResult(active)
       await record(active, 'run.resumed', { stepIndex: checkpoint.stepIndex }, { status: 'running',
@@ -1042,6 +1135,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       if (active) await finishFailed(active, 'provider_failed', 'The provider continuation failed.')
       return err('provider_failed', 'The safe continuation could not be resumed.', { retryable: false })
     } finally {
+      active?.releaseExecution?.()
+      active?.text.close()
       active && releaseExternalCancellation(active)
       activeRuns.delete(input.runId)
       releaseControl(input.runId)
@@ -1081,6 +1176,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     let request = initialRequest
     let stepIndex = initialStepIndex
     let initialTurn = activity?.initialTurn
+    if (initialTurn) active.text.retainJson('turn', initialTurn)
     active.operationSession = modelOperationSession
 
     while (true) {
@@ -1098,6 +1194,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         if (active.cancellationRequested) return cancelledResult(active)
         const continuation = activity ? createActivityContinuationIdentity(active, request, stepIndex) : undefined
         if (continuation) await record(active, 'provider-continuation.started', continuationJournalData(continuation))
+        active.text.assertAdmission()
         const stream = providerGateway.stream(request, {
           ...(providerGatewayOptions ?? {}), signal: active.controller.signal,
           onRouteSelected: async (route) => {
@@ -1115,17 +1212,19 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             await recordExecutionTarget(active, target)
           },
         })
-        for await (const event of interruptibleStream(stream, active.controller.signal)) {
+        for await (const event of interruptibleStream(stream, active.controller.signal, active.text)) {
           if (active.controller.signal.aborted || isTerminal(active.run)) break
           if (event.type === 'tool-call') {
             calls = [...calls, { callId: event.toolCallId, name: event.toolName, arguments: event.arguments ?? {},
               ...(event.providerMetadata ? { providerMetadata: event.providerMetadata } : {}) }]
+            active.text.retainJson('calls', calls)
           }
           if (event.type === 'provider-continuation-state') {
             if (event.binding.providerId !== (active.executionTarget ?? active.run).providerId
               || event.binding.model !== (active.executionTarget ?? active.run).model) {
               throw new Error('The provider continuation state does not match the selected route.')
             }
+            active.text.retainJson('reasoning', event.reasoningReplay)
             reasoningReplay = freezeReasoningReplay(event.reasoningReplay)
           }
           applyStreamEvent(active, event, maxOutputChars)
@@ -1160,7 +1259,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         active.outputText = active.outputText.slice(0, outputStart)
         const continuation = collaborationContinuation(request, turnOutput ?? '', { children: results }, delegated.call, reasoningReplay)
         await recordCompletedOperation(active, { kind: 'continue', request: continuation, receipt: { children: results } }, stepIndex + 1)
-        request = freezeChatRequest(continuation); stepIndex += 1; continue
+        request = captureRequest(active.text, continuation); stepIndex += 1; continue
       }
       if (!modelOperationSession) {
         const steered = await nextSteeredRequest(active, request, turnOutput ?? '', outputStart)
@@ -1174,25 +1273,29 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         return ok(activity ? active.run : await finishSucceeded(active))
       }
       const route = active.executionTarget ?? active.run
-      request = freezeChatRequest({ ...request, providerId: route.providerId, model: route.model,
+      request = captureRequest(active.text, { ...request, providerId: route.providerId, model: route.model,
         providerStateBinding: { providerId: route.providerId, model: route.model } })
       // Evaluation can dispatch a tool. Persist the uncertain-effect fence BEFORE
       // entering Tasks, including structured actions not visible as tool calls.
       await record(active, 'run.checkpointed', { phase: 'operation', stepIndex }, {
-        lifecycleCheckpoint: createHarnessCheckpoint({ request, stepIndex,
+        lifecycleCheckpoint: captureCheckpoint(active.text, { request, stepIndex,
           outputText: active.outputText.slice(0, outputStart), streamEventCount: active.streamEventCount,
           phase: 'operation', effectCertainty: 'uncertain', recovery: 'reconciliation-required',
           requiresOperationSession: true, steering: active.run.lifecycleCheckpoint?.steering ?? [] }),
       })
       if (active.cancellationRequested) return cancelledResult(active)
       if (active.pauseRequested) return await pausedResult(active)
+      active.text.assertAdmission()
       active.operationDispatched = true
       const outcome = await modelOperationSession.evaluateTurn({ run: active.run, request,
-        outputText: turnOutput ?? '', calls: Object.freeze(calls), reasoningReplay, stepIndex, signal: active.controller.signal })
+        outputText: turnOutput ?? '', calls: Object.freeze(calls), reasoningReplay, stepIndex, signal: active.controller.signal,
+        onOperationStarted: (operation) => recordOperationStarted(active, operation) })
       if (active.cancellationRequested || isTerminal(active.run)) return cancelledResult(active)
+      if (active.pauseRequested) return await settlePausedOperation(active, outcome, stepIndex)
+      active.text.retainJson('outcome', outcome)
       if (outcome.kind === 'no-operation') {
         await record(active, 'run.checkpointed', { phase: 'ready', noOperation: true }, {
-          lifecycleCheckpoint: createHarnessCheckpoint({ ...active.run.lifecycleCheckpoint!, phase: 'ready',
+          lifecycleCheckpoint: captureCheckpoint(active.text, { ...active.run.lifecycleCheckpoint!, phase: 'ready',
             effectCertainty: 'none', recovery: 'resumable' }),
         })
         active.operationDispatched = false
@@ -1219,13 +1322,13 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           catalogRevision: outcome.pending.catalogRevision, receipt: outcome.receipt,
         }, { status: 'awaiting-confirmation', pendingModelOperation: outcome.pending,
           checkpoint: { outputText: active.outputText, streamEventCount: active.streamEventCount },
-          lifecycleCheckpoint: createHarnessCheckpoint({ ...active.run.lifecycleCheckpoint!,
+          lifecycleCheckpoint: captureCheckpoint(active.text, { ...active.run.lifecycleCheckpoint!,
             phase: 'confirmation', effectCertainty: 'none', recovery: 'resumable' }),
         }))
       }
       await recordCompletedOperation(active, outcome, stepIndex + 1)
       if (active.pauseRequested) return await pausedResult(active)
-      request = freezeChatRequest(outcome.request)
+      request = captureRequest(active.text, outcome.request)
       stepIndex += 1
     }
   }
@@ -1235,9 +1338,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     let frozen = request
     await record(active, 'run.checkpointed', { phase: 'provider', stepIndex }, (run) => {
       const steering = run.lifecycleCheckpoint?.steering ?? []
-      frozen = freezeChatRequest({ ...request, messages: [...request.messages,
+      frozen = captureRequest(active.text, { ...request, messages: [...request.messages,
         ...steering.map((entry) => ({ id: entry.id, role: 'user' as const, text: entry.text }))] })
-      return { lifecycleCheckpoint: createHarnessCheckpoint({ request: frozen, stepIndex,
+      return { lifecycleCheckpoint: captureCheckpoint(active.text, { request: frozen, stepIndex,
         outputText: active.outputText, streamEventCount: active.streamEventCount,
         phase: 'provider', effectCertainty: run.lifecycleCheckpoint?.effectCertainty === 'settled' ? 'settled' : 'none',
         recovery: 'resumable', requiresOperationSession, steering: [] }) }
@@ -1252,8 +1355,19 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     await active.writeTail
     if (!active.run.lifecycleCheckpoint?.steering.length) return undefined
     active.outputText = active.outputText.slice(0, outputStart)
-    return freezeChatRequest({ ...request, messages: [...request.messages,
+    return captureRequest(active.text, { ...request, messages: [...request.messages,
       { id: `steering-answer:${active.run.id}:${active.run.journalSequence}`, role: 'assistant', text: output }] })
+  }
+
+  async function recordOperationStarted(active: ActiveRun, operation: { callId: string; operationId: string; inputSummary: string }) {
+    if (active.controller.signal.aborted) throw new DOMException('Operation cancelled.', 'AbortError')
+    // Extends the existing checkpoint payload; old readers can still read the run.
+    await record(active, 'run.checkpointed', { phase: 'operation', stepIndex: active.run.lifecycleCheckpoint?.stepIndex ?? 0, operation: {
+      callId: truncate(operation.callId, JOURNAL_LABEL_LIMIT),
+      operationId: truncate(operation.operationId, JOURNAL_LABEL_LIMIT),
+      inputSummary: sanitizeTraceDisplayText(operation.inputSummary, JOURNAL_TEXT_LIMIT),
+    } })
+    if (active.controller.signal.aborted) throw new DOMException('Operation cancelled.', 'AbortError')
   }
 
   async function recordCompletedOperation(active: ActiveRun,
@@ -1262,12 +1376,28 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     // boundary remains uncertain; a crash after it never re-executes the tool.
     await record(active, 'model-operation.selected', { outcome: outcome.kind, receipt: outcome.receipt }, (run) => ({
       checkpoint: { outputText: active.outputText, streamEventCount: active.streamEventCount },
-      lifecycleCheckpoint: createHarnessCheckpoint({ request: outcome.request, stepIndex: nextStep,
+      lifecycleCheckpoint: captureCheckpoint(active.text, { request: outcome.request, stepIndex: nextStep,
         outputText: active.outputText, streamEventCount: active.streamEventCount,
         phase: 'ready', effectCertainty: 'settled', recovery: 'resumable', requiresOperationSession: !!active.operationSession,
         steering: run.lifecycleCheckpoint?.steering ?? [] }),
     }))
     active.operationDispatched = false
+  }
+
+  async function settlePausedOperation(active: ActiveRun, outcome: AssistantModelOperationTurnOutcome, stepIndex: number) {
+    await active.writeTail
+    const checkpoint = active.run.lifecycleCheckpoint
+    // A definitive Tasks receipt from this exact in-flight operation is recovery
+    // evidence, not renewed execution authority. Preserve the durable pause and
+    // pre-operation output; cancellation and unrelated/ordinary late output win.
+    if (outcome.kind === 'continue' && activeRuns.get(active.run.id) === active && active.operationDispatched
+      && !active.cancellationRequested && active.run.status === 'paused'
+      && checkpoint?.phase === 'operation' && checkpoint.stepIndex === stepIndex) {
+      active.text.retainJson('outcome', outcome)
+      active.outputText = checkpoint.outputText
+      await recordCompletedOperation(active, outcome, stepIndex + 1)
+    }
+    return pausedResult(active)
   }
 
   async function continueActivityProviderTurns(
@@ -1326,6 +1456,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     capturedRequest?: StartAssistantRunInput['request'],
     contextReceipt?: AssistantContextPlanReceipt,
   ): Promise<AssistantRun> {
+    // Control entries use the run slot's emergency margin: pressure must not
+    // prevent an already-admitted invocation from durably stopping.
+    const stopping = type === 'run.paused' || type === 'run.cancelled' || type === 'run.cancellation-requested' || type === 'run.failed'
+    const release = stopping ? () => undefined : active.text.temporary(data)
     return enqueue(active, async () => {
       // An aborted transport/tool may complete late. Terminal state is monotonic.
       if (isTerminal(active.run)) return active.run
@@ -1344,6 +1478,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           ...(typeof patch === 'function' ? patch(active.run) : patch),
           journalSequence: entry.sequence,
         })
+        active.text.retainRun(next, active.outputText, stopping)
         const requestSnapshot = capturedRequest
           ? createCapturedRequestSnapshot(next.id, entry.occurredAt, capturedRequest, contextReceipt)
           : undefined
@@ -1357,10 +1492,15 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           try { void Promise.resolve(listener({ run: next, journalEntry: entry })).catch(() => undefined) } catch { /* Projection only. */ }
         }
         return next
-      } catch {
+      } catch (error) {
+        if (dependencies.governance?.admissionPauseReason?.(error)) throw error
+        // A failed checkpoint may be observed by a compatibility executor that
+        // ignores rejection/abort. Its CPU authority must still end immediately.
+        active.releaseExecution?.()
+        active.controller.abort(error)
         throw new PersistenceFailure()
       }
-    })
+    }).finally(release)
   }
 
   async function finishSucceeded(active: ActiveRun): Promise<AssistantRun> {
@@ -1464,12 +1604,13 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     void controlRun(runId, async (current) => {
       await requestCancellation(current, 'external_signal')
       return ok(await finishCancelled(current))
-    }).catch(() => undefined)
+    }, true).catch(() => undefined)
   }
 
   async function requestCancellation(active: ActiveRun, reason: 'caller_requested' | 'external_signal'): Promise<AssistantRun> {
     if (active.cancellationRequested) return active.run
     active.cancellationRequested = true
+    active.releaseExecution?.()
     active.controller.abort()
     return record(active, 'run.cancellation-requested', { reason }, {
       cancellationRequestedAt: active.now(),
@@ -1481,8 +1622,101 @@ function isTerminal(run: AssistantRun): boolean {
   return run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled'
 }
 
+/** Invocation-owned staging, not a Hermes heap measurement. High-water slots
+ * cover source, retained values and serialized copies. Keeping the high water
+ * also leaves room to durably pause/cancel without new admission under pressure. */
+class ManagedRunText {
+  private readonly releases: Array<() => void> = []
+  private readonly slots = new Map<string, number>()
+  private readonly measured = new WeakMap<object, number>()
+  private output = ''
+  private outputCharacters = 2
+  private holders = 1
+
+  constructor(private readonly reserve?: (bytes: number) => () => void) {}
+
+  assertAdmission(): void { this.reserve?.(0)() }
+
+  retainJson(slot: string, value: unknown): void {
+    if (!this.reserve) return
+    this.retain(slot, this.characters(value) * 6)
+  }
+
+  retainOutput(value: string, appended?: string): void {
+    if (!this.reserve) return
+    if (value === this.output) return
+    const characters = appended === undefined
+      ? measureJsonCharacters(value)
+      : this.outputCharacters + measureJsonCharacters(appended) - 2
+    // Active output, checkpoint/result and their serialization can coexist.
+    this.retain('output', characters * 8)
+    this.output = value
+    this.outputCharacters = characters
+  }
+
+  retainRun(run: AssistantRun, output: string, stopping = false): void {
+    if (!this.reserve) return
+    this.retainOutput(output)
+    let characters = 2
+    for (const [key, value] of Object.entries(run)) {
+      characters += key.length + 4
+      // The output slot already covers these copies. Only the small changing
+      // counters are scanned per stream checkpoint; frozen context is cached.
+      characters += key === 'checkpoint' || key === 'result'
+        ? measureJsonCharacters(value ? { ...value, outputText: '' } : value)
+        : this.characters(value, true)
+    }
+    this.retain('run', characters * 6, stopping ? 0 : 8192)
+  }
+
+  temporary(value: unknown): () => void {
+    return this.reserve?.(this.characters(value) * 6) ?? (() => undefined)
+  }
+
+  hold(): () => void {
+    if (!this.reserve) return () => undefined
+    this.holders++
+    let released = false
+    return () => { if (!released) { released = true; this.close() } }
+  }
+
+  close(): void {
+    if (!this.reserve) return
+    if (--this.holders !== 0) return
+    for (const release of this.releases.splice(0)) release()
+    this.slots.clear()
+    this.output = ''
+  }
+
+  private characters(value: unknown, immutable = false): number {
+    if (!immutable || !value || typeof value !== 'object' || !Object.isFrozen(value)) return measureJsonCharacters(value)
+    let count = this.measured.get(value)
+    if (count === undefined) { count = measureJsonCharacters(value); this.measured.set(value, count) }
+    return count
+  }
+
+  private retain(slot: string, bytes: number, margin = 0): void {
+    const previous = this.slots.get(slot) ?? 0
+    if (bytes + margin <= previous) return
+    const next = Math.ceil((bytes + margin) / 4096) * 4096
+    const release = this.reserve?.(next - previous)
+    if (release) this.releases.push(release)
+    this.slots.set(slot, next)
+  }
+}
+
+function captureRequest(text: ManagedRunText, request: StartAssistantRunInput['request']) {
+  text.retainJson('request', request)
+  return freezeChatRequest(request)
+}
+
+function captureCheckpoint(text: ManagedRunText, input: Parameters<typeof createHarnessCheckpoint>[0]) {
+  text.retainJson('checkpoint', input)
+  return createHarnessCheckpoint(input)
+}
+
 /** Abort remains attached even when a transport ignores it or iterator cleanup stalls. */
-async function* interruptibleStream(stream: AsyncIterable<StreamEvent>, signal: AbortSignal): AsyncIterable<StreamEvent> {
+async function* interruptibleStream(stream: AsyncIterable<StreamEvent>, signal: AbortSignal, text: ManagedRunText): AsyncIterable<StreamEvent> {
   const iterator = stream[Symbol.asyncIterator]()
   try {
     while (!signal.aborted) {
@@ -1492,14 +1726,21 @@ async function* interruptibleStream(stream: AsyncIterable<StreamEvent>, signal: 
         signal.addEventListener('abort', abort, { once: true })
         detach = () => signal.removeEventListener('abort', abort)
         if (signal.aborted) { abort(); return }
-        Promise.resolve(iterator.next()).then(resolve, reject)
+        const release = text.hold()
+        try { void Promise.resolve(iterator.next()).then(resolve, reject).finally(release) }
+        catch (error) { release(); reject(error) }
       }).finally(() => detach())
       if (next.done || signal.aborted) return
-      yield next.value
+      // Charge the raw event before truncation/journal projection. Its full
+      // text remains live while the consumer awaits checkpoint persistence.
+      const releaseEvent = text.temporary(next.value)
+      try { yield next.value } finally { releaseEvent() }
     }
   } finally {
     // Never let an uncooperative iterator delay a durable pause/cancel barrier.
-    try { void Promise.resolve(iterator.return?.()).catch(() => undefined) } catch { /* Already stopped. */ }
+    const release = text.hold()
+    try { void Promise.resolve(iterator.return?.()).catch(() => undefined).finally(release) }
+    catch { release() }
   }
 }
 
@@ -1596,7 +1837,10 @@ function applyStreamEvent(active: ActiveRun, event: StreamEvent, maxOutputChars:
     return
   }
 
-  active.outputText += event.text.slice(0, remaining)
+  const delta = event.text.slice(0, remaining)
+  const output = active.outputText + delta
+  active.text.retainOutput(output, delta)
+  active.outputText = output
   if (event.text.length > remaining) {
     active.failure = {
       code: 'output_limit_exceeded',

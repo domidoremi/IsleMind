@@ -13,6 +13,6 @@ test('calibrates per provider/model/protocol without duplicate cumulative usage 
 
 test('the calibrated final gate counts mixed-language code and cannot exceed 85 percent', () => {
   const body = { messages: [{ content: '中文 code { "x": [1,2,3] } '.repeat(20) }], max_tokens: 10 }
-  const raw = checkProviderContextCapacity({ body, contextWindow: 10_000, defaultOutputTokens: 10 })
-  expect(() => checkProviderContextCapacity({ body, contextWindow: Math.ceil(raw.estimatedInputTokens * 1.3), defaultOutputTokens: 10, inputCalibrationFactor: 1.5 })).toThrow('context_capacity')
+  const raw = checkProviderContextCapacity({ body, contextWindow: 10_000, modelMaxOutputTokens: 10 })
+  expect(() => checkProviderContextCapacity({ body, contextWindow: Math.ceil(raw.estimatedInputTokens * 1.3), modelMaxOutputTokens: 10, inputCalibrationFactor: 1.5 })).toThrow('context_capacity')
 })

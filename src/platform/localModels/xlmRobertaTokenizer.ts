@@ -1,3 +1,4 @@
+import { setExecutionTimeout } from '@/core/executionTimers'
 import { splitGraphemes } from 'unicode-segmenter/grapheme'
 
 // This is the catalogue's XLM-R Unigram pipeline, not a general tokenizer.json
@@ -112,7 +113,7 @@ async function parseVocabulary(raw: string) {
     }
     // Shared initialization must allow interaction/cancellation, without one
     // caller owning or aborting another caller's vocabulary build.
-    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    await new Promise<void>(resolve => setExecutionTimeout(resolve, 0))
   }
   const metadata = `${raw.slice(0, start)}null${raw.slice(cursor + 1)}`
   if (metadata.length > 1024 * 1024) throw new Error('Unigram metadata exceeds its size bound.')
@@ -323,7 +324,7 @@ function createPrecompiledNormalizer(base64: string): (text: string, signal?: Ab
 }
 
 async function yieldEncoding(signal?: AbortSignal): Promise<void> {
-  await new Promise<void>(resolve => setTimeout(resolve, 0))
+  await new Promise<void>(resolve => setExecutionTimeout(resolve, 0))
   if (signal?.aborted) throw Object.assign(new Error('Unigram encoding was cancelled.'), { name: 'AbortError' })
 }
 

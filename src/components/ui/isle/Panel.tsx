@@ -2,6 +2,7 @@ import type { PropsWithChildren } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { GlassSurface } from './GlassSurface'
+import { glassShadowStyle } from './glassShadowStyle'
 import { Card as NativeCard } from 'animal-island-ui-rn'
 export type IsleMaterial = 'paper' | 'raised' | 'muted' | 'glass' | 'chrome' | 'field' | 'transparent'
 
@@ -33,7 +34,7 @@ export function IslePanel({
     return <NativeCard style={[style, contentStyle]}>{children}</NativeCard>
   }
   const resolvedRadius = Math.min(radius ?? colors.ui.radius.panel, colors.ui.radius.panel)
-  const functionalMaterial = isLiquidGlass && (blur || resolvedMaterial === 'glass' || resolvedMaterial === 'chrome')
+  const functionalMaterial = isLiquidGlass && resolvedMaterial !== 'transparent'
   const tokenBackground = panelBackground(resolvedMaterial, colors)
   // Minimal paper panels are layout aids, not nested cards. Keep a real
   // surface for dialogs/raised sheets while allowing ordinary sections to
@@ -66,6 +67,7 @@ export function IslePanel({
       }),
     },
     style,
+    isLiquidGlass ? glassShadowStyle(colors, shouldElevate ? 'surface' : 'none') : null,
   ]
 
   if (functionalMaterial) {
@@ -75,6 +77,7 @@ export function IslePanel({
         variant={resolvedMaterial === 'chrome' ? 'chrome' : 'floating'}
         intensity={intensity}
         borderRadius={resolvedRadius}
+        shadow={shouldElevate ? 'surface' : 'none'}
         style={[panelStyle, contentStyle, { borderWidth: 0 }]}
       >
         {children}

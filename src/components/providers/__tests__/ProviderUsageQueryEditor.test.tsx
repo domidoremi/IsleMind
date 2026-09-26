@@ -7,6 +7,9 @@ import { ProviderUsageQueryEditor } from '../ProviderUsageQueryEditor'
 const mockQueryProviderUsage = jest.fn()
 const mockInvalidateProviderUsage = jest.fn()
 
+jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
+jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
+
 jest.mock('moti', () => {
   const React = require('react')
   const { View } = require('react-native')
@@ -48,9 +51,19 @@ function provider(usageQueryConfiguration: unknown, id = 'provider-a'): AIProvid
 
 describe('ProviderUsageQueryEditor', () => {
   const originalUpdateProvider = useSettingsStore.getState().updateProvider
+  const originalProviders = useSettingsStore.getState().providers
+  const originalFlushProviderPersistence = useSettingsStore.getState().flushProviderPersistence
+  const mockFlushProviderPersistence = jest.fn<Promise<void>, []>()
+
+  beforeEach(() => {
+    mockFlushProviderPersistence.mockResolvedValue(undefined)
+    useSettingsStore.setState({ flushProviderPersistence: mockFlushProviderPersistence })
+  })
 
   afterEach(() => {
-    useSettingsStore.setState({ updateProvider: originalUpdateProvider })
+    useSettingsStore.setState({ updateProvider: originalUpdateProvider, providers: originalProviders,
+      flushProviderPersistence: originalFlushProviderPersistence })
+    mockFlushProviderPersistence.mockReset()
     mockQueryProviderUsage.mockReset()
     mockInvalidateProviderUsage.mockReset()
   })
@@ -63,10 +76,12 @@ describe('ProviderUsageQueryEditor', () => {
     mockQueryProviderUsage.mockReturnValue(refresh.promise)
 
     const initialProvider = provider(createProviderUsageQueryConfiguration(false, []))
+    useSettingsStore.setState({ providers: [initialProvider] })
     const view = await render(<ProviderUsageQueryEditor provider={initialProvider} />)
 
     await fireEvent.press(view.getByRole('switch'))
     await fireEvent.press(view.getByTestId('provider-usage-query-save'))
+    expect(updateProvider).toHaveBeenCalledTimes(1)
     expect(view.getByTestId('provider-usage-query-save').props.accessibilityState).toMatchObject({ busy: true })
 
     await act(async () => {
@@ -75,9 +90,11 @@ describe('ProviderUsageQueryEditor', () => {
     })
 
     const savedConfiguration = updateProvider.mock.calls[0]?.[1]?.usageQueryConfiguration
+    useSettingsStore.setState({ providers: [provider(savedConfiguration)] })
     await view.rerender(<ProviderUsageQueryEditor provider={provider(savedConfiguration)} />)
 
     await waitFor(() => expect(mockQueryProviderUsage).toHaveBeenCalledTimes(1))
+    expect(mockFlushProviderPersistence).toHaveBeenCalledTimes(1)
     expect(view.getByTestId('provider-usage-query-save').props.accessibilityState).toMatchObject({ busy: true })
 
     await act(async () => {
@@ -96,10 +113,12 @@ describe('ProviderUsageQueryEditor', () => {
     useSettingsStore.setState({ updateProvider })
 
     const disabledConfiguration = createProviderUsageQueryConfiguration(false, [])
+    useSettingsStore.setState({ providers: [provider(disabledConfiguration), provider(disabledConfiguration, 'provider-b')] })
     const view = await render(<ProviderUsageQueryEditor provider={provider(disabledConfiguration)} />)
 
     await fireEvent.press(view.getByRole('switch'))
     await fireEvent.press(view.getByTestId('provider-usage-query-save'))
+    expect(updateProvider).toHaveBeenCalledTimes(1)
     await view.rerender(<ProviderUsageQueryEditor provider={provider(disabledConfiguration, 'provider-b')} />)
 
     await act(async () => {

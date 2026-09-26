@@ -58,7 +58,7 @@ export function createUsageStatisticsService(
     async listPricingEntries() {
       return [...builtInPricing, ...await repository.listPricingEntries()]
     },
-    savePricingEntry: (entry) => repository.savePricingEntry(entry),
+    savePricingEntry: (entry, expectedRevision) => repository.savePricingEntry(entry, expectedRevision),
     deletePricingEntry: (id) => repository.deletePricingEntry(id),
     async export(filter, format) {
       const [records, rollups] = await Promise.all([

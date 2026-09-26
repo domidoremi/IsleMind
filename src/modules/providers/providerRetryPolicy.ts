@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 export interface ProviderRetryPolicyRequestLike {
   provider: {
     id: string
@@ -109,12 +110,12 @@ export function createProviderRetryAbortError(error?: unknown): Error {
 export function delayProviderRetry(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(providerRetryCancellationReason(signal))
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    const timeout = setExecutionTimeout(() => {
       signal.removeEventListener('abort', abort)
       resolve()
     }, Math.max(0, ms))
     const abort = () => {
-      clearTimeout(timeout)
+      clearExecutionTimeout(timeout)
       signal.removeEventListener('abort', abort)
       reject(providerRetryCancellationReason(signal))
     }

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
+import { StyleSheet, Text, View, type PressableProps, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IsleButton as BaseIsleButton, type IsleButtonType } from './IsleKit'
 import { IsleChip as BaseIsleChip, type IsleChipTone } from './Chip'
@@ -14,7 +14,7 @@ export interface IsleButtonProps {
   accessibilityLabel?: string
   testID?: string
   icon?: ReactNode
-  onPress?: () => void
+  onPress?: NonNullable<PressableProps['onPress']>
   disabled?: boolean
   busy?: boolean
   tone?: IsleTone
@@ -39,7 +39,7 @@ export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, d
       size={compact ? 'small' : 'middle'}
       block={block}
       style={style}
-      textStyle={textStyle}
+      textStyle={[{ fontSize: 14, lineHeight: 20 }, textStyle]}
     />
   )
 }
@@ -78,7 +78,7 @@ export function IsleMetric({ label }: { label: string }) {
         borderColor,
       }}
     >
-      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
     </View>
   )
 }

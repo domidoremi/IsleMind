@@ -1,8 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const crypto = require('node:crypto')
-
-const { collectReleaseInputFiles } = require('./release-freshness-contract')
+const { snapshotReleaseInputs } = require('./release-freshness-contract')
 
 const root = path.resolve(__dirname, '..')
 const defaultOutputPath = path.join(root, 'test-evidence', 'qa', 'release-source-stability.json')
@@ -37,8 +35,8 @@ function parseArgs(argv) {
 }
 
 function parsePositiveInteger(value, label) {
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`--${label} must be a positive integer.`)
+  const parsed = Number(value)
+  if (!/^\d+$/.test(value ?? '') || !Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`--${label} must be a positive integer.`)
   return parsed
 }
 
@@ -46,7 +44,8 @@ function printHelp() {
   console.log([
     'Usage: node scripts/check-release-source-stability.js [--duration-ms 30000] [--interval-ms 5000] [--output test-evidence/qa/release-source-stability.json]',
     '',
-    'Verifies release source inputs remain unchanged during the stability window.',
+    'Checks every sampled release input set; observed changes remain failures even if reverted.',
+    'Polling is not a workspace lock or proof that no changes occurred between samples.',
   ].join('\n'))
 }
 
@@ -54,28 +53,10 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function relative(filePath) {
-  return path.relative(root, filePath).replace(/\\/g, '/')
-}
-
-function sha256File(filePath) {
-  const hash = crypto.createHash('sha256')
-  hash.update(fs.readFileSync(filePath))
-  return hash.digest('hex')
-}
-
 function snapshotInputs() {
-  return collectReleaseInputFiles(root)
-    .filter((filePath) => fs.existsSync(filePath))
-    .map((filePath) => {
-      const stat = fs.statSync(filePath)
-      return {
-        path: relative(filePath),
-        modifiedAt: stat.mtime.toISOString(),
-        sizeBytes: stat.size,
-        sha256: sha256File(filePath),
-      }
-    })
+  // Use the same bounded, mutation-checked hashing as build receipts, including
+  // the sibling animal-island-ui sources. Do not invent a second input catalog.
+  return snapshotReleaseInputs(root)
 }
 
 function compareSnapshots(before, after) {
@@ -118,29 +99,34 @@ function writeJson(filePath, payload) {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2))
-  if (options.help) {
-    printHelp()
-    return
-  }
-
-  const startedAt = new Date()
-  const initial = snapshotInputs()
+async function observeSourceStability(options, { snapshot = snapshotInputs, now = Date.now, wait = sleep } = {}) {
+  const startedAt = new Date(now())
+  const initial = snapshot()
   let latest = initial
-  const deadline = Date.now() + options.durationMs
+  const deadline = now() + options.durationMs
   let probes = 1
+  const observed = { changed: new Map(), added: new Map(), removed: new Map() }
 
-  while (Date.now() < deadline) {
-    await sleep(Math.min(options.intervalMs, Math.max(0, deadline - Date.now())))
-    latest = snapshotInputs()
+  while (now() < deadline) {
+    await wait(Math.min(options.intervalMs, Math.max(0, deadline - now())))
+    const next = snapshot()
+    const delta = compareSnapshots(latest, next)
     probes += 1
+    for (const kind of Object.keys(observed)) {
+      for (const item of delta[kind]) {
+        // Retain the first observed transition per path/kind, not just the last
+        // probe. A concurrent edit followed by a revert is still an unsafe window.
+        if (!observed[kind].has(item.path)) observed[kind].set(item.path, { ...item, firstObservedProbe: probes })
+      }
+    }
+    latest = next
   }
 
-  const endedAt = new Date()
-  const comparison = compareSnapshots(initial, latest)
+  const endedAt = new Date(now())
+  const comparison = Object.fromEntries(Object.entries(observed).map(([kind, entries]) => [kind, [...entries.values()]]))
+  const affected = new Set(Object.values(comparison).flat().map(item => item.path))
   const ok = comparison.added.length === 0 && comparison.removed.length === 0 && comparison.changed.length === 0
-  const payload = {
+  return {
     schema: 'islemind.release-source-stability.v1',
     generatedAt: endedAt.toISOString(),
     ok,
@@ -159,19 +145,33 @@ async function main() {
     changed: comparison.changed,
     added: comparison.added,
     removed: comparison.removed,
-    unchangedCount: comparison.unchangedCount,
+    unchangedCount: initial.filter(item => !affected.has(item.path)).length,
+    observationScope: 'sampled-inputs-only',
   }
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2))
+  if (options.help) {
+    printHelp()
+    return
+  }
+  const payload = await observeSourceStability(options)
   writeJson(options.output, payload)
 
-  if (!ok) {
-    console.error(`Release source stability failed: ${comparison.changed.length} changed, ${comparison.added.length} added, ${comparison.removed.length} removed. Evidence: ${path.relative(root, options.output).replace(/\\/g, '/')}`)
+  if (!payload.ok) {
+    console.error(`Release source stability failed: ${payload.changedCount} changed, ${payload.addedCount} added, ${payload.removedCount} removed. Evidence: ${path.relative(root, options.output).replace(/\\/g, '/')}`)
     process.exitCode = 1
     return
   }
-  console.log(`Release source stability passed (${latest.length} inputs, ${probes} probes, ${payload.durationMs}ms). Evidence: ${path.relative(root, options.output).replace(/\\/g, '/')}`)
+  console.log(`Release source stability passed (${payload.inputCount} inputs, ${payload.probes} probes, ${payload.durationMs}ms; sampled inputs only, not a workspace lock). Evidence: ${path.relative(root, options.output).replace(/\\/g, '/')}`)
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error))
-  process.exitCode = 1
-})
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : String(error))
+    process.exitCode = 1
+  })
+}
+
+module.exports = { observeSourceStability, parseArgs }

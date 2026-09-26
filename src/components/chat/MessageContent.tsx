@@ -6,6 +6,7 @@ import type { RenderRules } from 'react-native-markdown-display'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { ThemeExpressionSurface } from '@/components/ui/isle/ThemeExpressionSurface'
@@ -1107,6 +1108,7 @@ function RichCard({ isUser, children }: { isUser: boolean; children: ReactNode }
         shadowRadius: isUser ? 0 : material?.shadowBlur ?? 0,
         shadowOffset: { width: 0, height: isUser ? 0 : material?.shadowOffsetY ?? 0 },
         elevation: isUser ? 0 : material?.elevation ?? 0,
+        ...(colors.ui.liquidGlass ? glassShadowStyle(colors, isUser ? 'none' : 'control') : {}),
       }}
     >
       {children}

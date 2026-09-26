@@ -19,6 +19,8 @@ export const BUILT_IN_CAPABILITY_TOOL_NAMES = [
   'crawl_web',
   'read_file',
   'edit_file',
+  'list_files',
+  'search_files',
 ] as const
 
 export type BuiltInCapabilityToolName = typeof BUILT_IN_CAPABILITY_TOOL_NAMES[number]
@@ -74,7 +76,7 @@ export interface BuiltInCapabilityExecutionResult extends ExternalToolExecutionR
   capabilityOutcome: BuiltInCapabilityOutcome
 }
 
-export type BuiltInCapabilityAdapter = ToolAdapter & {
+export interface BuiltInCapabilityAdapter extends ToolAdapter {
   readonly definition: ToolAdapter['definition'] & {
     readonly id: `builtin:${string}:${BuiltInCapabilityToolName}`
     readonly source: 'builtin'
@@ -103,6 +105,8 @@ const BUILT_IN_CAPABILITY_TOOL_POLICIES: Readonly<Record<
   crawl_web: { permissions: ['network.remote'], requiresConfirmation: false },
   read_file: { permissions: ['files.read'], requiresConfirmation: false },
   edit_file: { permissions: ['files.read', 'files.write'], requiresConfirmation: true },
+  list_files: { permissions: ['files.read'], requiresConfirmation: false },
+  search_files: { permissions: ['files.read'], requiresConfirmation: false },
 }
 
 /** Returns a clone so callers cannot mutate the canonical capability policy. */
@@ -260,6 +264,30 @@ export interface BuiltInWorkspaceFileReadResult extends BuiltInWorkspaceFileInfo
   text: string
 }
 
+export interface BuiltInWorkspaceFileQuery {
+  directory: string
+  limit: number
+  afterPath?: string
+  /** Literal, case-sensitive text, never a regular expression or SQL pattern. */
+  query?: string
+}
+
+export interface BuiltInWorkspaceFileQueryEntry extends BuiltInWorkspaceFileInfo {
+  /** Bounded excerpt of the first match; absent for listing. */
+  snippet?: string
+}
+
+export interface BuiltInWorkspaceFilePage {
+  files: readonly BuiltInWorkspaceFileQueryEntry[]
+  nextAfterPath?: string
+}
+
+/** Discovers only the application-owned workspace, not arbitrary device paths. */
+export interface BuiltInWorkspaceFileQueryPort {
+  readonly workspaceScopeId: string
+  queryFiles(input: BuiltInWorkspaceFileQuery, options: { signal: AbortSignal }): Promise<BuiltInWorkspaceFilePage>
+}
+
 export type BuiltInWorkspaceFileEditResult =
   | {
       status: 'applied' | 'replayed'
@@ -322,6 +350,7 @@ export interface BuiltInCapabilityAdapterDependencies {
   remoteWebCrawl?: BuiltInRemoteWebCrawlPort
   workspaceFileRead?: BuiltInWorkspaceFileReadPort
   workspaceFiles?: BuiltInWorkspaceFilePort
+  workspaceFileQuery?: BuiltInWorkspaceFileQueryPort
   now?: () => number
 }
 
@@ -382,6 +411,20 @@ const BUILT_IN_CAPABILITY_TOOL_DESCRIPTORS: readonly ExternalToolDescriptor[] = 
       mimeType: { type: 'string', maxLength: 128 },
     }, ['path', 'text', 'expectedRevision']),
   },
+  ...(['list_files', 'search_files'] as const).map((name): ExternalToolDescriptor => ({
+    name,
+    description: name === 'list_files'
+      ? 'List a bounded page of app-owned workspace files, recursively within directory. Returns exact paths and revisions; continue with nextAfterPath. Does not enumerate device files or Knowledge imports.'
+      : 'Find a literal case-sensitive text match in app-owned workspace files. Returns a bounded first-match excerpt per file and exact revisions. Continue with nextAfterPath; read_file retrieves content before an edit.',
+    permission: 'read-only',
+    enabled: true,
+    inputSchema: objectSchema({
+      directory: { type: 'string', maxLength: 512, description: 'workspace or a subdirectory such as workspace/notes; defaults to workspace.' },
+      afterPath: { type: 'string', maxLength: 512, description: 'Exact nextAfterPath from the preceding page with the same directory/query. Live view, not a snapshot.' },
+      limit: { type: 'integer', minimum: 1, maximum: 20 },
+      ...(name === 'search_files' ? { query: { type: 'string', minLength: 1, maxLength: 200 } } : {}),
+    }, name === 'search_files' ? ['query'] : []),
+  })),
 ]
 
 export function listBuiltInCapabilityToolDescriptors(input: {

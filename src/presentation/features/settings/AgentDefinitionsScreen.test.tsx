@@ -1,6 +1,6 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
-import { createAgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
-import { AgentDefinitionConflictError } from '@/modules/assistant-runtime/agentDefinitionRepository'
+import { createAgentDefinition } from '@/modules/assistant-runtime'
+import { AgentDefinitionConflictError } from '@/modules/assistant-runtime'
 import { AgentDefinitionsScreen } from './AgentDefinitionsScreen'
 
 const mockTranslate = (key: string, values?: Record<string, unknown>) => values?.name ? `${key}:${values.name}` : key

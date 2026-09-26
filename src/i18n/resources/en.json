@@ -76,7 +76,7 @@
     "title": "Agents",
     "description": "Local, versioned agent definitions and safety limits",
     "instructionsSearch": "Agent instructions",
-    "managementOnly": "Definition management only. Saving or importing does not select an agent, start a run, or enable background execution. Chat does not yet use these definitions.",
+    "managementOnly": "Manage agent definitions here. Open Agent tasks from a conversation to choose an agent and start a task. Saving or importing a definition does not automatically start a task or enable background execution.",
     "dataOnly": "Files contain data only: no provider endpoints, credentials, permission grants, or executable hooks. Import previews a new local copy; Save is required.",
     "create": "New agent",
     "import": "Import JSON",
@@ -1263,6 +1263,103 @@
     "readyToSend": "Ready to send",
     "generating": "Generating",
     "responseStreaming": "Generating response",
+    "activity": {
+      "preparing": {
+        "active": "Preparing reply",
+        "done": "Reply prepared",
+        "idle": "Prepare reply"
+      },
+      "sending": {
+        "active": "Sending request",
+        "done": "Request sent",
+        "idle": "Send request"
+      },
+      "waiting": {
+        "active": "Waiting for model response",
+        "done": "Model response received",
+        "idle": "Wait for model response"
+      },
+      "thinking": {
+        "active": "Thinking",
+        "done": "Thinking completed",
+        "idle": "Thinking"
+      },
+      "working": {
+        "active": "Processing information",
+        "done": "Information processed",
+        "idle": "Process information"
+      },
+      "tool_calling": {
+        "active": "Calling tool",
+        "done": "Called tool",
+        "idle": "Call tool"
+      },
+      "tool_result": {
+        "active": "Tool result received",
+        "done": "Tool result received",
+        "idle": "Tool result"
+      },
+      "generating": {
+        "active": "Generating reply",
+        "done": "Answer generated",
+        "idle": "Generate reply"
+      },
+      "command": {
+        "active": "Running command with {{subject}}",
+        "done": "Ran command with {{subject}}",
+        "idle": "Run command with {{subject}}"
+      },
+      "edit": {
+        "active": "Editing {{subject}}",
+        "done": "Edited {{subject}}",
+        "idle": "Edit {{subject}}"
+      },
+      "search": {
+        "active": "Searching",
+        "done": "Search completed",
+        "idle": "Search"
+      },
+      "retrieval": {
+        "active": "Retrieving information",
+        "done": "Information retrieved",
+        "idle": "Retrieve information"
+      },
+      "tool": {
+        "active": "Running {{subject}}",
+        "done": "Ran {{subject}}",
+        "idle": "Run {{subject}}"
+      },
+      "tool_request": {
+        "active": "Requesting {{subject}}",
+        "done": "Requested {{subject}}",
+        "idle": "Request {{subject}}"
+      },
+      "error": {
+        "active": "Failed",
+        "done": "Failed",
+        "idle": "Failed"
+      },
+      "cancelled": {
+        "active": "Cancelled",
+        "done": "Cancelled",
+        "idle": "Cancelled"
+      },
+      "state": {
+        "pending": "Queued",
+        "error": "Failed",
+        "cancelled": "Cancelled",
+        "skipped": "Skipped",
+        "waiting": "Awaiting confirmation",
+        "incomplete": "Incomplete"
+      },
+      "detail": {
+        "summary": "Thinking summary",
+        "input": "Input",
+        "output": "Result"
+      },
+      "expand": "Expand this activity",
+      "collapse": "Collapse this activity"
+    },
     "lifecycle": {
       "preparing": "Preparing response",
       "sending": "Sending request",
@@ -1581,7 +1678,7 @@
     "localKnowledge": "Local knowledge",
     "webSearch": "Web search",
     "modelContextCompression": "Compress context with the current model",
-    "modelContextCompressionHint": "When the provider has no native compaction, the selected model summarizes earlier turns. Each compaction sends one extra request and counts toward usage; local structured compression is used when this is off.",
+    "modelContextCompressionHint": "Model compaction sends an extra request and may incur charges. When off, local structured compression is used.",
     "systemStatusNotifications": "System status notifications",
     "systemStatusNotificationsDescription": "Shows active generation in Android notifications. Supported systems may promote it into a top capsule. Notifications present status only and do not guarantee background generation or reply delivery.",
     "systemStatusNotificationsStatusChecking": "Reading this device's system notification capability. Notifications do not guarantee background generation.",
@@ -2372,6 +2469,7 @@
     "importDoneMessage": "{{count}} providers imported and disabled by default.",
     "importFailed": "Import failed",
     "importFailedMessage": "Import did not finish. Check the content and try again.",
+    "importSavePending": "The configuration was applied, but saving has not finished. Retry will not import duplicates. Closing will not undo the applied configuration.",
     "importProgress": {
       "parsing": "Parsing import content",
       "saving": "Saving providers",
@@ -3179,6 +3277,12 @@
     }
   },
   "updates": {
+    "cancelDownload": "Cancel download or verification",
+    "cancelling": "Cancelling…",
+    "cancelled": "Update cancelled. You can check again to retry.",
+    "installInProgress": "An update is already in progress. Please try again later.",
+    "openGooglePlay": "Update in Google Play",
+    "storeOpenFailed": "Could not open Google Play. Search for IsleMind in the store.",
     "never": "Never",
     "unknown": "Unknown",
     "androidOnly": "APK updates are only available on Android.",
@@ -3749,6 +3853,7 @@
     "editOverride": "Edit price",
     "deleteOverride": "Delete price",
     "noOverrides": "No custom prices",
+    "pricingRequiresModel": "Add a provider and a selectable model in Providers before adding a price.",
     "inputPrice": "Input price",
     "outputPrice": "Output price",
     "selectProvider": "Select provider",
@@ -3823,6 +3928,7 @@
     "itemCount": "{{count}} settings",
     "closeManual": "Close guide",
     "contents": "Contents",
+    "chapterContents": "On this page",
     "searchManual": "Search the guide",
     "notFound": "Chapter not found",
     "offline": "Available offline",

@@ -5,7 +5,7 @@
 <h1 align="center">IsleMind</h1>
 
 <p align="center">
-  A local-first, provider-controlled AI workspace for Android
+  A local-first, execution-controlled on-device Agent platform for Android
 </p>
 
 <p align="center">
@@ -14,7 +14,13 @@
 
 ## What IsleMind is
 
-IsleMind is a React Native + Expo Android app that puts model providers, conversations, knowledge, memory, and agentic tooling into a single, offline-capable workspace. It treats your data as yours: conversations, settings, and provider credentials stay on the device unless you explicitly wire up a network call.
+IsleMind is a React Native + Expo on-device Agent platform combining model providers, conversations, knowledge, memory, and governed tool execution. It treats your data as yours: conversations, settings, and provider credentials stay on the device unless you explicitly wire up a network call.
+
+### The Agent loop
+
+**LLM decision → Harness scheduling and constraints → on-device execution → receipt → LLM decision.**
+
+The LLM proposes actions; the Harness freezes context/tool scope, checks arguments, permission and budgets, and owns durable execution, confirmation, cancellation and recovery. Tasks and platform adapters execute authorized local capabilities and return attributable results. There is no unrestricted shell, permission bypass or automatic replay of uncertain effects. On-device control does not mean all LLM inference is offline: configured providers and network tools still use the network. See [architecture and execution boundaries](docs/architecture/architecture.md#16-agent-harness).
 
 ## Capabilities at a glance
 
@@ -87,14 +93,17 @@ distribution checksum again after native regeneration.
 ## Get the source
 
 ```bash
-git clone --branch rn https://github.com/domidoremi/animal-island-ui.git
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
-bun install
+export ANIMAL_ISLAND_UI_REF='<full paired UI commit SHA>'
+node scripts/prepare-animal-island-ui.js
+bun install --frozen-lockfile
 bun run doctor
 ```
 
 The RN theme fork must be a sibling directory. `bun install` links it and builds its declarations; fix reusable theme components in that fork, not in IsleMind. See [UI integration](src/components/ui/isle/README.md) for ownership and CI/EAS setup.
+
+Replace the placeholder with the full UI revision paired with these application sources, not a moving branch or a HEAD that omits required local changes. Preparation rejects missing/mismatched pins and leaves existing work untouched. GitHub jobs read the `ANIMAL_ISLAND_UI_REF` repository variable; configure the same value separately for EAS. See [release prerequisites](docs/release/google-play.md#配套构建输入与并发边界) for the current uncommitted-source limitation.
 
 ## Run on Android
 

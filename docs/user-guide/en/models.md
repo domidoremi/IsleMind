@@ -4,7 +4,7 @@ slug: "models"
 title: "Models & answers"
 updatedAt: "2026-09-24"
 reviewedAt: "2026-09-24"
-reviewedSourceHash: "0a20fa683aa80c243aec783ba6d1fd3fcc9f9d956f0fa8f464d119045dafd906"
+reviewedSourceHash: "fc35fbf27b3169c3642377e0e1958f2555f812a9e671b420389eee34c1c63e3c"
 ---
 # Models & answers
 
@@ -38,7 +38,8 @@ For 401/403 check credentials and permission; for 404 check address, protocol, a
 ## Generation parameters
 
 - **Model default** omits the custom value. The model and provider decide; this is not one universal number.
-- **Custom** offers a preview slider, step buttons, and exact input. Releasing the slider commits once; interrupted gestures do not write. Completed exact input uses the existing range validation.
+- **Custom** offers a preview slider, step buttons, and exact input. Releasing the slider commits once; interrupted gestures do not write. Exact input requires Save and uses the existing range validation. Blur, folding, and reading the guide do not submit it.
+- Save or reload pending exact input before using the slider, step buttons, or default selector, so those actions cannot overwrite your draft. Workflow numbers and the assistant name also require explicit saving.
 - Temperature affects sampling, not factual accuracy. A larger output ceiling can increase usage; the model may impose a lower effective limit.
 - Undo restores committed preferences only where a later edit has not changed the same field.
 
@@ -48,3 +49,5 @@ For 401/403 check credentials and permission; for 404 check address, protocol, a
 Open an existing provider to edit its connection, credentials, and models directly. The guide opens above the current editor without saving. Leaving or closing offers Keep editing or Discard changes.
 
 Saved means persistence completed. A failure keeps your input for retry. On an external-change warning, discard the draft and reopen rather than overwriting newer configuration. Saving does not automatically test or enable a provider. Model tests and usage queries are separate explicit actions and may contact or incur charges from the provider.
+
+Batch import also waits for saving to finish before asking whether to enable providers. If configuration was applied but saving failed, the window keeps your input and offers Retry without adding duplicates or overwriting later changes. Closing at that point does not undo applied data. Discarding an unsubmitted draft clears it; late file or clipboard reads cannot restore it.

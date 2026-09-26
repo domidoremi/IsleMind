@@ -177,6 +177,7 @@ async function runOnnxInitializationRecoveryTests() {
   let tokenLimit = 8
   let lastFeeds
   let sessionCreates = 0
+  let sessionCreateHook
   let outputFactory
   let finishRun
   let runStarted
@@ -225,6 +226,7 @@ async function runOnnxInitializationRecoveryTests() {
       InferenceSession: {
         async create(uri) {
           sessionCreates += 1
+          await sessionCreateHook?.()
           if (failSession) {
             failSession = false
             throw sessionFailure
@@ -259,13 +261,23 @@ async function runOnnxInitializationRecoveryTests() {
     failSession = true
     sessionCreates = 0
     tokenizerReads = 0
-    const first = await Promise.allSettled([sessionProvider.embed('hello'), sessionProvider.embed('world')])
+    let initializationEntered, finishInitialization
+    const initializationStarted = new Promise(resolve => { initializationEntered = resolve })
+    const initializationGate = new Promise(resolve => { finishInitialization = resolve })
+    sessionCreateHook = () => { initializationEntered(); return initializationGate }
+    const initializing = Promise.allSettled([sessionProvider.embed('hello'), sessionProvider.embed('world')])
+    await initializationStarted
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(sessionCreates, 1, 'queued embedding cannot allocate a second native session during initialization')
+    sessionCreateHook = undefined
+    finishInitialization()
+    const first = await initializing
     assert.deepEqual(first, [
       { status: 'rejected', reason: sessionFailure },
-      { status: 'rejected', reason: sessionFailure },
-    ], 'concurrent callers receive the same initialization failure')
-    assert.equal(sessionCreates, 1, 'concurrent embeddings share one pending native session')
-    assert.deepEqual(await sessionProvider.embed('hello'), [0.6, 0.8], 'a failed native session can be retried')
+      { status: 'fulfilled', value: [0.6, 0.8] },
+    ], 'serialized admission lets the next queued caller retry a failed session without poisoning its work')
+    assert.equal(sessionCreates, 2, 'the queued retry starts only after the failed initialization settles')
+    assert.deepEqual(await sessionProvider.embed('hello'), [0.6, 0.8], 'the recovered native session can be reused')
     assert.deepEqual(await sessionProvider.embed('world'), [0.6, 0.8], 'a successful native session remains reusable')
     assert.equal(sessionCreates, 2, 'only the failed session is evicted')
     assert.equal(tokenizerReads, 1, 'session failure does not evict the successful tokenizer')
@@ -423,22 +435,26 @@ async function runOnnxInitializationRecoveryTests() {
     assert.deepEqual(await direct.embed('hello', { signal: healthy.signal }), [0.6, 0.8], 'direct embed also forwards its admission signal')
 
     let sharedReady, finishShared, sharedCount = 0
-    const bothEntered = new Promise(resolve => { sharedReady = resolve })
+    const firstEntered = new Promise(resolve => { sharedReady = resolve })
     const sharedGate = new Promise(resolve => { finishShared = resolve })
     const cancelledPeer = new AbortController()
     modelResolutionHook = async signal => {
       assert.ok(signal === healthy.signal || signal === cancelledPeer.signal)
-      if (++sharedCount === 2) sharedReady()
+      if (++sharedCount === 1) sharedReady()
       await sharedGate
       if (signal.aborted) throw abortError()
     }
     const shared = await createOnnxEmbeddingProvider({ localEmbeddingModelId: 'shared-admission', localEmbeddingModelSource: 'downloaded' })
     const peers = Promise.allSettled([shared.available({ signal: cancelledPeer.signal }), shared.available({ signal: healthy.signal })])
-    await bothEntered; cancelledPeer.abort(); finishShared()
+    await firstEntered
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(sharedCount, 1, 'model verification shares the serialized local-heavy lane')
+    cancelledPeer.abort(); finishShared()
     const peerResults = await peers
     assert.equal(peerResults[0].status, 'rejected')
     assert.equal(peerResults[0].reason.name, 'AbortError')
     assert.deepEqual(peerResults[1], { status: 'fulfilled', value: true }, 'one cancelled caller cannot cancel a healthy peer')
+    assert.equal(sharedCount, 2, 'the healthy queued caller independently retries cancelled model verification')
     assert.match(shared.model, /shared-admission@/)
     modelResolutionHook = undefined
     await releaseOnnxEmbeddingResources()
@@ -724,9 +740,15 @@ async function run() {
   console.log('Local inference compatibility tests passed')
 }
 
-if (require.main === module) run().catch((error) => {
-  console.error(error)
-  process.exitCode = 1
-})
+if (require.main === module) {
+  let timeout
+  Promise.race([
+    run(),
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Local inference tests did not settle within 30 seconds')), 30_000) }),
+  ]).catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  }).finally(() => clearTimeout(timeout))
+}
 
 module.exports = { run }

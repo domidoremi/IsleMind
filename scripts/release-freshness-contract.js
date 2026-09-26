@@ -17,6 +17,7 @@ const releaseBuildInputPaths = [
   'patches/expo-clipboard@57.0.2.patch',
   'patches/expo-sqlite@57.0.3.patch',
   'patches/query-string@7.1.3.patch',
+  'patches/react-native@0.86.3.patch',
   'babel.config.js',
   'metro.config.js',
   'react-native.config.js',

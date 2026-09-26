@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 
@@ -82,7 +83,7 @@ export function ConversationNavigationRail({
   onInteractionEnd: () => void
 }) {
   const { width: windowWidth } = useWindowDimensions()
-  const { canonicalThemeId, design } = useAppTheme()
+  const { canonicalThemeId, design, colors } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const compact = windowWidth < CONVERSATION_NAVIGATION_MOBILE_BREAKPOINT
@@ -279,6 +280,7 @@ export function ConversationNavigationRail({
             shadowRadius: Math.min(10, navigationMaterial.shadowBlur),
             shadowOffset: { width: 0, height: Math.min(4, navigationMaterial.shadowOffsetY) },
             elevation: Math.min(design.semantic.elevation.level2, navigationMaterial.elevation),
+            ...(colors.ui.liquidGlass ? glassShadowStyle(colors, 'control') : {}),
           }}
         >
           <IslePressable
@@ -321,6 +323,7 @@ export function ConversationNavigationRail({
     shadowRadius: compact ? navigationMaterial.shadowBlur : visual.shadowRadius,
     shadowOffset: { width: 0, height: compact ? navigationMaterial.shadowOffsetY : visual.shadowOffsetY },
     elevation: compact ? navigationMaterial.elevation : visual.shadowOpacity ? design.semantic.elevation.level2 : 0,
+    ...(colors.ui.liquidGlass ? glassShadowStyle(colors, 'control') : {}),
   }
 
   const previousControl = (
@@ -428,7 +431,7 @@ export function ConversationNavigationRail({
             justifyContent: 'center',
             alignItems: 'center',
             zIndex: 34,
-            elevation: 2,
+            elevation: colors.ui.liquidGlass ? 0 : 2,
           }}
     >
       <MotiView

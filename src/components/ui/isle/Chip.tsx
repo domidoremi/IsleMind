@@ -75,7 +75,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
         style,
       ]}
     >
-      <Text style={{ color: foreground, fontSize: 12, lineHeight: 16, fontWeight: family === 'material' ? '500' : '600', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
+      <Text style={{ color: foreground, fontSize: 14, lineHeight: 20, fontWeight: family === 'material' ? '500' : '600', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
     </MotiView>
   )
 }

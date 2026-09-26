@@ -1,2 +1,2 @@
-import { createProviderTokenCalibration } from '@/modules/providers/providerTokenCalibration'
+import { createProviderTokenCalibration } from '@/modules/providers'
 export const providerTokenCalibration = createProviderTokenCalibration()

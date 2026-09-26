@@ -63,7 +63,11 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
   {"id":"governance.modelBlocklist","category":"privacy","titleKey":"settings.modelBlocklist","route":"/settings/system/governance","section":"governance.modelBlocklist","parentSection":"accessRules","fieldOnly":true,"helpTopic":"privacy","keywords":["modelBlocklist","accessRules"]},
   {"id":"temperature","titleKey":"chat.temperature","section":"generation-temperature","keywords":["temperature 温度 sampling サンプリング"],"category":"models","route":"/settings/preferences","fieldOnly":true,"helpTopic":"models"},
   {"id":"max-tokens","titleKey":"chat.maxTokens","section":"generation-tokens","keywords":["max tokens output 输出上限 最大出力"],"category":"models","route":"/settings/preferences","fieldOnly":true,"helpTopic":"models"},
+  { id: 'workflow-steps', category: 'tools', titleKey: 'preferences.agentWorkflowMaxSteps', route: '/settings/preferences', section: 'workflow-steps', parentSection: 'workflow', fieldOnly: true, helpTopic: 'tools', keywords: ['agentWorkflowMaxSteps max steps 步数 工作流 ワークフロー 最大ステップ'] },
+  { id: 'workflow-tools', category: 'tools', titleKey: 'preferences.agentWorkflowMaxToolCalls', route: '/settings/preferences', section: 'workflow-tools', parentSection: 'workflow', fieldOnly: true, helpTopic: 'tools', keywords: ['agentWorkflowMaxToolCallsPerStep tool calls 工具调用上限 ツール呼び出し上限'] },
+  { id: 'workflow-output', category: 'tools', titleKey: 'preferences.agentWorkflowOutputLimit', route: '/settings/preferences', section: 'workflow-output', parentSection: 'workflow', fieldOnly: true, helpTopic: 'tools', keywords: ['agentWorkflowOutputCharLimit workflow output 工作流 输出 字符数 出力文字数'] },
   {"id":"rag-profile","titleKey":"contextPanel.ragProfile","section":"rag-profile","keywords":["RAG fast balanced deep offline 检索 快速 均衡 深入 离线 オフライン"],"category":"knowledge","route":"/settings/context","fieldOnly":true,"helpTopic":"search"},
+  { id: 'local-model-mirror', category: 'knowledge', titleKey: 'contextPanel.localModel.mirrorBaseUrl', route: '/settings/context', section: 'local-model-mirror', parentSection: 'rag-profile', fieldOnly: true, helpTopic: 'search', keywords: ['local model download mirror address URL 本地模型 下载 镜像地址 镜像源 ローカルモデル ダウンロード ミラーアドレス'] },
   {"id":"search-provider","titleKey":"settings.search","section":"search-provider","keywords":["tavily google bing search 联网搜索 検索エンジン"],"category":"knowledge","route":"/settings/context","fieldOnly":true,"helpTopic":"search"},
 ]
 
@@ -77,6 +81,9 @@ export function searchSettingsIndex<T extends { searchText: string }>(index: rea
   const words = normalizeSettingsQuery(query).split(/\s+/).filter(Boolean)
   return words.length ? index.filter(entry => words.every(word => entry.searchText.includes(word))) : []
 }
-export function settingsHelpTopic(pathname: string): string {
-  return SETTINGS_DESTINATIONS.find(entry => entry.route === pathname)?.helpTopic ?? 'quick-start'
+export function settingsHelpTopic(pathname: string, section?: string): string {
+  const destinations = SETTINGS_DESTINATIONS.filter(entry => entry.route === pathname)
+  return destinations.find(entry => section && entry.section === section)?.helpTopic
+    ?? destinations[0]?.helpTopic
+    ?? 'quick-start'
 }

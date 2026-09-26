@@ -76,7 +76,7 @@
     "title": "智能体",
     "description": "管理本地、带版本的智能体定义与安全限制",
     "instructionsSearch": "智能体指令",
-    "managementOnly": "此页面仅管理定义。保存或导入不会选择智能体、启动任务或启用后台执行。目前聊天尚未使用这些定义。",
+    "managementOnly": "此页面用于管理智能体定义。请从会话中的「Agent 任务」入口选择智能体并启动任务。保存或导入定义不会自动启动任务或启用后台执行。",
     "dataOnly": "文件仅包含数据，不含供应商端点、凭据、权限授权或可执行钩子。导入会预览一个新的本地副本，需手动保存。",
     "create": "新建智能体",
     "import": "导入 JSON",
@@ -1263,6 +1263,103 @@
     "readyToSend": "准备发送",
     "generating": "生成中",
     "responseStreaming": "生成回答中",
+    "activity": {
+      "preparing": {
+        "active": "正在准备回复",
+        "done": "回复准备完成",
+        "idle": "准备回复"
+      },
+      "sending": {
+        "active": "正在发送请求",
+        "done": "请求已发送",
+        "idle": "发送请求"
+      },
+      "waiting": {
+        "active": "正在等待模型响应",
+        "done": "已收到模型响应",
+        "idle": "等待模型响应"
+      },
+      "thinking": {
+        "active": "思考中",
+        "done": "思考已完成",
+        "idle": "思考"
+      },
+      "working": {
+        "active": "正在处理相关信息",
+        "done": "相关信息处理完成",
+        "idle": "处理相关信息"
+      },
+      "tool_calling": {
+        "active": "正在调用工具",
+        "done": "已调用工具",
+        "idle": "调用工具"
+      },
+      "tool_result": {
+        "active": "工具结果已返回",
+        "done": "工具结果已返回",
+        "idle": "工具结果"
+      },
+      "generating": {
+        "active": "正在生成回答",
+        "done": "回答生成完成",
+        "idle": "生成回答"
+      },
+      "command": {
+        "active": "正在使用 {{subject}} 运行命令",
+        "done": "已使用 {{subject}} 运行命令",
+        "idle": "使用 {{subject}} 运行命令"
+      },
+      "edit": {
+        "active": "正在编辑 {{subject}}",
+        "done": "已编辑 {{subject}}",
+        "idle": "编辑 {{subject}}"
+      },
+      "search": {
+        "active": "正在搜索",
+        "done": "搜索完成",
+        "idle": "搜索"
+      },
+      "retrieval": {
+        "active": "正在检索资料",
+        "done": "资料检索完成",
+        "idle": "检索资料"
+      },
+      "tool": {
+        "active": "正在运行 {{subject}}",
+        "done": "已运行 {{subject}}",
+        "idle": "运行 {{subject}}"
+      },
+      "tool_request": {
+        "active": "正在请求调用 {{subject}}",
+        "done": "已请求调用 {{subject}}",
+        "idle": "请求调用 {{subject}}"
+      },
+      "error": {
+        "active": "失败",
+        "done": "失败",
+        "idle": "失败"
+      },
+      "cancelled": {
+        "active": "已取消",
+        "done": "已取消",
+        "idle": "已取消"
+      },
+      "state": {
+        "pending": "等待执行",
+        "error": "失败",
+        "cancelled": "已取消",
+        "skipped": "已跳过",
+        "waiting": "等待确认",
+        "incomplete": "未完成"
+      },
+      "detail": {
+        "summary": "思考摘要",
+        "input": "输入",
+        "output": "结果"
+      },
+      "expand": "展开此项详情",
+      "collapse": "收起此项详情"
+    },
     "lifecycle": {
       "preparing": "正在准备回复",
       "sending": "正在发送请求",
@@ -1581,7 +1678,7 @@
     "localKnowledge": "本机知识库",
     "webSearch": "联网搜索",
     "modelContextCompression": "用当前模型压缩上下文",
-    "modelContextCompressionHint": "服务商不支持原生压缩时，由当前选中模型摘要较早的对话。每次压缩会额外发起一次请求并计入用量；关闭时使用本地结构化压缩。",
+    "modelContextCompressionHint": "模型压缩会额外请求，可能产生费用。关闭时使用本地结构化压缩。",
     "systemStatusNotifications": "系统状态通知",
     "systemStatusNotificationsDescription": "生成回复时在 Android 通知区显示持续状态；支持的系统可能提升为顶部胶囊。通知仅展示状态，不保证切到后台后继续生成或接收回复。",
     "systemStatusNotificationsStatusChecking": "正在读取当前设备的系统通知能力；通知不会保证后台继续生成。",
@@ -2370,6 +2467,7 @@
     "importDoneMessage": "已导入 {{count}} 个供应商，默认停用。",
     "importFailed": "导入失败",
     "importFailedMessage": "导入未完成，请检查内容后重试。",
+    "importSavePending": "配置已提交，但保存尚未完成。重试不会重复导入；关闭窗口不会撤销已提交的配置。",
     "importProgress": {
       "parsing": "正在解析导入内容",
       "saving": "正在保存服务商",
@@ -3177,6 +3275,12 @@
     }
   },
   "updates": {
+    "cancelDownload": "取消下载或校验",
+    "cancelling": "正在取消…",
+    "cancelled": "更新已取消，可重新检查后下载。",
+    "installInProgress": "已有更新任务正在运行，请稍后再试。",
+    "openGooglePlay": "前往 Google Play 更新",
+    "storeOpenFailed": "无法打开 Google Play，请在商店中搜索 IsleMind。",
     "googlePlayManaged": "请在 Google Play 中管理应用更新。此版本不会检查、下载或安装外部 APK 更新。",
     "never": "从未",
     "unknown": "未知",
@@ -3747,6 +3851,7 @@
     "editOverride": "编辑价格",
     "deleteOverride": "删除价格",
     "noOverrides": "暂无自定义价格",
+    "pricingRequiresModel": "请先在「服务商」中添加服务商和可选模型，再添加价格。",
     "inputPrice": "输入价格",
     "outputPrice": "输出价格",
     "selectProvider": "选择供应商",
@@ -3821,6 +3926,7 @@
     "itemCount": "{{count}} 项设置",
     "closeManual": "关闭手册",
     "contents": "目录",
+    "chapterContents": "本章目录",
     "searchManual": "搜索手册",
     "notFound": "未找到该章节",
     "offline": "离线可用",

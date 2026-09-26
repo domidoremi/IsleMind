@@ -37,6 +37,57 @@ function setup(overrides: Partial<AndroidAgentExecutionAdapterDependencies> = {}
 }
 
 describe('Android Agent execution resource port', () => {
+  it('lazily registers one no-work scheduler task without granting execution authority', async () => {
+    const registerHeadlessTask = jest.fn()
+    const { native } = setup()
+    Object.assign(native, { scheduleExecutionTimer: jest.fn(async () => true), cancelExecutionTimer: jest.fn(), addListener: jest.fn(), removeListeners: jest.fn() })
+    jest.doMock('react-native', () => ({ Platform: { OS: 'android', Version: 31 },
+      NativeModules: { AndroidAgentExecution: native }, AppRegistry: { registerHeadlessTask },
+      NativeEventEmitter: class { addListener() { return { remove: jest.fn() } } } }))
+    try {
+      jest.isolateModules(() => {
+        const adapter = require('./androidAgentExecution') as typeof import('./androidAgentExecution')
+        const first = adapter.createExpoAndroidAgentExecutionPort()
+        expect(registerHeadlessTask).not.toHaveBeenCalled()
+        expect(first.isAvailable()).toBe(true)
+        expect(adapter.createExpoAndroidAgentExecutionPort().isAvailable()).toBe(true)
+      })
+      expect(registerHeadlessTask).toHaveBeenCalledTimes(1)
+      expect(registerHeadlessTask.mock.calls[0][0]).toBe('IsleMindAgentExecutionLease')
+      const factory = registerHeadlessTask.mock.calls[0][1]
+      let completed = false
+      void factory()({ runId: 'untrusted-data', resume: true }).then(() => { completed = true })
+      await Promise.resolve()
+      expect(completed).toBe(false)
+      expect(native.acquire).not.toHaveBeenCalled()
+      expect(native.renew).not.toHaveBeenCalled()
+      expect(native.getState).not.toHaveBeenCalled()
+    } finally { jest.dontMock('react-native') }
+  })
+
+  it('does not register a native timer task on unsupported platforms', () => {
+    const registerHeadlessTask = jest.fn()
+    jest.doMock('react-native', () => ({ Platform: { OS: 'web', Version: 0 },
+      NativeModules: { AndroidAgentExecution: setup().native }, AppRegistry: { registerHeadlessTask } }))
+    try {
+      jest.isolateModules(() => {
+        const adapter = require('./androidAgentExecution') as typeof import('./androidAgentExecution')
+        expect(adapter.createExpoAndroidAgentExecutionPort().isAvailable()).toBe(false)
+      })
+      expect(registerHeadlessTask).not.toHaveBeenCalled()
+    } finally { jest.dontMock('react-native') }
+  })
+
+  it('refuses a pre-scheduler native binary instead of relying on background frame timers', () => {
+    jest.doMock('react-native', () => ({ Platform: { OS: 'android', Version: 31 }, NativeModules: { AndroidAgentExecution: setup().native } }))
+    try {
+      jest.isolateModules(() => {
+        const adapter = require('./androidAgentExecution') as typeof import('./androidAgentExecution')
+        expect(adapter.createExpoAndroidAgentExecutionPort().isAvailable()).toBe(false)
+      })
+    } finally { jest.dontMock('react-native') }
+  })
+
   it('is a safe unsupported no-op on Web even if a native-looking module is present', async () => {
     const { port, native } = setup({ platform: { os: 'web', version: 0 } })
     expect(port.isAvailable()).toBe(false)

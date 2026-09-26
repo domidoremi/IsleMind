@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import type { Settings } from '@/types/settingsContracts'
 import type { AIProvider, ProviderOperationCode } from '@/types/providerContracts'
 import type { ProviderModelTestEvidenceResult } from './providerModelTestEvidence'
@@ -703,11 +704,11 @@ async function waitForProviderActivationRetry(
 }
 
 function cancellableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
+  if (!signal) return new Promise((resolve) => setExecutionTimeout(resolve, ms))
   return new Promise((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout> | undefined
+    let timeout: ReturnType<typeof setExecutionTimeout> | undefined
     const onAbort = () => {
-      if (timeout !== undefined) clearTimeout(timeout)
+      if (timeout !== undefined) clearExecutionTimeout(timeout)
       signal.removeEventListener('abort', onAbort)
       reject(createProviderActivationAbortError(signal.reason))
     }
@@ -716,7 +717,7 @@ function cancellableDelay(ms: number, signal: AbortSignal | undefined): Promise<
       onAbort()
       return
     }
-    timeout = setTimeout(() => {
+    timeout = setExecutionTimeout(() => {
       signal.removeEventListener('abort', onAbort)
       resolve()
     }, ms)

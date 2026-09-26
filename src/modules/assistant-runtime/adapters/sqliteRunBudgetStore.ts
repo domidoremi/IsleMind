@@ -10,6 +10,7 @@ export interface RunBudgetStore {
   settle(update: RunAttemptUsageUpdate): Promise<void>
   reserveTool(rootRunId: string, operationId: string, now: number): Promise<void>
   setActive(rootRunId: string, active: boolean, now: number, runId?: string): Promise<void>
+  recoverActiveTime(isActiveRoot: (rootRunId: string) => boolean): Promise<readonly string[]>
   clear(): Promise<void>
 }
 
@@ -85,6 +86,47 @@ export function createSqliteRunBudgetStore(provider: SqliteDatabaseProvider): Ru
     },
     reserveTool: (rootRunId, operationId, now) => mutate(rootRunId, (snapshot) => reserveRunTool(snapshot, operationId, now)),
     setActive: (rootRunId, active, now, runId = rootRunId) => mutate(rootRunId, (snapshot) => setRunBudgetActive(snapshot, active, now, runId)),
+    async recoverActiveTime(isActiveRoot) {
+      const db = await database()
+      const recovered: string[] = []
+      let after = ''
+      // Read bounded pages and commit one root at a time. Include terminal/waiting
+      // runs: their last status commit may have preceded a failed budget update.
+      for (;;) {
+        const rows = await db.getAll<{ rootRunId: string }>(
+          `SELECT rootRunId FROM harness_run_budgets
+           WHERE rootRunId > ? AND json_extract(snapshotJson, '$.activeSince') IS NOT NULL
+           ORDER BY rootRunId LIMIT 32`, [after])
+        if (!rows.length) break
+        for (const { rootRunId } of rows) {
+          after = rootRunId
+          await db.transaction(async (tx) => {
+            if (isActiveRoot(rootRunId)) return
+            const snapshot = await read(tx, rootRunId)
+            if (!snapshot || snapshot.activeSince === undefined) return
+            const children = await tx.getAll<{ runId: string }>(
+              'SELECT runId FROM harness_budget_members WHERE rootRunId = ? LIMIT 7', [rootRunId])
+            if (children.length > 6) throw new Error('Root child budget limit exceeded')
+            let lastActivity = snapshot.activeSince
+            for (const runId of [rootRunId, ...children.map((child) => child.runId)]) {
+              const entry = await tx.getFirst<{ occurredAt: number }>(
+                'SELECT occurredAt FROM assistant_run_journal WHERE runId = ? ORDER BY sequence DESC LIMIT 1', [runId])
+              if (entry) {
+                if (!Number.isSafeInteger(entry.occurredAt) || entry.occurredAt < 0) throw new Error('Invalid activity timestamp')
+                lastActivity = Math.max(lastActivity, entry.occurredAt)
+              }
+            }
+            if (isActiveRoot(rootRunId)) return
+            // Wall time after the last durable activity is not evidence of work.
+            // Keep request/tool usage and reservations, including unknown effects.
+            await save(tx, { ...snapshot, activeMs: snapshot.activeMs + lastActivity - snapshot.activeSince,
+              activeSince: undefined, activeRunIds: [] })
+            recovered.push(rootRunId)
+          })
+        }
+      }
+      return recovered
+    },
     async clear() {
       await (await database()).transaction(async (tx) => {
         await tx.run('DELETE FROM harness_attempt_owners')

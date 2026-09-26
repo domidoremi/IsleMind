@@ -2,8 +2,8 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
 import { AgentTasksScreen } from './AgentTasksScreen'
 import { AgentRunScreen } from './AgentRunScreen'
 import { createAgentDefinition, type AssistantRun, type AssistantRunProjection } from '@/modules/assistant-runtime'
-import { createRunBudget } from '@/modules/assistant-runtime/application/runBudget'
-import type { AgentTaskRuntime } from '@/bootstrap/agentTaskRuntime'
+import { createRunBudget } from '@/modules/assistant-runtime'
+import type { AgentTaskPort } from './agentTaskPort'
 import { asAssistantRunId, CHAT_REQUEST_SCHEMA } from '@/core'
 
 jest.mock('expo-router', () => ({ useFocusEffect: (callback: () => void) => require('react').useEffect(callback, [callback]) }))
@@ -35,7 +35,7 @@ function fixture(patch: Partial<AssistantRun> = {}) {
     pause: jest.fn(async () => ({ ok: true, value: run })), cancel: jest.fn(async () => ({ ok: true, value: run })),
     steer: jest.fn(async () => ({ ok: true, value: run })), saveDocument: jest.fn(async () => ({})),
   }
-  return { runtime: runtime as unknown as AgentTaskRuntime, mocks: runtime, run, unsubscribe,
+  return { runtime: runtime as unknown as AgentTaskPort, mocks: runtime, run, unsubscribe,
     emit: async (value: AssistantRun) => { await projection?.({ run: value, journalEntry: { type: 'run.paused' } } as Parameters<AssistantRunProjection>[0]) } }
 }
 

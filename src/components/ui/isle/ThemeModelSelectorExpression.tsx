@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { glassShadowStyle } from './glassShadowStyle'
 import { StyleSheet, Text, View } from 'react-native'
 
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
@@ -300,6 +301,7 @@ function LiquidGlassModelSelector({
           backgroundColor: 'transparent',
           borderColor: 'transparent',
           borderWidth: 0,
+          ...glassShadowStyle(colors, 'none'),
          },
       ]}
     >

@@ -11,6 +11,7 @@ import type { MessageUsage } from '@/types/chatContracts'
 import type { MessageCitation } from '@/types/contextContracts'
 import type { ChatErrorCode } from '@/types/providerContracts'
 import { st } from '@/i18n/service'
+import { modelOperationActivity } from './modelOperationActivity'
 import {
   resolveChatRecoveryMessageId,
   type PlainChatProjectionInput,
@@ -40,6 +41,13 @@ export function createPlainChatProjection(
       }
     }
     projectContextCitations(state, event.contextCitations)
+    const activity = modelOperationActivity(event)
+    if (activity) {
+      useChatStreamingStore.getState().upsertTrace(state.conversationId, state.messageId, activity)
+      useChatStore.getState().transitionMessageLifecycle(state.conversationId, state.messageId,
+        activity.status === 'running' || activity.status === 'pending' ? 'tool_calling' : 'tool_result',
+        { at: event.journalEntry!.occurredAt, traceId: activity.id })
+    }
     if (event.journalEntry?.type === 'stream.event') projectStreamEvent(state, event)
     if (event.journalEntry?.type === 'model-operation.selected') {
       state.suppressTextUntilContinuation = true
@@ -53,7 +61,7 @@ export function createPlainChatProjection(
           state.conversationId,
           state.messageId,
           'tool_result',
-          { at: event.journalEntry.occurredAt },
+          { at: event.journalEntry.occurredAt, ...(activity ? { traceId: activity.id } : {}) },
         )
       }
     }

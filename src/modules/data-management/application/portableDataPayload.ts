@@ -1,4 +1,4 @@
-import { parseAgentDefinitions, type AgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
+import { parseAgentDefinitions, type AgentDefinition } from '@/modules/assistant-runtime'
 import {
   PROVIDER_PLATFORM_DEFAULT_TEMPERATURE,
   defaultProviderCredentialMode,

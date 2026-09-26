@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -19,6 +20,10 @@ import { AppIcon, type AppIconName } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IslePressable, IsleToggle } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useSettingsDraft } from './SettingsEditBoundary'
+import { SettingsHelpButton } from './SettingsHelp'
+
+import { USAGE_PRICING_CONFLICT } from '@/modules/diagnostics'
 
 export type UsageStatisticsTab = 'requests' | 'providers' | 'models'
 export type UsageRequestStatus = 'succeeded' | 'failed' | 'cancelled' | 'other'
@@ -146,6 +151,7 @@ export interface UsagePricingOverride {
   inputPricePerMillion: string
   outputPricePerMillion: string
   currencyLabel: string
+  sourceRevision?: string
 }
 
 export interface UsagePricingModelOption extends UsageFilterOption {
@@ -246,7 +252,7 @@ export interface UsageStatisticsContentProps {
   pricingOverrides: UsagePricingOverride[]
   pricingProviderOptions: UsageFilterOption[]
   pricingModelOptions: UsagePricingModelOption[]
-  onSavePricingOverride: (draft: UsagePricingOverrideDraft) => void | Promise<void>
+  onSavePricingOverride: (draft: UsagePricingOverrideDraft, expectedRevision?: string) => void | Promise<void>
   onDeletePricingOverride: (overrideId: string) => void
   savingPricingOverrideId?: string | 'new' | null
   onExport: (format: UsageExportFormat) => void
@@ -332,6 +338,12 @@ type FilterKey = Exclude<keyof UsageStatisticsFilters, 'includeEstimates'>
 
 interface PricingDraftState extends UsagePricingOverrideDraft {
   key: string
+  original: UsagePricingOverrideDraft
+  sourceRevision?: string
+}
+
+function pricingFormValue(value: UsagePricingOverrideDraft): UsagePricingOverrideDraft {
+  return { id: value.id, providerId: value.providerId, modelId: value.modelId, inputPricePerMillion: value.inputPricePerMillion, outputPricePerMillion: value.outputPricePerMillion }
 }
 
 export function UsageStatisticsContent({
@@ -369,6 +381,7 @@ export function UsageStatisticsContent({
 }: UsageStatisticsContentProps) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const { t } = useTranslation()
   const { width, height, fontScale } = useWindowDimensions()
   const compact = width / fontScale < 430
   const narrow = width < 360
@@ -376,6 +389,12 @@ export function UsageStatisticsContent({
   const [filterSheet, setFilterSheet] = useState<FilterKey | null>(null)
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
   const [pricingDraft, setPricingDraft] = useState<PricingDraftState | null>(null)
+  const [pricingSubmitting, setPricingSubmitting] = useState(false)
+  const [pricingError, setPricingError] = useState<'conflict' | 'saveFailed'>()
+  const pricingSaveLock = useRef(false)
+  const pricingSaving = pricingSubmitting || (!!pricingDraft && (savingPricingOverrideId === pricingDraft.id || (!pricingDraft.id && savingPricingOverrideId === 'new')))
+  function discardPricingDraft() { if (!pricingSaveLock.current) { setPricingDraft(null); setPricingError(undefined) } }
+  const requestClosePricing = useSettingsDraft(Boolean(pricingDraft && JSON.stringify(pricingFormValue(pricingDraft)) !== JSON.stringify(pricingDraft.original)), pricingSaving, discardPricingDraft)
   const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const borderColor = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const mutedSurface = colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
@@ -410,15 +429,20 @@ export function UsageStatisticsContent({
     ? pricingModelOptions.filter((option) => option.providerId === pricingDraft.providerId)
     : []
   const canSavePricing = !!pricingDraft?.providerId && !!pricingDraft.modelId && !!pricingDraft.inputPricePerMillion.trim() && !!pricingDraft.outputPricePerMillion.trim()
-  const pricingSaving = !!pricingDraft && (savingPricingOverrideId === pricingDraft.id || (!pricingDraft.id && savingPricingOverrideId === 'new'))
-
   function openNewPricingOverride() {
+    if (pricingSaveLock.current) return
     const providerId = pricingProviderOptions[0]?.value ?? ''
     const modelId = pricingModelOptions.find((option) => option.providerId === providerId)?.value ?? ''
-    setPricingDraft({ key: `new:${providerId}:${modelId}`, providerId, modelId, inputPricePerMillion: '', outputPricePerMillion: '' })
+    const original = pricingFormValue({ providerId, modelId, inputPricePerMillion: '', outputPricePerMillion: '' })
+    void requestClosePricing(() => { setPricingDraft({ key: `new:${providerId}:${modelId}`, ...original, original }); setPricingError(undefined) })
   }
 
   function openExistingPricingOverride(item: UsagePricingOverride) {
+    if (pricingSaveLock.current) return
+    void requestClosePricing(() => loadPricingOverride(item))
+  }
+
+  function loadPricingOverride(item: UsagePricingOverride) {
     setPricingDraft({
       key: item.id,
       id: item.id,
@@ -426,7 +450,10 @@ export function UsageStatisticsContent({
       modelId: item.modelId,
       inputPricePerMillion: item.inputPricePerMillion,
       outputPricePerMillion: item.outputPricePerMillion,
+      original: pricingFormValue(item),
+      sourceRevision: item.sourceRevision,
     })
+    setPricingError(undefined)
   }
 
   function choosePricingProvider(providerId: string) {
@@ -435,12 +462,23 @@ export function UsageStatisticsContent({
     setPricingDraft((current) => current ? { ...current, providerId, modelId } : current)
   }
 
-  function savePricingOverride() {
-    if (!pricingDraft || !canSavePricing || pricingSaving) return
-    const { key: _key, ...draft } = pricingDraft
-    void Promise.resolve(onSavePricingOverride(draft))
-      .then(() => setPricingDraft(null))
-      .catch(() => undefined)
+  async function savePricingOverride() {
+    if (!pricingDraft || !canSavePricing || pricingSaving || pricingSaveLock.current) return
+    if (pricingDraft.id && pricingOverrides.find(item => item.id === pricingDraft.id)?.sourceRevision !== pricingDraft.sourceRevision) {
+      setPricingError('conflict'); return
+    }
+    pricingSaveLock.current = true
+    setPricingSubmitting(true)
+    setPricingError(undefined)
+    try {
+      await onSavePricingOverride(pricingFormValue(pricingDraft), pricingDraft.sourceRevision)
+      setPricingDraft(null)
+    } catch (error) {
+      setPricingError(error instanceof Error && error.message === USAGE_PRICING_CONFLICT ? 'conflict' : 'saveFailed')
+    } finally {
+      pricingSaveLock.current = false
+      setPricingSubmitting(false)
+    }
   }
 
   const sectionHeader = (title: string, action?: ReactNode) => (
@@ -604,6 +642,11 @@ export function UsageStatisticsContent({
             onPress={openNewPricingOverride}
           />
         ))}
+        {!pricingProviderOptions.length || !pricingModelOptions.length ? (
+          <Text style={[styles.rowMeta, { color: colors.textSecondary, marginBottom: 12 }]}>
+            {t('usage.pricingRequiresModel')}
+          </Text>
+        ) : null}
         {pricingOverrides.length ? (
           <View>
             {pricingOverrides.map((item, index) => (
@@ -718,12 +761,14 @@ export function UsageStatisticsContent({
         visible={pricingDraft !== null}
         title={pricingDraft?.id ? copy.editOverride : copy.addOverride}
         closeLabel={copy.close}
-        onClose={() => setPricingDraft(null)}
+        onClose={() => { void requestClosePricing(() => undefined) }}
         keyboardAware
       >
         {pricingDraft ? (
           <View key={pricingDraft.key} style={styles.pricingForm}>
+            <SettingsHelpButton topic="usage" />
             <OptionChips
+              disabled={pricingSaving}
               label={copy.provider}
               emptyLabel={copy.selectProvider}
               options={pricingProviderOptions}
@@ -731,6 +776,7 @@ export function UsageStatisticsContent({
               onChange={choosePricingProvider}
             />
             <OptionChips
+              disabled={pricingSaving}
               label={copy.model}
               emptyLabel={copy.selectModel}
               options={pricingModels}
@@ -739,20 +785,28 @@ export function UsageStatisticsContent({
             />
             <View style={[styles.priceFields, compact && styles.priceFieldsCompact]}>
               <PriceField
+                disabled={pricingSaving}
                 label={copy.inputPrice}
                 suffix={copy.perMillionTokens}
                 value={pricingDraft.inputPricePerMillion}
                 onChangeText={(inputPricePerMillion) => setPricingDraft((current) => current ? { ...current, inputPricePerMillion } : current)}
               />
               <PriceField
+                disabled={pricingSaving}
                 label={copy.outputPrice}
                 suffix={copy.perMillionTokens}
                 value={pricingDraft.outputPricePerMillion}
                 onChangeText={(outputPricePerMillion) => setPricingDraft((current) => current ? { ...current, outputPricePerMillion } : current)}
               />
             </View>
+            {pricingError ? <Text accessibilityRole="alert" style={[styles.sheetBody, { color: colors.ui.tone.danger.foreground }]}>{t(`settingsWorkspace.${pricingError}`)}</Text> : null}
             <View style={styles.sheetActions}>
-              <IsleButton label={copy.cancel} onPress={() => setPricingDraft(null)} />
+              <IsleButton label={copy.cancel} disabled={pricingSaving} onPress={discardPricingDraft} />
+              {pricingError === 'conflict' ? <IsleButton label={t('settingsWorkspace.reload')} disabled={pricingSaving} onPress={() => {
+                const latest = pricingOverrides.find(item => item.id === pricingDraft.id)
+                if (latest) loadPricingOverride(latest)
+                else discardPricingDraft()
+              }} /> : null}
               <IsleButton
                 tone="primary"
                 label={pricingSaving ? copy.saving : copy.saveOverride}
@@ -968,7 +1022,7 @@ function UsageSheet({ visible, title, closeLabel, onClose, children, keyboardAwa
   )
 }
 
-function OptionChips({ label, emptyLabel, options, value, onChange }: { label: string; emptyLabel: string; options: UsageFilterOption[]; value: string; onChange: (value: string) => void }) {
+function OptionChips({ label, emptyLabel, options, value, onChange, disabled = false }: { label: string; emptyLabel: string; options: UsageFilterOption[]; value: string; onChange: (value: string) => void; disabled?: boolean }) {
   const { colors } = useAppTheme()
   return (
     <View>
@@ -976,7 +1030,7 @@ function OptionChips({ label, emptyLabel, options, value, onChange }: { label: s
       {options.length ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.optionChips}>
           {options.map((option) => (
-            <IslePressable key={option.value} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ selected: value === option.value, checked: value === option.value }} onPress={() => onChange(option.value)} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}>
+            <IslePressable key={option.value} disabled={disabled} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ selected: value === option.value, checked: value === option.value, disabled }} onPress={() => onChange(option.value)} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}>
               <IsleChip active={value === option.value}>{option.label}</IsleChip>
             </IslePressable>
           ))}
@@ -988,12 +1042,13 @@ function OptionChips({ label, emptyLabel, options, value, onChange }: { label: s
   )
 }
 
-function PriceField({ label, suffix, value, onChangeText }: { label: string; suffix: string; value: string; onChangeText: (value: string) => void }) {
+function PriceField({ label, suffix, value, onChangeText, disabled = false }: { label: string; suffix: string; value: string; onChangeText: (value: string) => void; disabled?: boolean }) {
   const { colors } = useAppTheme()
   return (
     <View style={styles.priceField}>
       <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{label}</Text>
       <TextInput
+        editable={!disabled}
         value={value}
         onChangeText={onChangeText}
         keyboardType="decimal-pad"

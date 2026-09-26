@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import type { McpServerConfig } from '@/types/mcpContracts'
 
 export interface McpSettingsExperienceProps {
@@ -67,13 +69,13 @@ function CanonicalMcpExperience({ family, props }: { family: CanonicalMcpFamily;
             const cardBackground = enabled ? design.semantic.color.primaryContainer : panelBackground
             const cardForeground = enabled ? design.semantic.color.onPrimaryContainer : colors.text
             const cardStyle = family === 'liquid-glass'
-              ? { flexGrow: 1, flexBasis: props.compact ? '100%' : '47%', minHeight: 104, padding: 14, borderRadius: design.semantic.radius.extraLarge, backgroundColor: cardBackground, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, shadowColor: design.semantic.elevation.shadowColor, shadowOpacity: design.semantic.elevation.shadowOpacity, shadowRadius: design.semantic.elevation.shadowBlur, shadowOffset: { width: 0, height: design.semantic.elevation.shadowOffsetY }, elevation: design.semantic.elevation.level2 }
+              ? { flexGrow: 1, flexBasis: props.compact ? '100%' : '47%', minHeight: 104, padding: 14, borderRadius: design.semantic.radius.extraLarge, backgroundColor: cardBackground, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, ...glassShadowStyle(colors) }
               : family === 'monet'
                 ? { flexGrow: 1, flexBasis: props.compact ? '100%' : '47%', minHeight: 96, padding: 13, borderRadius: design.semantic.radius.large, backgroundColor: index % 2 === 0 ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border }
                 : { minHeight: 64, paddingHorizontal: 14, paddingVertical: 8, borderRadius: design.semantic.radius.extraLarge, backgroundColor: enabled ? design.semantic.color.primaryContainer : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: panelBorder }
             const typedCardStyle = cardStyle as ViewStyle
             return (
-              <View key={server.id} style={typedCardStyle}>
+              <GlassSurface key={server.id} colors={colors} enabled={family === 'liquid-glass'} style={[typedCardStyle, family === 'liquid-glass' ? { borderWidth: 0 } : null]}>
                 <IslePressable haptic disabled={pending} accessibilityRole="switch" accessibilityLabel={`${server.name}. ${t(enabled ? 'settings.enabledState' : 'settings.disabledState')}`} accessibilityState={{ checked: enabled, disabled: pending }} onPress={() => props.onToggle(server)} style={{ flex: 1, minHeight: 44, justifyContent: 'center', gap: 5 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: enabled ? colors.ui.tone.success.foreground : colors.ui.semantic.chrome.border }} />
@@ -85,7 +87,7 @@ function CanonicalMcpExperience({ family, props }: { family: CanonicalMcpFamily;
                 <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${server.name}. ${t('mcp.showDetails')}`} onPress={() => props.onOpenDetails(server.id)} style={{ position: 'absolute', right: family === 'material' ? 10 : 8, top: family === 'material' ? 8 : 5, minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
                   <AppIcon name="settings" color={enabled ? design.semantic.color.onPrimaryContainer : colors.textSecondary} size={16} />
                 </IslePressable>
-              </View>
+              </GlassSurface>
             )
           })}
         </View>

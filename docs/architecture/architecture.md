@@ -352,10 +352,13 @@ These rules describe required/documented behavior, not newly executed failure ca
 - `settingsRegistry.ts` owns navigation IDs, categories, aliases and help topics, not defaults or user data. Old settings routes remain valid. Search is isolated from Store subscribers and debounced; results do not mount editors.
 - `SettingsEditBoundary` coordinates explicit navigation, native removal/back and Web unload. A busy save blocks departure. Confirmed discard clears parent-owned drafts even if a route remains mounted. Drafts never enter Store, URL, logs or persistent caches; process-death recovery is not promised.
 - API, MCP, Skill and advanced text fields explicitly save. `SettingsFieldSession` retains governance text drafts outside conditional sections. Check the current committed value before applying a draft, use the existing persistence queue, and announce Saved only after it completes. Failed writes retain input; committed memory and durable storage are distinct, and secure-store multi-key writes are not transactional.
+- Usage pricing edits are local sessions too: sheet dismissal and route departure share the draft boundary, while explicit Cancel discards. Failed saves retain input; busy saves disable edits and duplicate submission. Existing overrides carry a source revision, compared and written within the existing SQLite transaction so a restored or concurrently edited price is not overwritten by a stale draft. This adds no schema migration and does not change billing or rate validation.
+- Provider batch imports retain their attempt identity in the editor until persistence finishes. A retry after publication only flushes current configuration, never reimports or restores a stale snapshot; the UI explains that closing does not undo already applied data. Failed provider metadata writes remain retryable in the existing queue, with newer snapshots taking precedence. Discard invalidates pending clipboard/file reads and clears the local credential text.
 - Reversible preferences use field-scoped undo revisions. Later edits, including value changes away and back, must not be overwritten. Permissions, imports and deletion have no generic undo. Sliders preview locally and commit on release, not each frame.
-- The contextual guide is a full-screen reading layer owned by its editor. Opening it dismisses the keyboard without submitting forms. Closing restores the trigger, not input focus. `/help` and `/help/[slug]` reuse the reader independently. Markdown under `docs/user-guide` is the single source; see the documentation index for fingerprint review and CI generation rules.
-- Field location waits for page focus, transition and measured layout. Request identity, leaving, unmounting or user dragging invalidates stale callbacks. Font/width changes use a visible anchor and relative offset; unchanged layouts are not forcibly restored. Native focus, keyboard, large-text and performance claims require platform evidence, not typechecking alone.
-- Android system font changes may still recreate the Activity and discard local editors. Adding `fontScale` to the manifest alone is not a safe retention fix: native text measurement must also update without clipping. Keep the existing native window policy until both layout and editor lifetime are verified together.
+- The contextual guide is a full-screen reading layer owned by its editor. Opening it dismisses the keyboard without submitting forms. Closing restores the activating button, not input focus or an outer wrapper: capture the press event's `currentTarget` during dispatch. Web uses that control's focus; Android's `AndroidAccessibilityFocus` bridge waits for its native window to regain focus before requesting accessibility focus, without opening an IME. Reopening, owner unmount, native detachment and bridge invalidation cancel pending restoration. This requires a rebuilt native host; older hosts fall back to React Native's accessibility event and do not establish reliable Android modal return focus. `/help` and `/help/[slug]` reuse the reader independently. Markdown under `docs/user-guide` is the single source; see the documentation index for fingerprint review and CI generation rules.
+- Field location waits for page focus, transition and measured layout, including native appearance for an initial route at stack index zero. Anchor restoration and search use the same content-height readiness check, preventing scroll clamping against the previous layout. Request identity, layout revision, leaving, unmounting or user dragging invalidates stale callbacks. Font/width changes use a visible anchor and relative offset; unchanged layouts are not forcibly restored. Native focus, keyboard, large-text and performance claims require platform evidence, not typechecking alone.
+- Android dynamic-font retention requires both `plugins/android-font-scale` and the pinned React Native 0.86.3 patch. The Activity handles `fontScale`, updates DeviceInfo/display metrics and remeasures the existing Fabric root even behind a full-screen guide; it does not remount editors or serialize drafts. The backport of [React Native #57246](https://github.com/facebook/react-native/pull/57246) invalidates measurable Yoga nodes on every layout commit, with font-only root invalidation as well. Manifest/Activity handling alone leaves stale text measurements and must not be used without the C++ fix.
+- Isolated Android 35 x86_64 testing covers foreground and background/resume 100% ↔ 200% changes while a guide is open, matching cold-start label dimensions, retaining the draft across rotation and keeping the IME closed on return. This does not establish process-death, real-device, arm64 or iOS behavior. `LayoutMetrics` changes ABI: rebuild RN and its native consumers, never pair patched headers with an old native host. The plugin selects Android source builds and disables iOS precompiled RN/Expo modules for the same ABI reason; iOS compilation/runtime still requires macOS validation. See [native build requirements](../release/google-play.md#动态字号修复的原生构建要求).
 
 Presentation owns routing, screens, feature controllers, localization binding, and reusable visual components. Domain and application layers emit stable codes and parameters, not translated strings.
 
@@ -537,11 +540,67 @@ No open decision blocks local module ownership, strict boundaries, or deletion o
 
 ## 16. Agent Harness
 
+IsleMind is an on-device Agent platform, not a provider UI with tool callbacks:
+
+| Layer | Owner | Authority |
+| --- | --- | --- |
+| LLM decision and reasoning | Providers gateway | Propose the next operation or final answer from context and receipts; no device authority |
+| Harness scheduling and constraints | Assistant Runtime | Freeze scope, validate calls, enforce permissions/budgets, checkpoint, await approval and manage cancellation/recovery |
+| On-device execution | Tasks plus platform/native adapters | Dispatch admitted capabilities, record effects and return receipts within OS and application boundaries |
+
+The loop is **LLM → Harness → Tasks/local capability → receipt → LLM**, repeated
+until a final answer, explicit wait or stop. Remote LLMs and enabled network tools
+remain network operations; on-device execution is not an offline-LLM guarantee.
+Native and tagged operation protocols use the same catalog/authorization boundary.
+Tagged receipts invite the next permitted decision rather than forcing an answer
+after the first tool. Receipt text is data, not new instructions or authorization.
+
+The session awaits an operation activity checkpoint before dispatch; failed persistence
+or cancellation prevents dispatch. This is an additive payload on `run.checkpointed`,
+not another executor or journal schema. Chat projects this checkpoint and the durable
+receipt to one activity keyed by run/step/call, updating that row on approval/result.
+An overall successful answer cannot overwrite a failed, rejected, cancelled or waiting
+tool. Tasks cancellation stops the loop even without a caller AbortSignal. A positive
+adapter flag cannot override a non-success Tasks state. Input/output summaries are
+bounded and redacted; display summaries exclude private reasoning/protocol blocks.
+
 The application-scoped `applicationAssistantRuntime` owns new Chat, Rich continuation,
 workflow and Agent execution. Provider adapters supply model events; the Harness owns
 the loop and durable lifecycle; Tasks remains the authority for concrete effects.
 The native service is a resource host, not another executor or a second Hermes runtime.
 No arbitrary plugin code or mandatory backend is introduced.
+
+### Local workspace execution and tool feedback
+
+The built-in `list_files` and `search_files` tools discover only the app-owned
+SQLite `workspace/` namespace; they do not enumerate device paths, credentials or
+Knowledge imports. They are advertised only with a concrete query port and pass
+the same durable Tasks admission as reads. Queries are scope-filtered, literal and
+case-sensitive (no regex/SQL patterns), with at most 20 files, a 320-code-point
+first-match excerpt and a 3,600-character complete JSON page. `nextAfterPath` is a
+binary-order keyset cursor, not a snapshot: changes behind a cursor require a fresh
+listing. Filtering/excerpt extraction stays in SQLite rather than loading every
+file across the native bridge. Discovery metadata is not content-integrity proof;
+`read_file` still verifies the stored content before returning it.
+
+`read_file` returns exact path/revision metadata before file content. `edit_file`
+returns the actual previous/new revisions and applied/replayed status. The Harness
+feeds bounded text/resource blocks back to the LLM even when a human-readable
+summary is present; a success summary alone cannot support the next decision.
+Binary payloads and private adapter metadata are not serialized into this context,
+and truncation is explicit. Edits still require exact confirmation, CAS and durable
+idempotency. These are virtual workspace files, not arbitrary native filesystem
+access; Web remains unadvertised until its durable workspace port is available.
+
+Tasks reserves a live invocation before asynchronous admission. Cancellation
+persists a terminal barrier without waiting for an uncooperative executor, while
+retaining that executor's live slot until settlement. Repeated cancellation waits
+for the same write, and failed cancellation persistence can be retried. Late
+artifacts/results cannot overwrite cancellation. A terminal write that already
+entered the serialized persistence boundary wins a later cancel request and is
+reported as its actual state. This is not OS-level preemption or rollback of an
+effect already performed; cross-runtime dispatch remains fenced by SQLite journal
+sequence, not by an in-memory liveness claim.
 
 ### Definitions, delegation and authorization
 
@@ -573,12 +632,34 @@ usage replaces estimates, partial usage retains outstanding reservation, and can
 or failed requests are not free. Unknown prices stay unknown and cannot satisfy an
 amount cap. These are dispatch limits, not an exact billing ceiling or remote rollback.
 
+Before restart recovery writes new events, stale active-time intervals close at the
+last durable journal timestamp across the root and its children. Offline time is not
+charged. The unobserved interval between the last checkpoint and process death cannot
+be measured exactly; request/tool reservations remain charged. Reconciliation also
+covers a terminal or waiting run whose status committed before its budget update,
+is repeatable, and skips roots with live invocations or resumption in progress.
+
 Context packing remains at 70%. The final assembled wire envelope, including tools,
 system instructions, protocol fields, media and normalized output/reasoning reserves,
 must fit within 85% of the selected model window. Actual usage calibrates estimates by
 provider/model/protocol; the 15% margin is not a mathematical error bound. Automatic
 compression being off does not disable this gate. The user's current Agent task is
 never truncated merely to admit a smaller model.
+
+The wire request must have a reliable positive output cap, or a catalogued/provider-
+reported maximum that actually bounds the model output. `outputTokenLimit` retains
+that maximum and its provenance separately from display defaults. Discovery of a
+model ID alone, or an old remote record without limit evidence, cannot turn an
+inferred family/application default into a reliable bound. Governed Chat/Rich requests
+mark their non-user cap as internal policy so serializers retain it. Fallback and parameter rectification
+repeat the same final check. A controller permits at most one local-capacity repair
+and one server-overflow repair, sharing those limits across transports and fallback;
+only plain old history is locally summarized, without an unaccounted model call.
+Unknown media accounting, an oversized envelope or an irreducible request fails
+closed rather than dropping the current task or lowering the safety margin.
+The current final-request adapter has image bounds but no PDF/audio measurement;
+provider PDF extraction is therefore refused before transport. Importer cancellation
+tests at the extraction port do not qualify PDF transport or lift this restriction.
 
 Until their adapters carry root attempt reservations, pre-run application-model
 summaries are downgraded to local structured packing (`harness_admission_required`),
@@ -588,12 +669,24 @@ that those independent model paths already participate in the shared ledger.
 
 Application-wide local-heavy admission is bounded, fair and cancellable. Managed text
 has an 8 MiB admission budget; this is not a measurement of Hermes heap or native
-tensors. Wire-attempt copies and response reserves are retained until transport
+tensors. Invocation accounting also covers captured requests, frozen snapshots,
+checkpoints, output, raw stream/tool/activity events and receipts with their serialized
+copies. Output accounting is incremental and immutable snapshot measurements are
+cached; it does not rescan the entire output on each token. Wire-attempt copies and
+response reserves are retained until transport
 settlement, including cancellation. JSON is bounded before cloning/parsing; fragmented
 response bodies are coalesced rather than retaining one buffer per packet. Cache-only
 trims do not cancel active inference; critical pressure retires resources and prevents
 new dispatch. In-flight native sessions release only after completion. No explicit GC
 is used, and no system memory-recovery callback is assumed.
+
+Active invocations retain control headroom. An existing inactive run's pause/cancel
+can reserve stop-only text while critical pressure blocks new work; steering, resume
+and fresh execution cannot use this path. Stop-only reservations still obey the
+same 8 MiB total. If that total is already occupied and a cold control requires a
+full snapshot, persistence can fail explicitly and be retried after release; the UI
+must not claim a successful cancellation. No quota bypass or indefinite credit for
+every historical paused run is introduced.
 
 The SQLite engine keeps WAL/FULL and short same-file serialized transactions. An
 external-effect intent is committed before dispatch, the Tasks receipt before Harness
@@ -612,7 +705,35 @@ fail configuration. Existing records remain readable in the compatible build.
 Background execution requires per-run foreground opt-in. The dedicated `dataSync`
 service uses 15-second leases with 5-second renewal and native generation/start/token
 fencing. Waiting releases CPU leases independently of uninterruptible-operation
-cleanup. Notification identity and immutable explicit PendingIntent are retained
+cleanup. Acquisition and renewal require both a live invocation/subtree scope and
+a durable running projection; a stale `running` row alone cannot renew a lease.
+React Native suspends ordinary JS timers when the Activity pauses, even while a
+WakeLock is held. A native lease therefore also owns a no-work `HeadlessJsTaskContext`
+scope in the existing React context so renewal and bounded execution timers remain
+eligible in the background. This is not a `HeadlessJsTaskService`, another Harness,
+or a restart entry point. The JS task cannot acquire/renew resources or replay work;
+native last-lease release, expiry and bridge invalidation finish the scheduler scope
+without awaiting JS cleanup. No scheduler scope is restored after process death.
+This eligibility is not sufficient on OEMs that suspend `Choreographer` itself.
+Execution timers (lease renewal, budget deadlines, provider/tool timeouts and backoff,
+stream projection and tokenizer cooperative yields) use `core/executionTimers`: the ordinary foreground
+clock races a bounded native Handler deadline, with one-shot, idempotent disposal.
+The native adapter mirrors at most 128 pending callbacks (native hard cap 256),
+and posts deadlines only while its bridge owns an unexpired lease. Last-lease
+release removes all posted deadlines; bridge invalidation also clears their records.
+Neither registering a timer nor firing it acquires or renews a lease. A renewed
+lease still requires the Harness's live invocation and durable running state.
+There is no frame-ticking loop, global JS timer replacement or private RN API patch;
+ordinary UI timers and arbitrary third-party timers retain RN's limitations.
+A native binary without the deadline-mirror contract cannot enable background mode.
+Pause, cancellation, abort and persistence failure revoke that invocation's CPU
+authority, while uninterruptible work retains its separate text/local-work quota
+until it settles. A child stop propagates to its root without awaiting that cleanup;
+unrelated roots keep their scopes. Old disposers cannot revoke a new invocation.
+A definitive Tasks receipt from the paused invocation's matching in-flight operation
+may settle its recovery checkpoint without changing the pause or dispatching again;
+ordinary late output and post-cancellation receipts cannot resume it.
+Notification identity and immutable explicit PendingIntent are retained
 through `STOP_FOREGROUND_DETACH`; a stale stop cannot dispose a new start. This reduces
 the app-created notification gap, not OEM process-kill risk. `UI_HIDDEN` is cache-only;
 [Android 14+ does not deliver all running-memory warnings](https://developer.android.com/reference/android/content/ComponentCallbacks2).

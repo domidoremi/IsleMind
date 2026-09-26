@@ -5,7 +5,7 @@
 <h1 align="center">IsleMind</h1>
 
 <p align="center">
-  本地优先、服务商可控的 Android AI 工作区
+  本地优先、执行可控的 Android 端侧 Agent 平台
 </p>
 
 <p align="center">
@@ -14,7 +14,17 @@
 
 ## IsleMind 是什么
 
-IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工具集成集中在一个移动工作区中。应用以 Android 为主要平台，强调本地数据所有权、明确的网络边界和可恢复的 AI 执行过程。
+IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工具集成集中在一个端侧 Agent 平台中。应用以 Android 为主要平台，强调本地数据所有权、明确的网络边界和可恢复的执行过程。
+
+### Agent 闭环
+
+**LLM 决策 → Harness 调度与约束 → 端侧执行 → 执行回执 → LLM 再决策。**
+
+- **LLM**：根据任务和真实执行结果选择下一步工具或给出答复，不直接拥有设备权限。
+- **Harness**：冻结工具与上下文范围，校验参数、权限和预算，调度执行并持久化等待确认、取消、失败和恢复状态。
+- **端侧运行时**：通过 Tasks 和平台适配器执行工作区、知识检索及已授权的 Android 能力，返回可追踪的结果；不提供无限制 Shell、权限绕过或不确定副作用的自动重放。
+
+端侧指执行控制与数据落在设备上，不代表所有 LLM 推理离线。服务商推理和已启用的网络工具仍会访问网络。详见[架构与执行边界](docs/architecture/architecture.md#16-agent-harness)。
 
 ## 主要能力
 
@@ -75,14 +85,17 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 ## 获取源码
 
 ```powershell
-git clone --branch rn https://github.com/domidoremi/animal-island-ui.git
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
-bun install
+$env:ANIMAL_ISLAND_UI_REF='<配套 UI 的完整提交 SHA>'
+node scripts/prepare-animal-island-ui.js
+bun install --frozen-lockfile
 bun run doctor
 ```
 
 RN 主题 fork 必须与 IsleMind 位于同级目录。`bun install` 直接链接并构建其声明；通用主题组件问题在 fork 修复，不在 IsleMind 重复移植。职责边界与 CI/EAS 配置见 [UI 接入说明](src/components/ui/isle/README.md)。
+
+将占位符替换为与应用源码配套的 UI 完整提交 SHA，不使用浮动分支，也不使用缺少必需本地修改的旧 HEAD。准备脚本拒绝缺失/不匹配的固定引用并保留已有工作。GitHub 工作流读取仓库变量 `ANIMAL_ISLAND_UI_REF`；EAS 环境需单独设置同一值。当前未提交源码的限制见[发布前提](docs/release/google-play.md#配套构建输入与并发边界)。
 
 ## 运行 Android
 

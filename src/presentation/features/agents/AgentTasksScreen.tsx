@@ -4,12 +4,12 @@ import { useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IslePanel, IsleSelect } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import type { AgentTaskRuntime } from '@/bootstrap/agentTaskRuntime'
+import type { AgentTaskPort } from './agentTaskPort'
 import type { AgentDefinition, AssistantRunSummary } from '@/modules/assistant-runtime'
 
 /** Task commands are injected; this screen never owns an executor or a polling loop. */
 export function AgentTasksScreen({ runtime, conversationId, onOpenRun, onManageAgents }: {
-  runtime: AgentTaskRuntime; conversationId?: string; onOpenRun(id: string): void; onManageAgents(): void
+  runtime: AgentTaskPort; conversationId?: string; onOpenRun(id: string): void; onManageAgents(): void
 }) {
   const { t } = useTranslation(); const { colors } = useAppTheme()
   const [agents, setAgents] = useState<AgentDefinition[]>([])

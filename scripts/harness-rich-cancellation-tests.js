@@ -29,6 +29,8 @@ for (const operation of ['pause','cancel','external']) {
     providerDispatchRuntime: {
       prepare(input) { return { request: { provider, conversationId: 'conv', model: 'gpt-4o', messages: [{ role: 'user', content: 'hello' }], attachments: [], maxTokens: 100, generationParameterSources: {}, webSearchMode: 'off' } }; },
       async dispatchPrepared(input, prepared) {
+        assert.equal(prepared.request.generationParameterSources.maxTokens, 'internal-policy');
+        assert.equal(prepared.request.maxTokens, 100);
         input.buildStreamLifecycle({});
         transportSignal = prepared.request.signal;
         if (transportSignal !== input.requestController.signal) throw new Error('Mismatched dispatch signals');

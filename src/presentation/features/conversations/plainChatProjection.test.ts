@@ -1,4 +1,5 @@
-import { recoverChatProjection } from './plainChatProjection'
+import { createPlainChatProjection, recoverChatProjection } from './plainChatProjection'
+import type { PlainChatProjectionInput } from './plainChatController'
 import type { AssistantRun } from '@/modules/assistant-runtime'
 import type { Message } from '@/types/chatContracts'
 
@@ -7,6 +8,8 @@ let mockLive = false
 const mockFlushBuffers = jest.fn()
 const mockFlushMessage = jest.fn()
 const mockFinishTask = jest.fn()
+const mockUpsertTrace = jest.fn()
+const mockLifecycle = jest.fn()
 const mockUpdateMessage = jest.fn((_conversationId: string, _messageId: string, patch: Partial<Message>) => {
   Object.assign(mockMessage, patch)
 })
@@ -16,10 +19,11 @@ jest.mock('@/store/chatStore', () => ({
     conversations: [{ id: 'conversation-gap', messages: [mockMessage] }],
     updateMessage: mockUpdateMessage,
     flushStreamingMessage: mockFlushMessage,
+    transitionMessageLifecycle: mockLifecycle,
   }) },
 }))
 jest.mock('@/store/chatStreamingStore', () => ({
-  useChatStreamingStore: { getState: () => ({ flushStreamingMessage: mockFlushBuffers }) },
+  useChatStreamingStore: { getState: () => ({ flushStreamingMessage: mockFlushBuffers, upsertTrace: mockUpsertTrace, resetContent: jest.fn() }) },
 }))
 jest.mock('@/services/chatStreamLifecycle', () => ({ hasActiveStream: () => mockLive }))
 jest.mock('@/services/tokenUsage', () => ({
@@ -45,6 +49,22 @@ beforeEach(() => {
   mockLive = false
   mockFlushBuffers.mockResolvedValue(undefined)
   mockFlushMessage.mockResolvedValue(undefined)
+})
+
+it('projects durable tool receipts into independent traces and links the lifecycle to the same activity', async () => {
+  const project = createPlainChatProjection({ conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap' } as PlainChatProjectionInput, jest.fn())
+  const active = { ...run, status: 'running' as const }
+  const journal = { schema: 'islemind.assistant-run-journal-entry.v1' as const, runId: run.id, sequence: 2, occurredAt: 20 }
+  await project({ conversationId: run.conversationId, run: active, journalEntry: { ...journal, type: 'run.checkpointed', data: { phase: 'operation', stepIndex: 0,
+    operation: { callId: 'call', operationId: 'exec_command', inputSummary: 'exit 2' } } } })
+  await project({ conversationId: run.conversationId, run: active, journalEntry: { ...journal, type: 'model-operation.selected', data: { receipt: {
+    schema: 'islemind.model-operation-receipt.v1', stepIndex: 0, callId: 'call', operationId: 'exec_command',
+    status: 'failed', code: 'execution_failed', output: 'Exit code 2',
+  } } } })
+  const [first, second] = mockUpsertTrace.mock.calls.map(call => call[2])
+  expect(first).toMatchObject({ status: 'running', metadata: { inputSummary: 'exit 2' } })
+  expect(second).toMatchObject({ id: first.id, status: 'error', content: 'Exit code 2' })
+  expect(mockLifecycle).toHaveBeenLastCalledWith('conversation-gap', 'message-gap', 'tool_result', { at: 20, traceId: first.id })
 })
 
 it('reconstructs committed output once under concurrent and repeated recovery, then awaits persistence', async () => {

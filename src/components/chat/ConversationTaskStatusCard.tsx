@@ -6,6 +6,7 @@ import { IslePressable } from '@/components/ui/isle'
 import type { ConversationTaskActivityRecord } from '@/modules/tasks'
 import { getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import type { Message } from '@/types/chatContracts'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 
@@ -40,9 +41,9 @@ function CanonicalTaskStatusCard(props: Parameters<typeof ConversationTaskStatus
   const tone = colors.ui.tone.warning
   const glass = props.family === 'liquid-glass'
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', top: props.topOffset, left: 14, right: 14, zIndex: 44, elevation: glass ? 8 : 4 }}>
+    <View pointerEvents="box-none" style={{ position: 'absolute', top: props.topOffset, left: 14, right: 14, zIndex: 44, elevation: glass ? 0 : 4 }}>
       <View testID={`chat-task-experience-${props.family}`} style={{ width: '100%', maxWidth: 520, alignSelf: 'center', padding: glass ? 8 : 0 }}>
-        <View accessibilityRole="summary" accessibilityLabel={projection.t('chat.taskCardAccessibilityLabel')} style={{ minHeight: 62, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9, borderRadius: glass || props.family === 'material' ? design.semantic.radius.extraLarge : design.semantic.radius.large, backgroundColor: glass ? colors.ui.semantic.chrome.background : props.family === 'material' ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: tone.border, shadowColor: glass ? design.semantic.elevation.shadowColor : undefined, shadowOpacity: glass ? design.semantic.elevation.shadowOpacity : 0, shadowRadius: glass ? design.semantic.elevation.shadowBlur : 0, shadowOffset: glass ? { width: 0, height: design.semantic.elevation.shadowOffsetY } : undefined, elevation: glass ? design.semantic.elevation.level2 : 0 }}>
+        <View accessibilityRole="summary" accessibilityLabel={projection.t('chat.taskCardAccessibilityLabel')} style={{ minHeight: 62, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9, borderRadius: glass || props.family === 'material' ? design.semantic.radius.extraLarge : design.semantic.radius.large, backgroundColor: glass ? colors.ui.semantic.chrome.background : props.family === 'material' ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: tone.border, ...(glass ? glassShadowStyle(colors) : {}) }}>
           <View style={{ width: 32, height: 32, borderRadius: props.family === 'material' ? design.semantic.radius.medium : design.semantic.radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: tone.background }}><AppIcon name="workflow" color={tone.foreground} size={15} strokeWidth={appIconStroke.strong} /></View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -114,7 +115,7 @@ function SharedTaskStatusCard({
   const borderColor = family === 'liquid-glass' ? colors.ui.semantic.chrome.border : colors.ui.semantic.chrome.border
   const tone = colors.ui.tone.warning
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', top: topOffset, left: 14, right: 14, zIndex: 44, elevation: 6 }}>
+    <View pointerEvents="box-none" style={{ position: 'absolute', top: topOffset, left: 14, right: 14, zIndex: 44, elevation: isLiquidGlass ? 0 : 6 }}>
       <View
         style={{ width: '100%', maxWidth: 520, alignSelf: 'center' }}
       >

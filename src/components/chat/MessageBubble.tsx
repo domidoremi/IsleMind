@@ -8,9 +8,10 @@ import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { Easing, runOnJS } from 'react-native-reanimated'
-import type { Message, MessageResponseLifecycle, ResponseLifecycleStage } from '@/types/chatContracts'
+import type { Message, MessageResponseLifecycle } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { ProviderBrandIcon, type ProviderBrand } from '@/components/ui/ProviderBrandIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
@@ -21,14 +22,10 @@ import { MessageSources } from './MessageSources'
 import { containsDisplayFormulaBlock } from './messageContentSpecialFormatPolicy'
 import {
   collectVisibleProcessTraces,
-  formatDuration,
-  formatProcessTraceForDisplay,
-  metadataSummaryForTrace,
   isAgentWorkflowEnvelopeTrace,
-  normalizeTraceStatuses,
-  selectActiveProcessTrace,
-  traceActivityStageLabel,
 } from './tracePresentation'
+import { MessageActivityTimeline } from './MessageActivityTimeline'
+import { collectMessageActivityRows } from './messageActivityRows'
 import { MessageBubbleThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 import { hasWideMessageContent, resolveMessageBubbleMaxWidth, resolveMessageBubbleRowAlignment } from './messageBubbleLayout'
 import { RenderGuard } from '@/components/ui/RenderGuard'
@@ -38,24 +35,17 @@ import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActi
 import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
 import { clampTraceText, redactSensitiveText, relocalizeUserFacingError } from '@/core'
 import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
-import {
-  collectLifecycleActivitySteps,
-  hasExpandableActivitySteps,
-  safeResponseLifecycleSummary,
-  safeResponseLifecycleTraceSummary,
-} from '@/modules/conversations'
+import { safeResponseLifecycleTraceSummary } from '@/modules/conversations'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
-import { getAssistantThinkingLabel } from './messageActivityPreview'
 import { createProcessTraceSignature } from './messageTraceSignature'
-import { resolveThemeComponentExpression, resolveThemeExpression, type ThemeMotionGrammar } from '@/theme/themeExpression'
+import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
 const STREAMING_RENDER_TEXT_STEP = 32
 const STREAMING_RENDER_FAST_FORWARD_THRESHOLD = 240
 const STREAMING_RENDER_THROTTLE_MS = 16
 const AGENT_ACTION_PROMPT_VISIBILITY_LIMIT = 900
-const PROCESS_TRACE_SUMMARY_CONTENT_LIMIT = 720
 const MESSAGE_ACTION_LOCK_MS = 420
 const MESSAGE_ACTION_SHEET_MAX_WIDTH = 540
 const MESSAGE_ACTION_PRIMARY_LIMIT = 5
@@ -147,7 +137,6 @@ function MessageBubbleComponent({
   const configuredAssistantDisplayName = useSettingsStore((state) => state.settings.assistantDisplayName)
   const assistantDisplayName = resolveChatAssistantDisplayName(configuredAssistantDisplayName)
   const [localActionsOpen, setLocalActionsOpen] = useState(false)
-  const [processExpanded, setProcessExpanded] = useState(false)
   const isUser = message.role === 'user'
   const isStreamingContent = !isUser && (message.status === 'streaming' || message.status === 'sending')
   const liveStreamingTraceSnapshot = useChatStreamingStore((state) =>
@@ -181,31 +170,9 @@ function MessageBubbleComponent({
     () => collectVisibleProcessTraces(displayMessage),
     [displayMessage.reasoning, displayMessage.retrievalTrace, displayMessage.toolCalls]
   )
-  const responseLifecycle = !isUser ? message.responseLifecycle : undefined
-  const processCanExpand = !isUser && (
-    processTraces.some(hasExpandableThinkingContent) ||
-    hasExpandableLifecycleDetails(responseLifecycle) ||
-    hasExpandableActivitySteps(responseLifecycle)
-  )
-  const hasVisibleAssistantReply = !isUser && Boolean(renderedDisplayText.trim())
-  const processNeedsAttention = !isUser && processTraces.some((trace) =>
-    shouldKeepBlockingProcessTraceVisible(trace, message.status)
-  )
-  const writingResponse = isStreamingContent && Boolean(renderedDisplayText.trim())
-  // Live, interrupted, or actionable work stays explicit. Once a successful
-  // reply is visible, redundant terminal status disappears; meaningful model
-  // thinking remains available through a compact disclosure instead.
-  const processLayerVisible = !isUser && (
-    isStreamingContent ||
-    showThinkingStatus ||
-    message.status === 'error' ||
-    message.status === 'cancelled' ||
-    (message.status === 'done' && !hasVisibleAssistantReply) ||
-    Boolean(responseLifecycle && responseLifecycle.stage !== 'completed') ||
-    processCanExpand ||
-    processTraces.some(isActiveProcessTrace) ||
-    processNeedsAttention
-  )
+  const activityRows = useMemo(() => collectMessageActivityRows(displayMessage, processTraces), [displayMessage, processTraces])
+  const activityNotice = waitingProcessLayerLabel(processTraces, t)
+  const processLayerVisible = !isUser && (activityRows.length > 0 || Boolean(activityNotice))
   const processHasDetails = processLayerVisible
   const bubbleMaxWidth = useMemo(
     () => resolveMessageBubbleMaxWidth(renderedDisplayText, message.role, processHasDetails, windowWidth, displayFormulaLayout),
@@ -278,7 +245,6 @@ function MessageBubbleComponent({
   const showInlineRetry = !isUser && message.status === 'error' && !multiSelectActive && Boolean(onRetry)
   useEffect(() => {
     setLocalActionsOpen(false)
-    setProcessExpanded(false)
     if (activeActionMessageId === message.id) onActionMessageChange?.(null)
   }, [message.id])
 
@@ -307,17 +273,6 @@ function MessageBubbleComponent({
     setActionBarOpen(true)
   }
 
-  function toggleProcessLayer() {
-    if (!processCanExpand) return
-    if (hapticsEnabled) void Haptics.selectionAsync()
-    setActionBarOpen(false)
-    setProcessExpanded((value) => {
-      const next = !value
-      if (next) requestAnimationFrame(() => onLayoutChangeRequest?.({ force: true }))
-      return next
-    })
-  }
-
   const tapBubble = Gesture.Tap()
     .enabled(multiSelectActive)
     .maxDuration(220)
@@ -335,7 +290,7 @@ function MessageBubbleComponent({
   const bubbleGesture = Gesture.Exclusive(longPressBubble, tapBubble)
 
   function handleBubbleLayout() {
-    if (isStreamingContent || processExpanded || hasDefaultWorkArtifactActions) onLayoutChangeRequest?.()
+    if (isStreamingContent || processLayerVisible || hasDefaultWorkArtifactActions) onLayoutChangeRequest?.()
   }
 
   return (
@@ -396,19 +351,13 @@ function MessageBubbleComponent({
               </IslePressable>
             ) : null}
             {processLayerVisible ? (
-              <MessageProcessLayer
-                message={message}
-                lifecycle={responseLifecycle}
-                traces={processTraces}
-                assistantDisplayName={assistantDisplayName}
-                expanded={processExpanded}
-                canExpand={processCanExpand}
+              <MessageActivityTimeline
+                key={`${conversationId}:${message.id}`}
+                rows={activityRows}
+                notice={activityNotice}
                 maxHeight={processMaxHeight}
-                onToggle={toggleProcessLayer}
-                trailingActionSpace={false}
                 motion={motion}
-                writingResponse={writingResponse}
-                compactSettled={message.status === 'done' && hasVisibleAssistantReply && !processNeedsAttention}
+                onLayoutChangeRequest={onLayoutChangeRequest}
               />
             ) : null}
             <GestureDetector gesture={bubbleGesture}>
@@ -809,852 +758,6 @@ function StreamingCursor({ motion }: { motion: MotionIntensity }) {
   )
 }
 
-function MessageProcessLayer({
-  message,
-  lifecycle,
-  traces,
-  assistantDisplayName,
-  expanded,
-  canExpand,
-  maxHeight,
-  onToggle,
-  trailingActionSpace = false,
-  motion,
-  writingResponse,
-  compactSettled,
-}: {
-  message: Message
-  lifecycle?: MessageResponseLifecycle
-  traces: ProcessTrace[]
-  assistantDisplayName?: string
-  expanded: boolean
-  canExpand: boolean
-  maxHeight: number
-  onToggle: () => void
-  trailingActionSpace?: boolean
-  motion: MotionIntensity
-  writingResponse: boolean
-  compactSettled: boolean
-}) {
-  const { colors, canonicalThemeId } = useAppTheme()
-  const processExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
-  const processGrammar = processExpression.motion
-  const actionChrome = resolveMessageActionChrome(colors, canonicalThemeId === 'liquid-glass')
-  const { t } = useTranslation()
-  const lifecycleStage = lifecycle?.stage
-  const active = lifecycleStage
-    ? !isTerminalLifecycleStage(lifecycleStage)
-    : message.status === 'streaming' || message.status === 'sending'
-  const streamingStatusPhase = active
-    ? resolveStreamingStatusPhase(message, lifecycle, traces, writingResponse)
-    : undefined
-  const processStatusLabel = processLayerLabel(message, lifecycle, traces, t, writingResponse, assistantDisplayName, streamingStatusPhase)
-  const thinkingPreviewText = useMemo(
-    () => (canExpand && !expanded ? resolveThinkingPreviewText(lifecycle, traces) : ''),
-    [canExpand, expanded, lifecycle, traces]
-  )
-  if (compactSettled && canExpand) {
-    return (
-      <SettledThinkingDisclosure
-        message={message}
-        lifecycle={lifecycle}
-        traces={traces}
-        expanded={expanded}
-        maxHeight={maxHeight}
-        onToggle={onToggle}
-        motion={motion}
-        previewText={thinkingPreviewText}
-      />
-    )
-  }
-  const toolFailed = message.status === 'done' && traces.some(trace => (trace.type === 'tool' || trace.type === 'search') && trace.status === 'error')
-  const isError = lifecycleStage === 'error' || message.status === 'error' || toolFailed
-  const isCancelled = lifecycleStage === 'cancelled' || message.status === 'cancelled'
-  const emphasizedStatus = isCancelled || traces.some(isAgentWorkflowWaitingTrace)
-  const processAccessibilityLabel = canExpand
-    ? expanded
-      ? t('messageBubble.collapseThinking')
-      : t('messageBubble.expandThinking')
-    : processStatusLabel
-  const processAccessibilityState = canExpand
-    ? active
-      ? { expanded, busy: true }
-      : { expanded }
-    : active
-      ? { busy: true }
-      : undefined
-  const processStatusIcon: AppIconName = isError
-    ? 'warning'
-    : isCancelled
-      ? 'stop'
-      : active
-        ? 'spark'
-        : 'check'
-  const tone =
-    isError
-      ? colors.ui.tone.danger.foreground
-        : isCancelled
-          ? colors.ui.tone.warning.foreground
-          : active
-            ? colors.ui.icon.accentForeground
-            : colors.textTertiary
-  const statusBackground =
-    isError
-      ? colors.ui.tone.danger.background
-      : isCancelled
-        ? colors.ui.tone.warning.background
-        : active
-          ? processGrammar === 'precision'
-            ? 'transparent'
-            : processGrammar === 'fluid'
-              ? colors.ui.actionBar.itemBackground
-              : colors.ui.tone.info.background
-          : processGrammar === 'precision'
-            ? 'transparent'
-            : processGrammar === 'material'
-              ? colors.ui.semantic.surface.raised
-              : actionChrome.itemSurface
-  const statusBorder =
-    isError
-      ? colors.ui.tone.danger.border
-      : isCancelled
-        ? colors.ui.tone.warning.border
-      : active
-        ? processGrammar === 'precision'
-          ? colors.ui.icon.accentForeground
-          : colors.ui.tone.info.border
-        : actionChrome.itemBorder
-  const statusRadius = processExpression.shape === 'capsule'
-    ? colors.ui.radius.chip
-    : processExpression.shape === 'material'
-      ? colors.ui.radius.controlMiddle
-      : processExpression.shape === 'soft'
-        ? colors.ui.radius.controlLarge
-        : 2
-  const statusBorderWidth = processGrammar === 'precision'
-    ? 0
-    : processExpression.border === 'none'
-      ? 0
-      : processGrammar === 'organic' || processGrammar === 'fluid'
-        ? 1
-        : StyleSheet.hairlineWidth
-  return (
-    <View style={{ marginBottom: 10 }}>
-      <IslePressable
-        testID="message-model-status"
-        haptic
-        disabled={!canExpand}
-        onPress={onToggle}
-        accessibilityLabel={processAccessibilityLabel}
-        accessibilityRole={canExpand ? 'button' : 'text'}
-        accessibilityLiveRegion="polite"
-        accessibilityState={processAccessibilityState}
-        accessibilityValue={canExpand ? { text: processStatusLabel } : undefined}
-        style={{
-          minHeight: ISLE_MIN_TOUCH_TARGET,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          alignSelf: 'flex-start',
-          width: '100%',
-          maxWidth: '100%',
-          overflow: 'hidden',
-          borderRadius: statusRadius,
-          paddingVertical: emphasizedStatus ? 6 : processGrammar === 'precision' ? 4 : 5,
-          paddingHorizontal: processGrammar === 'precision' ? 4 : processGrammar === 'organic' ? 10 : 8,
-          paddingRight: emphasizedStatus && trailingActionSpace ? 48 : 8,
-          backgroundColor: statusBackground,
-          borderWidth: statusBorderWidth,
-          borderLeftWidth: processGrammar === 'precision' ? 2 : statusBorderWidth,
-          borderColor: statusBorder,
-          shadowColor: colors.shadowTint,
-          shadowOpacity: processGrammar === 'organic' ? 0.07 : processGrammar === 'fluid' ? 0.12 : 0,
-          shadowRadius: processGrammar === 'organic' ? 12 : processGrammar === 'fluid' ? 16 : 0,
-          shadowOffset: { width: 0, height: processGrammar === 'organic' || processGrammar === 'fluid' ? 4 : 0 },
-          elevation: processGrammar === 'fluid' ? 2 : processGrammar === 'organic' ? 1 : 0,
-        }}
-      >
-        {processGrammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 18, right: 18, height: 2, borderRadius: 2, backgroundColor: colors.ui.control.focus, opacity: 0.24 }} /> : null}
-        {processGrammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: active ? 0.06 : 0.025 }} /> : null}
-        <View style={{ flex: 1, flexShrink: 1, minWidth: 0 }}>
-          <MotiView
-            key={streamingStatusPhase ?? 'settled-process'}
-            from={motion === 'full' ? { opacity: 0, translateY: 2 } : undefined}
-            animate={{ opacity: 1, translateY: 0 }}
-            transition={{
-              type: 'timing',
-              duration: motion === 'full' ? (processGrammar === 'precision' ? 88 : processGrammar === 'organic' ? 220 : processGrammar === 'material' ? 160 : 200) : 1,
-              easing: processGrammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.out(Easing.cubic),
-            }}
-            style={{ flexDirection: 'row', alignItems: 'center', minHeight: 20 }}
-          >
-            <AnimatedProcessStatusText
-              active={active}
-              label={processStatusLabel}
-              tone={tone}
-              icon={processStatusIcon}
-              motion={motion}
-              grammar={processGrammar}
-              statusMotionPhase={streamingStatusPhase}
-              stageStartedAt={active ? lifecycle?.stageStartedAt ?? findActiveReasoningStartedAt(traces) : undefined}
-              previewText={thinkingPreviewText}
-            />
-          </MotiView>
-        </View>
-        {canExpand ? (
-          <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? (processGrammar === 'precision' ? 88 : processGrammar === 'organic' ? 220 : processGrammar === 'material' ? 160 : 200) : 1, easing: processGrammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.out(Easing.cubic) }}>
-            <AppIcon name="back-next" color={colors.textTertiary} size={14} strokeWidth={appIconStroke.strong} />
-          </MotiView>
-        ) : null}
-      </IslePressable>
-      {expanded && canExpand ? <MessageProcessPanel message={message} lifecycle={lifecycle} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
-    </View>
-  )
-}
-
-function SettledThinkingDisclosure({
-  message,
-  lifecycle,
-  traces,
-  expanded,
-  maxHeight,
-  onToggle,
-  motion,
-  previewText,
-}: {
-  message: Message
-  lifecycle?: MessageResponseLifecycle
-  traces: ProcessTrace[]
-  expanded: boolean
-  maxHeight: number
-  onToggle: () => void
-  motion: MotionIntensity
-  previewText?: string
-}) {
-  const { colors, canonicalThemeId } = useAppTheme()
-  const { t } = useTranslation()
-  const label = settledModelStatusLabel(message, lifecycle, t)
-  const settledStage = lifecycle?.stage ?? (message.status === 'error' ? 'error' : message.status === 'cancelled' ? 'cancelled' : 'completed')
-  const settledStatusIcon: AppIconName = settledStage === 'error' ? 'warning' : settledStage === 'cancelled' ? 'stop' : 'check'
-  const disclosureExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
-  const grammar = disclosureExpression.motion
-  const disclosureBackground = grammar === 'precision'
-    ? 'transparent'
-    : grammar === 'organic'
-      ? colors.ui.semantic.surface.base
-      : grammar === 'material'
-        ? colors.ui.semantic.surface.raised
-        : colors.ui.actionBar.itemBackground
-  const disclosureBorder = grammar === 'precision'
-    ? colors.ui.semantic.chrome.border
-    : grammar === 'fluid'
-      ? colors.ui.actionBar.itemBorder
-      : colors.ui.semantic.chrome.border
-  const disclosureRadius = disclosureExpression.shape === 'capsule'
-    ? colors.ui.radius.chip
-    : disclosureExpression.shape === 'material'
-      ? colors.ui.radius.controlMiddle
-      : disclosureExpression.shape === 'soft'
-        ? colors.ui.radius.controlLarge
-        : 2
-
-  return (
-    <View style={{ marginBottom: expanded ? 8 : 4 }}>
-      <IslePressable
-        testID="message-thinking-disclosure"
-        haptic
-        onPress={onToggle}
-        accessibilityRole="button"
-        accessibilityLabel={expanded ? t('messageBubble.collapseThinking') : t('messageBubble.expandThinking')}
-        accessibilityState={{ expanded }}
-        accessibilityValue={{ text: label }}
-        style={{
-          minHeight: ISLE_MIN_TOUCH_TARGET,
-          maxWidth: '100%',
-          alignSelf: 'flex-start',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: grammar === 'precision' ? 5 : 7,
-          overflow: 'hidden',
-          paddingHorizontal: grammar === 'precision' ? 3 : 9,
-          backgroundColor: disclosureBackground,
-          borderRadius: disclosureRadius,
-          borderWidth: grammar === 'precision' ? 0 : disclosureExpression.border === 'none' ? 0 : StyleSheet.hairlineWidth,
-          borderBottomWidth: grammar === 'precision' ? StyleSheet.hairlineWidth : undefined,
-          borderColor: disclosureBorder,
-        }}
-      >
-        {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 14, right: 14, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.2 }} /> : null}
-        {grammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: colors.primary, opacity: expanded ? 0.08 : 0.03 }} /> : null}
-        <AppIcon name={settledStatusIcon} color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
-        <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>
-          {label}
-        </Text>
-        {previewText ? (
-          <Text
-            numberOfLines={1}
-            ellipsizeMode="tail"
-            accessible={false}
-            style={{ flexShrink: 2, minWidth: 0, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '500', opacity: 0.86 }}
-          >
-            {previewText}
-          </Text>
-        ) : null}
-        <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? (grammar === 'precision' ? 88 : grammar === 'organic' ? 220 : grammar === 'material' ? 160 : 200) : 1, easing: grammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.out(Easing.cubic) }}>
-          <AppIcon name="back-next" color={colors.textTertiary} size={12} strokeWidth={appIconStroke.strong} />
-        </MotiView>
-      </IslePressable>
-      {expanded ? <MessageProcessPanel message={message} lifecycle={lifecycle} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
-    </View>
-  )
-}
-
-function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar, statusMotionPhase, stageStartedAt, previewText }: { active: boolean; label: string; tone: string; icon: AppIconName; motion: MotionIntensity; grammar: ThemeMotionGrammar; statusMotionPhase?: StreamingStatusPhase; stageStartedAt?: number; previewText?: string }) {
-  const { colors } = useAppTheme()
-  const [dotCount, setDotCount] = useState(1)
-  // Reasoning keeps the full existing status motion with a live elapsed counter;
-  // generating drops the shimmer for a lighter dots-only cadence, and a settled
-  // thinking stage goes fully static instead of looping.
-  const phaseShimmerEnabled = !statusMotionPhase ||
-    statusMotionPhase === 'thinking' ||
-    statusMotionPhase === 'active-stage' ||
-    statusMotionPhase === 'preparing' ||
-    statusMotionPhase === 'sending' ||
-    statusMotionPhase === 'waiting' ||
-    statusMotionPhase === 'working' ||
-    statusMotionPhase === 'tool_calling'
-  const shimmer = active && motion === 'full' && grammar !== 'precision' && phaseShimmerEnabled
-  const dotsEnabled = active && (
-    !statusMotionPhase ||
-    statusMotionPhase === 'generating' ||
-    statusMotionPhase === 'active-stage' ||
-    statusMotionPhase === 'preparing' ||
-    statusMotionPhase === 'sending' ||
-    statusMotionPhase === 'waiting' ||
-    statusMotionPhase === 'working' ||
-    statusMotionPhase === 'tool_calling' ||
-    statusMotionPhase === 'tool_result' ||
-    (statusMotionPhase === 'thinking' && stageStartedAt === undefined)
-  )
-  const baseLabel = label.replace(/[.\u2026]+$/u, '').trimEnd()
-  const displayLabel = dotsEnabled
-    ? `${baseLabel}${'.'.repeat(motion === 'full' ? dotCount : 3)}`
-    : statusMotionPhase === 'thinking' ? baseLabel : label
-  const cycleMs = grammar === 'organic' ? 520 : grammar === 'fluid' ? 420 : 360
-  const shimmerDuration = grammar === 'organic' ? 1800 : grammar === 'fluid' ? 1380 : 980
-  const shimmerWidth = grammar === 'organic' ? 42 : grammar === 'fluid' ? 30 : 24
-  const shimmerOpacity = grammar === 'organic' ? 0.1 : grammar === 'fluid' ? 0.18 : 0.12
-
-  useEffect(() => {
-    if (!dotsEnabled || motion !== 'full') {
-      setDotCount(3)
-      return
-    }
-    setDotCount(1)
-    const timer = setInterval(() => {
-      setDotCount((current) => current >= 3 ? 1 : current + 1)
-    }, cycleMs)
-    return () => clearInterval(timer)
-  }, [cycleMs, dotsEnabled, motion])
-
-  return (
-    <View testID={`message-thinking-status-${grammar}`} style={{ flex: 1, flexShrink: 1, minWidth: 0, minHeight: 16, justifyContent: 'center', overflow: 'hidden' }}>
-      <View
-        key={label}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}
-      >
-        <AppIcon name={icon} color={tone} size={14} strokeWidth={appIconStroke.strong} />
-        <Text
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          accessibilityLabel={label}
-          style={{ flexShrink: 1, color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}
-        >
-          {displayLabel}
-        </Text>
-        {stageStartedAt !== undefined ? <LifecycleElapsedText startedAt={stageStartedAt} /> : null}
-        {previewText ? (
-          <Text
-            numberOfLines={1}
-            ellipsizeMode="tail"
-            accessible={false}
-            style={{ flexShrink: 2, minWidth: 0, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '500', opacity: 0.86 }}
-          >
-            {previewText}
-          </Text>
-        ) : null}
-      </View>
-      <MotiView
-        accessible={false}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        from={{ translateX: -shimmerWidth, opacity: 0 }}
-        animate={shimmer ? { translateX: 320, opacity: shimmerOpacity } : { translateX: -shimmerWidth, opacity: 0 }}
-        transition={{ loop: shimmer, type: 'timing', duration: shimmer ? shimmerDuration : 1, easing: grammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.inOut(Easing.cubic) }}
-        style={{ position: 'absolute', top: -6, bottom: -6, left: 0, width: shimmerWidth, borderRadius: grammar === 'material' ? 2 : 12, backgroundColor: tone, transform: [{ rotate: grammar === 'material' ? '0deg' : '12deg' }] }}
-      />
-    </View>
-  )
-}
-
-function LifecycleElapsedText({ startedAt }: { startedAt: number }) {
-  const { colors } = useAppTheme()
-  // The lifecycle timestamp is durable. This interval only refreshes its
-  // elapsed projection, so rerenders never invent or reset work time.
-  const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startedAt))
-
-  useEffect(() => {
-    setElapsedMs(Math.max(0, Date.now() - startedAt))
-    const timer = setInterval(() => {
-      setElapsedMs(Math.max(0, Date.now() - startedAt))
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [startedAt])
-
-  return (
-    <Text
-      accessible={false}
-      importantForAccessibility="no-hide-descendants"
-      style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '600', fontVariant: ['tabular-nums'], minWidth: 44 }}
-    >
-      {`· ${formatThinkingElapsed(elapsedMs)}`}
-    </Text>
-  )
-}
-
-function formatThinkingElapsed(ms: number): string {
-  if (ms < 60000) {
-    return `${Math.floor(ms / 1000)}s`
-  }
-  return formatDuration(ms)
-}
-
-function MessageProcessPanel({ message, lifecycle, traces, maxHeight, motion }: { message: Message; lifecycle?: MessageResponseLifecycle; traces: ProcessTrace[]; maxHeight: number; motion: MotionIntensity }) {
-  const { colors, canonicalThemeId } = useAppTheme()
-  const { t } = useTranslation()
-  const scrollRef = useRef<ScrollView>(null)
-  const thinkingSummaries = collectThinkingSummaries(lifecycle, traces)
-  const activitySteps = collectLifecycleActivitySteps(lifecycle)
-  const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
-  const running = lifecycle
-    ? !isTerminalLifecycleStage(lifecycle.stage)
-    : message.status === 'streaming' || message.status === 'sending'
-  const panelExpression = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse')
-  const grammar = panelExpression.motion
-  const panelBackground = grammar === 'precision'
-    ? 'transparent'
-    : grammar === 'organic'
-      ? colors.ui.semantic.surface.base
-      : grammar === 'material'
-        ? colors.ui.semantic.surface.raised
-        : colors.ui.actionBar.itemBackground
-  const panelBorder = grammar === 'fluid' ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const panelRadius = panelExpression.shape === 'capsule'
-    ? colors.ui.radius.controlLarge
-    : panelExpression.shape === 'material'
-      ? colors.ui.radius.controlMiddle
-      : panelExpression.shape === 'soft'
-        ? colors.ui.radius.controlLarge
-        : 2
-
-  useEffect(() => {
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: running && motion === 'full' }))
-  }, [contentLength, motion, running, thinkingSummaries.length])
-
-  return (
-    <View
-      testID="message-thinking-panel"
-      style={{
-        marginTop: 7,
-        overflow: 'hidden',
-        borderRadius: panelRadius,
-        borderWidth: grammar === 'precision' ? 0 : panelExpression.border === 'none' ? 0 : StyleSheet.hairlineWidth,
-        borderTopWidth: grammar === 'precision' ? StyleSheet.hairlineWidth : undefined,
-        borderTopColor: panelBorder,
-        borderColor: panelBorder,
-        backgroundColor: panelBackground,
-        paddingTop: grammar === 'precision' ? 8 : 10,
-        paddingHorizontal: grammar === 'precision' ? 0 : grammar === 'organic' ? 11 : 10,
-        paddingBottom: grammar === 'precision' ? 0 : 9,
-        shadowColor: colors.shadowTint,
-        shadowOpacity: grammar === 'organic' ? 0.06 : grammar === 'fluid' ? 0.12 : 0,
-        shadowRadius: grammar === 'organic' ? 12 : grammar === 'fluid' ? 16 : 0,
-        shadowOffset: { width: 0, height: grammar === 'organic' || grammar === 'fluid' ? 4 : 0 },
-        elevation: grammar === 'fluid' ? 2 : grammar === 'organic' ? 1 : 0,
-      }}
-    >
-      {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 18, right: 18, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.22 }} /> : null}
-      {grammar === 'material' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 3, bottom: 0, backgroundColor: colors.primary, opacity: 0.72 }} /> : null}
-      {thinkingSummaries.length > 0 || (running && lifecycle?.stage === 'thinking') ? (
-      <View style={{ marginBottom: activitySteps.length ? 9 : 0 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
-        <AppIcon name="reasoning" color={colors.ui.icon.accentForeground} size={13} strokeWidth={appIconStroke.strong} />
-        <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
-          {t('messageBubble.thinkingDetails', { defaultValue: '思考摘要' })}
-        </Text>
-        {running && lifecycle?.stage === 'thinking' ? <LifecycleElapsedText startedAt={lifecycle.stageStartedAt} /> : null}
-      </View>
-      <ScrollView ref={scrollRef} nestedScrollEnabled showsVerticalScrollIndicator={contentLength > 360 || thinkingSummaries.length > 2} style={{ maxHeight }}>
-        {thinkingSummaries.length ? (
-          <View style={{ gap: grammar === 'precision' ? 6 : grammar === 'organic' ? 10 : 8 }}>
-            {thinkingSummaries.map((summary, index) => (
-              <View
-                key={`${index}-${summary.slice(0, 24)}`}
-                style={{
-                  borderLeftWidth: grammar === 'precision' ? 1 : grammar === 'material' ? 3 : 0,
-                  borderLeftColor: grammar === 'precision' ? colors.ui.semantic.chrome.border : colors.primary,
-                  borderRadius: grammar === 'organic' ? colors.ui.radius.controlSmall : grammar === 'fluid' ? colors.ui.radius.controlLarge : 0,
-                  paddingLeft: grammar === 'precision' ? 7 : grammar === 'material' ? 8 : grammar === 'organic' || grammar === 'fluid' ? 9 : 0,
-                  paddingRight: grammar === 'organic' || grammar === 'fluid' ? 8 : 0,
-                  paddingVertical: grammar === 'organic' || grammar === 'fluid' ? 6 : 0,
-                  backgroundColor: grammar === 'organic'
-                    ? colors.ui.semantic.surface.muted
-                    : grammar === 'fluid'
-                      ? colors.ui.semantic.surface.overlay
-                      : 'transparent',
-                }}
-              >
-                <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: grammar === 'material' ? '700' : '600' }}>
-                  {summary}
-                </Text>
-              </View>
-            ))}
-          </View>
-        ) : running ? (
-          <TypingDots motion={motion} />
-        ) : null}
-      </ScrollView>
-      </View>
-      ) : null}
-      {activitySteps.length ? (
-        <View testID="message-activity-steps" style={{ gap: 5 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-            <AppIcon name="spark" color={colors.ui.icon.accentForeground} size={13} strokeWidth={appIconStroke.strong} />
-            <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
-              {t('messageBubble.activitySteps', { defaultValue: '运行过程' })}
-            </Text>
-          </View>
-          {activitySteps.map((step, index) => {
-            const durationMs = step.completedAt !== undefined ? Math.max(0, step.completedAt - step.startedAt) : undefined
-            return (
-              <View key={`${step.stage}-${index}-${step.startedAt}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <AppIcon
-                  name={step.live ? 'spark' : 'check'}
-                  color={step.live ? colors.ui.icon.accentForeground : colors.textTertiary}
-                  size={12}
-                  strokeWidth={appIconStroke.strong}
-                />
-                <Text
-                  numberOfLines={1}
-                  style={{ flexShrink: 1, color: step.live ? colors.textSecondary : colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: step.live ? '700' : '600' }}
-                >
-                  {lifecycleStageLabel(step.stage, t)}
-                </Text>
-                {step.live ? (
-                  <LifecycleElapsedText startedAt={step.startedAt} />
-                ) : durationMs && durationMs > 0 ? (
-                  <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontVariant: ['tabular-nums'] }}>
-                    {formatDuration(durationMs)}
-                  </Text>
-                ) : null}
-              </View>
-            )
-          })}
-        </View>
-      ) : null}
-    </View>
-  )
-}
-
-type StreamingStatusPhase = ResponseLifecycleStage | 'thinking-done' | 'active-stage'
-
-function resolveStreamingStatusPhase(
-  message: Message,
-  lifecycle: MessageResponseLifecycle | undefined,
-  traces: ProcessTrace[],
-  writingResponse: boolean,
-): StreamingStatusPhase {
-  if (lifecycle) return lifecycle.stage
-  const activeTrace = selectActiveProcessTrace(traces, message.status)
-  if (activeTrace && !isGenericModelRequestTrace(activeTrace) && activeTrace.type !== 'reasoning') return 'active-stage'
-  if (writingResponse) return 'generating'
-  if (activeTrace?.type === 'reasoning') return 'thinking'
-  if (selectLatestCompletedProcessTrace(traces, message.status)) return 'generating'
-  if (findLatestCompletedReasoningTrace(traces, message.status)) return 'thinking-done'
-  return 'preparing'
-}
-
-function processLayerLabel(
-  message: Message,
-  lifecycle: MessageResponseLifecycle | undefined,
-  traces: ProcessTrace[],
-  t: TFunction,
-  writingResponse = false,
-  assistantDisplayName?: string,
-  streamingPhase?: StreamingStatusPhase,
-): string {
-  const waitingLabel = waitingProcessLayerLabel(traces, t)
-  if (waitingLabel) return withProcessStageLabel(waitingLabel, traces, message.status)
-
-  if (message.status === 'done' && traces.some(trace => (trace.type === 'tool' || trace.type === 'search') && trace.status === 'error')) {
-    return t('messageBubble.completedWithToolFailure')
-  }
-
-  if (lifecycle) return lifecycleProcessLayerLabel(lifecycle, t)
-
-  if (message.status === 'streaming' || message.status === 'sending') {
-    const phase = streamingPhase ?? resolveStreamingStatusPhase(message, undefined, traces, writingResponse)
-    const activeTrace = selectActiveProcessTrace(traces, message.status)
-    switch (phase) {
-      case 'active-stage':
-        return activeTrace ? activeProcessLayerLabel(activeTrace, t) : thinkingProgressLabel(t, 'base')
-      case 'thinking':
-        return t('chat.thinking', { defaultValue: '思考中...' })
-      case 'thinking-done': {
-        const completedTrace = findLatestCompletedReasoningTrace(traces, message.status)
-        const durationMs = completedTrace ? traceDurationMs(completedTrace) : undefined
-        const label = translateMessageBubbleLabel(t, 'messageBubble.thinkingCompleted', '思考完成')
-        return durationMs ? `${label} · ${formatDuration(durationMs)}` : label
-      }
-      case 'generating':
-        return t('messageBubble.responseStreaming', {
-          defaultValue: '生成回答中',
-        })
-      case 'preparing':
-        if (activeTrace) return activeProcessLayerLabel(activeTrace, t)
-        return assistantDisplayName
-          ? getAssistantThinkingLabel(assistantDisplayName, t)
-          : thinkingProgressLabel(t, 'base')
-      default:
-        return thinkingProgressLabel(t, 'base')
-    }
-  }
-
-  return (() => {
-    switch (message.status) {
-      case 'error':
-        return translateMessageBubbleLabel(t, 'messageBubble.failed', '失败')
-      case 'cancelled':
-        return translateMessageBubbleLabel(t, 'messageBubble.stopped', '已停止')
-      case 'done':
-        return thinkingDoneLabel(message, traces, t)
-    }
-  })()
-}
-
-function lifecycleProcessLayerLabel(
-  lifecycle: MessageResponseLifecycle,
-  t: TFunction,
-): string {
-  // Tool identity is an implementation detail. Keep the current work state
-  // visible without exposing provider, server, or operation names.
-  return lifecycleStageLabel(lifecycle.stage, t)
-}
-
-function lifecycleStageLabel(stage: ResponseLifecycleStage, t: TFunction): string {
-  switch (stage) {
-    case 'preparing':
-      return t('messageBubble.lifecycle.preparing', { defaultValue: '正在准备回复' })
-    case 'sending':
-      return t('messageBubble.lifecycle.sending', { defaultValue: '正在发送请求' })
-    case 'waiting':
-      return t('messageBubble.lifecycle.waiting', { defaultValue: '正在等待模型响应' })
-    case 'thinking':
-      return t('messageBubble.lifecycle.thinking', { defaultValue: '正在思考' })
-    case 'working':
-      return t('messageBubble.lifecycle.working', { defaultValue: '正在处理相关信息' })
-    case 'tool_calling':
-      return t('messageBubble.lifecycle.toolCalling', { defaultValue: '正在调用工具' })
-    case 'tool_result':
-      return t('messageBubble.lifecycle.toolResult', { defaultValue: '工具结果已返回' })
-    case 'generating':
-      return t('messageBubble.lifecycle.generating', { defaultValue: '正在生成回答' })
-    case 'completed':
-      return t('messageBubble.completed', { defaultValue: '已完成' })
-    case 'error':
-      return t('messageBubble.failed', { defaultValue: '失败' })
-    case 'cancelled':
-      return t('messageBubble.stopped', { defaultValue: '已停止' })
-  }
-}
-
-function isTerminalLifecycleStage(stage: ResponseLifecycleStage): boolean {
-  return stage === 'completed' || stage === 'error' || stage === 'cancelled'
-}
-
-function findLatestCompletedReasoningTrace(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace | undefined {
-  const normalized = normalizeTraceStatuses(traces, messageStatus)
-  for (let index = normalized.length - 1; index >= 0; index -= 1) {
-    const trace = normalized[index]
-    if (trace.type !== 'reasoning' || trace.status !== 'done') continue
-    if (!hasDisplayableThinkingContent(trace)) continue
-    return trace
-  }
-  return undefined
-}
-
-function findActiveReasoningStartedAt(traces: ProcessTrace[]): number | undefined {
-  for (let index = traces.length - 1; index >= 0; index -= 1) {
-    const trace = traces[index]
-    if (trace.type === 'reasoning' && (trace.status === 'running' || trace.status === 'pending')) {
-      return trace.startedAt
-    }
-  }
-  return undefined
-}
-
-function resolveThinkingPreviewText(
-  lifecycle: MessageResponseLifecycle | undefined,
-  traces: ProcessTrace[],
-): string {
-  // The preview belongs to the thinking-summary layer only. Work states such
-  // as waiting, tool calls, and generation remain in the status row below.
-  if (lifecycle?.stage === 'thinking') {
-    const latest = lifecycle.history[lifecycle.history.length - 1]
-    const explicitSummary = safeResponseLifecycleSummary(latest?.summary)
-    if (explicitSummary) return explicitSummary
-  }
-  const activeTrace = selectActiveProcessTrace(traces, 'streaming')
-  if (activeTrace?.type !== 'reasoning') return ''
-  return safeReasoningTraceSummary(activeTrace) ?? ''
-}
-
-// The compact timeline shares one redaction and clamping path with the other trace
-// surfaces. formatProcessTraceForDisplay resolves a reasoning trace to empty content
-// unless the provider marked a display summary, so raw reasoning stays private here
-// as well.
-function safeReasoningTraceSummary(trace: ProcessTrace): string | undefined {
-  return safeResponseLifecycleSummary(
-    formatProcessTraceForDisplay(trace, PROCESS_TRACE_SUMMARY_CONTENT_LIMIT).content,
-  )
-
-}
-
-function hasExpandableLifecycleDetails(lifecycle: MessageResponseLifecycle | undefined): boolean {
-  if (!lifecycle) return false
-  return lifecycle.history.some((entry) =>
-    entry.stage === 'thinking' && Boolean(safeResponseLifecycleSummary(entry.summary)),
-  )
-}
-
-function activeProcessLayerLabel(trace: ProcessTrace, t: TFunction): string {
-  const stage = traceActivityStageLabel(trace)
-  if (trace.type === 'tool') {
-    return t('messageBubble.lifecycle.toolCalling', { defaultValue: '正在调用工具' })
-  }
-  if (trace.type === 'search') {
-    return t('messageBubble.runningSearch', { defaultValue: '正在搜索' })
-  }
-  if (trace.type === 'retrieval' || trace.type === 'memory' || trace.type === 'knowledge') {
-    return t('messageBubble.runningRetrieval', { defaultValue: '正在检索资料' })
-  }
-  if (isGenericModelRequestTrace(trace)) {
-    return t('messageBubble.runningRequest', { defaultValue: '正在准备请求' })
-  }
-  if (trace.type === 'reasoning') {
-    return t('chat.thinking', { defaultValue: '思考中...' })
-  }
-  return thinkingProgressLabel(t, 'active', stage)
-}
-
-function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
-  const hasThinking = traces.some(hasDisplayableThinkingContent)
-  const durationMs = resolveThinkingDurationMs(message, traces)
-  if (hasThinking && durationMs) {
-    return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成') + ` · ${formatDuration(durationMs)}`
-  }
-  if (hasThinking) return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
-  return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
-}
-
-function settledModelStatusLabel(
-  message: Message,
-  lifecycle: MessageResponseLifecycle | undefined,
-  t: TFunction,
-): string {
-  // The settled capsule sits in the model-status position, so it reports the
-  // terminal runtime state (已完成 / 失败 / 已停止). It must not reuse the
-  // thinking-summary name; reasoning stays in the expandable panel below.
-  if (lifecycle) return lifecycleStageLabel(lifecycle.stage, t)
-  switch (message.status) {
-    case 'error':
-      return translateMessageBubbleLabel(t, 'messageBubble.failed', '失败')
-    case 'cancelled':
-      return translateMessageBubbleLabel(t, 'messageBubble.stopped', '已停止')
-    default:
-      return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
-  }
-}
-
-function settledProcessStageLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
-  const trace = selectLatestCompletedProcessTrace(traces, message.status)
-  if (!trace) return ''
-  return thinkingProgressLabel(t, 'done', traceActivityStageLabel(trace))
-}
-
-function resolveThinkingDurationMs(message: Message, traces: ProcessTrace[]): number | undefined {
-  let maxTraceDuration = 0
-  for (const trace of normalizeTraceStatuses(traces, message.status)) {
-    if (!hasDisplayableThinkingContent(trace)) continue
-    const duration = traceDurationMs(trace)
-    if (duration && duration > maxTraceDuration) maxTraceDuration = duration
-  }
-  if (maxTraceDuration > 0) return maxTraceDuration
-  return undefined
-}
-
-function traceDurationMs(trace: Pick<ProcessTrace, 'durationMs' | 'startedAt' | 'completedAt'>): number | undefined {
-  if (trace.durationMs && trace.durationMs > 0) return trace.durationMs
-  if (trace.startedAt && trace.completedAt && trace.completedAt > trace.startedAt) {
-    return trace.completedAt - trace.startedAt
-  }
-  return undefined
-}
-
-function withProcessStageLabel(label: string, traces: ProcessTrace[], messageStatus: Message['status']): string {
-  const activeTrace = selectProcessStageTrace(traces, messageStatus)
-  if (!activeTrace) return label
-  return `${traceActivityStageLabel(activeTrace)} · ${label}`
-}
-
-function selectProcessStageTrace(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace | undefined {
-  const activeTrace = selectActiveProcessTrace(traces, messageStatus)
-  if (activeTrace) return activeTrace
-  const normalized = normalizeTraceStatuses(traces, messageStatus)
-  return normalized.find((trace) => trace.status === 'error')
-    ?? [...normalized].reverse().find((trace) => trace.title.startsWith('Agent ') || trace.metadata?.source || trace.metadata?.inputSummary)
-    ?? normalized[normalized.length - 1]
-}
-
-function selectLatestCompletedProcessTrace(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace | undefined {
-  return [...normalizeTraceStatuses(traces, messageStatus)].reverse().find((item) =>
-    isCompletedProcessStageTrace(item) &&
-    hasVisibleProcessContent(item)
-  )
-}
-
-function isCompletedProcessStageTrace(trace: ProcessTrace): boolean {
-  return trace.status === 'done' &&
-    trace.type !== 'reasoning' &&
-    trace.type !== 'system'
-}
-
-function thinkingProgressLabel(t: TFunction, state: 'base' | 'active' | 'done', stage = ''): string {
-  if (state === 'active' && stage) {
-    return t('messageBubble.thinkingProgressActive', {
-      stage,
-      defaultValue: `正在${stage}`,
-    })
-  }
-  if (state === 'done' && stage) {
-    return t('messageBubble.thinkingProgressDone', {
-      stage,
-      defaultValue: `已完成${stage}`,
-    })
-  }
-  return t('chat.thinking', { defaultValue: '思考中...' })
-}
-
 function waitingProcessLayerLabel(traces: ProcessTrace[], t: TFunction): string | undefined {
   for (let index = traces.length - 1; index >= 0; index -= 1) {
     const trace = traces[index]
@@ -1755,53 +858,6 @@ function pendingActionReason(value: unknown): string | undefined {
   if (!value || typeof value !== 'object') return undefined
   const reason = (value as Record<string, unknown>).reason
   return typeof reason === 'string' ? reason : undefined
-}
-
-function collectThinkingSummaries(
-  lifecycle: MessageResponseLifecycle | undefined,
-  traces: ProcessTrace[],
-): string[] {
-  const seen = new Set<string>()
-  const summaries: string[] = []
-  const summaryTraceIds = new Set<string>()
-  const addSummary = (value: string | undefined, durationMs?: number) => {
-    const detail = safeResponseLifecycleSummary(value)
-    if (!detail) return
-    if (summaries.length >= 4) return
-    const summary = [detail, durationMs && durationMs > 0 ? formatDuration(durationMs) : '']
-      .filter(Boolean)
-      .join(' · ')
-    const key = detail.replace(/\s+/g, ' ').trim()
-    if (!key || seen.has(key)) return
-    seen.add(key)
-    summaries.push(summary)
-  }
-
-  const lifecycleThinkingEntries = lifecycle?.history
-    .filter((entry) => entry.stage === 'thinking')
-    .slice(-4) ?? []
-  for (const entry of lifecycleThinkingEntries) {
-    const trace = entry.traceId ? traces.find((candidate) => candidate.id === entry.traceId) : undefined
-    const detail = safeResponseLifecycleSummary(entry.summary)
-      ?? (trace ? safeResponseLifecycleTraceSummary(trace) : undefined)
-    if (!detail) continue
-    if (entry.traceId) summaryTraceIds.add(entry.traceId)
-    const durationMs = entry.completedAt === undefined
-      ? undefined
-      : Math.max(0, entry.completedAt - entry.startedAt)
-    addSummary(detail, durationMs)
-  }
-
-  // Traces are a compatibility fallback for providers that do not persist a
-  // lifecycle entry. Only reasoning traces with an explicit safe summary are
-  // eligible; raw reasoning and all work/tool traces stay out of this layer.
-  for (const trace of traces) {
-    if (trace.type !== 'reasoning' || summaryTraceIds.has(trace.id)) continue
-    const detail = safeResponseLifecycleTraceSummary(trace)
-    if (!detail) continue
-    addSummary(detail, traceDurationMs(trace))
-  }
-  return summaries
 }
 
 function hasAndroidUndoFollowUp(traces: ProcessTrace[]): boolean {
@@ -2049,6 +1105,7 @@ function MessageActionSheet({
               shadowOpacity: menuExpression.elevation === 'layered' ? 0.2 : menuExpression.elevation === 'none' ? 0 : 0.1,
               shadowRadius: menuExpression.elevation === 'layered' ? 20 : menuExpression.elevation === 'none' ? 0 : 12,
               shadowOffset: { width: 0, height: menuExpression.elevation === 'none' ? 0 : 8 },
+              ...(colors.ui.liquidGlass ? glassShadowStyle(colors, 'floating') : {}),
             },
             webGlassStyle,
           ]}
@@ -2334,57 +1391,6 @@ function canShowActionBar({
   const hasRegenerate = isLastAssistant && message.status !== 'streaming' && !!onRegenerate
   const hasErrorActions = message.status === 'error' && (!!onConfigure || !!onRetry)
   return hasCommonActions || hasRegenerate || canConfirmAction || canContinueAgentWorkflow || canPrepareAndroidUndo || canRepairAgentEvidence || canOpenWorkflowSettings || canSaveWorkflowSkill || hasErrorActions || canDeleteMessage || canStartMessageMultiSelect
-}
-
-function hasThinkingContent(trace: ProcessTrace): boolean {
-  return hasDisplayableThinkingContent(trace)
-}
-
-function hasExpandableThinkingContent(trace: ProcessTrace): boolean {
-  return hasDisplayableThinkingContent(trace)
-}
-
-function hasDisplayableThinkingContent(trace: ProcessTrace): boolean {
-  if (trace.metadata?.hiddenSignature || trace.type !== 'reasoning') return false
-  return Boolean(safeResponseLifecycleTraceSummary(trace))
-}
-
-function hasVisibleProcessContent(trace: ProcessTrace): boolean {
-  if (trace.metadata?.hiddenSignature) return false
-  if (hasThinkingContent(trace)) return true
-  if (isActiveProcessTrace(trace)) return true
-  if (isAgentWorkflowWaitingTrace(trace)) return true
-  if (trace.type === 'system' && isGenericModelRequestTrace(trace)) return false
-  return Boolean(
-    trace.content?.trim() ||
-    metadataSummaryForTrace(trace) ||
-    (
-      trace.title.trim() &&
-      trace.type !== 'system'
-    )
-  )
-}
-
-function shouldKeepBlockingProcessTraceVisible(trace: ProcessTrace, messageStatus: Message['status']): boolean {
-  if (messageStatus === 'streaming' || messageStatus === 'sending') return false
-  const normalized = normalizeTraceStatuses([trace], messageStatus)[0]
-  if (!normalized || !hasVisibleProcessContent(normalized)) return false
-  if (normalized.status === 'error' || normalized.status === 'cancelled') return true
-  if (isAgentWorkflowWaitingTrace(normalized)) return true
-  return false
-}
-
-function isGenericModelRequestTrace(trace: ProcessTrace): boolean {
-  const metadata = trace.metadata ?? {}
-  return trace.id.startsWith('model-') ||
-    (
-      typeof metadata.providerId === 'string' &&
-      typeof metadata.model === 'string'
-    )
-}
-
-function isActiveProcessTrace(trace: ProcessTrace): boolean {
-  return trace.status === 'running' || trace.status === 'pending'
 }
 
 function translateMessageBubbleLabel(t: TFunction, key: string, fallback: string): string {

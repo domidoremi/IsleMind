@@ -1609,7 +1609,7 @@ async function runBuiltInCapabilityBoundaryTests() {
 
   assert.deepEqual(
     BUILT_IN_CAPABILITY_TOOL_NAMES,
-    ['search_web', 'crawl_web', 'read_file', 'edit_file'],
+    ['search_web', 'crawl_web', 'read_file', 'edit_file', 'list_files', 'search_files'],
     'target built-in catalog exposes the bounded production capability set',
   )
   const searchPolicy = getBuiltInCapabilityToolPolicy('search_web')
@@ -1788,7 +1788,8 @@ async function runBuiltInCapabilityBoundaryTests() {
     arguments: { path: 'notes/readme.md' },
   }, { signal: new AbortController().signal })
   assert.equal(readResult.capabilityOutcome.code, 'completed', 'workspace read completes through the target adapter')
-  assert.equal(readResult.observation.blocks[0]?.text, 'hello\n', 'workspace read preserves bounded text output')
+  assert.equal(readResult.observation.blocks.find(block => block.name === 'workspace-text')?.text, 'hello\n', 'workspace read preserves bounded text output')
+  assert.equal(JSON.parse(readResult.observation.blocks[0].text).revision, 'revision-read-001', 'workspace reads return the exact edit precondition before content')
 
   const editAdapter = binding.resolveAdapter(`builtin:${BUILT_IN_CAPABILITY_SERVER_ID}:edit_file`)
   assert.ok(editAdapter, 'bootstrap binds the atomic workspace edit adapter')
@@ -2099,7 +2100,7 @@ async function runKnowledgeWorkspaceFileReadPortTests() {
     arguments: { path, maxBytes: 13 },
   }, { signal })
   assert.equal(result.capabilityOutcome.code, 'completed', 'task-admitted knowledge workspace read completes through the target adapter')
-  assert.equal(result.observation.blocks[0]?.text, 'first\n\nsecond', 'task-admitted knowledge workspace read returns bounded durable text')
+  assert.equal(result.observation.blocks.find(block => block.name === 'workspace-text')?.text, 'first\n\nsecond', 'task-admitted knowledge workspace read returns bounded durable text')
 }
 
 function runMcpToolRequestParserTests() {

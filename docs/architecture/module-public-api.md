@@ -71,6 +71,12 @@ Consumers import only `@/modules/<owner>`. A module's `domain/`, `application/`,
 
 ## Durable Recovery Boundary
 
+Agent task screens consume the presentation-owned `AgentTaskPort`, injected by
+bootstrap. They do not import the concrete application runtime or create another
+executor. Bootstrap and cross-module callers use the existing public module entries;
+integration tests that need private Harness fixtures live with that module rather
+than exposing its in-memory test store as production API.
+
 `AssistantRunRepository.getLatestForResponseMessage(conversationId, responseMessageId)` is a read-only, conversation-scoped lookup including terminal runs, ordered by creation time with a deterministic ID tie-breaker. Its purpose is reconstruction of a disposable message after a run commit; it grants no replay/continuation authority. Bootstrap installs it through `ConversationMessageRuntime.getLatestResponseRun`, not a presentation-to-storage import or another registry. A nonterminal owner is not an orphan. Lookup failure must not become cancellation; live work and already cancelled/terminal projections are protected across asynchronous recovery.
 
 Run/task recovery honors durably acknowledged cancellation before interrupted disposition, and competing attempts re-read the durable winner rather than overwrite it. Bootstrap gates Chat admission on successful Chat hydration followed by completed run/task recovery; a failed read uses the existing blocked/Retry surface rather than an empty-history result. Chat's existing `load` action coalesces overlapping callers and settles loading on failure while preserving the original rejection. This is private store/bootstrap coordination, not a new persistence API, replay authority or transactional refresh guarantee. Optional settings-failure behavior and successful-load semantics are unchanged. Message reconstruction awaits persistence after projection; completion of a run and completion of its UI projection are not one atomic event.

@@ -1901,7 +1901,9 @@ function assertSourceIntegration() {
   )
   assert.doesNotMatch(mainPagerSource, /MainPagerExperience|ThemeNavigationDrawer|AppTopBar|shellNavigation/, 'the pager does not restore the retired global top bar or drawer')
   assert.ok(['common.backToChat', '<HistoryHeaderFrame', 'search={historySearch}', 'newConversationLabel'].every((marker) => conversationsScreenSource.includes(marker)), 'History owns Back to Chat, title/search, and new-chat actions')
-  assert.ok(['common.backToChat', '<SettingsOverviewExperience', 'value={settingsSearch}'].every((marker) => settingsScreenSource.includes(marker)), 'Settings owns Back to Chat, title, and search')
+  const settingsNavigationSource = fs.readFileSync(path.join(root, 'src/components/settings/SettingsNavigationContent.tsx'), 'utf8')
+  assert.match(settingsScreenSource, /<SettingsNavigationContent shellNavigation=\{shellNavigation\} onHome=\{onHome\}/, 'the retained Settings page delegates shell and return intent to its navigation owner')
+  assert.ok(['common.backToChat', "t('settings.title')", '<SettingsSearch />', '<IsleSearchField value={query} onChangeText={setQuery}', "onNavigate={onHome ?? (() => router.replace('/'))}"].every((marker) => settingsNavigationSource.includes(marker)), 'Settings navigation owns Back to Chat, title, and editable search')
   assert.ok(['<ChatAiConfigurationSheet', '<ChatPersistentHeader'].every((marker) => floatingChromeSource.includes(marker)) && ['chat.newConversation', 'settings.title', 'onModelPress'].every((marker) => persistentHeaderSource.includes(marker)) && /conversation\.title/.test(floatingChromeSource), 'Chat owns persistent history, AI configuration, new-chat, and Settings actions')
   assert.ok(
     ['useState(false)', 'collapseLocked', 'restoreChrome'].every((marker) => floatingChromeStateSource.includes(marker)) &&

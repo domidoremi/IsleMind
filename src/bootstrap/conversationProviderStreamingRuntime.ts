@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import {
   createAssistantConversationProviderStreamingRuntime,
   createAssistantStreamProjectionPolicy,
@@ -28,8 +29,8 @@ import { useChatStreamingStore } from '@/store/chatStreamingStore'
 
 const streamProjectionPolicy = createAssistantStreamProjectionPolicy({
   schedule(callback, delayMs) {
-    const timer = setTimeout(callback, delayMs)
-    return () => clearTimeout(timer)
+    const timer = setExecutionTimeout(callback, delayMs)
+    return () => clearExecutionTimeout(timer)
   },
   appendContent(projection) {
     useChatStreamingStore.getState().appendContent(

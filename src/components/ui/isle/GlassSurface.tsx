@@ -1,11 +1,12 @@
 import { createContext, forwardRef, useCallback, useContext, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { Platform, StyleSheet, View, type LayoutChangeEvent, type ViewProps } from 'react-native'
+import { Platform, Pressable, StyleSheet, View, type LayoutChangeEvent, type PressableProps, type ViewProps } from 'react-native'
 import { BlurTargetView, BlurView } from 'expo-blur'
 import Svg, { Defs, Ellipse, LinearGradient, RadialGradient, Rect, Stop } from 'react-native-svg'
 
 import { useTransparencyPreference } from '@/hooks/useTransparencyPreference'
 import type { AppPalette } from '@/theme/colors'
 import { resolveThemeDesignTokens } from '@/theme/themeTokens'
+import { glassShadowStyle } from './glassShadowStyle'
 
 export interface GlassCapabilityContract {
   platform: string
@@ -92,13 +93,20 @@ export interface GlassSurfaceProps extends ViewProps {
   enabled?: boolean
   focused?: boolean
   variant?: 'chrome' | 'navigation' | 'floating'
+  shadow?: Parameters<typeof glassShadowStyle>[1]
+  interactive?: boolean
+  disabled?: boolean
+  onPress?: PressableProps['onPress']
+  onHoverIn?: PressableProps['onHoverIn']
+  onHoverOut?: PressableProps['onHoverOut']
 }
 
 const INTENSITY = { chrome: 42, navigation: 32, floating: 56 } as const
 
 /** One material owner: clipped blur + tint + curved optics, then crisp content. */
 export const GlassSurface = forwardRef<View, GlassSurfaceProps>(function GlassSurface(
-  { colors, children, style, intensity, borderRadius, enabled = true, focused = false, variant = 'chrome', ...props }, ref,
+  { colors, children, style, intensity, borderRadius, enabled = true, focused = false, variant = 'chrome', shadow,
+    interactive = false, ...props }, ref,
 ) {
   const { blurTargetRef, capability, realtimeBlurSupported } = useGlassBackdrop()
   const insideTarget = useContext(InsideGlassTarget)
@@ -108,24 +116,25 @@ export const GlassSurface = forwardRef<View, GlassSurfaceProps>(function GlassSu
   const design = colors.design ?? resolveThemeDesignTokens('liquid-glass', 'light')
   const material = variant === 'floating' ? design.semantic.surface.floating : design.semantic.surface.chrome
   const dark = design.mode === 'dark'
-  const radius = borderRadius ?? design.semantic.radius.extraLarge
+  const containerStyle = StyleSheet.flatten(style)
+  const styledRadius = containerStyle?.borderRadius
+  const radius = borderRadius ?? (typeof styledRadius === 'number' ? styledRadius : design.semantic.radius.extraLarge)
   const background = blurActive || insideSurface ? material.background : design.semantic.color.surface
+  const Container = interactive ? Pressable : View
   return (
-    <View
+    <Container
       {...props}
       ref={ref}
       style={[
         style,
         enabled ? {
-          position: 'relative',
+          position: containerStyle?.position ?? 'relative',
           borderRadius: radius,
-          borderCurve: 'continuous',
+          // The native clip, SVG rim and shadow must describe the same shape.
+          borderCurve: 'circular',
+          overflow: 'hidden',
           backgroundColor: 'transparent',
-          // Android elevation on a transparent content frame draws rectangular
-          // render-node shadows. Only the outer rounded lens owns its shadow.
-          elevation: 0,
-          shadowOpacity: 0,
-          boxShadow: insideSurface ? 'none' : `0 ${variant === 'floating' ? 8 : 5}px ${variant === 'floating' ? 26 : 18}px ${dark ? 'rgba(0, 5, 15, 0.22)' : 'rgba(29, 60, 90, 0.12)'}`,
+          ...glassShadowStyle(colors, insideSurface ? 'none' : shadow ?? (variant === 'floating' ? 'floating' : 'surface')),
         } : null,
       ]}
     >
@@ -152,7 +161,7 @@ export const GlassSurface = forwardRef<View, GlassSurfaceProps>(function GlassSu
         </View>
       ) : null}
       <InsideGlassSurface.Provider value={enabled || insideSurface}>{children}</InsideGlassSurface.Provider>
-    </View>
+    </Container>
   )
 })
 

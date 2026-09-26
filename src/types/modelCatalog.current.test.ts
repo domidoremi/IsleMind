@@ -1,6 +1,23 @@
-import { getModelConfig } from './modelCatalog'
+import { DEFAULT_MODELS, getModelConfig, mergeModelConfig } from './modelCatalog'
 
 describe('current provider model catalog', () => {
+  it('keeps catalog output bounds separate from clamped display defaults', () => {
+    for (const model of DEFAULT_MODELS) {
+      expect(model.outputTokenLimit).toEqual({ tokens: model.maxOutputTokens, source: 'catalog' })
+    }
+    const merged = mergeModelConfig('gpt-4o', 'openai-compatible', { contextWindow: 1000, maxOutputTokens: 500 })
+    expect(merged.maxOutputTokens).toBe(500)
+    expect(merged.outputTokenLimit).toEqual({ tokens: 16384, source: 'catalog' })
+  })
+
+  it('does not promote legacy or inferred limits when merging unknown models repeatedly', () => {
+    let config = mergeModelConfig('custom-no-output-metadata', 'openai-compatible', { maxOutputTokens: 4096, source: 'remote' })
+    for (let count = 0; count < 3; count++) {
+      config = mergeModelConfig(config.id, config.provider, JSON.parse(JSON.stringify(config)))
+      expect(config.outputTokenLimit).toBeUndefined()
+    }
+  })
+
   it.each(['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'])(
     '%s exposes the current documented DeepSeek effort levels', (id) => {
       // https://api-docs.deepseek.com/guides/thinking_mode/

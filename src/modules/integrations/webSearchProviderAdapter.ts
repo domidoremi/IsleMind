@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import { XMLParser } from 'fast-xml-parser'
 import type { BuiltInWebSearchResult } from './builtInCapabilityContracts'
 import {
@@ -511,7 +512,7 @@ function createSearchAttemptSignal(
   const controller = new AbortController()
   let timedOut = false
   const abortFromParent = (): void => controller.abort(parentSignal.reason)
-  const timer = setTimeout(() => {
+  const timer = setExecutionTimeout(() => {
     timedOut = true
     controller.abort(new Error('Web search provider attempt timed out.'))
   }, timeoutMs)
@@ -520,7 +521,7 @@ function createSearchAttemptSignal(
     signal: controller.signal,
     timedOut: () => timedOut,
     dispose: () => {
-      clearTimeout(timer)
+      clearExecutionTimeout(timer)
       parentSignal.removeEventListener('abort', abortFromParent)
     },
   }

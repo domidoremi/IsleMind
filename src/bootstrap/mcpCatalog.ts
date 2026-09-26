@@ -47,7 +47,7 @@ const builtInCapabilityRuntime: BuiltInCapabilityRuntimeBinding = createBuiltInC
   ...androidTrustedWebFetchPorts,
   remoteWebCrawl: createTavilyRemoteWebCrawlPort(),
   workspaceFileRead: builtInWorkspaceFileReadPort,
-  ...(builtInWritableWorkspaceFilePort ? { workspaceFiles: builtInWritableWorkspaceFilePort } : {}),
+  ...(builtInWritableWorkspaceFilePort ? { workspaceFiles: builtInWritableWorkspaceFilePort, workspaceFileQuery: builtInWritableWorkspaceFilePort } : {}),
 })
 
 export const BUILTIN_SERVER_ID = BUILT_IN_CAPABILITY_SERVER_ID

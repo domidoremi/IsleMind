@@ -33,8 +33,8 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
 }) {
   const { t } = useTranslation()
   const { colors, canonicalThemeId, mode } = useAppTheme()
-  const { width } = useWindowDimensions()
-  const compact = width < 430
+  const { width, fontScale } = useWindowDimensions()
+  const compact = width / fontScale < 430
   const hintId = useId()
   const activeCustomThemeAccent = Boolean(value && !THEME_ACCENT_OPTIONS.some((item) => item.color === value))
   const customValue = activeCustomThemeAccent ? value : undefined
@@ -83,7 +83,7 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
             label={t(item.labelKey)}
             color={item.color}
             active={value === item.color}
-            compact={width < 600}
+            compact={width / fontScale < 600}
             onPress={(event) => { if (value !== item.color) onChange(item.color, event) }}
             testID={`settings-theme-accent-${item.id}`}
           />
@@ -92,7 +92,7 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
           label={t('settings.themeAccentCustom')}
           color={customValue ?? savedCustom}
           active={activeCustomThemeAccent}
-          compact={width < 600}
+          compact={width / fontScale < 600}
           disabled={!customValue && !savedCustom}
           onPress={(event) => {
             // The radio restores exactly the color it shows, never a hidden draft.
@@ -103,7 +103,7 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
         />
       </RadioGroup>
       <View testID="settings-theme-accent-editor" style={{ gap: 8 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('settings.themeAccentCustom')}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('settings.themeAccentCustom')}</Text>
         <View style={{ flexDirection: compact ? 'column' : 'row', gap: 8, alignItems: 'stretch' }}>
           <IsleInput
             value={draft}
@@ -142,10 +142,10 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
             <Text style={{ color: preview.ui.control.primaryForeground, fontSize: 16, fontWeight: '700' }}>Aa</Text>
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '700' }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>
               {t(normalized ? 'settings.themeAccentPreview' : 'settings.themeAccentCurrent')}{normalized ? ` · ${normalized}` : ''}
             </Text>
-            <Text nativeID={hintId} testID="settings-theme-accent-hint" accessibilityLiveRegion="polite" style={{ color: invalid ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, minHeight: 32 }}>{hint}</Text>
+            <Text nativeID={hintId} testID="settings-theme-accent-hint" accessibilityLiveRegion="polite" style={{ color: invalid ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, minHeight: 40 }}>{hint}</Text>
           </View>
         </View>
       </View>
@@ -217,7 +217,7 @@ function ThemeAccentSwatch({
         <View aria-hidden testID={`${testID}-color`} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: swatchColor, borderWidth: 2, borderColor: color ? 'rgba(255,255,255,0.7)' : colors.ui.semantic.chrome.border, overflow: 'hidden' }}>
           {color === undefined ? <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 12, backgroundColor: colors.ui.semantic.surface.base }} /> : null}
         </View>
-        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 13, fontWeight: '600' }}>{label}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600', textAlign: 'center' }}>{label}</Text>
       </MotiView>
     </IslePressable>
   )

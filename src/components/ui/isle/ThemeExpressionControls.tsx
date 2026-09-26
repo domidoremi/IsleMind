@@ -77,7 +77,6 @@ export function ThemeButtonExpressionBody({ family, colors, icon, content, prima
 
   return (
     <View testID="theme-button-body-liquid-glass" style={styles.row}>
-      <View {...decorativeAccessibility} style={[styles.glassPlane, { borderColor: colors.ui.actionBar.itemBorder }]} />
       {icon ? <View style={styles.icon}>{icon}</View> : null}
       {content ? <View style={styles.label}>{content}</View> : null}
     </View>
@@ -136,8 +135,6 @@ export function ThemeInputExpressionBody({ family, colors, prefix, input, suffix
 
   return (
     <View testID="theme-input-body-liquid-glass" style={styles.inputBody}>
-      <MotiView {...decorativeAccessibility} testID="theme-input-focus-liquid-glass" animate={{ borderColor: focused ? colors.ui.control.focus : colors.ui.actionBar.itemBorder, opacity: focused ? 1 : 0.6 }} transition={focusMotion.transition} style={[styles.glassInputPlane, {
-        borderRadius: multiline ? colors.ui.radius.controlLarge : 999, left: -8, right: -8 }]} />
       {content}
     </View>
   )
@@ -164,7 +161,9 @@ export function ThemeCardExpressionLayers({ family, colors, interactive, titleCa
       : <View {...decorativeAccessibility} testID="theme-card-layer-material" />
   }
 
-  return <View {...decorativeAccessibility} testID="theme-card-layer-liquid-glass" style={[styles.glassCardPlane, { borderColor: colors.ui.actionBar.itemBorder }]} />
+  // The surface owns the rounded boundary; a second content-sized outline
+  // becomes an inset box on tall cards and padded controls.
+  return null
 }
 
 const styles = StyleSheet.create({
@@ -176,7 +175,6 @@ const styles = StyleSheet.create({
   monetEdge: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderTopLeftRadius: 12, borderBottomRightRadius: 14, opacity: 0.24 },
   materialStateLayer: { ...StyleSheet.absoluteFill, opacity: 0.06 },
   materialIndicator: { position: 'absolute', top: 4, bottom: 4, left: 0, width: 2, opacity: 0.72 },
-  glassPlane: { ...StyleSheet.absoluteFill, borderWidth: StyleSheet.hairlineWidth, borderRadius: 999, opacity: 0.42 },
   inputBody: { position: 'relative', flex: 1, alignSelf: 'stretch', minWidth: 0, justifyContent: 'center' },
   inputRow: { position: 'relative', flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
   inputRowMultiline: { alignItems: 'flex-start' },
@@ -184,10 +182,8 @@ const styles = StyleSheet.create({
   monetInputWash: { position: 'absolute', top: 0, right: -8, width: 96, height: 44, borderRadius: 24 },
   monetInputEdge: { position: 'absolute', top: 2, right: 4, bottom: 2, left: 4, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderTopRightRadius: 20, borderBottomLeftRadius: 20 },
   materialInputIndicator: { position: 'absolute', left: 0, bottom: -1, width: 44, height: 2 },
-  glassInputPlane: { ...StyleSheet.absoluteFill, borderWidth: StyleSheet.hairlineWidth, borderRadius: 999, opacity: 0.42 },
   minimalCardRule: { position: 'absolute', top: 0, left: 0, right: 0, height: StyleSheet.hairlineWidth },
   minimalCardIndex: { position: 'absolute', top: 10, bottom: 10, left: 0, width: StyleSheet.hairlineWidth },
   monetCardWash: { position: 'absolute', top: -26, right: -16, width: 108, height: 58, borderRadius: 40, opacity: 0.08 },
   materialCardIndicator: { position: 'absolute', left: 0, top: 12, bottom: 12, width: 3, opacity: 0.68 },
-  glassCardPlane: { position: 'absolute', top: 2, right: 2, bottom: 2, left: 2, borderWidth: StyleSheet.hairlineWidth, borderRadius: 999, opacity: 0.36 },
 })

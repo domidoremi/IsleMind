@@ -28,12 +28,16 @@ interface ActiveTask {
   task: Task
   controller: AbortController
   cancellationRequested: boolean
+  cancellationWrite?: Promise<Task>
   writeTail: Promise<void>
   detachExternalCancellation?: () => void
 }
 
 export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRuntime {
   const activeTasks = new Map<TaskId, ActiveTask>()
+  // Reserve before the first asynchronous read. A second invocation must not
+  // replace the active cancellation controller while admission is in flight.
+  const startingTasks = new Map<TaskId, Promise<void>>()
 
   return {
     async create(input) {
@@ -104,29 +108,39 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
       if (!isValidTaskId(taskId)) {
         return err('invalid_request', 'The task ID is invalid.', { retryable: false })
       }
-      if (activeTasks.has(taskId)) {
+      if (activeTasks.has(taskId) || startingTasks.has(taskId)) {
         return err('task_already_active', 'The task is already active.', { retryable: false })
       }
+      let ready!: () => void
+      startingTasks.set(taskId, new Promise<void>(resolve => { ready = resolve }))
+      let released = false
+      const releaseStart = () => { if (!released) { released = true; startingTasks.delete(taskId); ready() } }
       let task: Task | undefined
+      let active: ActiveTask
       try {
-        task = await dependencies.persistence.get(taskId)
-      } catch {
-        return err('persistence_failed', 'The task could not be loaded.', { retryable: true })
-      }
-      if (!task) return err('task_not_found', 'The task does not exist.', { retryable: false })
-      if (task.status === 'awaiting-confirmation') {
-        return err('confirmation_required', 'The task requires confirmation before execution.', { retryable: false })
-      }
-      if (task.status === 'failed' && task.failure?.code === 'policy_denied') {
-        return err('policy_denied', 'The task was denied by policy.', { retryable: false })
-      }
-      if (task.status !== 'queued') {
-        return err('task_not_active', 'The task is not queued for execution.', { retryable: false })
-      }
-      if (input.cancellationSignal?.aborted) return this.cancel(taskId)
+        try {
+          task = await dependencies.persistence.get(taskId)
+        } catch {
+          return err('persistence_failed', 'The task could not be loaded.', { retryable: true })
+        }
+        if (!task) return err('task_not_found', 'The task does not exist.', { retryable: false })
+        if (task.status === 'awaiting-confirmation') {
+          return err('confirmation_required', 'The task requires confirmation before execution.', { retryable: false })
+        }
+        if (task.status === 'failed' && task.failure?.code === 'policy_denied') {
+          return err('policy_denied', 'The task was denied by policy.', { retryable: false })
+        }
+        if (task.status !== 'queued') {
+          return err('task_not_active', 'The task is not queued for execution.', { retryable: false })
+        }
+        if (task.cancellationRequestedAt !== undefined || input.cancellationSignal?.aborted) {
+          releaseStart()
+          return this.cancel(taskId)
+        }
 
-      const active: ActiveTask = createPassiveTask(task)
-      activeTasks.set(taskId, active)
+        active = createPassiveTask(task)
+        activeTasks.set(taskId, active)
+      } finally { releaseStart() }
       try {
         await record(active, dependencies, 'task.started', {}, {
           status: 'running',
@@ -185,6 +199,10 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
             ...(normalizeSummary(execution.summary) ? { summary: normalizeSummary(execution.summary) } : {}),
           },
         })
+        if (succeeded.status !== 'succeeded') {
+          const cancelled = await finishCancelled(active, dependencies)
+          return err('cancelled', 'The task was cancelled.', { retryable: true, details: { taskId: cancelled.id } })
+        }
         return ok(succeeded)
       } catch {
         if (active.cancellationRequested || active.controller.signal.aborted) {
@@ -206,6 +224,8 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
       if (!isValidTaskId(taskId)) {
         return err('invalid_request', 'The task ID is invalid.', { retryable: false })
       }
+      const starting = startingTasks.get(taskId)
+      if (starting) await starting
       const active = activeTasks.get(taskId)
       if (active) {
         try {
@@ -238,7 +258,7 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
       if (!isValidTaskId(taskId)) {
         return err('invalid_request', 'The task ID is invalid.', { retryable: false })
       }
-      if (activeTasks.has(taskId)) {
+      if (activeTasks.has(taskId) || startingTasks.has(taskId)) {
         return err('task_not_active', 'An active task cannot be expired directly.', { retryable: false })
       }
       let task: Task | undefined
@@ -277,7 +297,7 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
       }
       const recovered: Task[] = []
       for (const task of tasks) {
-        if (activeTasks.has(task.id)) continue
+        if (activeTasks.has(task.id) || startingTasks.has(task.id)) continue
         try {
           // An acknowledged cancellation must survive death between its journal
           // commit and the executor's eventual terminal callback, including the
@@ -380,7 +400,7 @@ function createPassiveTask(task: Task): ActiveTask {
   return {
     task,
     controller: new AbortController(),
-    cancellationRequested: false,
+    cancellationRequested: task.cancellationRequestedAt !== undefined,
     writeTail: Promise.resolve(),
   }
 }
@@ -393,6 +413,12 @@ async function record(
   patch: Partial<Task> = {},
 ): Promise<Task> {
   return enqueue(active, async () => {
+    // Terminal writes and cancellation are monotonic. A delayed artifact or
+    // executor result cannot resurrect a stopped task or report it as success.
+    if (isTerminalTask(active.task)) return active.task
+    if (active.cancellationRequested && type !== 'task.cancellation-requested' && type !== 'task.cancelled') {
+      throw new Error('The task was cancelled before this state transition.')
+    }
     const next = {
       ...active.task,
       ...patch,
@@ -460,12 +486,24 @@ async function requestCancellation(
   dependencies: TaskRuntimeDependencies,
   reason: 'caller_requested' | 'external_signal',
 ): Promise<Task> {
-  if (active.cancellationRequested) return active.task
+  if (active.cancellationWrite) return active.cancellationWrite
+  if (isTerminalTask(active.task)) return active.task
   active.cancellationRequested = true
+  const requested = active.task.cancellationRequestedAt !== undefined
+    ? Promise.resolve(active.task)
+    : record(active, dependencies, 'task.cancellation-requested', { reason }, { cancellationRequestedAt: dependencies.clock.now() })
+  // Acknowledge the durable terminal barrier without waiting for an executor
+  // that ignores abort. Keep its live slot until cleanup really settles. A
+  // failed write remains retryable; repeated callers await the same write.
+  const write = requested.then(() => finishCancelled(active, dependencies))
+  active.cancellationWrite = write
+  void write.finally(() => { if (active.cancellationWrite === write) active.cancellationWrite = undefined }).catch(() => undefined)
   active.controller.abort()
-  return record(active, dependencies, 'task.cancellation-requested', { reason }, {
-    cancellationRequestedAt: dependencies.clock.now(),
-  })
+  return write
+}
+
+function isTerminalTask(task: Task): boolean {
+  return task.status === 'succeeded' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'expired'
 }
 
 function normalizeCreateInput(input: CreateTaskInput): CreateTaskInput | undefined {

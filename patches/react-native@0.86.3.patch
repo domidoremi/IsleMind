@@ -1,0 +1,329 @@
+diff --git a/ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.cpp b/ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.cpp
+index c630cb4..f385d11 100644
+--- a/ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.cpp
++++ b/ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.cpp
+@@ -466,6 +466,7 @@ void YogaLayoutableShadowNode::updateYogaProps() {
+ 
+ void YogaLayoutableShadowNode::configureYogaTree(
+     float pointScaleFactor,
++    Float fontSizeMultiplier,
+     YGErrata defaultErrata,
+     bool swapLeftAndRight) {
+   ensureUnsealed();
+@@ -475,6 +476,18 @@ void YogaLayoutableShadowNode::configureYogaTree(
+   YGConfigSetErrata(&yogaConfig_, errata);
+   YGConfigSetPointScaleFactor(&yogaConfig_, pointScaleFactor);
+ 
++  // A measurable node's measurement depends on `fontSizeMultiplier`, but unlike
++  // `pointScaleFactor` it is not part of the Yoga config, so a change does not
++  // invalidate Yoga's layout cache. Dirty the node when it changes to force
++  // re-measurement. We propagate up to the root so an unchanged, still-cached
++  // ancestor isn't skipped by `calculateLayoutInternal` before reaching us.
++  if (ReactNativeFeatureFlags::enableFontScaleChangesUpdatingLayout() &&
++      getTraits().check(ShadowNodeTraits::Trait::MeasurableYogaNode) &&
++      !floatEquality(
++          getLayoutMetrics().fontSizeMultiplier, fontSizeMultiplier)) {
++    yogaNode_.markDirtyAndPropagate();
++  }
++
+   // TODO: `swapLeftAndRight` modified backing props and cannot be undone
+   if (swapLeftAndRight) {
+     swapStyleLeftAndRight();
+@@ -493,6 +506,8 @@ void YogaLayoutableShadowNode::configureYogaTree(
+ 
+     if (child.yogaTreeHasBeenConfigured_ &&
+         childLayoutMetrics.pointScaleFactor == pointScaleFactor &&
++        floatEquality(
++            childLayoutMetrics.fontSizeMultiplier, fontSizeMultiplier) &&
+         childLayoutMetrics.wasLeftAndRightSwapped == swapLeftAndRight &&
+         childErrata == child.resolveErrata(errata)) {
+       continue;
+@@ -501,10 +516,13 @@ void YogaLayoutableShadowNode::configureYogaTree(
+     if (doesOwn(child)) {
+       auto& mutableChild = const_cast<YogaLayoutableShadowNode&>(child);
+       mutableChild.configureYogaTree(
+-          pointScaleFactor, child.resolveErrata(errata), swapLeftAndRight);
++          pointScaleFactor,
++          fontSizeMultiplier,
++          child.resolveErrata(errata),
++          swapLeftAndRight);
+     } else {
+       cloneChildInPlace(i).configureYogaTree(
+-          pointScaleFactor, errata, swapLeftAndRight);
++          pointScaleFactor, fontSizeMultiplier, errata, swapLeftAndRight);
+     }
+   }
+ }
+@@ -601,6 +619,7 @@ void YogaLayoutableShadowNode::layoutTree(
+     TraceSection s2("YogaLayoutableShadowNode::configureYogaTree");
+     configureYogaTree(
+         layoutContext.pointScaleFactor,
++        layoutContext.fontSizeMultiplier,
+         YGErrataAll /*defaultErrata*/,
+         swapLeftAndRight);
+   }
+@@ -666,6 +685,7 @@ void YogaLayoutableShadowNode::layoutTree(
+   if (yogaNode_.getHasNewLayout()) {
+     auto layoutMetrics = layoutMetricsFromYogaNode(yogaNode_);
+     layoutMetrics.pointScaleFactor = layoutContext.pointScaleFactor;
++    layoutMetrics.fontSizeMultiplier = layoutContext.fontSizeMultiplier;
+     layoutMetrics.wasLeftAndRightSwapped = swapLeftAndRight;
+     setLayoutMetrics(layoutMetrics);
+     yogaNode_.setHasNewLayout(false);
+@@ -713,6 +733,7 @@ void YogaLayoutableShadowNode::layout(LayoutContext layoutContext) {
+ 
+       auto newLayoutMetrics = layoutMetricsFromYogaNode(*childYogaNode);
+       newLayoutMetrics.pointScaleFactor = layoutContext.pointScaleFactor;
++      newLayoutMetrics.fontSizeMultiplier = layoutContext.fontSizeMultiplier;
+       newLayoutMetrics.wasLeftAndRightSwapped =
+           layoutContext.swapLeftAndRightInRTL &&
+           newLayoutMetrics.layoutDirection == LayoutDirection::RightToLeft;
+diff --git a/ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.h b/ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.h
+index 25714d5..fff9c00 100644
+--- a/ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.h
++++ b/ReactCommon/react/renderer/components/view/YogaLayoutableShadowNode.h
+@@ -137,7 +137,8 @@ class YogaLayoutableShadowNode : public LayoutableShadowNode {
+    * ShadowTree has been constructed, but before it has been is laid out or
+    * committed.
+    */
+-  void configureYogaTree(float pointScaleFactor, YGErrata defaultErrata, bool swapLeftAndRight);
++  void
++  configureYogaTree(float pointScaleFactor, Float fontSizeMultiplier, YGErrata defaultErrata, bool swapLeftAndRight);
+ 
+   /**
+    * Return an errata based on a `layoutConformance` prop if given, otherwise
+diff --git a/ReactCommon/react/renderer/core/LayoutMetrics.h b/ReactCommon/react/renderer/core/LayoutMetrics.h
+index 794f899..cc20fae 100644
+--- a/ReactCommon/react/renderer/core/LayoutMetrics.h
++++ b/ReactCommon/react/renderer/core/LayoutMetrics.h
+@@ -40,6 +40,8 @@ struct LayoutMetrics {
+   bool wasLeftAndRightSwapped{false};
+   // Pixel density. Number of device pixels per density-independent pixel.
+   Float pointScaleFactor{1.0};
++  // Surface font scale this node was last laid out with.
++  Float fontSizeMultiplier{1.0};
+   // How much the children of the node actually overflow in each direction.
+   // Positive values indicate that children are overflowing outside of the node.
+   // Negative values indicate that children are clipped inside the node
+@@ -120,6 +122,7 @@ struct hash<facebook::react::LayoutMetrics> {
+         layoutMetrics.displayType,
+         layoutMetrics.layoutDirection,
+         layoutMetrics.pointScaleFactor,
++        layoutMetrics.fontSizeMultiplier,
+         layoutMetrics.overflowInset);
+   }
+ };
+diff --git a/ReactCommon/react/renderer/scheduler/SurfaceHandler.cpp b/ReactCommon/react/renderer/scheduler/SurfaceHandler.cpp
+index 3d4adc6..930472f 100644
+--- a/ReactCommon/react/renderer/scheduler/SurfaceHandler.cpp
++++ b/ReactCommon/react/renderer/scheduler/SurfaceHandler.cpp
+@@ -9,7 +9,6 @@
+ 
+ #include <cxxreact/TraceSection.h>
+ #include <react/debug/react_native_assert.h>
+-#include <react/featureflags/ReactNativeFeatureFlags.h>
+ #include <react/renderer/uimanager/UIManager.h>
+ 
+ namespace facebook::react {
+@@ -213,78 +212,6 @@ Size SurfaceHandler::measure(
+   return rootShadowNode->getLayoutMetrics().frame.size;
+ }
+ 
+-std::shared_ptr<const ShadowNode> SurfaceHandler::dirtyMeasurableNodesRecursive(
+-    std::shared_ptr<const ShadowNode> node) const {
+-  const auto nodeHasChildren = !node->getChildren().empty();
+-  const auto isMeasurableYogaNode =
+-      node->getTraits().check(ShadowNodeTraits::Trait::MeasurableYogaNode);
+-
+-  // Node is not measurable and has no children, its layout will not be affected
+-  if (!nodeHasChildren && !isMeasurableYogaNode) {
+-    return nullptr;
+-  }
+-
+-  std::shared_ptr<const std::vector<std::shared_ptr<const ShadowNode>>>
+-      newChildren = ShadowNodeFragment::childrenPlaceholder();
+-
+-  if (nodeHasChildren) {
+-    std::shared_ptr<std::vector<std::shared_ptr<const ShadowNode>>>
+-        newChildrenMutable = nullptr;
+-    for (size_t i = 0; i < node->getChildren().size(); i++) {
+-      const auto& child = node->getChildren()[i];
+-
+-      if (const auto& layoutableNode =
+-              std::dynamic_pointer_cast<const YogaLayoutableShadowNode>(
+-                  child)) {
+-        auto newChild = dirtyMeasurableNodesRecursive(layoutableNode);
+-
+-        if (newChild != nullptr) {
+-          if (newChildrenMutable == nullptr) {
+-            newChildrenMutable = std::make_shared<
+-                std::vector<std::shared_ptr<const ShadowNode>>>(
+-                node->getChildren());
+-            newChildren = newChildrenMutable;
+-          }
+-
+-          (*newChildrenMutable)[i] = newChild;
+-        }
+-      }
+-    }
+-
+-    // Node is not measurable and its children were not dirtied, its layout will
+-    // not be affected
+-    if (!isMeasurableYogaNode && newChildrenMutable == nullptr) {
+-      return nullptr;
+-    }
+-  }
+-
+-  const auto newNode = node->getComponentDescriptor().cloneShadowNode(
+-      *node,
+-      {
+-          .children = newChildren,
+-          // Preserve the original state of the node
+-          .state = node->getState(),
+-      });
+-
+-  if (isMeasurableYogaNode) {
+-    std::static_pointer_cast<YogaLayoutableShadowNode>(newNode)->dirtyLayout();
+-  }
+-
+-  return newNode;
+-}
+-
+-void SurfaceHandler::dirtyMeasurableNodes(ShadowNode& root) const {
+-  for (const auto& child : root.getChildren()) {
+-    if (const auto& layoutableNode =
+-            std::dynamic_pointer_cast<const YogaLayoutableShadowNode>(child)) {
+-      const auto newChild = dirtyMeasurableNodesRecursive(layoutableNode);
+-      if (newChild != nullptr) {
+-        root.replaceChild(*child, newChild);
+-      }
+-    }
+-  }
+-}
+-
+ void SurfaceHandler::constraintLayout(
+     const LayoutConstraints& layoutConstraints,
+     const LayoutContext& layoutContext) const {
+@@ -315,19 +242,8 @@ void SurfaceHandler::constraintLayout(
+         link_.shadowTree && "`link_.shadowTree` must not be null.");
+     link_.shadowTree->commit(
+         [&](const RootShadowNode& oldRootShadowNode) {
+-          auto newRoot = oldRootShadowNode.clone(
++          return oldRootShadowNode.clone(
+               propsParserContext, layoutConstraints, layoutContext);
+-
+-          // Dirty all measurable nodes when the fontSizeMultiplier changes to
+-          // trigger re-measurement.
+-          if (ReactNativeFeatureFlags::enableFontScaleChangesUpdatingLayout() &&
+-              layoutContext.fontSizeMultiplier !=
+-                  oldRootShadowNode.getConcreteProps()
+-                      .layoutContext.fontSizeMultiplier) {
+-            dirtyMeasurableNodes(*newRoot);
+-          }
+-
+-          return newRoot;
+         },
+         {/* default commit options */});
+   }
+diff --git a/ReactCommon/react/renderer/scheduler/SurfaceHandler.h b/ReactCommon/react/renderer/scheduler/SurfaceHandler.h
+index b031a51..93cfb22 100644
+--- a/ReactCommon/react/renderer/scheduler/SurfaceHandler.h
++++ b/ReactCommon/react/renderer/scheduler/SurfaceHandler.h
+@@ -151,12 +151,6 @@ class SurfaceHandler {
+ 
+   void applyDisplayMode(DisplayMode displayMode) const;
+ 
+-  /*
+-   * An utility for dirtying all measurable shadow nodes present in the tree.
+-   */
+-  void dirtyMeasurableNodes(ShadowNode &root) const;
+-  std::shared_ptr<const ShadowNode> dirtyMeasurableNodesRecursive(std::shared_ptr<const ShadowNode> node) const;
+-
+ #pragma mark - Link & Parameters
+ 
+   /*
+diff --git a/ReactCommon/react/renderer/components/root/RootShadowNode.cpp b/ReactCommon/react/renderer/components/root/RootShadowNode.cpp
+index cf4b05b..cfe5f83 100644
+--- a/ReactCommon/react/renderer/components/root/RootShadowNode.cpp
++++ b/ReactCommon/react/renderer/components/root/RootShadowNode.cpp
+@@ -50,7 +50,9 @@ RootShadowNode::Unshared RootShadowNode::clone(
+           /* .props = */ props,
+       });
+ 
+-  if (layoutConstraints != getConcreteProps().layoutConstraints) {
++  if (layoutConstraints != getConcreteProps().layoutConstraints ||
++      layoutContext.fontSizeMultiplier !=
++          getConcreteProps().layoutContext.fontSizeMultiplier) {
+     newRootShadowNode->dirtyLayout();
+   }
+ 
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index 62527f0..781f179 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -35,9 +35,9 @@ project(":packages:react-native:ReactAndroid:hermes-engine").projectDir =
+ // for :packages and :packages:react-native as well as otherwise the build from
+ // source will fail with a missing folder exception.
+ 
+-project(":packages").projectDir = file("/tmp")
++project(":packages").projectDir = file(".gradle/placeholder-project").also { it.mkdirs() }
+ 
+-project(":packages:react-native").projectDir = file("/tmp")
++project(":packages:react-native").projectDir = file(".gradle/placeholder-project").also { it.mkdirs() }
+ 
+ // Gradle properties defined in `gradle.properties` are not inherited by
+ // included builds, see https://github.com/gradle/gradle/issues/2534.
+diff --git a/ReactAndroid/build.gradle.kts b/ReactAndroid/build.gradle.kts
+index 3a1592d..bdbd6ac 100644
+--- a/ReactAndroid/build.gradle.kts
++++ b/ReactAndroid/build.gradle.kts
+@@ -11,6 +11,7 @@ import com.facebook.react.tasks.internal.*
+ import com.facebook.react.tasks.internal.utils.*
+ import de.undercouch.gradle.tasks.download.Download
+ import java.nio.file.Paths
++import java.util.Properties
+ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+ 
+ plugins {
+@@ -42,6 +43,13 @@ val reactNativeRootDir = projectDir.parent
+ val hermesV1Enabled =
+     rootProject.extensions.getByType(PrivateReactExtension::class.java).hermesV1Enabled.get()
+ 
++// Keep the published engine matched to this RN checkout; only RN needs rebuilding.
++val hermesVersionProperties = Properties().apply {
++  file("$reactNativeRootDir/sdks/hermes-engine/version.properties").inputStream().use { load(it) }
++}
++val hermesVersion = hermesVersionProperties.getProperty(
++    if (hermesV1Enabled) "HERMES_V1_VERSION_NAME" else "HERMES_VERSION_NAME")
++
+ // We put the publishing version from gradle.properties inside ext. so other
+ // subprojects can access it as well.
+ extra["publishing_version"] = project.findProperty("VERSION_NAME")?.toString()!!
+@@ -49,7 +57,7 @@ extra["publishing_version"] = project.findProperty("VERSION_NAME")?.toString()!!
+ // This is the version of CMake we're requesting to the Android SDK to use.
+ // If missing it will be downloaded automatically. Only CMake versions shipped with the
+ // Android SDK are supported (you can find them listed in the SDK Manager of Android Studio).
+-val cmakeVersion = System.getenv("CMAKE_VERSION") ?: "3.30.5"
++val cmakeVersion = System.getenv("CMAKE_VERSION") ?: "3.22.1"
+ 
+ extra["cmake_version"] = cmakeVersion
+ 
+@@ -581,6 +589,9 @@ android {
+             "-DANDROID_TOOLCHAIN=clang",
+             "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+             "-DCMAKE_POLICY_DEFAULT_CMP0069=NEW",
++            "-DCMAKE_JOB_POOLS=islemind_native=${providers.gradleProperty("islemindNativeBuildJobs").orElse("1").get()}",
++            "-DCMAKE_JOB_POOL_COMPILE=islemind_native",
++            "-DCMAKE_JOB_POOL_LINK=islemind_native",
+         )
+ 
+         if (hermesV1Enabled) {
+@@ -719,7 +730,7 @@ dependencies {
+ 
+   // It's up to the consumer to decide if hermes or other engines should be included or not.
+   // Therefore hermes-engine is a compileOnly dependencies.
+-  compileOnly(project(":packages:react-native:ReactAndroid:hermes-engine"))
++  compileOnly("com.facebook.hermes:hermes-android:$hermesVersion")
+ 
+   testImplementation(libs.junit)
+   testImplementation(libs.assertj)

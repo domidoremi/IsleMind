@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 export function providerEndpointHost(url: string): string | undefined {
   try {
     return new URL(url).host
@@ -21,13 +22,13 @@ export async function fetchProviderWithTimeout(
   const controller = new AbortController()
   // Keep caller/whole-operation cancellation connected after headers, as for streams.
   const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const timeout = setExecutionTimeout(() => controller.abort(), timeoutMs)
   try {
     // Never forward provider credentials or prompt bodies to a redirect target.
     // Manual callers (e.g. quota queries) inspect the original 3xx themselves.
     return await fetchImplementation(input, { ...init, signal, redirect: init?.redirect === 'manual' ? 'manual' : 'error' })
   } finally {
-    clearTimeout(timeout)
+    clearExecutionTimeout(timeout)
   }
 }
 
@@ -40,7 +41,7 @@ export async function withProviderOperationTimeout<T>(
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid provider operation timeout')
   const controller = new AbortController()
   const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal
-  const timeout = setTimeout(() => {
+  const timeout = setExecutionTimeout(() => {
     const error = new Error('The provider operation timed out')
     error.name = 'TimeoutError'
     controller.abort(error)
@@ -52,7 +53,7 @@ export async function withProviderOperationTimeout<T>(
     pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
   })
   try { return await wait(operation(signal, wait)) }
-  finally { clearTimeout(timeout) }
+  finally { clearExecutionTimeout(timeout) }
 }
 
 /** Fetches a streaming request while preserving runtimes that require an explicit body field. */
@@ -67,12 +68,12 @@ export async function fetchProviderStreamWithTimeout(
   // the native request while its body is open: Expo reader.cancel() alone
   // can leave Android's socket read blocked. Expo installs AbortSignal.any.
   const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const timeout = setExecutionTimeout(() => controller.abort(), timeoutMs)
   try {
     const body = init?.body ?? undefined
     return await fetchImplementation(input, { ...init, signal, body, redirect: init?.redirect === 'manual' ? 'manual' : 'error' })
   } finally {
-    clearTimeout(timeout)
+    clearExecutionTimeout(timeout)
   }
 }
 
@@ -112,7 +113,7 @@ export async function safeProviderResponseText(response: Pick<Response, 'text'> 
       pending += chunk
       if (pending.length >= 4096 || done) { if (pending) chunks.push(pending); pending = '' }
       if (done) return chunks.join('')
-      if (++reads % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      if (++reads % 16 === 0) await new Promise<void>((resolve) => setExecutionTimeout(resolve, 0))
     }
   } catch (error) {
     if (reader) await reader.cancel().catch(() => undefined)

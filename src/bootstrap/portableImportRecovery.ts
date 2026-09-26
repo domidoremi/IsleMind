@@ -58,9 +58,9 @@ import { clearRuntimeLog } from '@/platform/native/runtimeLog'
 import { usagePortableSnapshotRepository } from './usageStatisticsRuntime'
 import { parseSavedDocuments, type SavedDocument } from '@/modules/documents'
 import { documentLibrary } from './documentLibrary'
-import { parseAgentDefinitions, type AgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
+import { parseAgentDefinitions, type AgentDefinition } from '@/modules/assistant-runtime'
 import { agentDefinitionRepository } from './agentDefinitionRepository'
-import { AgentDefinitionConflictError } from '@/modules/assistant-runtime/agentDefinitionRepository'
+import { AgentDefinitionConflictError } from '@/modules/assistant-runtime'
 
 const PARTICIPANT_IDS = Object.freeze([
   'workspaces',

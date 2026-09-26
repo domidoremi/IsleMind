@@ -142,8 +142,8 @@ export function listUsagePricingEntries() {
   return usageStatisticsService.listPricingEntries()
 }
 
-export function saveUsagePricingEntry(entry: UsagePricingEntry): Promise<void> {
-  return usageStatisticsService.savePricingEntry(entry)
+export function saveUsagePricingEntry(entry: UsagePricingEntry, expectedRevision?: string): Promise<void> {
+  return usageStatisticsService.savePricingEntry(entry, expectedRevision)
 }
 
 export function deleteUsagePricingEntry(id: string): Promise<void> {

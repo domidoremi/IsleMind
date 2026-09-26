@@ -1,12 +1,12 @@
 import { fireEvent, render } from '@testing-library/react-native'
-import { Text } from 'react-native'
+import { StyleSheet, Text } from 'react-native'
 import { Collapse, Image, Modal, Tag, useTheme } from 'animal-island-ui-rn'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { getColors } from '@/theme/colors'
 import { THEME_MOTION_DURATIONS } from '@/theme/themeTokens'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
-import { IsleButton, IsleCollapse, IsleInput, IsleModal, IsleSelect, IsleSwitch } from './IsleKit'
+import { IsleButton, IsleCard, IsleCollapse, IsleInput, IsleModal, IsleSelect, IsleSwitch } from './IsleKit'
 import { IsleImage } from './Image'
 import { IsleTag } from './Tag'
 import { IsleThemeProvider } from './IsleThemeProvider'
@@ -126,7 +126,15 @@ it.each(['minimal', 'monet', 'material', 'liquid-glass'] as const)('%s focus dec
   expect(screen.getByTestId('draft')).toBe(input)
   expect(input.props.value).toBe('keep this draft')
   const decoration = screen.getByTestId(`theme-input-focus-${theme}`, { includeHiddenElements: true })
-  expect(decoration.props.pointerEvents).toBe('none')
+  if (theme === 'liquid-glass') {
+    // Glass focus belongs to the interactive outer shell, not a decorative
+    // content-sized plane. It must not block its native input's events.
+    expect(decoration.props.pointerEvents).toBeUndefined()
+    expect(decoration).toHaveStyle({ borderWidth: 1, elevation: 0, shadowOpacity: 0 })
+    expect(decoration.props.animate.borderColor).toBe(getColors('light', theme).ui.input.focus)
+  } else {
+    expect(decoration.props.pointerEvents).toBe('none')
+  }
   expect(decoration.props.transition.duration).toBeGreaterThan(1)
   jest.mocked(useMotionPreference).mockReturnValue('reduced')
   await screen.rerender(<IsleInput testID="draft" defaultValue="first" />)
@@ -172,4 +180,38 @@ it('animates search focus colors without moving or replacing the editable field'
   expect(frame.props.transition.duration).toBe(THEME_MOTION_DURATIONS.monet.emphasis)
   expect(frame.props.animate.scale).toBeUndefined()
   expect(frame.props.animate.translateY).toBeUndefined()
+})
+
+it.each(['light', 'dark'] as const)('keeps %s glass controls on one rounded shell without native content shadows', async (mode) => {
+  setTheme('liquid-glass', mode)
+  const onPress = jest.fn()
+  const screen = await render(<>
+    <IsleButton testID="button" label="Save" onPress={onPress} style={{ elevation: 4, shadowOpacity: 0.2 }} />
+    <IsleCard onPress={onPress} accessibilityLabel="Card" style={{ borderRadius: 28 }} contentStyle={{ elevation: 4 }}>
+      <Text>Card content</Text>
+    </IsleCard>
+    <IsleInput testID="input" multiline defaultValue="draft" shadow />
+    <IsleSearchField value="query" clearAccessibilityLabel="Clear" />
+  </>)
+  for (const node of [screen.getByTestId('button'), screen.getByRole('button', { name: 'Card' })]) {
+    expect(node).toHaveStyle({ elevation: 0, shadowOpacity: 0 })
+    expect(StyleSheet.flatten(node.props.style).boxShadow).toMatch(/^0 \d+px \d+px rgba\(/)
+  }
+  expect(screen.queryByTestId('theme-card-layer-liquid-glass', { includeHiddenElements: true })).toBeNull()
+  const body = screen.getByTestId('theme-button-body-liquid-glass')
+  expect(body.children.filter(node => typeof node !== 'string' && (StyleSheet.flatten(node.props.style)?.borderWidth ?? 0) > 0)).toHaveLength(0)
+  const field = screen.getByTestId('input')
+  const search = screen.getByDisplayValue('query')
+  for (const input of [field, search]) {
+    expect(input).toHaveStyle({ backgroundColor: 'transparent', borderWidth: 0, elevation: 0 })
+    expect(input.props.underlineColorAndroid).toBe('transparent')
+  }
+  await fireEvent(field, 'contentSizeChange', { nativeEvent: { contentSize: { width: 280, height: 120 } } })
+  await fireEvent(field, 'focus', { nativeEvent: {} })
+  expect(screen.getByTestId('input')).toBe(field)
+  expect(screen.getByTestId('theme-input-focus-liquid-glass')).toHaveStyle({ height: 138, borderRadius: getColors(mode, 'liquid-glass').ui.radius.controlLarge })
+  expect(screen.getByTestId('theme-search-liquid-glass')).toHaveStyle({ elevation: 0, shadowOpacity: 0 })
+  await fireEvent.press(screen.getByTestId('button'))
+  await fireEvent.press(screen.getByRole('button', { name: 'Card' }))
+  expect(onPress).toHaveBeenCalledTimes(2)
 })

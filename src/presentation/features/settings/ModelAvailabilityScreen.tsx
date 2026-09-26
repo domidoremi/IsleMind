@@ -61,7 +61,7 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
     const item = providers.find((candidate) => candidate.id === id)
     return item ? resolveProviderDisplayName(item, t('providerSettings.customProvider')) : id
   }, [providers, t])
-  const textStyle = useMemo(() => ({ color: colors.textSecondary, fontSize: 12 }), [colors.textSecondary])
+  const textStyle = useMemo(() => ({ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }), [colors.textSecondary])
   const headingStyle = useMemo(() => ({ color: colors.text, fontSize: 15, fontWeight: '700' as const }), [colors.text])
   const scopeLabel = (row: ProviderModelHistoryPage['items'][number]) => `${providerLabel(row.providerId)} · ${credentialSourceLabel(row.credentialSource, providers.find((item) => item.id === row.providerId), t)} · ${row.protocolAdapterId}`
   const observationLabel = (row: ProviderModelHistoryPage['items'][number]) => [new Date(row.observedAt).toLocaleString(),

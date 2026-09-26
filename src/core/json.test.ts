@@ -1,4 +1,4 @@
-import { assertJsonTraversalBudget } from './json'
+import { assertJsonTraversalBudget, measureJsonCharacters } from './json'
 
 test('rejects oversized input before serialization, traverses shared values with a bound and never invokes getters', () => {
   expect(() => assertJsonTraversalBudget({ data: 'x'.repeat(1024) }, 100)).toThrow('managed text')
@@ -20,4 +20,19 @@ test('rejects oversized input before serialization, traverses shared values with
   expect(() => assertJsonTraversalBudget(hiddenHook, 100)).toThrow('serialization hooks')
   expect(indexedGetter).not.toHaveBeenCalled()
   expect(() => assertJsonTraversalBudget({ content: '中英 mixed', empty: [], optional: undefined }, 200)).not.toThrow()
+})
+
+test('counts serialized escaping, numeric widths and shared values without stringifying', () => {
+  const shared = { text: '\u0000\n"\\\ud800\udfff😀', number: -1.7976931348623157e308, bool: false }
+  const input = { ['\u0001"']: [shared, shared, undefined, null], optional: undefined }
+  const serializedLength = JSON.stringify(input).length
+  const stringify = jest.spyOn(JSON, 'stringify').mockImplementation(() => { throw new Error('must not serialize') })
+  try {
+    expect(measureJsonCharacters(input)).toBeGreaterThanOrEqual(serializedLength)
+    expect(() => measureJsonCharacters(input, 20)).toThrow('managed text')
+    expect(() => measureJsonCharacters(input, 10000, 3)).toThrow('traversal')
+  } finally { stringify.mockRestore() }
+  const getter = jest.fn()
+  expect(() => measureJsonCharacters(Object.defineProperty({}, 'text', { enumerable: true, get: getter }))).toThrow('accessors')
+  expect(getter).not.toHaveBeenCalled()
 })

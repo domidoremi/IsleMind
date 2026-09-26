@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import type { AIProvider } from '@/types/providerContracts'
 import { updateCredentialGroupHealth as applyCredentialGroupHealth } from './providerCredentialGroups'
 
@@ -40,7 +41,7 @@ export function createProviderActivationPatchBuffer(
   const overlay = new Map<string, Partial<AIProvider>>()
   const flushLimit = Math.max(1, Math.floor(options.flushLimit))
   const flushMs = Math.max(0, options.flushMs)
-  let timer: ReturnType<typeof setTimeout> | null = null
+  let timer: ReturnType<typeof setExecutionTimeout> | null = null
   let activeFlush: Promise<void> | null = null
   let backgroundFailure: unknown | typeof NO_BACKGROUND_FAILURE = NO_BACKGROUND_FAILURE
   let accepting = !options.signal?.aborted
@@ -50,7 +51,7 @@ export function createProviderActivationPatchBuffer(
 
   const clearFlushTimer = () => {
     if (!timer) return
-    clearTimeout(timer)
+    clearExecutionTimeout(timer)
     timer = null
   }
 
@@ -155,7 +156,7 @@ export function createProviderActivationPatchBuffer(
 
   const scheduleFlush = () => {
     if (timer || closeRequested || disposed || closed || options.signal?.aborted) return
-    timer = setTimeout(() => {
+    timer = setExecutionTimeout(() => {
       timer = null
       const operation = beginFlush()
       void operation.catch(captureBackgroundFailure)

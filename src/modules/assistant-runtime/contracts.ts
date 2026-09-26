@@ -482,6 +482,8 @@ export interface AssistantModelOperationTurnInput {
   readonly reasoningReplay: readonly ChatReasoningReplayPart[]
   readonly stepIndex: number
   readonly signal: AbortSignal
+  /** Awaited durable activity boundary; failure must prevent effect dispatch. */
+  readonly onOperationStarted?: (operation: { callId: string; operationId: string; inputSummary: string }) => Promise<void>
 }
 
 export type AssistantModelOperationTurnOutcome =
@@ -514,6 +516,7 @@ export interface AssistantModelOperationSession {
     readonly pending: PendingModelOperation
     readonly approved: boolean
     readonly signal: AbortSignal
+    readonly onOperationStarted?: AssistantModelOperationTurnInput['onOperationStarted']
   }): Promise<AssistantModelOperationTurnOutcome>
 }
 
@@ -624,6 +627,19 @@ export interface AssistantRuntimeDependencies {
 
 /** Admission/accounting port; the assistant runtime remains the execution owner. */
 export interface AssistantRunGovernance {
+  /** Invocation/subtree CPU authority, separate from durable status and retained
+   * resources. The idempotent synchronous disposer also revokes on pause/cancel;
+   * an uninterruptible operation need not settle before CPU authority ends. */
+  executionStarted?(scope: { runId: AssistantRunId; rootRunId: AssistantRunId }): () => void
+  /** Shared managed UTF-16 text/copy budget, not a JavaScript heap estimate.
+   * Release only after the underlying work retaining the text has settled. */
+  reserveText?(bytes: number): () => void
+  /** Existing-run pause/cancel persistence may ignore critical-pressure
+   * admission, but must still consume the same bounded text budget. */
+  reserveStopText?(bytes: number): () => void
+  /** Reconcile stale process-owned accounting before writing recovery events.
+   * The callback must be checked at commit time so live invocations are preserved. */
+  recoverInterrupted?(isActiveRoot: (rootRunId: string) => boolean): Promise<void>
   created(run: AssistantRun): Promise<void>
   lifecycle(run: AssistantRun): Promise<void>
   beforeAttempt(run: AssistantRun, target: ProviderExecutionTarget): Promise<void>

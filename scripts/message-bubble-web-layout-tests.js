@@ -119,8 +119,12 @@ async function main() {
           } else assert.ok(measurement.lines > 1, `${label}: long CJK text wraps`)
           count++
         })
-        assert.equal(await page.getByTestId('tool-failure').getByText('messageBubble.completedWithToolFailure', { exact: true }).count(), 1,
-          `${family}/${width}: a completed reply must still disclose failed search`)
+        assert.equal(await page.getByTestId('tool-failure').getByRole('button', {
+          name: 'messageBubble.activity.search.idle · messageBubble.activity.state.error', exact: true,
+        }).count(), 1, `${family}/${width}: a completed reply must retain a failed-search activity with its own disclosure`)
+        const activityBounds = await page.getByTestId('message-activity-row-trace:search-1').boundingBox()
+        assert.ok(activityBounds && activityBounds.x >= 0 && activityBounds.x + activityBounds.width <= width,
+          `${family}/${width}: activity rows stay within the viewport`)
       }
     }
     console.log(`PASS ${count} rendered message layouts and 12 completed-reply search-failure disclosures (Chromium; native layout not verified)`)

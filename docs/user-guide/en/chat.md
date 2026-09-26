@@ -2,9 +2,9 @@
 id: "chat"
 slug: "chat"
 title: "Chat & attachments"
-updatedAt: "2026-09-23"
-reviewedAt: "2026-09-23"
-reviewedSourceHash: "feff96c44c26a66cf0b40dd8c1ac9484b89b98bcd3ae1871bc8a2638d045ff38"
+updatedAt: "2026-09-25"
+reviewedAt: "2026-09-25"
+reviewedSourceHash: "cb468bb15e4f3efbf9f990677c1d96a08335f2fa92df2364c8448e46a9242152"
 ---
 # Chat & attachments
 
@@ -28,6 +28,8 @@ Send messages and use files safely.
 ## Success
 
 Messages remain in the conversation. Successful parsing does not guarantee model understanding.
+
+Activities above the reply follow the order in which they actually occur. Live labels update to completed wording after success; absent stages are not invented. Tap an activity with an arrow to independently expand or collapse its thinking summary, tool input, execution result, or search result. Only explicitly supplied display summaries are shown, never raw internal reasoning. Awaiting confirmation, failure, stopping, and skipping are not shown as successful execution; a model's tool request does not mean the tool has run.
 
 <a id="troubleshooting"></a>
 ## Common problems

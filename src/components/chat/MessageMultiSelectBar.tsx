@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 
 export function MessageMultiSelectBar({
   count,
@@ -44,6 +45,7 @@ export function MessageMultiSelectBar({
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: border,
           elevation: 5,
+          ...(colors.ui.liquidGlass ? glassShadowStyle(colors) : {}),
         }}
       >
         <View style={{ minWidth: 74, paddingHorizontal: 8 }}>

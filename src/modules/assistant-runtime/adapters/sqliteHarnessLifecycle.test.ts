@@ -5,10 +5,12 @@ import type { ProviderGateway } from '@/modules/providers'
 import { createAssistantRuntime } from '../runtime'
 import { createAgentDefinition } from '../agentDefinition'
 import { createHarnessCheckpoint, projectRunSnapshot } from '../harnessCheckpoint'
-import type { AssistantModelOperationSession, AssistantModelOperationTurnOutcome, AssistantRun, PendingModelOperation } from '../contracts'
+import type { AssistantModelOperationSession, AssistantModelOperationTurnOutcome, AssistantRun, AssistantRunGovernance, PendingModelOperation } from '../contracts'
 import { createSqliteAssistantRunPersistence } from './sqliteAssistantRunStore'
+import { createSqliteRunBudgetStore } from './sqliteRunBudgetStore'
+import { runBudgetTotals } from '../application/runBudget'
 import { DELEGATE_OPERATION } from '../agentCollaboration'
-import { checkProviderContextCapacity, ProviderContextCapacityError } from '@/modules/providers/providerContextCapacity'
+import { checkProviderContextCapacity, ProviderContextCapacityError } from '@/modules/providers'
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void
@@ -60,6 +62,85 @@ const continuationRequest = (): ChatRequest => ({ ...request, messages: [...requ
   { id: 'receipt', role: 'tool', toolCallId: 'call', name: 'write', text: 'already completed' }] })
 
 describe('Harness lifecycle (real SQLite)', () => {
+  it.each(['running', 'paused', 'succeeded'] as const)('restart closes stale %s budget time at durable activity, excluding offline time', async (status) => {
+    const fx = fixture()
+    const runId = asAssistantRunId('crashed-budget')
+    const restartedAt = 24 * 60 * 60 * 1000
+    const budgets = createSqliteRunBudgetStore(fx.provider)
+    try {
+      const run: AssistantRun = { id: runId, engineVersion: 'islemind.harness.v1', kind: 'chat',
+        conversationId: request.conversationId, providerId: request.providerId, model: request.model,
+        contextSnapshotId: context.id, status, createdAt: 100, startedAt: 100, journalSequence: 1,
+        lifecycleCheckpoint: createHarnessCheckpoint({ request, stepIndex: 0, outputText: '', streamEventCount: 0,
+          phase: status === 'succeeded' ? 'complete' : 'provider', effectCertainty: 'none', recovery: 'resumable',
+          requiresOperationSession: false, steering: [] }) }
+      await fx.persistence.appendAndSave({ schema: 'islemind.assistant-run-journal-entry.v1', runId,
+        sequence: 1, type: status === 'running' ? 'run.started' : status === 'paused' ? 'run.paused' : 'run.succeeded', occurredAt: 200 }, run)
+      await budgets.create(runId)
+      await budgets.setActive(runId, true, 100)
+      await budgets.reserve(runId, { attemptId: 'crashed-attempt', runId, inputEstimate: 100, outputReservation: 200 }, 100)
+      if (status === 'running') {
+        const childId = asAssistantRunId('finished-child')
+        await fx.persistence.appendAndSave({ schema: 'islemind.assistant-run-journal-entry.v1', runId: childId,
+          sequence: 1, type: 'run.succeeded', occurredAt: 250 },
+        { ...run, id: childId, rootRunId: runId, parentRunId: runId, status: 'succeeded' })
+        await budgets.attach(runId, childId)
+        await budgets.setActive(runId, true, 150, childId)
+      }
+      const expectedActiveMs = status === 'running' ? 150 : 100
+      const governance: AssistantRunGovernance = {
+        async created() {}, async beforeAttempt() {},
+        async recoverInterrupted(isActiveRoot) { await budgets.recoverActiveTime(isActiveRoot) },
+        async lifecycle(value) { await budgets.setActive(value.rootRunId ?? value.id, value.status === 'running', restartedAt, value.id) },
+      }
+      const runtime = createAssistantRuntime({ persistence: fx.persistence, governance,
+        providerGateway: finalGateway(() => { throw new Error('Recovery must not dispatch') }),
+        clock: { now: () => restartedAt }, ids: { next: () => 'unused' } })
+      if (status === 'running') {
+        const original = fx.native.query('SELECT snapshotJson FROM harness_run_budgets WHERE rootRunId = ?').get(runId).snapshotJson
+        fx.native.query('UPDATE harness_run_budgets SET snapshotJson = ? WHERE rootRunId = ?').run('{corrupt', runId)
+        expect((await runtime.recoverInterruptedRuns()).ok).toBe(false)
+        expect((await runtime.getRun(runId))?.status).toBe('running')
+        expect(fx.native.query('SELECT snapshotJson FROM harness_run_budgets WHERE rootRunId = ?').get(runId).snapshotJson).toBe('{corrupt')
+        fx.native.query('UPDATE harness_run_budgets SET snapshotJson = ? WHERE rootRunId = ?').run(original, runId)
+      }
+      expect((await runtime.recoverInterruptedRuns()).ok).toBe(true)
+      const recovered = (await budgets.get(runId))!
+      expect(runBudgetTotals(recovered, restartedAt)).toMatchObject({ activeMs: expectedActiveMs, modelRequests: 1, reservedTokens: 300 })
+      expect(recovered.activeSince).toBeUndefined()
+      expect(recovered.activeRunIds).toEqual([])
+      expect((await runtime.recoverInterruptedRuns()).ok).toBe(true)
+      expect(await budgets.get(runId)).toEqual(recovered)
+      await budgets.setActive(runId, true, restartedAt)
+      expect(runBudgetTotals((await budgets.get(runId))!, restartedAt + 50).activeMs).toBe(expectedActiveMs + 50)
+    } finally { fx.native.close() }
+  })
+
+  it('recovery preserves an executing root and its active-time ledger', async () => {
+    const fx = fixture(); const entered = deferred(); const release = deferred()
+    const budgets = createSqliteRunBudgetStore(fx.provider)
+    const runId = asAssistantRunId('live-budget')
+    let now = 100
+    const runtime = createAssistantRuntime({ persistence: fx.persistence,
+      providerGateway: { describe: () => undefined, async *stream() { entered.resolve(); await release.promise } },
+      clock: { now: () => now }, ids: { next: () => 'unused' }, governance: {
+        async created(run) { await budgets.create(run.id) }, async beforeAttempt() {},
+        async lifecycle(run) { await budgets.setActive(run.id, run.status === 'running', now) },
+        async recoverInterrupted(isActiveRoot) { await budgets.recoverActiveTime(isActiveRoot) },
+      } })
+    const execution = runtime.execute({ runId, request, context })
+    try {
+      await entered.promise
+      const before = await budgets.get(runId)
+      now = 500
+      expect((await runtime.recoverInterruptedRuns()).ok).toBe(true)
+      expect((await runtime.getRun(runId))?.status).toBe('running')
+      expect(await budgets.get(runId)).toEqual(before)
+      release.resolve(); await execution
+      expect(runBudgetTotals((await budgets.get(runId))!, 10_000).activeMs).toBe(400)
+    } finally { release.resolve(); await execution; fx.native.close() }
+  })
+
   it('dynamically delegates two independent children through the same kernel and persists scope and links', async () => {
     const fx = fixture(); const entered = deferred(); const release = deferred(); let childCount = 0; let rootCalls = 0
     const root = definition(); root.modelBinding.actionCapability = 'native_tool_calling'; root.delegateAgentIds = ['child']
@@ -512,7 +593,7 @@ describe('Harness lifecycle (real SQLite)', () => {
       providerGateway: { describe: () => undefined, async *stream(value) {
         if (++turns === 1) { yield { type: 'tool-call', toolCallId: 'call', toolName: 'write', arguments: {} }; return }
         checkProviderContextCapacity({ body: { messages: value.messages, tools: [{ description: 'oversized schema '.repeat(500) }] },
-          contextWindow: 1000, defaultOutputTokens: 100 })
+          contextWindow: 1000, modelMaxOutputTokens: 100 })
         throw new Error('Capacity should have blocked the wire dispatch')
       } },
     })

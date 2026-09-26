@@ -1,3 +1,4 @@
+import { setExecutionTimeout } from '@/core/executionTimers'
 import type { AIModel, AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderOperationCode } from '@/types/providerContracts'
 import { extractUserFacingErrorDetail } from '@/core'
 import { mergeModelConfig, sortModelConfigs } from '@/types/modelCatalog'
@@ -315,7 +316,7 @@ function nextCredentialSyncDelay(
 }
 
 function defaultDelay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve) => setExecutionTimeout(resolve, ms))
 }
 
 function normalizeSyncConcurrency(value: number | undefined): number {

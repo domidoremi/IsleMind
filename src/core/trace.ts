@@ -124,3 +124,26 @@ export function isSensitiveTraceMetadataKey(key: string): boolean {
     normalized === 'token' ||
     normalized.endsWith('token')
 }
+
+/** Bounded user-visible summaries; excludes private protocol blocks and credentials. */
+export function sanitizeTraceDisplayText(value: unknown, limit: number): string {
+  if (typeof value !== 'string') return ''
+  let text = value
+    .replace(/<(think|thinking|thought|reasoning|tool_call|islemind_mcp_call)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
+    .trim()
+  // Tool arguments/results commonly contain JSON. Redact structural secret
+  // keys as well as plain-text credentials before exposing or truncating them.
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (parsed && typeof parsed === 'object') text = JSON.stringify(sanitizeTraceMetadataValue(parsed))
+  } catch {
+    // A log can contain embedded JSON, or the stored trace may already have
+    // been truncated mid-value. Keep those quoted credentials private too.
+    text = text.replace(/("(?:\\.|[^"\\])*")\s*:\s*("(?:\\.|[^"\\])*(?:"|$))/g, (match, key: string) => {
+      let decodedKey = key
+      try { decodedKey = JSON.parse(key) as string } catch { /* malformed log text, not JSON */ }
+      return isSensitiveTraceMetadataKey(decodedKey) ? `${key}:"[redacted]"` : match
+    })
+  }
+  return clampTraceText(redactSensitiveText(text), limit)
+}

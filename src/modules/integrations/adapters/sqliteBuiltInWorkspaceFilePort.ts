@@ -11,7 +11,10 @@ import {
   type BuiltInWorkspaceFileInfo,
   type BuiltInWorkspaceFilePort,
   type BuiltInWorkspaceFileReadResult,
+  type BuiltInWorkspaceFileQueryPort,
+  type BuiltInWorkspaceFileQueryEntry,
 } from '../builtInCapabilityContracts'
+import { boundedWorkspacePage, normalizeWorkspaceQuery, WORKSPACE_QUERY_SNIPPET_CHARS } from '../builtInWorkspaceQuery'
 import {
   assertTextFileMimeType,
   BUILT_IN_FILE_EDIT_MAX_BYTES,
@@ -118,7 +121,7 @@ export class SqliteBuiltInWorkspaceFileDataError extends Error {
  */
 export function createSqliteBuiltInWorkspaceFilePort(
   options: SqliteBuiltInWorkspaceFilePortOptions,
-): BuiltInWorkspaceFilePort {
+): BuiltInWorkspaceFilePort & BuiltInWorkspaceFileQueryPort {
   const workspaceScopeId = normalizeWorkspaceScopeId(options.workspaceScopeId)
   const limits = normalizeLimits(options)
   let initialization: Promise<void> | undefined
@@ -305,6 +308,39 @@ export function createSqliteBuiltInWorkspaceFilePort(
     inspect,
     readText,
     editTextAtomic,
+    async queryFiles(input, operation) {
+      throwIfAborted(operation.signal)
+      const query = normalizeWorkspaceQuery(input)
+      const value = await database(operation.signal)
+      const prefix = `${query.directory}/`
+      // SQL filters within one scope and returns metadata/excerpts only, never
+      // materializing every file's text across the native bridge. Literal instr
+      // and substr avoid SQL/LIKE wildcard interpretation of paths or queries.
+      const rows = await value.getAll<Omit<PersistedFileRow, 'textContent'> & { snippet: unknown }>(
+        `SELECT recordSchema, workspaceScopeId, relativePath, revision, byteLength, mimeType,
+                ${query.query === undefined ? 'NULL' : 'substr(textContent, max(1, instr(textContent, ?) - 80), ?)'} AS snippet
+           FROM ${FILE_TABLE}
+          WHERE workspaceScopeId = ? AND substr(relativePath, 1, length(?)) = ?
+            AND relativePath > ? ${query.query === undefined ? '' : 'AND instr(textContent, ?) > 0'}
+          ORDER BY relativePath COLLATE BINARY ASC LIMIT ?`,
+        [...(query.query === undefined ? [] : [query.query, WORKSPACE_QUERY_SNIPPET_CHARS]),
+          workspaceScopeId, prefix, prefix, query.afterPath ?? '', ...(query.query === undefined ? [] : [query.query]), query.limit + 1],
+      )
+      throwIfAborted(operation.signal)
+      const files = rows.map((row): BuiltInWorkspaceFileQueryEntry => {
+        if (row.recordSchema !== FILE_RECORD_SCHEMA || row.workspaceScopeId !== workspaceScopeId ||
+          typeof row.relativePath !== 'string' || canonicalWorkspacePath(row.relativePath) !== row.relativePath ||
+          !row.relativePath.startsWith(prefix) || typeof row.revision !== 'string' || !isDigestRevision(row.revision) ||
+          typeof row.byteLength !== 'number' || !Number.isSafeInteger(row.byteLength) || row.byteLength < 0 || row.byteLength > limits.maxFileBytes ||
+          typeof row.mimeType !== 'string' || assertTextFileMimeType(row.mimeType) !== row.mimeType ||
+          (query.query !== undefined && (typeof row.snippet !== 'string' || [...row.snippet].length > WORKSPACE_QUERY_SNIPPET_CHARS))) {
+          throw new SqliteBuiltInWorkspaceFileDataError()
+        }
+        return { relativePath: row.relativePath, revision: row.revision, byteLength: row.byteLength, mimeType: row.mimeType,
+          ...(typeof row.snippet === 'string' ? { snippet: row.snippet } : {}) }
+      })
+      return boundedWorkspacePage(files, query)
+    },
   }
 }
 

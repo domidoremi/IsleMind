@@ -10,7 +10,7 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8')
 const json = name => JSON.parse(read(name))
 
 test('settings display keeps installed build identity and uses Expo versionCode on Web', () => {
-  const source = read('src/components/main/SettingsScreenContent.tsx')
+  const source = read('src/components/settings/SystemSettingsPanelContent.tsx')
   const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
   const declaration = ast.program.body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'getSettingsVersionSnapshot')
   expect(declaration).toBeDefined()

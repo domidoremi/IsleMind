@@ -1,8 +1,15 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const http = require('node:http')
+const Module = require('node:module')
+const path = require('node:path')
 const { transformTypeScriptModule } = require('./node-ts-support')
 
+const originalResolve = Module._resolveFilename
+Module._resolveFilename = function resolveAlias(request, parent, isMain, options) {
+  return originalResolve.call(this, request.startsWith('@/')
+    ? path.join(__dirname, '..', 'src', request.slice(2)) : request, parent, isMain, options)
+}
 require.extensions['.ts'] = (module, filename) => {
   module._compile(transformTypeScriptModule(fs.readFileSync(filename, 'utf8'), filename), filename)
 }

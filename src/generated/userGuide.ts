@@ -6,43 +6,48 @@ export const userGuide = {
         "id": "chat",
         "slug": "chat",
         "title": "聊天与附件",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# 聊天与附件\n\n<a id=\"goal\"></a>\n## 完成什么\n\n发送消息并安全使用文件。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 选择或新建会话，检查当前模型。\n\n2. 通过附件入口选文件，发送前核对文件内容和模型是否支持该类型。\n\n3. 需要时停止生成；不同话题可使用新会话。\n\n<a id=\"success\"></a>\n## 成功表现\n\n消息和回复保留在当前会话中；文件解析成功不代表模型一定能理解。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n检查格式、大小、权限。附件可能发送给服务商；删除本地会话不删除服务商副本。\n"
+        "body": "# 聊天与附件\n\n<a id=\"goal\"></a>\n## 完成什么\n\n发送消息并安全使用文件。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 选择或新建会话，检查当前模型。\n\n2. 通过附件入口选文件，发送前核对文件内容和模型是否支持该类型。\n\n3. 需要时停止生成；不同话题可使用新会话。\n\n<a id=\"success\"></a>\n## 成功表现\n\n消息和回复保留在当前会话中；文件解析成功不代表模型一定能理解。\n\n回复上方按实际发生的顺序列出活动。正在进行的阶段会实时更新，成功后切换为完成态文案；未发生的阶段不会补列。点击带箭头的活动可单独展开或收起思考摘要、工具输入、执行结果或搜索结果，不会展开其他活动。仅显示服务商明确提供的可展示思考摘要，不显示内部推理原文。等待确认、失败、停止和跳过不会显示为执行成功；模型请求调用工具也不代表工具已经执行。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n检查格式、大小、权限。附件可能发送给服务商；删除本地会话不删除服务商副本。\n"
       },
       {
         "id": "documents",
         "slug": "documents",
         "title": "文档",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "save-and-reuse",
+          "review-revisions",
+          "save-conflicts"
         ],
-        "body": "# 文档\n\n<a id=\"goal\"></a>\n## 完成什么\n\n整理并保存需要继续编辑的内容。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 在文档列表新建或打开文档。\n\n2. 编辑标题和正文，预览后保存。\n\n3. 发生版本冲突先重新加载或保留副本，不覆盖新内容。\n\n<a id=\"success\"></a>\n## 成功表现\n\n保存后可重新打开；未保存输入不是备份。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n保存失败应保留输入并检查错误；分享前检查隐私和凭据。\n"
+        "body": "# 文档\n\n<a id=\"goal\"></a>\n## 完成什么\n\n整理并保存需要继续编辑的内容。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 在文档列表新建或打开文档。\n\n2. 编辑标题和正文，预览后保存。\n\n3. 发生版本冲突先重新加载或保留副本，不覆盖新内容。\n\n<a id=\"success\"></a>\n## 成功表现\n\n保存后可重新打开；未保存输入不是备份。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n保存失败应保留输入并检查错误；分享前检查隐私和凭据。\n\n<a id=\"save-and-reuse\"></a>\n## 从聊天整理成文档\n\n从文档列表新建空白文档，或将已结束的助手回复保存为文档草稿。先检查标题和正文，再点击保存；打开草稿或切换预览都不等于保存成功。\n\n文档是独立副本：编辑文档不会重写聊天，删除聊天也不会删除已经保存的文档。由回复创建的文档可查看来源与当时状态；来源说明不代表回答已经核实，也不代表相关任务成功。\n\n预览不会自动加载远程图片。复制正文只复制文本，不包含附加的来源记录。复制、分享或打开外部链接前，检查是否包含私人资料。\n\n<a id=\"review-revisions\"></a>\n## 审阅模型修改建议\n\n1. 展开修改建议，选择可用模型并填写具体要求。生成会调用所选服务商，可能产生费用。\n2. 若需参考来源，先读取并检查当前内容，再选择是否加入本次请求。来源可能已在原回答之后更新。\n3. 对比原文与建议，核对事实、遗漏和引用。点击接受只改变当前草稿，仍需单独保存。\n4. 只有明确选择连同审阅资料一起接受，才将该次选用的来源快照附到草稿。普通接受不额外保留这些来源副本。\n\n离页或进入后台会取消正在进行的建议生成。建议过期、文档被其他操作修改时，重新检查当前版本后再生成；不要用旧建议覆盖新内容。\n\n<a id=\"save-conflicts\"></a>\n## 保存失败或版本冲突\n\n保存失败时保留当前输入，检查错误后重试。出现版本冲突时，「重新加载」会读取最新保存版本并放弃本地修改；「保存副本」保留当前内容为独立文档。先决定要保留哪份内容，再选择操作。\n\n未保存草稿不会在进程终止后自动恢复。文档保存与[数据备份](privacy.md#steps)是不同操作，不要把一次保存当作设备之外的备份。\n"
       },
       {
         "id": "knowledge",
         "slug": "knowledge",
         "title": "知识与记忆",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "import-and-check",
+          "review-memory"
         ],
-        "body": "# 知识与记忆\n\n<a id=\"goal\"></a>\n## 完成什么\n\n导入资料并审阅长期记忆。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 进入知识与联网 → 知识库，选择资料，查看解析与索引进度。\n\n2. 检查内容和筛选条件，返回聊天验证相关引用。\n\n3. 进入记忆审核待处理项，只批准正确且适合保留的信息。\n\n<a id=\"success\"></a>\n## 成功表现\n\n完成索引的资料可供检索；已批准记忆按当前策略使用。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n导入失败检查格式、容量和模型依赖。拒绝记忆不等于删除源文件。\n"
+        "body": "# 知识与记忆\n\n<a id=\"goal\"></a>\n## 完成什么\n\n导入资料并审阅长期记忆。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 进入知识与联网 → 知识库，选择资料，查看解析与索引进度。\n\n2. 检查内容和筛选条件，返回聊天验证相关引用。\n\n3. 进入记忆审核待处理项，只批准正确且适合保留的信息。\n\n<a id=\"success\"></a>\n## 成功表现\n\n完成索引的资料可供检索；已批准记忆按当前策略使用。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n导入失败检查格式、容量和模型依赖。拒绝记忆不等于删除源文件。\n\n<a id=\"import-and-check\"></a>\n## 导入第一份资料\n\n1. 在知识库点击文件导入入口选择文件；只有一段文字时，展开粘贴文本区域，填写标题和正文，再点击导入。\n2. 查看资料列表的状态。**索引中**还未完成；**失败**需要检查错误；**空内容**不能作为可用资料。等待实际完成，不要只凭文件出现在列表中判断成功。\n3. 资料较多时展开筛选，按状态或关键词查找。无匹配项时先清除筛选，不要重复导入同一文件。\n4. 返回聊天，用资料中的具体事实提问，并打开回答中的来源检查原文。索引成功只表示可检索，不保证每次问题都能命中。\n\n检索范围和模型依赖见[联网与检索](search.md#dependencies)。资料可能进入模型上下文；导入前先检查是否包含不应发送给当前服务商的信息。\n\n<a id=\"review-memory\"></a>\n## 审阅和停用记忆\n\n打开记忆页，先看待确认、已启用和已停用的数量，再展开审阅队列。可按来源或低置信度筛选；置信度是辅助信号，不是事实保证。\n\n逐项检查内容后确认。批量操作前核对按钮说明的是「当前筛选」还是「全部待确认」，以及对应数量。已有记忆不再适用时可停用，需要时恢复；这些操作不修改原始聊天或知识文件。\n\n若记忆没有出现在回答中，先检查记忆开关、项目状态和当前检索范围。不要为提高命中率而批准不正确的信息。\n"
       },
       {
         "id": "models",
@@ -58,7 +63,7 @@ export const userGuide = {
           "generation",
           "editing"
         ],
-        "body": "# 模型与回答\n\n<a id=\"goal\"></a>\n## 完成什么\n\n配置服务商连接与生成参数。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 选择服务商，再填写连接信息。自定义地址应为 API 基础地址，而非登录网页。\n\n2. 填写凭据和模型，检查后保存。查看手册不会提交草稿；离开时可继续编辑或放弃。\n\n3. 生成参数选模型默认，或按需要指定温度、输出上限。\n\n<a id=\"success\"></a>\n## 成功表现\n\n其他页面只读取已提交值。保存成功不代表连通或免费。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n401/403 检查凭据与权限；404 检查地址、协议、模型名。截图须隐藏密钥。\n\n<a id=\"generation\"></a>\n## 生成参数\n\n- **模型默认**：不发送该项自定义值，由模型和服务商处理；它不是统一固定数值。\n- **自定义**：使用滑杆预览、加减按钮或精确输入。滑杆松手才提交；取消手势不会写入。精确输入完成后沿用原有范围校验。\n- 温度影响采样，不保证事实正确；更大的输出上限可能增加用量，模型仍可能使用更低的实际限制。\n- 已提交偏好可撤销；若其他操作已修改同一字段，撤销不会覆盖较新的值。\n\n<a id=\"editing\"></a>\n## 连接草稿与保存失败\n\n打开已有服务商直接编辑连接、凭据和模型，不必重走新建流程。使用说明在当前编辑器上方打开，不会保存草稿。返回或关闭编辑器时，选择继续编辑或放弃更改。\n\n只有持久化完成才提示已保存。失败时保留输入并重试；如果提示外部配置已变化，先放弃当前草稿并重新打开，不要用旧页面覆盖新配置。保存不自动测试或启用服务商；模型测试和用量查询是单独的显式操作，可能访问服务商或计费。\n"
+        "body": "# 模型与回答\n\n<a id=\"goal\"></a>\n## 完成什么\n\n配置服务商连接与生成参数。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 选择服务商，再填写连接信息。自定义地址应为 API 基础地址，而非登录网页。\n\n2. 填写凭据和模型，检查后保存。查看手册不会提交草稿；离开时可继续编辑或放弃。\n\n3. 生成参数选模型默认，或按需要指定温度、输出上限。\n\n<a id=\"success\"></a>\n## 成功表现\n\n其他页面只读取已提交值。保存成功不代表连通或免费。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n401/403 检查凭据与权限；404 检查地址、协议、模型名。截图须隐藏密钥。\n\n<a id=\"generation\"></a>\n## 生成参数\n\n- **模型默认**：不发送该项自定义值，由模型和服务商处理；它不是统一固定数值。\n- **自定义**：使用滑杆预览、加减按钮或精确输入。滑杆松手才提交；取消手势不会写入。精确输入需要点击保存，沿用原有范围校验；失焦、折叠和阅读手册均不提交。\n- 有未保存的精确输入时，先保存或重新加载已保存值，再操作滑杆、步进或默认值切换，避免覆盖草稿。工作流数值和助手名称也使用显式保存。\n- 温度影响采样，不保证事实正确；更大的输出上限可能增加用量，模型仍可能使用更低的实际限制。\n- 已提交偏好可撤销；若其他操作已修改同一字段，撤销不会覆盖较新的值。\n\n<a id=\"editing\"></a>\n## 连接草稿与保存失败\n\n打开已有服务商直接编辑连接、凭据和模型，不必重走新建流程。使用说明在当前编辑器上方打开，不会保存草稿。返回或关闭编辑器时，选择继续编辑或放弃更改。\n\n只有持久化完成才提示已保存。失败时保留输入并重试；如果提示外部配置已变化，先放弃当前草稿并重新打开，不要用旧页面覆盖新配置。保存不自动测试或启用服务商；模型测试和用量查询是单独的显式操作，可能访问服务商或计费。\n\n批量导入也会等待保存完成，再询问是否启用。若配置已提交但保存失败，窗口会保留输入并提供重试，不重复添加，也不覆盖之后修改的配置；此时关闭窗口不会撤销已提交的数据。尚未导入的草稿在确认放弃后清除，迟到的文件或剪贴板读取不会恢复它。\n"
       },
       {
         "id": "personalization",
@@ -107,15 +112,19 @@ export const userGuide = {
         "id": "search",
         "slug": "search",
         "title": "联网与检索",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "dependencies",
+          "search-credentials",
+          "context-compression",
+          "model-download-mirror"
         ],
-        "body": "# 联网与检索\n\n<a id=\"goal\"></a>\n## 完成什么\n\n为问题选择检索范围。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 进入知识与联网 → 上下文。\n\n2. 选择现有快速、均衡、深入或离线方案，检查所需模型和服务。\n\n3. 用需要资料的问题验证，核对来源而不只看回答长度。\n\n<a id=\"success\"></a>\n## 成功表现\n\n使用方案允许的知识和搜索结果。离线检索不等于整个应用禁网。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n无结果时检查索引、搜索服务及访问限制。更多资料不保证更正确。\n"
+        "body": "# 联网与检索\n\n<a id=\"goal\"></a>\n## 完成什么\n\n为问题选择检索范围。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 进入知识与联网 → 上下文。\n\n2. 选择现有快速、均衡、深入或离线方案，检查所需模型和服务。\n\n3. 用需要资料的问题验证，核对来源而不只看回答长度。\n\n<a id=\"success\"></a>\n## 成功表现\n\n使用方案允许的知识和搜索结果。离线检索不等于整个应用禁网。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n无结果时检查索引、搜索服务及访问限制。更多资料不保证更正确。\n\n<a id=\"dependencies\"></a>\n## 按依赖检查检索链路\n\n按「问题 → 检索 → 相关资料 → 模型回答」逐步检查，避免同时修改所有高级参数。\n\n| 环节 | 先检查什么 |\n|---|---|\n| 本地知识 | 知识开关、资料是否索引完成、是否被筛选排除 |\n| 长期记忆 | 记忆开关、条目是否已确认并启用 |\n| 联网搜索 | 搜索服务选择、所需凭据和地址、网络与访问权限 |\n| 向量与排序 | 页面显示的模型状态；未安装或未启用不是就绪 |\n| 最终回答 | 当前聊天模型是否可用、引用是否支持回答中的结论 |\n\n先选择现有方案，再按实际需求调整高级项。选择方案不会代替缺失模型的安装、凭据配置或权限批准。不要把「离线检索」当作隐私防火墙；聊天模型仍可能使用远程服务。\n\n<a id=\"search-credentials\"></a>\n## 保存搜索连接信息\n\n选择搜索服务后，只填写该服务要求的字段。Google 类服务可能同时需要密钥和搜索引擎 ID；自定义服务还可能需要接口地址或 Bearer 凭据，以页面实际字段为准。\n\n输入后显式保存。失焦和查看手册不会提交，切换服务或离开时先处理未保存提示。保存失败保留输入；不要因其他页面仍显示旧值而重复粘贴密钥。连接测试、搜索和模型调用可能产生费用，未知费用不等于免费。\n\n资料导入与记忆审核见[知识与记忆](knowledge.md#import-and-check)；401、403 等连接错误见[模型与回答](models.md#troubleshooting)。\n\n<a id=\"context-compression\"></a>\n## 选择上下文压缩方式\n\n在上下文中开启「用当前模型压缩上下文」后，服务商不支持原生压缩时，由当前模型摘要较早的对话。每次模型压缩额外发起一次请求，计入用量，并可能产生费用。关闭时使用本地结构化压缩，不会关闭聊天模型的正常请求。\n\n按费用和上下文需求选择开关，切换时不会发起测试请求。开关显示已应用的偏好；对话后可到用量页检查请求记录。费用未知不等于免费。如果早期信息遗漏，请在对话中重新说明；压缩无法保证保留全部细节。\n\n<a id=\"model-download-mirror\"></a>\n## 设置本地模型下载镜像\n\n在设置中搜索「镜像地址」，或进入上下文 → 检索模式 → 本地模型。输入受信任的镜像地址后点击保存；留空使用现有默认下载来源。保存地址不会开始下载。\n\n收起区域或查看使用手册会保留未保存的输入，失焦不会提交。离开时可继续编辑或放弃更改。下载只使用已提交的地址，不能用未保存的草稿验证镜像。\n\n显示「有错误」时重新展开检查。保存失败可重试；如果地址已在其他地方更改，重新加载最新值再编辑，避免覆盖它。只有持久化完成才显示「已保存」。\n"
       },
       {
         "id": "tools",
@@ -138,29 +147,30 @@ export const userGuide = {
         "id": "troubleshooting",
         "slug": "troubleshooting",
         "title": "诊断与排障",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
+        "updatedAt": "2026-09-24",
+        "reviewedAt": "2026-09-24",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# 诊断与排障\n\n<a id=\"goal\"></a>\n## 完成什么\n\n识别故障环节后再修复。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 打开帮助与维护 → 诊断与修复。\n\n2. 区分连接、权限、索引和工具故障，只执行相关修复。\n\n3. 反馈时提供版本、复现步骤和脱敏错误；更新前备份并选择可信来源。\n\n<a id=\"success\"></a>\n## 成功表现\n\n重试原操作确认恢复；诊断成功不保证全部功能正常。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n避免一次改多个参数；不发送凭据；重置和清除数据不是通用修复。\n"
+        "body": "# 诊断与排障\n\n<a id=\"goal\"></a>\n## 完成什么\n\n识别故障环节后再修复。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 打开帮助与维护 → 诊断与修复。\n\n2. 区分连接、权限、索引和工具故障，只执行相关修复。\n\n3. 反馈时提供版本、复现步骤和脱敏错误；更新前备份并选择可信来源。\n\n<a id=\"success\"></a>\n## 成功表现\n\n重试原操作确认恢复；诊断成功不保证全部功能正常。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n避免一次改多个参数；不发送凭据；重置和清除数据不是通用修复。\n\nAndroid 的「网络已断开」提示可关闭，继续编辑设置或阅读离线手册。关闭只收起提示，不会恢复连接或自动重试请求。\n\n修改 Android 系统字体大小可能重建页面并丢失未保存草稿；请先保存，再调整系统字体。\n\n### 版本更新\n\n- GitHub APK 版可在设置 → 版本更新中检查更新；下载或校验时可取消。离开此页面也会停止未交给系统安装器的更新，重试会重新下载。\n- 检查失败后可立即重试；重复点击不会启动多个下载。没有匹配设备架构的安装包时，不会下载不兼容的 APK。\n- 下载后必须通过文件大小与 SHA-256 校验才会打开安装器。安装器打开不代表安装成功，请按系统提示确认；此时需在系统安装器中取消。\n- Google Play 版只通过商店更新。点击「前往 Google Play 更新」打开应用商店页面；若无法打开，请在商店搜索 IsleMind。\n"
       },
       {
         "id": "usage",
         "slug": "usage",
         "title": "用量与费用",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "pricing-overrides"
         ],
-        "body": "# 用量与费用\n\n<a id=\"goal\"></a>\n## 完成什么\n\n区分使用记录与服务商账单。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 进入模型与回答 → 用量，选择时间与范围。\n\n2. 核对请求数和 Token，注意失败、取消与缺失记录。\n\n3. 估算或未知费用以服务商账单为准；未知不是免费。\n\n<a id=\"success\"></a>\n## 成功表现\n\n指标用于比较趋势，不能替代计费系统。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n核对时区、单价、记录范围；删除本地记录不取消已有费用。\n"
+        "body": "# 用量与费用\n\n<a id=\"goal\"></a>\n## 完成什么\n\n区分使用记录与服务商账单。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 进入模型与回答 → 用量，选择时间与范围。\n\n2. 核对请求数和 Token，注意失败、取消与缺失记录。\n\n3. 估算或未知费用以服务商账单为准；未知不是免费。\n\n<a id=\"success\"></a>\n## 成功表现\n\n指标用于比较趋势，不能替代计费系统。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n核对时区、单价、记录范围；删除本地记录不取消已有费用。\n\n<a id=\"pricing-overrides\"></a>\n## 设置估算单价\n\n1. 在用量页找到「自定义价格」，选择添加或编辑已有项。\n2. 核对服务商和模型，按「每百万 Token」分别填写输入与输出单价。界面使用美元；这只影响应用内估算，不会更改服务商定价。\n3. 点击保存，等待表单关闭。负数、非数字和超过支持范围的数值不能保存。\n\n输入内容仅保留在当前编辑页。失焦或查看使用手册不会保存；关闭和返回时可继续编辑或放弃更改，点击取消会直接丢弃草稿。保存期间不能重复提交或关闭表单。\n\n保存失败会显示错误并保留输入，可修正后重试。如果价格已被其他编辑或备份恢复修改，先重新加载最新值，再决定如何修改。未知费用仍应核对服务商账单，不要填入零来消除未知提示。\n"
       },
       {
         "id": "workspaces",
@@ -182,46 +192,51 @@ export const userGuide = {
         "id": "chat",
         "slug": "chat",
         "title": "Chat & attachments",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "feff96c44c26a66cf0b40dd8c1ac9484b89b98bcd3ae1871bc8a2638d045ff38",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "cb468bb15e4f3efbf9f990677c1d96a08335f2fa92df2364c8448e46a9242152",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# Chat & attachments\n\n<a id=\"goal\"></a>\n## Outcome\n\nSend messages and use files safely.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Choose or create a conversation and check the current model.\n\n2. Attach a file and review its content and model compatibility before sending.\n\n3. Stop generation if needed; use a new conversation for separate context.\n\n<a id=\"success\"></a>\n## Success\n\nMessages remain in the conversation. Successful parsing does not guarantee model understanding.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nCheck format, size, and permissions. Attachments may reach your provider; local deletion does not delete provider copies.\n"
+        "body": "# Chat & attachments\n\n<a id=\"goal\"></a>\n## Outcome\n\nSend messages and use files safely.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Choose or create a conversation and check the current model.\n\n2. Attach a file and review its content and model compatibility before sending.\n\n3. Stop generation if needed; use a new conversation for separate context.\n\n<a id=\"success\"></a>\n## Success\n\nMessages remain in the conversation. Successful parsing does not guarantee model understanding.\n\nActivities above the reply follow the order in which they actually occur. Live labels update to completed wording after success; absent stages are not invented. Tap an activity with an arrow to independently expand or collapse its thinking summary, tool input, execution result, or search result. Only explicitly supplied display summaries are shown, never raw internal reasoning. Awaiting confirmation, failure, stopping, and skipping are not shown as successful execution; a model's tool request does not mean the tool has run.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nCheck format, size, and permissions. Attachments may reach your provider; local deletion does not delete provider copies.\n"
       },
       {
         "id": "documents",
         "slug": "documents",
         "title": "Documents",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "f1a68aab7919781ceaefc8d3a0e0b89c0e2ead6c463323d6ca13648912553a6a",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "fa8e0cec78f51097eeee6463ce8de767fa63293860030e27d08e09928d38c23f",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "save-and-reuse",
+          "review-revisions",
+          "save-conflicts"
         ],
-        "body": "# Documents\n\n<a id=\"goal\"></a>\n## Outcome\n\nKeep material for further editing.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Create or open a document in the document list.\n\n2. Edit title and body, preview, and save.\n\n3. For revision conflicts, reload or save a copy instead of overwriting newer content.\n\n<a id=\"success\"></a>\n## Success\n\nSaved documents can be reopened; unsaved input is not a backup.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nRetain input on save failure and inspect the error. Check privacy and credentials before sharing.\n"
+        "body": "# Documents\n\n<a id=\"goal\"></a>\n## Outcome\n\nKeep material for further editing.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Create or open a document in the document list.\n\n2. Edit title and body, preview, and save.\n\n3. For revision conflicts, reload or save a copy instead of overwriting newer content.\n\n<a id=\"success\"></a>\n## Success\n\nSaved documents can be reopened; unsaved input is not a backup.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nRetain input on save failure and inspect the error. Check privacy and credentials before sharing.\n\n<a id=\"save-and-reuse\"></a>\n## Turn a chat answer into a document\n\nCreate a blank document from the library, or turn a finished assistant response into a document draft. Review its title and body, then save. Opening a draft or switching to preview does not acknowledge a successful save.\n\nA document is independent: editing it does not rewrite chat, and deleting the chat does not delete a saved document. Documents created from responses can show their origin and original status. Origin information does not certify accuracy or task success.\n\nPreview does not automatically load remote images. Copying the body copies text without the attached origin records. Check for private information before copying, sharing, or opening external links.\n\n<a id=\"review-revisions\"></a>\n## Review a model's proposed changes\n\n1. Open revision suggestions, choose an available model, and enter a specific instruction. Generating a suggestion calls the selected provider and may incur charges.\n2. To use references, read and check their current content before selecting them for this request. Sources may have changed since the original answer.\n3. Compare the original and proposed text; check facts, omissions, and citations. Accepting changes updates only the current draft. Save separately.\n4. Only the explicit option to accept with review context attaches snapshots of the selected sources to the draft. Ordinary acceptance does not retain those additional copies.\n\nLeaving the page or moving the app to the background cancels ongoing suggestion generation. If a proposal is stale or another operation changed the document, check the current version before generating again. Do not overwrite newer content with an old proposal.\n\n<a id=\"save-conflicts\"></a>\n## Handle save failures and conflicts\n\nOn failure, retain the input, inspect the error, and retry. For a version conflict, Reload reads the latest saved version and discards local changes; Save a copy keeps the current content as a separate document. Decide which content to retain before choosing.\n\nUnsaved drafts do not survive process termination. Saving a document and [backing up data](privacy.md#steps) are different actions; a save is not an off-device backup.\n"
       },
       {
         "id": "knowledge",
         "slug": "knowledge",
         "title": "Knowledge & memory",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "ecbaa595d9c1c3c13be7172b9d04eb945a66d2ac88ace4c4f27bef6b7aac19ff",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "a8511d985a8fdcc56dc4337f19a997f2fc3df3952710ad6df6636336876ee8be",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "import-and-check",
+          "review-memory"
         ],
-        "body": "# Knowledge & memory\n\n<a id=\"goal\"></a>\n## Outcome\n\nImport reference material and review long-term memory.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Knowledge & web → Knowledge, import material, and track parsing and indexing.\n\n2. Check content and filters, then verify relevant references in chat.\n\n3. Review pending memories and approve only accurate information worth retaining.\n\n<a id=\"success\"></a>\n## Success\n\nIndexed material is retrievable; approved memories follow current policy.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor import failures check format, capacity, and model dependencies. Rejecting memory does not delete source files.\n"
+        "body": "# Knowledge & memory\n\n<a id=\"goal\"></a>\n## Outcome\n\nImport reference material and review long-term memory.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Knowledge & web → Knowledge, import material, and track parsing and indexing.\n\n2. Check content and filters, then verify relevant references in chat.\n\n3. Review pending memories and approve only accurate information worth retaining.\n\n<a id=\"success\"></a>\n## Success\n\nIndexed material is retrievable; approved memories follow current policy.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor import failures check format, capacity, and model dependencies. Rejecting memory does not delete source files.\n\n<a id=\"import-and-check\"></a>\n## Import your first source\n\n1. In Knowledge, choose the file import action. For a text excerpt, expand the paste-text area, enter its title and body, then import it.\n2. Check the source list. **Indexing** is unfinished; **Failed** needs an error check; **Empty content** is not usable material. A file appearing in the list does not mean processing succeeded.\n3. For a large library, expand filters and search by status or keyword. Clear filters before importing a file again just because no matching item appears.\n4. Return to chat, ask about a specific fact in the source, and open the answer's references to check the original. Successful indexing makes a source searchable; it does not guarantee a match for every question.\n\nSee [Search & retrieval](search.md#dependencies) for scope and model requirements. Sources may enter model context; check for information that should not be sent to the selected provider before importing.\n\n<a id=\"review-memory\"></a>\n## Review and disable memories\n\nOpen Memory and check pending, active, and disabled counts before expanding the review queue. Filter by source or low confidence when helpful. Confidence is a signal, not proof of accuracy.\n\nReview each item before confirming it. Before a batch action, check whether its label refers to the current filter or all pending items, and verify the count. Disable outdated memories and restore them when appropriate; these actions do not edit the original chat or knowledge file.\n\nIf a memory is absent from an answer, check the memory switch, item status, and retrieval scope first. Do not approve incorrect information to increase matches.\n"
       },
       {
         "id": "models",
@@ -229,7 +244,7 @@ export const userGuide = {
         "title": "Models & answers",
         "updatedAt": "2026-09-24",
         "reviewedAt": "2026-09-24",
-        "reviewedSourceHash": "0a20fa683aa80c243aec783ba6d1fd3fcc9f9d956f0fa8f464d119045dafd906",
+        "reviewedSourceHash": "fc35fbf27b3169c3642377e0e1958f2555f812a9e671b420389eee34c1c63e3c",
         "anchors": [
           "goal",
           "steps",
@@ -238,7 +253,7 @@ export const userGuide = {
           "generation",
           "editing"
         ],
-        "body": "# Models & answers\n\n<a id=\"goal\"></a>\n## Outcome\n\nConfigure providers and generation parameters.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Choose a provider, then enter connection details. Use an API base address, not the sign-in page.\n\n2. Enter credentials and models, review, and save. Reading the guide does not submit drafts; leaving offers keep editing or discard.\n\n3. Keep model defaults or explicitly customize temperature and output limits.\n\n<a id=\"success\"></a>\n## Success\n\nOther screens read committed values. Saving does not imply connectivity or free usage.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor 401/403 check credentials and permission; for 404 check address, protocol, and model. Redact keys from screenshots.\n\n<a id=\"generation\"></a>\n## Generation parameters\n\n- **Model default** omits the custom value. The model and provider decide; this is not one universal number.\n- **Custom** offers a preview slider, step buttons, and exact input. Releasing the slider commits once; interrupted gestures do not write. Completed exact input uses the existing range validation.\n- Temperature affects sampling, not factual accuracy. A larger output ceiling can increase usage; the model may impose a lower effective limit.\n- Undo restores committed preferences only where a later edit has not changed the same field.\n\n<a id=\"editing\"></a>\n## Connection drafts and save failures\n\nOpen an existing provider to edit its connection, credentials, and models directly. The guide opens above the current editor without saving. Leaving or closing offers Keep editing or Discard changes.\n\nSaved means persistence completed. A failure keeps your input for retry. On an external-change warning, discard the draft and reopen rather than overwriting newer configuration. Saving does not automatically test or enable a provider. Model tests and usage queries are separate explicit actions and may contact or incur charges from the provider.\n"
+        "body": "# Models & answers\n\n<a id=\"goal\"></a>\n## Outcome\n\nConfigure providers and generation parameters.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Choose a provider, then enter connection details. Use an API base address, not the sign-in page.\n\n2. Enter credentials and models, review, and save. Reading the guide does not submit drafts; leaving offers keep editing or discard.\n\n3. Keep model defaults or explicitly customize temperature and output limits.\n\n<a id=\"success\"></a>\n## Success\n\nOther screens read committed values. Saving does not imply connectivity or free usage.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor 401/403 check credentials and permission; for 404 check address, protocol, and model. Redact keys from screenshots.\n\n<a id=\"generation\"></a>\n## Generation parameters\n\n- **Model default** omits the custom value. The model and provider decide; this is not one universal number.\n- **Custom** offers a preview slider, step buttons, and exact input. Releasing the slider commits once; interrupted gestures do not write. Exact input requires Save and uses the existing range validation. Blur, folding, and reading the guide do not submit it.\n- Save or reload pending exact input before using the slider, step buttons, or default selector, so those actions cannot overwrite your draft. Workflow numbers and the assistant name also require explicit saving.\n- Temperature affects sampling, not factual accuracy. A larger output ceiling can increase usage; the model may impose a lower effective limit.\n- Undo restores committed preferences only where a later edit has not changed the same field.\n\n<a id=\"editing\"></a>\n## Connection drafts and save failures\n\nOpen an existing provider to edit its connection, credentials, and models directly. The guide opens above the current editor without saving. Leaving or closing offers Keep editing or Discard changes.\n\nSaved means persistence completed. A failure keeps your input for retry. On an external-change warning, discard the draft and reopen rather than overwriting newer configuration. Saving does not automatically test or enable a provider. Model tests and usage queries are separate explicit actions and may contact or incur charges from the provider.\n\nBatch import also waits for saving to finish before asking whether to enable providers. If configuration was applied but saving failed, the window keeps your input and offers Retry without adding duplicates or overwriting later changes. Closing at that point does not undo applied data. Discarding an unsubmitted draft clears it; late file or clipboard reads cannot restore it.\n"
       },
       {
         "id": "personalization",
@@ -290,16 +305,20 @@ export const userGuide = {
         "id": "search",
         "slug": "search",
         "title": "Search & retrieval",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "58bb9197c203242bda8fc2d222537a7cde4472e7779e925c612b2ab69052f4f3",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "c872ff6bcde90cafba49be57672f20256167b9f984d8a8fae70164f019f8aa75",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "dependencies",
+          "search-credentials",
+          "context-compression",
+          "model-download-mirror"
         ],
-        "body": "# Search & retrieval\n\n<a id=\"goal\"></a>\n## Outcome\n\nChoose an appropriate retrieval scope.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Knowledge & web → Context.\n\n2. Choose an existing fast, balanced, deep, or offline profile and check its dependencies.\n\n3. Try a question requiring references and inspect sources, not just answer length.\n\n<a id=\"success\"></a>\n## Success\n\nRetrieval uses sources permitted by the profile. Offline retrieval is not an app-wide network block.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor empty results check indexing, search services, and access policies. More sources do not guarantee correctness.\n"
+        "body": "# Search & retrieval\n\n<a id=\"goal\"></a>\n## Outcome\n\nChoose an appropriate retrieval scope.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Knowledge & web → Context.\n\n2. Choose an existing fast, balanced, deep, or offline profile and check its dependencies.\n\n3. Try a question requiring references and inspect sources, not just answer length.\n\n<a id=\"success\"></a>\n## Success\n\nRetrieval uses sources permitted by the profile. Offline retrieval is not an app-wide network block.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor empty results check indexing, search services, and access policies. More sources do not guarantee correctness.\n\n<a id=\"dependencies\"></a>\n## Check the retrieval dependencies\n\nFollow question → retrieval → relevant material → model answer. Check one stage at a time instead of changing every advanced parameter together.\n\n| Stage | Check first |\n|---|---|\n| Local knowledge | Knowledge switch, completed indexing, filters excluding sources |\n| Long-term memory | Memory switch, confirmed and active items |\n| Web search | Selected service, required credentials and endpoint, network and access rules |\n| Vectors and ranking | Model status shown on the page; absent or disabled does not mean ready |\n| Final answer | Current chat model availability and whether references support the claims |\n\nStart with an existing profile, then adjust advanced options for a specific need. A profile does not install missing models, configure credentials, or grant permission. Offline retrieval is not a privacy firewall: the chat model may still use a remote provider.\n\n<a id=\"search-credentials\"></a>\n## Save search connection details\n\nAfter choosing a search service, fill only the fields it requires. Google services may need both a key and search engine ID; a custom service may require an endpoint or Bearer credential. Follow the fields actually shown.\n\nSave explicitly after entering the details. Blur and reading the guide do not submit them; resolve unsaved changes before switching services or leaving. Failed saves retain input. Do not paste keys again just because another page still shows the previous value. Connection tests, searches, and model calls may incur charges; unknown cost does not mean free.\n\nSee [Knowledge & memory](knowledge.md#import-and-check) for importing and review, and [Models & answers](models.md#troubleshooting) for errors such as 401 and 403.\n\n<a id=\"context-compression\"></a>\n## Choose context compression\n\nIn Context, “Compress context with the current model” lets the selected model summarize earlier turns when the provider has no native compaction. Each model compaction sends one additional request, counts toward usage, and may incur charges. Turning it off uses local structured compression; it does not disable the chat model's normal requests.\n\nChoose the switch according to your cost and context needs. No test request is sent when changing it. The switch shows the applied preference; check Usage after a conversation to see recorded requests. Unknown prices do not mean the service is free. If earlier details are missing, restate them in the conversation; compression cannot guarantee preserving every detail.\n\n<a id=\"model-download-mirror\"></a>\n## Set a local model download mirror\n\nSearch settings for “mirror address”, or open Context → Retrieval mode → Local models. Enter a trusted mirror address and choose Save; an empty value uses the existing default download source. Saving the address does not start a download.\n\nCollapsing the section or reading the guide retains unsaved input; blur does not submit it. When leaving, choose to keep editing or discard changes. Downloads use only the committed address, so an unsaved draft cannot be used to test a mirror.\n\nIf the summary says “Has errors”, reopen the section to check. Retry a failed save; if the address has changed elsewhere, reload the latest value before editing to avoid overwriting it. “Saved” appears only after persistence completes.\n"
       },
       {
         "id": "tools",
@@ -323,31 +342,32 @@ export const userGuide = {
         "id": "troubleshooting",
         "slug": "troubleshooting",
         "title": "Troubleshooting",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "372b98bcda6175359155ae83620b1a65b91ac6143a2f9875915c5a7d7d05d7be",
+        "updatedAt": "2026-09-24",
+        "reviewedAt": "2026-09-24",
+        "reviewedSourceHash": "31bd832db7b810a2067acce75931425f681faf8db19db7f47e33300122054e9b",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# Troubleshooting\n\n<a id=\"goal\"></a>\n## Outcome\n\nIdentify the failing stage before repair.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Help & maintenance → Diagnostics & repair.\n\n2. Distinguish connection, permission, indexing, and tool failures; run only relevant repairs.\n\n3. Report version, reproduction steps, and redacted errors. Back up before updates and use trusted sources.\n\n<a id=\"success\"></a>\n## Success\n\nRetry the original action; successful diagnostics do not prove every feature works.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nAvoid changing many settings at once; never share credentials. Reset and deletion are not universal repairs.\n"
+        "body": "# Troubleshooting\n\n<a id=\"goal\"></a>\n## Outcome\n\nIdentify the failing stage before repair.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Help & maintenance → Diagnostics & repair.\n\n2. Distinguish connection, permission, indexing, and tool failures; run only relevant repairs.\n\n3. Report version, reproduction steps, and redacted errors. Back up before updates and use trusted sources.\n\n<a id=\"success\"></a>\n## Success\n\nRetry the original action; successful diagnostics do not prove every feature works.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nAvoid changing many settings at once; never share credentials. Reset and deletion are not universal repairs.\n\nOn Android, close the Network offline notice to keep editing settings or reading the offline guide. Closing only dismisses the notice; it does not reconnect or retry requests.\n\nChanging Android's system font size may recreate the page and discard unsaved drafts. Save before changing the system font size.\n\n### App updates\n\n- In the GitHub APK edition, use Settings → Updates to check for updates. You can cancel during download or verification. Leaving this page also stops an update that has not reached the system installer; retrying downloads the file again.\n- Failed checks can be retried immediately; repeated clicks do not start parallel downloads. No incompatible APK is downloaded when a matching device architecture is unavailable.\n- File size and SHA-256 must pass verification before the installer opens. Opening the installer does not mean installation succeeded: follow the system prompts, or cancel there.\n- The Google Play edition updates only through the store. Select “Update in Google Play” to open its listing; if it cannot open, search for IsleMind in the store.\n"
       },
       {
         "id": "usage",
         "slug": "usage",
         "title": "Usage & costs",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "6f7a5e24e07b112151459ba20c33a722406996dcd52c95a22cf57b4766cf4b21",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "b43e329a9501465dc19acfc4a96a3213893d9799a85ab0800d904cfdf3b77567",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "pricing-overrides"
         ],
-        "body": "# Usage & costs\n\n<a id=\"goal\"></a>\n## Outcome\n\nDistinguish usage records from provider bills.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Models & answers → Usage and select the available period and scope.\n\n2. Inspect requests and tokens, including failures, cancellations, and missing records.\n\n3. Use provider bills for estimated or unknown costs; unknown is not free.\n\n<a id=\"success\"></a>\n## Success\n\nMetrics show trends, not authoritative billing.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nCheck time range, pricing, and completeness; deleting local records does not cancel charges.\n"
+        "body": "# Usage & costs\n\n<a id=\"goal\"></a>\n## Outcome\n\nDistinguish usage records from provider bills.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Models & answers → Usage and select the available period and scope.\n\n2. Inspect requests and tokens, including failures, cancellations, and missing records.\n\n3. Use provider bills for estimated or unknown costs; unknown is not free.\n\n<a id=\"success\"></a>\n## Success\n\nMetrics show trends, not authoritative billing.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nCheck time range, pricing, and completeness; deleting local records does not cancel charges.\n\n<a id=\"pricing-overrides\"></a>\n## Set an estimated price\n\n1. Find Price overrides on the usage page and add an entry or edit an existing one.\n2. Check the provider and model, then enter separate input and output prices per million tokens. The UI uses USD; this affects in-app estimates, not the provider's prices.\n3. Choose Save and wait for the form to close. Negative, nonnumeric, and out-of-range values cannot be saved.\n\nInput stays in the current editor. Blur and reading the guide do not save it. Closing or going back lets you keep editing or discard changes; Cancel discards the draft directly. While saving, the form cannot be submitted again or closed.\n\nA failed save shows an error and retains input for correction and retry. If another edit or backup restore changed the price, reload the latest value before deciding what to change. Check unknown costs against the provider's bill; do not enter zero just to remove an unknown-cost indication.\n"
       },
       {
         "id": "workspaces",
@@ -370,46 +390,51 @@ export const userGuide = {
         "id": "chat",
         "slug": "chat",
         "title": "チャットと添付",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "feff96c44c26a66cf0b40dd8c1ac9484b89b98bcd3ae1871bc8a2638d045ff38",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "cb468bb15e4f3efbf9f990677c1d96a08335f2fa92df2364c8448e46a9242152",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# チャットと添付\n\n<a id=\"goal\"></a>\n## 目的\n\nメッセージとファイルを安全に利用します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. 会話を選ぶか作成し、モデルを確認します。\n\n2. 添付ファイルの内容とモデルの対応形式を確認して送信します。\n\n3. 必要なら生成を停止します。別の文脈には新しい会話を使います。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n会話内にメッセージが残ります。解析成功はモデルの理解を保証しません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n形式、容量、権限を確認します。添付はサービスへ送信される場合があり、端末での削除ではサービス側のコピーは消えません。\n"
+        "body": "# チャットと添付\n\n<a id=\"goal\"></a>\n## 目的\n\nメッセージとファイルを安全に利用します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. 会話を選ぶか作成し、モデルを確認します。\n\n2. 添付ファイルの内容とモデルの対応形式を確認して送信します。\n\n3. 必要なら生成を停止します。別の文脈には新しい会話を使います。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n会話内にメッセージが残ります。解析成功はモデルの理解を保証しません。\n\n返信の上には、実際に発生した順序で各処理が表示されます。進行中の表示は成功後に完了形へ変わり、発生していない段階は追加されません。矢印のある項目をタップすると、その項目の思考の要約、ツール入力、実行結果、検索結果だけを展開・折りたたみできます。表示用として明示された要約のみを表示し、内部推論の原文は表示しません。確認待ち、失敗、停止、スキップは実行成功として表示されず、モデルによるツールのリクエストも実行済みとは区別されます。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n形式、容量、権限を確認します。添付はサービスへ送信される場合があり、端末での削除ではサービス側のコピーは消えません。\n"
       },
       {
         "id": "documents",
         "slug": "documents",
         "title": "文書",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "f1a68aab7919781ceaefc8d3a0e0b89c0e2ead6c463323d6ca13648912553a6a",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "fa8e0cec78f51097eeee6463ce8de767fa63293860030e27d08e09928d38c23f",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "save-and-reuse",
+          "review-revisions",
+          "save-conflicts"
         ],
-        "body": "# 文書\n\n<a id=\"goal\"></a>\n## 目的\n\n編集を続けたい内容を保存します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. 一覧で文書を作成または開きます。\n\n2. タイトルと本文を編集し、プレビューして保存します。\n\n3. 競合時は再読み込みやコピー保存で新しい内容を保護します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n保存した文書は再度開けます。未保存入力はバックアップではありません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n保存失敗時は入力を保持してエラーを確認します。共有前に個人情報と認証情報を確認してください。\n"
+        "body": "# 文書\n\n<a id=\"goal\"></a>\n## 目的\n\n編集を続けたい内容を保存します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. 一覧で文書を作成または開きます。\n\n2. タイトルと本文を編集し、プレビューして保存します。\n\n3. 競合時は再読み込みやコピー保存で新しい内容を保護します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n保存した文書は再度開けます。未保存入力はバックアップではありません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n保存失敗時は入力を保持してエラーを確認します。共有前に個人情報と認証情報を確認してください。\n\n<a id=\"save-and-reuse\"></a>\n## チャットの回答を文書にまとめる\n\n文書一覧から空の文書を作成するか、終了したアシスタントの回答を文書の下書きにします。タイトルと本文を確認してから保存してください。下書きを開くことやプレビューへの切り替えは、保存完了を意味しません。\n\n文書は独立したコピーです。編集してもチャットは書き換わらず、チャットを削除しても保存済み文書は消えません。回答から作成した文書では出所と当時の状態を確認できますが、正確さやタスクの成功を証明するものではありません。\n\nプレビューはリモート画像を自動取得しません。本文のコピーには付随する出所記録は含まれません。コピー、共有、外部リンクを開く前に、個人情報がないか確認してください。\n\n<a id=\"review-revisions\"></a>\n## モデルの修正案を確認する\n\n1. 修正案の欄を開き、利用可能なモデルと具体的な指示を設定します。生成は選択したプロバイダーを呼び出し、料金が発生する場合があります。\n2. 出典を使う場合は現在の内容を読み、確認してから今回のリクエストに含めるか選びます。元の回答後に内容が更新されている場合があります。\n3. 原文と修正案を比較し、事実、抜け、引用を確認します。採用で変更されるのは現在の下書きだけです。保存は別に行います。\n4. 審査資料とともに採用する操作を明示的に選んだ場合だけ、選択した出典のスナップショットを下書きに添付します。通常の採用では、その追加コピーは保持しません。\n\n画面を離れるかアプリをバックグラウンドにすると、進行中の修正案生成はキャンセルされます。修正案が古い場合や別の操作で文書が変わった場合は、最新版を確認してから再生成します。古い修正案で新しい内容を上書きしないでください。\n\n<a id=\"save-conflicts\"></a>\n## 保存の失敗と競合に対処する\n\n保存失敗時は入力を保持し、エラーを確認して再試行します。バージョンの競合時、「再読み込み」は最新の保存内容を読み、本画面での変更を破棄します。「コピーを保存」は現在の内容を別の文書として残します。どちらを残すか決めてから選んでください。\n\n未保存の下書きはプロセス終了後に復元されません。文書の保存と[データのバックアップ](privacy.md#steps)は別の操作です。保存だけでは端末外のバックアップにはなりません。\n"
       },
       {
         "id": "knowledge",
         "slug": "knowledge",
         "title": "ナレッジとメモリ",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "ecbaa595d9c1c3c13be7172b9d04eb945a66d2ac88ace4c4f27bef6b7aac19ff",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "a8511d985a8fdcc56dc4337f19a997f2fc3df3952710ad6df6636336876ee8be",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "import-and-check",
+          "review-memory"
         ],
-        "body": "# ナレッジとメモリ\n\n<a id=\"goal\"></a>\n## 目的\n\n資料を取り込み、長期メモリを確認します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. ナレッジと検索 → ナレッジで資料を取り込み、解析と索引を確認します。\n\n2. 内容とフィルターを確認し、会話の参照を検証します。\n\n3. 保留メモリを確認し、正確で保存に適した情報だけを承認します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n索引済み資料が検索対象になり、承認メモリは現在の方針で使われます。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n失敗時は形式、容量、依存モデルを確認します。メモリの却下は元ファイルの削除とは異なります。\n"
+        "body": "# ナレッジとメモリ\n\n<a id=\"goal\"></a>\n## 目的\n\n資料を取り込み、長期メモリを確認します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. ナレッジと検索 → ナレッジで資料を取り込み、解析と索引を確認します。\n\n2. 内容とフィルターを確認し、会話の参照を検証します。\n\n3. 保留メモリを確認し、正確で保存に適した情報だけを承認します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n索引済み資料が検索対象になり、承認メモリは現在の方針で使われます。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n失敗時は形式、容量、依存モデルを確認します。メモリの却下は元ファイルの削除とは異なります。\n\n<a id=\"import-and-check\"></a>\n## 最初の資料を取り込む\n\n1. ナレッジのファイル取り込みから資料を選びます。短い文章なら、テキスト貼り付け欄を開き、タイトルと本文を入力して取り込みます。\n2. 一覧の状態を確認します。**索引作成中**は未完了、**失敗**はエラーの確認が必要です。**空の内容**は資料として使えません。一覧に表示されただけで完了と判断しないでください。\n3. 資料が多い場合はフィルターを開き、状態やキーワードで絞り込みます。見つからないときは、同じファイルを再度取り込む前にフィルターを解除します。\n4. チャットに戻り、資料にある具体的な事実を質問し、回答の出典を開いて原文を確認します。索引作成の成功は検索可能になったことを示し、すべての質問でのヒットを保証しません。\n\n検索範囲と必要なモデルは[ネット検索と情報検索](search.md#dependencies)を参照してください。資料がモデルのコンテキストに含まれる場合があります。選択したプロバイダーへ送信すべきでない情報がないか、取り込み前に確認してください。\n\n<a id=\"review-memory\"></a>\n## メモリの確認と無効化\n\nメモリ画面で保留、有効、無効の件数を確認してから、審査キューを開きます。出所や低信頼度で絞り込めます。信頼度は判断の補助であり、正確さの証明ではありません。\n\n内容を一件ずつ確認して承認します。一括操作の前に、対象が現在の絞り込み結果か、保留中の全件かをボタンの説明と件数で確認します。古くなったメモリは無効化し、必要に応じて復元できます。元のチャットや資料は変更されません。\n\n回答にメモリが使われない場合は、メモリのスイッチ、項目の状態、検索範囲を先に確認します。ヒットを増やすために誤った情報を承認しないでください。\n"
       },
       {
         "id": "models",
@@ -417,7 +442,7 @@ export const userGuide = {
         "title": "モデルと回答",
         "updatedAt": "2026-09-24",
         "reviewedAt": "2026-09-24",
-        "reviewedSourceHash": "0a20fa683aa80c243aec783ba6d1fd3fcc9f9d956f0fa8f464d119045dafd906",
+        "reviewedSourceHash": "fc35fbf27b3169c3642377e0e1958f2555f812a9e671b420389eee34c1c63e3c",
         "anchors": [
           "goal",
           "steps",
@@ -426,7 +451,7 @@ export const userGuide = {
           "generation",
           "editing"
         ],
-        "body": "# モデルと回答\n\n<a id=\"goal\"></a>\n## 目的\n\n接続と生成パラメーターを設定します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. サービスを選び、接続情報を入力します。ログインページではなく API ベース URL を使います。\n\n2. 認証情報とモデルを確認して保存します。ガイドで下書きは確定されず、移動時に継続か破棄を選べます。\n\n3. モデルの既定値を使うか、温度と出力上限を指定します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n他画面は確定済みの値だけを使います。保存は接続成功や無料利用を意味しません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n401/403 は認証と権限、404 は URL・方式・モデル名を確認します。画像からキーを隠してください。\n\n<a id=\"generation\"></a>\n## 生成パラメーター\n\n- **モデルのデフォルト**はカスタム値を送信せず、モデルとプロバイダーに任せます。共通の固定値ではありません。\n- **カスタム**ではスライダー、増減ボタン、数値入力を使えます。スライダーは指を離した時だけ確定し、中断した操作は書き込みません。数値入力には既存の範囲チェックが適用されます。\n- 温度はサンプリングに影響しますが、正確さを保証しません。出力上限を増やすと使用量が増える場合があり、モデル側の上限が優先されることもあります。\n- 元に戻す操作は、その後変更されていない項目だけに適用されます。\n\n<a id=\"editing\"></a>\n## 接続の下書きと保存失敗\n\n既存のプロバイダーは接続、認証情報、モデルを直接編集できます。ガイドは編集画面の上に開き、下書きを保存しません。画面を離れる時は編集の継続か変更の破棄を選びます。\n\n永続化が完了してから保存済みと表示します。失敗時は入力を保持して再試行できます。外部変更の警告が出た場合は、下書きを破棄して開き直してください。保存だけではプロバイダーをテストしたり有効にしたりしません。モデルのテストと使用量の照会は個別の明示的な操作であり、通信や課金が発生する場合があります。\n"
+        "body": "# モデルと回答\n\n<a id=\"goal\"></a>\n## 目的\n\n接続と生成パラメーターを設定します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. サービスを選び、接続情報を入力します。ログインページではなく API ベース URL を使います。\n\n2. 認証情報とモデルを確認して保存します。ガイドで下書きは確定されず、移動時に継続か破棄を選べます。\n\n3. モデルの既定値を使うか、温度と出力上限を指定します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n他画面は確定済みの値だけを使います。保存は接続成功や無料利用を意味しません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n401/403 は認証と権限、404 は URL・方式・モデル名を確認します。画像からキーを隠してください。\n\n<a id=\"generation\"></a>\n## 生成パラメーター\n\n- **モデルのデフォルト**はカスタム値を送信せず、モデルとプロバイダーに任せます。共通の固定値ではありません。\n- **カスタム**ではスライダー、増減ボタン、数値入力を使えます。スライダーは指を離した時だけ確定し、中断した操作は書き込みません。数値入力は「保存」で確定し、既存の範囲チェックが適用されます。フォーカスを外す、折りたたむ、ガイドを読む操作では保存されません。\n- 下書きを上書きしないよう、未保存の数値を保存するか保存済みの値を再読み込みしてから、スライダー、増減ボタン、デフォルト切り替えを操作してください。ワークフローの数値とアシスタント名も明示的に保存します。\n- 温度はサンプリングに影響しますが、正確さを保証しません。出力上限を増やすと使用量が増える場合があり、モデル側の上限が優先されることもあります。\n- 元に戻す操作は、その後変更されていない項目だけに適用されます。\n\n<a id=\"editing\"></a>\n## 接続の下書きと保存失敗\n\n既存のプロバイダーは接続、認証情報、モデルを直接編集できます。ガイドは編集画面の上に開き、下書きを保存しません。画面を離れる時は編集の継続か変更の破棄を選びます。\n\n永続化が完了してから保存済みと表示します。失敗時は入力を保持して再試行できます。外部変更の警告が出た場合は、下書きを破棄して開き直してください。保存だけではプロバイダーをテストしたり有効にしたりしません。モデルのテストと使用量の照会は個別の明示的な操作であり、通信や課金が発生する場合があります。\n\n一括インポートも保存の完了を待ってから、有効にするかを確認します。設定の適用後に保存が失敗した場合は、入力を保持して再試行できます。重複追加や、その後の変更の上書きは行いません。この状態で閉じても適用済みのデータは元に戻りません。未送信の下書きは破棄の確認後に消去され、遅れて完了したファイルやクリップボードの読み取りでも復元されません。\n"
       },
       {
         "id": "personalization",
@@ -478,16 +503,20 @@ export const userGuide = {
         "id": "search",
         "slug": "search",
         "title": "検索と情報取得",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "58bb9197c203242bda8fc2d222537a7cde4472e7779e925c612b2ab69052f4f3",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "c872ff6bcde90cafba49be57672f20256167b9f984d8a8fae70164f019f8aa75",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "dependencies",
+          "search-credentials",
+          "context-compression",
+          "model-download-mirror"
         ],
-        "body": "# 検索と情報取得\n\n<a id=\"goal\"></a>\n## 目的\n\n適切な検索範囲を選びます。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. ナレッジと検索 → コンテキストを開きます。\n\n2. 高速・バランス・詳細・オフラインから選び、必要なモデルやサービスを確認します。\n\n3. 資料が必要な質問で出典を確認します。長さだけで判断しないでください。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n方式に応じた資料が使われます。オフライン検索はアプリ全体の通信禁止ではありません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n結果がない場合は索引、サービス、アクセス制限を確認します。情報量は正確さを保証しません。\n"
+        "body": "# 検索と情報取得\n\n<a id=\"goal\"></a>\n## 目的\n\n適切な検索範囲を選びます。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. ナレッジと検索 → コンテキストを開きます。\n\n2. 高速・バランス・詳細・オフラインから選び、必要なモデルやサービスを確認します。\n\n3. 資料が必要な質問で出典を確認します。長さだけで判断しないでください。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n方式に応じた資料が使われます。オフライン検索はアプリ全体の通信禁止ではありません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n結果がない場合は索引、サービス、アクセス制限を確認します。情報量は正確さを保証しません。\n\n<a id=\"dependencies\"></a>\n## 検索に必要な条件を確認する\n\n「質問 → 検索 → 関連資料 → モデルの回答」の順に確認します。詳細設定を一度にすべて変更しないでください。\n\n| 段階 | 最初に確認すること |\n|---|---|\n| ローカル資料 | ナレッジのスイッチ、索引作成の完了、フィルターによる除外 |\n| 長期メモリ | メモリのスイッチ、確認済みで有効な項目 |\n| Web 検索 | 選択したサービス、必要な認証情報と接続先、通信とアクセス規則 |\n| ベクトルと順位付け | 画面のモデル状態。未導入や無効は準備完了ではありません |\n| 最終回答 | チャットモデルが利用可能か、出典が回答の主張を裏付けているか |\n\n既存の方式を選び、必要に応じて詳細項目を調整します。方式を選んでも、不足モデルの導入、認証情報の設定、権限の承認は行われません。オフライン検索は通信を遮断する機能ではなく、チャットモデルは引き続きリモートサービスを使う場合があります。\n\n<a id=\"search-credentials\"></a>\n## 検索の接続情報を保存する\n\n検索サービスを選択し、必要な項目だけを入力します。Google 系ではキーと検索エンジン ID の両方、カスタムサービスでは接続先や Bearer 認証情報が必要な場合があります。実際に表示された項目に従ってください。\n\n入力後は明示的に保存します。フォーカス移動やガイドの閲覧では送信されません。サービスの切り替えや離脱時は、未保存の変更を先に処理します。保存に失敗しても入力は残ります。他の画面に以前の値が表示されているだけでキーを再入力しないでください。接続テスト、検索、モデル呼び出しには料金が発生する場合があり、料金不明は無料を意味しません。\n\n取り込みと審査は[ナレッジとメモリ](knowledge.md#import-and-check)、401 や 403 などのエラーは[モデルと回答](models.md#troubleshooting)を参照してください。\n\n<a id=\"context-compression\"></a>\n## コンテキストの圧縮方法を選ぶ\n\nコンテキストで「現在のモデルでコンテキストを圧縮」を有効にすると、プロバイダーがネイティブ圧縮に対応しない場合、現在のモデルが以前の会話を要約します。モデルによる圧縮は毎回リクエストを 1 回追加し、使用量に計上され、料金が発生する場合があります。オフではローカル構造化圧縮を使いますが、チャットモデルの通常のリクエストは停止しません。\n\n料金とコンテキストの必要性に応じて切り替えます。切り替えだけではテストリクエストは送信されません。スイッチは適用済みの設定を示し、会話後は使用量画面でリクエスト記録を確認できます。料金不明は無料を意味しません。以前の情報が抜けた場合は会話で再度伝えてください。圧縮で全ての詳細を保持できるとは限りません。\n\n<a id=\"model-download-mirror\"></a>\n## ローカルモデルのダウンロードミラーを設定する\n\n設定で「ミラー」を検索するか、コンテキスト → 検索モード → ローカルモデルを開きます。信頼できるミラーのアドレスを入力し、保存を選びます。空欄の場合は既存の標準ダウンロード元を使います。アドレスの保存だけではダウンロードは始まりません。\n\n折りたたみやガイドの閲覧では未保存の入力が残り、フォーカス移動では保存されません。離れるときは編集を続けるか変更を破棄します。ダウンロードに使われるのは確定済みのアドレスだけで、未保存の下書きではミラーを試せません。\n\n概要に「エラーあり」と表示されたら、再び展開して確認します。保存に失敗した場合は再試行できます。別の場所でアドレスが変更された場合は、上書きを避けるため最新の値を再読み込みしてから編集します。永続化が完了してから「保存しました」と表示されます。\n"
       },
       {
         "id": "tools",
@@ -511,31 +540,32 @@ export const userGuide = {
         "id": "troubleshooting",
         "slug": "troubleshooting",
         "title": "問題の解決",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "372b98bcda6175359155ae83620b1a65b91ac6143a2f9875915c5a7d7d05d7be",
+        "updatedAt": "2026-09-24",
+        "reviewedAt": "2026-09-24",
+        "reviewedSourceHash": "31bd832db7b810a2067acce75931425f681faf8db19db7f47e33300122054e9b",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# 問題の解決\n\n<a id=\"goal\"></a>\n## 目的\n\n失敗している段階を確認して修復します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. ヘルプと保守 → 診断と修復を開きます。\n\n2. 接続、権限、索引、ツールの問題を区別し、関係する修復だけ行います。\n\n3. 報告にはバージョン、手順、機密情報を除いたエラーを添えます。更新前にバックアップし、信頼できる配布元を使います。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n元の操作で確認します。診断成功だけですべての機能が正常とは限りません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n複数の設定を一度に変えず、認証情報を送らないでください。初期化や削除は万能な修復ではありません。\n"
+        "body": "# 問題の解決\n\n<a id=\"goal\"></a>\n## 目的\n\n失敗している段階を確認して修復します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. ヘルプと保守 → 診断と修復を開きます。\n\n2. 接続、権限、索引、ツールの問題を区別し、関係する修復だけ行います。\n\n3. 報告にはバージョン、手順、機密情報を除いたエラーを添えます。更新前にバックアップし、信頼できる配布元を使います。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n元の操作で確認します。診断成功だけですべての機能が正常とは限りません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n複数の設定を一度に変えず、認証情報を送らないでください。初期化や削除は万能な修復ではありません。\n\nAndroid の「ネットワークがオフラインです」という通知は閉じて、設定の編集やオフラインガイドの閲覧を続けられます。通知を閉じても、再接続や要求の再試行は行われません。\n\nAndroid のシステムの文字サイズを変更すると、画面が再作成されて未保存の下書きが失われる場合があります。文字サイズを変更する前に保存してください。\n\n### アプリの更新\n\n- GitHub APK 版では、設定 → バージョン更新から確認できます。ダウンロード中や検証中はキャンセルできます。このページを離れると、システムのインストーラーに渡す前の更新も停止します。再試行時は最初からダウンロードします。\n- 確認に失敗してもすぐ再試行できます。連続して押しても複数のダウンロードは始まりません。端末のアーキテクチャに合う APK がなければ、非対応の APK はダウンロードしません。\n- ファイルサイズと SHA-256 の検証に成功した場合だけインストーラーを開きます。開いただけではインストール完了ではありません。システムの案内に従い、キャンセルする場合もインストーラーで操作してください。\n- Google Play 版はストア経由でのみ更新します。「Google Play で更新」からストアページを開いてください。開けない場合はストアで IsleMind を検索してください。\n"
       },
       {
         "id": "usage",
         "slug": "usage",
         "title": "使用量と費用",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "6f7a5e24e07b112151459ba20c33a722406996dcd52c95a22cf57b4766cf4b21",
+        "updatedAt": "2026-09-25",
+        "reviewedAt": "2026-09-25",
+        "reviewedSourceHash": "b43e329a9501465dc19acfc4a96a3213893d9799a85ab0800d904cfdf3b77567",
         "anchors": [
           "goal",
           "steps",
           "success",
-          "troubleshooting"
+          "troubleshooting",
+          "pricing-overrides"
         ],
-        "body": "# 使用量と費用\n\n<a id=\"goal\"></a>\n## 目的\n\n利用記録とサービスの請求を区別します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. モデルと回答 → 使用量で期間と範囲を選びます。\n\n2. リクエストとトークン数を確認し、失敗、取消、記録漏れに注意します。\n\n3. 推定や不明な費用はサービスの請求を確認します。不明は無料ではありません。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n指標は傾向を示し、正式な請求ではありません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n期間、単価、記録範囲を確認します。端末の記録削除で料金は取り消されません。\n"
+        "body": "# 使用量と費用\n\n<a id=\"goal\"></a>\n## 目的\n\n利用記録とサービスの請求を区別します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. モデルと回答 → 使用量で期間と範囲を選びます。\n\n2. リクエストとトークン数を確認し、失敗、取消、記録漏れに注意します。\n\n3. 推定や不明な費用はサービスの請求を確認します。不明は無料ではありません。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n指標は傾向を示し、正式な請求ではありません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n期間、単価、記録範囲を確認します。端末の記録削除で料金は取り消されません。\n\n<a id=\"pricing-overrides\"></a>\n## 推定に使う単価を設定する\n\n1. 使用量ページの「カスタム料金」で、新しい項目を追加するか既存の項目を編集します。\n2. プロバイダーとモデルを確認し、100 万トークンあたりの入力単価と出力単価を別々に入力します。表示通貨は米ドルです。アプリ内の推定に使われ、サービス側の料金は変わりません。\n3. 保存を選び、フォームが閉じるまで待ちます。負数、数値でない値、対応範囲を超えた値は保存できません。\n\n入力は現在の編集画面内だけに保持されます。フォーカス移動やガイドの閲覧では保存されません。閉じる操作や戻る操作では、編集を続けるか変更を破棄するか選べます。キャンセルは下書きを直接破棄します。保存中は再送信やフォームを閉じる操作はできません。\n\n保存に失敗した場合はエラーが表示され、入力を修正して再試行できます。別の編集やバックアップの復元で単価が変わった場合は、最新の値を再読み込みしてから変更内容を決めます。料金不明のときはサービスの請求を確認してください。不明表示を消すためにゼロを入力しないでください。\n"
       },
       {
         "id": "workspaces",

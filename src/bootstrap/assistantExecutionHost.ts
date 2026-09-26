@@ -1,11 +1,12 @@
+import { setExecutionInterval, clearExecutionInterval } from '@/core/executionTimers'
 import type { AssistantRunId } from '@/core'
-import type { RunSnapshot } from '@/modules/assistant-runtime/harnessCheckpoint'
-import type { ExecutionResources } from '@/modules/tasks/application/executionResources'
+import type { RunSnapshot } from '@/modules/assistant-runtime'
+import type { ExecutionResources } from '@/modules/tasks'
 import { ANDROID_AGENT_LEASE_RENEW_INTERVAL_MS, type AndroidAgentExecutionLease,
   type AndroidAgentExecutionPort, type AndroidAgentExecutionReleaseReason } from '@/platform/native/androidAgentExecution'
 
 export type ExecutionHostPauseReason = 'memory_pressure' | 'background_disabled' | 'execution_lease_lost'
-type Entry = { snapshot?: RunSnapshot; enabled: boolean; generation: number; blocked?: ExecutionHostPauseReason;
+type Entry = { snapshot?: RunSnapshot; enabled: boolean; generation: number; executions: Set<symbol>; blocked?: ExecutionHostPauseReason;
   lease?: AndroidAgentExecutionLease; acquiring?: { generation: number; promise: Promise<void> }; renewing?: AndroidAgentExecutionLease }
 
 /** Application-scoped native control adapter, not a second run registry or execution engine.
@@ -20,14 +21,14 @@ export function createAssistantExecutionHost(input: {
   const entries = new Map<string, Entry>()
   let visible = true
   let generation = Date.now()
-  let timer: ReturnType<typeof setInterval> | undefined
+  let timer: ReturnType<typeof setExecutionInterval> | undefined
   let unsubscribe: (() => void) | undefined
-  const runnable = (entry: Entry) => entry.snapshot?.status === 'running' && !entry.blocked
+  const runnable = (entry: Entry) => entry.executions.size > 0 && entry.snapshot?.status === 'running' && !entry.blocked
   const release = (entry: Entry, reason: AndroidAgentExecutionReleaseReason) => {
     const lease = entry.lease
     entry.lease = undefined
-    if (lease) void input.port.release(lease, reason)
-    if (![...entries.values()].some((item) => item.lease) && timer) { clearInterval(timer); timer = undefined }
+    if (lease) void input.port.release(lease, reason).catch(() => undefined)
+    if (![...entries.values()].some((item) => item.lease) && timer) { clearExecutionInterval(timer); timer = undefined }
   }
   const pause = (entry: Entry, reason: ExecutionHostPauseReason) => {
     if (entry.blocked) return
@@ -63,7 +64,7 @@ export function createAssistantExecutionHost(input: {
       }
       if (!result.ok || !result.lease) { pause(entry, 'execution_lease_lost'); return }
       entry.lease = result.lease
-      timer ??= setInterval(renew, ANDROID_AGENT_LEASE_RENEW_INTERVAL_MS)
+      timer ??= setExecutionInterval(renew, ANDROID_AGENT_LEASE_RENEW_INTERVAL_MS)
     })().catch(() => { if (entry.generation === acquiredGeneration) pause(entry, 'execution_lease_lost') })
     const acquisition = { generation: acquiredGeneration, promise: attempt }
     entry.acquiring = acquisition
@@ -71,10 +72,22 @@ export function createAssistantExecutionHost(input: {
   }
   function entryFor(id: string) {
     let entry = entries.get(id)
-    if (!entry) { entry = { enabled: false, generation: ++generation }; entries.set(id, entry) }
+    if (!entry) { entry = { enabled: false, generation: ++generation, executions: new Set() }; entries.set(id, entry) }
     return entry
   }
   return {
+    /** A scope spans the whole invocation, including consecutive local dispatch
+     * and delegated children. Stored running state alone is never CPU authority. */
+    executionStarted({ runId, rootRunId }: { runId: AssistantRunId; rootRunId: AssistantRunId }) {
+      const entry = entryFor(rootRunId)
+      const token = Symbol(runId)
+      entry.executions.add(token)
+      return () => {
+        if (!entry.executions.delete(token) || entry.executions.size) return
+        ++entry.generation
+        release(entry, 'completed')
+      }
+    },
     start() {
       if (unsubscribe) return
       const controls = input.port.subscribeControl((event) => {
@@ -101,7 +114,7 @@ export function createAssistantExecutionHost(input: {
         ++entry.generation
         release(entry, 'shutdown')
       }
-      if (timer) { clearInterval(timer); timer = undefined }
+      if (timer) { clearExecutionInterval(timer); timer = undefined }
     },
     /** Explicit foreground user action only; never called by a notification tap. */
     async enableBackground(runId: AssistantRunId, enabled: boolean) {
@@ -140,7 +153,7 @@ export function createAssistantExecutionHost(input: {
     prepareUserResume(runId: AssistantRunId) {
       if (!visible) throw new Error('Resume requires a visible Activity')
       const entry = entries.get(runId)
-      if (entry?.snapshot?.status === 'running' || entry?.acquiring || entry?.lease) throw new Error('Run is already active')
+      if (entry?.executions.size || entry?.snapshot?.status === 'running' || entry?.acquiring || entry?.lease) throw new Error('Run is already active')
       input.resources.setPressure(false)
       input.resources.reserveText(0)()
       if (entry) { entry.blocked = undefined; ++entry.generation }

@@ -2212,7 +2212,8 @@ const requiredContracts = [
       ['src/services/chatAndroidUndoPrompt.ts', /function sanitizeAndroidUndoOperationsForPrompt/],
       ['src/services/chatAndroidUndoPrompt.ts', /function sanitizeAndroidUndoPromptValue/],
       ['src/services/chatAndroidUndoPrompt.ts', /function isSensitivePromptKey/],
-      ['src/components/chat/MessageBubble.tsx', /formatProcessTraceForDisplay\(trace/],
+      ['src/components/chat/messageActivityRows.ts', /formatProcessTraceForDisplay\(trace/],
+      ['src/components/chat/MessageBubble.tsx', /collectMessageActivityRows\(displayMessage, processTraces\)/],
       ['src/components/chat/MessageBubble.tsx', /getWorkflowContinuationActionFromMessage\(message\)/],
       ['src/components/chat/MessageBubble.tsx', /!!workflowContinuationAction/],
       ['src/components/chat/MessageBubble.tsx', /agentWorkflowContinuationActionLabel\(t, pendingWorkflowAction, workflowContinuationAction\)/],
@@ -12113,11 +12114,15 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
+      'src/components/chat/messageActivityRows.ts',
+      'export function collectMessageActivityRows() { return formatProcessTraceForDisplay(trace) }',
+    ],
+    [
       'src/components/chat/MessageBubble.tsx',
       [
         'export function MessageBubble() {',
         '  const onSaveWorkflowSkill = () => undefined',
-        '  const display = formatProcessTraceForDisplay(trace)',
+        '  const activities = collectMessageActivityRows(displayMessage, processTraces)',
         '  const workflowContinuationAction = getWorkflowContinuationActionFromMessage(message)',
         '  const canContinue = !!workflowContinuationAction',
         '  agentWorkflowContinuationActionLabel(t, pendingWorkflowAction, workflowContinuationAction)',

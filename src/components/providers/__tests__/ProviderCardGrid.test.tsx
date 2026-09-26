@@ -120,7 +120,14 @@ describe('ProviderCardGrid', () => {
     expect(source).toContain('delayLongPress={520}')
     expect(source).toContain("accessibilityActions={!batchMode ? [{ name: 'delete'")
     expect(source).toContain('confirmRemoveSupplierGroup(group)')
-    expect(source).toContain('numberOfLines={2} ellipsizeMode="tail"')
+    // Settings typography allows wrapping; the full identity must also remain
+    // available to assistive technology in every production row variant.
+    const rowButtons = rowSource.match(/<IslePressable\b[\s\S]*?accessibilityState=\{\{ expanded \}\}/g) ?? []
+    expect(rowButtons).toHaveLength(5)
+    for (const button of rowButtons) {
+      expect(button).toContain('accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}')
+    }
+    expect(rowSource).not.toContain('numberOfLines=')
     expect(rowSource).toContain("provider.baseUrl?.trim() || t('providerSettings.baseUrl')")
     expect(rowSource).not.toContain('getProviderSelectableModels(provider).length')
     expect(rowSource).not.toContain('<DeferredProviderDetails')

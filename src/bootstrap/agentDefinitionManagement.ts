@@ -1,6 +1,6 @@
 import * as Crypto from 'expo-crypto'
-import { MAX_AGENT_DEFINITION_BYTES } from '@/modules/assistant-runtime/agentDefinition'
-import { createAgentDefinitionManagement } from '@/modules/assistant-runtime/application/agentDefinitionManagement'
+import { MAX_AGENT_DEFINITION_BYTES } from '@/modules/assistant-runtime'
+import { createAgentDefinitionManagement } from '@/modules/assistant-runtime'
 import { agentDefinitionRepository } from './agentDefinitionRepository'
 import { createAgentDefinitionFileTransfer } from '@/platform/native/agentDefinitionFileTransfer'
 import { st } from '@/i18n/service'

@@ -6,9 +6,9 @@ import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IslePanel, IsleSelect, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
-import { AGENT_ACTION_CAPABILITIES, type AgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
-import { AgentDefinitionConflictError } from '@/modules/assistant-runtime/agentDefinitionRepository'
-import type { AgentDefinitionManagement } from '@/modules/assistant-runtime/application/agentDefinitionManagement'
+import { AGENT_ACTION_CAPABILITIES, type AgentDefinition } from '@/modules/assistant-runtime'
+import { AgentDefinitionConflictError } from '@/modules/assistant-runtime'
+import type { AgentDefinitionManagement } from '@/modules/assistant-runtime'
 import { agentDefinitionFromForm, agentDefinitionToForm, type AgentDefinitionForm } from './agentDefinitionForm'
 import { resolveProviderDisplayName } from './providerPresentation'
 import type { AIProvider } from '@/types/providerContracts'
@@ -49,7 +49,7 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding }: { ma
     return () => { cancelled = true }
   }, [management, afterId, refresh])
 
-  const bodyStyle = { color: colors.textSecondary, fontSize: 13, lineHeight: 19 }
+  const bodyStyle = { color: colors.textSecondary, fontSize: 14, lineHeight: 20 }
   const headingStyle = { color: colors.text, fontSize: 16, fontWeight: '700' as const }
   const rowsStyle = { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: 8 }
   async function operation(work: () => Promise<void>, failure: string) {

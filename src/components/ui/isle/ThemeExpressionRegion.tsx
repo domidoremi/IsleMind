@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react'
-import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from './glassShadowStyle'
+import { GlassSurface } from './GlassSurface'
 import { resolveThemeComponentExpression, type ThemeComponentId } from '@/theme/themeExpression'
 
 export interface ThemeExpressionRegionProps {
@@ -42,12 +44,9 @@ export function ThemeExpressionRegion({ componentId, children, style, testID }: 
       : monet
         ? colors.ui.semantic.chrome.border
         : colors.material.strokeStrong
-  const webGlassStyle = glass && componentId === 'menu' && Platform.OS === 'web'
-    ? ({ backdropFilter: 'blur(10px) saturate(1.05)', WebkitBackdropFilter: 'blur(10px) saturate(1.05)' } as unknown as ViewStyle)
-    : undefined
 
   return (
-    <View
+    <GlassSurface colors={colors} enabled={glass && !contentRegion}
       testID={testID ?? `theme-${componentId}-${canonicalThemeId}`}
       style={[
         {
@@ -57,7 +56,7 @@ export function ThemeExpressionRegion({ componentId, children, style, testID }: 
           paddingVertical: contentRegion ? 1 : minimal ? 1 : 10,
           borderRadius: contentRegion ? 0 : radius,
           backgroundColor,
-          borderWidth: contentRegion || minimal ? 0 : expression.border === 'none' ? 0 : StyleSheet.hairlineWidth,
+          borderWidth: contentRegion || minimal || glass ? 0 : expression.border === 'none' ? 0 : StyleSheet.hairlineWidth,
           borderLeftWidth: contentRegion
             ? minimal || glass
               ? StyleSheet.hairlineWidth
@@ -76,14 +75,14 @@ export function ThemeExpressionRegion({ componentId, children, style, testID }: 
           elevation: glass && componentId === 'menu' ? 1 : 0,
           overflow: contentRegion ? 'visible' : 'hidden',
         },
-        webGlassStyle,
         style,
+        glass ? glassShadowStyle(colors, componentId === 'menu' ? 'surface' : 'none') : null,
       ]}
     >
       {material ? (
         <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: 3, backgroundColor: colors.ui.icon.accentForeground, opacity: 0.68 }} />
       ) : null}
       {children}
-    </View>
+    </GlassSurface>
   )
 }

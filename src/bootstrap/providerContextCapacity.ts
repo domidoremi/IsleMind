@@ -3,7 +3,7 @@ import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import { checkProviderContextCapacity, ProviderContextCapacityError, getWireProviderType, providerContextOverflowMessage,
   resolveProviderLocalCompressionPrivacy, type ProviderRuntimeChatRequest, type ProviderRuntimeTraceCallback } from '@/modules/providers'
-import { summarizeContextPackingHistory, UNTRUSTED_HISTORY_SUMMARY_PREAMBLE } from '@/modules/assistant-runtime/application/contextPackingPolicy'
+import { summarizeContextPackingHistory, UNTRUSTED_HISTORY_SUMMARY_PREAMBLE } from '@/modules/assistant-runtime'
 import { assertExecutionResourcesAvailable } from './executionResources'
 import { providerTokenCalibration } from './providerTokenCalibration'
 import { providerRemoteCompactLifecycle } from './providerRemoteCompactLifecycle'
@@ -31,11 +31,16 @@ export function checkFinalProviderRequestCapacity(input: {
   assertExecutionResourcesAvailable()
   const body = parseWireBody(input.body)
   const capacity = getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
+  const outputLimit = capacity.outputTokenLimit
   const wire = getWireProviderType(input.provider)
   const calibrationKey = JSON.stringify([input.provider.id, input.model, wire, Array.isArray(body.input) ? 'responses' : Array.isArray(body.contents) ? 'contents' : 'messages'])
   return { ...checkProviderContextCapacity({ body, providerType: wire, model: input.model,
     inputCalibrationFactor: providerTokenCalibration.factor(calibrationKey),
-    contextWindow: capacity.contextWindow, defaultOutputTokens: capacity.defaultMaxTokens }), calibrationKey }
+    contextWindow: capacity.contextWindow,
+    // A remote model row may still contain inferred/clamped display defaults.
+    // Only field-level provider/catalog evidence can bound an uncapped request.
+    modelMaxOutputTokens: outputLimit?.source === 'provider' || outputLimit?.source === 'catalog'
+      ? outputLimit.tokens : undefined }), calibrationKey }
 }
 
 export function providerCapacityCompressionAllowed(req: ProviderRuntimeChatRequest): boolean {

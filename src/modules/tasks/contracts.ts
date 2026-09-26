@@ -160,6 +160,8 @@ export interface TaskRuntime {
   create(input: CreateTaskInput): Promise<Result<Task, TaskRuntimeErrorCode>>
   confirm(taskId: TaskId, input: ConfirmTaskInput): Promise<Result<Task, TaskRuntimeErrorCode>>
   execute(taskId: TaskId, executor: TaskExecutor, input?: ExecuteTaskInput): Promise<Result<Task, TaskRuntimeErrorCode>>
+  /** Awaits the durable cancellation barrier, not executor cleanup. If a
+   * terminal write already won, returns that actual state, never a fake cancel. */
   cancel(taskId: TaskId): Promise<Result<Task, TaskRuntimeErrorCode>>
   expire(taskId: TaskId, reason?: string): Promise<Result<Task, TaskRuntimeErrorCode>>
   getTask(taskId: TaskId): Promise<Task | undefined>

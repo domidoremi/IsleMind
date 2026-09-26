@@ -6,11 +6,18 @@ import { providerRemoteCompactLifecycle } from './providerRemoteCompactLifecycle
 import { recordProviderRuntimeFailure } from './providerRuntimeHealth'
 import { providerRequestSerializer } from './providerRequestBinding'
 import { buildProviderFallbackCandidates } from './providerFallbackCandidates'
-import { getModelConfig } from '@/types/modelCatalog'
+import { getModelConfig, mergeModelConfig } from '@/types/modelCatalog'
 import type { AIProvider } from '@/types/providerContracts'
-import { createProviderRouteAssemblyPolicy, providerCompatibilityCapabilityCanBeSentForProvider,
+import { createProviderRouteAssemblyPolicy, mapOpenAICompatibleModels, providerCompatibilityCapabilityCanBeSentForProvider,
   type ProviderExecutionTarget, type ProviderRuntimeChatRequest } from '@/modules/providers'
-import * as packing from '@/modules/assistant-runtime/application/contextPackingPolicy'
+import * as packing from '@/modules/assistant-runtime'
+
+// Public-barrel re-exports are getters. Preserve the real implementation while
+// exposing configurable properties for the compression call-count assertions.
+jest.mock('@/modules/assistant-runtime', () => {
+  const actual = jest.requireActual('@/modules/assistant-runtime')
+  return { ...actual, summarizeContextPackingHistory: jest.fn(actual.summarizeContextPackingHistory) }
+})
 import { parseProviderChatCompletionJson } from './providerResponsePolicies'
 
 jest.mock('./assistantRunGovernance', () => ({ assistantRunBudgetStore: { settle: jest.fn(async () => undefined) } }))
@@ -35,8 +42,8 @@ let nextProvider = 0
 function provider(window = 6000): AIProvider {
   return { id: `capacity-test-${nextProvider++}`, name: 'Capacity', type: 'openai-compatible', enabled: true,
     baseUrl: 'https://example.invalid/v1', apiKey: 'test-only', apiKeySource: { kind: 'primary' }, models: ['capacity-model'],
-    modelConfigs: [{ ...getModelConfig('capacity-model', 'openai-compatible'), contextWindow: window,
-      maxOutputTokens: 512, defaultMaxTokens: 100, supportsTools: true }],
+    modelConfigs: mapOpenAICompatibleModels({ data: [{ id: 'capacity-model', context_window: window,
+      max_output_tokens: 512, supported_parameters: ['tools'] }] }, 'openai-compatible'),
   }
 }
 function history() {
@@ -73,6 +80,108 @@ function fixture(window = 6000) {
 const overflow = () => new Response('{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}', { status: 400 })
 beforeEach(() => { jest.clearAllMocks(); jest.mocked(providerRemoteCompactLifecycle.getCompactionGuardState).mockReturnValue({ autoDisabled: false } as ReturnType<typeof providerRemoteCompactLifecycle.getCompactionGuardState>) })
 afterEach(() => { jest.restoreAllMocks(); expect(executionResources.retainedTextBytes).toBe(0) })
+
+test('an uncapped wire request reserves the model maximum, never the app default', () => {
+  const req = request(1000)
+  const body = { messages: [{ role: 'user', content: 'hello' }] }
+  expect(checkFinalProviderRequestCapacity({ ...req, body }).reservedOutputTokens).toBe(512)
+  req.provider.modelConfigs![0].defaultMaxTokens = 100
+  req.provider.modelConfigs![0].maxOutputTokens = 900
+  expect(checkFinalProviderRequestCapacity({ ...req, body }).reservedOutputTokens).toBe(512)
+  req.provider.modelConfigs![0].outputTokenLimit = { tokens: 900, source: 'provider' }
+  expect(() => checkFinalProviderRequestCapacity({ ...req, body })).toThrow('context_capacity')
+  delete req.provider.modelConfigs![0].outputTokenLimit
+  expect(() => checkFinalProviderRequestCapacity({ ...req, body })).toThrow('invalid_capacity')
+  expect(checkFinalProviderRequestCapacity({ ...req, body: { ...body, max_tokens: 100 } }).reservedOutputTokens).toBe(100)
+})
+
+test.each(['id-only discovery', 'legacy remote', 'remerged legacy remote'])(
+  '%s cannot turn inferred output defaults into an uncapped bound', (source) => {
+    const req = request()
+    const model = req.model = 'custom-no-output-metadata'
+    const legacy = { ...getModelConfig(model, 'openai-compatible'), source: 'remote' as const }
+    req.provider.modelConfigs = source === 'id-only discovery'
+      ? mapOpenAICompatibleModels({ data: [{ id: model }] }, 'openai-compatible')
+      : [source === 'legacy remote' ? legacy : mergeModelConfig(model, 'openai-compatible', legacy)]
+    expect(req.provider.modelConfigs[0]).toMatchObject({ source: 'remote', maxOutputTokens: 4096 })
+    const body = { messages: [{ role: 'user', content: 'hello' }] }
+    expect(() => checkFinalProviderRequestCapacity({ ...req, body })).toThrow('invalid_capacity')
+    expect(checkFinalProviderRequestCapacity({ ...req, body: { ...body, max_tokens: 100 } }).reservedOutputTokens).toBe(100)
+  },
+)
+
+test('catalog evidence survives id-only discovery and legacy rows without trusting their display limits', () => {
+  const req = request()
+  req.model = 'gpt-4o'
+  const legacy = { ...getModelConfig(req.model), maxOutputTokens: 1, source: 'remote' as const }
+  delete legacy.outputTokenLimit
+  for (const modelConfigs of [[], [legacy], mapOpenAICompatibleModels({ data: [{ id: req.model }] }, 'openai-compatible')]) {
+    req.provider.modelConfigs = modelConfigs
+    expect(checkFinalProviderRequestCapacity({ ...req, body: { messages: [] } }).reservedOutputTokens).toBe(16384)
+  }
+})
+
+test('uncapped admission preserves the raw provider limit across inferred context clamping and persistence', () => {
+  const req = request()
+  req.provider.modelConfigs = mapOpenAICompatibleModels({ data: [{ id: req.model, max_output_tokens: 60_000 }] }, 'openai-compatible')
+  const persisted = JSON.parse(JSON.stringify(req.provider.modelConfigs[0]))
+  req.provider.modelConfigs = [mergeModelConfig(req.model, 'openai-compatible', { ...persisted, contextWindow: 60_000 })]
+  expect(req.provider.modelConfigs[0].maxOutputTokens).toBe(32768)
+  expect(() => checkFinalProviderRequestCapacity({ ...req, body: { messages: [] } })).toThrow('context_capacity')
+  expect(checkFinalProviderRequestCapacity({ ...req, body: { messages: [], max_tokens: 100 } }).reservedOutputTokens).toBe(100)
+})
+
+test.each([
+  { output: undefined, error: 'invalid_capacity' },
+  { output: 900, error: 'context_capacity' },
+  { output: 512, error: undefined },
+])('parameter correction removing the wire cap rechecks provider evidence ($output)', async ({ output, error }) => {
+  const f = fixture(1000)
+  f.input.req.model = 'custom-no-output-metadata'
+  f.input.req.provider.modelConfigs = mapOpenAICompatibleModels({ data: [{ id: f.input.req.model,
+    context_window: 1000, max_output_tokens: output }] }, 'openai-compatible')
+  f.input.req.messages = [{ role: 'user', content: 'hello' }]
+  f.input.body = JSON.stringify(body(f.input.req))
+  f.wire.mockImplementationOnce(async () => new Response('unsupported parameter: max_tokens', { status: 400 }))
+  if (error) {
+    await expect(executeHttpSseChat(f.input)).rejects.toThrow(error)
+    expect(f.wire).toHaveBeenCalledTimes(1)
+    expect(f.targets).toHaveLength(1)
+    expect(f.onDone).not.toHaveBeenCalled()
+  } else {
+    await executeHttpSseChat(f.input)
+    expect(f.wire).toHaveBeenCalledTimes(2)
+    expect(f.targets.map((target) => target.tokenEstimate?.outputTokens)).toEqual([100, 512])
+    const corrected = JSON.parse((f.wire.mock.calls as unknown as [string, RequestInit][])[1][1].body as string)
+    expect(corrected.max_tokens).toBeUndefined()
+    expect(f.onDone).toHaveBeenCalledTimes(1)
+  }
+  expect(assistantRunBudgetStore.settle).toHaveBeenCalledTimes(error ? 1 : 2)
+  expect(f.fallbackWire).not.toHaveBeenCalled()
+})
+
+test.each(['json', 'buffered', 'stream'] as const)('cancel during final usage persistence cannot publish %s completion', async (mode) => {
+  const f = fixture(60_000)
+  f.input.stream = mode !== 'json'
+  const data = 'data: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n'
+  if (mode === 'buffered') f.wire.mockImplementation(async () => ({ ok: true, status: 200,
+    headers: new Headers(), body: null, text: async () => data }) as Response)
+  if (mode === 'stream') f.wire.mockImplementation(async () => new Response(data, { status: 200 }))
+  let release!: () => void
+  let entered!: () => void
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  const persisting = new Promise<void>((resolve) => { entered = resolve })
+  jest.mocked(assistantRunBudgetStore.settle).mockImplementationOnce(async () => { entered(); await pending })
+  const execution = executeHttpSseChat(f.input)
+  const rejected = expect(execution).rejects.toThrow('cancel during usage persistence')
+  await persisting
+  f.input.controller.abort(new Error('cancel during usage persistence'))
+  release()
+  await rejected
+  expect(f.onDone).not.toHaveBeenCalled()
+  expect(f.fallbackWire).not.toHaveBeenCalled()
+  expect(f.wire).toHaveBeenCalledTimes(1)
+})
 
 test('local recovery rechecks the rebuilt envelope before its sole observed wire attempt', async () => {
   const f = fixture()

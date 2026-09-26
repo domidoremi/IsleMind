@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 export interface ProviderSessionLeaseOptions {
   key: string
   limit?: number
@@ -94,7 +95,7 @@ function waitForProviderSessionLease(ms: number, signal?: AbortSignal): Promise<
     const finish = (error?: Error) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      clearExecutionTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
       if (error) reject(error)
       else resolve()
@@ -104,7 +105,7 @@ function waitForProviderSessionLease(ms: number, signal?: AbortSignal): Promise<
       error.name = 'AbortError'
       finish(error)
     }
-    const timer = setTimeout(() => finish(), ms)
+    const timer = setExecutionTimeout(() => finish(), ms)
     signal?.addEventListener('abort', onAbort, { once: true })
   })
 }

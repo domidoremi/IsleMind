@@ -214,6 +214,7 @@ class AndroidAgentExecutionService : Service() {
       cpuHandler.postDelayed(cpuExpiry, (latest - now).coerceAtLeast(1L))
     }
     AndroidAgentExecutionRuntime.handler.postDelayed(expiryCheck, (earliest - now).coerceAtLeast(1L))
+    AndroidAgentExecutionRuntime.bridge?.get()?.syncTimerScope()
   }
 
   private fun releaseWakeLock() {
@@ -228,6 +229,7 @@ class AndroidAgentExecutionService : Service() {
   private fun finishIdle(stopSelf: Boolean = true) {
     if (AndroidAgentExecutionRuntime.service !== this || leases.isNotEmpty()) return
     releaseWakeLock()
+    AndroidAgentExecutionRuntime.bridge?.get()?.syncTimerScope()
     val shown = displayedLease
     if (shown != null && AndroidAgentExecutionRuntime.notificationOwner == shown.identity.leaseToken) {
       try {
@@ -252,6 +254,8 @@ class AndroidAgentExecutionService : Service() {
     stopped.forEach { AndroidAgentExecutionRuntime.recordControl(it, kind) }
     finishIdle(stopSelf)
   }
+
+  internal fun timerSchedulingFailed() { stopAll("native_error") }
 
   override fun onTimeout(startId: Int, fgsType: Int) {
     if (AndroidAgentExecutionRuntime.service === this && startId == lastStartId) stopAll("timeout")

@@ -42,6 +42,7 @@ import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
+import { useProviderImportSession } from '@/components/providers/useProviderImportSession'
 import { useProviderUsageSnapshots, type ProviderUsageSnapshot, type ProviderUsageSnapshotMap } from '@/components/providers/useProviderUsageSnapshots'
 import { ProviderUsageQueryEditor } from '@/components/providers/ProviderUsageQueryEditor'
 import { PROVIDER_CARD_DETAIL_MAX_WIDTH } from '@/components/providers/ProviderCardGrid'
@@ -96,7 +97,6 @@ const PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_MODEL_ENTRY_LIMIT = 256
 const PROVIDER_MANUAL_SORT_RAIL_PROVIDER_LIMIT = 8
 const PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT = 8
 const PROVIDER_DETAILS_DEFER_FALLBACK_MS = 180
-const PROVIDER_IMPORT_PERSISTENCE_FLUSH_DELAY_MS = 1400
 const PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT = 120000
 let providerNotificationSequence = 0
 type ProviderFormFieldId = 'name' | 'baseUrl' | 'tokens' | 'models'
@@ -196,7 +196,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   const providers = useSettingsStore((state) => state.providers)
   const providerUsageSnapshots = useProviderUsageSnapshots(providers)
   const addProvider = useSettingsStore((state) => state.addProvider)
-  const addProviders = useSettingsStore((state) => state.addProviders)
   const reorderProviders = useSettingsStore((state) => state.reorderProviders)
   const removeProvider = useSettingsStore((state) => state.removeProvider)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
@@ -204,7 +203,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   const listInvalidProviders = useSettingsStore((state) => state.listInvalidProviders)
   const clearInvalidProviders = useSettingsStore((state) => state.clearInvalidProviders)
   const compactProviderStorage = useSettingsStore((state) => state.compactProviderStorage)
-  const flushProviderPersistence = useSettingsStore((state) => state.flushProviderPersistence)
   const settings = useSettingsStore((state) => state.settings)
   const storedConversations = useChatStore((state) => state.conversations)
   const draftConversationIds = useChatStore((state) => state.draftConversationIds)
@@ -229,7 +227,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const runtimeDiagnosticsRunRef = useRef(0)
-  const providerPersistenceFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const importSession = useProviderImportSession()
   const suppressedSupplierPress = useRef<string | null>(null)
   const providerModelAccessSettings = useMemo(() => ({
     providerAllowlist: settings.providerAllowlist,
@@ -300,10 +298,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   useEffect(() => {
     onBackgroundStateChange?.(backgroundState)
   }, [backgroundState, onBackgroundStateChange])
-
-  useEffect(() => () => {
-    if (providerPersistenceFlushTimer.current) clearTimeout(providerPersistenceFlushTimer.current)
-  }, [])
 
   useEffect(() => {
     if (isActivationRunning || importProgress) return undefined
@@ -456,14 +450,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
     if (options.waitForNotification) await notification
   }
 
-  function scheduleProviderPersistenceFlush() {
-    if (providerPersistenceFlushTimer.current) clearTimeout(providerPersistenceFlushTimer.current)
-    providerPersistenceFlushTimer.current = setTimeout(() => {
-      providerPersistenceFlushTimer.current = null
-      void flushProviderPersistence()
-    }, PROVIDER_IMPORT_PERSISTENCE_FLUSH_DELAY_MS)
-  }
-
   async function importProvidersFromText(input: string): Promise<boolean> {
     if (importProgress) return false
     const notificationOwner = createProviderNotificationOwner('import')
@@ -471,7 +457,13 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
     Keyboard.dismiss()
     await yieldToNextPaint()
     try {
-      const result = parseProviderImportText(input, { accessSettings: settings })
+      const result = await importSession.save(input, async total => {
+        await publishImportProgress({ stage: 'saving', completed: 0, total }, { waitForNotification: true, owner: notificationOwner })
+        await yieldToNextPaint()
+      }, ({ completed, total, currentProviderName }) => {
+        void publishImportProgress({ stage: 'saving', completed, total, currentProviderName }, { owner: notificationOwner })
+      })
+      if (!result) return false
       if (!result.providers.length) {
         setImportProgress(null)
         void clearAndroidStatusNotification({ owner: notificationOwner })
@@ -479,19 +471,8 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
         return false
       }
 
-      await publishImportProgress({ stage: 'saving', completed: 0, total: result.providers.length }, { waitForNotification: true, owner: notificationOwner })
-      await yieldToNextPaint()
-      await addProviders(result.providers, {
-        persist: 'deferred',
-        yieldEvery: 4,
-        onProgress: ({ completed, total, currentProviderName }) => {
-          void publishImportProgress({ stage: 'saving', completed, total, currentProviderName }, { owner: notificationOwner })
-        },
-      })
       void publishImportProgress({ stage: 'finishing', completed: result.providers.length, total: result.providers.length }, { owner: notificationOwner })
       await yieldToNextPaint()
-      updateSettings({ defaultProvider: result.providers[0].id })
-      scheduleProviderPersistenceFlush()
 
       setImportProgress(null)
       setImportOpen(false)
@@ -986,8 +967,10 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
       <ProviderImportModal
         visible={importOpen}
         importProgress={importProgress}
+        persistencePending={importSession.persistencePending}
         onClose={() => {
           if (importProgress) return
+          importSession.reset()
           setImportOpen(false)
         }}
         onSubmit={importProvidersFromText}
@@ -2438,14 +2421,16 @@ function countLogicalTextLines(value: string, stopAfter: number): number {
   return lines
 }
 
-function ProviderImportModal({
+export function ProviderImportModal({
   visible,
   importProgress,
+  persistencePending = false,
   onClose,
   onSubmit,
 }: {
   visible: boolean
   importProgress: ProviderImportProgress | null
+  persistencePending?: boolean
   onClose: () => void
   onSubmit: (input: string) => Promise<boolean>
 }) {
@@ -2456,9 +2441,13 @@ function ProviderImportModal({
   const { height, width } = useWindowDimensions()
   const motion = useMotionPreference()
   const bodyScrollRef = useRef<ScrollView>(null)
-  const inputRef = useRef<TextInput>(null)
   const [input, setInput] = useState('')
   const deferredInput = useDeferredValue(input)
+  const inputValue = useRef(input)
+  inputValue.current = input
+  const draftEpoch = useRef(0)
+  const submitLock = useRef(false)
+  const [submitting, setSubmitting] = useState(false)
   const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
   const [contentHeight, setContentHeight] = useState(0)
   const [keyboardFrame, setKeyboardFrame] = useState<KeyboardFrameSnapshot | null>(null)
@@ -2504,8 +2493,20 @@ function ProviderImportModal({
   const liveDetectionInput = detectionLimited ? deferredInput.slice(0, PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT) : deferredInput
   const detectedImportCount = useMemo(() => countDetectedProviderImports(liveDetectionInput), [liveDetectionInput])
   const clipboardBusy = clipboardState !== 'idle'
-  const importBusy = importProgress !== null
-  const keyboardRequestClose = useKeyboardAwareModalRequestClose(onClose)
+  const importBusy = importProgress !== null || submitting
+  const resetDraft = () => {
+    draftEpoch.current += 1
+    inputValue.current = ''
+    setInput('')
+    setContentHeight(0)
+    setClipboardState('idle')
+  }
+  const requestDiscard = useSettingsDraft(visible && Boolean(input), importBusy, () => { resetDraft(); onClose() })
+  const closeWithoutSubmit = () => {
+    if (!submitLock.current) void requestDiscard(() => undefined)
+  }
+  const keyboardRequestClose = useKeyboardAwareModalRequestClose(closeWithoutSubmit)
+  useEffect(() => { if (!visible) resetDraft(); return () => { draftEpoch.current += 1 } }, [visible])
 
   useEffect(() => {
     if (!visible) {
@@ -2518,13 +2519,10 @@ function ProviderImportModal({
       setKeyboardFrame(null)
       return undefined
     }
-    const focusTimer = setTimeout(() => {
-      inputRef.current?.focus()
-    }, Platform.OS === 'android' ? 260 : 120)
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
       setKeyboardFrame(keyboardFrameSnapshotFromEvent(event))
       // 只在有较多内容时才滚动到底部，避免初始打开时输入框被推到顶部
-      if (input.trim() && countLogicalTextLines(input, 6) > 5) {
+      if (inputValue.current.trim() && countLogicalTextLines(inputValue.current, 6) > 5) {
         scrollBodyToEndSoon()
       }
     })
@@ -2532,29 +2530,31 @@ function ProviderImportModal({
       setKeyboardFrame(null)
     })
     return () => {
-      clearTimeout(focusTimer)
       showSub.remove()
       hideSub.remove()
     }
-  }, [height, visible, input, importBusy])
+  }, [height, visible, importBusy])
 
   function scrollBodyToEndSoon() {
+    const epoch = draftEpoch.current
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        if (epoch !== draftEpoch.current) return
         bodyScrollRef.current?.scrollToEnd({ animated: true })
       })
     })
   }
 
   function appendInputText(text: string): boolean {
-    if (importBusy) return false
+    if (importBusy || submitLock.current || persistencePending) return false
     const trimmed = text.trim()
     if (!trimmed) return false
-    const nextInput = [input.trim(), trimmed].filter(Boolean).join('\n\n')
+    const nextInput = [inputValue.current.trim(), trimmed].filter(Boolean).join('\n\n')
     if (nextInput.length > MAX_IMPORT_TEXT_FILE_BYTES) {
       toastImportTextTooLarge()
       return false
     }
+    inputValue.current = nextInput
     setInput(nextInput)
     scrollBodyToEndSoon()
     return true
@@ -2566,19 +2566,26 @@ function ProviderImportModal({
 
   async function submit() {
     const text = input.trim()
-    if (!text || importBusy) return
+    if (!text || importBusy || submitLock.current) return
     if (text.length > MAX_IMPORT_TEXT_FILE_BYTES) {
       toastImportTextTooLarge()
       return
     }
-    const imported = await onSubmit(text)
-    if (!imported) return
-    setInput('')
-    setContentHeight(0)
+    submitLock.current = true
+    draftEpoch.current += 1
+    setClipboardState('idle')
+    setSubmitting(true)
+    try {
+      const imported = await onSubmit(text)
+      if (imported) resetDraft()
+    } catch (error) {
+      dialog.notice({ title: t('providerSettings.importFailed'), message: providerImportFailureMessage(error, t), tone: 'danger' })
+    } finally { submitLock.current = false; setSubmitting(false) }
   }
 
   async function pasteFromClipboard() {
-    if (importBusy) return
+    if (importBusy || submitLock.current || persistencePending) return
+    const epoch = draftEpoch.current
     setClipboardState('requesting')
     dialog.toast({
       title: t('providerSettings.clipboardPermissionRequest'),
@@ -2588,11 +2595,13 @@ function ProviderImportModal({
     })
     try {
       const hasText = await Clipboard.hasStringAsync()
+      if (epoch !== draftEpoch.current) return
       if (!hasText) {
         dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
         return
       }
       const text = await Clipboard.getStringAsync()
+      if (epoch !== draftEpoch.current) return
       if (!text.trim()) {
         dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
         return
@@ -2611,18 +2620,20 @@ function ProviderImportModal({
         tone: detected.providers.length ? 'mint' : 'amber',
       })
     } catch (error) {
+      if (epoch !== draftEpoch.current) return
       dialog.toast({
         title: t('providerSettings.clipboardReadFailed'),
         message: clipboardReadFailureMessage(error, t),
         tone: 'amber',
       })
     } finally {
-      setClipboardState('idle')
+      if (epoch === draftEpoch.current) setClipboardState('idle')
     }
   }
 
   async function importFromFile() {
-    if (importBusy) return
+    if (importBusy || submitLock.current || persistencePending) return
+    const epoch = draftEpoch.current
     let importUri: string | undefined
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -2632,6 +2643,7 @@ function ProviderImportModal({
       if (result.canceled || !result.assets[0]) return
       const asset = result.assets[0]
       importUri = asset.uri
+      if (epoch !== draftEpoch.current) return
       const name = asset.name.toLowerCase()
       const supported = /\.(txt|csv|json)$/i.test(name) || ['text/plain', 'text/csv', 'application/csv', 'application/json', 'text/json'].includes(asset.mimeType ?? '')
       if (!supported) {
@@ -2642,9 +2654,11 @@ function ProviderImportModal({
         size: asset.size,
         limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
       })
+      if (epoch !== draftEpoch.current) return
       appendInputText(text)
       dialog.toast({ title: t('providerSettings.fileRead'), message: asset.name, tone: 'mint' })
     } catch (error) {
+      if (epoch !== draftEpoch.current) return
       dialog.toast({
         title: isFileTooLargeError(error) ? t('error.fileTooLarge') : t('providerSettings.fileUnsupported'),
         message: isFileTooLargeError(error) ? t('chat.fileTooLarge20') : t('providerSettings.fileUnsupportedMessage'),
@@ -2659,7 +2673,7 @@ function ProviderImportModal({
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
       <View style={{ flex: 1 }}>
         <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
-          <IsleOverlayPressable accessible={false} accessibilityRole="none" onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
+          <IsleOverlayPressable accessible={false} accessibilityRole="none" onPress={closeWithoutSubmit} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </View>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardLayoutInset }}>
           <View
@@ -2679,7 +2693,7 @@ function ProviderImportModal({
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('settings.batchImport')}</Text>
               </View>
-              <IsleIconButton label={t('dialog.close')} onPress={onClose} disabled={importBusy}>
+              <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit} disabled={importBusy}>
                 <AppIcon name="close" color={colors.textSecondary} size={18} />
               </IsleIconButton>
             </View>
@@ -2693,6 +2707,7 @@ function ProviderImportModal({
               contentContainerStyle={{ paddingHorizontal: modalPadding, paddingTop: 10, paddingBottom: 10, backgroundColor: sheetMaterial.body }}
             >
               <View>
+                <SettingsHelpButton topic="models" />
                 <View style={{ marginBottom: 10 }}>
                   <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginBottom: 7 }}>{t('providerSettings.importSources')}</Text>
                   <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 8 }}>
@@ -2701,7 +2716,7 @@ function ProviderImportModal({
                       compact
                       icon={<AppIcon name="paste" color={colors.textSecondary} size={16} />}
                       onPress={() => void pasteFromClipboard()}
-                      disabled={clipboardBusy || importBusy}
+                      disabled={clipboardBusy || importBusy || persistencePending}
                       style={modalActionStyle}
                     />
                     <IsleButton
@@ -2709,12 +2724,13 @@ function ProviderImportModal({
                       compact
                       icon={<AppIcon name="json" color={colors.textSecondary} size={16} />}
                       onPress={() => void importFromFile()}
-                      disabled={importBusy}
+                      disabled={importBusy || persistencePending}
                       style={modalActionStyle}
                     />
                   </View>
                 </View>
                 {importProgress ? <ProviderImportProgressCard progress={importProgress} /> : null}
+                {persistencePending && !importBusy ? <Text accessibilityRole="alert" style={{ color: colors.text, fontSize: 14, lineHeight: 22, marginBottom: 10 }}>{t('providerSettings.importSavePending')}</Text> : null}
                 <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginBottom: 6 }}>{t('providerSettings.importContent')}</Text>
                 <View
                   style={{
@@ -2733,11 +2749,11 @@ function ProviderImportModal({
                   }}
                 >
                   <TextInput
-                    ref={inputRef}
                     value={input}
-                    onChangeText={setInput}
+                    accessibilityLabel={t('providerSettings.importContent')}
+                    onChangeText={value => { inputValue.current = value; setInput(value) }}
                     maxLength={MAX_IMPORT_TEXT_FILE_BYTES}
-                    editable={!importBusy}
+                    editable={!importBusy && !persistencePending}
                     onFocus={keyboardRequestClose.markKeyboardActive}
                     onContentSizeChange={(event) => setContentHeight(event.nativeEvent.contentSize.height)}
                     multiline
@@ -2772,9 +2788,9 @@ function ProviderImportModal({
               </View>
             </ScrollView>
             <View style={{ minHeight: keyboardVisible ? 56 : IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: keyboardVisible ? 8 : 12, paddingBottom: (keyboardVisible ? 8 : Math.max(insets.bottom, 10) + 10), backgroundColor: footerSurface, borderTopWidth: subtleBorderWidth, borderTopColor: sheetMaterial.divider }}>
-                <IsleButton label={t('common.cancel')} compact onPress={onClose} disabled={importBusy} style={modalActionStyle} />
+                <IsleButton label={t('common.cancel')} compact onPress={closeWithoutSubmit} disabled={importBusy} style={modalActionStyle} />
                 <IsleButton
-                  label={importBusy ? t('providerSettings.importProgressWorking') : t('providerSettings.import')}
+                  label={importBusy ? t('providerSettings.importProgressWorking') : persistencePending ? t('common.retry') : t('providerSettings.import')}
                   compact
                   tone="primary"
                   busy={importBusy}

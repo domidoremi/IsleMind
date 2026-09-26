@@ -1,6 +1,7 @@
 import { SettingsSection, useSettingsTarget } from './SettingsSection'
 import { useSettingsDraft } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
+import { SavedSettingsField, useSettingsFieldSession } from './SettingsFieldSession'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
@@ -32,6 +33,7 @@ import {
   type RagEvaluationRun,
 } from '@/modules/knowledge'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_OPTIONS, legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
 import { SEARCH_PROVIDER_CREDENTIAL_FIELDS, searchProviderCredentialPresentation, searchProviderLabel } from '@/presentation/features/settings/searchProviderPresentation'
@@ -194,7 +196,9 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const [customSearchKey, setCustomSearchKey] = useState('')
   const [googleSearchCxDraft, setGoogleSearchCxDraft] = useState(settings.googleSearchCx ?? '')
   const [customSearchEndpointDraft, setCustomSearchEndpointDraft] = useState(settings.customSearchEndpoint ?? '')
-  const [localModelMirrorDraft, setLocalModelMirrorDraft] = useState(settings.localModelDownloadMirrorBaseUrl ?? '')
+  const fieldSession = useSettingsFieldSession()
+  const mirrorEntry = fieldSession.entries.localModelDownloadMirrorBaseUrl
+  const mirrorStatus = t(mirrorEntry?.error ? 'settingsWorkspace.error' : mirrorEntry ? 'settingsWorkspace.unsaved' : settings.localModelDownloadMirrorBaseUrl ? 'settingsWorkspace.custom' : 'settingsWorkspace.default')
   const [saved, setSaved] = useState(false)
   const [keysReady, setKeysReady] = useState(false)
   const [keysLoadError, setKeysLoadError] = useState(false)
@@ -241,12 +245,13 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const [plainText, setPlainText] = useState('')
   const [activeContextSection, setActiveContextSection] = useState<'search' | 'rag' | 'credentials' | null>(null)
   const target = useSettingsTarget()
-  useEffect(() => {
-    if (target === 'rag-profile') setActiveContextSection('rag')
-    if (target === 'search-provider') setActiveContextSection('search')
-  }, [target])
   const [ragTechniquesOpen, setRagTechniquesOpen] = useState(false)
   const [localModelsOpen, setLocalModelsOpen] = useState(false)
+  useEffect(() => {
+    if (target === 'rag-profile' || target === 'local-model-mirror') setActiveContextSection('rag')
+    if (target === 'local-model-mirror') setLocalModelsOpen(true)
+    if (target === 'search-provider') setActiveContextSection('search')
+  }, [target])
   const [knowledgeToolsOpen, setKnowledgeToolsOpen] = useState(false)
   const showContext = section === 'all' || section === 'context'
   const showMemory = section === 'all' || section === 'memory'
@@ -280,7 +285,6 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   }, [])
   useEffect(() => { if (!keysDirty) { keysBaseline.current[4] = settings.googleSearchCx ?? ''; setGoogleSearchCxDraft(settings.googleSearchCx ?? '') } }, [settings.googleSearchCx])
   useEffect(() => { if (!keysDirty) { keysBaseline.current[5] = settings.customSearchEndpoint ?? ''; setCustomSearchEndpointDraft(settings.customSearchEndpoint ?? '') } }, [settings.customSearchEndpoint])
-  useEffect(() => setLocalModelMirrorDraft(settings.localModelDownloadMirrorBaseUrl ?? ''), [settings.localModelDownloadMirrorBaseUrl])
   const filteredMemories = sortedMemories
   const filteredDocuments = sortedDocuments
   const visibleMemories = showAllMemories ? sortedMemories : sortedMemories.slice(0, memoryPreviewLimit)
@@ -310,6 +314,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     (settings.ragMode ?? 'hybrid') === 'hybrid' ? t('contextPanel.ragHybrid') : (settings.ragMode ?? 'hybrid') === 'fts' ? t('contextPanel.ragFts') : t('contextPanel.ragOff'),
     t(`contextPanel.ragProfiles.${settings.ragProfile ?? 'balanced'}`),
     (settings.embeddingMode ?? 'hybrid') === 'hybrid' ? t('contextPanel.embeddingHybrid') : (settings.embeddingMode ?? 'hybrid') === 'provider' ? t('contextPanel.embeddingProvider') : t('contextPanel.embeddingLocal'),
+    ...(mirrorEntry ? [mirrorStatus] : []),
   ].join(' · ')
   const enabledTechniqueCount = [
     settings.ragQueryRewriteEnabled !== false,
@@ -371,13 +376,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     borderBottomWidth: isMinimal ? StyleSheet.hairlineWidth : undefined,
     borderLeftWidth: isMaterial ? 3 : undefined,
     borderColor: isLiquidGlass ? colors.ui.actionBar.itemBorder : isMaterial ? colors.ui.section.divider : isMonet ? colors.material.stroke : colors.ui.semantic.chrome.border,
-    ...(isLiquidGlass ? {
-      shadowColor: colors.ui.control.shadow,
-      shadowOpacity: 0.16,
-      shadowRadius: 16,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 2,
-    } : {}),
+    ...(isLiquidGlass ? glassShadowStyle(colors) : {}),
   } as const
 
   async function refresh() {
@@ -527,12 +526,6 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     }, 1408)
     } catch { dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
     finally { keysSaveLock.current = false; setKeysSaving(false) }
-  }
-
-  function commitLocalModelMirror() {
-    const nextMirrorBaseUrl = localModelMirrorDraft.trim()
-    if ((settings.localModelDownloadMirrorBaseUrl ?? '') === nextMirrorBaseUrl) return
-    updateSettings({ localModelDownloadMirrorBaseUrl: nextMirrorBaseUrl })
   }
 
   function markSearchConfigEdited() {
@@ -1007,7 +1000,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         <IslePressable
           haptic
           accessibilityRole="button"
-          accessibilityLabel={`${t('contextPanel.localModel.title')}. ${t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}`}
+          accessibilityLabel={`${t('contextPanel.localModel.title')}. ${t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}. ${t('contextPanel.localModel.mirrorBaseUrl')}: ${mirrorStatus}`}
           accessibilityState={{ expanded: localModelsOpen }}
           onPress={() => setLocalModelsOpen((value) => !value)}
           style={{ marginTop: 10, minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
@@ -1016,6 +1009,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.localModel.title')}</Text>
             <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('contextPanel.localModel.mirrorBaseUrl')}: {mirrorStatus}</Text>
           </View>
           <MotiView animate={{ rotate: localModelsOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
             <AppIcon name="collapse" color={colors.textTertiary} size={16} />
@@ -1029,21 +1023,22 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>
               {t('contextPanel.localModel.capabilityNotice')}
             </Text>
-            <IsleField
+            <SettingsSection id="local-model-mirror"><SavedSettingsField
+              session={fieldSession}
+              settingKey="localModelDownloadMirrorBaseUrl"
+              value={settings.localModelDownloadMirrorBaseUrl ?? ''}
+              normalize={value => value.trim()}
+              onCommit={value => updateSettings({ localModelDownloadMirrorBaseUrl: value })}
               label={t('contextPanel.localModel.mirrorBaseUrl')}
               note={t('contextPanel.localModel.mirrorHelp')}
               style={{ marginTop: 10 }}
               inputProps={{
-                value: localModelMirrorDraft,
-                onChangeText: setLocalModelMirrorDraft,
-                onBlur: commitLocalModelMirror,
-                onSubmitEditing: commitLocalModelMirror,
                 returnKeyType: 'done',
                 autoCapitalize: 'none',
                 autoCorrect: false,
                 placeholder: t('contextPanel.localModel.mirrorPlaceholder'),
               }}
-            />
+            /></SettingsSection>
             <View style={{ marginTop: 10, gap: 10 }}>
               {downloadableLocalModels.length ? (
                 <View style={{ gap: 8 }}>
@@ -1450,7 +1445,7 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
         accessibilityLabel={`${title}. ${detail}`}
         accessibilityState={{ expanded: open }}
         onPress={onPress}
-        style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, borderRadius: colors.ui.radius.controlLarge, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 }}
+        style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, borderRadius: colors.ui.radius.controlLarge, ...glassShadowStyle(colors, 'control') }}
       >
         {icon}
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -1551,7 +1546,7 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
           </IslePressable>
         </View>
         {emptyVisible ? (
-          <View style={{ minHeight: emptyDetail ? 64 : 48, borderRadius: colors.ui.radius.panel, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: emptySurface, borderWidth: 1, borderColor, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.14, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 }}>
+          <View style={{ minHeight: emptyDetail ? 64 : 48, borderRadius: colors.ui.radius.panel, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: emptySurface, borderWidth: 1, borderColor, ...glassShadowStyle(colors) }}>
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{empty}</Text>
             {emptyDetail ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '600', includeFontPadding: false }}>{emptyDetail}</Text> : null}
           </View>
@@ -1599,6 +1594,8 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const { width, fontScale } = useWindowDimensions()
+  const stackedStatus = width / fontScale < 600
   const canEnable = view.source !== 'none'
   const downloadable = isDownloadableLocalModel(view)
   const modelMeta = [
@@ -1632,7 +1629,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
     : ''
   return (
     <View style={{ padding: 10, ...assetCardSurface(colors, view.active ? colors.ui.control.primaryBorder : colors.material.stroke) }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
         <View style={{ width: 34, height: 34, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: view.active ? colors.ui.control.primaryBackground : colors.ui.icon.accentBackground }}>
           {view.active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.textTertiary} size={16} />}
         </View>
@@ -1642,7 +1639,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
             {modelMeta}
           </Text>
         </View>
-        <Text style={{ color: view.active ? colors.ui.control.link : colors.textTertiary, fontSize: 14, fontWeight: '800' }}>{statusLabel}</Text>
+        <Text style={{ width: stackedStatus ? '100%' : undefined, color: view.active ? colors.ui.control.link : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{statusLabel}</Text>
       </View>
       <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 8 }}>{view.model.useCase}</Text>
       {view.model.experimental ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, marginTop: 6 }}>{t('contextPanel.localModel.experimentalNotice')}</Text> : null}
@@ -1696,6 +1693,8 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const { width, fontScale } = useWindowDimensions()
+  const stackedStatus = width / fontScale < 600
   const capability = view.model.capability ?? 'embedding'
   const active = localCapabilityEnabled(capability, settings)
   const modelMeta = [
@@ -1706,7 +1705,7 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
   ].filter(Boolean).join(' · ')
   return (
     <View style={{ padding: 10, ...assetCardSurface(colors, active ? colors.ui.control.primaryBorder : colors.ui.tone.warning.border) }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
         <View style={{ width: 34, height: 34, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.tone.warning.background }}>
           {active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.ui.tone.warning.foreground} size={16} />}
         </View>
@@ -1716,7 +1715,9 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
             {modelMeta}
           </Text>
         </View>
-        <IsleChip tone={active ? 'mint' : 'amber'}>{active ? t('contextPanel.localModel.strategyOn') : t('contextPanel.localModel.strategyOff')}</IsleChip>
+        <View style={{ width: stackedStatus ? '100%' : undefined, maxWidth: '100%', alignItems: 'flex-start' }}>
+          <IsleChip tone={active ? 'mint' : 'amber'}>{active ? t('contextPanel.localModel.strategyOn') : t('contextPanel.localModel.strategyOff')}</IsleChip>
+        </View>
       </View>
       <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 8 }}>
         {t(`contextPanel.localModel.fallbackStrategies.${capability}`)}
@@ -1790,7 +1791,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
   }
   if (canonicalThemeId === 'liquid-glass') {
     return (
-      <View style={{ padding: 12, marginBottom: 9, borderRadius: colors.ui.radius.panel, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.14, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 }}>
+      <View style={{ padding: 12, marginBottom: 9, borderRadius: colors.ui.radius.panel, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, ...glassShadowStyle(colors) }}>
         <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{title}</Text>
         <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>{description}</Text>
         {meta ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 6 }}>{meta}</Text> : null}

@@ -29,6 +29,7 @@ import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { IslePressable } from '@/components/ui/isle'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import type { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { PRODUCT_MOBILE_READING_COLUMN_MAX_WIDTH } from '@/presentation/layout/productMobileLayout'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 
@@ -901,6 +902,7 @@ export function ModelMenu({
               borderColor: colors.ui.semantic.chrome.border,
             },
             menuMotionStyle,
+            colors.ui.liquidGlass ? glassShadowStyle(colors, 'floating') : null,
           ]}
         >
           <View style={styles.modelMenuHeader}>

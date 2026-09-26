@@ -21,6 +21,7 @@ import type { CanonicalThemeId } from '@/types/settingsContracts'
 
 import { IslePressable } from './Pressable'
 import { IsleTooltip } from './Tooltip'
+import { glassShadowStyle } from './glassShadowStyle'
 
 export interface IsleSearchFieldProps extends Omit<TextInputProps, 'style'> {
   inputRef?: Ref<TextInput>
@@ -143,6 +144,7 @@ export function IsleSearchField({
         },
         webGlassStyle,
         containerStyle,
+        glass ? glassShadowStyle(colors, 'control') : null,
       ]}
     >
       {minimal && focused ? (
@@ -179,6 +181,7 @@ export function IsleSearchField({
       </View>
       <TextInput
         {...props}
+        underlineColorAndroid={glass ? 'transparent' : props.underlineColorAndroid}
         ref={inputRef}
         value={value}
         defaultValue={defaultValue}
@@ -209,6 +212,7 @@ export function IsleSearchField({
             textAlignVertical: 'center',
           },
           inputStyle,
+          glass ? { backgroundColor: 'transparent', borderWidth: 0, elevation: 0 } : null,
         ]}
       />
       {pending ? (

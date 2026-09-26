@@ -1,6 +1,6 @@
 import type { UsagePortableSnapshot } from '@/modules/diagnostics'
 import type { SavedDocument } from '@/modules/documents'
-import type { AgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
+import type { AgentDefinition } from '@/modules/assistant-runtime'
 import type { PortableKnowledgeSnapshot } from '@/modules/knowledge'
 import type {
   TavernExportAudit,

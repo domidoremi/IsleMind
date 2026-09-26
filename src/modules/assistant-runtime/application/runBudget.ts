@@ -1,4 +1,4 @@
-import type { ProviderUsage } from '@/modules/providers/providerUsage'
+import type { ProviderUsage } from '@/modules/providers'
 
 export const HARNESS_ENGINE_VERSION = 'islemind.harness.v1' as const
 export const DEFAULT_RUN_BUDGET = Object.freeze({ modelRequests: 24, tools: 48, tokens: 120_000, activeMs: 30 * 60_000 })

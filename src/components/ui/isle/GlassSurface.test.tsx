@@ -69,9 +69,23 @@ it('owns one clipped material with a matching radius and no Android elevation', 
   expect(blur.props.blurTarget.current).not.toBeNull()
   expect(StyleSheet.flatten(screen.getByTestId('lens').props.style)).toMatchObject({
     backgroundColor: 'transparent', elevation: 0, shadowOpacity: 0, padding: 8,
+    overflow: 'hidden', borderCurve: 'circular',
+    boxShadow: '0 5px 18px rgba(0, 5, 15, 0.22)',
   })
   expect(material.props.pointerEvents).toBe('none')
   expect(screen.getByText('Readable content')).toBeTruthy()
+})
+
+it('uses the caller radius for both the material and content clip and retains press handling', async () => {
+  const onPress = jest.fn()
+  const screen = await render(<GlassSurface interactive colors={colors} onPress={onPress} accessibilityRole="button"
+    accessibilityLabel="Card" style={{ borderRadius: 12, overflow: 'visible', padding: 6, position: 'absolute' }}>
+    <View style={{ backgroundColor: 'red', height: 80 }} />
+  </GlassSurface>)
+  expect(screen.getByRole('button', { name: 'Card' })).toHaveStyle({ borderRadius: 12, overflow: 'hidden', position: 'absolute' })
+  expect(screen.getByTestId('glass-material', { includeHiddenElements: true })).toHaveStyle({ borderRadius: 12, overflow: 'hidden' })
+  await fireEvent.press(screen.getByRole('button', { name: 'Card' }))
+  expect(onPress).toHaveBeenCalledTimes(1)
 })
 
 it('never samples a target descendant or adds a second blur inside a glass surface', async () => {
@@ -79,11 +93,12 @@ it('never samples a target descendant or adds a second blur inside a glass surfa
     <GlassBackdropProvider>
       <GlassBackdropTarget><GlassSurface colors={colors}><Text>Inside target</Text></GlassSurface></GlassBackdropTarget>
       <GlassSurface colors={colors}>
-        <GlassSurface colors={colors}><Text>Nested content</Text></GlassSurface>
+        <GlassSurface colors={colors} testID="nested"><Text>Nested content</Text></GlassSurface>
       </GlassSurface>
     </GlassBackdropProvider>,
   )
   expect(screen.getAllByTestId('glass-backdrop-blur', { includeHiddenElements: true })).toHaveLength(1)
+  expect(screen.getByTestId('nested')).toHaveStyle({ boxShadow: 'none', elevation: 0, shadowOpacity: 0 })
 })
 
 it('preserves content when transparency is reduced or the screen disables glass', async () => {

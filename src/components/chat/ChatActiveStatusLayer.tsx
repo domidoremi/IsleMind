@@ -3,6 +3,7 @@ import { View } from 'react-native'
 import { useTranslation } from 'react-i18next'
 
 import { useChatStore } from '@/store/chatStore'
+import { useAppTheme } from '@/hooks/useAppTheme'
 
 import { CompressionBanner, ConversationHealthBanner } from './ChatStatusBanners'
 import type { ChatActiveWorkspaceActions } from './chatActiveWorkspaceActions'
@@ -55,6 +56,7 @@ export function ChatActiveStatusLayer({
   safeStopMessage,
 }: ChatActiveStatusLayerProps) {
   const { t } = useTranslation()
+  const { isLiquidGlass } = useAppTheme()
   const conversationError = useChatStore((state) => state.error)
   const setError = useChatStore((state) => state.setError)
   const cancellingTaskIdRef = useRef<string | null>(null)
@@ -140,7 +142,7 @@ export function ChatActiveStatusLayer({
             right: 0,
             top: chromeAwareTopOffset,
             zIndex: 43,
-            elevation: 2,
+            elevation: isLiquidGlass ? 0 : 2,
             paddingHorizontal: 14,
           }}
         >
@@ -163,7 +165,7 @@ export function ChatActiveStatusLayer({
             right: 0,
             top: providerHealthTopOffset,
             zIndex: 44,
-            elevation: 3,
+            elevation: isLiquidGlass ? 0 : 3,
             paddingHorizontal: 14,
           }}
         >

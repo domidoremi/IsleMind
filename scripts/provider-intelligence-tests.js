@@ -5493,7 +5493,7 @@ async function assertRuntimeDiagnosticsBehavior() {
 }
 
 async function assertRuntimeDiagnosticsFailurePath() {
-  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/settings/SystemSettingsPanelContent.tsx'), 'utf8')
   const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   const chatDeepLinkSource = fs.readFileSync(path.join(root, 'app/chat/[id].tsx'), 'utf8')
   const runtimeRepairWorkspaceSource = fs.readFileSync(path.join(root, 'src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx'), 'utf8')
@@ -5564,7 +5564,9 @@ async function assertRuntimeDiagnosticsFailurePath() {
   assert.ok(settingsScreenSource.includes('sourceEventIds: task.sourceEventIds.join'), 'settings diagnostics passes source runtime event ids into retry repair chat links')
   assert.ok(settingsScreenSource.includes('latestEventId: task.latestEventId'), 'settings diagnostics passes the latest runtime event id into retry repair chat links')
   assert.ok(settingsScreenSource.includes('summary: task.summary'), 'settings diagnostics passes repair summaries into retry repair chat links')
-  assert.ok(settingsScreenSource.includes('governance: true'), 'settings diagnostics opens governance controls for compact and session-affinity repairs')
+  assert.ok(settingsScreenSource.includes("pathname: '/settings/system/governance'")
+    && settingsScreenSource.includes("task.target.kind === 'session-affinity-settings' ? 'governance.sessionAffinityTtlMs' : 'governance.remoteCompactMode'"),
+  'settings diagnostics opens the exact governance field for compact and session-affinity repairs')
   assert.ok(chatDeepLinkSource.includes("routeParamText(params.source) === 'runtime-repair'"), 'chat deep links gate the lazy repair workspace to runtime repair links')
   assert.ok(chatDeepLinkSource.includes("import('@/presentation/features/conversations/RuntimeRepairConversationWorkspace')"), 'chat deep links defer runtime repair replay construction')
   assert.ok(runtimeRepairWorkspaceSource.includes('buildRuntimeRepairIntent'), 'runtime repair deep links build retry intents from runtime repair params')
@@ -5967,7 +5969,7 @@ async function assertPluginManifestBehavior() {
   assert.ok(skillSettingsRouteSource.includes('routeParamList(params.sourceEventIds)'), 'skills settings route parses plugin repair source event ids')
   assert.ok(skillSettingsRouteSource.includes('routeParamPositiveInteger(params.eventCount)'), 'skills settings route parses plugin repair event counts')
   assert.ok(skillSettingsRouteSource.includes('pluginManifestFocus={pluginManifestFocus}'), 'skills settings route passes plugin manifest focus into settings content')
-  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/settings/SystemSettingsPanelContent.tsx'), 'utf8')
   const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   assert.ok(settingsScreenSource.includes('loadPluginManifestCatalogSnapshot'), 'settings diagnostics loads the plugin manifest catalog snapshot')
   assert.ok(settingsScreenSource.includes('emitPluginManifestCatalogSnapshotEvent'), 'settings diagnostics emits bounded plugin catalog runtime events')
@@ -6353,6 +6355,8 @@ async function assertConversationKnowledgeContextRuntimeBehavior() {
   const originalListMemories = knowledgeRepository.listMemories
   const originalListDocuments = knowledgeRepository.listDocuments
   const originalSearchMemories = knowledgeRepository.searchMemories
+  const originalSearchFts = knowledgeRepository.searchFts
+  const originalMarkFtsHits = knowledgeRepository.markFtsHits
   const originalSearchHybrid = knowledgeHybridIndex.searchHybrid
   const originalSearchAgentic = knowledgeAgenticIndex.search
   const originalSearchColbert = knowledgeColbertIndex.search
@@ -6403,6 +6407,8 @@ async function assertConversationKnowledgeContextRuntimeBehavior() {
     assert.equal(evaluationWrites, 0, 'pre-aborted retrieval performs no evaluation writes')
 
     let forwardedInitializationSignal
+    let notifyRepositoryEntered
+    const repositoryEntered = new Promise((resolve) => { notifyRepositoryEntered = resolve })
     knowledgeRepository.listMemories = async ({ signal }) => {
       repositoryCalls += 1
       forwardedInitializationSignal = signal
@@ -6412,6 +6418,7 @@ async function assertConversationKnowledgeContextRuntimeBehavior() {
           error.name = 'AbortError'
           reject(error)
         }, { once: true })
+        notifyRepositoryEntered()
       })
     }
     knowledgeRepository.listDocuments = async () => { repositoryCalls += 1; return [] }
@@ -6421,6 +6428,7 @@ async function assertConversationKnowledgeContextRuntimeBehavior() {
       { id: 'context-mid-abort-message', role: 'user', content: 'cancel during retrieval', timestamp: 1, status: 'done' },
       retrievalController.signal,
     )
+    await repositoryEntered
     retrievalController.abort()
     await assert.rejects(
       pendingRetrieval,
@@ -6477,35 +6485,38 @@ async function assertConversationKnowledgeContextRuntimeBehavior() {
         embeddingMode: 'hybrid',
       },
     }))
-    knowledgeHybridIndex.searchHybrid = async () => [{
+    let flareScope
+    knowledgeRepository.markFtsHits = async () => undefined
+    knowledgeRepository.searchFts = async ({ knowledgeScope }) => {
+      flareScope = knowledgeScope
+      return [{
       id: 'scoped-primary',
       documentId: 'scoped-document',
       title: 'Scoped document',
       content: 'Scoped primary evidence.',
       ordinal: 0,
       score: 0.55,
-      retrievalMode: 'hybrid',
-    }]
-    knowledgeAgenticIndex.search = async () => [{
-      id: 'out-of-scope-agentic',
-      chunkId: 'out-of-scope-agentic',
+      retrievalMode: 'fts',
+    }, {
+      id: 'out-of-scope-fts',
       documentId: 'other-document',
       title: 'Other document',
       content: 'Higher score but outside the conversation scope.',
       score: 0.99,
-      retrievalMode: 'agentic',
-      sourceReason: 'raptor',
+      retrievalMode: 'fts',
     }, {
-      id: 'scoped-agentic',
-      chunkId: 'scoped-agentic',
+      id: 'scoped-fts',
       documentId: 'scoped-document',
       title: 'Scoped document',
-      content: 'Scoped agentic evidence.',
+      content: 'Scoped local evidence.',
       score: 0.65,
-      retrievalMode: 'agentic',
-      sourceReason: 'raptor',
-    }]
-    knowledgeColbertIndex.search = async () => []
+      retrievalMode: 'fts',
+    }] }
+    indexCalls = 0
+    providerHydrations = 0
+    knowledgeHybridIndex.searchHybrid = async () => { indexCalls += 1; return [] }
+    knowledgeAgenticIndex.search = async () => { indexCalls += 1; return [] }
+    knowledgeColbertIndex.search = async () => { indexCalls += 1; return [] }
     const flare = await retrieveConversationFlareContext({
       conversation: {
         id: 'context-scoped-flare',
@@ -6521,8 +6532,11 @@ async function assertConversationKnowledgeContextRuntimeBehavior() {
       followupQuery: 'architecture evidence',
       limit: 4,
     })
-    assert.ok(flare.sources.some((source) => source.id === 'scoped-agentic'), 'FLARE retains in-scope agentic evidence')
-    assert.equal(flare.sources.some((source) => source.id === 'out-of-scope-agentic'), false, 'FLARE excludes higher-score out-of-scope agentic evidence')
+    assert.deepEqual([...flareScope.ids], ['scoped-document'], 'FLARE forwards the exact document scope to local FTS')
+    assert.ok(flare.sources.some((source) => source.id === 'scoped-fts'), 'FLARE retains in-scope local evidence')
+    assert.equal(flare.sources.some((source) => source.id === 'out-of-scope-fts'), false, 'FLARE excludes higher-score out-of-scope evidence')
+    assert.equal(indexCalls, 0, 'FLARE cannot start unbudgeted embedding or agentic index calls')
+    assert.equal(providerHydrations, 0, 'FLARE local retrieval needs no provider credentials')
 
     ragEvaluationRepository.log = async () => {
       evaluationWrites += 1
@@ -6543,6 +6557,8 @@ async function assertConversationKnowledgeContextRuntimeBehavior() {
     knowledgeRepository.listMemories = originalListMemories
     knowledgeRepository.listDocuments = originalListDocuments
     knowledgeRepository.searchMemories = originalSearchMemories
+    knowledgeRepository.searchFts = originalSearchFts
+    knowledgeRepository.markFtsHits = originalMarkFtsHits
     knowledgeHybridIndex.searchHybrid = originalSearchHybrid
     knowledgeAgenticIndex.search = originalSearchAgentic
     knowledgeColbertIndex.search = originalSearchColbert
@@ -7123,7 +7139,7 @@ function assertProviderClientSimulationBehavior() {
   const executorSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerRuntimeExecutor.ts'), 'utf8')
   const runtimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerRuntime.ts'), 'utf8')
   assert.match(pipelineSource, /getHeaders\(runtimeReq\.provider,\s*\{[\s\S]*?model:\s*runtimeReq\.model/, 'provider pipeline forwards the selected model to header policy')
-  assert.match(executorSource, /prepareProviderRuntimePipeline\(\{ req: selectedReq,[\s\S]*?selectedReq = selectedPipeline\.runtimeReq[\s\S]*?const selectedPreparedRequest = selectedPipeline\.preparedHttpRequest/, 'provider executor uses the selected model and headers from the complete governed pipeline')
+  assert.match(executorSource, /prepareProviderRuntimePipeline\(\{ req: selectedReq,[\s\S]*?selectedReq = selectedPipeline\.runtimeReq[\s\S]*?let selectedPreparedRequest = selectedPipeline\.preparedHttpRequest/, 'provider executor uses the selected model and headers from the complete governed pipeline')
   assert.match(executorSource, /getHeaders\(fallbackReq\.provider,\s*\{[\s\S]*?model:\s*fallbackReq\.model/, 'provider fallback recomputes headers for its selected model')
   assert.match(runtimeSource, /headers:\s*getHeaders\(provider,\s*\{\s*model\s*\}\)/, 'provider request preparation forwards its selected model to header policy')
 }
@@ -8559,17 +8575,17 @@ async function assertUpstreamGovernanceBehavior() {
           name: 'Custom Compatible Minimal Retry',
           baseUrl: 'https://relay.example/v1',
           apiKey: FAKE_KEY_A,
-          models: ['gpt-oss-120b'],
+          models: ['gpt-4o'],
           enabled: true,
         },
-        model: 'gpt-oss-120b',
+        model: 'gpt-4o',
         messages: [{ role: 'user', content: 'hello' }],
         settings: { upstreamMaxRetries: 0, upstreamRequestTimeoutMs: 5000, upstreamCircuitBreakerEnabled: false, runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 },
       },
       url: 'https://relay.example/v1/chat/completions',
       headers: {},
       body: JSON.stringify({
-        model: 'gpt-oss-120b',
+        model: 'gpt-4o',
         messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1n' } }] }],
         stream: true,
         response_format: { type: 'json_schema', json_schema: { name: 'relay_result', schema: { type: 'object' } } },
@@ -8586,7 +8602,7 @@ async function assertUpstreamGovernanceBehavior() {
     assert.deepEqual(
       compatibleMinimalRetryBodies[1],
       {
-        model: 'gpt-oss-120b',
+        model: 'gpt-4o',
         messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1n' } }] }],
         stream: true,
         reasoning_effort: 'high',
@@ -8675,6 +8691,9 @@ async function assertUpstreamGovernanceBehavior() {
       name: 'Fallback OpenAI',
       apiKey: FAKE_KEY_A,
       models: ['gpt-5.5', 'gpt-5.5-mini'],
+      // This synthetic fallback variant is not a catalogued model. Supply the
+      // authoritative output bound that an uncapped real route must also have.
+      modelConfigs: mapOpenAICompatibleModels({ data: [{ id: 'gpt-5.5-mini', max_output_tokens: 4096 }] }, 'openai'),
       credentialGroups: [{ id: 'openai-a', label: 'A', apiKey: FAKE_KEY_A, enabled: true, availableModels: ['gpt-5.5', 'gpt-5.5-mini'] }],
       enabled: true,
     }
@@ -9894,7 +9913,7 @@ async function assertUpstreamGovernanceBehavior() {
         ...getModelConfig('gpt-oss-120b', 'openai-compatible'),
         id: 'gpt-oss-120b',
         provider: 'openai-compatible',
-        supportedParameters: ['response_format'],
+        supportedParameters: ['response_format', 'max_tokens'],
         reasoningMode: 'openai-effort',
         reasoningEfforts: ['high'],
         supportsTools: true,
@@ -9919,6 +9938,8 @@ async function assertUpstreamGovernanceBehavior() {
       {
         provider: compatibleFallbackProvider,
         model: 'gpt-oss-120b',
+        maxTokens: 1024,
+        generationParameterSources: { maxTokens: 'internal-policy' },
         messages: [{ role: 'user', content: 'hello' }],
         structuredOutput: { type: 'json_schema', name: 'relay_result', schema: { type: 'object' }, strict: true },
         reasoningEffort: 'high',
@@ -9935,6 +9956,8 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(compatibleFallbackChunks.join(''), 'compatible fallback OK', 'OpenAI-compatible no-reader fallback emits rectified non-streaming result')
     assert.equal(compatibleFallbackDone.text, 'compatible fallback OK', 'OpenAI-compatible no-reader fallback completes after rectified non-streaming retry')
     assert.equal(compatibleFallbackBodies.length, 3, 'OpenAI-compatible no-reader fallback sends stream probe, rich non-streaming retry, and minimal chat retry')
+    assert.ok(compatibleFallbackBodies.every((body) => (body.max_completion_tokens ?? body.max_tokens) === 1024),
+      'stream fallback and rectification preserve the governed output cap for an inferred model')
     assert.equal(compatibleFallbackBodies[0].stream, true, 'OpenAI-compatible no-reader fallback starts on the requested stream path')
     assert.equal(compatibleFallbackBodies[1].stream, false, 'OpenAI-compatible no-reader fallback disables streaming before retrying')
     assert.ok(compatibleFallbackBodies[1].response_format, 'OpenAI-compatible no-reader fallback first retries with declared structured-output fields')
@@ -11255,8 +11278,7 @@ async function assertApkUpdateBehavior() {
     'APK manifest rejects non-web APK asset URLs'
   )
   const unknownAbiAsset = selectApkAssetForTest(apkManifestFixture.assets, ['riscv64'])
-  assert.ok(unknownAbiAsset, 'APK asset selection returns a fallback asset for unknown ABIs')
-  assert.equal(unknownAbiAsset.abi, 'universal-64', 'unknown device ABI falls back to universal-64 no-model')
+  assert.equal(unknownAbiAsset, null, 'universal-64 does not imply compatibility with an unknown CPU ABI')
   assert.ok(
     compareReleaseToSnapshotForTest(
       {
@@ -11292,7 +11314,7 @@ async function assertApkUpdateBehavior() {
   assert.equal(shouldRecordApkUpdateCheck({ status: 'available', message: '' }), true, 'available update checks update the last-check timestamp')
   assert.equal(shouldRecordApkUpdateCheck({ status: 'unavailable', message: '' }), true, 'unavailable update checks update the last-check timestamp')
   assert.equal(shouldRecordApkUpdateCheck({ status: 'error', message: '', reason: 'network' }), false, 'failed update checks do not update the last-check timestamp')
-  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/settings/SystemSettingsPanelContent.tsx'), 'utf8')
   assert.ok(settingsScreenSource.includes("type ApkUpdateUiStage = 'checking' | ApkInstallProgressStage"), 'Settings screen tracks APK update phases beyond a single checking flag')
   assert.ok(settingsScreenSource.includes('setApkUpdateStage(progress.stage)'), 'Settings screen switches to download/verify/installer progress after confirmation')
   assert.ok(settingsScreenSource.includes('apkUpdateProgressDetail'), 'Settings screen renders APK download progress details while the installer flow is running')
@@ -11469,8 +11491,8 @@ async function assertApkUpdateBehavior() {
   })
   try {
     const noDeviceModuleUpdate = await checkLatestApkRelease()
-    assert.equal(noDeviceModuleUpdate.status, 'available', 'missing ExpoDevice native module does not crash tagged APK update checks')
-    assert.equal(noDeviceModuleUpdate.release?.apkName, 'IsleMind-0.0.7-universal-64-no-model.apk', 'missing ExpoDevice native module uses the actually published universal fallback')
+    assert.equal(noDeviceModuleUpdate.status, 'unavailable', 'missing ExpoDevice native module does not crash tagged APK update checks')
+    assert.equal(noDeviceModuleUpdate.release, undefined, 'unknown device architecture must not be offered a potentially incompatible universal-64 APK')
   } finally {
     global.fetch = originalFetchForNoDeviceModule
     expoDeviceModuleAvailable = true
@@ -11594,6 +11616,7 @@ async function assertApkUpdateBehavior() {
     apkUrl: progressApkUrl,
     apkName: 'IsleMind-0.0.10-arm64-v8a-no-model.apk',
     publishedAt: null,
+    sha256: sha256BytesForTest(progressApkBody),
     sizeBytes: progressApkBody.length,
     abi: 'arm64-v8a',
     variant: 'no-model',
@@ -20728,7 +20751,6 @@ function assertWebSearchSettingsPolicyBehavior() {
     'src/bootstrap/workflowSearchToolAdmission.ts',
     'src/bootstrap/conversationAssistantContextAcquisitionRuntime.ts',
     'src/store/settingsStore.ts',
-    'src/components/main/SettingsScreenContent.tsx',
     'src/services/contextSelfTest.ts',
     'src/components/settings/ContextPanel.tsx',
     'src/bootstrap/webSearchProviderRuntime.ts',
@@ -20739,6 +20761,9 @@ function assertWebSearchSettingsPolicyBehavior() {
     assert.doesNotMatch(source, /@\/services\/searchPolicy/, `${relativePath} cannot restore the legacy search policy import`)
     assert.match(source, /@\/modules\/integrations/, `${relativePath} consumes the target search settings policy`)
   }
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  assert.match(settingsScreenSource, /<SettingsNavigationContent\b/, 'settings entry delegates to navigation after search controls moved to ContextPanel')
+  assert.doesNotMatch(settingsScreenSource, /@\/services\/searchPolicy/, 'settings navigation cannot restore the legacy search policy import')
 }
 
 async function assertBuiltInSearchRuntimeBehavior() {
@@ -23336,7 +23361,7 @@ async function run() {
       req: backoffAbortReq,
       url: 'https://retry.example/v1/chat/completions',
       headers: {},
-      body: '{}',
+      body: '{"max_tokens":128}',
       stream: true,
       controller: backoffAbortController,
       transport: {
@@ -23374,7 +23399,7 @@ async function run() {
     req: terminalRetryReq,
     url: 'https://retry.example/v1/chat/completions',
     headers: {},
-    body: '{}',
+    body: '{"max_tokens":128}',
     stream: true,
     controller: new AbortController(),
     transport: {
@@ -23402,7 +23427,7 @@ async function run() {
     req: clientErrorRetryReq,
     url: 'https://retry.example/v1/chat/completions',
     headers: {},
-    body: '{}',
+    body: '{"max_tokens":128}',
     stream: true,
     controller: new AbortController(),
     transport: {
@@ -23678,7 +23703,6 @@ async function run() {
   )
   assert.equal(st('messageBubble.copyWorkArtifact'), '复制工作产物', 'Chinese message actions expose work artifact copy')
   assert.equal(st('messageBubble.continueWorkArtifact'), '继续这项工作', 'Chinese message actions expose work artifact continuation')
-  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
   const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   assert.ok(runtimeDiagnosticsDetailsSource.includes('localSaved: diagnostics.compact.localEstimatedSavedTokens'), 'settings diagnostics surfaces local compact saved-token totals')
   assert.ok(runtimeDiagnosticsDetailsSource.includes('localRatio: formatCompactRatio(diagnostics.compact.localAverageCompressionRatio)'), 'settings diagnostics surfaces local compact average ratio')
@@ -23982,18 +24006,20 @@ codex    ${FAKE_KEY_D} "
   assert.equal(fs.existsSync(path.join(root, 'src/services/providerImportSummary.ts')), false, 'legacy provider import summary facade is deleted after consumer migration')
   assert.ok(providerSettingsContentSource.includes('clearInvalidProviders'), 'provider settings exposes invalid-provider cleanup')
   assert.ok(providerSettingsContentSource.includes("parseProviderImportDraft(text, { requireConnection: source === 'manual', preferredWireProtocol: wireProtocol })"), 'add provider form applies detected provider import drafts from clipboard and manual input')
-  assert.match(providerSettingsContentSource, /<ProviderTokenField\s+value=\{keysText\}\s+onChangeText=\{handleKeysText\}/, 'add provider form routes token input through provider import auto-detection')
+  assert.match(providerSettingsContentSource, /<ProviderTokenField\b(?=[^>]*\bvalue=\{keysText\})(?=[^>]*\bonChangeText=\{handleKeysText\})(?=[^>]*\beditable=\{!saving\})/, 'add provider form routes token input through provider import auto-detection and locks edits while saving')
   const providerTokenFieldSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderTokenField.tsx'), 'utf8')
-  assert.match(providerTokenFieldSource, /inputProps=\{\{ value, onChangeText, onFocus/, 'the token-field boundary forwards edits and focus without changing imported credentials')
+  assert.match(providerTokenFieldSource, /inputProps=\{\{\s*editable,\s*value,\s*onChangeText,\s*onFocus/, 'the token-field boundary forwards editability, edits and focus without changing imported credentials')
   const addProviderFromFormStart = providerSettingsContentSource.indexOf('async function addProviderFromForm')
   const publishImportProgressStart = providerSettingsContentSource.indexOf('async function publishImportProgress', addProviderFromFormStart)
   assert.notEqual(addProviderFromFormStart, -1, 'provider settings keeps the single-provider onboarding function')
   assert.notEqual(publishImportProgressStart, -1, 'provider settings keeps the import flow after single-provider onboarding')
   const addProviderFromFormSource = providerSettingsContentSource.slice(addProviderFromFormStart, publishImportProgressStart)
-  assert.ok(addProviderFromFormSource.includes('await probeProviderPreset({'), 'add provider performs a bounded protocol probe without a second setup action')
-  assert.ok(addProviderFromFormSource.includes("await activateProviders([detectedProvider.id], 'single')"), 'add provider immediately enters the automatic activation pipeline')
-  assert.ok(addProviderFromFormSource.includes('if (!previousDefaultProvider) updateSettings({ defaultProvider: null })'), 'failed onboarding cannot become the default provider before readiness succeeds')
-  assert.equal(addProviderFromFormSource.includes('const enableNow = await dialog.confirm({'), false, 'add provider no longer asks for a redundant second enable confirmation')
+  assert.ok(addProviderFromFormSource.includes('await addProvider(provider)'), 'add provider persists the explicitly saved configuration')
+  assert.ok(addProviderFromFormSource.includes('await store.updateProvider(provider.id, provider)'), 'retrying a saved provider updates its existing identity')
+  assert.ok(addProviderFromFormSource.includes('await store.flushProviderPersistence()') && addProviderFromFormSource.includes('await flushPersistedSettings()'), 'add provider waits for durable provider and settings writes')
+  assert.equal(addProviderFromFormSource.includes('probeProviderPreset('), false, 'saving provider configuration does not authorize a network probe')
+  assert.equal(addProviderFromFormSource.includes('activateProviders('), false, 'saving provider configuration does not automatically activate or test a model')
+  assert.ok(addProviderFromFormSource.includes('if (!previousDefault) store.updateSettings({ defaultProvider: null })'), 'saving an untested provider does not automatically select it as the default')
   assert.ok(providerActivationJobSource.includes('testModels: false'), 'provider onboarding fetches the model catalog without model health testing')
   assert.equal(providerActivationJobSource.includes('testModels: true'), false, 'provider onboarding cannot send model health test requests')
   assert.equal(apiKeyPanelSource.includes('<ModelTestCapabilityPanel'), false, 'provider settings does not expose model-test evidence as an onboarding action')
@@ -30378,10 +30404,37 @@ https://gateway.example/messages`
   const pdfController = new AbortController()
   let pdfProviderSignal
   const originalFetchForPdfCancellation = global.fetch
+  const pdfProviderRuntime = require('../src/bootstrap/providerRuntime.ts')
+  const originalGeneratePdfText = pdfProviderRuntime.generateProviderText
   const documentsBeforePdfCancellation = await listKnowledgeDocuments()
+  const pdfImportProvider = {
+    id: 'openai-pdf-cancellation', name: 'OpenAI PDF cancellation', type: 'openai', enabled: true,
+    models: ['gpt-4.1'], apiKey: FAKE_KEY_A, baseUrl: 'https://api.openai.com/v1',
+    capabilities: { files: true },
+    modelConfigs: [{ id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', contextWindow: 1_000_000,
+      maxTokens: 32_768, supportsFiles: true, source: 'manual' }],
+  }
   try {
-    global.fetch = async (_url, options = {}) => {
-      pdfProviderSignal = options.signal
+    let pdfTransportCalls = 0
+    global.fetch = async () => { pdfTransportCalls++; throw new Error('Unmetered PDF must not reach transport') }
+    const pdfPickerFixture = nextDocumentPickerResult
+    await assert.rejects(
+      () => importKnowledgeFile(pdfImportProvider, 'gpt-4.1', { signal: new AbortController().signal }),
+      (error) => error.name === 'ProviderContextCapacityError' && error.code === 'media_estimate_unavailable',
+      'PDF extraction fails closed while its adapter has no reliable media accounting',
+    )
+    assert.equal(pdfTransportCalls, 0, 'unmetered PDF extraction cannot send a provider request')
+    assert.equal((await listKnowledgeDocuments()).length, documentsBeforePdfCancellation.length, 'capacity refusal cannot persist a PDF document')
+    assert.ok(localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/cancellable-knowledge.pdf'), 'capacity refusal deletes the temporary PDF copy')
+
+    // Exercise importer cancellation at the extraction port independently of
+    // transport admission. This is not evidence that unmetered PDFs can dispatch.
+    resetLocalModelFileMocks()
+    localFileFixtures.set('file:///tmp/cancellable-knowledge.pdf', cancellablePdf)
+    nextDocumentPickerResult = pdfPickerFixture
+    pdfProviderRuntime.generateProviderText = async (request) => {
+      pdfProviderSignal = request.signal
+      assert.equal(request.attachments[0].type, 'pdf', 'PDF cancellation exercises the extraction path')
       pdfController.abort()
       const error = new Error('PDF provider request aborted')
       error.name = 'AbortError'
@@ -30389,34 +30442,18 @@ https://gateway.example/messages`
     }
     let pdfCancellationError
     try {
-      await importKnowledgeFile({
-        id: 'openai-pdf-cancellation',
-        name: 'OpenAI PDF cancellation',
-        type: 'openai',
-        enabled: true,
-        models: ['gpt-4.1'],
-        apiKey: FAKE_KEY_A,
-        baseUrl: 'https://api.openai.com/v1',
-        capabilities: { files: true },
-        modelConfigs: [{
-          id: 'gpt-4.1',
-          name: 'GPT-4.1',
-          provider: 'openai',
-          contextWindow: 1_000_000,
-          maxTokens: 32_768,
-          supportsFiles: true,
-          source: 'manual',
-        }],
-      }, 'gpt-4.1', { signal: pdfController.signal })
+      await importKnowledgeFile(pdfImportProvider, 'gpt-4.1', { signal: pdfController.signal })
     } catch (error) {
       pdfCancellationError = error
     }
     assert.equal(pdfCancellationError?.name, 'AbortError', `PDF provider cancellation aborts document import: ${pdfCancellationError?.message}`)
   } finally {
     global.fetch = originalFetchForPdfCancellation
+    pdfProviderRuntime.generateProviderText = originalGeneratePdfText
   }
   assert.equal(pdfController.signal.aborted, true, 'PDF import caller signal is aborted during provider execution')
-  assert.equal(pdfProviderSignal?.aborted, true, 'PDF provider transport observes cancellation from the import signal')
+  assert.equal(pdfProviderSignal, pdfController.signal, 'PDF extraction port receives the caller cancellation signal')
+  assert.equal(pdfProviderSignal?.aborted, true, 'PDF extraction port observes cancellation from the import signal')
   assert.equal((await listKnowledgeDocuments()).length, documentsBeforePdfCancellation.length, 'PDF provider cancellation prevents document persistence')
   assert.ok(
     localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/cancellable-knowledge.pdf'),
@@ -35640,125 +35677,68 @@ function assertChatTopChromeBehavior() {
 }
 
 function assertChatActivityStatusBehavior() {
-  const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   const messageActivityPreviewSource = fs.readFileSync(path.join(root, 'src/components/chat/messageActivityPreview.ts'), 'utf8')
-  const chatMessageListScrollStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatMessageListScrollState.ts'), 'utf8')
   const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
+  const timelineSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageActivityTimeline.tsx'), 'utf8')
   const tracePresentationSource = fs.readFileSync(path.join(root, 'src/components/chat/tracePresentation.ts'), 'utf8')
-  assert.ok(
-    messageActivityPreviewSource.includes('getActiveTraceStageLabel(traces, message.status)'),
-    'chat activity preview uses process stage labels while replies are running'
-  )
-  assert.ok(
-    tracePresentationSource.includes('export function selectActiveProcessTrace') &&
-      tracePresentationSource.includes('!isGenericModelActivityTrace(trace)'),
-    'trace presentation prefers concrete search/tool/retrieval work over generic model-request traces'
-  )
-  assert.ok(
-    tracePresentationSource.includes("trace.type === 'system'") &&
-      tracePresentationSource.includes("st('trace.stage.reasoning')"),
-    'trace presentation maps generic system activity to thinking instead of exposing system as a live status'
-  )
-  assert.ok(
-    tracePresentationSource.includes('function isProviderRequestStatusTrace') &&
-      tracePresentationSource.includes("metadata.source === 'runtime-policy'") &&
-      tracePresentationSource.includes("st('trace.stage.request')"),
-    'trace presentation maps provider runtime status to request preparation instead of generic thinking'
-  )
-  assert.ok(
-    messageBubbleSource.includes('selectActiveProcessTrace(traces, messageStatus)') &&
-      messageBubbleSource.includes('traceActivityStageLabel(activeTrace)'),
-    'message process layer uses the same active trace stage selection as chat activity status'
-  )
-  assert.ok(
-    !messageBubbleSource.includes('displayText.trim()\n          ? thinkingDoneLabel(message, traces, t)') &&
-      messageBubbleSource.includes("thinkingProgressLabel(t, 'active'") &&
-      messageBubbleSource.includes("thinkingProgressLabel(t, 'done'"),
-    'message process layer keeps live thinking progress labels while reply text streams'
-  )
-  assert.ok(
-    messageBubbleSource.includes('testID="message-model-status"') &&
-      !messageBubbleSource.includes('messageBubble.modelStatus') &&
-      !messageBubbleSource.includes('const statusIcon') &&
-      messageBubbleSource.includes('<AppIcon name="back-next"') &&
-      /<AnimatedProcessStatusText\s+active=\{active\}\s+label=\{processStatusLabel\}\s+tone=\{tone\}\s+icon=\{processStatusIcon\}\s+motion=\{motion\}\s+grammar=\{processGrammar\}\s+statusMotionPhase=\{streamingStatusPhase\}/.test(messageBubbleSource) &&
-      messageBubbleSource.includes('accessibilityLiveRegion="polite"') &&
-      messageBubbleSource.includes('loop: shimmer') &&
-      !messageBubbleSource.includes('<ProcessAnchor') &&
-      !messageBubbleSource.includes('activeProcessInlinePreview') &&
-      !messageBubbleSource.includes('function ThinkingStatusText'),
-    'message process layer keeps active and actionable work behind one labelled accessible status row without restoring the retired circular indicator'
-  )
-  assert.ok(
-    messageBubbleSource.includes('scrollRef.current?.scrollToEnd') &&
-      messageBubbleSource.includes("onLayoutChangeRequest?.({ force: true })"),
-    'expanded thinking process auto-scrolls to the latest process content'
-  )
-  assert.ok(
-    chatMessageListScrollStateSource.includes('const force = options?.force === true') &&
-      chatMessageListScrollStateSource.includes('if (force) autoStickToBottom.current = true'),
-    'message list accepts forced scroll requests when the user opens thinking details'
-  )
+  const scrollSource = fs.readFileSync(path.join(root, 'src/components/chat/chatMessageListScrollState.ts'), 'utf8')
+  assert.ok(messageActivityPreviewSource.includes('getActiveTraceStageLabel(traces, message.status)'),
+    'compact chat activity preview still follows runtime trace state')
+  assert.ok(tracePresentationSource.includes('!isGenericModelActivityTrace(trace)') &&
+    tracePresentationSource.includes("metadata.source === 'runtime-policy'"),
+    'compact activity preview distinguishes concrete work from generic request bookkeeping')
+  assert.ok(messageBubbleSource.includes('collectMessageActivityRows(displayMessage, processTraces)') &&
+    messageBubbleSource.includes('<MessageActivityTimeline') &&
+    messageBubbleSource.includes('notice={activityNotice}') &&
+    !messageBubbleSource.includes('MessageProcessPanel'),
+    'chat renders independent recorded activities and a separate actionable notice, not an umbrella process panel')
+  assert.ok(timelineSource.includes('key={row.id}') && timelineSource.includes('const [expanded, setExpanded] = useState(false)') &&
+    timelineSource.includes('const canExpand = row.details.length > 0') &&
+    timelineSource.includes('row.details.map(detail =>'),
+    'each activity owns a stable disclosure with only its own meaningful details')
+  assert.ok(timelineSource.includes('accessibilityLiveRegion="polite"') &&
+    timelineSource.includes('accessibilityState={{ expanded, busy: active }}') &&
+    timelineSource.includes('ISLE_MIN_TOUCH_TARGET') && timelineSource.includes('loop: shimmer'),
+    'activity rows retain accessible state, touch targets and motion-aware status feedback')
+  assert.ok(timelineSource.includes('onLayoutChangeRequest?.({ force: !expanded })') &&
+    scrollSource.includes('const force = options?.force === true'),
+    'opening an individual activity requests layout/scroll, without auto-opening later activities')
   const zh = require('../src/i18n/resources/zh-CN.json')
-  assert.equal(zh.trace.stage.reasoning, '生成', 'Chinese trace stage labels surface generation as a user-visible work state')
-  assert.equal(zh.trace.stage.request, '准备请求', 'Chinese trace stage labels surface request preparation as a user-visible work state')
-  assert.equal(zh.trace.stage.search, '搜索', 'Chinese trace stage labels surface search as a user-visible work state')
-  assert.equal(zh.trace.stage.controlledTool, '调用工具', 'Chinese trace stage labels surface controlled tool calls as a user-visible work state')
-  assert.equal(zh.messageBubble.thinkingProgressBase, '准备中', 'Chinese thinking progress base avoids a persistent thinking label before a concrete stage is known')
-  assert.equal(zh.messageBubble.thinkingProgressActive, '正在{{stage}}', 'Chinese thinking progress active state switches to the current work stage')
-  assert.equal(zh.messageBubble.thinkingProgressDone, '已完成{{stage}}', 'Chinese thinking progress completion state switches to the completed work stage')
-  assert.ok(
-    !messageBubbleSource.includes('思考中... >') &&
-      !zh.messageBubble.thinkingProgressActive.includes('思考中'),
-    'message process layer does not keep a persistent thinking prefix while stage labels change'
-  )
+  for (const [stage, active, done] of [
+    ['preparing', '正在准备回复', '准备回复'],
+    ['sending', '正在发送请求', '发送请求'],
+    ['waiting', '正在等待模型响应', '模型响应'],
+    ['thinking', '思考中', '已完成'],
+    ['working', '正在处理相关信息', '处理相关信息'],
+  ]) {
+    assert.equal(zh.messageBubble.activity[stage].active, active)
+    assert.equal(zh.messageBubble.activity[stage].done, done)
+  }
 }
 
 function assertChatCompletedProcessBehavior() {
-  const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
+  const rowsSource = fs.readFileSync(path.join(root, 'src/components/chat/messageActivityRows.ts'), 'utf8')
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   const floatingComposerControlsSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingComposerControls.tsx'), 'utf8')
-  assert.ok(
-    messageBubbleSource.includes('const hasVisibleAssistantReply = !isUser && Boolean(renderedDisplayText.trim())') &&
-      messageBubbleSource.includes("(message.status === 'done' && !hasVisibleAssistantReply)") &&
-      messageBubbleSource.includes('const processNeedsAttention = !isUser') &&
-      messageBubbleSource.includes('const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)') &&
-      messageBubbleSource.includes("compactSettled={message.status === 'done' && hasVisibleAssistantReply && !processNeedsAttention}") &&
-      messageBubbleSource.includes('testID="message-thinking-disclosure"') &&
-      messageBubbleSource.includes('testID="message-thinking-panel"'),
-    'a visible successful reply drops redundant terminal status while meaningful thinking remains available through a compact disclosure'
-  )
-  assert.ok(
-    messageBubbleSource.includes('function collectThinkingSummaries') &&
-      messageBubbleSource.includes('if (!hasDisplayableThinkingContent(trace)) continue') &&
-      messageBubbleSource.includes('const seen = new Set<string>()') &&
-      messageBubbleSource.includes('function isInternalThinkingStatusContent') &&
-      messageBubbleSource.includes('disabled|enabled|adaptive'),
-    'completed process panel renders only deduplicated model thinking content and filters internal thinking switches'
-  )
-  assert.ok(
-    messageBubbleSource.includes('const hasThinking = traces.some(hasDisplayableThinkingContent)') &&
-      messageBubbleSource.includes("if (hasThinking) return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')") &&
-      !messageBubbleSource.includes('const settledStage = settledProcessStageLabel(message, traces, t)'),
-    'completed status does not stay on the last retrieval/tool stage after the model is done'
-  )
-  assert.ok(
-    messageBubbleSource.includes('function settledProcessStageLabel') &&
-      messageBubbleSource.includes('selectLatestCompletedProcessTrace') &&
-      messageBubbleSource.includes('messageBubble.thinkingProgressDone'),
-    'streaming process layer can still label completed retrieval/tool setup before response text starts'
-  )
-  assert.ok(
-    messageBubbleSource.includes('function isGenericModelRequestTrace') &&
-      messageBubbleSource.includes("trace.type !== 'system'"),
-    'completed process panel filters generic system traces from persistent user-visible progress labels'
-  )
-  assert.ok(
-    !chatWorkspaceSource.includes('GenerationStatusPill') &&
-      !chatWorkspaceSource.includes("AppIcon name=\"reasoning\"") &&
-      floatingComposerControlsSource.includes('const heights = [5, 8, 11, 14, 17]'),
-    'composer dock removes the lower-right status pill and renders reasoning effort as strength bars'
-  )
+  assert.ok(rowsSource.includes("entry.stage === 'completed'") &&
+    rowsSource.includes("entry.stage === 'generating' && (message.responseText ?? message.content).trim()"),
+    'visible replies do not carry a redundant overall completion or generation row')
+  assert.ok(rowsSource.includes('safeActivitySummary(display.content)') &&
+    rowsSource.includes('safeResponseLifecycleSummary(safeActivityText(value, 720))') &&
+    rowsSource.includes('internalTraceIds') && rowsSource.includes('isAgentWorkflowEnvelopeTrace(trace)'),
+    'thinking details use only explicit safe summaries and exclude workflow bookkeeping')
+  assert.ok(rowsSource.includes("return status === 'done' ? 'incomplete' : 'running'") &&
+    rowsSource.includes("next?.stage === 'error' || next?.stage === 'cancelled'") &&
+    !rowsSource.includes('normalizeTraceStatuses'),
+    'partial output and interrupted stages are never promoted to successful work')
+  assert.ok(rowsSource.includes("permissionPending ? 'waiting'") &&
+    rowsSource.includes("return 'tool_request'") &&
+    rowsSource.includes("trace.type !== 'system'"),
+    'confirmation gates, provider requests and generic system bookkeeping are not presented as executed tools')
+  assert.ok(!chatWorkspaceSource.includes('GenerationStatusPill') &&
+    !chatWorkspaceSource.includes('AppIcon name="reasoning"') &&
+    floatingComposerControlsSource.includes('const heights = [5, 8, 11, 14, 17]'),
+    'composer dock keeps the removed status pill absent and retains reasoning effort strength bars')
 }
 
 function assertProviderNativeToolDeclarationBehavior() {
@@ -42103,7 +42083,7 @@ function assertRuntimeControlPlanePlanAudit() {
   assert.ok(pluginManifestSource.includes('createPluginManifestFromWorkflowSkill'), 'plugin manifest represents imported workflow skills')
   assert.ok(pluginManifestSource.includes('createPluginManifestFromMcpServer'), 'plugin manifest represents MCP server references')
   assert.ok(pluginManifestSource.includes("execution: 'noop'"), 'plugin hooks remain no-op by default')
-  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/settings/SystemSettingsPanelContent.tsx'), 'utf8')
   const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticPluginCatalog'), 'settings diagnostics surfaces plugin catalog snapshots')
   assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticPerformance'), 'settings diagnostics surfaces runtime diagnostics performance budgets')
@@ -42254,13 +42234,15 @@ async function assertProviderStreamParsingMigrationBehavior() {
         enabled: true,
       },
       model: 'terminal-stream-model',
+      maxTokens: 128,
+      generationParameterSources: { maxTokens: 'internal-policy' },
       messages: [{ role: 'user', content: 'complete on the terminal marker' }],
       stream: true,
       settings: { upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false },
     },
     url: 'https://terminal-stream.invalid/v1/chat/completions',
     headers: { Authorization: `Bearer ${FAKE_KEY_A}` },
-    body: JSON.stringify({ model: 'terminal-stream-model', stream: true }),
+    body: JSON.stringify({ model: 'terminal-stream-model', stream: true, max_tokens: 128 }),
     stream: true,
     controller,
     resolveRoute: () => ({ body: {} }),
@@ -42344,13 +42326,15 @@ async function assertProviderStreamParsingMigrationBehavior() {
         enabled: true,
       },
       model: 'normally-closing-model',
+      maxTokens: 128,
+      generationParameterSources: { maxTokens: 'internal-policy' },
       messages: [{ role: 'user', content: 'allow native close after the terminal marker' }],
       stream: true,
       settings: { upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false },
     },
     url: 'https://normally-closing.invalid/v1/chat/completions',
     headers: { Authorization: `Bearer ${FAKE_KEY_A}` },
-    body: JSON.stringify({ model: 'normally-closing-model', stream: true }),
+    body: JSON.stringify({ model: 'normally-closing-model', stream: true, max_tokens: 128 }),
     stream: true,
     controller: new AbortController(),
     resolveRoute: () => ({ body: {} }),
@@ -42419,13 +42403,15 @@ async function assertProviderStreamParsingMigrationBehavior() {
         enabled: true,
       },
       model: 'done-with-value-model',
+      maxTokens: 128,
+      generationParameterSources: { maxTokens: 'internal-policy' },
       messages: [{ role: 'user', content: 'preserve the final reader value' }],
       stream: true,
       settings: { upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false },
     },
     url: 'https://done-with-value.invalid/v1/chat/completions',
     headers: { Authorization: `Bearer ${FAKE_KEY_A}` },
-    body: JSON.stringify({ model: 'done-with-value-model', stream: true }),
+    body: JSON.stringify({ model: 'done-with-value-model', stream: true, max_tokens: 128 }),
     stream: true,
     controller: new AbortController(),
     resolveRoute: () => ({ body: {} }),
@@ -42664,13 +42650,19 @@ async function assertActualProviderExecutionTargetBehavior() {
       const selectedProvider = strictGroup ? { ...provider, credentialGroups: [{ id: 'default', label: 'Real default', enabled: true, apiKey: FAKE_KEY_B }] } : provider
       global.fetch = async (_url, init) => {
         calls += 1
+        const body = JSON.parse(init.body)
+        assert.equal(body.max_output_tokens ?? body.max_completion_tokens ?? body.max_tokens, 1024,
+          'actual-target fixture retains the Harness output bound on the initial and fallback wire request')
         wireProtocols.push(String(_url).endsWith('/responses') ? 'openai-responses' : 'openai-chat')
-        events.push(`wire:${JSON.parse(init.body).model}`)
+        events.push(`wire:${body.model}`)
         if (calls === 1) return new Response('rate limit', { status: 429 })
         return new Response(JSON.stringify({ choices: [{ message: { content: 'Actual fallback answer' } }] }), { headers: { 'content-type': 'application/json' } })
       }
       const handle = await streamChat({
         provider: selectedProvider, model: 'preferred-alias', messages: [{ role: 'user', content: 'fixture' }],
+        // Match the governed request contract; the synthetic fallback model has
+        // no authoritative uncapped output maximum in the model catalog.
+        maxTokens: 1024, generationParameterSources: { maxTokens: 'internal-policy' },
         ...(strictGroup ? { targetCredentialGroupId: 'default' } : {}), stream: false,
         settings: { upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false },
         onExecutionTarget: async (target) => { targets.push(target); events.push(`target:${target.model}`) },

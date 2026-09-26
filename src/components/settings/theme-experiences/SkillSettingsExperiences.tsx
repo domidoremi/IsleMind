@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 
 export interface SkillSettingsLeadProps {
   saved: number
@@ -48,8 +49,8 @@ export function MaterialSkillSettingsLead({ saved, workflows, enabledWorkflows, 
 export function LiquidGlassSkillSettingsLead({ summary }: SkillSettingsLeadProps) {
   const { colors, design } = useAppTheme()
   return (
-    <View testID="skill-settings-experience-liquid-glass" style={{ padding: design.semantic.spacing.md, borderRadius: design.semantic.radius.extraLarge, backgroundColor: colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, shadowColor: design.semantic.elevation.shadowColor, shadowOpacity: design.semantic.elevation.shadowOpacity, shadowRadius: design.semantic.elevation.shadowBlur, shadowOffset: { width: 0, height: design.semantic.elevation.shadowOffsetY }, elevation: design.semantic.elevation.level2 }}>
+    <GlassSurface colors={colors} testID="skill-settings-experience-liquid-glass" style={{ padding: design.semantic.spacing.md, borderRadius: design.semantic.radius.extraLarge }}>
       {summary}
-    </View>
+    </GlassSurface>
   )
 }

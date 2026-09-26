@@ -182,8 +182,10 @@ function AndroidNetworkRecoverySurface({
   recovery: AndroidNetworkRecoveryView
 }) {
   const { t } = useTranslation()
+  const [offlineNoticeDismissed, setOfflineNoticeDismissed] = useState(false)
+  useEffect(() => { setOfflineNoticeDismissed(false) }, [recovery.state])
   if (Platform.OS !== 'android') return null
-  if (recovery.state === 'offline') {
+  if (recovery.state === 'offline' && !offlineNoticeDismissed) {
     return (
       <View pointerEvents="box-none" style={styles.networkSurface}>
         <AppStatusSurface
@@ -195,6 +197,7 @@ function AndroidNetworkRecoverySurface({
           safeArea="top"
           accessibilityRole="alert"
           accessibilityLiveRegion="assertive"
+          onDismiss={() => setOfflineNoticeDismissed(true)}
           testID="android-network-offline"
         />
       </View>
@@ -202,7 +205,7 @@ function AndroidNetworkRecoverySurface({
   }
   if (recovery.recoveredNoticeVisible && recovery.policy.reason === 'recovered') {
     return (
-      <View pointerEvents="box-none" style={styles.networkSurface}>
+      <View pointerEvents="none" style={styles.networkSurface}>
         <AppStatusSurface
           title={t('chat.androidNetworkRecoveredTitle')}
           message={t('chat.androidNetworkRecoveredMessage')}

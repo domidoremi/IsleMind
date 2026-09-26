@@ -8,6 +8,7 @@ import * as v from 'valibot'
 import {
   USAGE_PORTABLE_SNAPSHOT_SCHEMA,
   USAGE_RECORD_SCHEMA,
+  USAGE_PRICING_CONFLICT,
   type UsageDataSource,
   type UsageDailyRollup,
   type UsageMeasurementSource,
@@ -396,12 +397,12 @@ export function createSqliteUsageRecordRepository(
       })
     },
 
-    async savePricingEntry(entry) {
+    async savePricingEntry(entry, expectedRevision) {
       const normalized = parsePricingEntry(entry)
       if (normalized.source !== 'manual') {
         throw new UsageRecordRepositoryDataError('Only manual usage pricing overrides are persisted.')
       }
-      await (await database()).run(
+      const write = (executor: SqliteExecutor) => executor.run(
         `INSERT INTO usage_pricing_entries (
            id, providerId, modelPattern, effectiveFrom, source, entryJson
          ) VALUES (?, ?, ?, ?, ?, ?)
@@ -420,6 +421,17 @@ export function createSqliteUsageRecordRepository(
           JSON.stringify(normalized),
         ],
       )
+      const db = await database()
+      if (expectedRevision === undefined) { await write(db); return }
+      // Keep the comparison and write in the same transaction: an import or
+      // another editor must not replace the baseline between the two.
+      await db.transaction(async transaction => {
+        const row = await transaction.getFirst<UsagePricingEntryRow>(
+          'SELECT id, providerId, modelPattern, effectiveFrom, source, entryJson FROM usage_pricing_entries WHERE id = ?', [normalized.id],
+        )
+        if (!row || JSON.stringify(parsePersistedPricingEntry(row)) !== expectedRevision) throw new Error(USAGE_PRICING_CONFLICT)
+        await write(transaction)
+      })
     },
 
     async deletePricingEntry(id) {

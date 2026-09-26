@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from 'react-native'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 
 export interface ProviderSettingsExperienceProps {
   title: string
@@ -70,11 +71,11 @@ function ProviderCommand({
       />
       {ticket || document ? (
         <Text
-          numberOfLines={1}
           style={{
             color: ticket ? colors.ui.control.primaryForeground : colors.textSecondary,
-            fontSize: document ? 10.5 : 11.5,
-            lineHeight: 15,
+            fontSize: 14,
+            lineHeight: 20,
+            flexShrink: 1,
             fontWeight: '900',
             letterSpacing: document ? 0.35 : 0,
           }}
@@ -136,11 +137,11 @@ export function MinimalProviderSettingsExperience({
       <View style={{ minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <ProviderBack label={backLabel} onPress={onBack} variant="quiet" />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text accessibilityRole="header" numberOfLines={1} style={{ color: colors.text, fontSize: 18, lineHeight: 23, fontWeight: '700', includeFontPadding: false }}>
+          <Text accessibilityRole="header" style={{ color: colors.text, fontSize: 18, lineHeight: 25, fontWeight: '700', includeFontPadding: false }}>
             {title}
           </Text>
           {!compact ? (
-            <Text numberOfLines={1} style={{ marginTop: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '500', includeFontPadding: false }}>
+            <Text style={{ marginTop: 1, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500', includeFontPadding: false }}>
               {subtitle}
             </Text>
           ) : null}
@@ -151,9 +152,9 @@ export function MinimalProviderSettingsExperience({
         </View>
       </View>
       <View style={{ minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: '700' }}>{enabledSummary}</Text>
+        <Text style={{ flexShrink: 1, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{enabledSummary}</Text>
         <View style={{ width: 1, height: 13, backgroundColor: colors.ui.section.divider }} />
-        <Text style={{ flex: 1, minWidth: 0, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '600' }}>{visibleSummary}</Text>
+        <Text style={{ flex: 1, minWidth: 0, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{visibleSummary}</Text>
       </View>
       {attention ? <View style={{ paddingTop: 10 }}>{attention}</View> : null}
       {activation ? <View style={{ paddingTop: 10 }}>{activation}</View> : null}
@@ -175,26 +176,26 @@ function CanonicalProviderSettingsExperience({
   const material = family === 'material'
   return (
     <View testID={`provider-settings-experience-${family}`} style={{ width: '100%', maxWidth: family === 'monet' ? 980 : 920, alignSelf: 'center', gap: design.semantic.spacing.md }}>
-      <View style={{ minHeight: material ? 72 : 64, padding: glass ? 12 : 8, borderRadius: glass ? design.semantic.radius.extraLarge : material ? design.semantic.radius.extraLarge : 0, backgroundColor: glass ? colors.ui.semantic.chrome.background : material ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: glass || material ? 1 : 0, borderBottomWidth: glass || material ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.semantic.chrome.border, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <GlassSurface colors={colors} enabled={glass} style={{ minHeight: material ? 72 : 64, padding: glass ? 12 : 8, borderRadius: glass ? design.semantic.radius.extraLarge : material ? design.semantic.radius.extraLarge : 0, backgroundColor: material ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: material ? 1 : 0, borderBottomWidth: glass ? 0 : material ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.semantic.chrome.border, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <ProviderBack label={props.backLabel} onPress={props.onBack} variant={glass || material ? 'route' : 'quiet'} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text accessibilityRole="header" numberOfLines={1} style={{ color: colors.text, fontSize: design.semantic.typography.headline.fontSize, lineHeight: design.semantic.typography.headline.lineHeight, fontWeight: design.semantic.typography.headline.fontWeight }}>{props.title}</Text>
-          {!props.compact ? <Text numberOfLines={1} style={{ marginTop: 2, color: colors.textSecondary, fontSize: design.semantic.typography.caption.fontSize, lineHeight: design.semantic.typography.caption.lineHeight }}>{props.subtitle}</Text> : null}
+          <Text accessibilityRole="header" style={{ color: colors.text, fontSize: design.semantic.typography.headline.fontSize, lineHeight: design.semantic.typography.headline.lineHeight, fontWeight: design.semantic.typography.headline.fontWeight }}>{props.title}</Text>
+          {!props.compact ? <Text style={{ marginTop: 2, color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{props.subtitle}</Text> : null}
         </View>
-        <ProviderCommand label={props.addLabel} icon="add" onPress={props.onAdd} variant={glass ? 'ticket' : material ? 'ticket' : 'quiet'} />
-        {!props.compact ? <ProviderCommand label={props.importLabel} icon="import" onPress={props.onImport} variant={glass ? 'ticket' : material ? 'ticket' : 'quiet'} /> : null}
-      </View>
+        <ProviderCommand label={props.addLabel} icon="add" onPress={props.onAdd} variant={props.compact ? 'quiet' : glass || material ? 'ticket' : 'quiet'} />
+        <ProviderCommand label={props.importLabel} icon="import" onPress={props.onImport} variant={props.compact ? 'quiet' : glass || material ? 'ticket' : 'quiet'} />
+      </GlassSurface>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: material ? 14 : 4, minHeight: 42, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
-        <Text style={{ color: colors.textSecondary, fontSize: design.semantic.typography.label.fontSize, fontWeight: '700' }}>{props.enabledSummary}</Text>
+        <Text style={{ flexShrink: 1, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{props.enabledSummary}</Text>
         <View style={{ width: 1, height: 14, backgroundColor: colors.ui.semantic.chrome.border }} />
-        <Text style={{ flex: 1, minWidth: 0, color: colors.textTertiary, fontSize: design.semantic.typography.caption.fontSize }}>{props.visibleSummary}</Text>
+        <Text style={{ flex: 1, minWidth: 0, color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{props.visibleSummary}</Text>
       </View>
       {props.attention ? <View>{props.attention}</View> : null}
       {props.activation ? <View>{props.activation}</View> : null}
       {props.tools ? <View>{props.tools}</View> : null}
-      <View style={{ padding: glass ? 12 : material ? 8 : 0, borderRadius: glass ? design.semantic.radius.extraLarge : material ? design.semantic.radius.extraLarge : 0, backgroundColor: glass ? colors.ui.semantic.chrome.background : material ? colors.ui.semantic.surface.muted : 'transparent', borderWidth: glass || material ? 1 : 0, borderColor: colors.ui.semantic.chrome.border, shadowColor: glass ? design.semantic.elevation.shadowColor : undefined, shadowOpacity: glass ? design.semantic.elevation.shadowOpacity : 0, shadowRadius: glass ? design.semantic.elevation.shadowBlur : 0, shadowOffset: glass ? { width: 0, height: design.semantic.elevation.shadowOffsetY } : undefined, elevation: glass ? design.semantic.elevation.level2 : 0 }}>
+      <GlassSurface colors={colors} enabled={glass} style={{ padding: glass ? 12 : material ? 8 : 0, borderRadius: glass ? design.semantic.radius.extraLarge : material ? design.semantic.radius.extraLarge : 0, backgroundColor: material ? colors.ui.semantic.surface.muted : 'transparent', borderWidth: material ? 1 : 0, borderColor: colors.ui.semantic.chrome.border }}>
         {props.children}
-      </View>
+      </GlassSurface>
     </View>
   )
 }

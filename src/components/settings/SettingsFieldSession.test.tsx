@@ -19,6 +19,7 @@ it('retains parent-owned input and detects an external change from an undefined 
   expect(commit).not.toHaveBeenCalled()
   expect(hook.result.current.entries.proxyBaseUrl?.draft).toBe('https://draft.invalid/v1')
   expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.conflict' }))
+  expect(hook.result.current.entries.proxyBaseUrl?.error).toBe('conflict')
 })
 it('preserves failed writes for retry, and resets explicitly without committing', async () => {
   const hook = await renderHook(useSettingsFieldSession)
@@ -27,6 +28,7 @@ it('preserves failed writes for retry, and resets explicitly without committing'
   mockFlush.mockRejectedValueOnce(new Error('disk unavailable'))
   await act(() => hook.result.current.save('proxyBaseUrl', commit, value => value))
   expect(hook.result.current.entries.proxyBaseUrl).toBeDefined()
+  expect(hook.result.current.entries.proxyBaseUrl?.error).toBe('saveFailed')
   await act(() => hook.result.current.save('proxyBaseUrl', commit, value => value))
   expect(hook.result.current.entries.proxyBaseUrl).toBeUndefined()
   await act(() => hook.result.current.edit('proxyBaseUrl', 'another input', 'https://draft.invalid'))

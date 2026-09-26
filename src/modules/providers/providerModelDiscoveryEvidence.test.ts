@@ -23,6 +23,41 @@ function adapter(pages: unknown[], request?: (url: string, signal: AbortSignal) 
   }) }
 }
 
+describe('discovered model output-limit evidence', () => {
+  it('does not treat id-only discovery or context metadata as an output bound', () => {
+    for (const model of [
+      ...mapOpenAICompatibleModels({ data: [{ id: 'custom-no-output-metadata' }, { id: 'custom-context-only', context_window: 1000 }] }, 'openai-compatible'),
+      ...mapAnthropicModels({ data: [{ id: 'custom-anthropic', max_input_tokens: 1000 }] }),
+      ...mapGoogleModels({ models: [{ name: 'models/custom-google', inputTokenLimit: 1000, supportedGenerationMethods: ['generateContent'] }] }),
+    ]) {
+      expect(model.source).toBe('remote')
+      expect(model.outputTokenLimit).toBeUndefined()
+    }
+  })
+
+  it('preserves explicit raw limits before display values are clamped, for every discovery protocol', () => {
+    for (const model of [
+      ...mapOpenAICompatibleModels({ data: [{ id: 'custom-openai', context_window: 1000, max_output_tokens: 2000 }] }, 'openai-compatible'),
+      ...mapAnthropicModels({ data: [{ id: 'custom-anthropic', max_input_tokens: 1000, max_tokens: 2000 }] }),
+      ...mapGoogleModels({ models: [{ name: 'models/custom-google', inputTokenLimit: 1000, outputTokenLimit: 2000, supportedGenerationMethods: ['generateContent'] }] }),
+    ]) {
+      expect(model.maxOutputTokens).toBe(1000)
+      expect(model.outputTokenLimit).toEqual({ tokens: 2000, source: 'provider' })
+    }
+  })
+
+  it.each([0, -1, 1.5, Infinity, '4096 tokens', '4096.5', ''])('does not manufacture evidence from invalid metadata %p', (value) => {
+    const [model] = mapOpenAICompatibleModels({ data: [{ id: 'custom-invalid-output', metadata: { max_output_tokens: value } }] }, 'openai-compatible')
+    expect(model.outputTokenLimit).toBeUndefined()
+  })
+
+  it('parses complete numeric metadata rather than truncating exponent notation', () => {
+    const [model] = mapOpenAICompatibleModels({ data: [{ id: 'custom-output', metadata: { max_output_tokens: '6e4' } }] }, 'openai-compatible')
+    expect(model.outputTokenLimit).toEqual({ tokens: 60_000, source: 'provider' })
+    expect(model.maxOutputTokens).toBe(32768)
+  })
+})
+
 describe('qualified discovery evidence', () => {
   it('allows absence only for a valid, scoped and exhaustive official response', async () => {
     const result = await adapter([{ object: 'list', data: [] }]).value.discoverDetailed(provider, options)

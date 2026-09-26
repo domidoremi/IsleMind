@@ -28,6 +28,7 @@ import { SavedSettingsField, useSettingsFieldSession } from './SettingsFieldSess
 
 import { type SettingsControlView } from '@/components/settings/theme-experiences/SettingsControlCatalogExperiences'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useThemeSelection } from '@/hooks/useThemeSelection'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { PortableBackupCategory, PortableDataExportOptions, PortableDataExportResult, PortableDataRestorePreview } from '@/modules/data-management'
@@ -38,7 +39,7 @@ import {
 } from '@/presentation/features/settings/portableDataCommand'
 import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/platform/native/boundedImportFile'
 import type { ApkInstallProgress, ApkInstallProgressStage, ApkReleaseInfo } from '@/platform/native/androidApkUpdates'
-import { isGooglePlayDistribution } from '@/platform/native/appDistribution'
+import { isGooglePlayDistribution, openGooglePlayListing } from '@/platform/native/appDistribution'
 import { useIsleDialog } from '@/components/ui/isle'
 
 
@@ -341,6 +342,11 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   const setObservabilitySinkApiKey = useSettingsStore((state) => state.setObservabilitySinkApiKey)
   const apkUpdateFeedbackClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const apkNotificationOwnerRef = useRef<string | null>(null)
+  const apkOperationRef = useRef<AbortController | null>(null)
+  const apkMountedRef = useRef(true)
+  const apkDialogRef = useRef(dialog)
+  apkDialogRef.current = dialog
+  const [cancellingApk, setCancellingApk] = useState(false)
   const diagnosticsRefreshInFlightRef = useRef(false)
   const [apkUpdateStage, setApkUpdateStage] = useState<ApkUpdateUiStage | null>(null)
   const [activeApkRelease, setActiveApkRelease] = useState<ApkReleaseInfo | null>(null)
@@ -417,6 +423,27 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   const updateProgressIndeterminate = apkUpdateStage != null && (
     apkUpdateStage !== 'downloading' || apkInstallProgress?.percent == null
   )
+  useEffect(() => {
+    apkMountedRef.current = true
+    setCancellingApk(false)
+    setApkUpdateStage(null)
+    setActiveApkRelease(null)
+    setApkInstallProgress(null)
+    return () => {
+      apkMountedRef.current = false
+      apkOperationRef.current?.abort()
+      apkOperationRef.current = null
+      if (apkUpdateFeedbackClearTimerRef.current) clearTimeout(apkUpdateFeedbackClearTimerRef.current)
+      const owner = apkNotificationOwnerRef.current
+      apkNotificationOwnerRef.current = null
+      if (owner) {
+        apkDialogRef.current.dismissBanner(APK_UPDATE_BANNER_ID)
+        void loadAndroidStatusNotification()
+          .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification({ owner }))
+          .catch(() => undefined)
+      }
+    }
+  }, [panel])
   useEffect(() => {
     if (panel !== 'advanced') return
     void refreshSystemStatusNotificationStatus()
@@ -615,8 +642,9 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
     dialog.dismissBanner(APK_UPDATE_BANNER_ID)
     const owner = apkNotificationOwnerRef.current
     apkNotificationOwnerRef.current = null
+    if (!owner) return
     void loadAndroidStatusNotification()
-      .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification(owner ? { owner } : {}))
+      .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification({ owner }))
       .catch(() => undefined)
   }
 
@@ -641,18 +669,21 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
       tone: stage === 'checking' ? 'default' : stage === 'opening-installer' ? 'mint' : 'amber',
     })
     void loadAndroidStatusNotification()
-      .then(({ updateAndroidStatusNotification }) => updateAndroidStatusNotification({
-        state: 'running',
-        title,
-        message: detail,
-        shortText: determinate ? `${percent}%` : title,
-        deepLink: 'islemind://settings',
-        progress: determinate ? percent / 100 : 0,
-        indeterminate: !determinate,
-        ongoing: true,
-        requestPromotedOngoing: stage !== 'checking',
-        foregroundService: stage !== 'checking',
-      }, { enabled: settings.systemStatusNotificationsEnabled === true, owner }))
+      .then(async ({ updateAndroidStatusNotification }) => {
+        if (!apkMountedRef.current || apkNotificationOwnerRef.current !== owner) return
+        await updateAndroidStatusNotification({
+          state: 'running',
+          title,
+          message: detail,
+          shortText: determinate ? `${percent}%` : title,
+          deepLink: 'islemind://settings',
+          progress: determinate ? percent / 100 : 0,
+          indeterminate: !determinate,
+          ongoing: true,
+          requestPromotedOngoing: stage !== 'checking',
+          foregroundService: stage !== 'checking',
+        }, { enabled: settings.systemStatusNotificationsEnabled === true, owner })
+      })
       .catch(() => undefined)
   }
 
@@ -672,20 +703,24 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
       tone: options.tone,
     })
     void loadAndroidStatusNotification()
-      .then(({ updateAndroidStatusNotification }) => updateAndroidStatusNotification({
-        state: options.tone === 'danger' ? 'error' : 'completed',
-        title: options.title,
-        message: options.message,
-        shortText: options.title,
-        deepLink: 'islemind://settings',
-        progress: options.tone === 'mint' ? 1 : undefined,
-        indeterminate: false,
-        ongoing: false,
-        requestPromotedOngoing: false,
-        foregroundService: options.installFlow === true,
-      }, { enabled: settings.systemStatusNotificationsEnabled === true, owner }))
+      .then(async ({ updateAndroidStatusNotification }) => {
+        if (!apkMountedRef.current || apkNotificationOwnerRef.current !== owner) return
+        await updateAndroidStatusNotification({
+          state: options.tone === 'danger' ? 'error' : 'completed',
+          title: options.title,
+          message: options.message,
+          shortText: options.title,
+          deepLink: 'islemind://settings',
+          progress: options.tone === 'mint' ? 1 : undefined,
+          indeterminate: false,
+          ongoing: false,
+          requestPromotedOngoing: false,
+          foregroundService: options.installFlow === true,
+        }, { enabled: settings.systemStatusNotificationsEnabled === true, owner })
+      })
       .catch(() => undefined)
     apkUpdateFeedbackClearTimerRef.current = setTimeout(() => {
+      if (!apkMountedRef.current || apkNotificationOwnerRef.current !== owner) return
       apkUpdateFeedbackClearTimerRef.current = null
       dialog.dismissBanner(APK_UPDATE_BANNER_ID)
       if (apkNotificationOwnerRef.current === owner) apkNotificationOwnerRef.current = null
@@ -696,14 +731,20 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   }
 
   async function checkApkUpdate() {
-    if (updatingApk) return
+    if (apkOperationRef.current) return
+    const controller = new AbortController()
+    apkOperationRef.current = controller
+    const isCurrent = () => apkMountedRef.current && apkOperationRef.current === controller
+    setCancellingApk(false)
     setApkUpdateStage('checking')
     setActiveApkRelease(null)
     setApkInstallProgress(null)
-    publishApkUpdateProgress('checking')
     try {
+      publishApkUpdateProgress('checking')
       const { checkLatestApkRelease, downloadAndOpenApkInstaller } = await import('@/platform/native/androidApkUpdates')
+      if (!isCurrent()) return
       const result = await checkLatestApkRelease()
+      if (!isCurrent()) return
       if (result.status === 'available' || result.status === 'unavailable') {
         updateSettings({ lastApkUpdateCheckAt: Date.now() })
       }
@@ -726,20 +767,30 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
       setActiveApkRelease(result.release)
       dismissApkUpdateFeedback()
       const confirmed = await confirmApkInstall(result.release)
+      if (!isCurrent()) return
       if (!confirmed) {
         dismissApkUpdateFeedback()
         return
       }
       const installResult = await downloadAndOpenApkInstaller(result.release, {
+        signal: controller.signal,
         onProgress: (progress) => {
+          if (!isCurrent() || controller.signal.aborted) return
           setActiveApkRelease(progress.release)
           setApkUpdateStage(progress.stage)
           setApkInstallProgress(progress)
           publishApkUpdateProgress(progress.stage, progress.release, progress)
         },
       })
-      const terminalTitle = installResult.status === 'downloaded' ? t('settings.installerOpened') : t('settings.apkUpdateFailed')
-      const terminalTone = installResult.status === 'downloaded' ? 'mint' : 'danger'
+      if (!isCurrent()) return
+      if (installResult.status === 'cancelled') {
+        dismissApkUpdateFeedback()
+        dialog.toast({ title: t('updates.cancelled'), tone: 'amber' })
+        return
+      }
+      const terminalTitle = installResult.status === 'downloaded' ? t('settings.installerOpened')
+        : installResult.status === 'busy' ? t('updates.installInProgress') : t('settings.apkUpdateFailed')
+      const terminalTone = installResult.status === 'downloaded' ? 'mint' : installResult.status === 'busy' ? 'amber' : 'danger'
       dialog.notice({ title: terminalTitle, message: installResult.message, tone: terminalTone })
       publishApkUpdateTerminalFeedback({
         title: terminalTitle,
@@ -747,10 +798,19 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
         tone: terminalTone,
         installFlow: true,
       })
+    } catch (error) {
+      if (isCurrent()) {
+        dismissApkUpdateFeedback()
+        dialog.notice({ title: t('settings.apkUpdateFailed'), message: userFacingErrorDetail(error), tone: 'danger' })
+      }
     } finally {
-      setApkUpdateStage(null)
-      setActiveApkRelease(null)
-      setApkInstallProgress(null)
+      if (isCurrent()) {
+        apkOperationRef.current = null
+        setCancellingApk(false)
+        setApkUpdateStage(null)
+        setActiveApkRelease(null)
+        setApkInstallProgress(null)
+      }
     }
   }
 
@@ -1049,7 +1109,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   return (
     <>
         <View style={{ width: '100%', maxWidth: 860, alignSelf: 'center' }}>
-        {Object.keys(fieldSession.entries).length ? <IsleButton label={t('settingsWorkspace.unsaved')} onPress={() => {
+        {Object.keys(fieldSession.entries).length ? <IsleButton label={t(Object.values(fieldSession.entries).some(entry => entry?.error) ? 'settingsWorkspace.error' : 'settingsWorkspace.unsaved')} onPress={() => {
           const groups = Object.keys(fieldSession.entries).map(key => SETTINGS_DESTINATIONS.find(entry => entry.section === `governance.${key}`)?.parentSection).filter(Boolean)
           setExpandedGovernanceGroups(current => ({ ...current, ...Object.fromEntries(groups.map(group => [group!, true])) }))
         }} /> : null}
@@ -1783,7 +1843,12 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               {!googlePlayDistribution ? <VersionRow label={t('settings.lastCheck')} value={formatSettingsUpdateCheckTime(settings.lastApkUpdateCheckAt, t)} /> : null}
             </View>
             {googlePlayDistribution ? (
-              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('updates.googlePlayManaged')}</Text>
+              <>
+                <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('updates.googlePlayManaged')}</Text>
+                <DataButton label={t('updates.openGooglePlay')} icon={<AppIcon name="external-link" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => {
+                  void openGooglePlayListing().catch(() => dialog.toast({ title: t('updates.storeOpenFailed'), tone: 'danger' }))
+                }} />
+              </>
             ) : (
             <>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', gap: 10 }}>
@@ -1816,6 +1881,12 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                   style={{ marginTop: 8 }}
                 />
                 <Text style={{ marginTop: 4, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{updateProgressDetail}</Text>
+                {apkUpdateStage === 'downloading' || apkUpdateStage === 'verifying' ? (
+                  <IsleButton label={t(cancellingApk ? 'updates.cancelling' : 'updates.cancelDownload')} tone="soft" disabled={cancellingApk} onPress={() => {
+                    setCancellingApk(true)
+                    apkOperationRef.current?.abort()
+                  }} style={{ marginTop: 8 }} />
+                ) : null}
               </View>
             ) : null}
             </>
@@ -1961,7 +2032,7 @@ function SettingsToggleRow({
             {title}
           </Text>
           {description ? (
-            <Text numberOfLines={3} style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>
               {description}
             </Text>
           ) : null}
@@ -2085,6 +2156,7 @@ function ThemeFamilyCard({
           shadowRadius: active && radioExpression.elevation === 'layered' ? 8 : 0,
           shadowOffset: { width: 0, height: active && radioExpression.elevation === 'layered' ? 2 : 0 },
           elevation: active && radioExpression.elevation === 'layered' ? 1 : 0,
+          ...(colors.ui.liquidGlass ? glassShadowStyle(colors, active ? 'control' : 'none') : {}),
         }}
       >
         <ThemeFamilyPreview themeId={themeId} colors={previewColors} />

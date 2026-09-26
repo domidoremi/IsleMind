@@ -572,7 +572,8 @@ function createCanonicalRichRequest(
     topK: request.topK,
     reasoningEffort: request.reasoningEffort,
     maxTokens: request.maxTokens,
-    generationParameterSources: request.generationParameterSources,
+    generationParameterSources: { ...request.generationParameterSources,
+      maxTokens: request.generationParameterSources?.maxTokens === 'explicit' ? 'explicit' : 'internal-policy' },
     requestedCapabilities: requestedCapabilities.length
       ? Object.freeze(requestedCapabilities)
       : undefined,
@@ -593,6 +594,8 @@ function bindCanonicalRichToolDeclarations(
   return Object.freeze({
     request: Object.freeze({
       ...prepared.request,
+      maxTokens: canonicalRequest.maxTokens ?? prepared.request.maxTokens,
+      generationParameterSources: canonicalRequest.generationParameterSources,
       providerToolDeclarations: declarations?.length
         ? freezePreparedValue(declarations)
         : undefined,

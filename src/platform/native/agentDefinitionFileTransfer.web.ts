@@ -1,8 +1,7 @@
-import type { AgentDefinitionFilePort } from '@/modules/assistant-runtime/application/agentDefinitionManagement'
-import type { ExpoPortableDataTransferOptions } from './expoPortableDataTransfer'
+import type { ExpoPortableDataTransferOptions, ExpoPortableDataTransferPort } from './expoPortableDataTransfer'
 
 /** Browser-local files only; no fetch, upload, endpoint, credential or permission import. */
-export function createAgentDefinitionFileTransfer(options: ExpoPortableDataTransferOptions): AgentDefinitionFilePort {
+export function createAgentDefinitionFileTransfer(options: ExpoPortableDataTransferOptions): ExpoPortableDataTransferPort {
   return {
     async exportJsonFile(json) {
       const uri = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
@@ -19,7 +18,7 @@ export function createAgentDefinitionFileTransfer(options: ExpoPortableDataTrans
         const input = document.createElement('input')
         input.type = 'file'; input.accept = '.json,application/json'; input.style.display = 'none'
         let settled = false
-        const finish = (result: Awaited<ReturnType<AgentDefinitionFilePort['selectJsonFile']>>) => {
+        const finish = (result: Awaited<ReturnType<ExpoPortableDataTransferPort['selectJsonFile']>>) => {
           if (settled) return
           settled = true; signal?.removeEventListener('abort', abort); input.remove(); resolve(result)
         }

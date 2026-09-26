@@ -23,6 +23,7 @@ import {
   type ComposerPresentationState,
 } from '@/components/chat/Composer'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import type { MotionIntensity } from '@/theme/themeMotion'
@@ -611,7 +612,7 @@ function ReasoningPickerPopover({
     <Modal transparent visible={visible} animationType={motion === 'full' ? 'fade' : 'none'} statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <Pressable accessible={false} accessibilityRole="none" onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]} />
       <View pointerEvents="box-none" style={{ position: 'absolute', top: Math.max(insets.top, 8) + 8, left: 12, right: 12, bottom: bottomOffset, alignItems: 'center', justifyContent: 'flex-end' }}>
-        <View accessibilityViewIsModal style={{ width: '100%', maxWidth: 420, maxHeight: '100%', overflow: 'hidden', borderRadius: popoverRadius, backgroundColor: popoverSurface, borderWidth: popoverBorderWidth, borderColor: colors.material.sheet.border, shadowColor: colors.ui.control.shadow, shadowOpacity: popoverShadowOpacity, shadowRadius: popoverShadowOpacity ? 10 : 0, shadowOffset: { width: 0, height: popoverShadowOpacity ? 3 : 0 }, elevation: popoverShadowOpacity ? 2 : 0 }}>
+        <View accessibilityViewIsModal style={{ width: '100%', maxWidth: 420, maxHeight: '100%', overflow: 'hidden', borderRadius: popoverRadius, backgroundColor: popoverSurface, borderWidth: popoverBorderWidth, borderColor: colors.material.sheet.border, shadowColor: colors.ui.control.shadow, shadowOpacity: popoverShadowOpacity, shadowRadius: popoverShadowOpacity ? 10 : 0, shadowOffset: { width: 0, height: popoverShadowOpacity ? 3 : 0 }, elevation: popoverShadowOpacity ? 2 : 0, ...(colors.ui.liquidGlass ? glassShadowStyle(colors, 'floating') : {}) }}>
           <View style={{ minHeight: 48, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.material.sheet.border }}>
             <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800', includeFontPadding: false }}>
               {t('chat.quickReasoning')}

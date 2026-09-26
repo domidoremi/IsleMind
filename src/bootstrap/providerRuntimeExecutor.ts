@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import type { AIProvider, ChatErrorCode, ProviderOperationCode, ProviderType } from '@/types/providerContracts'
 import { st } from '@/i18n/service'
 import type { MessageUsage } from '@/types/chatContracts'
@@ -593,6 +594,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     throwIfProviderRuntimeAborted(input.controller.signal)
     if (!hasDeliverableProviderOutput(result)) {
       await recordSuccessfulProviderUsageAttempt(response, input, result.usage, 'failed', 'empty_response')
+      throwIfProviderRuntimeAborted(input.controller.signal)
       const recovered = await tryRuntimeFallback({
         req: input.req,
         status: response.status,
@@ -630,6 +632,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       latencyMs: Date.now() - startedAt,
     })
     await recordSuccessfulProviderUsageAttempt(response, input, result.usage)
+    throwIfProviderRuntimeAborted(input.controller.signal)
     void appendRuntimeLog('upstream.response', {
       conversationId: input.req.conversationId,
       providerId: input.req.provider.id,
@@ -675,9 +678,11 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
         latencyMs: Date.now() - startedAt,
       })
       await recordSuccessfulProviderUsageAttempt(response, input, result.usage)
+      throwIfProviderRuntimeAborted(input.controller.signal)
       input.onDone(withCredentialGroup(result, input.credentialGroupId))
     } else {
       await recordSuccessfulProviderUsageAttempt(response, input, result.usage, 'partial')
+      throwIfProviderRuntimeAborted(input.controller.signal)
       input.onTrace?.(createStreamModeTrace('buffered', st('providerTrace.streamBufferedFallback')))
       await retryWithoutStreaming(
         input.req,
@@ -772,6 +777,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     const citations = finalResult.citations ?? []
     if (!hasDeliverableProviderOutput(finalResult)) {
       await recordSuccessfulProviderUsageAttempt(response, input, providerUsage, 'failed', 'empty_response')
+      throwIfProviderRuntimeAborted(input.controller.signal)
       const recovered = await tryRuntimeFallback({
         req: input.req,
         status: response.status,
@@ -801,6 +807,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       latencyMs: Date.now() - startedAt,
     })
     await recordSuccessfulProviderUsageAttempt(response, input, providerUsage)
+    throwIfProviderRuntimeAborted(input.controller.signal)
     void appendRuntimeLog('upstream.response', {
       conversationId: input.req.conversationId,
       providerId: input.req.provider.id,
@@ -825,7 +832,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     }
 
     let settled = false
-    const cancelTimer = setTimeout(() => {
+    const cancelTimer = setExecutionTimeout(() => {
       if (settled) return
       settled = true
       cancel()
@@ -834,12 +841,12 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       () => {
         if (settled) return
         settled = true
-        clearTimeout(cancelTimer)
+        clearExecutionTimeout(cancelTimer)
       },
       () => {
         if (settled) return
         settled = true
-        clearTimeout(cancelTimer)
+        clearExecutionTimeout(cancelTimer)
       },
     )
   }
@@ -878,6 +885,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
             providerUsage = { ...providerUsage, ...Object.fromEntries(Object.entries(parsed.usage).filter(([, value]) => value !== undefined)) } as MessageUsage
             const attempt = successfulProviderUsageAttempts.get(response)
             if (attempt) await settleHarnessProviderUsage(input.req, attempt.target, providerUsage, ++attempt.usageSequence, false)
+            throwIfProviderRuntimeAborted(input.controller.signal)
           }
           citationCollector?.addSse(event)
           if (parsed.terminal) {
@@ -2020,6 +2028,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     throw error
   })
   await settleHarnessProviderUsage(selectedReq, selectedTarget, selectedResult.usage, 0, true)
+  throwIfProviderRuntimeAborted(input.controller.signal)
   if (!hasDeliverableProviderOutput(selectedResult)) {
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,

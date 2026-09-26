@@ -4,6 +4,116 @@
 这是发布操作说明和待确认材料，不是上架批准、已生效隐私政策或已完成的商店申报。
 当前用户尚未准备运营主体名称、公开支持邮箱或隐私政策 URL。
 
+## 本地准备状态（2026-09-24 历史记录；当前复核见下）
+
+已补齐 Expo SDK 57 要求的 6 个补丁版本，并更新 Bun lockfile。React、React Native、SVG
+通过应用根目录的 overrides 固定；postinstall 在 UI 声明构建前把相邻 RN workspace 的
+这 3 个生成依赖入口链接到宿主安装，避免 Metro 使用宿主、原生 autolinking 却发现另一版本。
+不会改写 UI 的 package.json，也不会关闭 Doctor 的重复依赖检查。
+
+相邻 `animal-island-ui` 的 ref、Input 事件与原生宽度类型已兼容宿主 RN 0.86.3；
+Jest preset 随实际安装的 RN 版本选择。这些是与应用配套的源码修改，构建副本必须包含它们。
+在两个仓库的对应修改被正常保存并提供给构建环境前，不要用远程 UI 分支的旧源码代替；
+云构建前应通过 `ANIMAL_ISLAND_UI_REF` 固定包含这些修正的完整提交 SHA。
+
+2026-09-24 直接执行的历史证据（不自动适用于后续源码）：
+
+- Bun frozen-lockfile 安装、postinstall 和 UI 声明构建通过。
+- Expo Doctor **21/21** 通过；应用 TypeScript 检查通过。
+- Play/GitHub 配置与真实 Expo manifest introspection 通过。
+- 更新服务／更新设置页 **12** 个测试、UI 集成 **14** 项检查通过。
+- UI 受影响组件 **9** 个套件、**234** 个测试通过（宿主 RN 0.86.3）。
+- Android 工具链测试、发布加固 host 测试与依赖安全回归通过。
+- 架构依赖门禁通过（含 type-only imports，无环）。
+- `ISLEMIND_DISTRIBUTION=google-play`、`EXPO_NO_DOTENV=1` 下 Android production
+  Hermes bundle 导出通过（3,679 个模块）；导出文件位于系统临时目录，没有覆盖 `android/`。
+
+以上不等于签名 AAB、最终 manifest、16 KB 原生兼容、设备/Play 安装或政策审核已通过。
+工作区另有并行的运行时修改，当前不是已冻结、已签名的发布候选。
+下面的提交前阻塞项仍然有效，尤其是尚未实现的真实应用内举报链路。
+
+### 2026-09-26 复核记录（非最终候选认证）
+
+- 应用类型检查、完整 `provider-intelligence-tests.js` 及真实 SQLite 的 **11 文件 / 78 测试**通过。
+  先前 `actual-execution-target` 的 `invalid_capacity` 失败已不再复现；不再把它列为当前阻塞。
+- 相关 Jest **16 套件 / 201 测试**通过，覆盖 Harness 预算/执行资源、执行宿主、容量门禁、
+  Android 计时/执行桥、设置草稿/指南/布局和更新隔离。这些是 host 测试，不是 TalkBack 或设备验收。
+  并行运行时改动后的复跑另有 Assistant/Tasks/Documents/Knowledge **18 套件 / 135 测试**通过；
+  两组覆盖有重叠，不应相加当作独立测试总数。
+- 架构依赖（含类型、无环）、**14/14** 架构边界及架构运行时合同通过。
+  模块边界较早输入为 **790 文件 / 0 问题**；并行改动后的最新复跑为 **794 文件 / 2 问题**：
+  `src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort.test.ts` 深层导入
+  `@/modules/tasks/runtime` 和 `@/modules/tasks/adapters/sqliteTaskStore`，违反跨模块边界。
+  需由该测试所有者通过合法入口/测试归属解决，不能豁免规则来放行。
+  离线指南 **12 章 × 3 语言**一致，指南 **10** 项测试通过。
+- 字号、无障碍焦点、Agent 执行、状态通知、高刷插件与工具链的 host 检查通过；
+  Harness/Rich 取消方向、工具权限、安全策略、预算治理及发布加固检查通过。
+  Provider 传输测试补齐了新增计时模块所需的路径别名解析，实际 loopback HTTP 测试验证
+  跨源重定向不携带请求体/合成凭据、响应后的取消与超时；没有替换真实计时实现或放宽断言。
+- 发布 readiness 的旧断言仍查找已移除的 Settings overview 实现；已改为验证实际的
+  `SettingsNavigationContent` 委托，以及返回聊天、标题和可编辑搜索，完整检查重跑通过。
+- **共享安装仍未集成字号补丁**：真实 Expo introspection 在 RN 补丁守卫处失败。
+  `LayoutMetrics` / `RootShadowNode` 缺少必需变更，`SurfaceHandler` 仍有被替代实现。
+  不能跳过守卫、只凭插件测试通过或重用旧 AAR 宣称集成完成；应在隔离副本完成安装与原生构建。
+- **隔离冷安装已通过**：全新目录、无旧 `node_modules` / `dist`，执行 Bun
+  `--no-env-file install --offline --frozen-lockfile --backend copyfile`，UI prepare 和宿主 postinstall
+  均通过，lockfile 内容未改变。随后真实 Play/GitHub Expo introspection、UI 接入 **15** 项、
+  Doctor **21/21** 及 UI 受影响组件与几何测试 **12 套件 / 312 测试**通过。
+  两个 workspace 的 RN 入口实际指向该副本的同一份已补丁 RN，不链接共享开发安装。
+  此结果验证安装、配置和 host 组件，不等于 C++/Kotlin 原生编译或设备运行通过。
+
+以上不包含真实模型调用、最终原生包、草稿/旋转/TalkBack 设备回归、后台/跨机型/长时功耗、
+正式签名或 Play 安装。没有执行提交、推送、Actions、发布或生产签名。
+期间检测到 Tasks/MCP/模型操作的并行源码变化，最新一轮验证窗口内 `package.json` 也增加了
+SQLite 测试入口；因此上述结果不是“共享工作树已经冻结”的声明。合并验收须在所有者确认边界后，
+对最终配套输入重新执行相关门禁。短暂出现的输出类型收窄错误在后续类型复跑中已消失，未由本轮改写运行时。
+
+### 配套构建输入与并发边界
+
+`prepare-animal-island-ui.js` 在相邻仓库不存在时要求完整 `ANIMAL_ISLAND_UI_REF`，
+缺失或分支名会在 clone 前拒绝；明确指定 SHA 时，已有仓库的 HEAD 和干净状态都必须匹配，
+不重置、不清理开发者改动。已有本地开发仓库可以不指定 ref，但这不代表它是该 HEAD 的精确构建。
+四个 GitHub 工作流从仓库变量 `ANIMAL_ISLAND_UI_REF` 读取配套 SHA；EAS 云环境也必须单独配置
+同名变量，不能假定 runner 环境自动传入云构建。当前配套修改尚未被授权提交，**不要用旧 HEAD
+冒充包含未提交修复的固定版本**。未设置变量时，新构建失败是有意的准备门禁，不要退回浮动分支。
+
+本地隔离验证可使用同时包含两仓库未提交改动的内容哈希副本；复制前后校验文件集合和内容，
+不复制 `.env`、签名材料、共享 `node_modules` 或旧 `android/`。内容副本不等于已提交的发布候选。
+根 `package.json` 使用 Bun 1.4.2 的 `workspaces.selfContained`，让相邻 UI 在自身 `prepare`
+期间就可解析完整依赖及 React 类型；Bun 会先执行 workspace prepare，再执行根 preinstall/postinstall，
+仅靠根 postinstall 修复链接对冷安装太迟。之后仍由既有 postinstall 统一 React/RN/SVG 的实际入口。
+不取消 UI prepare、不忽略类型错误、不修改上游 manifest，也不改变版本锁定。
+`release:source-stability` 使用与制品收据相同的两仓库输入集合，保留每次采样发现的变更，
+即使后续恢复原样也失败；采样间隙仍可能发生未观察到的变更，**通过不等于获得工作区锁**。
+并行任务必须先划分源码/设备所有权，最终构建继续使用构建前后内容校验和制品绑定，不能只看时间戳。
+
+## 动态字号修复的原生构建要求
+
+设置页动态字号修复固定在 `patches/react-native@0.86.3.patch`，由 Bun
+`patchedDependencies` 安装；没有升级 RN/Expo。它回移
+[React Native #57246](https://github.com/facebook/react-native/pull/57246)
+（`45904c866882f136edde55df2fe453327057d387`）并补齐字号变化时的根布局失效。
+仅添加 manifest `fontScale` 或 Activity 回调不能修复旧的 Yoga 测量缓存。
+
+- 在专用构建副本中执行 `bun install --frozen-lockfile`，再运行 Android prebuild 和完整原生构建。
+  `plugins/android-font-scale` 检查 RN 版本及补丁，并将新旧 RN Maven 坐标都替换为源码工程。
+  **不可复用旧 AAR/APK、Expo Go 或仅更新 JS bundle**：补丁改变 `LayoutMetrics` C++ ABI，
+  RN、Reanimated、Worklets 等原生消费者必须使用同一份头文件重编译。
+- Gradle 启动 JDK 仍按既有工具链选择；RN 源码 Kotlin 编译另需 **JDK 17 toolchain**。
+  离线构建前准备该 toolchain、NDK、CMake 和源码构建依赖缓存；不能靠换用 Maven RN 绕过缺失依赖。
+  补丁默认 CMake **3.22.1**（可用 `CMAKE_VERSION` 显式指定已验证版本）。
+  Hermes 仍使用 RN 自带 `sdks/hermes-engine/version.properties` 对应的已发布引擎，
+  默认 Hermes V1 为 `250829098.0.17`，不单独升级或重编译引擎。
+- RN CMake 编译/链接池默认各共用 **1** 个任务槽，避免 Ninja 忽略 Gradle worker 限制而耗尽内存。
+  有足够物理内存时可用 `-PislemindNativeBuildJobs=N` 调整；仍建议 Gradle `--max-workers=1`
+  和 `-Dorg.gradle.parallel=false`。PowerShell 中每个 Gradle 参数分别加引号。
+- 共享头文件也影响 iOS。插件设置 `ios.buildReactNativeFromSource=true` 和
+  `EXPO_USE_PRECOMPILED_MODULES=false`；不要用环境变量重新开启预编译 RN，或复用旧 Pods。
+  Windows 上只验证了这些配置的生成，没有进行 iOS 构建/运行验证。
+- 本次范围是离线、debug 签名的 Android 35 x86_64 隔离 QA：动态字号、指南返回、草稿及旋转。
+  不替代 arm64、真机、16 KB 设备、正式签名或 Play 验收。升级 RN 时必须重新审查并移除已被上游
+  覆盖的补丁/构建适配，重跑 `test:android-font-scale` 和同样的原生场景，不能只改版本守卫。
+
 ## 分发渠道
 
 | 项目 | GitHub APK（保持现状） | Google Play |
@@ -31,7 +141,9 @@ $node = (& mise which node).Trim()
 & $node node_modules/typescript/bin/tsc --noEmit
 & $node node_modules/jest/bin/jest.js --runInBand --runTestsByPath `
   src/platform/native/androidApkUpdates.test.ts `
-  src/components/main/SettingsScreenContent.test.tsx
+  src/components/settings/SystemSettingsPanelContent.test.tsx
+& $node scripts/isle-ui-upstream-sync-tests.js
+& $node node_modules/expo-doctor/bin/expo-doctor.js
 & $node scripts/android-build-toolchain-tests.js
 & $node scripts/android-release-hardening-tests.js
 ```
@@ -49,6 +161,8 @@ $node = (& mise which node).Trim()
 避免覆盖开发中的原生工程。以下是待执行步骤，不是已经通过的构建记录：
 
 1. 使用 `mise.toml` 的工具链、Bun frozen lockfile 和既有 postinstall 补丁。
+   从 IsleMind 根目录安装，让相邻 UI 使用同一套 React/RN/SVG；若之后在 UI 仓库独立安装依赖，
+   回到应用根目录重新执行安装。不能只重跑 Metro 就认为原生依赖已经去重。
    先执行 `node scripts/android-build-toolchain.js` 验证实际 JDK/Node/Bun。
 2. 在整个 prebuild 和 Gradle 会话中设置 `ISLEMIND_DISTRIBUTION=google-play`、
    `EXPO_NO_DOTENV=1`、`NODE_ENV=production`。
@@ -93,6 +207,7 @@ $node = (& mise which node).Trim()
 | AI 内容举报与安全措施 | 未确认存在符合 Play 要求的完整链路。需应用内对具体生成内容举报/标记，明确告知发送范围，接入真实运营接收端、失败重试和审核流程；仅本地标记、复制文本、邮件跳转或 GitHub issue 外链不能替代应用内提交。第三方/BYOK 模型也不能免除开发者责任。不要把 API key 或完整对话自动附到举报。 |
 | UI 与模型授权 | UI 上游 LICENSE 为 CC BY-NC 4.0；拟分发/商业用途授权未确认。免费上架不自动等于非商业使用；先确认许可范围，必要时取得授权。逐一核对模型、字体、图标及依赖署名；不在此认定侵权或自动替换 UI。 |
 | Data safety | 需按真实网络行为及第三方接收方填写，不因为“本地优先”或“用户自己的 Key”就声明不收集数据。参见下表。 |
+| 整体回归与配套输入 | Provider host 回归已通过，但最新模块边界检查有 2 个跨模块深层导入问题。共享安装缺少 RN 字号补丁，隔离冷安装虽通过，最终原生集成及设备回归仍待完成。两仓库未提交修改尚无可用于 CI/EAS 的已保存配套 SHA；须在授权保存后固定输入并重新验证，不能只凭 host 测试/打包通过放行。 |
 | 传输与备份 | 现有原生配置允许 cleartext、Android backup；需核对所有 provider/proxy/MCP/工具路径是否允许敏感数据经 HTTP 发送，以及 SQLite/文件备份范围。未确认前不能宣称所有数据传输加密、数据库加密或完全不离开设备。 |
 | 前台服务 | 当前插件使用 `dataSync`，音频插件还有 `mediaPlayback`。核对实际用途、用户可见启停、后台时限，并按 Console 要求提供声明/演示；不得用不相符类型维持任意后台 Agent。 |
 | 正式包与兼容性 | 尚无本次 Play 签名 AAB/Play 安装实测。当前 RN 工具链声明 targetSdk 36，但最终制品仍需验证。16 KB 严格检查是发布门槛，不能沿用旧版“第三方限制”豁免说明。 |

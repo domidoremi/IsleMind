@@ -1,4 +1,4 @@
-import type { AgentDefinition, FrozenAgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
+import type { AgentDefinition, FrozenAgentDefinition } from '@/modules/assistant-runtime'
 import { stableIdentityHash } from '@/modules/integrations'
 import type { AIProvider } from '@/types/providerContracts'
 import { buildProviderModelCapabilityMatrix, providerModelCapabilityCanBeSent } from './providerCapabilityMatrix'

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 
 import { ConversationNavigationRail } from './ConversationNavigationRail'
@@ -158,6 +159,7 @@ function ScrollToBottomControl({
                 shadowRadius: material?.shadowBlur ?? 8,
                 shadowOffset: { width: 0, height: material?.shadowOffsetY ?? 3 },
                 elevation: material?.elevation ?? 2,
+                ...(colors.ui.liquidGlass ? glassShadowStyle(colors, 'control') : {}),
                 backgroundColor: material?.background ?? colors.ui.semantic.surface.base,
               }}
             >

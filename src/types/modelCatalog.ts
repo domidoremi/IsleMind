@@ -201,6 +201,9 @@ export function mergeModelConfig(modelId: string, providerType: ProviderType, re
     contextWindow,
     maxTokens: contextWindow,
     maxOutputTokens,
+    // Do not promote legacy/display maxOutputTokens to evidence: it may have
+    // been inferred or clamped against an inferred context window.
+    outputTokenLimit: remote?.outputTokenLimit ?? base.outputTokenLimit,
     defaultMaxTokens,
     defaultTemperature: remote?.defaultTemperature ?? base.defaultTemperature,
     maxTemperature: remote?.maxTemperature ?? base.maxTemperature,
@@ -236,6 +239,7 @@ function mergeKnownModelDefaults(modelId: string, providerType: ProviderType | u
     ...remote,
     id: modelId,
     provider: providerType ?? remote.provider,
+    outputTokenLimit: remote.outputTokenLimit ?? known.outputTokenLimit,
     preferredEndpoint: hasRemoteField('preferredEndpoint') ? remote.preferredEndpoint : known.preferredEndpoint,
     reasoningMode: hasRemoteField('reasoningMode') ? remote.reasoningMode : known.reasoningMode,
     reasoningEfforts: hasRemoteField('reasoningEfforts') ? remote.reasoningEfforts : known.reasoningEfforts,
@@ -267,6 +271,7 @@ function model(
     contextWindow,
     maxTokens: contextWindow,
     maxOutputTokens,
+    outputTokenLimit: { tokens: maxOutputTokens, source: 'catalog' },
     defaultMaxTokens,
     supportsVision,
     supportsFiles,

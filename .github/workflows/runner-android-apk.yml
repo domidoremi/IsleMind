@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
+      ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}
       JAVA_TOOL_OPTIONS: --enable-native-access=ALL-UNNAMED
     steps:
       - name: Checkout

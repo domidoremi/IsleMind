@@ -3,6 +3,7 @@ import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navig
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from './glassShadowStyle'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import { IslePanel } from './Panel'
 import { IsleButton } from './Controls'
@@ -81,6 +82,7 @@ export function IsleEmptyState({ title, description, actionLabel, actionGlyph, a
             shadowRadius: glass ? 16 : monet ? 12 : 0,
             shadowOffset: { width: 0, height: glass ? 6 : 3 },
             elevation: glass ? 3 : monet ? 1 : 0,
+            ...(glass ? glassShadowStyle(colors, 'control') : {}),
           }}
         >
           {monet ? <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', top: 4, left: 10, right: 10, height: 2, borderRadius: 2, backgroundColor: colors.ui.control.focus, opacity: 0.22 }} /> : null}

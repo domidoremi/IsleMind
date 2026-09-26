@@ -4,6 +4,7 @@ import { AnimatePresence, MotiView } from 'moti'
 import { Tooltip as NativeTooltip } from 'animal-island-ui-rn'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from './glassShadowStyle'
 import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
@@ -106,6 +107,7 @@ export function IsleTooltip({
                 overflow: 'hidden',
               },
               webGlassStyle,
+              glass ? glassShadowStyle(colors, 'control') : null,
             ]}
           >
             {monet ? (

@@ -272,8 +272,8 @@ export function IsleToggle({
             </MotiView>
           ) : null}
           <View style={{ flex: 1, minWidth: 0, minHeight: description ? 38 : 40, justifyContent: 'center' }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
-            {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
+          <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+            {description ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
           </View>
           <View accessible={false} pointerEvents="none" style={{ height: 44, justifyContent: 'center' }}>
             <IsleSwitch active={active} />
@@ -414,7 +414,7 @@ export function IsleListItem({
             borderBottomWidth: danger ? 0 : family === 'liquid-glass' ? 0 : StyleSheet.hairlineWidth,
             borderColor: itemBorderColor,
             shadowColor: danger ? colors.ui.tone.danger.foreground : colors.shadowTint,
-            shadowOpacity: family === 'liquid-glass' ? 0.04 : itemShadowOpacity,
+            shadowOpacity: itemShadowOpacity,
             shadowRadius: 0,
             shadowOffset: { width: 0, height: 0 },
             elevation: 0,
@@ -441,7 +441,7 @@ export function IsleListItem({
           borderBottomWidth: danger ? 0 : family === 'liquid-glass' ? 0 : StyleSheet.hairlineWidth,
           borderColor: itemBorderColor,
           shadowColor: danger ? colors.ui.tone.danger.foreground : colors.shadowTint,
-          shadowOpacity: family === 'liquid-glass' ? 0.04 : itemShadowOpacity,
+          shadowOpacity: itemShadowOpacity,
           shadowRadius: 0,
           shadowOffset: { width: 0, height: 0 },
           elevation: 0,

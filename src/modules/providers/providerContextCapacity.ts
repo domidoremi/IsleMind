@@ -31,7 +31,8 @@ export function assertProviderResponseContextCapacity(payload: unknown): void {
 export function checkProviderContextCapacity(input: {
   body: Readonly<Record<string, unknown>>
   contextWindow: number
-  defaultOutputTokens: number
+  /** Reliable model maximum when the wire envelope has no output cap. Not an app default. */
+  modelMaxOutputTokens?: number
   providerType?: string
   model?: string
   /** Provider-specific media estimate supplied by an adapter when available. */
@@ -85,8 +86,8 @@ export function checkProviderContextCapacity(input: {
   const generation = input.body.generationConfig as Record<string, unknown> | undefined
   const outputConfig = input.body.inferenceConfig as Record<string, unknown> | undefined
   const requestedOutput = input.body.max_completion_tokens ?? input.body.max_output_tokens ?? input.body.max_tokens
-    ?? generation?.maxOutputTokens ?? outputConfig?.maxTokens ?? input.defaultOutputTokens
-  if (typeof requestedOutput !== 'number' || !Number.isSafeInteger(requestedOutput) || requestedOutput < 0) {
+    ?? generation?.maxOutputTokens ?? outputConfig?.maxTokens ?? input.modelMaxOutputTokens
+  if (typeof requestedOutput !== 'number' || !Number.isSafeInteger(requestedOutput) || requestedOutput <= 0) {
     throw new ProviderContextCapacityError('invalid_capacity')
   }
   // Thinking tokens are included in these wire output caps. They must not be

@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import { runBudgetTotals, type RunBudgetSnapshot } from './runBudget'
 
 /** One active-time deadline; no polling and no timer during human waiting. */
@@ -5,10 +6,10 @@ export function createRunBudgetDeadlines(input: {
   now(): number
   exhausted(runId: string): void | Promise<unknown>
 }) {
-  const timers = new Map<string, { timer: ReturnType<typeof setTimeout> }>()
+  const timers = new Map<string, { timer: ReturnType<typeof setExecutionTimeout> }>()
   const clear = (runId: string) => {
     const old = timers.get(runId)
-    if (old) clearTimeout(old.timer)
+    if (old) clearExecutionTimeout(old.timer)
     timers.delete(runId)
   }
   return {
@@ -16,7 +17,7 @@ export function createRunBudgetDeadlines(input: {
       clear(budget.rootRunId)
       if (!running) return
       const remaining = Math.max(0, budget.limits.activeMs - runBudgetTotals(budget, input.now()).activeMs)
-      const entry = { timer: setTimeout(() => {
+      const entry = { timer: setExecutionTimeout(() => {
         if (timers.get(budget.rootRunId) !== entry) return
         timers.delete(budget.rootRunId)
         // Durable budget admission still denies dispatch if saving the pause fails.

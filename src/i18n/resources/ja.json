@@ -76,7 +76,7 @@
     "title": "エージェント",
     "description": "ローカルのバージョン付き定義と安全上限を管理",
     "instructionsSearch": "エージェントの指示",
-    "managementOnly": "この画面は定義の管理専用です。保存やインポートでは、エージェントの選択、実行開始、バックグラウンド実行は行いません。チャットはまだこの定義を使用しません。",
+    "managementOnly": "この画面でエージェント定義を管理します。会話の「Agent タスク」からエージェントを選んでタスクを開始できます。定義の保存やインポートでは、タスクやバックグラウンド実行は自動的に開始されません。",
     "dataOnly": "ファイルはデータのみです。プロバイダーの接続先、認証情報、権限付与、実行可能なフックは含められません。インポートは新しいローカルコピーのプレビューであり、保存が必要です。",
     "create": "新規エージェント",
     "import": "JSON をインポート",
@@ -1263,6 +1263,103 @@
     "readyToSend": "送信準備中",
     "generating": "生成中",
     "responseStreaming": "回答を生成中",
+    "activity": {
+      "preparing": {
+        "active": "返信を準備中",
+        "done": "返信の準備完了",
+        "idle": "返信を準備"
+      },
+      "sending": {
+        "active": "リクエストを送信中",
+        "done": "リクエスト送信済み",
+        "idle": "リクエストを送信"
+      },
+      "waiting": {
+        "active": "モデルの応答を待機中",
+        "done": "モデルの応答を受信済み",
+        "idle": "モデルの応答を待機"
+      },
+      "thinking": {
+        "active": "思考中",
+        "done": "思考完了",
+        "idle": "思考"
+      },
+      "working": {
+        "active": "関連情報を処理中",
+        "done": "関連情報の処理完了",
+        "idle": "関連情報を処理"
+      },
+      "tool_calling": {
+        "active": "ツールを呼び出し中",
+        "done": "ツールを呼び出しました",
+        "idle": "ツールを呼び出す"
+      },
+      "tool_result": {
+        "active": "ツール結果を受信しました",
+        "done": "ツール結果を受信しました",
+        "idle": "ツール結果"
+      },
+      "generating": {
+        "active": "回答を生成中",
+        "done": "回答の生成完了",
+        "idle": "回答を生成"
+      },
+      "command": {
+        "active": "{{subject}} でコマンドを実行中",
+        "done": "{{subject}} でコマンドを実行しました",
+        "idle": "{{subject}} でコマンドを実行"
+      },
+      "edit": {
+        "active": "{{subject}} を編集中",
+        "done": "{{subject}} を編集しました",
+        "idle": "{{subject}} を編集"
+      },
+      "search": {
+        "active": "検索中",
+        "done": "検索完了",
+        "idle": "検索"
+      },
+      "retrieval": {
+        "active": "資料を検索中",
+        "done": "資料の検索完了",
+        "idle": "資料を検索"
+      },
+      "tool": {
+        "active": "{{subject}} を実行中",
+        "done": "{{subject}} を実行しました",
+        "idle": "{{subject}} を実行"
+      },
+      "tool_request": {
+        "active": "{{subject}} をリクエスト中",
+        "done": "{{subject}} をリクエストしました",
+        "idle": "{{subject}} をリクエスト"
+      },
+      "error": {
+        "active": "失敗",
+        "done": "失敗",
+        "idle": "失敗"
+      },
+      "cancelled": {
+        "active": "キャンセル済み",
+        "done": "キャンセル済み",
+        "idle": "キャンセル済み"
+      },
+      "state": {
+        "pending": "実行待ち",
+        "error": "失敗",
+        "cancelled": "キャンセル済み",
+        "skipped": "スキップしました",
+        "waiting": "確認待ち",
+        "incomplete": "未完了"
+      },
+      "detail": {
+        "summary": "思考の要約",
+        "input": "入力",
+        "output": "結果"
+      },
+      "expand": "この項目の詳細を展開",
+      "collapse": "この項目の詳細を折りたたむ"
+    },
     "lifecycle": {
       "preparing": "回答を準備中",
       "sending": "リクエストを送信中",
@@ -1581,7 +1678,7 @@
     "localKnowledge": "ローカルナレッジ",
     "webSearch": "Web 検索",
     "modelContextCompression": "現在のモデルでコンテキストを圧縮",
-    "modelContextCompressionHint": "プロバイダーがネイティブ圧縮に対応しない場合、選択中のモデルが以前の会話を要約します。圧縮ごとにリクエストが 1 回追加され使用量に計上されます。オフのときはローカル構造化圧縮を使用します。",
+    "modelContextCompressionHint": "モデルによる圧縮は追加リクエストを行い、料金が発生する場合があります。オフのときはローカル構造化圧縮を使います。",
     "systemStatusNotifications": "システム状態通知",
     "systemStatusNotificationsDescription": "生成中の状態を Android 通知に表示します。対応システムでは上部カプセルとして表示される場合があります。通知は状態表示のみで、バックグラウンド生成や返信受信を保証しません。",
     "systemStatusNotificationsStatusChecking": "このデバイスのシステム通知機能を確認しています。通知はバックグラウンド生成を保証しません。",
@@ -2368,6 +2465,7 @@
     "importDoneMessage": "{{count}} 件のプロバイダーをインポートしました。既定では無効です。",
     "importFailed": "インポートに失敗しました",
     "importFailedMessage": "インポートは完了しませんでした。内容を確認して再試行してください。",
+    "importSavePending": "設定は適用されましたが、保存は完了していません。再試行しても重複してインポートされません。閉じても適用済みの設定は元に戻りません。",
     "importProgress": {
       "parsing": "インポート内容を解析中",
       "saving": "プロバイダーを保存中",
@@ -3175,6 +3273,12 @@
     }
   },
   "updates": {
+    "cancelDownload": "ダウンロード・検証をキャンセル",
+    "cancelling": "キャンセル中…",
+    "cancelled": "更新をキャンセルしました。再確認してダウンロードをやり直せます。",
+    "installInProgress": "別の更新が進行中です。しばらくしてから再試行してください。",
+    "openGooglePlay": "Google Play で更新",
+    "storeOpenFailed": "Google Play を開けませんでした。ストアで IsleMind を検索してください。",
     "googlePlayManaged": "アプリの更新は Google Play で管理してください。このバージョンは外部 APK の更新確認、ダウンロード、インストールを行いません。",
     "never": "未実行",
     "unknown": "不明",
@@ -3745,6 +3849,7 @@
     "editOverride": "料金を編集",
     "deleteOverride": "料金を削除",
     "noOverrides": "カスタム料金はありません",
+    "pricingRequiresModel": "料金を追加する前に、「プロバイダー」で接続先と選択可能なモデルを追加してください。",
     "inputPrice": "入力料金",
     "outputPrice": "出力料金",
     "selectProvider": "プロバイダーを選択",
@@ -3819,6 +3924,7 @@
     "itemCount": "設定 {{count}} 項目",
     "closeManual": "ガイドを閉じる",
     "contents": "目次",
+    "chapterContents": "この章の目次",
     "searchManual": "ガイドを検索",
     "notFound": "章が見つかりません",
     "offline": "オフラインで利用可能",

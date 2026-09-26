@@ -1,4 +1,4 @@
-import { createAgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
+import { createAgentDefinition } from '@/modules/assistant-runtime'
 import { agentDefinitionFromForm, agentDefinitionToForm } from './agentDefinitionForm'
 
 const definition = () => createAgentDefinition({ id: 'agent', name: 'Research', providerId: 'provider', modelId: 'model' })

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/appFeedbackState'
 import { resolveAppFeedbackTimeout } from '@/components/ui/appFeedbackTimeout'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 
@@ -498,7 +499,7 @@ function AppBannerViewport({
           from={feedbackMotion.from}
           animate={feedbackMotion.animate}
           transition={feedbackMotion.transition}
-          style={{ position: 'absolute', bottom: insets.bottom + 14, left: 0, right: 0, zIndex: 980, elevation: 11, alignItems: 'center', paddingHorizontal: 16, gap: 8 }}
+          style={{ position: 'absolute', bottom: insets.bottom + 14, left: 0, right: 0, zIndex: 980, elevation: colors.ui.liquidGlass ? 0 : 11, alignItems: 'center', paddingHorizontal: 16, gap: 8 }}
         >
           {banners.map((banner) => {
             const tone = banner.tone ?? 'default'
@@ -509,7 +510,7 @@ function AppBannerViewport({
                 accessible
                 accessibilityRole="alert"
                 accessibilityLiveRegion={isDangerTone(tone) ? 'assertive' : 'polite'}
-                style={{ width: '100%', maxWidth: 560, minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 0, borderLeftWidth: 3, borderColor: token.border, borderLeftColor: token.foreground, borderRadius: 6, backgroundColor: colors.ui.semantic.chrome.background, paddingLeft: 11, paddingRight: 6, paddingVertical: 8, shadowColor: colors.shadowTint, shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } }}
+                style={{ width: '100%', maxWidth: 560, minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 0, borderLeftWidth: 3, borderColor: token.border, borderLeftColor: token.foreground, borderRadius: 6, backgroundColor: colors.ui.semantic.chrome.background, paddingLeft: 11, paddingRight: 6, paddingVertical: 8, shadowColor: colors.shadowTint, shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, ...(colors.ui.liquidGlass ? glassShadowStyle(colors) : {}) }}
               >
                 <AppIcon name={toastIconName(tone)} color={token.foreground} size={17} strokeWidth={appIconStroke.strong} />
                 <View style={{ flex: 1, minWidth: 0 }}>

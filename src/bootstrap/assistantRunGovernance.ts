@@ -1,14 +1,10 @@
-import { createSqliteRunBudgetStore, RunBudgetAdmissionError, type AssistantRunGovernance } from '@/modules/assistant-runtime'
+import { createSqliteRunBudgetStore, createRunBudgetDeadlines, projectRunSnapshot, RunBudgetAdmissionError, type AssistantRunGovernance } from '@/modules/assistant-runtime'
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
-import { assertExecutionResourcesAvailable, executionSqliteMaintenance, SqliteMaintenanceAdmissionError } from './executionResources'
+import { assertExecutionResourcesAvailable, executionResources, executionSqliteMaintenance, SqliteMaintenanceAdmissionError } from './executionResources'
 import { assistantExecutionHost } from './assistantExecutionHostRuntime'
-import { projectRunSnapshot } from '@/modules/assistant-runtime/harnessCheckpoint'
-import { createRunBudgetDeadlines } from '@/modules/assistant-runtime/application/runBudgetDeadline'
-import type { AssistantRunId } from '@/core'
-import { ExecutionResourceError } from '@/modules/tasks/application/executionResources'
-import { ProviderContextCapacityError } from '@/modules/providers/providerContextCapacity'
-import { ProviderExecutionTargetObserverError } from '@/modules/providers'
-import { ProviderResponseLimitError } from '@/modules/providers/providerTransportUtils'
+import { JsonTextBudgetError, type AssistantRunId } from '@/core'
+import { ExecutionResourceError } from '@/modules/tasks'
+import { ProviderContextCapacityError, ProviderExecutionTargetObserverError, ProviderResponseLimitError } from '@/modules/providers'
 
 let pauseBudgetRun: ((id: AssistantRunId) => Promise<unknown>) | undefined
 export function bindBudgetDeadlinePause(handler: NonNullable<typeof pauseBudgetRun>) { pauseBudgetRun = handler }
@@ -17,6 +13,13 @@ const deadlines = createRunBudgetDeadlines({ now: Date.now, exhausted: (id) => p
 export const assistantRunBudgetStore = createSqliteRunBudgetStore(createExpoSqliteDatabaseProvider())
 
 export const assistantRunGovernance: AssistantRunGovernance = {
+  executionStarted: (scope) => assistantExecutionHost.executionStarted(scope),
+  reserveText: (bytes) => executionResources.reserveText(bytes),
+  reserveStopText: (bytes) => executionResources.reserveStopText(bytes),
+  async recoverInterrupted(isActiveRoot) {
+    const recovered = await assistantRunBudgetStore.recoverActiveTime(isActiveRoot)
+    for (const rootRunId of recovered) if (!isActiveRoot(rootRunId)) deadlines.clear(rootRunId)
+  },
   async created(run) {
     assertExecutionResourcesAvailable()
     if (run.parentRunId) await assistantRunBudgetStore.attach(run.rootRunId!, run.id)
@@ -48,6 +51,7 @@ export const assistantRunGovernance: AssistantRunGovernance = {
     for (let depth = 0; depth < 4 && error instanceof ProviderExecutionTargetObserverError; depth++) error = error.cause
     if (error instanceof RunBudgetAdmissionError) return error.reason === 'price_unknown' ? 'price_unknown' : 'budget_exhausted'
     if (error instanceof ExecutionResourceError) return 'memory_pressure'
+    if (error instanceof JsonTextBudgetError) return 'memory_pressure'
     if (error instanceof ProviderResponseLimitError) return 'memory_pressure'
     if (error instanceof ProviderContextCapacityError) return 'context_capacity'
     if (error instanceof SqliteMaintenanceAdmissionError) return 'storage_pressure'

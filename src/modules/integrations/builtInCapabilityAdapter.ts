@@ -1,3 +1,4 @@
+import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import type { JsonRecord } from '@/core'
 
 import type {
@@ -51,6 +52,7 @@ import {
   truncatePublicText,
   utf8ByteLength,
 } from './builtInCapabilityPolicy'
+import { compareWorkspacePaths, normalizeWorkspaceQuery, WORKSPACE_QUERY_PAGE_CHARS, WORKSPACE_QUERY_SNIPPET_CHARS } from './builtInWorkspaceQuery'
 import { normalizeExternalToolExecutionResult } from './externalToolObservation'
 
 const SEARCH_SNIPPET_LIMIT = 4_000
@@ -75,6 +77,9 @@ export function listRunnableBuiltInCapabilityToolNames(
         return dependencies.workspaceFileRead !== undefined || dependencies.workspaceFiles !== undefined
       case 'edit_file':
         return dependencies.workspaceFiles !== undefined
+      case 'list_files':
+      case 'search_files':
+        return dependencies.workspaceFileQuery !== undefined
     }
   })
 }
@@ -144,6 +149,9 @@ export function createBuiltInCapabilityAdapter(
             return await executeWebCrawl(toolId, request.arguments, dependencies, options.signal, startedAt)
           case 'read_file':
             return await executeFileRead(toolId, request.arguments, dependencies, options.signal, startedAt)
+          case 'list_files':
+          case 'search_files':
+            return await executeFileQuery(toolId, name, request.arguments, dependencies, options.signal, startedAt)
           case 'edit_file':
             return await executeFileEdit(
               toolId,
@@ -519,6 +527,45 @@ function hasUnsafeRemoteCrawlText(input: string): boolean {
   return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(input)
 }
 
+async function executeFileQuery(
+  toolId: string,
+  name: 'list_files' | 'search_files',
+  argumentsValue: JsonRecord,
+  dependencies: BuiltInCapabilityAdapterDependencies,
+  signal: AbortSignal,
+  startedAt: number,
+): Promise<BuiltInCapabilityExecutionResult> {
+  const files = dependencies.workspaceFileQuery
+  if (!files) throw unavailable('Workspace discovery is unavailable on this runtime.')
+  if (name === 'search_files' && typeof argumentsValue.query !== 'string') {
+    throw new BuiltInCapabilityPolicyError('schema_invalid', 'A literal search query is required.')
+  }
+  const query = normalizeWorkspaceQuery({ ...argumentsValue, query: name === 'search_files' ? argumentsValue.query : undefined })
+  const page = await runWithDeadline(signal, 10_000, operationSignal => files.queryFiles(query, { signal: operationSignal }))
+  const invalidPage = () => new BuiltInCapabilityPolicyError('execution_failed', 'The workspace returned an invalid discovery page.')
+  if (!page || !Array.isArray(page.files) || page.files.length > query.limit) throw invalidPage()
+  let previousPath = query.afterPath ?? ''
+  for (const file of page.files) {
+    if (!file || typeof file.relativePath !== 'string' || !file.relativePath.startsWith(`${query.directory}/`) ||
+      normalizeWorkspaceRelativePath(file.relativePath) !== file.relativePath || compareWorkspacePaths(file.relativePath, previousPath) <= 0 ||
+      typeof file.mimeType !== 'string' || file.mimeType.length > 128) throw invalidPage()
+    validateWorkspaceFileInfo(file, file.relativePath, BUILT_IN_FILE_READ_MAX_BYTES)
+    assertTextFileMimeType(file.mimeType)
+    if (name === 'search_files' && (typeof file.snippet !== 'string' || file.snippet.length > WORKSPACE_QUERY_SNIPPET_CHARS * 2)) throw invalidPage()
+    previousPath = file.relativePath
+  }
+  if (page.nextAfterPath !== undefined && (!page.files.length || page.nextAfterPath !== page.files[page.files.length - 1].relativePath)) throw invalidPage()
+  // Copy only the public fields; a platform adapter cannot smuggle extra data.
+  const output = JSON.stringify({ ...(page.nextAfterPath ? { nextAfterPath: page.nextAfterPath } : {}),
+    files: page.files.map(file => ({ relativePath: file.relativePath, revision: file.revision, byteLength: file.byteLength, mimeType: file.mimeType,
+      ...(name === 'search_files' ? { snippet: file.snippet } : {}) })) })
+  if (output.length > WORKSPACE_QUERY_PAGE_CHARS) throw invalidPage()
+  return successResult({ toolId, name, summary: `${name === 'search_files' ? 'Found' : 'Listed'} ${page.files.length} workspace file(s) on this page.`,
+    blocks: [{ type: 'text', text: output, mimeType: 'application/json', name: 'workspace-file-page' }],
+    metadata: { workspaceScopeFingerprint: stablePrivateFingerprint(files.workspaceScopeId), hasMore: !!page.nextAfterPath, fileCount: page.files.length },
+    startedAt, dependencies })
+}
+
 async function executeFileRead(
   toolId: string,
   argumentsValue: JsonRecord,
@@ -553,7 +600,10 @@ async function executeFileRead(
     toolId,
     name: 'read_file',
     summary: `Read ${measuredBytes} byte(s) from a workspace text file.`,
-    blocks: [{ type: 'text', text: read.text, mimeType, name: 'workspace-text' }],
+    blocks: [
+      { type: 'text', text: JSON.stringify({ relativePath, revision: read.revision, byteLength: measuredBytes, mimeType }), mimeType: 'application/json', name: 'workspace-file-info' },
+      { type: 'text', text: read.text, mimeType, name: 'workspace-text' },
+    ],
     metadata: {
       workspaceScopeFingerprint: stablePrivateFingerprint(files.workspaceScopeId),
       pathFingerprint: stablePrivateFingerprint(relativePath),
@@ -780,7 +830,10 @@ function projectFileEditResult(input: {
     summary: result.status === 'replayed'
       ? 'Reused the durable receipt for an already-applied workspace file edit.'
       : 'Applied an atomic preconditioned workspace file edit.',
-    blocks: [{ type: 'text', text: result.status === 'replayed' ? 'File edit already applied.' : 'File edit applied.' }],
+    blocks: [{ type: 'text', name: 'workspace-edit-receipt', mimeType: 'application/json', text: JSON.stringify({
+      status: result.status, relativePath: input.relativePath, previousRevision: input.expectedRevision,
+      revision: result.revision, byteLength: result.byteLength, mimeType: input.expectedMimeType,
+    }) }],
     metadata: {
       workspaceScopeFingerprint: stablePrivateFingerprint(input.files.workspaceScopeId),
       pathFingerprint: stablePrivateFingerprint(input.relativePath),
@@ -1079,7 +1132,7 @@ function runWithDeadline<T>(
     const settle = (callback: () => void): void => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      clearExecutionTimeout(timer)
       parentSignal.removeEventListener('abort', onAbort)
       callback()
     }
@@ -1089,7 +1142,7 @@ function runWithDeadline<T>(
       error.name = 'AbortError'
       settle(() => reject(error))
     }
-    const timer = setTimeout(() => {
+    const timer = setExecutionTimeout(() => {
       controller.abort(new Error('Tool operation timed out.'))
       settle(() => reject(new BuiltInCapabilityPolicyError(
         'timed_out',

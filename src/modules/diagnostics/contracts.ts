@@ -187,6 +187,8 @@ export interface UsageStatisticsSnapshot {
   records: UsageRecordPage
 }
 
+export const USAGE_PRICING_CONFLICT = 'usage_pricing_conflict'
+
 export interface UsageRecordRepository {
   append(record: UsageRecord): Promise<boolean>
   importOnce(markerId: string, records: readonly UsageRecord[]): Promise<boolean>
@@ -194,7 +196,7 @@ export interface UsageRecordRepository {
   listAll(filter?: UsageRecordFilter): Promise<readonly UsageRecord[]>
   listRollups(filter?: UsageRecordFilter): Promise<readonly UsageDailyRollup[]>
   listPricingEntries(): Promise<readonly UsagePricingEntry[]>
-  savePricingEntry(entry: UsagePricingEntry): Promise<void>
+  savePricingEntry(entry: UsagePricingEntry, expectedRevision?: string): Promise<void>
   deletePricingEntry(id: string): Promise<void>
   compactBefore(cutoff: number): Promise<void>
   clear(): Promise<void>
@@ -219,7 +221,7 @@ export interface UsageStatisticsService {
   record(record: UsageRecord): Promise<boolean>
   snapshot(request?: UsageRecordPageRequest): Promise<UsageStatisticsSnapshot>
   listPricingEntries(): Promise<readonly UsagePricingEntry[]>
-  savePricingEntry(entry: UsagePricingEntry): Promise<void>
+  savePricingEntry(entry: UsagePricingEntry, expectedRevision?: string): Promise<void>
   deletePricingEntry(id: string): Promise<void>
   export(filter: UsageRecordFilter | undefined, format: 'csv' | 'json'): Promise<string>
   runRetention(now?: number): Promise<void>

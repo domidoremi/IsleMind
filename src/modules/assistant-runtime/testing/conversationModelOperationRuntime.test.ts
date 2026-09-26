@@ -1,13 +1,13 @@
 import { asAssistantRunId, asContextSnapshotId, CHAT_REQUEST_SCHEMA, type ChatRequest } from '@/core'
-import { createAgentDefinition, freezeAgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
+import { createAgentDefinition, freezeAgentDefinition } from '../agentDefinition'
 import type { AssistantRun } from '@/modules/assistant-runtime'
 import { createModelOperationCatalogSnapshot, formatTaggedModelOperationPrompt, type ModelOperationDescriptor } from '@/modules/integrations'
-import { createConversationModelOperationSession, type ConversationModelOperationRuntimeInput, type ConversationModelOperationSessionDependencies } from './conversationModelOperationRuntime'
-import { resolveAgentModelBinding } from './agentModelBinding'
+import { createConversationModelOperationSession, type ConversationModelOperationRuntimeInput, type ConversationModelOperationSessionDependencies } from '@/bootstrap/conversationModelOperationRuntime'
+import { resolveAgentModelBinding } from '@/bootstrap/agentModelBinding'
 import { KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST } from '@/modules/knowledge'
-import { createAssistantRuntime } from '@/modules/assistant-runtime/runtime'
-import { createInMemoryRunStore } from '@/modules/assistant-runtime/testing/inMemoryRunStore'
-import { DELEGATE_OPERATION } from '@/modules/assistant-runtime/agentCollaboration'
+import { createAssistantRuntime } from '../runtime'
+import { createInMemoryRunStore } from './inMemoryRunStore'
+import { DELEGATE_OPERATION } from '../agentCollaboration'
 
 async function fixture(permission: 'read-only' | 'read-write' = 'read-write', includeTrustedRead = false) {
   const descriptors: ModelOperationDescriptor[] = [includeTrustedRead ? KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST.id : 'first', 'second'].map((id) => ({ id, name: id, description: id,
@@ -62,6 +62,112 @@ test('decline does not create or dispatch a task', async () => {
   const result = await f.session.resume({ run: f.run, pending: pending.pending, approved: false, signal: new AbortController().signal })
   expect(result.kind).toBe('continue')
   expect(f.executeExternal).not.toHaveBeenCalled()
+})
+
+test.each(['native', 'tagged'] as const)('LLM → Harness → local executor → receipt → LLM repeats until final output (%s)', async mode => {
+  const f = await fixture('read-only')
+  const persistence = createInMemoryRunStore()
+  const catalog = createModelOperationCatalogSnapshot(f.descriptors)
+  if (!catalog.ok) throw new Error(catalog.message)
+  let turns = 0
+  const operations = ['first', 'second']
+  f.executeExternal.mockImplementation(async () => {
+    const entries = await persistence.list(asAssistantRunId('loop'))
+    expect(entries.at(-1)?.data?.operation).toMatchObject({ operationId: operations[turns - 1] })
+    return { observation: { ok: turns !== 1, output: turns === 1 ? 'Not found; try the second source.' : 'Found the answer.', metadata: { taskId: 'task', taskStatus: turns === 1 ? 'failed' : 'succeeded' } } }
+  })
+  const runtime = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => 'loop' },
+    providerGateway: { describe: () => undefined, async *stream(request) {
+      ++turns
+      if (turns > 1) {
+        const feedback = request.messages.at(-1)!.text
+        expect(feedback).toContain(turns === 2 ? 'Not found' : 'Found the answer')
+        expect(feedback).toContain(turns === 2 ? '"status":"failed"' : '"status":"succeeded"')
+        if (mode === 'tagged') expect(feedback).toContain('Decide the next permitted operation')
+      }
+      if (turns === 3) { yield { type: 'text-delta', text: 'Verified answer from the second source.' }; return }
+      const operationId = operations[turns - 1]
+      if (mode === 'native') yield { type: 'tool-call', toolCallId: `call-${turns}`, toolName: request.toolDefinitions!.find(tool => tool.operationId === operationId)!.name, arguments: { target: 'item' } }
+      else yield { type: 'text-delta', text: `<islemind_tool_call>${JSON.stringify({ schema: 'islemind.model-tool-call.v1', catalogRevision: catalog.snapshot.revision, operationId, arguments: { target: 'item' } })}</islemind_tool_call>` }
+    } },
+  })
+  const result = await runtime.execute({ runId: asAssistantRunId('loop'), request: f.request, modelOperationSession: f.session,
+    context: { schema: 'islemind.context-snapshot.v1', id: asContextSnapshotId('context'), createdAt: 1,
+      conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [] } })
+  expect(result.ok && result.value.result?.outputText).toBe('Verified answer from the second source.')
+  expect(turns).toBe(3)
+  expect(f.executeExternal).toHaveBeenCalledTimes(2)
+  expect((await persistence.list(asAssistantRunId('loop'))).filter(entry => entry.type === 'model-operation.selected')
+    .map(entry => (entry.data?.receipt as { status: string }).status)).toEqual(['failed', 'succeeded'])
+})
+
+test.each(['persistence-failure', 'cancelled'] as const)('an activity boundary cannot dispatch after %s', async reason => {
+  const f = await fixture('read-only')
+  const controller = new AbortController()
+  const input = { ...f.turn(), signal: controller.signal, onOperationStarted: async () => {
+    if (reason === 'persistence-failure') throw new Error('disk full')
+    controller.abort()
+  } }
+  await expect(f.session.evaluateTurn(input)).rejects.toThrow()
+  expect(f.executeExternal).not.toHaveBeenCalled()
+})
+
+test.each(['native', 'tagged'] as const)('model continuation receives actual file content and revision, not just a success summary (%s)', async mode => {
+  const f = await fixture('read-only')
+  const revision = `sha256:${'a'.repeat(64)}`
+  const content = 'The next lookup target is local-file-42.'
+  f.executeExternal.mockResolvedValue({ observation: { ok: true, output: 'Read a workspace text file.', metadata: { taskId: 'task', taskStatus: 'succeeded' },
+    blocks: [
+      { type: 'text', text: JSON.stringify({ relativePath: 'workspace/notes.txt', revision }), name: 'workspace-file-info' },
+      { type: 'text', text: content, name: 'workspace-text' },
+      { type: 'image', data: 'never-inline-binary', mimeType: 'image/png' },
+    ],
+  } } as never)
+  const persistence = createInMemoryRunStore()
+  const catalog = createModelOperationCatalogSnapshot(f.descriptors)
+  if (!catalog.ok) throw new Error(catalog.message)
+  let turns = 0
+  const runtime = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => 'file-loop' },
+    providerGateway: { describe: () => undefined, async *stream(request) {
+      if (++turns === 1) {
+        if (mode === 'native') yield { type: 'tool-call', toolCallId: 'read', toolName: request.toolDefinitions![0].name, arguments: { target: 'workspace/notes.txt' } }
+        else yield { type: 'text-delta', text: `<islemind_tool_call>${JSON.stringify({ schema: 'islemind.model-tool-call.v1', catalogRevision: catalog.snapshot.revision, operationId: 'first', arguments: { target: 'workspace/notes.txt' } })}</islemind_tool_call>` }
+        return
+      }
+      const feedback = request.messages.at(-1)!.text
+      expect(feedback).toContain(revision)
+      expect(feedback).toContain(content)
+      expect(feedback).not.toContain('never-inline-binary')
+      yield { type: 'text-delta', text: 'Use local-file-42 and the observed revision.' }
+    } },
+  })
+  const result = await runtime.execute({ request: f.request, modelOperationSession: f.session,
+    context: { schema: 'islemind.context-snapshot.v1', id: asContextSnapshotId('context'), createdAt: 1,
+      conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [] } })
+  expect(result).toMatchObject({ ok: true, value: { status: 'succeeded' } })
+  expect(turns).toBe(2)
+})
+
+test('oversized tool blocks are explicitly bounded without JSON-serializing binary or private adapter metadata', async () => {
+  const f = await fixture('read-only')
+  f.executeExternal.mockResolvedValue({ observation: { ok: true, output: 'Summary', metadata: { taskId: 'task', taskStatus: 'succeeded', privateData: 'not-for-model' },
+    blocks: [{ type: 'text', text: 'x'.repeat(30_000) }, { type: 'image', data: 'not-for-model' }],
+  } } as never)
+  const outcome = await f.session.evaluateTurn(f.turn())
+  expect(outcome.kind).toBe('continue')
+  if (outcome.kind !== 'continue') throw new Error('Expected a continuation')
+  if (typeof outcome.receipt.output !== 'string') throw new Error('Expected text receipt')
+  expect(outcome.receipt.output.length).toBeLessThanOrEqual(4_800)
+  expect(outcome.receipt.output).toContain('[tool output truncated]')
+  expect(outcome.receipt.output).not.toContain('not-for-model')
+})
+
+test.each(['failed', 'cancelled', 'awaiting-confirmation', 'running'] as const)('an ok adapter flag cannot override the actual task status %s', async taskStatus => {
+  const f = await fixture('read-only')
+  f.executeExternal.mockResolvedValue({ observation: { ok: true, output: 'receipt', metadata: { taskId: 'task', taskStatus } } })
+  const result = await f.session.evaluateTurn(f.turn())
+  expect(result.kind).toBe(taskStatus === 'cancelled' ? 'cancelled' : taskStatus === 'awaiting-confirmation' ? 'awaiting-confirmation' : 'continue')
+  if (result.kind !== 'no-operation') expect(result.receipt.status).not.toBe('succeeded')
 })
 
 test('agent catalogs only narrow and an empty parent knowledge scope cannot be widened', async () => {

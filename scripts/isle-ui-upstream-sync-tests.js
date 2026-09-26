@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { parse } = require('@babel/parser')
-const { prepareAnimalIslandUi } = require('./prepare-animal-island-ui')
+const { prepareAnimalIslandUi, linkAnimalIslandUiRuntimes, sharedRuntimes } = require('./prepare-animal-island-ui')
 const { collectReleaseInputFiles } = require('./release-freshness-contract')
 
 const root = path.resolve(__dirname, '..')
@@ -20,7 +20,8 @@ function check(name, run) {
 
 check('workspace resolves directly to the sibling RN fork', () => {
   assert.equal(manifest.dependencies['animal-island-ui-rn'], 'workspace:*')
-  assert.ok(manifest.workspaces.includes('../animal-island-ui'))
+  assert.deepEqual(manifest.workspaces.packages, ['../animal-island-ui'])
+  assert.deepEqual(manifest.workspaces.selfContained, ['animal-island-ui-rn'], 'the outside-root workspace must resolve dependencies during prepare, before host postinstall links runtimes')
   assert.equal(fs.realpathSync(fork), fs.realpathSync(path.resolve(root, '../animal-island-ui')))
   assert.equal(forkManifest['react-native'], 'src/index.ts')
   assert.equal(forkManifest.exports['.'].browser, './src/index.ts')
@@ -67,6 +68,15 @@ check('Metro shares host runtimes and preserves platform resolution', () => {
   assert.ok(JSON.parse(read('tsconfig.json')).compilerOptions.paths.react.every((target) => target.endsWith('.d.ts')))
 })
 
+check('native autolinking and the sibling compiler share the installed host runtimes', () => {
+  for (const name of sharedRuntimes) {
+    assert.equal(manifest.overrides[name], `$${name}`)
+    assert.equal(fs.realpathSync(path.join(fork, 'node_modules', name)), fs.realpathSync(path.join(root, 'node_modules', name)))
+  }
+  const postinstall = manifest.scripts.postinstall
+  assert.ok(postinstall.indexOf('--link-runtimes') >= 0 && postinstall.indexOf('--link-runtimes') < postinstall.indexOf('build:ui'))
+})
+
 check('theme transition rendering belongs to the fork, not a duplicate app port', () => {
   assert.ok(readFork('src/index.ts').includes('ThemeTransitionProvider, useThemeTransition'))
   assert.ok(read('src/components/ui/isle/IsleThemeProvider.tsx').includes('<ThemeTransitionProvider reducedMotion='))
@@ -81,7 +91,7 @@ check('custom settings radios share the fork keyboard group without a local impl
   const group = readFork('src/components/Radio/RadioGroup.tsx')
   assert.ok(group.includes("Platform.OS === 'web'"))
   assert.ok(group.includes('accessible={false}'))
-  for (const file of ['src/components/main/SettingsScreenContent.tsx', 'src/components/settings/SettingsThemeAccentControl.tsx']) {
+  for (const file of ['src/components/settings/SystemSettingsPanelContent.tsx', 'src/components/settings/SettingsThemeAccentControl.tsx']) {
     const source = read(file)
     assert.ok(source.includes("import { RadioGroup } from 'animal-island-ui-rn'"))
     assert.ok(source.includes('<RadioGroup'))
@@ -109,6 +119,7 @@ check('install builds declarations and release freshness includes the fork', () 
     const source = read('.github/workflows/' + workflow + '.yml')
     const prepare = source.indexOf('node scripts/prepare-animal-island-ui.js')
     assert.ok(prepare >= 0 && prepare < source.indexOf('bun install --frozen-lockfile'))
+    assert.ok(source.includes('ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}'), 'each runner must pass the configured full paired UI revision')
   }
   assert.ok(collectReleaseInputFiles(root).includes(path.resolve(fork, 'src/components/Button/Button.tsx')))
 })
@@ -122,12 +133,113 @@ check('CI bootstrap preserves existing work and rejects the Web branch', () => {
     fs.mkdirSync(sibling)
     const manifestPath = path.join(sibling, 'package.json')
     fs.writeFileSync(manifestPath, JSON.stringify({ name: 'animal-island-ui' }))
-    const git = (...args) => { assert.deepEqual(args.slice(0, 2), ['git', ['-C', sibling, 'rev-parse', 'HEAD']]); return 'a'.repeat(40) }
-    assert.throws(() => prepareAnimalIslandUi({ root: app, git }), /Use the rn branch/)
+    let dirty = ''
+    const git = (executable, args) => {
+      assert.equal(executable, 'git')
+      assert.deepEqual(args.slice(0, 2), ['-C', sibling])
+      if (args[2] === 'status') { assert.deepEqual(args.slice(2), ['status', '--porcelain', '--untracked-files=all']); return dirty }
+      assert.deepEqual(args.slice(2), ['rev-parse', 'HEAD'])
+      return 'a'.repeat(40)
+    }
+    assert.throws(() => prepareAnimalIslandUi({ root: app, ref: '', git }), /Use the rn branch/)
     fs.writeFileSync(manifestPath, JSON.stringify(forkManifest))
-    assert.equal(prepareAnimalIslandUi({ root: app, git }), sibling)
+    assert.equal(prepareAnimalIslandUi({ root: app, ref: '', git }), sibling)
+    assert.equal(prepareAnimalIslandUi({ root: app, ref: 'a'.repeat(40), git }), sibling)
+    for (const status of [' M src/index.ts', '?? src/new.ts']) {
+      dirty = status
+      assert.throws(() => prepareAnimalIslandUi({ root: app, ref: 'a'.repeat(40), git }), /matching HEAD alone/)
+      assert.equal(prepareAnimalIslandUi({ root: app, ref: '', git }), sibling, 'uncommitted local development remains supported without claiming a pinned build')
+    }
     assert.throws(() => prepareAnimalIslandUi({ root: app, ref: 'b'.repeat(40), git }), /left untouched/)
     assert.deepEqual(JSON.parse(fs.readFileSync(manifestPath)), forkManifest)
+  } finally {
+    assert.equal(path.dirname(temp), path.resolve(os.tmpdir()))
+    assert.ok(path.basename(temp).startsWith('islemind-ui-contract-'))
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+check('new workspaces require a full ref before any network or filesystem effect', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-ui-pinning-'))
+  try {
+    const app = path.join(temp, 'app')
+    const sibling = path.join(temp, 'animal-island-ui')
+    fs.mkdirSync(app)
+    const git = () => { throw new Error('No git call is allowed for an unpinned checkout') }
+    assert.throws(() => prepareAnimalIslandUi({ root: app, ref: '', git }), /is required/)
+    for (const ref of ['rn', 'main', 'a'.repeat(7), '--upload-pack=unexpected']) {
+      assert.throws(() => prepareAnimalIslandUi({ root: app, ref, git }), /full commit SHA/)
+    }
+    assert.equal(fs.existsSync(sibling), false)
+    const ref = 'c'.repeat(40)
+    const calls = []
+    const pinnedGit = (executable, args) => {
+      assert.equal(executable, 'git')
+      calls.push(args)
+      if (args[0] === 'clone') {
+        assert.equal(args.at(-1), sibling)
+        fs.mkdirSync(sibling)
+        fs.writeFileSync(path.join(sibling, 'package.json'), JSON.stringify(forkManifest))
+      }
+      return args.includes('rev-parse') ? ref : ''
+    }
+    assert.equal(prepareAnimalIslandUi({ root: app, ref, git: pinnedGit }), sibling)
+    assert.deepEqual(calls.slice(1), [
+      ['-C', sibling, 'fetch', '--depth=1', 'origin', ref],
+      ['-C', sibling, 'checkout', '--detach', 'FETCH_HEAD'],
+      ['-C', sibling, 'rev-parse', 'HEAD'],
+      ['-C', sibling, 'status', '--porcelain', '--untracked-files=all'],
+    ])
+  } finally {
+    assert.equal(path.dirname(temp), path.resolve(os.tmpdir()))
+    assert.ok(path.basename(temp).startsWith('islemind-ui-pinning-'))
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+check('runtime linking is idempotent, preserves sources and rejects unsafe replacements', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-ui-contract-'))
+  const app = path.join(temp, 'app')
+  const sibling = path.join(temp, 'animal-island-ui')
+  try {
+    fs.mkdirSync(app)
+    fs.mkdirSync(sibling)
+    fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify(manifest))
+    fs.writeFileSync(path.join(sibling, 'package.json'), JSON.stringify(forkManifest))
+    fs.writeFileSync(path.join(sibling, 'source.ts'), 'keep developer source')
+    for (const name of sharedRuntimes) {
+      for (const base of [app, sibling]) {
+        const directory = path.join(base, 'node_modules', name)
+        fs.mkdirSync(directory, { recursive: true })
+        fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ name, version: base === app ? manifest.dependencies[name] : '0.0.0' }))
+      }
+    }
+    const lastManifest = path.join(sibling, 'node_modules/react-native-svg/package.json')
+    const lastSource = fs.readFileSync(lastManifest, 'utf8')
+    fs.writeFileSync(lastManifest, JSON.stringify({ name: 'not-a-generated-runtime' }))
+    assert.throws(() => linkAnimalIslandUiRuntimes({ root: app }), /non-package directory/)
+    assert.equal(JSON.parse(fs.readFileSync(path.join(sibling, 'node_modules/react/package.json'))).version, '0.0.0', 'Validation must precede every replacement.')
+    fs.writeFileSync(lastManifest, lastSource)
+    linkAnimalIslandUiRuntimes({ root: app })
+    linkAnimalIslandUiRuntimes({ root: app })
+    for (const name of sharedRuntimes) {
+      assert.equal(fs.realpathSync(path.join(sibling, 'node_modules', name)), fs.realpathSync(path.join(app, 'node_modules', name)))
+    }
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(sibling, 'package.json'))), forkManifest)
+    assert.equal(fs.readFileSync(path.join(sibling, 'source.ts'), 'utf8'), 'keep developer source')
+
+    // A package link may be replaced, but its previous target must survive.
+    const runtime = path.join(sibling, 'node_modules/react')
+    fs.rmSync(runtime, { recursive: true, force: true })
+    const unrelated = path.join(temp, 'unrelated')
+    fs.mkdirSync(unrelated)
+    fs.writeFileSync(path.join(unrelated, 'keep.txt'), 'keep')
+    fs.symlinkSync(unrelated, runtime, process.platform === 'win32' ? 'junction' : 'dir')
+    linkAnimalIslandUiRuntimes({ root: app })
+    assert.equal(fs.readFileSync(path.join(unrelated, 'keep.txt'), 'utf8'), 'keep')
+    fs.renameSync(path.join(sibling, 'node_modules'), path.join(sibling, 'installed'))
+    fs.symlinkSync(unrelated, path.join(sibling, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
+    assert.throws(() => linkAnimalIslandUiRuntimes({ root: app }), /linked node_modules/)
   } finally {
     assert.equal(path.dirname(temp), path.resolve(os.tmpdir()))
     assert.ok(path.basename(temp).startsWith('islemind-ui-contract-'))

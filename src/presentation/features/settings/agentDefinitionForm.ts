@@ -1,4 +1,4 @@
-import { parseAgentDefinition, type AgentDefinition } from '@/modules/assistant-runtime/agentDefinition'
+import { parseAgentDefinition, type AgentDefinition } from '@/modules/assistant-runtime'
 
 export interface AgentDefinitionForm {
   source: AgentDefinition
