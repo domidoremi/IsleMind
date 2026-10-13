@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
-import {
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View,
-  type AccessibilityActionEvent,
-  type GestureResponderEvent,
-  type ViewStyle,
-} from 'react-native'
+import { StyleSheet, useWindowDimensions, View, type AccessibilityActionEvent, type GestureResponderEvent, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 

@@ -70,7 +70,6 @@ export function quoteChatMessageDraft({
 export function editUserChatMessageDraft({
   conversation,
   message,
-  safeStopMessage,
   updateConversation,
   onBeforeTrim,
   onTrimComplete,
@@ -79,7 +78,6 @@ export function editUserChatMessageDraft({
 }: MessageDraftActionState & {
   conversation: Conversation
   message: Message
-  safeStopMessage: (conversationId: string) => void
   updateConversation: (conversationId: string, updates: Partial<Conversation>) => void
   onBeforeTrim?: (messageId: string, removedMessageIds: string[]) => void
   onTrimComplete?: (messageId: string) => void
@@ -87,7 +85,6 @@ export function editUserChatMessageDraft({
 }): ReturnType<typeof setTimeout> | undefined {
   const plan = buildChatMessageEditPlan(conversation, message)
   if (!plan) return undefined
-  safeStopMessage(conversation.id)
   onBeforeTrim?.(plan.messageId, plan.removedMessageIds)
 
   const commit = () => {

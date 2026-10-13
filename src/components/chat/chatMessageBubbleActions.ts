@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next'
+import { createElement, type ReactNode } from 'react'
 import * as Clipboard from 'expo-clipboard'
 
 import {
@@ -7,6 +8,9 @@ import {
   saveConversationWorkflowSkillFromMessage,
 } from '@/presentation/features/conversations/conversationMessageActionCommand'
 import { userFacingErrorDetail } from '@/core'
+import { IsleButton } from '@/components/ui/isle'
+import { agentConfirmationExpiry, agentConfirmationPreview } from '@/presentation/features/agents/agentRunPresentation'
+import { loadWorkspaceEditReview } from '@/bootstrap/workspaceEditReview'
 import { buildAndroidUndoPromptContext } from '@/services/chatAndroidUndoPrompt'
 import type { Message } from '@/types/chatContracts'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
@@ -30,10 +34,13 @@ type ChatMessageActionDialog = {
     tone: 'mint' | 'danger'
     chips?: Array<{ label: string; tone?: 'default' | 'mint' | 'amber' | 'danger' }>
     metrics?: Array<{ label: string; before?: string; after?: string; tone?: 'default' | 'mint' | 'amber' | 'danger' }>
+    signal?: AbortSignal
+    renderBody?: () => ReactNode
   }) => Promise<boolean>
 }
 
 type ApplyStarterDraft = (draft: string) => void
+const reviewingActions = new Set<string>()
 
 export function copyChatMessageText({
   dialog,
@@ -174,10 +181,41 @@ export function confirmActionForMessage({
   message: Message
   t: TFunction
 }) {
-  void confirmConversationAction(conversationId, message.id)
+  const key = conversationId + ':' + message.id
+  if (reviewingActions.has(key)) return
+  reviewingActions.add(key)
+  let decision: boolean | 'decline' | undefined
+  void confirmConversationAction(conversationId, message.id, async run => {
+    const preview = agentConfirmationPreview(run)
+    const pending = run.pendingModelOperation
+    if (!preview || !pending || agentConfirmationExpiry(run, Date.now())?.expired) return false
+    const controller = new AbortController()
+    let diff: string | undefined
+    try { diff = await loadWorkspaceEditReview(pending, controller.signal) } catch {
+      // An unavailable diff blocks approval, not the user's ability to refuse.
+      const decline = await dialog.confirm({ title: t('agentTasks.confirmation'),
+        message: [t('chat.workspacePreviewUnavailable'), preview.operation].join('\n\n'),
+        confirmLabel: t('agentTasks.decline'), cancelLabel: t('common.cancel'), tone: 'danger' })
+      decision = decline ? 'decline' : false
+      return decision
+    }
+    let declined = false
+    const approved = await dialog.confirm({
+      title: t('agentTasks.confirmation'),
+      message: [t('agentTasks.confirmationScope'), preview.operation,
+        preview.total ? t('agentTasks.queuePosition', { position: preview.position, total: preview.total }) : '',
+        diff ?? preview.parameters].filter(Boolean).join('\n\n'),
+      confirmLabel: t('agentTasks.approve'), cancelLabel: t('common.cancel'), tone: 'danger', signal: controller.signal,
+      renderBody: () => createElement(IsleButton, { label: t('agentTasks.decline'),
+        onPress: () => { declined = true; controller.abort() } }),
+    })
+    decision = declined ? 'decline' : approved
+    return decision
+  })
     .then((confirmed) => {
+      if (decision === false) return
       dialog.toast({
-        title: confirmed ? t('messageBubble.confirmAgentActionQueued') : t('messageBubble.confirmAgentActionUnavailable'),
+        title: confirmed ? t(decision === 'decline' ? 'agentTasks.code.confirmation_declined' : 'messageBubble.confirmAgentActionQueued') : t('messageBubble.confirmAgentActionUnavailable'),
         tone: confirmed ? 'mint' : 'amber',
       })
     })
@@ -186,6 +224,7 @@ export function confirmActionForMessage({
       message: userFacingErrorDetail(error) || t('messageBubble.confirmAgentActionFailedMessage'),
       tone: 'danger',
     }))
+    .finally(() => reviewingActions.delete(key))
 }
 
 export function saveWorkflowSkillFromMessage({

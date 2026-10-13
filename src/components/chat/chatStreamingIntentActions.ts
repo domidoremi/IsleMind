@@ -146,7 +146,7 @@ export function useChatStreamingSubmitActions({
   sendMessage: SendStreamingMessage
   setIntentDraft: (draft: IntentDraft | null) => void
   setPendingStreamingMessage: (message: PendingStreamingMessage | null) => void
-  stopStreaming: (conversationId: string) => void
+  stopStreaming: (conversationId: string) => boolean | void | Promise<boolean | void>
 }): ChatStreamingSubmitActions {
   const scrollToSubmitTarget = useCallback(() => {
     scrollToLatestMessage(false, 0, { force: true, replacePending: true })
@@ -227,7 +227,7 @@ export function applyStreamingIntentDraft({
   sendMessage: SendStreamingMessage
   setIntentDraft: (draft: IntentDraft | null) => void
   setPendingStreamingMessage: (message: PendingStreamingMessage | null) => void
-  stopStreaming: (conversationId: string) => void
+  stopStreaming: (conversationId: string) => boolean | void | Promise<boolean | void>
   interruptReplayDelayMs?: number
 }): boolean {
   if (!draft) return false
@@ -236,23 +236,28 @@ export function applyStreamingIntentDraft({
   setIntentDraft(null)
   if (intent === 'interrupt') {
     scrollToLatestMessage()
-    stopStreaming(conversation.id)
-    setPendingStreamingMessage(null)
-    setTimeout(() => {
-      const latestConversation = getLatestConversation(conversation.id)
-      if (!latestConversation) {
+    void (async () => {
+      if (await stopStreaming(conversation.id) === false) {
         onApplyStarter(draft.content, draft.attachments, true)
         return
       }
-      void sendMessage({
-        conversation: latestConversation,
-        content: draft.content,
-        attachments: draft.attachments,
-        requestedOutput: draft.requestedOutput,
-      }).catch(() => {
-        onApplyStarter(draft.content, draft.attachments, true)
-      })
-    }, interruptReplayDelayMs)
+      setPendingStreamingMessage(null)
+      setTimeout(() => {
+        const latestConversation = getLatestConversation(conversation.id)
+        if (!latestConversation) {
+          onApplyStarter(draft.content, draft.attachments, true)
+          return
+        }
+        void sendMessage({
+          conversation: latestConversation,
+          content: draft.content,
+          attachments: draft.attachments,
+          requestedOutput: draft.requestedOutput,
+        }).catch(() => {
+          onApplyStarter(draft.content, draft.attachments, true)
+        })
+      }, interruptReplayDelayMs)
+    })().catch(() => onApplyStarter(draft.content, draft.attachments, true))
     return true
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ScrollView, StyleSheet, Text, View } from 'react-native'
+import { ScrollView, StyleSheet, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { Easing } from 'react-native-reanimated'
 import { useTranslation } from 'react-i18next'
@@ -12,17 +13,53 @@ import type { ResponseLifecycleStage } from '@/types/chatContracts'
 import { formatDuration } from './tracePresentation'
 import { messageActivityLabel, type MessageActivityRow } from './messageActivityRows'
 
-export function MessageActivityTimeline({ rows, notice, maxHeight, motion, onLayoutChangeRequest }: {
+export function MessageActivityTimeline({ rows, notice, maxHeight, motion, active = false, replyStarted = false, onLayoutChangeRequest }: {
   rows: MessageActivityRow[]
   notice?: string
   maxHeight: number
   motion: MotionIntensity
+  active?: boolean
+  replyStarted?: boolean
   onLayoutChangeRequest?: (options?: { force?: boolean }) => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
+  const { t } = useTranslation()
+  // Show real preparation/tool steps until the answer takes the screen. A
+  // user's choice after that transition survives subsequent streaming updates.
+  const autoExpanded = active && !replyStarted
+  const [disclosure, setDisclosure] = useState<{ phase: boolean; expanded: boolean }>()
+  const expanded = disclosure?.phase === autoExpanded ? disclosure.expanded : autoExpanded
+  const current = [...rows].reverse().find(row => row.state === 'running')
+  const hasDetails = rows.length > 1 || rows.some(row => row.details.length > 0)
+  const attention = rows.filter(row => row.state === 'error' || row.state === 'waiting' || row.state === 'incomplete')
+  const cancelled = rows.some(row => row.state === 'cancelled')
+  const failed = rows.filter(row => row.state === 'error').length
+  const done = rows.filter(row => row.state === 'done').length
+  const unfinished = rows.some(row => ['pending', 'incomplete', 'skipped'].includes(row.state))
+  const label = current ? messageActivityLabel(current, t)
+    : failed ? t('messageBubble.activity.failed', { count: failed })
+      : rows.some(row => row.state === 'waiting') ? t('messageBubble.activity.state.waiting')
+        : cancelled ? t('messageBubble.activity.state.cancelled')
+          : unfinished ? t('messageBubble.activity.state.incomplete')
+            : active ? t(`messageBubble.activity.${replyStarted ? 'generating' : 'working'}.active`)
+              : t('messageBubble.activity.completed', { count: done })
+  const grammar = resolveThemeComponentExpression(canonicalThemeId, 'aiResponse').motion
+  if (!rows.length && !notice) return null
   return (
     <View testID="message-activity-timeline" onLayout={() => onLayoutChangeRequest?.()} style={{ width: '100%', minWidth: 0, marginBottom: 8, gap: 2 }}>
-      {rows.map(row => (
+      {hasDetails ? <IslePressable testID="message-activity-toggle" haptic accessibilityRole="button"
+        accessibilityLabel={t('messageBubble.process', { summary: label })} accessibilityHint={t(expanded ? 'messageBubble.activity.collapseHistory' : 'messageBubble.activity.expandHistory')}
+        accessibilityState={{ expanded, busy: active || Boolean(current) }}
+        onPress={() => { setDisclosure({ phase: autoExpanded, expanded: !expanded }); onLayoutChangeRequest?.({ force: !expanded }) }}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: ISLE_MIN_TOUCH_TARGET }}>
+        <AnimatedProcessStatusText label={label} active={Boolean(current)} tone={colors.textSecondary}
+          icon={current ? 'loader' : attention.length ? 'warning' : cancelled ? 'stop' : 'history'} motion={motion} grammar={grammar}
+          statusMotionPhase={current?.kind === 'thinking' ? 'thinking' : 'active-stage'} stageStartedAt={current?.startedAt} />
+        <AppIcon name={expanded ? 'collapse' : 'back-next'} color={colors.textTertiary} size={14} />
+      </IslePressable> : null}
+      {/* Once the reply starts, normal history is unmounted, not clipped.
+          Authorization and unsafe outcomes remain visible in either phase. */}
+      {(expanded || !hasDetails ? rows : attention).map(row => (
         <MessageActivityItem key={row.id} row={row} maxHeight={maxHeight} motion={motion} onLayoutChangeRequest={onLayoutChangeRequest} />
       ))}
       {notice ? (
@@ -164,8 +201,6 @@ function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar,
       >
         <AppIcon name={icon} color={tone} size={14} strokeWidth={appIconStroke.strong} />
         <Text
-          numberOfLines={1}
-          ellipsizeMode="tail"
           accessibilityLabel={label}
           style={{ flexShrink: 1, color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}
         >
@@ -183,7 +218,7 @@ function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar,
           </Text>
         ) : null}
       </View>
-      <MotiView
+      {shimmer ? <MotiView
         accessible={false}
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
@@ -191,7 +226,7 @@ function AnimatedProcessStatusText({ active, label, tone, icon, motion, grammar,
         animate={shimmer ? { translateX: 320, opacity: shimmerOpacity } : { translateX: -shimmerWidth, opacity: 0 }}
         transition={{ loop: shimmer, type: 'timing', duration: shimmer ? shimmerDuration : 1, easing: grammar === 'organic' ? Easing.inOut(Easing.sin) : Easing.inOut(Easing.cubic) }}
         style={{ position: 'absolute', top: -6, bottom: -6, left: 0, width: shimmerWidth, borderRadius: grammar === 'material' ? 2 : 12, backgroundColor: tone, transform: [{ rotate: grammar === 'material' ? '0deg' : '12deg' }] }}
-      />
+      /> : null}
     </View>
   )
 }

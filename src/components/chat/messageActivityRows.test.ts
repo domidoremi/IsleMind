@@ -45,6 +45,64 @@ it('updates real stages in place with completed wording, without inventing absen
   expect(rows.every(row => row.details.length === 0)).toBe(true)
 })
 
+it('omits unused capability manifests and disabled retrieval, including their linked lifecycle entries', () => {
+  const traces: ProcessTrace[] = [
+    { id: 'mcp-manifest-1', type: 'tool', title: 'Tools', status: 'done', metadata: { connected: 5 } },
+    { id: 'provider-tools-skip-1', type: 'tool', title: 'Tools', status: 'skipped' },
+    { id: 'tool-gateway-1', type: 'tool', title: 'Gateway', status: 'done' },
+    { id: 'native-search-1', type: 'search', title: 'Search', status: 'skipped', metadata: { requestedMode: 'off' } },
+    { id: 'memory-extract-1', type: 'memory', title: 'Memory', status: 'skipped', metadata: { transitionReason: 'memory_disabled' } },
+    { id: 'context-1', type: 'retrieval', title: 'Context', status: 'done', metadata: { memoryEnabled: false, knowledgeEnabled: false, sourceCount: 0 } },
+    { id: 'rag-evaluate-1', type: 'retrieval', title: 'Diagnostic', status: 'done', metadata: { sourceCount: 0 } },
+    { id: 'rag-generation-verify-1', type: 'retrieval', title: 'Diagnostic', status: 'skipped', metadata: { needsFlare: true } },
+  ]
+  const lifecycle = transitionResponseLifecycle(createResponseLifecycle(100, 'tool_calling', { traceId: 'mcp-manifest-1' }), 'completed', 200)
+  expect(collectMessageActivityRows({ ...message, status: 'done', content: 'Answer', responseLifecycle: lifecycle }, traces)).toEqual([])
+})
+
+it('retains rejected requests, actual no-hit retrieval, and failures replacing hidden preparation', () => {
+  const traces: ProcessTrace[] = [
+    { id: 'native-search-1', type: 'search', title: 'Search', status: 'skipped', metadata: { requestedMode: 'native', reason: 'provider_native_search_unclaimed' } },
+    { id: 'context-no-hits', type: 'retrieval', title: 'Context', status: 'done', metadata: { memoryEnabled: false, knowledgeEnabled: true, sourceCount: 0 } },
+    { id: 'context-error', type: 'retrieval', title: 'Context', status: 'running', metadata: { memoryEnabled: false, knowledgeEnabled: false } },
+    { id: 'context-error', type: 'retrieval', title: 'Context', status: 'error', content: 'Storage failed' },
+    { ...tool('provider-tools-actual', 100, 'error'), metadata: { toolId: 'edit_file', errorCode: 'permission_required' } },
+  ]
+  const rows = collectMessageActivityRows({ ...message, status: 'done' }, traces)
+  expect(rows).toHaveLength(4)
+  expect(rows.find(row => row.id === 'trace:context-error')?.state).toBe('error')
+  expect(rows.find(row => row.id === 'trace:provider-tools-actual')?.state).toBe('waiting')
+})
+
+it('does not turn unused RAG follow-up and quality diagnostics into unfinished retrieval work', () => {
+  // runAgenticRag records these local planning/quality steps even when the
+  // actual retrieval returns no sources. No FLARE request has run yet.
+  const diagnostics: ProcessTrace[] = ['plan', 'rerank', 'pack', 'flare', 'verify'].map(stage => ({
+    id: `rag-qa-${stage}`, type: 'retrieval', title: `RAG ${stage}`,
+    status: stage === 'flare' || stage === 'verify' ? 'skipped' : 'done',
+    metadata: { stage, reason: 'missing-evidence', confidence: 0 },
+  }))
+  const retrieval: ProcessTrace = {
+    id: 'rag-qa-retrieve', type: 'retrieval', title: 'RAG retrieve', status: 'done',
+    metadata: { stage: 'retrieve', sourceCount: 0 },
+  }
+  const lifecycle = transitionResponseLifecycle(createResponseLifecycle(100, 'working', { traceId: 'rag-qa-verify' }), 'completed', 200)
+  const rows = collectMessageActivityRows({ ...message, status: 'done', content: 'Answer', responseLifecycle: lifecycle }, [...diagnostics, retrieval])
+  expect(rows.map(row => row.id)).toEqual(['trace:rag-qa-retrieve'])
+  expect(rows.map(row => row.state)).toEqual(['done'])
+})
+
+it('keeps actual follow-up retrieval, rejected operations and RAG diagnostic failures visible', () => {
+  const base: ProcessTrace = { id: 'rag-qa-flare', type: 'retrieval', title: 'FLARE', status: 'skipped', metadata: { stage: 'flare' } }
+  const traces: ProcessTrace[] = [
+    { ...base, id: 'rag-actual-flare', status: 'done' },
+    { ...base, id: 'rag-pending-flare', status: 'running' },
+    { ...base, id: 'rag-denied-flare', metadata: { stage: 'flare', reason: 'missing-evidence', errorCode: 'permission_required' } },
+    { ...base, id: 'rag-qa-verify', status: 'error', metadata: { stage: 'verify' }, content: 'Storage failed' },
+  ]
+  expect(collectMessageActivityRows(message, traces).map(row => row.state)).toEqual(['done', 'running', 'waiting', 'error'])
+})
+
 it('joins thinking, tool call and result events to their own trace exactly once', () => {
   const traces: ProcessTrace[] = [
     { id: 'thinking', type: 'reasoning', title: 'Thinking', status: 'done', startedAt: 110, completedAt: 150,
@@ -103,6 +161,14 @@ it('distinguishes a provider tool request from a tool that actually ran', () => 
     toolName: 'exec_command', toolCallMode: 'native-provider', source: 'provider',
   } }])
   expect(messageActivityLabel(rows[0], i18n.t)).toBe('已请求调用 exec_command')
+})
+
+it('does not leave transport fragments as unfinished work after a successful Harness receipt', () => {
+  const fragment = { ...tool('fragment', 100), metadata: { source: 'provider', clientToolCall: true, toolName: 'provider_tool' } }
+  const receipt = { ...tool('receipt', 110, 'done'), metadata: { operationId: 'builtin:set_theme_mode', toolName: 'set_theme_mode' } }
+  expect(collectMessageActivityRows({ ...message, status: 'done' }, [fragment, receipt]).map(row => row.state)).toEqual(['done'])
+  // Actual parser errors and operation failures still require visible attention.
+  expect(collectMessageActivityRows({ ...message, status: 'error' }, [{ ...fragment, status: 'error' }, receipt]).some(row => row.state === 'error')).toBe(true)
 })
 
 it('uses concrete search and edit identities rather than generic lifecycle tool labels', () => {

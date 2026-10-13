@@ -1,6 +1,7 @@
 import { getConversationReasoningEffortOptions as getReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import { Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useNetworkState } from 'expo-network'

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Platform, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import { Keyboard, Platform, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import * as Clipboard from 'expo-clipboard'
 import { useTranslation } from 'react-i18next'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
@@ -26,6 +27,7 @@ import { useComposerVoiceInput } from './useComposerVoiceInput'
 import { useComposerDraftPersistence } from './useComposerDraftPersistence'
 import { MessageInput, SendButton } from './FloatingComposerSurfaces'
 import { ChatComposerThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
+import { CodeWorkspaceSheet } from './CodeWorkspaceSheet'
 import { useComposerLongDraftEditor } from './useComposerLongDraftEditor'
 import type { ComposerSizeMode } from './composerLongDraftState'
 import {
@@ -139,12 +141,14 @@ export function Composer({
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
+  const [workspaceOpen, setWorkspaceOpen] = useState(false)
+  useEffect(() => { setWorkspaceOpen(false) }, [draftPersistenceKey])
   const {
     width: composerWindowWidth,
     fontScale: composerFontScale,
   } = useWindowDimensions()
   const effectiveInputLineHeight =
-    COMPOSER_INPUT_LINE_HEIGHT * Math.max(0.85, composerFontScale)
+    (colors.design?.semantic.typography.body.lineHeight ?? COMPOSER_INPUT_LINE_HEIGHT) * Math.max(0.85, composerFontScale)
   const [content, setContent] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
@@ -500,6 +504,19 @@ export function Composer({
     replaceActiveToken(`@${reference.label}`)
   }
 
+  function insertWorkspacePath(path: string) {
+    const next = content + (content && !content.endsWith('\n') ? '\n' : '') + path
+    if (next.length > COMPOSER_MAX_LENGTH) {
+      dialog.toast({ title: t('chat.workspaceDraftFull'), tone: 'amber' })
+      return
+    }
+    markDraftChanged()
+    setContent(next)
+    setWorkspaceOpen(false)
+    onRequestCloseUtilities?.()
+    editor.refocus()
+  }
+
   return (
     <ChatComposerThemeSurface themeId={canonicalThemeId} colors={colors} horizontalPadding={horizontalPadding} focused={focused}>
       <View style={{ width: '100%', position: 'relative', backgroundColor: 'transparent' }}>
@@ -577,6 +594,10 @@ export function Composer({
             <AttachmentChip label={t('chat.openCommandPanel')} accessibilityHint={t('chat.openCommandPanelAccessibilityHint')} minWidth={toolsLayout.chipMinWidth} maxWidth={toolsLayout.chipMaxWidth} onPress={openCommandEntry}>
               <AppIcon name="slash-command" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
+            <AttachmentChip label={t('chat.codeWorkspace')} minWidth={toolsLayout.chipMinWidth} maxWidth={toolsLayout.chipMaxWidth}
+              onPress={() => { closeUtilities(); Keyboard.dismiss(); setWorkspaceOpen(true) }}>
+              <AppIcon name="code" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
+            </AttachmentChip>
             {onOpenKnowledge ? (
               <AttachmentChip label={t('chat.importKnowledge')} accessibilityHint={t('chat.importKnowledgeAccessibilityHint')} minWidth={toolsLayout.chipMinWidth} maxWidth={toolsLayout.chipMaxWidth} onPress={openKnowledge}>
                 <AppIcon name="knowledge" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
@@ -585,6 +606,7 @@ export function Composer({
           </View>
         </View>
       ) : null}
+      {workspaceOpen ? <CodeWorkspaceSheet onClose={() => { setWorkspaceOpen(false); editor.refocus() }} onInsertPath={insertWorkspacePath} /> : null}
       {pendingNotice ? (
         <IslePressable
           haptic

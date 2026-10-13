@@ -1,4 +1,5 @@
-import { Text, View, useWindowDimensions } from 'react-native'
+import { View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -34,7 +35,6 @@ import {
 import type { Attachment } from '@/types/chatContracts'
 
 import { ChatEmptyStateExperience } from './theme-experiences/ChatEmptyStateExperience'
-import { shouldRenderChatSetupBoundaryStatus } from './chatSetupBoundaryVisibility'
 
 export interface ChatBoundaryMemoryStatus {
   active: number
@@ -234,9 +234,8 @@ function ChatEmptyStateIntro({
               minimumFontScale={0.82}
               style={{
                 color: colors.text,
-                fontSize: compactLandscape ? 21 : 24,
-                lineHeight: compactLandscape ? 25 : 29,
-                fontWeight: '900',
+                ...colors.design?.semantic.typography.headline,
+                ...(compactLandscape ? { fontSize: 21, lineHeight: 29 } : null),
                 textAlign: 'left',
                 includeFontPadding: false,
               }}
@@ -255,7 +254,7 @@ function ChatEmptyStateIntro({
         </View>
         {description && showDescription ? (
           <Text
-            style={{ maxWidth: Math.max(180, maxWidth - 24), color: colors.textSecondary, fontSize: 12.5, lineHeight: 19, fontWeight: '600', textAlign: 'left', includeFontPadding: false }}
+            style={{ maxWidth: Math.max(180, maxWidth - 24), color: colors.textSecondary, ...colors.design?.semantic.typography.body, textAlign: 'left', includeFontPadding: false }}
           >
             {description}
           </Text>
@@ -297,9 +296,8 @@ function ChatEmptyStateIntro({
         minimumFontScale={0.82}
         style={{
           color: colors.text,
-          fontSize: 19,
-          lineHeight: 25,
-          fontWeight: '700',
+          ...colors.design?.semantic.typography.headline,
+          ...(compactLandscape ? { fontSize: 21, lineHeight: 29 } : null),
           textAlign: 'center',
           includeFontPadding: false,
         }}
@@ -310,9 +308,7 @@ function ChatEmptyStateIntro({
         <Text
           style={{
             color: colors.textSecondary,
-            fontSize: 12.5,
-            lineHeight: 19,
-            fontWeight: '500',
+            ...colors.design?.semantic.typography.body,
             textAlign: 'center',
             includeFontPadding: false,
           }}
@@ -421,7 +417,6 @@ export function ChatSetupEmptyState({
     canOpenTools: !!onOpenTools,
   }).primaryStarter
   const showAction = !!actionLabel && !!glyph && !!onAction
-  const showBoundaryStatus = shouldRenderChatSetupBoundaryStatus(multimodalPolicy)
 
   return (
     <ChatEmptyStateExperience
@@ -437,16 +432,7 @@ export function ChatSetupEmptyState({
         showDecoration={setupLayout.showIntroDecoration}
         showDescription={setupLayout.showIntroDescription}
       />}
-      boundary={showBoundaryStatus ? (
-        <ChatBoundaryStatusAction
-          multimodalPolicy={multimodalPolicy}
-          memoryStatus={memoryStatus}
-          onInspectProvider={onInspectProvider}
-          onOpenMemory={onOpenMemory}
-          onOpenTools={onOpenTools}
-          maxWidth={starterLayout.setupContentMaxWidth}
-        />
-      ) : null}
+      boundary={null}
       starter={primaryStarter && onStarter ? (
         <ChatStarterAction
           starter={primaryStarter}
@@ -760,14 +746,7 @@ export function ChatConversationEmptyState({
           description={CHAT_SHOW_ENTRY_DESCRIPTION ? description : undefined}
           maxWidth={starterLayout.emptyContentMaxWidth}
         />}
-        boundary={<ChatBoundaryStatusAction
-          multimodalPolicy={multimodalPolicy}
-          memoryStatus={memoryStatus}
-          onInspectProvider={onProviders}
-          onOpenMemory={onOpenMemory}
-          onOpenTools={onOpenTools}
-          maxWidth={starterLayout.emptyContentMaxWidth}
-        />}
+        boundary={/* Capability details belong to the task/attachment surfaces, not an empty-chat readiness score. */ null}
         starter={primaryStarter ? (
           <ChatStarterAction
             starter={primaryStarter}

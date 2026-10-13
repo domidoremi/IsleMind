@@ -153,6 +153,7 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
         onLayoutChangeRequest={onLayoutChangeRequest}
         onCopy={(item) => copyChatMessageText({ dialog, message: item, t })}
         onCreateDocument={(item) => router.push({ pathname: '/documents/edit', params: { conversationId, messageId: item.id } })}
+        onReport={(item) => router.push({ pathname: '/report', params: { conversationId, messageId: item.id } })}
         onCopyProcessTrace={(item) => copyChatMessageProcessTrace({ dialog, message: item, t })}
         onCopyWorkArtifact={(item) => copyChatMessageWorkArtifact({ dialog, message: item, t })}
         onContinueWorkArtifact={(item) => continueChatMessageWorkArtifact({ dialog, message: item, onApplyStarter, t })}

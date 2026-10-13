@@ -7,20 +7,8 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated'
-import {
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  useWindowDimensions,
-  type LayoutChangeEvent,
-  type TextInputSubmitEditingEvent,
-  type TextInputProps,
-} from 'react-native'
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent, type TextInputSubmitEditingEvent, type TextInputProps } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
@@ -316,6 +304,7 @@ export function MessageInput({
   const interactiveMaterial = colors.design?.semantic.surface.interactive
   const activeMaterial = colors.design?.semantic.surface.active
   const isLiquidGlass = colors.design?.family === 'liquid-glass'
+  const ruledInput = colors.design?.family === 'minimal' || colors.design?.family === 'monet'
   const [toolMode, setToolMode] = useState<'formatting' | 'more'>('formatting')
   const animatedSurfaceHeight = useSharedValue(surfaceHeight)
   const largeProgress = useSharedValue(sizeMode === 'large' ? 1 : 0)
@@ -363,7 +352,7 @@ export function MessageInput({
       backgroundColor: interpolateColor(
         focusProgress.value,
         [0, 1],
-        isLiquidGlass
+        isLiquidGlass || ruledInput
           ? ['transparent', 'transparent']
           : [interactiveMaterial?.background ?? colors.ui.input.background, activeMaterial?.background ?? colors.ui.input.backgroundFocused],
       ),
@@ -518,7 +507,9 @@ export function MessageInput({
       style={[
         styles.messageInputSurface,
         {
-          borderWidth: StyleSheet.hairlineWidth,
+          borderRadius: ruledInput ? 0 : colors.design?.family === 'material' ? 20 : 12,
+          borderWidth: ruledInput ? 0 : StyleSheet.hairlineWidth,
+          borderBottomWidth: ruledInput ? StyleSheet.hairlineWidth : undefined,
         },
         surfaceStyle,
         focusStyle,
@@ -563,6 +554,7 @@ export function MessageInput({
         onBlur={onBlur}
         style={[
           styles.messageInput,
+          colors.design?.semantic.typography.body,
           {
             height: bodyHeight,
             color: colors.text,

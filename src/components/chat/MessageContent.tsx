@@ -1,5 +1,7 @@
+import { APP_FONT_FAMILY } from '@/theme/font'
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import * as Clipboard from 'expo-clipboard'
 import Markdown from 'react-native-markdown-display'
 import type { RenderRules } from 'react-native-markdown-display'
@@ -241,6 +243,7 @@ function RichMarkdown({
   const blockBorder = isUser ? userMessage.userActionBackground : assistantSurfaces.blockBorder
   const codeSurface = isUser ? userMessage.userActionBackground : colors.ui.code.background
   const mutedForeground = isUser ? userMessage.userForeground : colors.textTertiary
+  const typography = colors.design?.semantic.typography
 
   if (isStreaming) {
     const hiddenCharCount = Math.max(0, content.length - STREAMING_MARKDOWN_RENDER_CHAR_LIMIT)
@@ -253,8 +256,7 @@ function RichMarkdown({
           selectable={selectionEnabled}
           style={{
             color: isUser ? userMessage.userForeground : colors.text,
-            fontSize: 15,
-            lineHeight: 23,
+            ...typography?.body,
             includeFontPadding: !isUser,
           }}
         >
@@ -291,11 +293,11 @@ function RichMarkdown({
       <Markdown
         rules={markdownRules}
         style={{
-          body: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 15, lineHeight: 22, includeFontPadding: !isUser },
-          heading1: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 18, lineHeight: 24, marginTop: 6, marginBottom: 5, fontWeight: '700' },
-          heading2: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 16.5, lineHeight: 23, marginTop: 5, marginBottom: 4, fontWeight: '700' },
-          heading3: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 15.5, lineHeight: 22, marginTop: 4, marginBottom: 3, fontWeight: '600' },
-          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 5, fontWeight: isUser ? undefined : '400' },
+          body: { fontFamily: APP_FONT_FAMILY, ...typography?.body, color: isUser ? userMessage.userForeground : colors.text, includeFontPadding: !isUser },
+          heading1: { ...typography?.headline, color: isUser ? userMessage.userForeground : colors.text, marginTop: 6, marginBottom: 5 },
+          heading2: { ...typography?.title, color: isUser ? userMessage.userForeground : colors.text, marginTop: 5, marginBottom: 4 },
+          heading3: { ...typography?.body, color: isUser ? userMessage.userForeground : colors.text, marginTop: 4, marginBottom: 3, fontWeight: typography?.title.fontWeight ?? '600' },
+          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 5 },
           link: { color: isUser ? userMessage.userForeground : colors.ui.control.link, fontWeight: '600' },
           bullet_list: {
             marginTop: 2,
@@ -319,13 +321,13 @@ function RichMarkdown({
           bullet_list_icon: {
             color: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
             fontWeight: '800',
-            lineHeight: 22,
+            lineHeight: typography?.body.lineHeight ?? 22,
             marginRight: 5,
           },
           ordered_list_icon: {
             color: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
             fontWeight: '800',
-            lineHeight: 22,
+            lineHeight: typography?.body.lineHeight ?? 22,
             marginRight: 5,
             minWidth: 18,
             textAlign: 'right',
@@ -422,29 +424,30 @@ function CodeBlockCard({ content, language, isUser }: { content: string; languag
   const { t } = useTranslation()
   const label = language?.trim() || 'code'
   const userMessage = colors.ui.message
-  const assistantSurfaces = resolveAssistantRichSurfaces(colors)
   const lineCount = countContentLines(content)
   const codeLines = useMemo(() => splitSourceLines(content), [content])
 
   return (
-    <View style={{ width: '100%', minWidth: 0 }}>
+    <View style={{ width: '100%', minWidth: 0, backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.code.background }}>
       <CardHeader
-        icon={<AppIcon name="code" color={isUser ? userMessage.userForeground : colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />}
+        icon={<AppIcon name="code" color={isUser ? userMessage.userForeground : colors.ui.code.text} size={14} strokeWidth={appIconStroke.strong} />}
         title={t('messageContent.codeBlockTitle', { language: label, count: lineCount })}
         isUser={isUser}
         compact
+        codeSurface
         dividerColor={isUser ? userMessage.userActionBackground : colors.ui.code.border}
         actions={isUser ? [] : [
           { label: t('common.copy'), kind: 'copy', onPress: () => Clipboard.setStringAsync(content) },
         ]}
       />
       <SourceLineRows
+        codeSurface
         lines={codeLines}
         isUser={isUser}
         borderColor={colors.ui.code.border}
         textColor={isUser ? userMessage.userForeground : colors.ui.code.text}
-        numberColor={isUser ? userMessage.userForeground : colors.textTertiary}
-        gutterBackground={isUser ? userMessage.userActionBackground : assistantSurfaces.gutterSurface}
+        numberColor={isUser ? userMessage.userForeground : colors.ui.code.text}
+        gutterBackground={isUser ? userMessage.userActionBackground : colors.ui.code.background}
       />
     </View>
   )
@@ -457,6 +460,7 @@ function SourceLineRows({
   textColor,
   numberColor,
   gutterBackground,
+  codeSurface = false,
 }: {
   lines: string[]
   isUser: boolean
@@ -464,6 +468,7 @@ function SourceLineRows({
   textColor: string
   numberColor: string
   gutterBackground: string
+  codeSurface?: boolean
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -486,7 +491,7 @@ function SourceLineRows({
           style={{
             flexDirection: 'row',
             alignItems: 'stretch',
-            backgroundColor: !isUser && index % 2 === 1 && !colors.ui.minimal ? assistantSurfaces.stripeSurface : undefined,
+            backgroundColor: !isUser && !codeSurface && index % 2 === 1 && !colors.ui.minimal ? assistantSurfaces.stripeSurface : undefined,
           }}
         >
           <Text
@@ -534,7 +539,7 @@ function SourceLineRows({
             minHeight: 38,
             paddingHorizontal: 10,
             paddingVertical: 10,
-            backgroundColor: !isUser && !colors.ui.minimal ? assistantSurfaces.stripeSurface : undefined,
+            backgroundColor: !isUser && !codeSurface && !colors.ui.minimal ? assistantSurfaces.stripeSurface : undefined,
             borderTopWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth,
             borderTopColor: borderColor,
           }}
@@ -592,7 +597,7 @@ function FormulaBlockCard({ content, isUser, selectionEnabled }: { content: stri
         }}
       >
         {formulaTokens.map((token, index) => (
-          <Text key={`${index}-${token.kind}-${token.content}`} style={{ color: tokenColors[token.kind], fontWeight: token.kind === 'operator' || token.kind === 'function' ? '800' : '600' }}>
+          <Text key={`${index}-${token.kind}-${token.content}`} style={{ fontFamily: 'monospace', color: tokenColors[token.kind], fontWeight: token.kind === 'operator' || token.kind === 'function' ? '800' : '600' }}>
             {token.content}
           </Text>
         ))}
@@ -1123,6 +1128,7 @@ function CardHeader({
   isUser,
   compact = false,
   dividerColor,
+  codeSurface = false,
 }: {
   icon: ReactNode
   title: string
@@ -1130,6 +1136,7 @@ function CardHeader({
   isUser: boolean
   compact?: boolean
   dividerColor?: string
+  codeSurface?: boolean
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -1138,8 +1145,8 @@ function CardHeader({
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
   const family = colors.design?.family ?? 'minimal'
-  const actionSurface = isUser ? userMessage.userActionBackground : assistantSurfaces.headerActionSurface
-  const iconSurface = family === 'liquid-glass' ? actionSurface : family === 'material' ? colors.ui.semantic.surface.muted : 'transparent'
+  const actionSurface = codeSurface ? 'transparent' : isUser ? userMessage.userActionBackground : assistantSurfaces.headerActionSurface
+  const iconSurface = codeSurface ? 'transparent' : family === 'liquid-glass' ? actionSurface : family === 'material' ? colors.ui.semantic.surface.muted : 'transparent'
 
   useEffect(() => {
     return () => {
@@ -1187,7 +1194,7 @@ function CardHeader({
       <View style={{ width: 20, height: 20, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: iconSurface }}>
         {icon}
       </View>
-      <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: isUser ? userMessage.userForeground : colors.text, fontSize: 11.5, fontWeight: '800' }}>
+      <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: isUser ? userMessage.userForeground : codeSurface ? colors.ui.code.text : colors.text, fontSize: 11.5, fontWeight: '800' }}>
         {title}
       </Text>
       {actions.map((action) => {
@@ -1195,7 +1202,7 @@ function CardHeader({
         const feedback = actionFeedback?.key === key ? actionFeedback : null
         const displayLabel = feedback?.label ?? action.label
         const accessibilityHint = action.accessibilityHint ?? t('messageContent.copyBlockHint')
-        const foreground = feedback?.failed ? colors.ui.tone.danger.foreground : isUser ? userMessage.userForeground : colors.textTertiary
+        const foreground = feedback?.failed ? colors.ui.tone.danger.foreground : isUser ? userMessage.userForeground : codeSurface ? colors.ui.code.text : colors.textTertiary
         return (
           <IslePressable
             key={key}

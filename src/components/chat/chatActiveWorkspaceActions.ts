@@ -34,7 +34,7 @@ export interface ChatActiveWorkspaceActions {
   confirmSwitchModel: (nextProvider: AIProvider, nextModel: string) => void
   rememberCommandReference: (reference: CommandReference) => void
   repairAgentEvidenceFromMessage: (item: Message) => void
-  safeStopMessage: (conversationId: string) => boolean
+  safeStopMessage: (conversationId: string) => Promise<boolean>
 }
 
 export function useChatActiveWorkspaceActions({
@@ -47,10 +47,10 @@ export function useChatActiveWorkspaceActions({
   t,
   updateConversation,
 }: ChatActiveWorkspaceActionOptions): ChatActiveWorkspaceActions {
-  const safeStopMessage = useCallback((conversationId: string) => {
+  const safeStopMessage = useCallback(async (conversationId: string) => {
     if (isConversationLocked(conversationId)) return false
     try {
-      stopConversationMessage(conversationId)
+      await stopConversationMessage(conversationId)
       return true
     } catch {
       useChatStore.getState().setError(t('chat.stopFailedMessage'))

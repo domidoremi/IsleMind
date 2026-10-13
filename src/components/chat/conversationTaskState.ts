@@ -65,7 +65,7 @@ export function cancelConversationTask({
   task,
 }: {
   conversation: Conversation
-  stopStreaming: (conversationId: string) => boolean | void
+  stopStreaming: (conversationId: string) => boolean | void | Promise<boolean | void>
   task: ConversationTaskActivityRecord
 }): Promise<ConversationTaskCancellationOutcome> {
   return cancelConversationTaskActivity({ conversation, stopStreaming, task })
@@ -77,14 +77,14 @@ async function cancelConversationTaskActivity({
   task,
 }: {
   conversation: Conversation
-  stopStreaming: (conversationId: string) => boolean | void
+  stopStreaming: (conversationId: string) => boolean | void | Promise<boolean | void>
   task: ConversationTaskActivityRecord
 }): Promise<ConversationTaskCancellationOutcome> {
   const taskMessage = task.messageId
     ? conversation.messages.find((message) => message.id === task.messageId)
     : undefined
   if (task.conversationId === conversation.id && taskMessage && (taskMessage.status === 'streaming' || taskMessage.status === 'sending')) {
-    const stopped = stopStreaming(conversation.id)
+    const stopped = await stopStreaming(conversation.id)
     if (stopped === false) return 'failed'
     return 'stream-stopped'
   }

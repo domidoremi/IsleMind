@@ -1,16 +1,47 @@
 import { act, fireEvent, render } from '@testing-library/react-native'
+import { StyleSheet } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { useIsleDialog } from '@/components/ui/isle'
 import { Composer } from './Composer'
 import { MessageContent } from './MessageContent'
 
+let mockMode: 'light' | 'dark' = 'light'
+let mockFamily = 'minimal'
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'])('keeps %s reply typography consistent when streaming finishes', async family => {
+  mockFamily = family
+  const typography = jest.requireActual('@/theme/colors').getColors('light', family).design.semantic.typography
+  const content = '# Heading\n\n## Section\n\nReadable reply'
+  const view = await render(<MessageContent content={content} isStreaming />)
+  expect(view.getByText(content)).toHaveStyle(typography.body)
+  await view.rerender(<MessageContent content={content} />)
+  expect(view.getByText('Readable reply')).toHaveStyle(typography.body)
+  expect(view.getByText('Heading')).toHaveStyle(typography.headline)
+  expect(view.getByText('Section')).toHaveStyle(typography.title)
+})
+
+it.each(['monet', 'animal-island-ui'])('uses %s body typography in the editable composer but keeps source code monospace', async family => {
+  mockFamily = family
+  const typography = jest.requireActual('@/theme/colors').getColors('light', family).design.semantic.typography
+  const view = await render(<Composer initialDraft="Typography draft" initialDraftKey="font-test"
+    viewportHeight={844} horizontalPadding={12} safeAreaTop={0} safeAreaBottom={0} keyboardLift={0} motion="none" onSend={jest.fn()} />)
+  expect(view.getByLabelText('chat.inputAccessibility')).toHaveStyle(typography.body)
+  await view.unmount()
+  const reply = await render(<MessageContent content={'```ts\nconst value = 2\n```'} />)
+  expect(reply.getByText('const value = 2')).toHaveStyle({ fontFamily: 'monospace' })
+})
+
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 jest.mock('@/hooks/useAppTheme', () => ({
-  useAppTheme: () => ({ colors: jest.requireActual('@/theme/colors').getColors('light', 'minimal'), canonicalThemeId: 'minimal' }),
+  useAppTheme: () => ({ colors: jest.requireActual('@/theme/colors').getColors(mockMode, mockFamily), canonicalThemeId: mockFamily }),
 }))
 jest.mock('@/components/ui/isle', () => ({
   IslePressable: require('react-native').Pressable,
+  IsleButton: ({ label, ...props }: any) => {
+    const { Pressable, Text } = require('react-native')
+    return <Pressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></Pressable>
+  },
   ISLE_MIN_TOUCH_TARGET: 44,
   useIsleDialog: jest.fn(),
 }))
@@ -24,9 +55,27 @@ jest.mock('./theme-surfaces/ChatThemeSurfaces', () => ({
 }))
 jest.mock('@/services/attachment', () => ({ pickDocument: jest.fn(), pickImage: jest.fn(), takePhoto: jest.fn() }))
 jest.mock('./useComposerVoiceInput', () => ({ useComposerVoiceInput: () => ({ state: { phase: 'idle' } }) }))
+jest.mock('expo-router', () => ({ router: { push: jest.fn() } }))
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }))
+const mockQueryFiles = jest.fn(async (..._args: unknown[]) => ({ files: [{ relativePath: 'workspace/example.ts', revision: 'fixture-revision', byteLength: 12, mimeType: 'text/plain' }] }))
+jest.mock('@/bootstrap/builtInWorkspaceFileRuntime', () => ({ builtInWritableWorkspaceFilePort: { queryFiles: (...args: unknown[]) => mockQueryFiles(...args) } }))
 
 const toast = jest.fn()
 const cases = ['success', 'false', 'rejection', 'throw'] as const
+
+it('opens code files only on demand and adds a path without losing the draft or sending', async () => {
+  const onSend = jest.fn()
+  const view = await render(<Composer initialDraft="Please review this carefully." initialDraftKey="workspace-test"
+    utilitiesOpen onSend={onSend} viewportHeight={844} horizontalPadding={12}
+    safeAreaTop={0} safeAreaBottom={0} keyboardLift={0} motion="none" />)
+  expect(mockQueryFiles).not.toHaveBeenCalled()
+  await fireEvent.press(view.getByRole('button', { name: 'chat.codeWorkspace' }))
+  expect(mockQueryFiles).toHaveBeenCalledWith({ directory: 'workspace', limit: 20, afterPath: undefined }, expect.anything())
+  await fireEvent.press(view.getByRole('button', { name: 'workspace/example.ts' }))
+  expect(view.getByLabelText('chat.inputAccessibility').props.value).toBe('Please review this carefully.\nworkspace/example.ts')
+  expect(onSend).not.toHaveBeenCalled()
+  expect(view.queryByRole('button', { name: 'workspace/example.ts' })).toBeNull()
+})
 function clipboardOutcome(outcome: typeof cases[number]) {
   const write = jest.mocked(Clipboard.setStringAsync)
   if (outcome === 'throw') write.mockImplementationOnce(() => { throw new Error('Clipboard unavailable') })
@@ -35,10 +84,25 @@ function clipboardOutcome(outcome: typeof cases[number]) {
 }
 
 beforeEach(() => {
+  mockMode = 'light'
+  mockFamily = 'minimal'
   jest.clearAllMocks()
   jest.mocked(Clipboard.setStringAsync).mockReset()
   jest.useFakeTimers()
   jest.mocked(useIsleDialog).mockReturnValue({ toast } as unknown as ReturnType<typeof useIsleDialog>)
+})
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'])('uses code-surface foregrounds for %s code labels and actions', async family => {
+  for (const mode of ['light', 'dark'] as const) {
+    mockMode = mode
+    mockFamily = family
+    const colors = jest.requireActual('@/theme/colors').getColors(mode, family)
+    const view = await render(<MessageContent content={'```ts\nconst first = 1\nconst second = 2\n```'} />)
+    for (const text of ['messageContent.codeBlockTitle', 'common.copy', '1', '2', 'const first = 1', 'const second = 2']) {
+      expect(StyleSheet.flatten(view.getByText(text).props.style).color).toBe(colors.ui.code.text)
+    }
+    await view.unmount()
+  }
 })
 afterEach(async () => {
   await act(async () => jest.runOnlyPendingTimers())

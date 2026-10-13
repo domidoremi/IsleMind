@@ -47,3 +47,7 @@ it('does not reuse source navigation across conversations with the same message 
 it('still skips unchanged message/source props', () => {
   expect(compare(props, { ...props, message: { ...message } })).toBe(true)
 })
+
+it('refreshes the message menu when reporting becomes available', () => {
+  expect(compare(props, { ...props, onReport: () => undefined })).toBe(false)
+})

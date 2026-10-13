@@ -61,7 +61,8 @@ export function ChatActiveStatusLayer({
   const setError = useChatStore((state) => state.setError)
   const cancellingTaskIdRef = useRef<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
-  const incomingProgramError = conversationError && !isConversationErrorProjected(activeConversation, conversationError)
+  const isProjectedError = Boolean(conversationError && isConversationErrorProjected(activeConversation, conversationError))
+  const incomingProgramError = conversationError && !isProjectedError
     ? conversationError
     : null
   const [programError, setProgramError] = useState<string | null>(incomingProgramError)
@@ -69,8 +70,15 @@ export function ChatActiveStatusLayer({
   const showCompressionBanner = Boolean(latestCompression?.metadata) && !programError && !primaryConversationTask && !providerHealth?.code
 
   useEffect(() => {
+    if (conversationError && isProjectedError) {
+      // The message now owns this failure and its recovery. Retaining the global
+      // copy would resurrect it as a program error when retry removes the message.
+      setProgramError((current) => current === conversationError ? null : current)
+      if (useChatStore.getState().error === conversationError) setError(null)
+      return
+    }
     if (incomingProgramError) setProgramError(incomingProgramError)
-  }, [incomingProgramError])
+  }, [conversationError, incomingProgramError, isProjectedError, setError])
 
   function dismissProgramError() {
     const dismissedError = programError

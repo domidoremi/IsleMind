@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react'
-import { BackHandler, Platform, Text, View } from 'react-native'
+import { BackHandler, Platform, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace'

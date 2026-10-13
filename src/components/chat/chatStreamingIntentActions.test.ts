@@ -1,7 +1,7 @@
 import type { Conversation } from '@/types/chatContracts'
 import { CONVERSATION_LOCK_REASON, lockConversation } from '@/services/conversationLock'
 
-import { sendActiveChatMessage } from './chatStreamingIntentActions'
+import { applyStreamingIntentDraft, sendActiveChatMessage } from './chatStreamingIntentActions'
 
 const conversation: Conversation = {
   id: 'send-boundary', title: 'Draft recovery', providerId: 'unused', model: 'unused',
@@ -50,5 +50,28 @@ describe('active chat send acceptance', () => {
     const failure = new Error('storage unavailable')
     input.sendMessage.mockRejectedValue(failure)
     await expect(sendActiveChatMessage(input)).rejects.toBe(failure)
+  })
+})
+
+describe('interrupt waits for durable cancellation', () => {
+  afterEach(() => jest.useRealTimers())
+
+  it.each([true, false])('sends the next draft only after Stop acknowledges success (%s)', async success => {
+    jest.useFakeTimers()
+    let finishStop!: (value: boolean) => void
+    const stopped = new Promise<boolean>(resolve => { finishStop = resolve })
+    const input = {
+      conversation, draft: { content: 'Next draft', attachments: [], requestedOutput: 'reply' as const },
+      intent: 'interrupt' as const, getLatestConversation: () => conversation,
+      stopStreaming: jest.fn(() => stopped), onApplyStarter: jest.fn(), scrollToLatestMessage: jest.fn(),
+      sendMessage: jest.fn(async () => undefined), setIntentDraft: jest.fn(), setPendingStreamingMessage: jest.fn(),
+    }
+    expect(applyStreamingIntentDraft(input)).toBe(true)
+    await jest.runAllTimersAsync()
+    expect(input.sendMessage).not.toHaveBeenCalled()
+    finishStop(success)
+    await jest.runAllTimersAsync()
+    expect(input.sendMessage).toHaveBeenCalledTimes(success ? 1 : 0)
+    if (!success) expect(input.onApplyStarter).toHaveBeenCalledWith('Next draft', [], true)
   })
 })

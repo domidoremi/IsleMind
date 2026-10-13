@@ -26,6 +26,19 @@ const props = { rows, maxHeight: 220, motion: 'none' as const }
 beforeAll(async () => { await i18n.init({ lng: 'zh-CN', resources: { en: { translation: en }, ja: { translation: ja }, 'zh-CN': { translation: zhCN } } }) })
 beforeEach(() => { mockT = i18n.getFixedT('zh-CN'); mockTheme = 'minimal' })
 
+it('shows actual work before the answer, then collapses once the reply starts', async () => {
+  const view = await render(<MessageActivityTimeline {...props} active replyStarted={false} />)
+  expect(view.getByTestId('message-activity-row-command')).toBeTruthy()
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityState.expanded).toBe(true)
+  await view.rerender(<MessageActivityTimeline {...props} active replyStarted />)
+  expect(view.queryByTestId('message-activity-row-command')).toBeNull()
+  await fireEvent.press(view.getByTestId('message-activity-toggle'))
+  await view.rerender(<MessageActivityTimeline {...props} active replyStarted rows={[...rows, { ...rows[2], id: 'later' }]} />)
+  expect(view.getByTestId('message-activity-row-later')).toBeTruthy()
+  await view.rerender(<MessageActivityTimeline {...props} replyStarted />)
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityState.expanded).toBe(true)
+})
+
 it('shows a failed activity and its error without requiring expansion', async () => {
   const view = await render(<MessageActivityTimeline {...props} rows={[{
     ...rows[2], state: 'error', details: [{ kind: 'output', text: 'Command exited with code 2' }],
@@ -35,8 +48,14 @@ it('shows a failed activity and its error without requiring expansion', async ()
   expect(view.queryByText('已使用 exec_command 运行命令')).toBeNull()
 })
 
-it('shows separate activity rows immediately and expands only each row’s own content', async () => {
+it('keeps history unmounted by default and expands only each row’s own content on demand', async () => {
   const view = await render(<MessageActivityTimeline {...props} />)
+  expect(view.queryByTestId('message-activity-row-prepare')).toBeNull()
+  expect(view.queryByTestId('message-activity-row-think')).toBeNull()
+  expect(view.queryByTestId('message-activity-row-command')).toBeNull()
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityState.expanded).toBe(false)
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityLabel).not.toContain('{{')
+  await fireEvent.press(view.getByTestId('message-activity-toggle'))
   expect(view.getByText('回复准备完成')).toBeTruthy()
   expect(view.getByText('思考已完成')).toBeTruthy()
   expect(view.queryByText('运行过程')).toBeNull()
@@ -52,24 +71,30 @@ it('shows separate activity rows immediately and expands only each row’s own c
   await fireEvent.press(view.getByRole('button', { name: '思考已完成' }))
   expect(view.queryByText('Compared three sources.')).toBeNull()
   expect(view.getByText('echo hello')).toBeTruthy()
+  await fireEvent.press(view.getByTestId('message-activity-toggle'))
+  expect(view.queryByTestId('message-activity-row-command')).toBeNull()
+  expect(view.queryByText('echo hello')).toBeNull()
 })
 
 it('preserves disclosure identity across live completion and does not open new activities', async () => {
   const view = await render(<MessageActivityTimeline {...props} />)
+  await fireEvent.press(view.getByTestId('message-activity-toggle'))
   await fireEvent.press(view.getByRole('button', { name: '正在使用 exec_command 运行命令' }))
   const completed: MessageActivityRow = { ...rows[2], state: 'done', details: [...rows[2].details, { kind: 'output', text: 'hello' }] }
   await view.rerender(<MessageActivityTimeline {...props} rows={[rows[0], rows[1], completed, { ...rows[2], id: 'second-command', subject: 'bash' }]} />)
-  expect(view.getByRole('button', { name: '已使用 exec_command 运行命令' }).props.accessibilityState).toMatchObject({ expanded: true, busy: false })
+  expect(within(view.getByTestId('message-activity-row-command')).getByRole('button').props.accessibilityState).toMatchObject({ expanded: true, busy: false })
   expect(view.getByText('hello')).toBeTruthy()
   expect(view.queryByTestId('message-activity-details-second-command')).toBeNull()
 })
 
 it('gives only meaningful disclosures a button and keeps physical touch targets accessible', async () => {
   const view = await render(<MessageActivityTimeline {...props} />)
-  expect(view.getAllByRole('button')).toHaveLength(2)
+  expect(view.getAllByRole('button')).toHaveLength(1)
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityHint).toBe('展开运行过程')
+  await fireEvent.press(view.getByTestId('message-activity-toggle'))
+  expect(view.getAllByRole('button')).toHaveLength(3)
   for (const button of view.getAllByRole('button')) {
     expect(StyleSheet.flatten(button.props.style).minHeight).toBeGreaterThanOrEqual(44)
-    expect(button.props.accessibilityHint).toBe('展开此项详情')
   }
 })
 
@@ -77,12 +102,23 @@ it('keeps a confirmation notice separate from successfully completed work', asyn
   const view = await render(<MessageActivityTimeline {...props} notice="需要确认后继续" />)
   expect(view.getByText('需要确认后继续')).toBeTruthy()
   expect(view.queryByText('生成 · 需要确认后继续')).toBeNull()
-  expect(view.getByText('回复准备完成')).toBeTruthy()
+  expect(view.queryByText('回复准备完成')).toBeNull()
+})
+
+it('shows cancellation in the compact summary without mounting normal history', async () => {
+  const view = await render(<MessageActivityTimeline {...props} rows={[rows[0],
+    { id: 'terminal', kind: 'cancelled', state: 'cancelled', details: [] },
+  ]} />)
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityLabel).toContain('已取消')
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityState.expanded).toBe(false)
+  expect(view.queryByTestId('message-activity-row-prepare')).toBeNull()
+  expect(view.queryByTestId('message-activity-row-terminal')).toBeNull()
 })
 
 it.each(['en', 'ja', 'zh-CN'])('localizes labels and detail toggles in %s', async locale => {
   mockT = i18n.getFixedT(locale)
   const view = await render(<MessageActivityTimeline {...props} />)
+  await fireEvent.press(view.getByTestId('message-activity-toggle'))
   const button = view.getByRole('button', { name: mockT('messageBubble.activity.thinking.done') })
   await fireEvent.press(button)
   expect(view.getByText(mockT('messageBubble.activity.detail.summary'))).toBeTruthy()
@@ -92,6 +128,51 @@ it.each(['en', 'ja', 'zh-CN'])('localizes labels and detail toggles in %s', asyn
 it.each(['minimal', 'material', 'monet', 'animal-island-ui', 'liquid-glass'])('renders the same independent disclosures in theme %s', async theme => {
   mockTheme = theme
   const view = await render(<MessageActivityTimeline {...props} />)
+  await fireEvent.press(view.getByTestId('message-activity-toggle'))
   await fireEvent.press(view.getByRole('button', { name: '思考已完成' }))
   expect(view.getByText('Compared three sources.')).toBeTruthy()
+})
+
+it('does not render empty history or unfold when new work arrives', async () => {
+  const view = await render(<MessageActivityTimeline {...props} rows={[]} />)
+  expect(view.queryByTestId('message-activity-timeline')).toBeNull()
+  await view.rerender(<MessageActivityTimeline {...props} />)
+  await view.rerender(<MessageActivityTimeline {...props} rows={[...rows, { ...rows[2], id: 'later' }]} />)
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityState.expanded).toBe(false)
+  expect(view.queryByTestId('message-activity-row-later')).toBeNull()
+})
+
+it('keeps a real waiting or uncertain operation visible without opening unrelated history', async () => {
+  const view = await render(<MessageActivityTimeline {...props} rows={[...rows,
+    { id: 'approval', kind: 'edit', state: 'waiting', subject: 'draft.txt', details: [] },
+    { id: 'partial', kind: 'tool', state: 'incomplete', subject: 'copy', details: [] },
+  ]} />)
+  expect(view.getByTestId('message-activity-row-approval')).toBeTruthy()
+  expect(view.getByTestId('message-activity-row-partial')).toBeTruthy()
+  expect(view.queryByTestId('message-activity-row-prepare')).toBeNull()
+})
+
+
+it('summarizes successful completion, and never counts failed or cancelled work as completed', async () => {
+  const done = rows.map(row => ({ ...row, state: 'done' as const }))
+  const view = await render(<MessageActivityTimeline {...props} rows={done} />)
+  expect(view.getByText('已完成 3 项')).toBeTruthy()
+  expect(view.queryByText(/运行过程/)).toBeNull()
+  await view.rerender(<MessageActivityTimeline {...props} rows={[...done.slice(0, 2), { ...done[2], state: 'error' }]} />)
+  expect(view.getByText('1 项失败')).toBeTruthy()
+  expect(view.queryByText('已完成 3 项')).toBeNull()
+  await view.rerender(<MessageActivityTimeline {...props} rows={[...done.slice(0, 2), { ...done[2], state: 'cancelled' }]} />)
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityLabel).toContain('已取消')
+})
+
+it('does not announce completion while the live reply is between recorded stages', async () => {
+  const done = rows.map(row => ({ ...row, state: 'done' as const }))
+  const view = await render(<MessageActivityTimeline {...props} rows={done} active />)
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityLabel).toContain(mockT('messageBubble.activity.working.active'))
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityState.busy).toBe(true)
+  await view.rerender(<MessageActivityTimeline {...props} rows={done} active replyStarted />)
+  expect(view.getByTestId('message-activity-toggle').props.accessibilityLabel).toContain(mockT('messageBubble.activity.generating.active'))
+  expect(view.queryByTestId('message-activity-row-command')).toBeNull()
+  await view.rerender(<MessageActivityTimeline {...props} rows={done} replyStarted />)
+  expect(view.getByText('已完成 3 项')).toBeTruthy()
 })

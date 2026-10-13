@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
@@ -87,6 +88,7 @@ export interface MessageBubbleProps {
   onQuote?: (message: Message) => void
   onBranch?: (message: Message) => void
   onCreateDocument?: (message: Message) => void
+  onReport?: (message: Message) => void
   onEdit?: (message: Message) => void
   onStartMultiSelect?: (message: Message) => void
   onToggleSelected?: (message: Message) => void
@@ -123,6 +125,7 @@ function MessageBubbleComponent({
   onQuote,
   onBranch,
   onCreateDocument,
+  onReport,
   onEdit,
   onStartMultiSelect,
   onToggleSelected,
@@ -190,7 +193,10 @@ function MessageBubbleComponent({
   const processMaxHeight = Math.min(230, viewportHeight * 0.34)
   const actionBarOpen = activeActionMessageId === undefined ? localActionsOpen : activeActionMessageId === message.id
   const actionMessage = !isUser && !isStreamingContent ? message : undefined
-  const pendingWorkflowAction = useMemo(() => actionMessage ? getWorkflowPendingActionFromMessage(actionMessage) : undefined, [actionMessage])
+  // Awaiting confirmation is not a completed reply. Keep its review entry
+  // available without falsely marking the durable message as done.
+  const pendingWorkflowAction = useMemo(() => !isUser && message.status !== 'cancelled'
+    ? getWorkflowPendingActionFromMessage(message) : undefined, [isUser, message])
   const evidenceRepairAction = useMemo(() => actionMessage ? getWorkflowEvidenceRepairActionFromMessage(actionMessage) : undefined, [actionMessage])
   const workflowRecoveryAction = useMemo(() => actionMessage ? getWorkflowRecoveryActionFromMessage(actionMessage) : undefined, [actionMessage])
   const workflowContinuationAction = useMemo(() => actionMessage ? getWorkflowContinuationActionFromMessage(actionMessage) : undefined, [actionMessage])
@@ -207,7 +213,8 @@ function MessageBubbleComponent({
   const canBranchMessage = !!onBranch && message.status !== 'sending' && message.status !== 'streaming'
   const canEditMessage = isUser && !!displayText.trim() && !!onEdit && message.status !== 'sending' && message.status !== 'streaming'
   const canStartMessageMultiSelect = !!onStartMultiSelect && message.status !== 'sending' && message.status !== 'streaming'
-  const canOpenActions = !isStreamingContent && (canBranchMessage || canShowActionBar({
+  const canReportMessage = message.role === 'assistant' && !isStreamingContent && !!displayText.trim() && !!onReport
+  const canOpenActions = !isStreamingContent && (canReportMessage || canBranchMessage || canShowActionBar({
     message,
     displayText,
     isLastAssistant,
@@ -242,7 +249,7 @@ function MessageBubbleComponent({
   const showCompletedQuickActions = !isUser && message.status === 'done' && !multiSelectActive && Boolean(displayText.trim()) && Boolean(
     onCopy || onSpeak || (isLastAssistant && onRegenerate),
   )
-  const showInlineRetry = !isUser && message.status === 'error' && !multiSelectActive && Boolean(onRetry)
+  const showInlineRetry = !isUser && (message.status === 'error' || message.status === 'cancelled') && !multiSelectActive && Boolean(onRetry)
   useEffect(() => {
     setLocalActionsOpen(false)
     if (activeActionMessageId === message.id) onActionMessageChange?.(null)
@@ -354,6 +361,8 @@ function MessageBubbleComponent({
               <MessageActivityTimeline
                 key={`${conversationId}:${message.id}`}
                 rows={activityRows}
+                active={isStreamingContent}
+                replyStarted={Boolean(renderedDisplayText.trim())}
                 notice={activityNotice}
                 maxHeight={processMaxHeight}
                 motion={motion}
@@ -416,6 +425,7 @@ function MessageBubbleComponent({
             onQuote={canQuoteMessage && onQuote ? () => onQuote(message) : undefined}
             onBranch={canBranchMessage && onBranch ? () => onBranch(message) : undefined}
             onCreateDocument={!isUser && message.status !== 'sending' && message.status !== 'streaming' && displayText.trim() && onCreateDocument ? () => onCreateDocument(message) : undefined}
+            onReport={canReportMessage && onReport ? () => onReport(message) : undefined}
             onEdit={canEditMessage && onEdit ? () => onEdit(message) : undefined}
             onStartMultiSelect={canStartMessageMultiSelect && onStartMultiSelect ? () => onStartMultiSelect(message) : undefined}
             />
@@ -921,6 +931,7 @@ function MessageActionSheet({
   onQuote,
   onBranch,
   onCreateDocument,
+  onReport,
   onEdit,
   onStartMultiSelect,
 }: {
@@ -953,6 +964,7 @@ function MessageActionSheet({
   onQuote?: () => void
   onBranch?: () => void
   onCreateDocument?: () => void
+  onReport?: () => void
   onEdit?: () => void
   onStartMultiSelect?: () => void
 }) {
@@ -1031,7 +1043,7 @@ function MessageActionSheet({
   const commonActions = [
     hasText ? action('copy', t('common.copy'), 'copy', onCopy) : null,
     isUser && hasText ? action('edit', t('common.edit'), 'edit', onEdit) : null,
-    !isUser && message.status === 'error' ? action('retry', t('messageBubble.retry'), 'retry', onRetry, { emphasized: true }) : null,
+    !isUser && (message.status === 'error' || message.status === 'cancelled') ? action('retry', t('messageBubble.retry'), 'retry', onRetry, { emphasized: true }) : null,
     !isUser && isLastAssistant && message.status !== 'streaming' ? action('regenerate', t('messageBubble.regenerate'), 'regenerate', onRegenerate) : null,
     hasText ? action('quote', t('messageBubble.quote'), 'paste', onQuote) : null,
     action('branch-chat', t('messageBubble.branchChat'), 'new-chat', onBranch),
@@ -1039,6 +1051,7 @@ function MessageActionSheet({
     !isUser && hasText ? action('speak', t('messageBubble.speak'), 'voice', onSpeak) : null,
   ].filter((item): item is MessageActionSheetAction => item !== null)
   const secondaryActions = [
+    action('report', t('contentReport.title'), 'shield', onReport),
     canCopyProcessTrace ? action('copy-trace', t('messageBubble.copyProcessTrace'), 'trace', onCopyProcessTrace) : null,
     hasText && !isUser ? action('copy-artifact', t('messageBubble.copyWorkArtifact'), 'list-check', onCopyWorkArtifact) : null,
     hasText && !isUser ? action('continue-artifact', t('messageBubble.continueWorkArtifact'), 'spark', onContinueWorkArtifact) : null,
@@ -1389,8 +1402,8 @@ function canShowActionBar({
   if (message.role === 'user') return (hasText && !!onCopy) || canDeleteMessage || canQuoteMessage || canEditMessage || canStartMessageMultiSelect
   const hasCommonActions = (hasText && (!!onCopy || !!onSpeak || !!onCopyWorkArtifact || !!onContinueWorkArtifact)) || canCopyProcessTrace || canQuoteMessage
   const hasRegenerate = isLastAssistant && message.status !== 'streaming' && !!onRegenerate
-  const hasErrorActions = message.status === 'error' && (!!onConfigure || !!onRetry)
-  return hasCommonActions || hasRegenerate || canConfirmAction || canContinueAgentWorkflow || canPrepareAndroidUndo || canRepairAgentEvidence || canOpenWorkflowSettings || canSaveWorkflowSkill || hasErrorActions || canDeleteMessage || canStartMessageMultiSelect
+  const hasRecoveryActions = (message.status === 'error' && !!onConfigure) || ((message.status === 'error' || message.status === 'cancelled') && !!onRetry)
+  return hasCommonActions || hasRegenerate || canConfirmAction || canContinueAgentWorkflow || canPrepareAndroidUndo || canRepairAgentEvidence || canOpenWorkflowSettings || canSaveWorkflowSkill || hasRecoveryActions || canDeleteMessage || canStartMessageMultiSelect
 }
 
 function translateMessageBubbleLabel(t: TFunction, key: string, fallback: string): string {
@@ -1496,6 +1509,7 @@ const areMessagesEqual = (
   if (prevProps.selected !== nextProps.selected) return false
   if (Boolean(prevProps.onBranch) !== Boolean(nextProps.onBranch)) return false
   if (Boolean(prevProps.onCreateDocument) !== Boolean(nextProps.onCreateDocument)) return false
+  if (Boolean(prevProps.onReport) !== Boolean(nextProps.onReport)) return false
 
   return true
 }

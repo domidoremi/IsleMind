@@ -1,4 +1,5 @@
-import { Text, useWindowDimensions, View, StyleSheet } from 'react-native'
+import { useWindowDimensions, View, StyleSheet } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 

@@ -28,11 +28,11 @@ export function collectMessageActivityRows(message: Message, traces: ProcessTrac
   // Workflow bookkeeping uses the historical "reasoning" trace type too. It
   // is not model thinking and must not produce several meaningless "Completed"
   // rows (or leak its internal step/status text into a thinking disclosure).
-  const internalTraceIds = new Set(traces.filter(trace => isAgentIntentTrace(trace) || isAgentPlanTrace(trace) ||
-    isAgentWorkflowEnvelopeTrace(trace) || (trace.type === 'reasoning' && trace.id.endsWith('-start') &&
+  const currentTraces = [...new Map(traces.map(trace => [trace.id, trace])).values()]
+  const internalTraceIds = new Set(currentTraces.filter(trace => isAgentIntentTrace(trace) || isAgentPlanTrace(trace) ||
+    isAgentWorkflowEnvelopeTrace(trace) || isNonExecutionTrace(trace) || (trace.type === 'reasoning' && trace.id.endsWith('-start') &&
       Boolean(trace.metadata?.toolName || trace.metadata?.toolId))).map(trace => trace.id))
-  const visibleTraces = [...new Map(traces.filter(trace => !trace.metadata?.hiddenSignature && trace.type !== 'system' && !internalTraceIds.has(trace.id))
-    .map(trace => [trace.id, trace])).values()]
+  const visibleTraces = currentTraces.filter(trace => !trace.metadata?.hiddenSignature && trace.type !== 'system' && !internalTraceIds.has(trace.id))
   const traceRows = new Map(visibleTraces.map(trace => [trace.id, activityForTrace(trace, message.status)]))
   const history = message.responseLifecycle?.history ?? []
   const rows: MessageActivityRow[] = []
@@ -86,6 +86,35 @@ export function collectMessageActivityRows(message: Message, traces: ProcessTrac
     rows.push({ id: 'terminal', kind: message.status, state: message.status, details: [] })
   }
   return rows
+}
+
+function isNonExecutionTrace(trace: ProcessTrace): boolean {
+  const meta = trace.metadata ?? {}
+  // Raw argument/name fragments are transport diagnostics, not execution.
+  // Harness permission decisions and operation receipts supply the real rows.
+  if (meta.clientToolCall === true && meta.source === 'provider' && trace.status !== 'error' && trace.status !== 'cancelled') return true
+  // Never suppress an actual operation, permission decision, or failure just
+  // because its id resembles a preparation event. Receipts remain authoritative.
+  if (trace.status === 'error' || trace.status === 'cancelled' ||
+    meta.toolName || meta.toolId || meta.toolCallId || meta.operationId ||
+    meta.errorCode || meta.code || meta.decision || meta.permission) return false
+  if (trace.type === 'tool' && /^(?:mcp-(?:manifest|empty|disabled)|provider-tools|tool-gateway)-/.test(trace.id)) return true
+  // These are local diagnostic summaries, not additional retrieval operations.
+  if (trace.type === 'retrieval' && (trace.status === 'done' || trace.status === 'skipped') &&
+    /^(?:rag-generation-verify|rag-evaluate)-/.test(trace.id)) return true
+  if (trace.type === 'retrieval' && (trace.status === 'done' || trace.status === 'skipped') &&
+    typeof meta.stage === 'string' && trace.id.startsWith('rag-') && trace.id.endsWith(`-${meta.stage}`)) {
+    // The RAG planner also records packing/quality diagnostics and a deferred
+    // FLARE hint. These are not extra retrieval calls or unfinished work.
+    if (['plan', 'rerank', 'pack', 'verify'].includes(meta.stage)) return true
+    if (meta.stage === 'flare' && trace.status === 'skipped' && meta.reason === 'missing-evidence') return true
+  }
+  if (trace.type === 'retrieval' && trace.id.startsWith('context-') &&
+    meta.memoryEnabled === false && meta.knowledgeEnabled === false &&
+    !meta.sourceCount && !meta.ragPlan) return true
+  if (trace.status !== 'skipped') return false
+  if (trace.type === 'search' && trace.id.startsWith('native-search-')) return typeof meta.requestedMode === 'string' && meta.requestedMode !== 'native'
+  return trace.type === 'memory' && trace.id.startsWith('memory-extract-') && meta.transitionReason === 'memory_disabled'
 }
 
 function matchesLifecycleActivity(trace: ProcessTrace, entry: MessageResponseLifecycleEntry, next?: MessageResponseLifecycleEntry): boolean {

@@ -18,6 +18,8 @@ import {
   type MessageActionDialog,
 } from './chatMessageSelectionActions'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useChatStore } from '@/store/chatStore'
+import { buildChatMessageEditPlan } from './chatMessageEditState'
 
 export function useChatMessageSelectionController({
   conversation,
@@ -31,13 +33,14 @@ export function useChatMessageSelectionController({
   conversation: Conversation
   dialog: MessageActionDialog
   onApplyStarter: (draft: string, attachments?: Attachment[], restoreIfEmpty?: boolean) => void
-  safeStopMessage: (conversationId: string) => void
+  safeStopMessage: (conversationId: string) => Promise<boolean>
   setActiveActionMessageId: Dispatch<SetStateAction<string | null>>
   t: TFunction
   updateConversation: (id: string, updates: Partial<Conversation>) => void
 }) {
   const motion = useMotionPreference()
   const editTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const editRequestRef = useRef(0)
   const [multiSelectActive, setMultiSelectActive] = useState(false)
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(() => new Set())
   const [rewindingMessageIds, setRewindingMessageIds] = useState<Set<string>>(() => new Set())
@@ -60,14 +63,19 @@ export function useChatMessageSelectionController({
     quoteChatMessageDraft({ dialog, message, onApplyStarter, setActiveActionMessageId, setMultiSelectActive, setSelectedMessageIds, t })
   }, [dialog, onApplyStarter, setActiveActionMessageId, t])
 
-  const editUserMessage = useCallback((message: Message) => {
+  const editUserMessage = useCallback(async (message: Message) => {
+    if (!buildChatMessageEditPlan(conversation, message)) return
+    const request = ++editRequestRef.current
     if (editTimerRef.current) clearTimeout(editTimerRef.current)
+    if (!await safeStopMessage(conversation.id) || request !== editRequestRef.current) return
+    const latest = useChatStore.getState().conversations.find(item => item.id === conversation.id)
+    const currentMessage = latest?.messages.find(item => item.id === message.id)
+    if (!latest || !currentMessage) return
     editTimerRef.current = editUserChatMessageDraft({
-      conversation,
+      conversation: latest,
       dialog,
-      message,
+      message: currentMessage,
       onApplyStarter,
-      safeStopMessage,
       setActiveActionMessageId,
       setMultiSelectActive,
       setSelectedMessageIds,
@@ -116,6 +124,7 @@ export function useChatMessageSelectionController({
   }, [clearMessageSelection, conversation, dialog, selectedMessages, t, updateConversation])
 
   useEffect(() => {
+    editRequestRef.current += 1
     clearMessageSelection()
     setActiveActionMessageId(null)
     setRewindingMessageIds(new Set())
@@ -126,6 +135,7 @@ export function useChatMessageSelectionController({
   }, [clearMessageSelection, conversation.id, setActiveActionMessageId])
 
   useEffect(() => () => {
+    editRequestRef.current += 1
     if (editTimerRef.current) clearTimeout(editTimerRef.current)
   }, [])
 
