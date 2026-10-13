@@ -1,6 +1,6 @@
-import { createPlainChatProjection, recoverChatProjection } from './plainChatProjection'
+import { createPlainChatProjection, projectPendingModelOperation, recoverChatProjection } from './plainChatProjection'
 import type { PlainChatProjectionInput } from './plainChatController'
-import type { AssistantRun } from '@/modules/assistant-runtime'
+import type { AssistantRun, PendingModelOperation } from '@/modules/assistant-runtime'
 import type { Message } from '@/types/chatContracts'
 
 let mockMessage: Message
@@ -23,7 +23,7 @@ jest.mock('@/store/chatStore', () => ({
   }) },
 }))
 jest.mock('@/store/chatStreamingStore', () => ({
-  useChatStreamingStore: { getState: () => ({ flushStreamingMessage: mockFlushBuffers, upsertTrace: mockUpsertTrace, resetContent: jest.fn() }) },
+  useChatStreamingStore: { getState: () => ({ flushStreamingMessage: mockFlushBuffers, upsertTrace: mockUpsertTrace, resetContent: jest.fn(), setStreaming: jest.fn() }) },
 }))
 jest.mock('@/services/chatStreamLifecycle', () => ({ hasActiveStream: () => mockLive }))
 jest.mock('@/services/tokenUsage', () => ({
@@ -65,6 +65,30 @@ it('projects durable tool receipts into independent traces and links the lifecyc
   expect(first).toMatchObject({ status: 'running', metadata: { inputSummary: 'exit 2' } })
   expect(second).toMatchObject({ id: first.id, status: 'error', content: 'Exit code 2' })
   expect(mockLifecycle).toHaveBeenLastCalledWith('conversation-gap', 'message-gap', 'tool_result', { at: 20, traceId: first.id })
+})
+
+it('persists a review entry without claiming an awaiting-confirmation response has completed', async () => {
+  await projectPendingModelOperation({ conversationId: 'conversation-gap', messageId: 'message-gap' }, {
+    runId: run.id, callId: 'reviewed-call', operationId: 'builtin:edit_file', requestedAt: 20,
+  } as PendingModelOperation)
+  expect(mockUpsertTrace).toHaveBeenCalledWith('conversation-gap', 'message-gap', expect.objectContaining({
+    metadata: expect.objectContaining({ pendingModelOperationRunId: run.id,
+      pendingAction: expect.objectContaining({ confirmable: true, reason: 'permission_required' }) }),
+  }))
+  expect(mockFlushBuffers).toHaveBeenCalledWith('conversation-gap', 'message-gap')
+  expect(mockMessage.status).toBe('streaming')
+  expect(mockFinishTask).not.toHaveBeenCalled()
+})
+
+it.each(['reasoning', 'toolCalls', 'retrievalTrace'] as const)('removes resolved review markers from %s, preserving unrelated evidence', async key => {
+  const unrelated = { id: 'retained', type: 'system' as const, title: 'Other evidence', status: 'done' as const }
+  mockMessage[key] = [unrelated, { id: 'pending', type: 'system', title: 'Agent workflow', status: 'running',
+    metadata: { pendingModelOperationRunId: run.id } }]
+  const project = createPlainChatProjection({ conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap' } as PlainChatProjectionInput, jest.fn())
+  await project({ conversationId: run.conversationId, run: { ...run, status: 'running' }, journalEntry: {
+    schema: 'islemind.assistant-run-journal-entry.v1', runId: run.id, sequence: 8, occurredAt: 20, type: 'run.confirmation-resolved',
+  } })
+  expect(mockMessage[key]).toEqual([unrelated])
 })
 
 it('reconstructs committed output once under concurrent and repeated recovery, then awaits persistence', async () => {
@@ -111,5 +135,17 @@ it.each(['failed', 'cancelled'] as const)('reconstructs partial output without f
   await recoverChatProjection({ ...run, status, result: undefined, checkpoint: { outputText: output, streamEventCount: 2 } })
   expect(mockMessage.content).toBe(output)
   expect(mockMessage.status).toBe(status === 'failed' ? 'error' : 'cancelled')
+  expect(mockFlushMessage).toHaveBeenCalledTimes(1)
+})
+
+it('removes a recovered authorization only after authoritative cancellation, including buffered markers', async () => {
+  const evidence = { id: 'retained', type: 'system' as const, title: 'Other evidence', status: 'done' as const }
+  mockFlushBuffers.mockImplementation(async () => {
+    mockMessage.retrievalTrace = [evidence, { id: 'pending', type: 'system', title: 'Pending review', status: 'running',
+      metadata: { pendingModelOperationRunId: run.id, pendingAction: { confirmable: true } } }]
+  })
+  await recoverChatProjection({ ...run, status: 'cancelled' })
+  expect(mockMessage.status).toBe('cancelled')
+  expect(mockMessage.retrievalTrace).toEqual([evidence])
   expect(mockFlushMessage).toHaveBeenCalledTimes(1)
 })

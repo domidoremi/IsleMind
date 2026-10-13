@@ -76,7 +76,7 @@ export interface ConversationChatWorkflowReplyStartDependencies {
   clock: Clock
   createMessageId(): string
   createAbortController(): AbortController
-  stopConversation(conversationId: string): void
+  stopConversation(conversationId: string): void | Promise<void>
   addMessage(conversationId: string, message: Message): void
   projectLifecycleStage?(input: {
     conversationId: string
@@ -156,7 +156,7 @@ export function createConversationChatWorkflowReplyStarter(
     content: string,
     options: ConversationChatWorkflowReplyStartOptions = {},
   ): Promise<void> => {
-    dependencies.stopConversation(conversation.id)
+    await dependencies.stopConversation(conversation.id)
 
     const startedAt = dependencies.clock.now()
     const assistantMessage: Message = {

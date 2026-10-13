@@ -23,7 +23,7 @@ import { describeUserFacingError, type ProcessTrace } from '@/core'
 import {
   createConversationControlController,
 } from './conversationControlController'
-import { getLatestConversationResponseRunRuntime, startConversationReplyAfterHistoryProjectionRuntime } from './conversationMessageRuntimeBinding'
+import { cancelConversationResponseRunRuntime, getLatestConversationResponseRunRuntime, startConversationReplyAfterHistoryProjectionRuntime } from './conversationMessageRuntimeBinding'
 import { recoverChatProjection } from './plainChatProjection'
 
 function createControlTraceId(prefix: string): string {
@@ -64,6 +64,7 @@ function settleConversationRunningTraces(
 
 const controller = createConversationControlController({
   buildEstimatedUsage,
+  cancelResponseRun: cancelConversationResponseRunRuntime,
   clearActiveStream,
   clearStreaming(conversationId, messageId) {
     useChatStreamingStore.getState().clearStreaming(conversationId, messageId)
@@ -134,9 +135,13 @@ const controller = createConversationControlController({
   upsertTrace: upsertConversationTrace,
 })
 
-export const stopConversationMessage = (conversationId: string): void => {
+export const stopConversationMessage = (conversationId: string): void | Promise<void> => {
   if (isConversationLocked(conversationId)) return
-  controller.stop(conversationId)
+  const stopping = controller.stop(conversationId)
+  // Shutdown callers may be synchronous; keep failures visible even when they
+  // cannot await. Interactive callers still receive the original rejection.
+  if (stopping) void stopping.catch(() => useChatStore.getState().setError(st('chat.stopFailedMessage')))
+  return stopping
 }
 export const recoverStaleConversationMessages = controller.recoverStale
 export const retryConversationMessage = async (conversationId: string, assistantMessageId: string): Promise<void> => {

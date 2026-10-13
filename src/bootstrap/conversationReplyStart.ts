@@ -2,6 +2,7 @@ import { resolveConversationChatWorkflowAssistantMessage } from '@/bootstrap/con
 import { retrieveConversationKnowledgeContextInLocalJob } from '@/bootstrap/knowledgeContextRuntime'
 import { createChatWorkflowRuntime } from '@/bootstrap/chatWorkflowRuntime'
 import { systemClock } from '@/core'
+import { assistantExecutionHost } from '@/bootstrap/assistantExecutionHostRuntime'
 import { st } from '@/i18n/service'
 import { createConversationChatWorkflowReplyStarter } from '@/modules/conversations'
 import {
@@ -21,7 +22,7 @@ import {
   releaseChatWorkspaceReviewRuntime,
 } from '@/presentation/features/conversations/chatWorkspaceReviewCommand'
 import { startConversationAssistantReplyAfterHistoryProjection } from '@/bootstrap/conversationAssistantReplyStartRuntime'
-import { getLatestConversationResponseRun, resumeConversationModelOperation } from '@/bootstrap/conversationRuntime'
+import { cancelConversationResponseRun, getLatestConversationResponseRun, resumeConversationModelOperation } from '@/bootstrap/conversationRuntime'
 import { createPlainChatProjection } from '@/presentation/features/conversations/plainChatProjection'
 import {
   extractWorkflowDefinitionsFromSkillSnapshot,
@@ -126,6 +127,17 @@ const startConversationChatWorkflowReply = createConversationChatWorkflowReplySt
   estimateTextTokens,
 })
 
+// Only explicit send/retry/confirmed-workflow entry points recheck a latched
+// resource pause. Automatic continuations and workflow fallback stay fenced.
+async function startUserRequestedAssistantReply(conversationId: string): Promise<void> {
+  assistantExecutionHost.prepareUserResume()
+  await startConversationAssistantReplyAfterHistoryProjection(conversationId)
+}
+
+const startUserRequestedChatWorkflowReply: typeof startConversationChatWorkflowReply = async (...args) => {
+  assistantExecutionHost.prepareUserResume()
+  await startConversationChatWorkflowReply(...args)
+}
 const conversationReplyDispatchController = createConversationReplyDispatchController({
   normalizeContent: normalizeUserContent,
   readSettings() {
@@ -144,8 +156,8 @@ const conversationReplyDispatchController = createConversationReplyDispatchContr
     return { manifests, enabledWorkflowIds, blockedWorkflowStates }
   },
   resolveWorkflowRunLimits: resolveWorkflowRunLimitsFromSettings,
-  startWorkflowReply: startConversationChatWorkflowReply,
-  startAssistantReply: startConversationAssistantReplyAfterHistoryProjection,
+  startWorkflowReply: startUserRequestedChatWorkflowReply,
+  startAssistantReply: startUserRequestedAssistantReply,
   reportError(message) {
     useChatStore.getState().setError(message)
   },
@@ -157,15 +169,19 @@ const conversationReplyDispatchController = createConversationReplyDispatchContr
 const chatWorkspaceReviewRuntimeResolver = resolveChatWorkspaceReviewRuntime
 const conversationMessageRuntime: ConversationMessageRuntime = {
   dispatchAfterUserProjection: conversationReplyDispatchController.dispatch,
-  startAfterHistoryProjection: startConversationAssistantReplyAfterHistoryProjection,
-  startConfirmedWorkflowReply: startConversationChatWorkflowReply,
+  startAfterHistoryProjection: startUserRequestedAssistantReply,
+  startConfirmedWorkflowReply: startUserRequestedChatWorkflowReply,
   getLatestResponseRun: getLatestConversationResponseRun,
-  async resumePendingModelOperation(conversationId, assistantMessageId, runId, approved) {
+  cancelResponseRun: cancelConversationResponseRun,
+  async resumePendingModelOperation(conversationId, assistantMessageId, runId, approved, identity) {
     const conversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
     if (!conversation) return false
     const settingsState = useSettingsStore.getState()
-    const provider = settingsState.providers.find((item) => item.id === conversation.providerId)
-    if (!provider) return false
+    // Settings keeps credential references, not usable keys. Recovery must
+    // hydrate locally just like initial admission; never probe the provider.
+    if (!conversation.providerId) return false
+    const provider = await settingsState.hydrateProviderKey(conversation.providerId)
+    if (!provider || !provider.enabled) return false
     useChatStreamingStore.getState().setStreaming(conversationId, assistantMessageId)
     return resumeConversationModelOperation({
       conversation,
@@ -173,6 +189,7 @@ const conversationMessageRuntime: ConversationMessageRuntime = {
       settings: settingsState.settings,
       runId,
       approved,
+      ...identity,
       projection: createPlainChatProjection({
         conversation,
         assistantMessageId,

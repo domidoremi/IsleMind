@@ -18,6 +18,7 @@ import { stopConversationMessage } from '@/presentation/features/conversations/c
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { Message } from '@/types/chatContracts'
+import type { AssistantRun } from '@/modules/assistant-runtime'
 
 import { createConversationActionConfirmationController } from './conversationActionConfirmationController'
 import { createConversationWorkflowSkillSaveController } from './conversationWorkflowSkillSaveController'
@@ -29,6 +30,7 @@ import {
   saveApprovedConversationWorkflowSkillRuntime as saveApprovedWorkflowSkillSuggestion,
   startConfirmedConversationWorkflowReplyRuntime,
   resumePendingConversationModelOperationRuntime,
+  getLatestConversationResponseRunRuntime,
 } from './conversationMessageRuntimeBinding'
 
 const messageActionController = createConversationMessageActionController({
@@ -104,27 +106,34 @@ export function branchConversationFromMessage(conversationId: string, messageId:
   return useChatStore.getState().createBranchDraft(conversationId, messageId)
 }
 
-export function confirmConversationAction(
+export async function confirmConversationAction(
   conversationId: string,
   assistantMessageId: string,
+  review?: (run: AssistantRun) => Promise<boolean | 'decline'>,
 ): Promise<boolean> {
   const message = useChatStore.getState().conversations
     .find((conversation) => conversation.id === conversationId)
     ?.messages.find((item) => item.id === assistantMessageId)
   const runId = message ? pendingModelOperationRunId(message) : undefined
   if (runId) {
+    const run = await getLatestConversationResponseRunRuntime(conversationId, assistantMessageId)
+    const pending = run?.pendingModelOperation
+    if (!review || !run || run.id !== runId || !pending || run.status !== 'awaiting-confirmation') return false
+    const approved = await review(run)
+    if (approved === false) return false
     return resumePendingConversationModelOperationRuntime(
       conversationId,
       assistantMessageId,
       runId,
-      true,
+      approved === true,
+      { continuationToken: pending.continuationToken, continuationDigest: pending.continuationDigest },
     )
   }
   return actionConfirmationController.confirm(conversationId, assistantMessageId)
 }
 
 function pendingModelOperationRunId(message: Message): string | undefined {
-  const traces = [...(message.reasoning ?? []), ...(message.toolCalls ?? [])]
+  const traces = [...(message.reasoning ?? []), ...(message.toolCalls ?? []), ...(message.retrievalTrace ?? [])]
   for (let index = traces.length - 1; index >= 0; index -= 1) {
     const value = traces[index]?.metadata?.pendingModelOperationRunId
     if (typeof value === 'string' && value.trim()) return value

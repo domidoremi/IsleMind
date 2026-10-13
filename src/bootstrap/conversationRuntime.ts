@@ -35,7 +35,7 @@ import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import type { RetrievalSource } from '@/types/contextContracts'
 import type { Settings } from '@/types/settingsContracts'
-import { assistantRunPersistence as runPersistence, bindAssistantRuntimeGateway } from './applicationAssistantRuntime'
+import { applicationAssistantRuntime, assistantRunPersistence as runPersistence, bindAssistantRuntimeGateway } from './applicationAssistantRuntime'
 import { assistantExecutionHost } from './assistantExecutionHostRuntime'
 import { buildChatContextRuntime } from './contextContributionRuntime'
 import { planChatContext } from './contextPlanning'
@@ -78,6 +78,17 @@ export interface PlainChatRuntimeInput {
 /** Read-only reconstruction; looking up a terminal run never resumes its effects. */
 export function getLatestConversationResponseRun(conversationId: string, responseMessageId: string) {
   return runPersistence.getLatestForResponseMessage(conversationId, responseMessageId)
+}
+
+/** Stop is local run control, independent of provider credentials or admission. */
+export async function cancelConversationResponseRun(runId: Parameters<typeof applicationAssistantRuntime.cancel>[0]) {
+  const result = await applicationAssistantRuntime.cancel(runId)
+  if (result.ok) return result.value
+  if (result.error.code === 'run_not_active') {
+    const run = await applicationAssistantRuntime.getRun(runId)
+    if (run && (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled')) return run
+  }
+  throw new Error(result.error.message)
 }
 
 export function createConversationRuntime(
@@ -309,6 +320,8 @@ export async function resumeConversationModelOperation(input: {
   settings: Settings
   runId: string
   approved: boolean
+  continuationToken: string
+  continuationDigest: string
   projection: Parameters<ConversationRunUseCase['resumeModelOperation']>[0]['projection']
 }): Promise<boolean> {
   // This entry is invoked by the visible confirmation UI, never by a notification.
@@ -317,6 +330,8 @@ export async function resumeConversationModelOperation(input: {
   const result = await runtime.resumeModelOperation({
     runId: asAssistantRunId(input.runId),
     approved: input.approved,
+    continuationToken: input.continuationToken,
+    continuationDigest: input.continuationDigest,
     projection: input.projection,
   })
   return result.ok && result.value.status !== 'awaiting-confirmation'

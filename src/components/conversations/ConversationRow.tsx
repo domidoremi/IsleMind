@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { StyleSheet, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
+import { StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
+import { TextInput } from '@/components/ui/AppText'
 import type { TFunction } from 'i18next'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'

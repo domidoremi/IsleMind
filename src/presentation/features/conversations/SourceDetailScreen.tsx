@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BackHandler, Linking, Platform, ScrollView, Text, View, useWindowDimensions } from 'react-native'
+import { BackHandler, Linking, Platform, ScrollView, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import type { WebViewProps } from 'react-native-webview'
 import * as Clipboard from 'expo-clipboard'
 import { router, useLocalSearchParams } from 'expo-router'

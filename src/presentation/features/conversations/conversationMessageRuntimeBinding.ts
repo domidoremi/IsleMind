@@ -46,11 +46,13 @@ export interface ConversationMessageRuntime {
   startAfterHistoryProjection: ConversationReplyRuntimeStart
   startConfirmedWorkflowReply: ConversationConfirmedWorkflowReplyRuntimeStart
   getLatestResponseRun(conversationId: string, responseMessageId: string): Promise<AssistantRun | undefined>
+  cancelResponseRun(runId: AssistantRun['id']): Promise<AssistantRun>
   resumePendingModelOperation?: (
     conversationId: string,
     assistantMessageId: string,
     runId: string,
     approved: boolean,
+    identity: { continuationToken: string; continuationDigest: string },
   ) => Promise<boolean>
   listConversationToolManifests(): Promise<ConversationToolCatalogManifest[]>
   resolveConversationTool(
@@ -78,6 +80,7 @@ export function bindConversationMessageRuntime(
       startAfterHistoryProjection: nextRuntime.startAfterHistoryProjection,
       startConfirmedWorkflowReply: nextRuntime.startConfirmedWorkflowReply,
       getLatestResponseRun: nextRuntime.getLatestResponseRun,
+      cancelResponseRun: nextRuntime.cancelResponseRun,
       resumePendingModelOperation: nextRuntime.resumePendingModelOperation,
       listConversationToolManifests: nextRuntime.listConversationToolManifests,
       resolveConversationTool: nextRuntime.resolveConversationTool,
@@ -174,10 +177,11 @@ export async function resumePendingConversationModelOperationRuntime(
   assistantMessageId: string,
   runId: string,
   approved: boolean,
+  identity: { continuationToken: string; continuationDigest: string },
 ): Promise<boolean> {
   const resume = runtime?.resumePendingModelOperation
   if (!resume) return false
-  return resume(conversationId, assistantMessageId, runId, approved)
+  return resume(conversationId, assistantMessageId, runId, approved, identity)
 }
 
 export async function getLatestConversationResponseRunRuntime(
@@ -190,6 +194,12 @@ export async function getLatestConversationResponseRunRuntime(
   return read(conversationId, responseMessageId)
 }
 
+export async function cancelConversationResponseRunRuntime(runId: AssistantRun['id']): Promise<AssistantRun> {
+  const cancel = runtime?.cancelResponseRun
+  if (!cancel) throw new Error(CONVERSATION_MESSAGE_RUNTIME_UNINITIALIZED_ERROR)
+  return cancel(runId)
+}
+
 function hasSameRuntimeMethods(
   currentRuntime: ConversationMessageRuntime,
   nextRuntime: ConversationMessageRuntime,
@@ -198,6 +208,7 @@ function hasSameRuntimeMethods(
     && currentRuntime.startAfterHistoryProjection === nextRuntime.startAfterHistoryProjection
     && currentRuntime.startConfirmedWorkflowReply === nextRuntime.startConfirmedWorkflowReply
     && currentRuntime.getLatestResponseRun === nextRuntime.getLatestResponseRun
+    && currentRuntime.cancelResponseRun === nextRuntime.cancelResponseRun
     && currentRuntime.resumePendingModelOperation === nextRuntime.resumePendingModelOperation
     && currentRuntime.listConversationToolManifests === nextRuntime.listConversationToolManifests
     && currentRuntime.resolveConversationTool === nextRuntime.resolveConversationTool

@@ -1,6 +1,8 @@
 import { createConversationRunUseCase } from './conversationRunUseCase'
 import type { ConversationSnapshot } from '../domain/conversationSnapshot'
 import type { ConversationRunUseCaseDependencies } from '../contracts'
+import { asAssistantRunId, err } from '@/core'
+import type { AssistantModelOperationSession } from '@/modules/assistant-runtime'
 
 const conversation: ConversationSnapshot = {
   schema: 'islemind.conversation-snapshot.v3',
@@ -9,6 +11,18 @@ const conversation: ConversationSnapshot = {
   model: 'model-1',
   messages: [{ id: 'message-1', role: 'user', text: 'Hello' }],
 }
+
+it('forwards the exact reviewed continuation to the shared Harness', async () => {
+  const { dependencies } = createDependencies(async () => { throw new Error('unused') })
+  const resume = jest.fn(async () => err('run_not_active' as const, 'fixture'))
+  const useCase = createConversationRunUseCase({ ...dependencies,
+    createModelOperationSession: async () => ({} as AssistantModelOperationSession),
+    assistantRuntime: { ...dependencies.assistantRuntime, resumeModelOperation: resume },
+  })
+  await useCase.resumeModelOperation({ runId: asAssistantRunId('run'), approved: true,
+    continuationToken: 'reviewed-token', continuationDigest: 'reviewed-digest' })
+  expect(resume).toHaveBeenCalledWith(expect.objectContaining({ continuationToken: 'reviewed-token', continuationDigest: 'reviewed-digest' }))
+})
 
 function createDependencies(
   assemble: NonNullable<ConversationRunUseCaseDependencies['contextSnapshotAssembler']>['assemble'],

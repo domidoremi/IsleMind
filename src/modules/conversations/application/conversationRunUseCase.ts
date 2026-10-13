@@ -55,6 +55,8 @@ export function createConversationRunUseCase(
       return dependencies.assistantRuntime.resumeModelOperation({
         runId: input.runId,
         approved: input.approved,
+        continuationToken: input.continuationToken,
+        continuationDigest: input.continuationDigest,
         session,
         ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
         ...(dependencies.providerGatewayOptions ? { providerGatewayOptions: dependencies.providerGatewayOptions } : {}),

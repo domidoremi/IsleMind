@@ -90,6 +90,8 @@ export interface ConversationRunPreparedRequest {
 export interface ResumeConversationModelOperationInput {
   runId: AssistantRunId
   approved: boolean
+  continuationToken?: string
+  continuationDigest?: string
   cancellationSignal?: AbortSignal
   projection?: ConversationRunProjection
 }

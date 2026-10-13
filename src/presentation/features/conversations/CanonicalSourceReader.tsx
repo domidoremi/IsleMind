@@ -1,5 +1,6 @@
 import { useCallback, useState, type ReactNode } from 'react'
-import { ActivityIndicator, FlatList, Text, View } from 'react-native'
+import { ActivityIndicator, FlatList, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleChip, IsleSection } from '@/components/ui/isle'

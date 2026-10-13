@@ -1,4 +1,4 @@
-import type { AssistantRun } from '@/modules/assistant-runtime'
+import type { AssistantRun, PendingModelOperation } from '@/modules/assistant-runtime'
 import { getAssistantRunMessageAttribution } from '@/modules/assistant-runtime'
 import type { ConversationRunProjection, ConversationRunProjectionEvent } from '@/modules/conversations'
 import type { ContextCitation } from '@/modules/knowledge'
@@ -78,8 +78,8 @@ export function createPlainChatProjection(
       removePendingModelOperationTrace(state)
       useChatStreamingStore.getState().setStreaming(state.conversationId, state.messageId)
     }
-    if (event.journalEntry?.type === 'run.awaiting-confirmation') {
-      await projectPendingModelOperation(state, event.run)
+    if (event.journalEntry?.type === 'run.awaiting-confirmation' && event.run.pendingModelOperation) {
+      await projectPendingModelOperation(state, event.run.pendingModelOperation)
     }
     if (isTerminalStatus(event.run.status)) {
       removePendingModelOperationTrace(state)
@@ -89,12 +89,10 @@ export function createPlainChatProjection(
   }
 }
 
-async function projectPendingModelOperation(
-  state: ProjectionState,
-  run: AssistantRun,
+export async function projectPendingModelOperation(
+  state: Pick<ProjectionState, 'conversationId' | 'messageId'>,
+  pending: PendingModelOperation,
 ): Promise<void> {
-  const pending = run.pendingModelOperation
-  if (!pending) return
   const source = pending.operationId.startsWith('mcp:')
     ? 'mcp'
     : pending.operationId.startsWith('android:')
@@ -136,11 +134,16 @@ async function projectPendingModelOperation(
 
 function removePendingModelOperationTrace(state: ProjectionState): void {
   const message = getMessage(state.conversationId, state.messageId)
-  if (!message?.reasoning?.length) return
-  useChatStore.getState().updateMessage(state.conversationId, state.messageId, {
-    reasoning: message.reasoning.filter((trace) =>
-      typeof trace.metadata?.pendingModelOperationRunId !== 'string'),
-  })
+  if (!message) return
+  const patch: Partial<Pick<typeof message, 'reasoning' | 'toolCalls' | 'retrievalTrace'>> = {}
+  // System traces are stored in retrievalTrace, not reasoning. Remove the
+  // resolved review marker wherever historical/current projections placed it.
+  for (const key of ['reasoning', 'toolCalls', 'retrievalTrace'] as const) {
+    const traces = message[key]
+    if (!traces?.some(trace => typeof trace.metadata?.pendingModelOperationRunId === 'string')) continue
+    patch[key] = traces.filter(trace => typeof trace.metadata?.pendingModelOperationRunId !== 'string')
+  }
+  if (Object.keys(patch).length) useChatStore.getState().updateMessage(state.conversationId, state.messageId, patch)
 }
 
 export async function finishPlainChatProjectionFailure(
@@ -288,6 +291,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun, rec
   // Duplicate recovery must not project or finish the same task a second time.
   if (!current || current.status === 'cancelled') return
   if (recovering && (hasActiveStream(state.conversationId) || (current.status !== 'streaming' && current.status !== 'sending'))) return
+  removePendingModelOperationTrace(state)
   const conversation = useChatStore.getState().conversations.find((item) => item.id === state.conversationId)
   const completedAt = run.completedAt ?? Date.now()
   const outputText = run.result?.outputText ?? run.checkpoint?.outputText ?? current?.responseText ?? current?.content ?? ''

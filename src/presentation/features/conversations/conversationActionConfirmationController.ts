@@ -35,7 +35,7 @@ export interface ConversationActionConfirmationControllerDependencies<
     manifests: TToolManifest[]
   }): TToolManifest | undefined
   getRunLimits(): TRunLimits
-  stopConversation(conversationId: string): void
+  stopConversation(conversationId: string): void | Promise<void>
   removeMessage(conversationId: string, messageId: string): void
   startWorkflowReply(
     conversation: Conversation,
@@ -131,7 +131,7 @@ export function createConversationActionConfirmationController<
         manifests,
       })) return false
 
-      dependencies.stopConversation(conversationId)
+      await dependencies.stopConversation(conversationId)
       dependencies.removeMessage(conversationId, current.assistantMessage.id)
       const nextConversation = dependencies.getConversation(conversationId)
       if (!nextConversation) return false

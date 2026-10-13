@@ -10,6 +10,7 @@ export interface ConversationControlActiveStream {
 
 export interface ConversationControlDependencies {
   buildEstimatedUsage(inputMessages: Message[], outputText: string): MessageUsage
+  cancelResponseRun(runId: AssistantRun['id']): Promise<AssistantRun>
   clearActiveStream(conversationId: string): void
   clearStreaming(conversationId: string, messageId: string): void
   commitStreamingBuffers(conversationId: string, messageId: string): void
@@ -40,7 +41,7 @@ export interface ConversationControlDependencies {
 }
 
 export interface ConversationControlController {
-  stop(conversationId: string): void
+  stop(conversationId: string): void | Promise<void>
   recoverStale(conversationId: string): Promise<void>
   retry(conversationId: string, assistantMessageId: string): Promise<void>
   regenerateLastAssistant(conversationId: string): Promise<void>
@@ -49,9 +50,23 @@ export interface ConversationControlController {
 export function createConversationControlController(
   dependencies: ConversationControlDependencies,
 ): ConversationControlController {
-  function stop(conversationId: string): void {
+  const pendingStops = new Map<string, Promise<void>>()
+
+  function stop(conversationId: string): void | Promise<void> {
+    const pending = pendingStops.get(conversationId)
+    if (pending) return pending
     const active = dependencies.getActiveStream(conversationId)
-    if (!active) return
+    if (!active) {
+      const message = dependencies.getConversation(conversationId)?.messages.findLast(
+        (item) => item.role === 'assistant' && (item.status === 'streaming' || item.status === 'sending'),
+      )
+      if (!message) return
+      const stopping = stopRecoveredResponse(conversationId, message.id).finally(() => {
+        if (pendingStops.get(conversationId) === stopping) pendingStops.delete(conversationId)
+      })
+      pendingStops.set(conversationId, stopping)
+      return stopping
+    }
 
     // Drain both runner-level batching and the streaming store before reading
     // partial output for terminal usage accounting.
@@ -83,6 +98,29 @@ export function createConversationControlController(
       active.messageId,
       dependencies.createStoppedTrace(completedAt),
     )
+  }
+
+  async function stopRecoveredResponse(conversationId: string, messageId: string): Promise<void> {
+    const run = await dependencies.getLatestResponseRun(conversationId, messageId)
+    // Recovery has no in-memory AbortController. Never substitute a newly
+    // registered stream for the exact response selected by the user's Stop.
+    if (dependencies.hasActiveStream(conversationId)) throw new Error('conversation_stop_target_changed')
+    const current = dependencies.getMessage(conversationId, messageId)
+    if (!current || (current.status !== 'streaming' && current.status !== 'sending')) return
+    if (!run) {
+      await recoverStale(conversationId)
+    } else {
+      const terminal = run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled'
+        ? run
+        : await dependencies.cancelResponseRun(run.id)
+      if (dependencies.hasActiveStream(conversationId)) throw new Error('conversation_stop_target_changed')
+      // Cancellation must be acknowledged by the journal before the disposable
+      // projection changes. This path never approves or resumes a model request.
+      await dependencies.recoverProjection(terminal)
+    }
+    if (dependencies.hasActiveStream(conversationId)) throw new Error('conversation_stop_target_changed')
+    const latest = dependencies.getMessage(conversationId, messageId)
+    if (latest?.status === 'streaming' || latest?.status === 'sending') throw new Error('conversation_stop_not_acknowledged')
   }
 
   async function recoverStale(conversationId: string): Promise<void> {
@@ -163,7 +201,7 @@ export function createConversationControlController(
     if (!previousUser) return
 
     // Stop first so trimming cannot discard uncommitted output or traces.
-    stop(conversationId)
+    await stop(conversationId)
     dependencies.trimAfterMessage(conversationId, previousUser.id)
     try {
       await dependencies.startAssistantReplyAfterHistoryProjection(conversationId)
@@ -179,7 +217,7 @@ export function createConversationControlController(
     const lastAssistant = conversation.messages.at(-1)
     if (!lastAssistant || lastAssistant.role !== 'assistant') return
     // Stop first so removing the final assistant cannot discard its buffers.
-    stop(conversationId)
+    await stop(conversationId)
     dependencies.removeMessage(conversationId, lastAssistant.id)
     try {
       await dependencies.startAssistantReplyAfterHistoryProjection(conversationId)

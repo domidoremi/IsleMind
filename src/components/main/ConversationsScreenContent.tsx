@@ -1,6 +1,7 @@
 import { router } from 'expo-router'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { AppState, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
+import { AppState, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleHeader, IslePressable, IsleSearchField, useIsleDialog } from '@/components/ui/isle'

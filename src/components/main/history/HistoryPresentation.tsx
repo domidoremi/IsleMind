@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, View, type ViewStyle } from 'react-native'
+import { StyleSheet, View, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 import type { NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
 import { IsleEmptyState } from '@/components/ui/isle'
