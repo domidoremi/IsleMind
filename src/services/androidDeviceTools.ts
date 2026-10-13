@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from 'react-native'
+import { Platform } from 'react-native'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
 import {
@@ -10,7 +10,9 @@ import {
 } from '@/modules/integrations'
 import { clampTraceText, redactSensitiveText } from '@/core'
 import { appendRuntimeLog, type RuntimeLogOptions } from '@/platform/native/runtimeLog'
+import { createAndroidFileOperationsPort, type AndroidFileOperationReceipt, type AndroidNativeFileAction } from '@/platform/native/androidFileOperations'
 import { isAllowedAndroidApkUri } from '@/platform/native/androidUriPolicy'
+import type { TaskEffectRecorder } from '@/modules/tasks'
 import type {
   AndroidStatusNotificationSettingsResult,
   AndroidStatusNotificationSettingsTarget,
@@ -46,31 +48,6 @@ export interface AndroidFileOperationManifest {
   reason?: string
 }
 
-interface AndroidDeviceToolsNativeModule {
-  scanDirectory: (directoryUri: string, maxDepth: number, maxEntries: number) => Promise<{
-    directoryUri: string
-    entries: AndroidFileEntry[]
-    truncated: boolean
-    entryCount: number
-  }>
-  ensureDirectory: (parentUri: string, directoryName: string) => Promise<NativeDocumentResult>
-  copyDocument: (
-    sourceUri: string,
-    targetParentUri: string,
-    targetName: string,
-    mimeType: string | null,
-    conflictPolicy: AndroidFileConflictPolicy
-  ) => Promise<NativeOperationResult>
-  moveDocument: (
-    sourceUri: string,
-    sourceParentUri: string,
-    targetParentUri: string,
-    targetName: string,
-    conflictPolicy: AndroidFileConflictPolicy
-  ) => Promise<NativeOperationResult>
-  renameDocument: (sourceUri: string, targetName: string) => Promise<NativeOperationResult>
-}
-
 interface NativeDocumentResult {
   ok: boolean
   status: 'created' | 'existing' | 'skipped' | string
@@ -90,12 +67,17 @@ interface NativeOperationResult {
 
 interface AndroidToolExecution {
   output: string
+  status?: ExternalToolObservationStatus
+  errorCode?: ExternalToolObservationErrorCode
   metadata?: Record<string, unknown>
 }
 
 export interface AndroidDeviceToolOptions {
   signal?: AbortSignal
   runtimeLog?: RuntimeLogOptions
+  effects?: TaskEffectRecorder
+  /** Host-owned wait scope, never taken from tool arguments or remote metadata. */
+  withSystemPicker?: <T>(open: () => Promise<T>) => Promise<T>
   openStatusNotificationSettings?: (
     target: AndroidStatusNotificationSettingsTarget,
   ) => Promise<AndroidStatusNotificationSettingsResult>
@@ -135,21 +117,39 @@ interface AndroidOperationAudit {
   failureReason?: string
 }
 
-const nativeModule = NativeModules.AndroidDeviceTools as AndroidDeviceToolsNativeModule | undefined
+const fileOperations = createAndroidFileOperationsPort()
 const APK_MIME_TYPE = 'application/vnd.android.package-archive'
 const ANDROID_GRANT_READ_URI_PERMISSION = 1
 const DEFAULT_SCAN_DEPTH = 1
 const DEFAULT_SCAN_ENTRY_LIMIT = 300
-const MAX_OPERATION_COUNT = 100
+// At most two native receipts per manifest (destination mkdir + operation).
+// Keep the complete receipt list below the integration metadata node/array limits.
+const MAX_OPERATION_COUNT = 32
 const ANDROID_FILE_TOOL_METADATA = {
   androidOnly: true,
   allowedUriSchemes: ['content'],
   allowedUriScope: 'user-selected SAF tree',
   deleteSupported: false,
   permanentDeleteSupported: false,
+  maxOperationsPerApply: MAX_OPERATION_COUNT,
 }
 
 export function listAndroidDeviceToolManifests(): ConversationToolManifest[] {
+  const operationSchema = objectSchema({
+    id: { type: 'string', minLength: 1, maxLength: 160 },
+    action: { type: 'string', enum: ['mkdir', 'copy', 'move', 'rename'] },
+    sourceUri: { type: 'string' },
+    sourceParentUri: { type: 'string' },
+    sourceName: { type: 'string' },
+    targetParentUri: { type: 'string' },
+    targetDirectoryName: { type: 'string' },
+    targetName: { type: 'string' },
+    mimeType: { type: 'string' },
+    conflictPolicy: { type: 'string', enum: ['skip', 'rename'] },
+    requiresUserConfirmation: { type: 'boolean', enum: [true] },
+    createdAt: { type: 'number' },
+    reason: { type: 'string' },
+  }, ['id', 'action'])
   const manifests: ConversationToolManifest[] = [
     {
       id: 'android:files.request_directory_access',
@@ -220,11 +220,11 @@ export function listAndroidDeviceToolManifests(): ConversationToolManifest[] {
       id: 'android:files.apply_operations',
       source: 'android',
       name: 'android.files.apply_operations',
-      description: 'Apply a confirmed Android SAF file operation manifest. Delete operations are refused.',
+      description: 'Apply confirmed Android SAF file operations. Pass full manifest objects returned by preview_operations, not operation IDs. Delete operations are refused.',
       permission: 'read-write',
       enabled: true,
       inputSchema: objectSchema({
-        operations: { type: 'array' },
+        operations: { type: 'array', items: operationSchema, maxItems: MAX_OPERATION_COUNT },
       }, ['operations']),
       metadata: {
         ...ANDROID_FILE_TOOL_METADATA,
@@ -236,11 +236,11 @@ export function listAndroidDeviceToolManifests(): ConversationToolManifest[] {
       id: 'android:files.undo_operations',
       source: 'android',
       name: 'android.files.undo_operations',
-      description: 'Apply a confirmed undo manifest for reversible Android SAF move operations.',
+      description: 'Apply a confirmed undo manifest for reversible Android SAF move operations. Pass full undoOperations objects from the receipt, not operation IDs.',
       permission: 'read-write',
       enabled: true,
       inputSchema: objectSchema({
-        undoOperations: { type: 'array' },
+        undoOperations: { type: 'array', items: operationSchema, maxItems: MAX_OPERATION_COUNT },
       }, ['undoOperations']),
       metadata: {
         ...ANDROID_FILE_TOOL_METADATA,
@@ -367,10 +367,10 @@ export function listAndroidDeviceToolManifests(): ConversationToolManifest[] {
   const runtimeAvailable = Platform.OS === 'android'
   return manifests.map((manifest) => ({
     ...manifest,
-    enabled: runtimeAvailable && manifest.enabled,
+    enabled: runtimeAvailable && manifest.enabled && (!requiresFileRuntime(manifest.name) || fileOperations.isAvailable()),
     metadata: {
       ...(manifest.metadata ?? {}),
-      runtimeAvailable,
+      runtimeAvailable: runtimeAvailable && (!requiresFileRuntime(manifest.name) || fileOperations.isAvailable()),
     },
   }))
 }
@@ -385,8 +385,9 @@ export async function executeAndroidDeviceTool(
   try {
     throwIfAndroidToolCancelled(options.signal)
     const execution = await runAndroidTool(tool.name, args, options)
-    throwIfAndroidToolCancelled(options.signal)
-    result = buildToolResult(tool, true, 'done', execution.output, startedAt, execution.metadata)
+    throwIfAndroidToolCancelled(options.signal, execution.metadata)
+    const status = execution.status ?? 'done'
+    result = buildToolResult(tool, status === 'done', status, execution.output, startedAt, execution.metadata, execution.errorCode)
   } catch (error) {
     const failure = normalizeAndroidToolError(error)
     result = buildToolResult(tool, false, failure.status, failure.message, startedAt, failure.metadata, failure.errorCode)
@@ -400,16 +401,16 @@ async function runAndroidTool(toolName: string, args: Record<string, unknown>, o
   let execution: Promise<AndroidToolExecution>
   switch (toolName) {
     case 'android.files.request_directory_access':
-      execution = requestDirectoryAccess(args)
+      execution = requestDirectoryAccess(args, options)
       break
     case 'android.files.scan':
-      execution = scanDirectoryTool(args)
+      execution = scanDirectoryTool(args, options)
       break
     case 'android.files.propose_structure':
-      execution = proposeStructureTool(args)
+      execution = proposeStructureTool(args, options)
       break
     case 'android.files.preview_operations':
-      execution = previewOperationsTool(args)
+      execution = previewOperationsTool(args, options)
       break
     case 'android.files.apply_operations':
       execution = applyOperationsTool(readOperationArray(args.operations, 'operations'), false, options)
@@ -448,18 +449,19 @@ async function runAndroidTool(toolName: string, args: Record<string, unknown>, o
       throw androidToolError('tool_unavailable', `${toolName} is not an Android device tool.`, 'skipped')
   }
   const result = await execution
-  throwIfAndroidToolCancelled(options.signal)
+  throwIfAndroidToolCancelled(options.signal, result.metadata)
   return result
 }
 
-async function requestDirectoryAccess(args: Record<string, unknown>): Promise<AndroidToolExecution> {
+async function requestDirectoryAccess(args: Record<string, unknown>, options: AndroidDeviceToolOptions): Promise<AndroidToolExecution> {
   assertAndroid()
   const initialUri = typeof args.initialUri === 'string' && args.initialUri.trim()
     ? args.initialUri.trim()
     : args.initialDirectory === 'downloads'
       ? FileSystem.StorageAccessFramework.getUriForDirectoryInRoot('Download')
       : undefined
-  const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync(initialUri)
+  const open = () => FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync(initialUri)
+  const permission = await (options.withSystemPicker ? options.withSystemPicker(open) : open())
   if (!permission.granted) {
     throw androidToolError('permission_required', 'Directory access was not granted by the user.', 'skipped', {
       granted: false,
@@ -473,13 +475,14 @@ async function requestDirectoryAccess(args: Record<string, unknown>): Promise<An
   })
 }
 
-async function scanDirectoryTool(args: Record<string, unknown>): Promise<AndroidToolExecution> {
+async function scanDirectoryTool(args: Record<string, unknown>, options: AndroidDeviceToolOptions): Promise<AndroidToolExecution> {
   assertAndroid()
   const directoryUri = requireSafUri(args.directoryUri, 'directoryUri')
   const scan = await scanAndroidDirectory(
     directoryUri,
     readInteger(args.maxDepth, DEFAULT_SCAN_DEPTH, 0, 6),
-    readInteger(args.maxEntries, DEFAULT_SCAN_ENTRY_LIMIT, 1, 1000)
+    readInteger(args.maxEntries, DEFAULT_SCAN_ENTRY_LIMIT, 1, 1000),
+    options.signal
   )
   return jsonExecution(scan, {
     directoryUri,
@@ -488,10 +491,10 @@ async function scanDirectoryTool(args: Record<string, unknown>): Promise<Android
   })
 }
 
-async function proposeStructureTool(args: Record<string, unknown>): Promise<AndroidToolExecution> {
+async function proposeStructureTool(args: Record<string, unknown>, options: AndroidDeviceToolOptions): Promise<AndroidToolExecution> {
   assertAndroid()
   const directoryUri = requireSafUri(args.directoryUri, 'directoryUri')
-  const scan = await scanAndroidDirectory(directoryUri, 0, readInteger(args.maxEntries, DEFAULT_SCAN_ENTRY_LIMIT, 1, 1000))
+  const scan = await scanAndroidDirectory(directoryUri, 0, readInteger(args.maxEntries, DEFAULT_SCAN_ENTRY_LIMIT, 1, 1000), options.signal)
   const proposal = buildStructureProposal(directoryUri, scan.entries)
   return jsonExecution({
     directoryUri,
@@ -506,21 +509,21 @@ async function proposeStructureTool(args: Record<string, unknown>): Promise<Andr
   })
 }
 
-async function previewOperationsTool(args: Record<string, unknown>): Promise<AndroidToolExecution> {
+async function previewOperationsTool(args: Record<string, unknown>, options: AndroidDeviceToolOptions): Promise<AndroidToolExecution> {
   assertAndroid()
   const mode = typeof args.mode === 'string' ? args.mode : 'organize'
   let operations: AndroidFileOperationManifest[]
 
   if (mode === 'organize') {
     const directoryUri = requireSafUri(args.directoryUri, 'directoryUri')
-    const scan = await scanAndroidDirectory(directoryUri, 0, readInteger(args.maxEntries, DEFAULT_SCAN_ENTRY_LIMIT, 1, 1000))
+    const scan = await scanAndroidDirectory(directoryUri, 0, readInteger(args.maxEntries, DEFAULT_SCAN_ENTRY_LIMIT, 1, 1000), options.signal)
     operations = buildStructureProposal(directoryUri, scan.entries).operations
   } else if (mode === 'copy') {
-    operations = [await buildDirectOperation('copy', args)]
+    operations = [await buildDirectOperation('copy', args, options.signal)]
   } else if (mode === 'move') {
-    operations = [await buildDirectOperation('move', args)]
+    operations = [await buildDirectOperation('move', args, options.signal)]
   } else if (mode === 'rename') {
-    operations = [await buildDirectOperation('rename', args)]
+    operations = [await buildDirectOperation('rename', args, options.signal)]
   } else {
     throw androidToolError('schema_invalid', `Unsupported preview mode: ${mode}.`)
   }
@@ -529,7 +532,8 @@ async function previewOperationsTool(args: Record<string, unknown>): Promise<And
     mode,
     operationCount: operations.length,
     operations,
-    confirmationRequired: operations.some((operation) => operation.action !== 'mkdir'),
+    confirmationRequired: operations.length > 0,
+    maxOperationsPerApply: MAX_OPERATION_COUNT,
     deleteSupported: false,
   }, {
     mode,
@@ -548,18 +552,36 @@ async function applyOperationsTool(
   if (!operations.length) {
     return jsonExecution({ applied: 0, results: [], undoOperations: [] }, { applied: 0 })
   }
+  if (!options.effects) throw androidToolError('evidence_insufficient', 'File writes require a Tasks-owned durable effect recorder.')
   const results: Array<NativeOperationResult & { operationId: string }> = []
   const undoOperations: AndroidFileOperationManifest[] = []
   const directoryCache = new Map<string, string>()
+  const receipts: Array<AndroidFileOperationReceipt & { operationId: string }> = []
+  const progress = () => ({
+    replaySafe: receipts.every((receipt) => receipt.effect === 'none'),
+    fileOperationReceipts: receipts.map(({ data: _data, ...receipt }) => receipt),
+    ...buildApplyCancellationMetadata(undo, results, operations, undoOperations),
+  })
 
   for (const operation of operations) {
-    throwIfAndroidToolCancelled(options.signal, buildApplyCancellationMetadata(undo, results, operations, undoOperations))
+    throwIfAndroidToolCancelled(options.signal, progress())
+    const recordReceipt = async (receipt: AndroidFileOperationReceipt, admitted: boolean) => {
+      receipts.push({ ...receipt, operationId: operation.id })
+      if (admitted) await options.effects!.settle({ id: receipt.requestId,
+        status: receipt.status === 'succeeded' && receipt.data?.status === 'skipped' ? 'skipped' : receipt.status, effect: receipt.effect,
+        bytesCopied: receipt.bytesCopied, ...(receipt.targetUri ? { targetUri: receipt.targetUri } : {}),
+        ...(receipt.completedSteps ? { completedSteps: receipt.completedSteps } : {}), ...(receipt.reason ? { reason: receipt.reason } : {}) })
+      // Retain the just-completed effect, but do not dispatch more I/O when receipts grow large.
+      if (JSON.stringify(progress().fileOperationReceipts).length > 24_000) {
+        throw androidToolError('step_limit_reached', 'File receipt budget reached. Review recorded effects before continuing.')
+      }
+    }
     try {
       validateOperation(operation)
       if (operation.action === 'mkdir') {
         const parentUri = requireSafUri(operation.targetParentUri, 'targetParentUri')
         const directoryName = requireSafeDisplayName(operation.targetDirectoryName ?? operation.targetName, 'targetDirectoryName')
-        const target = await ensureAndroidDirectory(parentUri, directoryName, directoryCache)
+        const target = await ensureAndroidDirectory(parentUri, directoryName, directoryCache, options.signal, recordReceipt, options.effects)
         results.push({
           operationId: operation.id,
           ok: true,
@@ -569,41 +591,39 @@ async function applyOperationsTool(
           sourceUri: parentUri,
           targetUri: target.uri,
         })
-        throwIfAndroidToolCancelled(options.signal, buildApplyCancellationMetadata(undo, results, operations, undoOperations))
+        throwIfAndroidToolCancelled(options.signal, progress())
         continue
       }
 
-      if (!nativeModule) {
-        throw androidToolError('tool_unavailable', 'Android native SAF file operations are unavailable in this build.', 'skipped')
-      }
-
       if (operation.action === 'copy') {
-        const targetParentUri = await resolveOperationTargetParent(operation, directoryCache)
-        const result = await nativeModule.copyDocument(
-          requireSafUri(operation.sourceUri, 'sourceUri'),
+        const targetParentUri = await resolveOperationTargetParent(operation, directoryCache, options.signal, recordReceipt, options.effects)
+        const result = await executeFileOperation('copy', {
+          sourceUri: requireSafUri(operation.sourceUri, 'sourceUri'),
           targetParentUri,
-          requireSafeDisplayName(operation.targetName, 'targetName'),
-          operation.mimeType ?? inferMimeType(operation.targetName ?? operation.sourceName ?? ''),
-          normalizeConflictPolicy(operation.conflictPolicy)
-        )
+          targetName: requireSafeDisplayName(operation.targetName, 'targetName'),
+          mimeType: operation.mimeType ?? inferMimeType(operation.targetName ?? operation.sourceName ?? ''),
+          conflictPolicy: normalizeConflictPolicy(operation.conflictPolicy),
+        }, options.signal, recordReceipt, options.effects) as unknown as NativeOperationResult
         results.push({ ...result, operationId: operation.id })
-        throwIfAndroidToolCancelled(options.signal, buildApplyCancellationMetadata(undo, results, operations, undoOperations))
+        if (!result.ok) throw androidToolError('policy_denied', 'File operation was skipped; dependent operations were not dispatched.', 'skipped')
+        throwIfAndroidToolCancelled(options.signal, progress())
         continue
       }
 
       if (operation.action === 'move') {
         const sourceUri = requireSafUri(operation.sourceUri, 'sourceUri')
         const sourceParentUri = requireSafUri(operation.sourceParentUri, 'sourceParentUri')
-        const targetParentUri = await resolveOperationTargetParent(operation, directoryCache)
+        const targetParentUri = await resolveOperationTargetParent(operation, directoryCache, options.signal, recordReceipt, options.effects)
         const targetName = requireSafeDisplayName(operation.targetName ?? operation.sourceName, 'targetName')
-        const result = await nativeModule.moveDocument(
+        const result = await executeFileOperation('move', {
           sourceUri,
           sourceParentUri,
           targetParentUri,
           targetName,
-          normalizeConflictPolicy(operation.conflictPolicy)
-        )
+          conflictPolicy: normalizeConflictPolicy(operation.conflictPolicy),
+        }, options.signal, recordReceipt, options.effects) as unknown as NativeOperationResult
         results.push({ ...result, operationId: operation.id })
+        if (!result.ok) throw androidToolError('policy_denied', 'File operation was skipped; dependent operations were not dispatched.', 'skipped')
         if (result.ok && result.targetUri) {
           undoOperations.push({
             id: `undo-${operation.id}`,
@@ -619,30 +639,31 @@ async function applyOperationsTool(
             reason: `Undo move from ${operation.id}.`,
           })
         }
-        throwIfAndroidToolCancelled(options.signal, buildApplyCancellationMetadata(undo, results, operations, undoOperations))
+        throwIfAndroidToolCancelled(options.signal, progress())
         continue
       }
 
       if (operation.action === 'rename') {
-        const result = await nativeModule.renameDocument(
-          requireSafUri(operation.sourceUri, 'sourceUri'),
-          requireSafeDisplayName(operation.targetName, 'targetName')
-        )
+        const result = await executeFileOperation('rename', {
+          sourceUri: requireSafUri(operation.sourceUri, 'sourceUri'),
+          targetName: requireSafeDisplayName(operation.targetName, 'targetName'),
+        }, options.signal, recordReceipt, options.effects) as unknown as NativeOperationResult
         results.push({ ...result, operationId: operation.id })
-        throwIfAndroidToolCancelled(options.signal, buildApplyCancellationMetadata(undo, results, operations, undoOperations))
+        if (!result.ok) throw androidToolError('policy_denied', 'File operation was skipped; dependent operations were not dispatched.', 'skipped')
+        throwIfAndroidToolCancelled(options.signal, progress())
         continue
       }
     } catch (error) {
       const failure = normalizeAndroidToolError(error)
-      if (failure.errorCode === 'cancelled' || (!results.length && !undoOperations.length)) {
-        throw error
-      }
-      throwAndroidApplyPartialFailure(failure, operation, undo, results, operations, undoOperations)
+      // Even the first call can create a partial file or a directory before failing.
+      const metadata = { ...failure.metadata, ...progress(), failedOperationId: operation.id,
+        partialFailure: receipts.some((receipt) => receipt.effect !== 'none'), failureCount: 1 }
+      throw androidToolError(failure.errorCode, failure.message, failure.status, metadata)
     }
   }
 
   const applied = results.filter((result) => result.status === 'done').length
-  return jsonExecution({
+  const execution = jsonExecution({
     mode: undo ? 'undo' : 'apply',
     applied,
     skipped: results.filter((result) => result.status !== 'done').length,
@@ -650,12 +671,18 @@ async function applyOperationsTool(
     undoOperations,
     deleteSupported: false,
   }, {
+    ...progress(),
     mode: undo ? 'undo' : 'apply',
     applied,
     skipped: results.filter((result) => result.status !== 'done').length,
     undoOperationCount: undoOperations.length,
     deleteSupported: false,
   })
+  if (results.some((result) => !result.ok)) {
+    execution.status = 'skipped'
+    execution.errorCode = 'policy_denied'
+  }
+  return execution
 }
 
 async function inspectApkTool(args: Record<string, unknown>): Promise<AndroidToolExecution> {
@@ -1102,57 +1129,70 @@ async function launchAndroidIntentWithFallback(
   })
 }
 
-async function scanAndroidDirectory(directoryUri: string, maxDepth: number, maxEntries: number): Promise<{
+function requiresFileRuntime(name: string): boolean {
+  return name.startsWith('android.files.') && name !== 'android.files.request_directory_access'
+}
+
+async function executeFileOperation(
+  action: AndroidNativeFileAction, input: Record<string, unknown>, signal?: AbortSignal,
+  recordReceipt?: (receipt: AndroidFileOperationReceipt, admitted: boolean) => void | Promise<void>, effects?: TaskEffectRecorder,
+): Promise<Record<string, unknown>> {
+  let admitted = false
+  const beforeDispatch = action === 'scan' ? undefined : async (id: string) => {
+    if (!effects) throw new Error('File effect recorder is unavailable')
+    await effects.begin({ id, kind: 'file', action,
+      ...(typeof input.sourceUri === 'string' ? { sourceUri: input.sourceUri } : {}),
+      ...(typeof input.sourceParentUri === 'string' ? { sourceParentUri: input.sourceParentUri } : {}),
+      ...(typeof (input.targetParentUri ?? input.parentUri) === 'string' ? { targetParentUri: (input.targetParentUri ?? input.parentUri) as string } : {}),
+      ...(typeof (input.targetName ?? input.directoryName) === 'string' ? { targetName: (input.targetName ?? input.directoryName) as string } : {}),
+    })
+    admitted = true
+  }
+  const receipt = beforeDispatch ? await fileOperations.execute(action, input, signal, beforeDispatch) : await fileOperations.execute(action, input, signal)
+  await recordReceipt?.(receipt, admitted)
+  if (receipt.status !== 'succeeded') {
+    const code = receipt.status === 'cancelled' ? 'cancelled'
+      : receipt.reason === 'permission_required' ? 'permission_required'
+        : receipt.reason === 'unavailable' ? 'tool_unavailable' : 'execution_failed'
+    throw androidToolError(code, 'Android file operation ' + receipt.status + ': ' + receipt.reason
+      + (receipt.effect !== 'none' ? '. Changes may already exist; inspect the receipt before retrying.' : ''),
+    receipt.status === 'cancelled' || receipt.reason === 'unavailable' ? 'skipped' : 'error', {
+      fileOperationReceipts: [receipt], status: receipt.status, replaySafe: receipt.effect === 'none',
+    })
+  }
+  return receipt.data!
+}
+
+async function scanAndroidDirectory(directoryUri: string, maxDepth: number, maxEntries: number, signal?: AbortSignal): Promise<{
   directoryUri: string
   entries: AndroidFileEntry[]
   truncated: boolean
 }> {
-  if (nativeModule) {
-    const result = await nativeModule.scanDirectory(directoryUri, maxDepth, maxEntries)
-    return {
-      directoryUri: result.directoryUri,
-      entries: normalizeEntries(result.entries, directoryUri),
-      truncated: Boolean(result.truncated),
-    }
-  }
-
-  const childUris = await FileSystem.StorageAccessFramework.readDirectoryAsync(directoryUri)
-  const entries: AndroidFileEntry[] = []
-  for (const uri of childUris.slice(0, maxEntries)) {
-    const info = await FileSystem.getInfoAsync(uri)
-    entries.push({
-      uri,
-      parentUri: directoryUri,
-      name: displayNameFromSafUri(uri),
-      mimeType: null,
-      isDirectory: info.exists ? Boolean(info.isDirectory) : false,
-      depth: 0,
-      size: info.exists ? info.size : undefined,
-      lastModified: info.exists ? info.modificationTime : undefined,
-    })
-  }
-  return {
-    directoryUri,
-    entries,
-    truncated: childUris.length > maxEntries,
-  }
+  const result = await executeFileOperation('scan', { directoryUri, maxDepth, maxEntries }, signal)
+  return { directoryUri: result.directoryUri as string,
+    entries: normalizeEntries(result.entries as AndroidFileEntry[], directoryUri), truncated: Boolean(result.truncated) }
 }
 
-async function ensureAndroidDirectory(parentUri: string, directoryName: string, cache: Map<string, string>): Promise<NativeDocumentResult> {
-  const key = `${parentUri}\n${directoryName}`
+async function ensureAndroidDirectory(
+  parentUri: string, directoryName: string, cache: Map<string, string>, signal?: AbortSignal,
+  recordReceipt?: (receipt: AndroidFileOperationReceipt, admitted: boolean) => void | Promise<void>, effects?: TaskEffectRecorder,
+): Promise<NativeDocumentResult> {
+  throwIfAndroidToolCancelled(signal)
+  const key = parentUri + '\n' + directoryName
   const cached = cache.get(key)
   if (cached) return { ok: true, status: 'existing', uri: cached, name: directoryName }
-  const result = nativeModule
-    ? await nativeModule.ensureDirectory(parentUri, directoryName)
-    : { ok: true, status: 'created', uri: await FileSystem.StorageAccessFramework.makeDirectoryAsync(parentUri, directoryName), name: directoryName }
+  const result = await executeFileOperation('mkdir', { parentUri, directoryName }, signal, recordReceipt, effects) as unknown as NativeDocumentResult
   cache.set(key, result.uri)
   return result
 }
 
-async function resolveOperationTargetParent(operation: AndroidFileOperationManifest, cache: Map<string, string>): Promise<string> {
+async function resolveOperationTargetParent(
+  operation: AndroidFileOperationManifest, cache: Map<string, string>, signal?: AbortSignal,
+  recordReceipt?: (receipt: AndroidFileOperationReceipt, admitted: boolean) => void | Promise<void>, effects?: TaskEffectRecorder,
+): Promise<string> {
   const parentUri = requireSafUri(operation.targetParentUri, 'targetParentUri')
   if (!operation.targetDirectoryName) return parentUri
-  const directory = await ensureAndroidDirectory(parentUri, requireSafeDisplayName(operation.targetDirectoryName, 'targetDirectoryName'), cache)
+  const directory = await ensureAndroidDirectory(parentUri, requireSafeDisplayName(operation.targetDirectoryName, 'targetDirectoryName'), cache, signal, recordReceipt, effects)
   return directory.uri
 }
 
@@ -1220,7 +1260,7 @@ function buildStructureProposal(directoryUri: string, entries: AndroidFileEntry[
   }
 }
 
-async function buildDirectOperation(action: AndroidFileOperationAction, args: Record<string, unknown>): Promise<AndroidFileOperationManifest> {
+async function buildDirectOperation(action: AndroidFileOperationAction, args: Record<string, unknown>, signal?: AbortSignal): Promise<AndroidFileOperationManifest> {
   const now = Date.now()
   const directoryUri = typeof args.directoryUri === 'string' && args.directoryUri.trim()
     ? requireSafUri(args.directoryUri, 'directoryUri')
@@ -1229,7 +1269,7 @@ async function buildDirectOperation(action: AndroidFileOperationAction, args: Re
     ? requireSafeDisplayName(args.sourceName, 'sourceName')
     : undefined
   const sourceEntry = action !== 'mkdir' && typeof args.sourceUri !== 'string' && directoryUri && requestedSourceName
-    ? await findFileEntryByName(directoryUri, requestedSourceName, readInteger(args.maxEntries, DEFAULT_SCAN_ENTRY_LIMIT, 1, 1000))
+    ? await findFileEntryByName(directoryUri, requestedSourceName, readInteger(args.maxEntries, DEFAULT_SCAN_ENTRY_LIMIT, 1, 1000), signal)
     : undefined
   const sourceUri = action === 'mkdir'
     ? undefined
@@ -1256,8 +1296,8 @@ async function buildDirectOperation(action: AndroidFileOperationAction, args: Re
   }
 }
 
-async function findFileEntryByName(directoryUri: string, sourceName: string, maxEntries: number): Promise<AndroidFileEntry> {
-  const scan = await scanAndroidDirectory(directoryUri, 1, maxEntries)
+async function findFileEntryByName(directoryUri: string, sourceName: string, maxEntries: number, signal?: AbortSignal): Promise<AndroidFileEntry> {
+  const scan = await scanAndroidDirectory(directoryUri, 1, maxEntries, signal)
   const matches = scan.entries.filter((entry) => !entry.isDirectory && entry.name === sourceName)
   if (!matches.length) {
     throw androidToolError('schema_invalid', `sourceName ${sourceName} was not found in the selected SAF directory.`)
@@ -1270,11 +1310,19 @@ async function findFileEntryByName(directoryUri: string, sourceName: string, max
 
 function validateOperation(operation: AndroidFileOperationManifest): void {
   if (!operation || typeof operation !== 'object') throw androidToolError('schema_invalid', 'Each operation must be an object.')
+  if (typeof operation.id !== 'string' || !/^[A-Za-z0-9_.:-]{1,160}$/.test(operation.id)) {
+    throw androidToolError('schema_invalid', 'Each operation needs a bounded, stable operation id.')
+  }
   if (!['mkdir', 'move', 'copy', 'rename'].includes(operation.action)) {
     throw androidToolError('policy_denied', `Operation ${String((operation as { action?: unknown }).action)} is not allowed.`)
   }
   if ((operation as { delete?: unknown }).delete || (operation as { destructive?: unknown }).destructive) {
     throw androidToolError('policy_denied', 'Delete and destructive file operations are not supported by Android device tools.')
+  }
+  if (operation.action !== 'mkdir') requireSafUri(operation.sourceUri, 'sourceUri')
+  if (operation.action === 'mkdir') {
+    requireSafUri(operation.targetParentUri, 'targetParentUri')
+    requireSafeDisplayName(operation.targetDirectoryName ?? operation.targetName, 'targetDirectoryName')
   }
   if (operation.targetName) requireSafeDisplayName(operation.targetName, 'targetName')
   if (operation.targetDirectoryName) requireSafeDisplayName(operation.targetDirectoryName, 'targetDirectoryName')
@@ -1295,7 +1343,14 @@ function validateOperation(operation: AndroidFileOperationManifest): void {
 function readOperationArray(value: unknown, label: string): AndroidFileOperationManifest[] {
   if (!Array.isArray(value)) throw androidToolError('schema_invalid', `${label} must be an array.`)
   if (value.length > MAX_OPERATION_COUNT) throw androidToolError('policy_denied', `At most ${MAX_OPERATION_COUNT} operations can run at once.`)
-  return value.map((item) => item as AndroidFileOperationManifest)
+  const ids = new Set<string>()
+  return value.map((item) => {
+    const operation = { ...item } as AndroidFileOperationManifest
+    validateOperation(operation)
+    if (ids.has(operation.id)) throw androidToolError('schema_invalid', 'Operation ids must be unique within a batch.')
+    ids.add(operation.id)
+    return operation
+  })
 }
 
 function normalizeEntries(entries: AndroidFileEntry[], fallbackParentUri: string): AndroidFileEntry[] {
@@ -1351,7 +1406,7 @@ function assertAndroid(): void {
 function requireSafUri(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw androidToolError('schema_invalid', `${label} is required.`)
   const uri = value.trim()
-  if (!uri.startsWith('content://') || !uri.includes('/tree/')) {
+  if (uri.length > 4096 || !uri.startsWith('content://') || !uri.includes('/tree/')) {
     throw androidToolError('policy_denied', `${label} must be an Android SAF tree content URI, not a raw filesystem path.`)
   }
   return uri
@@ -1547,52 +1602,10 @@ function buildApplyCancellationMetadata(
     skipped: results.filter((result) => result.status !== 'done').length,
     operationCount: operations.length,
     undoOperationCount: undoOperations.length,
+    results: [...results],
+    undoOperations: [...undoOperations],
     deleteSupported: false,
   }
-}
-
-function throwAndroidApplyPartialFailure(
-  failure: ReturnType<typeof normalizeAndroidToolError>,
-  failedOperation: AndroidFileOperationManifest,
-  undo: boolean,
-  results: Array<NativeOperationResult & { operationId: string }>,
-  operations: AndroidFileOperationManifest[],
-  undoOperations: AndroidFileOperationManifest[]
-): never {
-  const applied = results.filter((result) => result.status === 'done').length
-  const skipped = results.filter((result) => result.status !== 'done').length
-  const failureRecord = {
-    operationId: failedOperation.id,
-    action: failedOperation.action,
-    errorCode: failure.errorCode,
-    message: clampTraceText(redactSensitiveText(failure.message), 500),
-  }
-  const payload = {
-    mode: undo ? 'undo' : 'apply',
-    partialFailure: true,
-    applied,
-    skipped,
-    failureCount: 1,
-    failedOperationId: failedOperation.id,
-    results,
-    failures: [failureRecord],
-    undoOperations,
-    deleteSupported: false,
-    nextStep: undoOperations.length
-      ? 'Review partial results and run android.files.undo_operations from a visible confirmation to reverse completed move operations.'
-      : 'Review partial results before retrying. Delete-based rollback is unsupported.',
-  }
-  throw androidToolError(failure.errorCode, JSON.stringify(payload, null, 2), 'error', {
-    mode: undo ? 'undo' : 'apply',
-    partialFailure: true,
-    applied,
-    skipped,
-    operationCount: operations.length,
-    failureCount: 1,
-    failedOperationId: failedOperation.id,
-    undoOperationCount: undoOperations.length,
-    deleteSupported: false,
-  })
 }
 
 function buildToolResult(

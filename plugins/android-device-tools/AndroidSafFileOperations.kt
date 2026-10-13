@@ -4,8 +4,6 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.os.CancellationSignal
 import android.provider.DocumentsContract
-import java.io.InputStream
-import java.io.OutputStream
 
 /** SAF only. This is an I/O boundary, not an authorization or task scheduler. */
 internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
@@ -41,7 +39,10 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
             DocumentsContract.isTreeUri(it.uri) && DocumentsContract.getTreeDocumentId(it.uri) == treeId
       }
       if (!grant) throw SecurityException("A persisted directory grant is required")
-      val id = if (DocumentsContract.isDocumentUri(null, uri)) DocumentsContract.getDocumentId(uri) else treeId
+      val segments = uri.pathSegments
+      require((segments.size == 2 && segments[0] == "tree") ||
+          (segments.size == 4 && segments[0] == "tree" && segments[2] == "document"))
+      val id = if (segments.size == 4) DocumentsContract.getDocumentId(uri) else treeId
       val root = DocumentsContract.buildDocumentUriUsingTree(uri, treeId)
       val document = DocumentsContract.buildDocumentUriUsingTree(uri, id)
       if (id != treeId && !DocumentsContract.isChildDocument(resolver, root, document)) {
@@ -56,6 +57,7 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
     fun scan(input: Map<String, Any?>): Map<String, Any?> {
       val rootValue = input.string("directoryUri")
       val root = authorized(rootValue)
+      context.retainResultText(rootValue, 4096)
       val maxDepth = input.int("maxDepth", 1).coerceIn(0, 6)
       val limit = input.int("maxEntries", 300).coerceIn(1, 1000)
       val entries = mutableListOf<Map<String, Any?>>()
@@ -67,11 +69,15 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
           while (cursor.moveToNext()) {
             context.readRow()
             if (entries.size >= limit) { truncated = true; return }
-            val child = DocumentsContract.buildDocumentUriUsingTree(root, cursor.getString(0))
-            val mime = cursor.getString(2)
+            val documentId = cursor.getString(0)
+            if (documentId.length > 4096) throw FileOperationStopped("response_limit")
+            val child = DocumentsContract.buildDocumentUriUsingTree(root, documentId)
+            val childValue = context.retainResultText(child.toString(), 4096)
+            val name = context.retainResultText(cursor.getString(1), 255)
+            val mime = context.retainResultText(cursor.getString(2), 200)
             val directory = mime == DocumentsContract.Document.MIME_TYPE_DIR
-            entries.add(mapOf("uri" to child.toString(), "parentUri" to parentValue,
-                "name" to cursor.getString(1), "mimeType" to mime, "isDirectory" to directory,
+            entries.add(mapOf("uri" to childValue, "parentUri" to context.retainResultText(parentValue, 4096),
+                "name" to name, "mimeType" to mime, "isDirectory" to directory,
                 "depth" to depth, "size" to if (cursor.isNull(3)) 0.0 else cursor.getLong(3).toDouble(),
                 "lastModified" to if (cursor.isNull(4)) 0.0 else cursor.getLong(4).toDouble()))
             if (directory && depth < maxDepth) walk(authorized(child.toString()), child.toString(), depth + 1)
@@ -121,6 +127,7 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
           ?: throw IllegalStateException("Creation returned no URI")
       context.targetUri = created.toString()
       context.effect = "applied"
+      context.completedSteps.add("created")
       return mapOf("ok" to true, "status" to "created", "uri" to created.toString(), "name" to name)
     }
 
@@ -132,7 +139,7 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
       query(source, arrayOf(DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_MIME_TYPE)).use { cursor ->
         if (!cursor.moveToFirst()) throw IllegalStateException("Source is missing")
         require(cursor.getString(1) != DocumentsContract.Document.MIME_TYPE_DIR)
-        if (!cursor.isNull(0) && cursor.getLong(0) > MAX_COPY_BYTES) throw FileOperationStopped("byte_limit")
+        if (!cursor.isNull(0) && cursor.getLong(0) > BoundedFileCopy.MAX_BYTES) throw FileOperationStopped("byte_limit")
       }
       // Open/read-authorize the source before creating any destination.
       authorized(source.toString())
@@ -145,13 +152,15 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
             ?: throw IllegalStateException("Creation returned no URI")
         context.targetUri = created.toString()
         context.effect = "partial"
+        context.completedSteps.add("created")
         context.check()
         authorized(created.toString(), true)
         resolver.openOutputStream(created, "w").use { output ->
-          copyBounded(inputStream, output ?: throw IllegalStateException("Destination cannot be opened"), context)
+          BoundedFileCopy.copy(inputStream, output ?: throw IllegalStateException("Destination cannot be opened"), context)
         }
       }
       context.effect = "applied"
+      context.completedSteps.add("copied")
       return result("copy", "done", source, Uri.parse(context.targetUri!!), "copied")
     }
 
@@ -170,7 +179,13 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
       var moved = DocumentsContract.moveDocument(resolver, source, sourceParent, parent)
           ?: throw IllegalStateException("Move returned no URI")
       context.targetUri = moved.toString()
+      context.completedSteps.add("moved")
       context.effect = if (name == original) "applied" else "partial"
+      // DocumentsContract may build the returned URI using the source tree. After a
+      // cross-tree move, subsequent access must use the authorized destination tree.
+      if (moved.authority != parent.authority) throw SecurityException("Unexpected destination authority")
+      moved = DocumentsContract.buildDocumentUriUsingTree(parent, DocumentsContract.getDocumentId(moved))
+      context.targetUri = moved.toString()
       if (name != original) {
         authorized(moved.toString(), true)
         context.mutation()
@@ -178,6 +193,7 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
             ?: throw IllegalStateException("Rename returned no URI")
         context.targetUri = moved.toString()
         context.effect = "applied"
+        context.completedSteps.add("renamed")
       }
       return result("move", "done", source, moved, "moved")
     }
@@ -190,6 +206,7 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
           ?: throw IllegalStateException("Rename returned no URI")
       context.targetUri = renamed.toString()
       context.effect = "applied"
+      context.completedSteps.add("renamed")
       return result("rename", "done", source, renamed, "renamed")
     }
   }
@@ -207,22 +224,4 @@ internal class AndroidSafFileOperations(private val resolver: ContentResolver) {
   private fun Map<String, Any?>.string(key: String): String = this[key] as? String ?: throw IllegalArgumentException(key)
   private fun Map<String, Any?>.int(key: String, default: Int): Int = (this[key] as? Number)?.toInt() ?: default
 
-  companion object {
-    const val MAX_COPY_BYTES = 64L * 1024 * 1024
-
-    internal fun copyBounded(input: InputStream, output: OutputStream, context: FileOperationContext) {
-      val buffer = ByteArray(64 * 1024)
-      while (true) {
-        context.check()
-        val size = input.read(buffer)
-        context.check()
-        if (size < 0) break
-        if (context.bytesCopied + size > MAX_COPY_BYTES) throw FileOperationStopped("byte_limit")
-        output.write(buffer, 0, size)
-        context.bytesCopied += size
-      }
-      context.check()
-      output.flush()
-    }
-  }
 }

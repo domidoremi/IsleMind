@@ -7,6 +7,8 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.io.InputStream
+import java.io.OutputStream
 
 internal class FileOperationStopped(val code: String) : RuntimeException(code)
 
@@ -21,7 +23,9 @@ internal class FileOperationContext(
   var effect = "none"
   var targetUri: String? = null
   var bytesCopied = 0L
+  val completedSteps = mutableListOf<String>()
   var rowsRead = 0
+  private var resultCharacters = 0
 
   fun cancel(reason: String) {
     if (stop.compareAndSet(null, reason)) cancellation.get()?.let(dispatchCancellation)
@@ -44,8 +48,37 @@ internal class FileOperationContext(
     if (++rowsRead > 5000) throw FileOperationStopped("query_limit")
   }
 
+  /** Row count alone does not bound provider-controlled names/IDs across the bridge. */
+  fun retainResultText(value: String, fieldLimit: Int): String {
+    check()
+    if (value.length > fieldLimit || value.length > 256 * 1024 - resultCharacters) {
+      throw FileOperationStopped("response_limit")
+    }
+    resultCharacters += value.length
+    return value
+  }
+
   /** Mark before entering a provider: an exception may still mean the provider mutated data. */
   fun mutation() { check(); effect = "uncertain" }
+}
+
+internal object BoundedFileCopy {
+  const val MAX_BYTES = 64L * 1024 * 1024
+
+  fun copy(input: InputStream, output: OutputStream, context: FileOperationContext) {
+    val buffer = ByteArray(64 * 1024)
+    while (true) {
+      context.check()
+      val size = input.read(buffer)
+      context.check()
+      if (size < 0) break
+      if (context.bytesCopied + size > MAX_BYTES) throw FileOperationStopped("byte_limit")
+      output.write(buffer, 0, size)
+      context.bytesCopied += size
+    }
+    context.check()
+    output.flush()
+  }
 }
 
 internal class BoundedFileOperationExecutor(private val now: () -> Long) {
@@ -122,6 +155,7 @@ internal class BoundedFileOperationExecutor(private val now: () -> Long) {
       reason: String?, data: Map<String, Any?>? = null): Map<String, Any?> = mapOf(
       "requestId" to id, "action" to action, "status" to status, "effect" to context.effect,
       "reason" to reason, "targetUri" to context.targetUri, "bytesCopied" to context.bytesCopied.toDouble(),
+      "completedSteps" to context.completedSteps.toList(),
       "data" to data,
   )
 }

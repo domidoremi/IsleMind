@@ -3,15 +3,17 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 
 const root = path.resolve(__dirname, '..')
-const outputPath = path.join(root, 'test-evidence', 'qa', 'android-external-blockers.json')
-const defaultDevice = readDeviceArg() || process.env.QA_DEVICE_SERIAL || 'emulator-5554'
+const defaultOutputPath = path.join(root, 'test-evidence', 'qa', 'android-external-blockers.json')
 
-function main() {
+function main(options = parseArgs(process.argv.slice(2))) {
+  const outputPath = options.output
+  const execute = args => runCommand(options.adb, args)
+  // Resolve authority before querying a device or replacing prior evidence.
+  const device = resolveDevice(options.device, execute)
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-  const device = resolveDevice(defaultDevice)
-  const installer = device ? resolveIntent(device, ['resolve-activity', '--brief', '-a', 'android.intent.action.INSTALL_PACKAGE', '-d', 'file:///sdcard/Download/QA-IsleMind.apk', '-t', 'application/vnd.android.package-archive']) : { available: false, resolver: null }
-  const notificationSettings = device ? resolveIntent(device, ['resolve-activity', '--brief', '-a', 'android.settings.APP_NOTIFICATION_SETTINGS']) : { available: false, resolver: null }
-  const currentFocus = device ? readCurrentFocus(device) : null
+  const installer = resolveIntent(device, ['resolve-activity', '--brief', '-a', 'android.intent.action.INSTALL_PACKAGE', '-d', 'file:///sdcard/Download/QA-IsleMind.apk', '-t', 'application/vnd.android.package-archive'], execute)
+  const notificationSettings = resolveIntent(device, ['resolve-activity', '--brief', '-a', 'android.settings.APP_NOTIFICATION_SETTINGS'], execute)
+  const currentFocus = readCurrentFocus(device, execute)
   const blockers = {
     generatedAt: new Date().toISOString(),
     deviceSerial: device,
@@ -47,30 +49,50 @@ function main() {
   console.log(`Android external blocker audit wrote ${relative(outputPath)}`)
 }
 
-function readDeviceArg() {
-  const index = process.argv.indexOf('--device')
-  if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1]
-  const deviceWithEquals = process.argv.find((value) => value.startsWith('--device='))
-  return deviceWithEquals ? deviceWithEquals.split('=').slice(1).join('=') : null
+function parseArgs(argv, env = process.env) {
+  const options = { device: env.QA_DEVICE_SERIAL, adb: 'adb', output: defaultOutputPath }
+  const seen = new Set()
+  for (let i = 0; i < argv.length; i++) {
+    const [flag, ...parts] = argv[i].split('=')
+    if (!['--device', '--adb', '--output'].includes(flag) || seen.has(flag)) throw new Error(`Invalid or duplicate option: ${flag}`)
+    seen.add(flag)
+    const value = parts.length ? parts.join('=') : argv[++i]
+    if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value`)
+    options[flag.slice(2)] = value
+  }
+  assertDevice(options.device)
+  options.output = path.resolve(root, options.output)
+  return options
+}
+
+function assertDevice(device) {
+  if (typeof device !== 'string' || !/^[^\s-][^\s]{0,255}$/.test(device)) {
+    throw new Error('An explicitly authorized --device serial or QA_DEVICE_SERIAL is required; no automatic device selection.')
+  }
 }
 
 function relative(file) {
   return path.relative(root, file).replace(/\\/g, '/')
 }
 
-function resolveDevice(requested) {
-  const output = runCommand('adb', ['devices']) ?? ''
+function resolveDevice(requested, execute) {
+  assertDevice(requested)
+  const output = execute(['devices'])
+  if (output === null) throw new Error('Unable to enumerate ADB devices; no device was queried.')
   const devices = output
     .split(/\r?\n/)
     .map((line) => line.trim().split(/\s+/))
     .filter(([serial, state]) => serial && state === 'device')
     .map(([serial]) => serial)
-  if (devices.includes(requested)) return requested
-  return devices[0] ?? null
+  if (devices.filter(serial => serial === requested).length !== 1) {
+    throw new Error('The authorized ADB device is unavailable or ambiguous; no fallback device was queried.')
+  }
+  return requested
 }
 
-function resolveIntent(device, args) {
-  const output = runCommand('adb', ['-s', device, 'shell', 'cmd', 'package', ...args])
+function resolveIntent(device, args, execute) {
+  const output = execute(['-s', device, 'shell', 'cmd', 'package', ...args])
+  if (output === null) throw new Error('Authorized-device intent query failed; evidence was not written.')
   const text = String(output ?? '').trim()
   return {
     available: Boolean(text && !/No activity found/i.test(text)),
@@ -78,8 +100,9 @@ function resolveIntent(device, args) {
   }
 }
 
-function readCurrentFocus(device) {
-  const output = runCommand('adb', ['-s', device, 'shell', 'dumpsys', 'window'])
+function readCurrentFocus(device, execute) {
+  const output = execute(['-s', device, 'shell', 'dumpsys', 'window'])
+  if (output === null) throw new Error('Authorized-device focus query failed; evidence was not written.')
   const match = String(output ?? '').match(/mCurrentFocus=([^\r\n]+)/)
   return match?.[1]?.trim() ?? null
 }
@@ -89,6 +112,7 @@ function runCommand(command, args) {
     return execFileSync(command, args, {
       cwd: root,
       encoding: 'utf8',
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 20000,
       maxBuffer: 6 * 1024 * 1024,
@@ -100,4 +124,4 @@ function runCommand(command, args) {
 
 if (require.main === module) main()
 
-module.exports = { main }
+module.exports = { main, parseArgs, resolveDevice }

@@ -39,11 +39,23 @@ function run() {
     'moveDocument(',
     'renameDocument(',
     'publishPortableJsonFileToDownloads(',
-    'Only Android SAF tree URIs are supported.',
+    'executeFileOperation(',
+    'cancelFileOperation(',
+    '"fileOperationVersion" to 1',
   ]) {
     assert.ok(moduleText.includes(snippet), `Plugin AndroidDeviceToolsModule.kt must include ${snippet}.`)
     assert.ok(generatedModuleText.includes(snippet), `Generated AndroidDeviceToolsModule.kt must include ${snippet}.`)
   }
+
+  for (const file of ['AndroidSafFileOperations.kt', 'BoundedFileOperationExecutor.kt']) {
+    const template = fs.readFileSync(path.join(root, 'plugins/android-device-tools', file), 'utf8')
+    const generated = fs.readFileSync(path.join(path.dirname(nativeFiles[2]), file), 'utf8')
+    assert.equal(normalizeGeneratedKotlin(template), normalizeGeneratedKotlin(generated), `${file} must stay in sync`)
+  }
+  const saf = fs.readFileSync(path.join(root, 'plugins/android-device-tools/AndroidSafFileOperations.kt'), 'utf8')
+  for (const contract of ['persistedUriPermissions', 'DocumentsContract.isChildDocument', 'context.mutation()',
+    'CancellationSignal()', 'BoundedFileCopy.copy', 'context.targetUri =']) assert.ok(saf.includes(contract), contract)
+  assert.ok(!saf.includes('.copyTo('), 'Agent SAF copies must use the bounded copier')
 
   assert.ok(mainApplicationText.includes('add(AndroidDeviceToolsPackage())'), 'MainApplication must register AndroidDeviceToolsPackage.')
   console.log('Android device native audit passed')

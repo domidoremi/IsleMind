@@ -205,6 +205,8 @@ function assertNativePluginBoundary() {
   const generated = fs.readFileSync(nativeGeneratedPath, 'utf8')
   assert.equal(normalizeGeneratedKotlin(generated), normalizeGeneratedKotlin(template), 'Generated Android native module must match its plugin template.')
   assert.deepEqual(extractReactMethods(template), [
+    'executeFileOperation',
+    'cancelFileOperation',
     'scanDirectory',
     'ensureDirectory',
     'copyDocument',
@@ -212,8 +214,10 @@ function assertNativePluginBoundary() {
     'renameDocument',
     'publishPortableJsonFileToDownloads',
   ], 'The native bridge exposes only scoped SAF operations and the portable JSON Downloads publisher.')
+  const nativeSources = [template, ...['AndroidSafFileOperations.kt', 'BoundedFileOperationExecutor.kt']
+    .map(file => fs.readFileSync(path.join(path.dirname(nativeTemplatePath), file), 'utf8'))].join('\n')
   for (const forbidden of [/DocumentsContract\.deleteDocument/, /\bdeleteDocument\s*\(/, /Runtime\.getRuntime/, /ProcessBuilder\s*\(/]) {
-    assert.doesNotMatch(template, forbidden, `Native Android bridge must not expose ${forbidden}.`)
+    assert.doesNotMatch(nativeSources, forbidden, `Native Android bridge must not expose ${forbidden}.`)
   }
 }
 
@@ -277,7 +281,14 @@ function registerTypeScriptSupport() {
     return originalResolve.call(this, request, parent, isMain, options)
   }
   Module._load = function loadAndroidAuditDependency(request, parent, isMain) {
-    if (request === 'react-native') return { NativeModules: {}, Platform: { OS: 'android' } }
+    if (request === 'react-native') return {
+      NativeModules: { AndroidDeviceTools: {
+        fileOperationVersion: 1,
+        executeFileOperation: async () => { throw new Error('Architecture audit must not dispatch native file operations') },
+        cancelFileOperation: async () => { throw new Error('Architecture audit must not dispatch native file operations') },
+      } },
+      Platform: { OS: 'android' },
+    }
     if (request === 'expo-file-system/legacy') return { cacheDirectory: 'file:///cache/' }
     if (request === 'expo-intent-launcher') return { ActivityAction: {}, startActivityAsync: async () => undefined }
     if (request === '@/platform/native/runtimeLog') {
