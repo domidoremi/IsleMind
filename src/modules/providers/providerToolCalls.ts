@@ -7,6 +7,9 @@ export interface ProviderToolCall {
   rawArguments?: unknown
   thoughtSignature?: string
   argumentsComplete?: boolean
+  /** Transport fragments must not be mistaken for complete JSON snapshots. */
+  argumentsDelta?: boolean
+  nameDelta?: boolean
 }
 
 export interface ProviderTextToolCallStreamFilter {
@@ -26,6 +29,8 @@ type ProviderToolCallInput = {
   rawArguments?: unknown
   arguments?: unknown
   thoughtSignature?: string
+  argumentsDelta?: boolean
+  nameDelta?: boolean
 }
 
 export function extractProviderToolCalls(value: unknown, providerType: string): ProviderToolCall[] | undefined {
@@ -146,21 +151,26 @@ export function createProviderTextToolCallStreamFilter(): ProviderTextToolCallSt
 }
 
 function collectOpenAIProviderToolCalls(root: Record<string, unknown>, add: (input: ProviderToolCallInput) => void) {
-  const addOpenAIToolCall = (value: unknown, fallback: { id?: string; index?: number; name?: string; rawArguments?: unknown } = {}) => {
+  const addOpenAIToolCall = (value: unknown, fallback: { id?: string; index?: number; name?: string; rawArguments?: unknown; delta?: boolean } = {}) => {
     const record = asRecord(value)
     if (!record) return
     const fn = asRecord(record.function) ?? asRecord(record.function_call)
+    // Responses output also contains reasoning and provider-hosted search.
+    // Those are replay/trace items, not client-executable function calls.
+    if (typeof record.type === 'string' && !['function_call', 'tool_call', 'function'].includes(record.type) && !fn && !record.name) return
     add({
       id: stringValue(record.id) || stringValue(record.call_id) || stringValue(record.item_id) || fallback.id,
       callId: stringValue(record.call_id),
       index: numberValue(record.index) ?? fallback.index,
       name: stringValue(record.name) || stringValue(fn?.name) || fallback.name,
       rawArguments: record.arguments ?? record.input ?? fn?.arguments ?? fn?.input ?? fallback.rawArguments,
+      argumentsDelta: fallback.delta,
+      nameDelta: fallback.delta,
     })
   }
-  const addOpenAIArray = (items: unknown, fallback: { index?: number } = {}) => {
+  const addOpenAIArray = (items: unknown, fallback: { index?: number; delta?: boolean } = {}) => {
     if (!Array.isArray(items)) return
-    items.forEach((item, index) => addOpenAIToolCall(item, { index: fallback.index ?? index }))
+    items.forEach((item, index) => addOpenAIToolCall(item, { ...fallback, index: fallback.index ?? index }))
   }
 
   addOpenAIArray(root.tool_calls)
@@ -174,6 +184,7 @@ function collectOpenAIProviderToolCalls(root: Record<string, unknown>, add: (inp
       callId: stringValue(root.call_id),
       index: numberValue(root.output_index),
       rawArguments: root.arguments ?? root.delta,
+      argumentsDelta: root.type === 'response.function_call_arguments.delta',
     })
   }
 
@@ -181,8 +192,8 @@ function collectOpenAIProviderToolCalls(root: Record<string, unknown>, add: (inp
     const choiceRecord = asRecord(choice)
     const delta = asRecord(choiceRecord?.delta)
     const message = asRecord(choiceRecord?.message)
-    addOpenAIArray(delta?.tool_calls)
-    addOpenAIToolCall(delta?.function_call)
+    addOpenAIArray(delta?.tool_calls, { delta: true })
+    addOpenAIToolCall(delta?.function_call, { delta: true })
     addOpenAIArray(message?.tool_calls)
     addOpenAIToolCall(message?.function_call)
   }
@@ -220,7 +231,7 @@ function collectAnthropicProviderToolCalls(root: Record<string, unknown>, add: (
   for (const part of Array.isArray(root.content) ? root.content : []) addAnthropicToolUse(part)
   const delta = asRecord(root.delta)
   if (root.type === 'content_block_delta' && delta?.type === 'input_json_delta') {
-    add({ index, rawArguments: delta.partial_json })
+    add({ index, rawArguments: delta.partial_json, argumentsDelta: true })
   }
 }
 
@@ -263,6 +274,8 @@ function normalizeProviderToolCall(input: ProviderToolCallInput): ProviderToolCa
     name,
     arguments: parsed.arguments,
     ...(rawArguments !== undefined ? { rawArguments } : {}),
+    ...(rawArguments !== undefined ? { argumentsDelta: input.argumentsDelta === true } : {}),
+    ...(name ? { nameDelta: input.nameDelta === true } : {}),
     ...(input.thoughtSignature ? { thoughtSignature: input.thoughtSignature } : {}),
     argumentsComplete: parsed.complete,
   }
@@ -320,7 +333,7 @@ function findMatchingProviderToolCallIndex(calls: ProviderToolCall[], part: Prov
 }
 
 function mergeProviderToolCallPart(previous: ProviderToolCall, next: ProviderToolCall): ProviderToolCall {
-  const rawArguments = mergeProviderToolRawArguments(previous.rawArguments, next.rawArguments, next.argumentsComplete === true)
+  const rawArguments = mergeProviderToolRawArguments(previous.rawArguments, next.rawArguments, next.argumentsComplete === true, next.argumentsDelta)
   const parsed = normalizeProviderToolCallArguments(rawArguments)
   const mergedArguments = rawArguments !== undefined && parsed.complete
     ? parsed.arguments
@@ -329,23 +342,39 @@ function mergeProviderToolCallPart(previous: ProviderToolCall, next: ProviderToo
     id: previous.id || next.id,
     ...(previous.callId || next.callId ? { callId: previous.callId || next.callId } : {}),
     index: previous.index ?? next.index,
-    name: previous.name || next.name,
+    name: next.name && next.nameDelta === false ? next.name
+      : next.name && next.nameDelta && previous.name && next.name !== previous.name
+        ? previous.name + next.name : previous.name || next.name,
     arguments: mergedArguments,
     ...(rawArguments !== undefined ? { rawArguments } : {}),
+    ...(rawArguments !== undefined ? { argumentsDelta: next.rawArguments === undefined ? previous.argumentsDelta
+      : previous.rawArguments === undefined ? next.argumentsDelta
+        : next.argumentsDelta === true ? previous.argumentsDelta : next.argumentsDelta } : {}),
+    nameDelta: next.name && next.nameDelta === false ? false : previous.name ? previous.nameDelta : next.nameDelta,
     ...(previous.thoughtSignature || next.thoughtSignature ? { thoughtSignature: previous.thoughtSignature || next.thoughtSignature } : {}),
     argumentsComplete: rawArguments !== undefined ? parsed.complete : previous.argumentsComplete !== false && next.argumentsComplete !== false,
   }
 }
 
-function mergeProviderToolRawArguments(previous: unknown, next: unknown, nextComplete: boolean): unknown {
+function mergeProviderToolRawArguments(previous: unknown, next: unknown, nextComplete: boolean, delta?: boolean): unknown {
   if (next === undefined) return previous
   if (previous === undefined) return next
-  if (typeof previous === 'string' && typeof next === 'string') return nextComplete ? next : `${previous}${next}`
+  if (typeof previous === 'string' && typeof next === 'string') {
+    if (delta === true) return previous + next
+    if (delta === false) return next
+    return !next ? previous : nextComplete ? next : `${previous}${next}`
+  }
   return next
 }
 
-export function executableProviderToolCalls(calls: ProviderToolCall[] | undefined): ProviderToolCall[] | undefined {
-  const executable = mergeProviderToolCallParts(calls ?? [])
+export function executableProviderToolCalls(calls: ProviderToolCall[] | undefined, final = false): ProviderToolCall[] | undefined {
+  const merged = mergeProviderToolCallParts(calls ?? [])
+  // At the response boundary, malformed calls must fail visibly rather than
+  // silently disappearing (or allowing only part of a proposed batch to run).
+  if (final && merged.some(call => !call.name || call.argumentsComplete === false)) {
+    throw new Error('Provider returned an incomplete tool call. No tools were executed; retry the request.')
+  }
+  const executable = merged
     .filter((call) => call.name && call.argumentsComplete !== false)
     .map((call) => ({
       ...(call.id ? { id: call.id } : {}),
@@ -458,4 +487,9 @@ function numberValue(value: unknown): number | undefined {
 function isToolEventType(type: unknown): boolean {
   if (typeof type !== 'string') return false
   return type.includes('tool') || type.includes('function_call') || type.includes('web_search')
+}
+
+/** Validate the complete response atomically before dispatching any tool. */
+export function finalizeProviderToolCalls(calls: ProviderToolCall[] | undefined): ProviderToolCall[] | undefined {
+  return executableProviderToolCalls(calls, true)
 }

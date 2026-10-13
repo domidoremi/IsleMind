@@ -1,3 +1,5 @@
+import { measureInlinePcmWave } from './providerWaveAudio'
+
 /** Conservative per-image upper bounds, not a character estimate of Base64 or a bill.
  * Rules checked against official docs on 2026-09-23:
  * https://developers.openai.com/api/docs/guides/images-vision
@@ -44,4 +46,21 @@ export function providerImageTokenUpperBound(input: {
     if (resolution === 'ultra_high') return 2240
   }
   return undefined
+}
+
+/** Google documents 32 input tokens/second of audio (checked 2026-09-29):
+ * https://ai.google.dev/gemini-api/docs/audio#technical-details-about-audio
+ * Round duration UP to a whole second and add one second for framing. This is
+ * admission estimation, not billing; final provider usage remains authoritative.
+ * Deliberately no rule for remote files, compressed audio or compatible aliases.
+ */
+export function providerWaveTokenUpperBound(input: { providerType?: string; model?: string; base64: string }): number | undefined {
+  if (input.providerType !== 'google' || ![
+    'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash',
+    'gemini-3.5-flash-lite', 'gemini-3.1-pro', 'gemini-3.1-pro-preview',
+    'gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-3-pro-preview',
+    'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
+  ].includes(input.model ?? '')) return undefined
+  const wave = measureInlinePcmWave(input.base64)
+  return wave ? (Math.ceil(wave.seconds) + 1) * 32 : undefined
 }

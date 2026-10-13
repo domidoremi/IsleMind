@@ -1,7 +1,10 @@
-import { estimateTextTokens } from '@/core'
-import { providerImageTokenUpperBound } from './providerMediaTokenBudget'
+import { estimateTextTokens, measureJsonCharacters } from '@/core'
+import { providerImageTokenUpperBound, providerWaveTokenUpperBound } from './providerMediaTokenBudget'
 
 export const FINAL_CONTEXT_WINDOW_RATIO = 0.85
+// String bodies are bounded before parsing; object bodies use the existing
+// conservative JSON measurement, including opaque media and escaped characters.
+export const MAX_PROVIDER_REQUEST_CODE_UNITS = 16 * 1024 * 1024
 
 export class ProviderContextCapacityError extends Error {
   constructor(readonly code: 'context_capacity' | 'request_too_large' | 'invalid_capacity' | 'media_estimate_unavailable') {
@@ -42,47 +45,57 @@ export function checkProviderContextCapacity(input: {
   if (!Number.isSafeInteger(input.contextWindow) || input.contextWindow <= 0) {
     throw new ProviderContextCapacityError('invalid_capacity')
   }
+  try {
+    measureJsonCharacters(input.body, MAX_PROVIDER_REQUEST_CODE_UNITS)
+  } catch {
+    throw new ProviderContextCapacityError('request_too_large')
+  }
   let tokens = 0
   let textBytes = 0
-  let visited = 0
   let mediaCount = 0
   let measuredMediaTokens = 0
-  const walk = (value: unknown, path: string, depth: number): void => {
-    if (++visited > 100_000 || depth > 32) throw new ProviderContextCapacityError('request_too_large')
+  const countText = (value: string): void => {
+    textBytes += value.length * 2
+    if (textBytes > 8 * 1024 * 1024) throw new ProviderContextCapacityError('request_too_large')
+  }
+  const walk = (value: unknown, path: readonly (string | number)[], opaquePaths: readonly (readonly string[])[] = []): void => {
     if (typeof value === 'string') {
-      textBytes += value.length * 2
-      if (textBytes > 8 * 1024 * 1024) throw new ProviderContextCapacityError('request_too_large')
-      tokens += estimateTextTokens(value) + 2
+      const opaque = opaquePaths.some(parts => parts.length === 0)
+      if (!opaque) {
+        countText(value)
+        tokens += estimateTextTokens(value) + 2
+      }
     } else if (Array.isArray(value)) {
-      for (let index = 0; index < value.length; index++) walk(value[index], `${path}.${index}`, depth + 1)
+      for (let index = 0; index < value.length; index++) walk(value[index], [...path, index])
     } else if (value !== null && typeof value === 'object') {
       const record = value as Record<string, unknown>
-      const source = record.source as Record<string, unknown> | undefined
-      // Only typed media envelopes are opaque. An arbitrary tool argument
-      // named "data" (or a user pasting base64) is still ordinary input.
-      const mediaPosition = /^(?:messages|input)\.\d+\.content\.\d+$|^contents\.\d+\.parts\.\d+$/.test(path)
-      const inline = (record.inlineData ?? record.fileData) as Record<string, unknown> | undefined
-      const image = record.type === 'image_url' || record.type === 'input_image' || record.type === 'image'
-        || typeof inline?.mimeType === 'string' && inline.mimeType.startsWith('image/')
-      if (mediaPosition && (image || inline || record.type === 'input_audio' || record.type === 'input_file' || record.type === 'document')) {
+      // Match structural segments, not a dotted string that a tool/object key
+      // could forge. Only known payload strings are opaque, never all metadata.
+      const mediaPosition = path.length === 4 && typeof path[1] === 'number' && typeof path[3] === 'number'
+        && ((path[0] === 'messages' || path[0] === 'input') && path[2] === 'content' || path[0] === 'contents' && path[2] === 'parts')
+      const media = mediaPosition ? mediaEnvelope(record) : undefined
+      if (media) {
         mediaCount += 1
         if (input.mediaInputTokens === undefined) {
           const nested = record.image_url as Record<string, unknown> | undefined
           const config = input.body.generationConfig as Record<string, unknown> | undefined
-          const bound = image ? providerImageTokenUpperBound({ providerType: input.providerType, model: input.model,
-            detail: record.detail ?? nested?.detail, resolution: record.mediaResolution ?? config?.mediaResolution }) : undefined
+          const bound = media.image ? providerImageTokenUpperBound({ providerType: input.providerType, model: input.model,
+            detail: record.detail ?? nested?.detail, resolution: record.mediaResolution ?? config?.mediaResolution })
+            : media.waveBase64 === undefined ? undefined
+              : providerWaveTokenUpperBound({ providerType: input.providerType, model: input.model, base64: media.waveBase64 })
           if (bound === undefined) throw new ProviderContextCapacityError('media_estimate_unavailable')
           measuredMediaTokens += bound
         }
-        return
+        opaquePaths = media.payloads
       }
       for (const [name, item] of Object.entries(record)) {
+        countText(name)
         tokens += estimateTextTokens(name) + 1
-        walk(item, path ? `${path}.${name}` : name, depth + 1)
+        walk(item, [...path, name], opaquePaths.filter(parts => parts[0] === name).map(parts => parts.slice(1)))
       }
     } else if (value !== undefined) tokens += 2
   }
-  walk(input.body, '', 0)
+  walk(input.body, [])
   const generation = input.body.generationConfig as Record<string, unknown> | undefined
   const outputConfig = input.body.inferenceConfig as Record<string, unknown> | undefined
   const requestedOutput = input.body.max_completion_tokens ?? input.body.max_output_tokens ?? input.body.max_tokens
@@ -102,4 +115,39 @@ export function checkProviderContextCapacity(input: {
   if (estimatedInputTokens + requestedOutput > limit) throw new ProviderContextCapacityError('context_capacity')
   return { estimatedInputTokens, rawInputTokens, managedTextBytes: textBytes,
     reservedOutputTokens: requestedOutput, limit, mediaEstimated: mediaCount > 0 }
+}
+
+/** Both SDK/camelCase and REST/snake_case spellings occur in assembled bodies. */
+function mediaEnvelope(record: Record<string, unknown>): { image: boolean; payloads: string[][]; waveBase64?: string } | undefined {
+  const envelopes: { image: boolean; payloads: string[][]; waveBase64?: string }[] = []
+  for (const key of ['inlineData', 'inline_data', 'fileData', 'file_data']) {
+    const value = record[key]
+    if (value == null || typeof value !== 'object') continue
+    const data = value as Record<string, unknown>
+    const mime = data.mimeType ?? data.mime_type
+    // A server may prefer either spelling. Conflicting descriptors must not
+    // let a PDF/audio payload inherit the cheaper image allowance.
+    const consistentMime = data.mimeType === undefined || data.mime_type === undefined || data.mimeType === data.mime_type
+    const wave = (key === 'inlineData' || key === 'inline_data') && mime === 'audio/wav'
+      && typeof data.data === 'string'
+      && consistentMime
+      && Object.keys(data).every(name => ['data', 'mimeType', 'mime_type'].includes(name))
+    envelopes.push({ image: consistentMime && typeof mime === 'string' && mime.startsWith('image/'),
+      payloads: [[key, 'data'], [key, 'fileUri'], [key, 'file_uri']],
+      ...(wave ? { waveBase64: data.data as string } : {}) })
+  }
+  switch (record.type) {
+    case 'image_url': envelopes.push({ image: true, payloads: [['image_url', 'url']] }); break
+    case 'input_image': envelopes.push({ image: true, payloads: [['image_url'], ['file_id']] }); break
+    case 'image': envelopes.push({ image: true, payloads: [['source', 'data'], ['source', 'url']] }); break
+    case 'input_audio': envelopes.push({ image: false, payloads: [['input_audio', 'data']] }); break
+    case 'file': envelopes.push({ image: false, payloads: [['file', 'file_data'], ['file', 'file_id']] }); break
+    case 'file_url': envelopes.push({ image: false, payloads: [['file_url', 'url']] }); break
+    case 'input_file': envelopes.push({ image: false, payloads: [['file_data'], ['file_url'], ['file_id']] }); break
+    case 'document': envelopes.push({ image: false, payloads: [['source', 'data'], ['source', 'url']] }); break
+  }
+  if (!envelopes.length) return undefined
+  // Conflicting/multiple payloads cannot be admitted for one image's allowance.
+  return { image: envelopes.length === 1 && envelopes[0].image, payloads: envelopes.flatMap(item => item.payloads),
+    ...(envelopes.length === 1 && envelopes[0].waveBase64 !== undefined ? { waveBase64: envelopes[0].waveBase64 } : {}) }
 }

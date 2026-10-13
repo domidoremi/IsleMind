@@ -20,6 +20,8 @@ import type { ProviderLocalCompressionPrivacySettings } from './providerContextM
 export interface ProviderRuntimeChatMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string | ProviderContentPart[]
+  /** Host-only binding; serializers never forward this marker to a provider. */
+  attachmentTarget?: boolean
   reasoningContent?: string
   responseItems?: Record<string, unknown>[]
   providerContentBlocks?: Record<string, unknown>[]

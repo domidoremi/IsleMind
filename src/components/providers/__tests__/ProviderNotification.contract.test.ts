@@ -13,14 +13,16 @@ function sourceBetween(source: string, start: string, end: string): string {
 }
 
 describe('provider notification contract', () => {
-  it('uses the import confirmation as the only foreground success surface', () => {
+  it('reports local import completion without offering to activate imported credentials', () => {
     const importFlow = sourceBetween(
       providerSettingsSource,
       'async function importProvidersFromText(',
       '  async function enableEffectiveSelection()',
     )
 
-    expect(importFlow).toContain('const enableNow = await dialog.confirm({')
+    expect(importFlow).toContain("title: t('providerSettings.configurationSaved')")
+    expect(importFlow).not.toContain('activateProviders(')
+    expect(importFlow).not.toContain('enableNow')
     expect(importFlow).not.toContain("title: t('providerSettings.importDone')")
     expect(importFlow).not.toContain('publishProviderImportCompletedNotification')
     expect(importFlow).toContain('void clearAndroidStatusNotification({ owner: notificationOwner })')

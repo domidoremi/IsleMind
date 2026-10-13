@@ -6,6 +6,7 @@ import { ProviderUsageQueryEditor } from '../ProviderUsageQueryEditor'
 
 const mockQueryProviderUsage = jest.fn()
 const mockInvalidateProviderUsage = jest.fn()
+jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, options?: { value?: string; unit?: string }) => options?.value === undefined ? key : key + ' ' + options.value + (options.unit ?? '') }) }))
 
 jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
@@ -68,7 +69,7 @@ describe('ProviderUsageQueryEditor', () => {
     mockInvalidateProviderUsage.mockReset()
   })
 
-  it('stays busy when the saved baseline updates before refresh settles', async () => {
+  it('saves locally without a request and queries only after an explicit refresh', async () => {
     const update = deferred<void>()
     const refresh = deferred<null>()
     const updateProvider = jest.fn<Promise<void>, [string, Partial<AIProvider>]>(() => update.promise)
@@ -93,8 +94,13 @@ describe('ProviderUsageQueryEditor', () => {
     useSettingsStore.setState({ providers: [provider(savedConfiguration)] })
     await view.rerender(<ProviderUsageQueryEditor provider={provider(savedConfiguration)} />)
 
-    await waitFor(() => expect(mockQueryProviderUsage).toHaveBeenCalledTimes(1))
+    expect(mockQueryProviderUsage).not.toHaveBeenCalled()
     expect(mockFlushProviderPersistence).toHaveBeenCalledTimes(1)
+    expect(view.getByTestId('provider-usage-query-save').props.accessibilityState?.busy).not.toBe(true)
+    await fireEvent.press(view.getByTestId('provider-usage-query-refresh'))
+    await fireEvent.press(view.getByTestId('provider-usage-query-refresh'))
+    expect(mockQueryProviderUsage).toHaveBeenCalledTimes(1)
+    expect(mockQueryProviderUsage.mock.calls[0][1]).toMatchObject({ maxAttempts: 1, forceRefresh: true })
     expect(view.getByTestId('provider-usage-query-save').props.accessibilityState).toMatchObject({ busy: true })
 
     await act(async () => {
@@ -128,5 +134,19 @@ describe('ProviderUsageQueryEditor', () => {
 
     expect(mockQueryProviderUsage).not.toHaveBeenCalled()
     expect(view.getByTestId('provider-usage-query-editor-provider-b')).toBeTruthy()
+  })
+
+  it('shows numeric quota only after a manual query', async () => {
+    const configured = provider(createProviderUsageQueryConfiguration(true, [{
+      schema: 'islemind.provider-usage-query-recipe.v1', method: 'GET', path: '/usage', extract: { remaining: '/remaining' },
+    }]))
+    useSettingsStore.setState({ providers: [configured] })
+    mockQueryProviderUsage.mockResolvedValue({ endpoint: 'https://example.test/usage', status: 200, remaining: 12.5, unit: 'USD' })
+    const view = await render(<ProviderUsageQueryEditor provider={configured} />)
+    expect(mockQueryProviderUsage).not.toHaveBeenCalled()
+    expect(view.queryByTestId('provider-usage-result')).toBeNull()
+    await fireEvent.press(view.getByTestId('provider-usage-query-refresh'))
+    await waitFor(() => expect(view.getByText('providerSettings.usageRemaining 12.5 USD')).toBeTruthy())
+    expect(mockQueryProviderUsage).toHaveBeenCalledTimes(1)
   })
 })

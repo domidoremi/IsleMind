@@ -6,10 +6,12 @@ import { buildAnthropicNativeContextManagement } from './providerContextManageme
 import { sanitizeAnthropicReplayContentBlocks } from './providerReplay'
 import { mergeProviderToolDeclarations } from './providerToolDeclarations'
 import { resolveProviderRemoteCompactThresholdTokens } from './providerRemoteCompactThresholdPolicy'
+import { selectProviderAttachmentMessage } from './providerAttachments'
 
 export interface AnthropicRequestMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string | readonly ProviderContentPart[]
+  attachmentTarget?: boolean
   providerContentBlocks?: readonly Record<string, unknown>[]
 }
 
@@ -81,11 +83,12 @@ export function createAnthropicRequestBodyBuilder<
       const system = [request.systemPrompt, request.contextPrompt].filter(Boolean).join('\n\n') || undefined
       const messages: Record<string, unknown>[] = []
       const attachments = dependencies.selectAttachments(request)
+      const attachmentMessage = attachments.length ? selectProviderAttachmentMessage(request.messages) : undefined
 
       for (const message of request.messages) {
         if (message.role === 'user') {
           const content = toAnthropicContentBlocks(message.content)
-          if (attachments.length && message === request.messages[request.messages.length - 1]) {
+          if (message === attachmentMessage) {
             for (const attachment of attachments) {
               const part = dependencies.buildAttachmentPart(attachment)
               if (part) content.push(part)

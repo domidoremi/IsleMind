@@ -103,6 +103,9 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
             signal: abortController.signal,
           })
       const hydrateProviderForActivation = async (providerId: string) => {
+        // Discovery captures committed configuration authority, not the overlay.
+        // A delayed enable write would otherwise invalidate its own admission.
+        await patchBuffer?.flush()
         const hydrated = await hydrateProviderKey(providerId)
         return patchBuffer?.apply(providerId, hydrated) ?? hydrated
       }

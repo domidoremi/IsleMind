@@ -5,6 +5,7 @@ export interface ProviderCredentialSynchronizationOptions {
   timeoutMs?: number
   signal?: AbortSignal
   credentialSource?: ProviderCredentialSource
+  forceRefresh?: boolean
 }
 
 export interface ProviderCredentialSynchronizationMessages {
@@ -66,7 +67,7 @@ export function createProviderCredentialSynchronization(
             const result = await dependencies.fetchModels(
               source,
               group.apiKey ?? '',
-              { ...options, credentialSource: group.source ?? { kind: 'group', groupId: group.id } },
+              { ...options, forceRefresh: true, credentialSource: group.source ?? { kind: 'group', groupId: group.id } },
             )
             if (!result.ok && result.code !== 'empty_models') throw new Error(result.message)
             return result.data ?? []

@@ -8,7 +8,9 @@ import { providerRequestSerializer } from './providerRequestBinding'
 import { buildProviderFallbackCandidates } from './providerFallbackCandidates'
 import { getModelConfig, mergeModelConfig } from '@/types/modelCatalog'
 import type { AIProvider } from '@/types/providerContracts'
-import { createProviderRouteAssemblyPolicy, mapOpenAICompatibleModels, providerCompatibilityCapabilityCanBeSentForProvider,
+import { buildAnthropicAttachmentPart, buildGoogleAttachmentPart, buildOpenAIChatAttachmentPart, buildOpenAIResponsesAttachmentPart,
+  MAX_PROVIDER_REQUEST_CODE_UNITS,
+  createProviderRouteAssemblyPolicy, mapOpenAICompatibleModels, providerCompatibilityCapabilityCanBeSentForProvider,
   type ProviderExecutionTarget, type ProviderRuntimeChatRequest } from '@/modules/providers'
 import * as packing from '@/modules/assistant-runtime'
 
@@ -211,6 +213,31 @@ test('an irreducible assembled tool schema stops before attribution, budget rese
   expect(recordProviderRuntimeFailure).not.toHaveBeenCalled()
 })
 
+test.each(['google', 'openai-chat', 'openai-responses', 'anthropic', 'perplexity'] as const)(
+  'unmeasured %s PDF stops before transport, accounting or any compression repair', async protocol => {
+    const f = fixture(128_000)
+    const attachment = { type: 'pdf' as const, name: 'synthetic.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQKJUVPRgo=' }
+    const part = protocol === 'google' ? buildGoogleAttachmentPart(attachment)
+      : protocol === 'anthropic' ? buildAnthropicAttachmentPart(attachment)
+      : protocol === 'openai-responses' ? buildOpenAIResponsesAttachmentPart(attachment)
+      : buildOpenAIChatAttachmentPart(protocol === 'perplexity' ? { ...attachment, base64: 'https://files.example.invalid/synthetic.pdf' } : attachment,
+        protocol === 'perplexity' ? 'url' : 'inline')
+    const envelope = protocol === 'google' ? { contents: [{ role: 'user', parts: [part] }], generationConfig: { maxOutputTokens: 100 } }
+      : protocol === 'openai-responses' ? { input: [{ role: 'user', content: [part] }], max_output_tokens: 100 }
+      : { messages: [{ role: 'user', content: [part] }], max_tokens: 100 }
+    f.input.body = JSON.stringify(envelope)
+    await expect(executeHttpSseChat(f.input)).rejects.toThrow('media_estimate_unavailable')
+    expect(f.targets).toHaveLength(0)
+    expect(f.wire).not.toHaveBeenCalled()
+    expect(f.fallbackWire).not.toHaveBeenCalled()
+    expect(f.onDone).not.toHaveBeenCalled()
+    expect(f.decisions).toHaveLength(0)
+    expect(assistantRunBudgetStore.settle).not.toHaveBeenCalled()
+    expect(recordProviderRuntimeFailure).not.toHaveBeenCalled()
+    expect(packing.summarizeContextPackingHistory).not.toHaveBeenCalled()
+  },
+)
+
 test.each([{ modelContextCompressionEnabled: false }, { localCompressionAllowed: false }, { privacyMode: 'strict-remote' }])(
   'disabled or privacy-blocked compression never disables final admission (%j)', async (settings) => {
     const f = fixture(); f.input.req.settings = settings
@@ -346,11 +373,88 @@ test('WebSocket overflow is bounded and each exact response.create envelope is a
   expect(f.wire).not.toHaveBeenCalled()
 })
 
+test.each(['media_estimate_unavailable', 'request_too_large'] as const)(
+  'WebSocket object bodies cannot bypass media admission (%s)', async code => {
+    const f = fixture(128_000)
+    f.input.req.provider.type = 'openai'
+    f.input.req.model = 'gpt-4o'
+    f.input.req.settings = { transportMode: 'websocket' }
+    const part = code === 'media_estimate_unavailable'
+      ? buildOpenAIResponsesAttachmentPart({ type: 'pdf', name: 'synthetic.pdf', mimeType: 'application/pdf', base64: 'JVBERi0xLjQKJUVPRgo=' })
+      : buildOpenAIResponsesAttachmentPart({ type: 'image', name: 'synthetic.png', mimeType: 'image/png', base64: 'a'.repeat(MAX_PROVIDER_REQUEST_CODE_UNITS + 1) })
+    const rawBody = { input: [{ role: 'user', content: [part] }], max_output_tokens: 100, stream: true }
+    const run = jest.fn()
+    const input = { ...f.input, pipeline: { runtimeReq: f.input.req, effectiveReq: f.input.req, stream: true,
+      transportSelection: { transport: 'responses_websocket' }, headers: {}, rawBody, proxyPolicy: { effectiveUrl: f.input.url },
+      preparedHttpRequest: { url: f.input.url, headers: {}, body: '{}' } },
+      responsesWebSocketTransport: { run },
+    } as unknown as ProviderRuntimeChatExecutionInput
+    await executeProviderRuntimeChat(input)
+    expect(f.onError).toHaveBeenCalledWith(expect.objectContaining({ code }))
+    expect(f.targets).toHaveLength(0)
+    expect(run).not.toHaveBeenCalled()
+    expect(f.wire).not.toHaveBeenCalled()
+    expect(f.fallbackWire).not.toHaveBeenCalled()
+    expect(f.onDone).not.toHaveBeenCalled()
+    expect(assistantRunBudgetStore.settle).not.toHaveBeenCalled()
+    expect(recordProviderRuntimeFailure).not.toHaveBeenCalled()
+    expect(packing.summarizeContextPackingHistory).not.toHaveBeenCalled()
+  },
+)
+
 test('does not confuse output-parameter errors with a context overflow', () => {
   expect(isProviderContextOverflow(400, 'max_tokens must be at most 4096')).toBe(false)
   expect(isProviderContextOverflow(400, 'unknown parameter: context_window')).toBe(false)
   expect(isProviderContextOverflow(401, 'context_length_exceeded')).toBe(false)
 })
+
+test.each(['admitted', 'budget-denied', 'malformed'] as const)(
+  'inline PCM audio reaches actual-attempt admission before transport: %s', async scenario => {
+    jest.spyOn(require('./providerResponsePolicies'), 'parseProviderNonStreamingResponse')
+      .mockImplementation(jest.requireActual('./providerResponsePolicies').parseProviderNonStreamingResponse)
+    const f = fixture(128_000)
+    f.input.req.provider.type = 'google'
+    f.input.req.model = 'gemini-3.8-flash'
+    // A one-second 16-bit mono WAV; no file, microphone or external model call.
+    const wav = Buffer.alloc(16044)
+    wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8)
+    wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22)
+    wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28)
+    wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(16000, 40)
+    const data = scenario === 'malformed' ? wav.subarray(0, 44) : wav
+    f.input.body = JSON.stringify({ contents: [{ role: 'user', parts: [
+      { text: 'Transcribe this synthetic audio.' },
+      buildGoogleAttachmentPart({ type: 'document', name: 'synthetic.wav', mimeType: 'audio/wav', base64: data.toString('base64') }),
+    ] }], generationConfig: { maxOutputTokens: 100 } })
+    const admission = jest.fn(async (target: ProviderExecutionTarget) => {
+      expect(f.wire).not.toHaveBeenCalled()
+      expect(target.tokenEstimate!.inputTokens).toBeGreaterThanOrEqual(64)
+      expect(target.tokenEstimate!.outputTokens).toBe(100)
+      if (scenario === 'budget-denied') throw new Error('synthetic budget exhausted')
+    })
+    f.input.req.onExecutionTarget = admission
+    f.wire.mockImplementation(async () => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: 'Synthetic response' }] } }],
+      usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 4, totalTokenCount: 84 },
+    }), { status: 200 }))
+    if (scenario === 'admitted') await executeHttpSseChat(f.input)
+    else await expect(executeHttpSseChat(f.input)).rejects.toThrow(scenario === 'malformed'
+      ? 'media_estimate_unavailable' : 'Could not record the actual provider execution target')
+    expect(admission).toHaveBeenCalledTimes(scenario === 'malformed' ? 0 : 1)
+    expect(f.wire).toHaveBeenCalledTimes(scenario === 'admitted' ? 1 : 0)
+    expect(f.fallbackWire).not.toHaveBeenCalled()
+    if (scenario === 'admitted') {
+      expect(f.onError).not.toHaveBeenCalled()
+      expect(assistantRunBudgetStore.settle).toHaveBeenCalledWith(expect.objectContaining({
+        settled: true, complete: true, usage: expect.objectContaining({ inputTokens: 80, outputTokens: 4 }),
+      }))
+    } else {
+      expect(f.onDone).not.toHaveBeenCalled()
+      expect(assistantRunBudgetStore.settle).not.toHaveBeenCalled()
+      expect(packing.summarizeContextPackingHistory).not.toHaveBeenCalled()
+    }
+  },
+)
 
 test('HTTP 200 JSON and buffered SSE overflow errors cannot masquerade as empty output', async () => {
   const f = fixture(60_000); f.input.stream = true

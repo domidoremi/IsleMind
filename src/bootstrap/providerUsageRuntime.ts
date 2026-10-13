@@ -121,7 +121,7 @@ const usageCache = new Map<string, CachedUsage>()
 /** Queries a provider's configured or conventional usage endpoints without evaluating remote code. */
 export async function queryProviderUsage(
   provider: AIProvider,
-  options: { forceRefresh?: boolean; signal?: AbortSignal } = {},
+  options: { forceRefresh?: boolean; signal?: AbortSignal; maxAttempts?: number } = {},
 ): Promise<ProviderUsageQueryResult | null> {
   const baseUrl = provider.baseUrl?.trim()
   if (!baseUrl || !provider.enabled) return null
@@ -140,12 +140,15 @@ export async function queryProviderUsage(
   })
   const recipes = providerUsageRecipes(provider)
   let result: ProviderUsageQueryResult | null = null
-  for (const credential of credentials) {
+  let attempts = 0
+  queryAttempts: for (const credential of credentials) {
     const deadline = Date.now() + PROVIDER_USAGE_QUERY_DEADLINE_MS
     const credentialProvider = { ...provider, apiKey: credential.apiKey }
     const authenticationHeaders = getProviderRequestHeaders(credentialProvider)
     for (const recipe of recipes) {
       if (options.signal?.aborted) return null
+      if (options.maxAttempts !== undefined && attempts >= options.maxAttempts) break queryAttempts
+      attempts += 1
       const remainingMs = deadline - Date.now()
       if (remainingMs < 1_000) break
       try {

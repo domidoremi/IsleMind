@@ -1,7 +1,7 @@
 import { estimateTextTokens } from '@/core'
 import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
-import { checkProviderContextCapacity, ProviderContextCapacityError, getWireProviderType, providerContextOverflowMessage,
+import { checkProviderContextCapacity, MAX_PROVIDER_REQUEST_CODE_UNITS, ProviderContextCapacityError, getWireProviderType, providerContextOverflowMessage,
   resolveProviderLocalCompressionPrivacy, type ProviderRuntimeChatRequest, type ProviderRuntimeTraceCallback } from '@/modules/providers'
 import { summarizeContextPackingHistory, UNTRUSTED_HISTORY_SUMMARY_PREAMBLE } from '@/modules/assistant-runtime'
 import { assertExecutionResourcesAvailable } from './executionResources'
@@ -18,7 +18,7 @@ const RECENT_MESSAGE_COUNT = 8
 function parseWireBody(body: WireBody | string): WireBody {
   // Check before parsing, including opaque media. This is not a Hermes heap claim.
   if (typeof body !== 'string') return body
-  if (body.length > 16 * 1024 * 1024) throw new ProviderContextCapacityError('request_too_large')
+  if (body.length > MAX_PROVIDER_REQUEST_CODE_UNITS) throw new ProviderContextCapacityError('request_too_large')
   const parsed: unknown = JSON.parse(body)
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ProviderContextCapacityError('invalid_capacity')
   return parsed as WireBody

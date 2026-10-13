@@ -7,8 +7,9 @@ const mockFlushProviders = jest.fn()
 const mockFlushSettings = jest.fn()
 const mockUpdateSettings = jest.fn((patch: object) => Object.assign(mockSettings, patch))
 let mockSettings: Record<string, unknown>
+let mockProviders: { id: string; name: string }[]
 jest.mock('@/bootstrap/providerRegistry', () => ({ parseProviderImportText: (...args: unknown[]) => mockParse(...args) }))
-jest.mock('@/store/settingsStore', () => ({ useSettingsStore: { getState: () => ({ settings: mockSettings, addProviders: mockAdd, flushProviderPersistence: mockFlushProviders, updateSettings: mockUpdateSettings }) } }))
+jest.mock('@/store/settingsStore', () => ({ useSettingsStore: { getState: () => ({ settings: mockSettings, providers: mockProviders, addProviders: mockAdd, flushProviderPersistence: mockFlushProviders, updateSettings: mockUpdateSettings }) } }))
 jest.mock('@/presentation/features/settings/settingsStorePersistenceCommand', () => ({ flushPersistedSettings: () => mockFlushSettings() }))
 const prepared = async () => undefined
 const progress = () => undefined
@@ -16,10 +17,22 @@ const progress = () => undefined
 beforeEach(() => {
   jest.clearAllMocks()
   mockSettings = { defaultProvider: 'old' }
+  mockProviders = []
   mockParse.mockImplementation(() => ({ providers: [{ id: `import-${mockParse.mock.calls.length}`, name: 'Example' }], warnings: [] }))
   mockAdd.mockResolvedValue(undefined)
   mockFlushProviders.mockResolvedValue(undefined)
   mockFlushSettings.mockResolvedValue(undefined)
+})
+
+it('skips same-name/address imports by default and allows a separate copy only by explicit choice', async () => {
+  mockProviders = [{ id: 'old', name: 'Example' }]
+  const { result } = await renderHook(useProviderImportSession)
+  await act(async () => { expect((await result.current.save('fixture', prepared, progress))?.providers).toHaveLength(0) })
+  expect(mockAdd).not.toHaveBeenCalled()
+  await act(async () => { await result.current.save('fixture', prepared, progress, false) })
+  expect(mockAdd).toHaveBeenCalledTimes(1)
+  expect(mockAdd.mock.calls[0][0][0].id).not.toBe('old')
+  expect(mockSettings.defaultProvider).toBe('old')
 })
 
 it('does not finish or accept duplicate submissions before durability', async () => {
@@ -35,6 +48,8 @@ it('does not finish or accept duplicate submissions before durability', async ()
   await act(async () => { finish(); await save })
   expect(mockFlushSettings).toHaveBeenCalledTimes(1)
   expect(result.current.persistencePending).toBe(false)
+  expect(mockSettings.defaultProvider).toBe('old')
+  expect(mockAdd.mock.calls[0][1]).toMatchObject({ selectDefaultIfEmpty: false })
 })
 
 it.each(['metadata', 'settings'])('retries %s persistence without duplicating or reverting newer configuration', async kind => {

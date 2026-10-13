@@ -8,6 +8,19 @@ export interface ProviderAttachment {
   base64?: string
 }
 
+/** Explicit live-continuation binding wins over the legacy last-message rule. */
+export function selectProviderAttachmentMessage<Message extends { role: string; attachmentTarget?: boolean }>(
+  messages: readonly Message[],
+): Message | undefined {
+  const targets = messages.filter((message) => message.attachmentTarget === true)
+  if (targets.length > 1 || (targets.length === 1 && targets[0].role !== 'user')) {
+    throw new Error('The attachment message binding is invalid.')
+  }
+  if (targets.length) return targets[0]
+  const last = messages[messages.length - 1]
+  return last?.role === 'user' ? last : undefined
+}
+
 export interface ProviderAttachmentEncodingRequest {
   provider: AIProvider
 }

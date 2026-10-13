@@ -10,10 +10,12 @@ import {
 } from './providerToolReplay'
 import { mergeProviderToolDeclarations } from './providerToolDeclarations'
 import { resolveProviderRemoteCompactThresholdTokens } from './providerRemoteCompactThresholdPolicy'
+import { selectProviderAttachmentMessage } from './providerAttachments'
 
 export interface OpenAIResponsesRequestMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string | readonly ProviderContentPart[]
+  attachmentTarget?: boolean
   responseItems?: readonly Record<string, unknown>[]
   toolCallId?: string
   toolCalls?: readonly ProviderToolCall[]
@@ -78,12 +80,12 @@ export function createOpenAIResponsesRequestBodyBuilder<
     build(request) {
       const input: Record<string, unknown>[] = []
       const attachments = dependencies.selectAttachments(request)
+      const attachmentMessage = attachments.length ? selectProviderAttachmentMessage(request.messages) : undefined
       const systemPrompt = [request.systemPrompt, request.contextPrompt].filter(Boolean).join('\n\n')
       if (systemPrompt) input.push({ role: 'system', content: systemPrompt })
 
-      for (const [index, message] of request.messages.entries()) {
+      for (const message of request.messages) {
         const text = openAIResponsesMessageText(message.content)
-        const isLast = index === request.messages.length - 1
         if (message.role === 'tool') {
           input.push({
             type: 'function_call_output',
@@ -103,7 +105,7 @@ export function createOpenAIResponsesRequestBodyBuilder<
           input.push(...responseItems)
           continue
         }
-        if (message.role === 'user' && isLast && attachments.length) {
+        if (message === attachmentMessage) {
           input.push({
             role: 'user',
             content: [

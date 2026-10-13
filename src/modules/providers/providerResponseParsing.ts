@@ -31,7 +31,7 @@ import {
   type ProviderStructuredOutputRequest,
 } from './providerStructuredOutput'
 import {
-  executableProviderToolCalls,
+  finalizeProviderToolCalls,
   extractProviderTextToolCalls,
   extractProviderToolCalls,
   stripProviderTextToolCallBlocks,
@@ -221,7 +221,7 @@ export function createProviderResponseParsingPolicy(
       traces: parsed.traces,
       usage: parsed.usage,
       responseId: parsed.responseId,
-      providerToolCalls: executableProviderToolCalls(parsed.providerToolCalls),
+      providerToolCalls: finalizeProviderToolCalls(parsed.providerToolCalls),
       reasoningContent: parsed.reasoningContent,
       responseItems: parsed.responseItems,
       providerContentBlocks: parsed.providerContentBlocks,
@@ -250,7 +250,7 @@ export function createProviderResponseParsingPolicy(
           usage: extractUsage(json, providerType, { includeReasoning }),
           citations: extractCitationsFromText(openAIText, request.retrievalSources),
           traces: dependencies.extractTraces(json, providerType, { includeReasoning }),
-          providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, providerType)),
+          providerToolCalls: finalizeProviderToolCalls(extractProviderToolCalls(json, providerType)),
           reasoningContent: includeReasoning ? extractOpenAIReasoningContent(json) : undefined,
           responseItems: extractOpenAIResponseReplayItems(json),
           responseId: extractResponseId(json),
@@ -271,7 +271,7 @@ export function createProviderResponseParsingPolicy(
             ...(source ? extractProviderCitations(json, source) : []),
           ],
           traces: dependencies.extractTraces(json, 'anthropic', { includeReasoning }),
-          providerToolCalls: executableProviderToolCalls(
+          providerToolCalls: finalizeProviderToolCalls(
             filterProviderStructuredOutputToolCalls(
               anthropicToolCalls,
               request.structuredOutput,
@@ -286,7 +286,7 @@ export function createProviderResponseParsingPolicy(
           text: extractGoogleText(json),
           usage: extractUsage(json, 'google', { includeReasoning }),
           traces: dependencies.extractTraces(json, 'google', { includeReasoning }),
-          providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, 'google')),
+          providerToolCalls: finalizeProviderToolCalls(extractProviderToolCalls(json, 'google')),
         })
         return {
           ...result,
@@ -311,7 +311,7 @@ export function createProviderResponseParsingPolicy(
           usage: extractUsage(json, 'openai-compatible', { includeReasoning }),
           citations,
           traces: dependencies.extractTraces(json, providerType, { includeReasoning }),
-          providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, providerType)),
+          providerToolCalls: finalizeProviderToolCalls(extractProviderToolCalls(json, providerType)),
           reasoningContent: includeReasoning ? extractOpenAIReasoningContent(json) : undefined,
           responseItems: extractOpenAIResponseReplayItems(json),
           responseId: extractResponseId(json),
@@ -376,7 +376,7 @@ export function createProviderResponseParsingPolicy(
     const removedTextToolCall = strippedText !== taggedText.visibleText ||
       stripProviderTextToolCallBlocks(taggedRawText.visibleText) !== taggedRawText.visibleText
     const text = removedTextToolCall ? strippedText.trim() : strippedText
-    const providerToolCalls = executableProviderToolCalls([
+    const providerToolCalls = finalizeProviderToolCalls([
       ...(result.providerToolCalls ?? []),
       ...(fallbackCalls ?? []),
     ])

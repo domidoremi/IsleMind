@@ -116,6 +116,8 @@ export interface ProviderRuntimeAdapterOptions {
   settings?: ProviderRuntimeChatRequest['settings']
   streamChat?: ProviderStreamChat
   executionConstraint?: ProviderChatExecutionConstraint
+  /** Live Rich media stays on this canonical user message across tool turns. */
+  attachmentMessageId?: string
 }
 
 export type ProviderStreamChat = (
@@ -315,6 +317,7 @@ function providerAdapterCapabilities(provider: AIProvider): ProviderAdapter['cap
   if (provider.capabilities?.files === true) capabilities.push('files')
   if (provider.capabilities?.audioInput === true) capabilities.push('audio')
   if (provider.capabilities?.nativeTools === true) capabilities.push('tools')
+  if (provider.capabilities?.nativeSearch === true) capabilities.push('native-search')
   return capabilities
 }
 
@@ -1011,12 +1014,18 @@ export function toRuntimeChatRequest(
   options: ProviderRuntimeAdapterOptions,
   request: CanonicalChatRequest,
 ): ProviderRuntimeChatRequest {
+  if (options.attachmentMessageId !== undefined) {
+    const targets = request.messages.filter((message) => message.id === options.attachmentMessageId)
+    if (targets.length !== 1 || targets[0].role !== 'user') {
+      throw new Error('The attachment message binding is missing or invalid.')
+    }
+  }
   const providerToolDeclarations = buildModelOperationDeclarations(options.provider, request)
   return {
     provider: options.provider,
     model: request.model,
     requestedModel: request.model,
-    messages: toProviderRuntimeMessages(options.provider, request.messages),
+    messages: toProviderRuntimeMessages(options.provider, request.messages, options.attachmentMessageId),
     ...(request.systemPrompt ? { systemPrompt: request.systemPrompt } : {}),
     ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
     ...(request.topP === undefined ? {} : { topP: request.topP }),
@@ -1035,12 +1044,14 @@ export function toRuntimeChatRequest(
     sessionId: request.conversationId,
     ...(options.settings ? { settings: options.settings } : {}),
     ...(providerToolDeclarations.length ? { providerToolDeclarations } : {}),
+    ...(request.requestedCapabilities?.includes('native-search') ? { webSearchMode: 'native' as const } : {}),
   }
 }
 
 function toProviderRuntimeMessages(
   provider: AIProvider,
   messages: CanonicalChatRequest['messages'],
+  attachmentMessageId?: string,
 ): ProviderRuntimeChatMessage[] {
   const googleCallIds = new Map<string, string | undefined>()
   return messages.flatMap<ProviderRuntimeChatMessage>((message): ProviderRuntimeChatMessage[] => {
@@ -1114,6 +1125,7 @@ function toProviderRuntimeMessages(
     return [{
       role: message.role,
       content: message.text,
+      ...(message.id === attachmentMessageId ? { attachmentTarget: true } : {}),
       ...providerReplayFields(message.reasoningReplay),
       ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
       ...(message.name ? { name: message.name } : {}),

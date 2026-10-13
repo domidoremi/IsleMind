@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Platform, ScrollView, StyleSheet, View } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IsleButton, IslePressable, IsleToggle, useIsleDialog } from '@/components/ui/isle'
@@ -14,6 +15,7 @@ import {
   PROVIDER_USAGE_QUERY_EXAMPLE,
   PROVIDER_USAGE_QUERY_EXAMPLE_RECIPE,
   type ProviderUsageQueryRecipe,
+  type ProviderUsageQueryResult,
 } from '@/modules/providers'
 import { invalidateProviderUsage, queryProviderUsage } from '@/bootstrap/providerUsageRuntime'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
@@ -38,6 +40,8 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
   const [editorText, setEditorText] = useState(baselineText)
   const [task, setTask] = useState<UsageQueryEditorTask>('idle')
   const [referenceOpen, setReferenceOpen] = useState(false)
+  const [usageResult, setUsageResult] = useState<ProviderUsageQueryResult | null>(null)
+  const [usageFeedback, setUsageFeedback] = useState<string | null>(null)
   const refreshController = useRef<AbortController | null>(null)
   const activeProviderId = useRef(provider.id)
   const saveLock = useRef(false)
@@ -60,7 +64,9 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
     activeProviderId.current = provider.id
     setTask('idle')
     setReferenceOpen(false)
-  }, [provider.id])
+    setUsageResult(null)
+    setUsageFeedback(null)
+  }, [provider.id, configurationFingerprint])
 
   useEffect(() => () => {
     refreshController.current?.abort()
@@ -116,7 +122,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
     })
   }
 
-  async function saveAndRefresh() {
+  async function saveConfiguration() {
     if (busy || saveLock.current || !dirty) return
     const latest = useSettingsStore.getState().providers.find(item => item.id === provider.id)
     if (!latest || providerUsageQueryConfigurationFingerprint(latest.usageQueryConfiguration) !== baseline.current.fingerprint) {
@@ -168,17 +174,14 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
     if (activeProviderId.current !== provider.id) return
 
     invalidateProviderUsage(provider.id)
-    if (!provider.enabled || !provider.baseUrl?.trim()) {
-      setTask('idle')
-      dialog.toast({
-        title: t('providerSettings.usageQuerySaved'),
-        message: t('providerSettings.usageQueryRefreshSkipped'),
-        tone: 'mint',
-      })
-      return
-    }
+    setUsageResult(null)
+    setUsageFeedback(null)
+    setTask('idle')
+    dialog.toast({ title: t('providerSettings.usageQuerySaved'), message: t('providerSettings.savedWithoutRequest'), tone: 'mint' })
+  }
 
-    refreshController.current?.abort()
+  async function refreshUsage() {
+    if (busy || dirty || refreshController.current || !configuration.enabled || !configuration.recipes.length || !provider.enabled || !provider.baseUrl?.trim()) return
     const controller = new AbortController()
     refreshController.current = controller
     setTask('refreshing')
@@ -190,12 +193,14 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
     })
     try {
       const result = await queryProviderUsage(
-        { ...provider, usageQueryConfiguration: nextConfiguration },
-        { forceRefresh: true, signal: controller.signal },
+        provider,
+        { forceRefresh: true, signal: controller.signal, maxAttempts: 1 },
       )
       if (controller.signal.aborted || activeProviderId.current !== provider.id) return
+      setUsageResult(result)
+      setUsageFeedback(t(result ? 'providerSettings.usageQueryRefreshDone' : 'providerSettings.usageQueryRefreshUnavailable'))
       dialog.toast({
-        title: t('providerSettings.usageQuerySaved'),
+        title: t('providerSettings.usageQueryRefreshing'),
         message: result
           ? t('providerSettings.usageQueryRefreshDone')
           : t('providerSettings.usageQueryRefreshUnavailable'),
@@ -203,8 +208,10 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
       })
     } catch {
       if (!controller.signal.aborted && activeProviderId.current === provider.id) {
+        setUsageResult(null)
+        setUsageFeedback(t('providerSettings.usageQueryRefreshFailed'))
         dialog.toast({
-          title: t('providerSettings.usageQuerySaved'),
+          title: t('providerSettings.usageQueryRefreshFailed'),
           message: t('providerSettings.usageQueryRefreshFailed'),
           tone: 'amber',
         })
@@ -295,12 +302,12 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
             ) : null}
             <IsleButton
               testID="provider-usage-query-save"
-              label={task === 'saving' ? t('providerSettings.usageQuerySaving') : task === 'refreshing' ? t('providerSettings.usageQueryRefreshing') : t('providerSettings.usageQuerySaveAndRefresh')}
+              label={task === 'saving' ? t('providerSettings.usageQuerySaving') : t('common.save')}
               compact
               tone="primary"
               busy={busy}
               icon={<AppIcon name="refresh" color={colors.ui.control.primaryForeground} size={14} />}
-              onPress={() => void saveAndRefresh()}
+              onPress={() => void saveConfiguration()}
               disabled={!dirty || busy || !validation.valid}
               style={{ minHeight: 44, flexGrow: 1 }}
             />
@@ -321,12 +328,12 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
               />
               <IsleButton
                 testID="provider-usage-query-save"
-                label={task === 'saving' ? t('providerSettings.usageQuerySaving') : task === 'refreshing' ? t('providerSettings.usageQueryRefreshing') : t('providerSettings.usageQuerySaveAndRefresh')}
+                label={task === 'saving' ? t('providerSettings.usageQuerySaving') : t('common.save')}
                 compact
                 tone="primary"
                 busy={busy}
                 icon={<AppIcon name="refresh" color={colors.ui.control.primaryForeground} size={14} />}
-                onPress={() => void saveAndRefresh()}
+                onPress={() => void saveConfiguration()}
                 disabled={busy}
                 style={{ minHeight: 44, flexGrow: 1 }}
               />
@@ -334,6 +341,21 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
           ) : null}
         </View>
       )}
+
+      {configuration.enabled ? <IsleButton testID="provider-usage-query-refresh" label={t('providerSettings.refreshUsage')}
+        busy={task === 'refreshing'} disabled={busy || dirty || !provider.enabled}
+        onPress={() => void refreshUsage()} /> : null}
+      {usageFeedback ? <View testID="provider-usage-result" accessibilityLiveRegion="polite" style={{ gap: 4 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{usageFeedback}</Text>
+        {usageResult ? (['remaining', 'used', 'limit'] as const).map(field => {
+          const value = usageResult[field]
+          if (value === undefined) return null
+          const label = field === 'remaining' ? 'usageRemaining' : field === 'used' ? 'usageUsed' : 'usageLimit'
+          return <Text key={field} style={{ color: colors.text, fontSize: 15, lineHeight: 22 }}>
+            {t('providerSettings.' + label, { value: value.toLocaleString(undefined, { maximumFractionDigits: 2 }), unit: usageResult.unit ? ' ' + usageResult.unit : '' })}
+          </Text>
+        }) : null}
+      </View> : null}
 
       <IslePressable
         haptic

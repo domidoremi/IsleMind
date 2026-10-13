@@ -1,6 +1,7 @@
 import { CHAT_REQUEST_SCHEMA, type ChatRequest, type StreamEvent } from '@/core'
 import type { AIProvider } from '@/types/providerContracts'
-import { extractProviderToolCalls, type ProviderRuntimeCompletionResult } from '@/modules/providers'
+import { getModelConfig } from '@/types/modelCatalog'
+import { createProviderGateway, extractProviderToolCalls, selectProviderAttachmentMessage, type ProviderRuntimeCompletionResult } from '@/modules/providers'
 import { buildProviderNativeToolRevisionMessages } from '@/services/chatProviderNativeToolUtils'
 import { buildProviderProtocolRequestBody } from './providerRequestBinding'
 import { createProviderRuntimeAdapter, toRuntimeChatRequest } from './providerRuntime'
@@ -11,6 +12,150 @@ jest.mock('./usageStatisticsRuntime', () => ({}))
 
 const provider = (type: AIProvider['type'], model: string, presetId?: AIProvider['presetId']): AIProvider => ({
   id: `${type}-replay`, type, presetId, name: type, enabled: true, models: [model], apiKey: 'test-only',
+})
+
+describe('Harness native-search continuation', () => {
+  const p: AIProvider = {
+    ...provider('openai', 'gpt-4o'),
+    capabilities: { chat: true, streaming: true, modelList: true, vision: true, files: true,
+      audioInput: false, audioTranscription: false, speech: false, nativeSearch: true,
+      reasoningEffort: true, nativeTools: true, topP: true },
+  }
+  const request: ChatRequest = {
+    schema: CHAT_REQUEST_SCHEMA, conversationId: 'search-continuation', providerId: p.id, model: p.models[0],
+    generationParameterSources: {},
+    requestedCapabilities: ['tools', 'native-search'],
+    providerStateBinding: { providerId: p.id, model: p.models[0] },
+    messages: [
+      { id: 'u1', role: 'user', text: 'Continue with the search results.' },
+      { id: 'a1', role: 'assistant', text: '', toolCalls: [{ callId: 'call-1', name: 'lookup', arguments: {} }] },
+      { id: 't1', role: 'tool', name: 'lookup', toolCallId: 'call-1', text: 'Local result' },
+    ],
+  }
+
+  it('passes the gateway and preserves native search, call identity and route binding on the wire', async () => {
+    const streamChat = jest.fn<ReturnType<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>,
+      Parameters<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>>()
+      .mockImplementation(async (runtime, _chunk, done) => {
+        expect(runtime.webSearchMode).toBe('native')
+        expect(runtime.allowFallback).toBe(false)
+        const body = buildProviderProtocolRequestBody(runtime)
+        expect(body.tools).toContainEqual(expect.objectContaining({ type: 'web_search' }))
+        expect(body.input).toContainEqual({ type: 'function_call_output', call_id: 'call-1', output: 'Local result' })
+        return { controller: new AbortController(), done: Promise.resolve().then(() => done({ text: 'Finished', traces: [] })) }
+      })
+    const gateway = createProviderGateway([createProviderRuntimeAdapter({ provider: p, streamChat })])
+    const events: StreamEvent[] = []
+    for await (const event of gateway.stream(request, { signal: new AbortController().signal })) events.push(event)
+    expect(streamChat).toHaveBeenCalledTimes(1)
+    expect(events).toContainEqual({ type: 'text-delta', text: 'Finished' })
+  })
+
+  it('rejects unsupported native search before dispatch', async () => {
+    const streamChat = jest.fn()
+    const gateway = createProviderGateway([createProviderRuntimeAdapter({
+      provider: { ...p, capabilities: { ...p.capabilities!, nativeSearch: false } }, streamChat,
+    })])
+    await expect((async () => {
+      for await (const _event of gateway.stream(request, { signal: new AbortController().signal })) { /* drain */ }
+    })()).rejects.toThrow(/native-search/)
+    expect(streamChat).not.toHaveBeenCalled()
+  })
+
+  it('does not enable native search for plain or legacy ambiguous web-search requests', () => {
+    for (const requestedCapabilities of [undefined, ['tools'], ['web-search']]) {
+      expect(toRuntimeChatRequest({ provider: p }, { ...request, requestedCapabilities }).webSearchMode).toBeUndefined()
+    }
+  })
+
+  it.each(['web-search', 'attachments', 'remote-compact'])('keeps unsupported legacy %s recovery fail-closed', async (capability) => {
+    const streamChat = jest.fn()
+    const gateway = createProviderGateway([createProviderRuntimeAdapter({ provider: p, streamChat })])
+    await expect((async () => {
+      for await (const _event of gateway.stream({ ...request, requestedCapabilities: [capability] }, {
+        signal: new AbortController().signal,
+      })) { /* drain */ }
+    })()).rejects.toThrow(capability)
+    expect(streamChat).not.toHaveBeenCalled()
+  })
+})
+
+describe.each(['native', 'tagged'] as const)('%s tool continuation attachments', (mode) => {
+  it.each([
+    ['openai', 'gpt-4o'],
+    ['openai', 'gpt-6-astra'],
+    ['anthropic', 'claude-sonnet-4-6'],
+    ['google', 'gemini-3.8-flash'],
+  ] as const)('keeps media on its original user message for %s / %s', (type, model) => {
+    const p: AIProvider = { ...provider(type, model), capabilities: {
+      chat: true, streaming: true, modelList: true, vision: true, files: true,
+      audioInput: false, audioTranscription: false, speech: false, nativeSearch: false,
+      reasoningEffort: true, nativeTools: true, topP: true,
+    } }
+    const original: ChatRequest = {
+      schema: CHAT_REQUEST_SCHEMA, conversationId: 'media-continuation', providerId: p.id, model,
+      generationParameterSources: {},
+      providerStateBinding: { providerId: p.id, model },
+      messages: [
+        { id: 'older-user', role: 'user', text: 'Read this image' },
+        { id: 'older-answer', role: 'assistant', text: 'Earlier answer' },
+        { id: 'media-user', role: 'user', text: 'Read this image' },
+        ...(mode === 'native' ? [
+          { id: 'call', role: 'assistant' as const, text: '', toolCalls: [{ callId: 'read-1', name: 'lookup', arguments: {} }] },
+          { id: 'receipt', role: 'tool' as const, toolCallId: 'read-1', name: 'lookup', text: 'Local result' },
+        ] : [
+          { id: 'call', role: 'assistant' as const, text: '<islemind_tool_call>lookup</islemind_tool_call>' },
+          { id: 'receipt', role: 'user' as const, text: 'Tool result: local result. Continue.' },
+        ]),
+      ],
+    }
+    const runtime = toRuntimeChatRequest({ provider: p, attachmentMessageId: 'media-user' }, original)
+    runtime.attachments = [{ id: 'image', type: 'image', uri: 'fixture://image', name: 'image.png',
+      mimeType: 'image/png', size: 8, base64: 'Zml4dHVyZQ==' }]
+    const body = buildProviderProtocolRequestBody(runtime)
+    const messages = (body.messages ?? body.input ?? body.contents) as Record<string, unknown>[]
+    expect(JSON.stringify(messages[2])).toContain('Zml4dHVyZQ==')
+    expect(JSON.stringify(messages.filter((_, index) => index !== 2))).not.toContain('Zml4dHVyZQ==')
+    expect(JSON.stringify(body)).not.toContain('attachmentTarget')
+    expect(JSON.stringify(body)).not.toContain('fixture://image')
+    expect(JSON.stringify(original)).not.toContain('attachmentTarget')
+    expect(runtime.allowFallback).toBe(false)
+
+    for (const attachmentMessageId of ['missing', 'older-answer']) {
+      expect(() => toRuntimeChatRequest({ provider: p, attachmentMessageId }, original)).toThrow(/attachment message binding/)
+    }
+    expect(() => toRuntimeChatRequest({ provider: p, attachmentMessageId: 'media-user' }, {
+      ...original, messages: [...original.messages, original.messages[2]],
+    })).toThrow(/attachment message binding/)
+
+    const next = toRuntimeChatRequest({ provider: p, attachmentMessageId: 'media-user' }, {
+      ...original, messages: [...original.messages,
+        { id: 'follow-up-answer', role: 'assistant', text: 'Another operation completed' },
+        { id: 'follow-up-receipt', role: 'user', text: 'Second tool receipt, not the image owner' }],
+    })
+    next.attachments = runtime.attachments
+    const nextBody = buildProviderProtocolRequestBody(next)
+    const nextMessages = (nextBody.messages ?? nextBody.input ?? nextBody.contents) as Record<string, unknown>[]
+    expect(JSON.stringify(nextMessages[2])).toContain('Zml4dHVyZQ==')
+    expect(JSON.stringify(nextMessages.filter((_, index) => index !== 2))).not.toContain('Zml4dHVyZQ==')
+
+    const noVision = buildProviderProtocolRequestBody({ ...runtime,
+      provider: { ...p, modelConfigs: [{ ...getModelConfig(model, type), supportsVision: false }] },
+    })
+    expect(JSON.stringify(noVision)).not.toContain('Zml4dHVyZQ==')
+  })
+})
+
+test('attachment selection preserves legacy initial sends and rejects ambiguous or non-user bindings', () => {
+  const user = { role: 'user' }
+  const assistant = { role: 'assistant' }
+  expect(selectProviderAttachmentMessage([assistant, user])).toBe(user)
+  expect(selectProviderAttachmentMessage([user, assistant])).toBeUndefined()
+  expect(selectProviderAttachmentMessage([])).toBeUndefined()
+  expect(() => selectProviderAttachmentMessage([{ ...user, attachmentTarget: true },
+    { ...user, attachmentTarget: true }])).toThrow(/attachment message binding/)
+  expect(() => selectProviderAttachmentMessage([{ ...assistant, attachmentTarget: true }, user]))
+    .toThrow(/attachment message binding/)
 })
 
 test.each(['openai', 'anthropic', 'google'] as const)('Harness %s requests serialize an output cap without changing explicit settings', (type) => {

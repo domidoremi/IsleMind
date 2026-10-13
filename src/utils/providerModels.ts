@@ -83,8 +83,10 @@ export function clearHistoricalInjectedGroupModels(group: ProviderCredentialGrou
 
 export function getProviderAvailableModels(provider: AIProvider): string[] {
   const manualModels = getProviderManualModels(provider)
+  // Discovery failure changes the observation, not the saved configuration.
+  // Cached models stay selectable; this is not a live availability claim.
   const syncedGroupModels = (provider.credentialGroups ?? [])
-    .filter((group) => group.enabled !== false && group.lastModelSyncStatus === 'ok')
+    .filter((group) => group.enabled !== false && (group.lastModelSyncStatus === 'ok' || group.lastModelSyncStatus === 'bad'))
     .flatMap((group) => clearHistoricalInjectedGroupModels(group, provider))
   if (syncedGroupModels.length) return filterChatCompatibleModels(provider, [...syncedGroupModels, ...manualModels])
 
@@ -112,7 +114,7 @@ export function getProviderPreferredModel(provider: AIProvider): string | undefi
     firstChatCompatibleModel(provider, [...sourceModels, ...manualModels])
 
   const syncedGroupModels = (provider.credentialGroups ?? [])
-    .filter((group) => group.enabled !== false && group.lastModelSyncStatus === 'ok')
+    .filter((group) => group.enabled !== false && (group.lastModelSyncStatus === 'ok' || group.lastModelSyncStatus === 'bad'))
     .flatMap((group) => clearHistoricalInjectedGroupModels(group, provider))
   if (syncedGroupModels.length) {
     return pickTestedModel(syncedGroupModels) ?? pickFirstModel(syncedGroupModels)
@@ -246,9 +248,10 @@ export function inferModelFamily(provider: AIProvider | undefined, model: string
 }
 
 export function isProviderConversationReady(provider: AIProvider): boolean {
+  // Readiness is local configuration, not historical probe health. A past
+  // request failure stays visible but must not require another probe to use it.
   return provider.id !== 'local-setup' &&
     provider.enabled &&
-    provider.lastTestStatus !== 'bad' &&
     !!getProviderPreferredModel(provider)
 }
 

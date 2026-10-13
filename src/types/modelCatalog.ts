@@ -209,7 +209,7 @@ export function mergeModelConfig(modelId: string, providerType: ProviderType, re
     maxTemperature: remote?.maxTemperature ?? base.maxTemperature,
     supportsVision: remote?.supportsVision ?? base.supportsVision,
     supportsFiles: remote?.supportsFiles ?? base.supportsFiles,
-    supportsTools: remote?.supportsTools ?? base.supportsTools,
+    supportsTools: remote?.supportsTools !== undefined ? remote.supportsTools : base.supportsTools,
     supportsStreaming: remote?.supportsStreaming ?? base.supportsStreaming,
     preferredEndpoint: remote?.preferredEndpoint ?? base.preferredEndpoint,
     chatCompatible: remote?.chatCompatible ?? base.chatCompatible,
@@ -246,7 +246,7 @@ function mergeKnownModelDefaults(modelId: string, providerType: ProviderType | u
     sourceUrl: remote.sourceUrl ?? known.sourceUrl,
     verifiedAt: remote.verifiedAt ?? known.verifiedAt,
     deprecatedReason: remote.deprecatedReason ?? known.deprecatedReason,
-    supportsTools: remote.supportsTools ?? known.supportsTools,
+    supportsTools: remote.supportsTools !== undefined ? remote.supportsTools : known.supportsTools,
     supportsStreaming: remote.supportsStreaming ?? known.supportsStreaming,
     chatCompatible: remote.chatCompatible ?? known.chatCompatible,
   }

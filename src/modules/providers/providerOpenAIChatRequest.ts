@@ -3,6 +3,7 @@ import { toTextContent } from './providerContentParts'
 import type { ProviderToolCall } from './providerToolCalls'
 import { toOpenAIChatToolCall } from './providerToolReplay'
 import { mergeProviderToolDeclarations } from './providerToolDeclarations'
+import { selectProviderAttachmentMessage } from './providerAttachments'
 
 export type OpenAIChatReasoningReplayField = 'reasoning' | 'reasoning_content'
 export type OpenAIChatMaxTokensField = 'max_completion_tokens' | 'max_tokens'
@@ -10,6 +11,7 @@ export type OpenAIChatMaxTokensField = 'max_completion_tokens' | 'max_tokens'
 export interface OpenAIChatRequestMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string | readonly ProviderContentPart[]
+  attachmentTarget?: boolean
   reasoningContent?: string
   toolCallId?: string
   name?: string
@@ -85,6 +87,8 @@ export function createOpenAIChatRequestBodyBuilder<
       const messages: Record<string, unknown>[] = []
       const systemPrompt = [request.systemPrompt, request.contextPrompt].filter(Boolean).join('\n\n')
       if (systemPrompt) messages.push({ role: 'system', content: systemPrompt })
+      const attachments = dependencies.selectAttachments(request)
+      const attachmentMessage = attachments.length ? selectProviderAttachmentMessage(request.messages) : undefined
 
       for (const message of request.messages) {
         const content = toTextContent(message.content)
@@ -102,27 +106,13 @@ export function createOpenAIChatRequestBodyBuilder<
           : undefined
         messages.push({
           role: message.role,
-          content,
+          content: message === attachmentMessage ? [
+            { type: 'text', text: content },
+            ...attachments.map((attachment) => dependencies.buildAttachmentPart(request, attachment)),
+          ] : content,
           ...(reasoningReplayField ? { [reasoningReplayField]: message.reasoningContent } : {}),
           ...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map(toOpenAIChatToolCall) } : {}),
         })
-      }
-
-      const attachments = dependencies.selectAttachments(request)
-      if (attachments.length) {
-        const lastMessage = messages[messages.length - 1]
-        if (lastMessage && lastMessage.role === 'user') {
-          const content = lastMessage.content
-          const textContent = typeof content === 'string'
-            ? content
-            : Array.isArray(content)
-              ? content.map((part) => asText(part)).join('\n')
-              : ''
-          lastMessage.content = [
-            { type: 'text', text: textContent },
-            ...attachments.map((attachment) => dependencies.buildAttachmentPart(request, attachment)),
-          ]
-        }
       }
 
       const body: Record<string, unknown> = {
@@ -174,11 +164,4 @@ export function createOpenAIChatRequestBodyBuilder<
       return body
     },
   }
-}
-
-function asText(value: unknown): string {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
-  return typeof (value as Record<string, unknown>).text === 'string'
-    ? (value as Record<string, unknown>).text as string
-    : ''
 }

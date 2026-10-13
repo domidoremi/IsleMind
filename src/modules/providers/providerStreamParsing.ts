@@ -248,6 +248,8 @@ export function createProviderStreamParsingPolicy(
               dependencies.summarizeToolEvent(json),
               isDoneEvent(json.type) ? 'done' : 'running',
               stableTraceId(json, 'tool'),
+              { clientToolCall: Boolean(delta?.tool_calls || delta?.function_call || json.tool_call || json.function_call ||
+                stringValue(json.type).includes('function_call') || json.item?.type === 'function_call') },
             ),
           )
         }
@@ -311,6 +313,7 @@ export function createProviderStreamParsingPolicy(
               dependencies.summarizeToolEvent(json.content_block),
               'running',
               stableTraceId(json, 'tool'),
+              { clientToolCall: true },
             ),
           )
         }
@@ -323,6 +326,7 @@ export function createProviderStreamParsingPolicy(
               stringValue(json.delta?.partial_json),
               'running',
               stableTraceId(json, 'tool-input'),
+              { clientToolCall: true },
             ),
           )
         }
@@ -368,6 +372,7 @@ export function createProviderStreamParsingPolicy(
                   dependencies.summarizeToolEvent(item.functionCall),
                   'running',
                   stableTraceId(item.functionCall, 'function'),
+                  { clientToolCall: true },
                 ),
               )
             } else {

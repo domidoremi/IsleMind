@@ -209,7 +209,8 @@ export interface AIModel {
   maxTemperature?: number
   supportsVision: boolean
   supportsFiles: boolean
-  supportsTools?: boolean
+  /** null means discovery did not report support; false is an explicit denial. */
+  supportsTools?: boolean | null
   supportedParameters?: string[]
   supportsStreaming?: boolean
   preferredEndpoint?: 'chat-completions' | 'responses'

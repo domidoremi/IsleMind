@@ -2,13 +2,15 @@ import { flushPersistedSettings } from '@/presentation/features/settings/setting
 import { SettingsEditBoundary, useSettingsDraft, useSettingsLeave } from '@/components/settings/SettingsEditBoundary'
 import { SettingsHelpButton } from '@/components/settings/SettingsHelp'
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AppState, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type KeyboardEvent, type LayoutChangeEvent } from 'react-native'
+import { AppState, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type KeyboardEvent, type LayoutChangeEvent } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated'
 import { MotiView } from 'moti'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
+import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
 import { ProviderTokenField } from './ProviderTokenField'
@@ -35,16 +37,14 @@ import { resolveProviderConfigDraft } from '@/bootstrap/providerPolicies'
 import { activationItemProgress } from '@/services/providerActivationJob'
 import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/platform/native/boundedImportFile'
 import { parseModels } from '@/utils/text'
-import { isProviderConversationReady } from '@/utils/providerModels'
-import { hasProviderModelAccessRules, providerHasPolicyAllowedModel } from '@/bootstrap/providerModelAccess'
-import { buildProviderSettingsPolicyModelCache, buildProviderSettingsSearchIndex, filterAndSortProviders, groupProviderSettingsCards } from '@/bootstrap/providerSettingsList'
+import { summarizeProviderModelInventory } from '@/utils/providerModels'
+import { hasProviderModelAccessRules } from '@/bootstrap/providerModelAccess'
+import { buildProviderSettingsPolicyModelCache, buildProviderSettingsSearchIndex, filterAndSortProviders } from '@/bootstrap/providerSettingsList'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
-import { useProviderImportSession } from '@/components/providers/useProviderImportSession'
-import { useProviderUsageSnapshots, type ProviderUsageSnapshot, type ProviderUsageSnapshotMap } from '@/components/providers/useProviderUsageSnapshots'
-import { ProviderUsageQueryEditor } from '@/components/providers/ProviderUsageQueryEditor'
+import { isExistingProviderImport, useProviderImportSession } from '@/components/providers/useProviderImportSession'
 import { PROVIDER_CARD_DETAIL_MAX_WIDTH } from '@/components/providers/ProviderCardGrid'
 import {
   LiquidGlassProviderSettingsExperience,
@@ -54,7 +54,7 @@ import {
 } from '@/components/providers/theme-experiences/ProviderSettingsExperiences'
 import type { RuntimeDiagnosticsProviderDetail, RuntimeDiagnosticsSummary } from '@/bootstrap/runtimeDiagnostics'
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
-import { resolveProviderDisplayName, resolveProviderSupplierDisclosure } from '@/presentation/features/settings/providerPresentation'
+import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { invalidateProviderUsage } from '@/bootstrap/providerUsageRuntime'
 
 type ClipboardReadState = 'idle' | 'requesting'
@@ -88,7 +88,6 @@ const IMPORT_FOOTER_HEIGHT = 64
 const IMPORT_BODY_FIXED_SPACE = 100
 const PROVIDER_ROW_HEIGHT = 72
 const PROVIDER_DRAG_STEP = 64
-const PROVIDER_CARD_RADIUS = 8
 const CLEAR_INVALID_PROVIDER_LIST_LIMIT = 12
 const PROVIDER_POLICY_MODEL_UI_LIMIT = PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT
 const RUNTIME_DIAGNOSTICS_DEBOUNCE_MS = 900
@@ -126,53 +125,10 @@ function countProviderRuntimeDiagnosticsModelEntries(providers: AIProvider[]): n
   }, 0)
 }
 
-function formatProviderUsageNumber(value: number): string {
-  if (Number.isInteger(value)) return String(value)
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
-}
-
-function providerUsageSummary(
-  snapshot: ProviderUsageSnapshot | undefined,
-  translate: (key: string, options?: Record<string, unknown>) => string,
-): string | undefined {
-  if (!snapshot) return undefined
-  if (snapshot.status === 'loading') return translate('providerSettings.usageLoading')
-  if (snapshot.status === 'error') return translate('providerSettings.usageError')
-  if (snapshot.status === 'unavailable' || !snapshot.result) return translate('providerSettings.usageUnavailable')
-  const result = snapshot.result
-  const unit = result.unit ? ` ${result.unit}` : ''
-  if (result.remaining !== undefined) {
-    return translate('providerSettings.usageRemaining', { value: formatProviderUsageNumber(result.remaining), unit })
-  }
-  if (result.used !== undefined && result.limit !== undefined) {
-    return translate('providerSettings.usageUsedOfLimit', {
-      used: formatProviderUsageNumber(result.used),
-      limit: formatProviderUsageNumber(result.limit),
-      unit,
-    })
-  }
-  if (result.used !== undefined) {
-    return translate('providerSettings.usageUsed', { value: formatProviderUsageNumber(result.used), unit })
-  }
-  if (result.limit !== undefined) {
-    return translate('providerSettings.usageLimit', { value: formatProviderUsageNumber(result.limit), unit })
-  }
-  return translate('providerSettings.usageUnavailable')
-}
-
-function providerUsageSnapshotForGroup(
-  providers: readonly AIProvider[],
-  snapshots: ProviderUsageSnapshotMap,
-): ProviderUsageSnapshot | undefined {
-  const groupSnapshots = providers.map((provider) => snapshots.get(provider.id)).filter(Boolean) as ProviderUsageSnapshot[]
-  return groupSnapshots.find((snapshot) => snapshot.status === 'ready')
-    ?? groupSnapshots.find((snapshot) => snapshot.status === 'loading')
-    ?? groupSnapshots[0]
-}
-
 interface ProviderSettingsContentProps {
   embedded?: boolean
   autoOpenAdd?: boolean
+  onAutoOpenAddConsumed?: () => void
   onClose?: () => void
   onProviderConnected?: () => void
   onBackgroundStateChange?: (state: IsleBackgroundState) => void
@@ -182,7 +138,7 @@ export function ProviderSettingsContent(props: ProviderSettingsContentProps) {
   return <SettingsEditBoundary><ProviderSettingsBody {...props} /></SettingsEditBoundary>
 }
 
-function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
+function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpenAddConsumed, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -190,15 +146,11 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   const insets = useSafeAreaInsets()
   const { width, fontScale } = useWindowDimensions()
   const compactWidth = width < 430
-  const veryCompactWidth = width < 360
   const pagePadding = compactWidth ? 12 : 16
   const pagerGestureLock = useMainPagerGestureLock()
   const providers = useSettingsStore((state) => state.providers)
-  const providerUsageSnapshots = useProviderUsageSnapshots(providers)
-  const addProvider = useSettingsStore((state) => state.addProvider)
   const reorderProviders = useSettingsStore((state) => state.reorderProviders)
   const removeProvider = useSettingsStore((state) => state.removeProvider)
-  const updateSettings = useSettingsStore((state) => state.updateSettings)
   const clearAllProviders = useSettingsStore((state) => state.clearAllProviders)
   const listInvalidProviders = useSettingsStore((state) => state.listInvalidProviders)
   const clearInvalidProviders = useSettingsStore((state) => state.clearInvalidProviders)
@@ -211,7 +163,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
     [draftConversationIds, storedConversations]
   )
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
-  const [expandedSupplierId, setExpandedSupplierId] = useState<string | null>(null)
+  const [providerView, setProviderView] = useState<'connection' | 'models'>('models')
   const [deletingSupplierId, setDeletingSupplierId] = useState<string | null>(null)
   const selectedProvider = expandedProviderId ? providers.find((provider) => provider.id === expandedProviderId) : undefined
   const [sortMode, setSortMode] = useState<ProviderSortMode>('manual')
@@ -219,16 +171,14 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   const deferredModelFilter = useDeferredValue(modelFilter)
   const [batchMode, setBatchMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
-  const [addOpen, setAddOpen] = useState(autoOpenAdd)
-  const [importOpen, setImportOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(autoOpenAdd)
   const [batchActionsOpen, setBatchActionsOpen] = useState(false)
-  const [listToolsOpen, setListToolsOpen] = useState(false)
   const [importProgress, setImportProgress] = useState<ProviderImportProgress | null>(null)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const runtimeDiagnosticsRunRef = useRef(0)
   const importSession = useProviderImportSession()
-  const suppressedSupplierPress = useRef<string | null>(null)
   const providerModelAccessSettings = useMemo(() => ({
     providerAllowlist: settings.providerAllowlist,
     providerBlocklist: settings.providerBlocklist,
@@ -255,7 +205,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   const autoRuntimeDiagnosticsEnabled = providers.length <= PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_PROVIDER_LIMIT &&
     providerRuntimeDiagnosticsModelEntries <= PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_MODEL_ENTRY_LIMIT
   const runtimeDiagnosticsEnabled = Boolean(selectedProvider) && autoRuntimeDiagnosticsEnabled
-  const { activationBusy, activationJob, clearActivationJob, activateProviders, isActivationRunning } = useProviderActivationJob({
+  const { activationBusy, activationJob, clearActivationJob, isActivationRunning } = useProviderActivationJob({
     onActivationCompleted: () => {
       setBatchMode(false)
       setSelectedIds(new Set())
@@ -279,8 +229,10 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   }, [embedded, pagerGestureLock])
 
   useEffect(() => {
-    if (autoOpenAdd) setAddOpen(true)
-  }, [autoOpenAdd])
+    if (!autoOpenAdd) return
+    setImportOpen(true)
+    onAutoOpenAddConsumed?.()
+  }, [autoOpenAdd, onAutoOpenAddConsumed])
 
   useEffect(() => {
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
@@ -357,14 +309,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
     }),
     [deferredModelFilter, providers, providerModelAccessSettings, providerSearchTextById, policyModelsByProviderId, sortMode, usageByProvider]
   )
-  const providerCardGroups = groupProviderSettingsCards(visibleProviderItems)
-  const featuredProviderId = useMemo(() => {
-    if (settings.defaultProvider && visibleProviderItems.some((provider) => provider.id === settings.defaultProvider)) {
-      return settings.defaultProvider
-    }
-    return [...visibleProviderItems]
-      .sort((left, right) => (usageByProvider.get(right.id) ?? 0) - (usageByProvider.get(left.id) ?? 0))[0]?.id
-  }, [settings.defaultProvider, usageByProvider, visibleProviderItems])
   const manualOrdering = sortMode === 'manual'
   const providerOrderById = useMemo(
     () => new Map(providers.map((provider, index) => [provider.id, index] as const)),
@@ -378,32 +322,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
   const providerListIsSmall = providers.length <= PROVIDER_MANUAL_SORT_RAIL_PROVIDER_LIMIT
   const showManualSortControls = manualOrdering && providerListIsSmall && !hasModelFilter
 
-  const enabled = providers.filter((provider) => provider.enabled).length
-  const available = useMemo(
-    () => providers.filter((provider) => isProviderConversationReady(provider) && (!providerModelAccessHasRules || providerHasPolicyAllowedModel(provider, providerModelAccessSettings))).length,
-    [providers, providerModelAccessHasRules, providerModelAccessSettings]
-  )
   const providerAttentionItems: SettingsSummaryItem[] = []
-  if (providers.length && !enabled) {
-    providerAttentionItems.push({
-      key: 'enabled',
-      label: t('settings.enabled'),
-      value: String(enabled),
-      detail: t('providerSettings.providerCount', { count: providers.length }),
-      icon: <AppIcon name="toggle-on" color={colors.textTertiary} size={15} />,
-      tone: 'amber',
-    })
-  }
-  if (providers.length && enabled > 0 && !available) {
-    providerAttentionItems.push({
-      key: 'available',
-      label: t('providerSettings.overviewAvailable'),
-      value: String(available),
-      detail: t('providerSettings.availableCount', { count: available }),
-      icon: <AppIcon name="health" color={colors.textTertiary} size={15} />,
-      tone: 'amber',
-    })
-  }
   if (providers.length && providerModelAccessHasRules) {
     providerAttentionItems.push({
       key: 'policy',
@@ -415,26 +334,16 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
     })
   }
   const { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
-  const activeSortLabel = t(SORT_OPTIONS.find((option) => option.id === sortMode)?.labelKey ?? SORT_OPTIONS[0].labelKey)
-  const providerListHint = manualOrdering
-    ? t('providerSettings.manualSortHint')
-    : t('providerSettings.sortedViewHint', { label: activeSortLabel })
-  const listToolsActive = modelFilter.trim().length > 0
-  const listToolsExpanded = listToolsOpen || listToolsActive
-  const batchActionsActive = batchMode || Boolean(activationJob)
-  const batchActionsExpanded = batchActionsOpen || batchActionsActive
-  const providerActionButtonStyle = { flexGrow: 1, flexShrink: 1, flexBasis: veryCompactWidth ? '100%' : '48%', minWidth: 0, minHeight: 44 } as const
   async function addProviderFromForm(provider: AIProvider) {
     // Saving configuration is not authorization to probe or test a paid model.
     const store = useSettingsStore.getState()
-    const previousDefault = store.settings.defaultProvider
     if (store.providers.some(item => item.id === provider.id)) await store.updateProvider(provider.id, provider)
-    else await addProvider(provider)
-    if (!previousDefault) store.updateSettings({ defaultProvider: null })
+    else await store.addProviders([provider], { selectDefaultIfEmpty: false })
     await store.flushProviderPersistence()
     await flushPersistedSettings()
     setAddOpen(false)
     setExpandedProviderId(provider.id)
+    setProviderView('models')
     setSortMode('manual')
     setModelFilter('')
   }
@@ -450,7 +359,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
     if (options.waitForNotification) await notification
   }
 
-  async function importProvidersFromText(input: string): Promise<boolean> {
+  async function importProvidersFromText(input: string, skipExisting = true): Promise<boolean> {
     if (importProgress) return false
     const notificationOwner = createProviderNotificationOwner('import')
     await publishImportProgress({ stage: 'parsing', completed: 0, total: 0 }, { waitForNotification: true, owner: notificationOwner })
@@ -462,7 +371,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
         await yieldToNextPaint()
       }, ({ completed, total, currentProviderName }) => {
         void publishImportProgress({ stage: 'saving', completed, total, currentProviderName }, { owner: notificationOwner })
-      })
+      }, skipExisting)
       if (!result) return false
       if (!result.providers.length) {
         setImportProgress(null)
@@ -479,20 +388,17 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
       setExpandedProviderId(result.providers.length === 1 ? result.providers[0]?.id ?? null : null)
       setSortMode('manual')
       setModelFilter('')
-      // The follow-up confirmation is the single foreground terminal surface.
-      // Clear the optional system progress indicator before asking for the next step.
+      setProviderView('models')
+      // Import is complete locally. Choosing a model is a separate user action,
+      // never an invitation to activate/test every imported credential.
       void clearAndroidStatusNotification({ owner: notificationOwner })
-
-      const enableNow = await dialog.confirm({
-        title: t('providerSettings.enableImportedTitle'),
-        message: [t('providerSettings.enableImportedMessage', { count: result.providers.length }), formatProviderNameList(result.providers), ...result.warnings].filter(Boolean).join('\n'),
-        confirmLabel: t('providerSettings.enableImportedConfirm'),
-        cancelLabel: t('providerSettings.enableLater'),
-        tone: result.warnings.length ? 'amber' : 'mint',
-      })
-      if (enableNow) {
-        void activateProviders(result.providers.map((provider) => provider.id), 'batch')
+      const savedNotice = {
+        title: t('providerSettings.configurationSaved'),
+        message: [t('providerSettings.selectModelHint'), ...result.warnings].filter(Boolean).join('\n'),
+        tone: result.warnings.length ? 'amber' as const : 'mint' as const,
       }
+      if (result.warnings.length) dialog.notice(savedNotice)
+      else dialog.toast(savedNotice)
       return true
     } catch (error) {
       const failureMessage = providerImportFailureMessage(error, t)
@@ -513,7 +419,10 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
       dialog.toast({ title: t('providerSettings.enableNone'), tone: 'amber' })
       return
     }
-    void activateProviders(ids, batchMode ? 'batch' : 'all')
+    // Enabling is a local preference, not consent to test credentials or models.
+    for (const id of ids) await useSettingsStore.getState().updateProvider(id, { enabled: true })
+    await useSettingsStore.getState().flushProviderPersistence()
+    dialog.toast({ title: t('providerSettings.configurationSaved'), tone: 'mint' })
   }
 
   async function confirmClearAllProviders() {
@@ -588,7 +497,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
     const ids = new Set(group.providers.map((provider) => provider.id))
     setDeletingSupplierId(group.id)
     setExpandedProviderId((current) => current && ids.has(current) ? null : current)
-    setExpandedSupplierId((current) => current === group.id ? null : current)
     setSelectedIds((current) => new Set([...current].filter((id) => !ids.has(id))))
     const notificationOwner = createProviderNotificationOwner('delete')
     void publishProviderDeleteNotification(0, count, t, useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true, notificationOwner)
@@ -657,15 +565,14 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
     return (
       <ProviderListRow
         provider={provider}
-        usageSnapshot={providerUsageSnapshots.get(provider.id)}
         position={providerIndex + 1}
-        featured={colors.ui.family === 'monet' && provider.id === featuredProviderId}
+        featured={provider.id === settings.defaultProvider}
         selected={selectedIds.has(provider.id)}
         batchMode={batchMode}
         expanded={expandedProviderId === provider.id}
-        grouped
         onToggleSelected={() => toggleSelection(provider.id)}
-        onExpandedChange={(next) => setExpandedProviderId(next ? provider.id : null)}
+        onExpandedChange={(next) => { setProviderView('models'); setExpandedProviderId(next ? provider.id : null) }}
+        onEdit={() => { setProviderView('connection'); setExpandedProviderId(provider.id) }}
       />
     )
   }
@@ -677,253 +584,60 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
       : canonicalThemeId === 'liquid-glass'
         ? LiquidGlassProviderSettingsExperience
         : MinimalProviderSettingsExperience
-  const providerAttention = providerAttentionItems.length ? <SettingsSummaryStrip items={providerAttentionItems} /> : undefined
+  const providerAttention = providerModelAccessHasRules ? <SettingsSummaryStrip items={providerAttentionItems.filter(item => item.key === 'policy')} /> : undefined
   const providerActivation = activationJob
     ? <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />
     : undefined
-  const providerTools = providers.length > 3 || listToolsActive || providers.length > 1 || batchActionsActive ? (
-    <View style={{ gap: 8 }}>
-      {providers.length > 3 || listToolsActive ? (
-        <>
-          <ProviderToolbarDisclosureRow
-            title={t('providerSettings.listTools')}
-            detail={listToolsActive ? t('providerSettings.listToolsActive', { label: activeSortLabel, count: visibleProviderItems.length }) : t('providerSettings.listToolsCollapsedDetail', { label: activeSortLabel, count: visibleProviderItems.length })}
-            icon={<AppIcon name="filter" color={colors.textTertiary} size={15} />}
-            open={listToolsExpanded}
-            onPress={() => setListToolsOpen((value) => !value)}
-          />
-          {listToolsExpanded ? (
-            <View style={{ gap: 8 }}>
-              <View style={{ flexDirection: veryCompactWidth ? 'column' : 'row', alignItems: veryCompactWidth ? 'stretch' : 'center', gap: 8 }}>
-                <View style={{ minHeight: ISLE_MIN_TOUCH_TARGET, flex: 1, minWidth: 0, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}>
-                  <AppIcon name="search" color={colors.textTertiary} size={16} />
-                  <TextInput
-                    value={modelFilter}
-                    onChangeText={setModelFilter}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    placeholder={t('providerSettings.filterModels')}
-                    placeholderTextColor={colors.textTertiary}
-                    style={{ flex: 1, minWidth: 0, minHeight: ISLE_MIN_TOUCH_TARGET, padding: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}
-                  />
-                  {modelFilter ? (
-                    <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: mutedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
-                      <AppIcon name="close" color={colors.textSecondary} size={15} />
-                    </IslePressable>
-                  ) : null}
-                </View>
-                {!manualOrdering ? (
-                  <IslePressable haptic accessibilityLabel={t('providerSettings.switchToManualSort')} onPress={() => setSortMode('manual')} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: raisedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
-                    <AppIcon name="grab" color={colors.textSecondary} size={14} />
-                    <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('providerSettings.sort.manual')}</Text>
-                  </IslePressable>
-                ) : null}
-              </View>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {SORT_OPTIONS.map((option) => (
-                  <ChoiceIsleChip
-                    key={option.id}
-                    label={t(option.labelKey)}
-                    active={sortMode === option.id}
-                    onPress={() => {
-                      setSortMode(option.id)
-                      dialog.toast({ title: t('providerSettings.sortChanged', { label: t(option.labelKey) }), tone: 'mint' })
-                    }}
-                  />
-                ))}
-              </View>
-            </View>
-          ) : null}
-        </>
-      ) : null}
-
-      {providers.length > 1 || batchActionsActive ? (
-        <>
-          <ProviderToolbarDisclosureRow
-            title={t('providerSettings.batchActions')}
-            detail={batchMode ? t('providerSettings.batchActionsSelectionDetail', { selected: selectedIds.size, total: providers.length }) : t('providerSettings.batchActionsCollapsedDetail', { total: providers.length })}
-            icon={<AppIcon name="list-check" color={batchMode ? colors.ui.tone.warning.foreground : colors.textTertiary} size={15} />}
-            open={batchActionsExpanded}
-            tone={batchMode ? 'amber' : undefined}
-            onPress={() => setBatchActionsOpen((value) => !value)}
-          />
-          {batchActionsExpanded ? (
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <IsleButton
-                label={batchMode ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
-                compact
-                block
-                tone="mint"
-                icon={<AppIcon name="zap" color={colors.textSecondary} size={15} />}
-                onPress={() => void enableEffectiveSelection()}
-                disabled={activationBusy || activationJob?.status === 'running' || (batchMode ? !selectedIds.size : !providers.length)}
-                style={providerActionButtonStyle}
-              />
-              <IsleButton
-                label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.selectionMode')}
-                compact
-                block
-                accessibilityLabel={batchMode ? t('providerSettings.exitSelectionMode') : t('providerSettings.enterSelectionMode')}
-                tone={batchMode ? 'amber' : 'soft'}
-                icon={<AppIcon name="list-check" color={batchMode ? colors.ui.tone.warning.foreground : colors.textSecondary} size={15} />}
-                onPress={() => {
-                  setBatchMode((value) => !value)
-                  setSelectedIds(new Set())
-                  dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
-                }}
-                style={providerActionButtonStyle}
-              />
-              <IsleButton
-                label={t('providerSettings.clearInvalid')}
-                accessibilityLabel={t('providerSettings.clearInvalid')}
-                compact
-                block
-                tone="amber"
-                icon={<AppIcon name="warning" color={colors.textSecondary} size={15} />}
-                onPress={() => void confirmClearInvalidProviders()}
-                disabled={!providers.length}
-                style={providerActionButtonStyle}
-              />
-              {providers.length ? (
-                <IsleButton
-                  label={t('providerSettings.clearAll')}
-                  compact
-                  block
-                  tone="danger"
-                  icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={15} />}
-                  onPress={() => void confirmClearAllProviders()}
-                  style={providerActionButtonStyle}
-                />
-              ) : null}
-            </View>
-          ) : null}
-        </>
-      ) : null}
-    </View>
-  ) : undefined
-
-  const providerRegistry = providerCardGroups.length ? (
-    <View accessibilityRole="list" style={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center', gap: 12 }}>
-      {providerCardGroups.map((group) => {
-        const groupFeatured = group.providers.some((provider) => provider.id === featuredProviderId)
-        const groupEnabledCount = group.providers.filter((provider) => provider.enabled).length
-        const groupLabel = group.id.startsWith('preset:')
-          ? getProviderPreset(group.id.slice('preset:'.length) as ProviderPresetId).name
-          : group.label
-        const groupUsageSnapshot = providerUsageSnapshotForGroup(group.providers, providerUsageSnapshots)
-        const groupUsageSummary = providerUsageSummary(groupUsageSnapshot, t)
-        const groupExpanded = expandedSupplierId === group.id
-        const disclosure = resolveProviderSupplierDisclosure(group.providers.length, groupExpanded, batchMode)
-        const singleProvider = group.providers[0]
-        const groupStateSummary = `${t('settings.enabled')} ${groupEnabledCount}/${group.providers.length}`
-        const groupDeleting = deletingSupplierId === group.id
-        return (
-          <View
-            key={group.id}
-            role="listitem"
-            testID={`provider-supplier-group-${group.id}`}
-            style={{
-              width: '100%',
-              overflow: 'hidden',
-              borderRadius: colors.ui.family === 'material' ? 0 : Math.min(colors.ui.radius.card, 8),
-              backgroundColor: colors.ui.family === 'minimal' ? 'transparent' : raisedSurface,
-              borderWidth: colors.ui.family === 'minimal' ? StyleSheet.hairlineWidth : 1,
-              borderColor: groupFeatured ? colors.ui.control.primaryBorder : colors.ui.family === 'monet' ? colors.material.stroke : colors.ui.section.divider,
-            }}
-          >
-            <IslePressable
-              haptic
-              focusable
-              testID={`provider-supplier-toggle-${group.id}`}
-              accessibilityRole="button"
-              accessibilityLabel={`${groupLabel}. ${groupStateSummary}`}
-              accessibilityHint={!batchMode ? t('providerSettings.longPressDeleteHint') : undefined}
-              accessibilityState={{ ...(disclosure.expandable ? { expanded: groupExpanded } : {}), disabled: groupDeleting }}
-              accessibilityActions={!batchMode ? [{ name: 'delete', label: t('providerSettings.deleteSupplierAction') }] : undefined}
-              onAccessibilityAction={(event) => {
-                if (event.nativeEvent.actionName === 'delete' && !batchMode && !groupDeleting) {
-                  void confirmRemoveSupplierGroup(group)
-                }
-              }}
-              delayLongPress={520}
-              onLongPress={() => {
-                if (batchMode || groupDeleting) return
-                suppressedSupplierPress.current = group.id
-                setTimeout(() => {
-                  if (suppressedSupplierPress.current === group.id) suppressedSupplierPress.current = null
-                }, 800)
-                void confirmRemoveSupplierGroup(group)
-              }}
-              onPress={() => {
-                if (suppressedSupplierPress.current === group.id) {
-                  suppressedSupplierPress.current = null
-                  return
-                }
-                if (groupDeleting) return
-                if (disclosure.expandable) {
-                  setExpandedSupplierId((current) => current === group.id ? null : group.id)
-                  return
-                }
-                if (singleProvider) setExpandedProviderId(singleProvider.id)
-              }}
-              style={{ minHeight: 64, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.ui.semantic.surface.muted }}
-            >
-              <View style={{ width: 30, height: 30, borderRadius: Math.min(colors.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
-                <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={15} />
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{groupLabel}</Text>
-                <Text style={{ marginTop: 1, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{groupStateSummary}</Text>
-                {groupUsageSummary ? <Text testID={`provider-usage-group-${group.id}`} style={{ marginTop: 1, color: groupUsageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{groupUsageSummary}</Text> : null}
-              </View>
-              {groupDeleting ? (
-                <View accessibilityLabel={t('providerSettings.deleteSupplierStarted')} style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}>
-                  <HighFrameSpinner color={colors.textTertiary} size={16} />
-                </View>
-              ) : disclosure.expandable ? (
-                <View style={{ minWidth: 30, height: 30, borderRadius: Math.min(colors.ui.radius.controlSmall, 8), paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: raisedSurface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.section.divider }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{group.providers.length}</Text>
-                  <AppIcon name="collapse" color={colors.textTertiary} size={14} style={{ transform: [{ rotate: groupExpanded ? '180deg' : '0deg' }] }} />
-                </View>
-              ) : (
-                <AppIcon name="back-next" color={colors.textTertiary} size={14} />
-              )}
-            </IslePressable>
-            {disclosure.showConfigurations ? (
-              <View accessibilityRole="list" testID={`provider-supplier-configurations-${group.id}`} style={{ borderTopWidth: colors.ui.family === 'monet' ? 1 : StyleSheet.hairlineWidth, borderTopColor: colors.ui.family === 'monet' ? colors.material.stroke : colors.ui.section.divider }}>
-                {group.providers.map((provider, index) => (
-                  <View key={provider.id} role="listitem" style={{ borderBottomWidth: index === group.providers.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
-                    {renderProviderItem({ item: provider, index: providerOrderById.get(provider.id) ?? 0 })}
-                  </View>
-                ))}
-              </View>
-            ) : null}
-          </View>
-        )
-      })}
-    </View>
-  ) : colors.ui.family === 'material' ? (
-    <View testID="provider-empty-material" style={{ minHeight: 84, paddingHorizontal: 12, paddingVertical: 10, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider, backgroundColor: colors.ui.semantic.surface.muted }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
-      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
-    </View>
-  ) : colors.ui.family === 'monet' ? (
-    <View testID="provider-empty-monet" style={{ minHeight: 96, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: colors.material.stroke }}>
-      <View style={{ width: 34, alignItems: 'center' }}>
-        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: colors.ui.control.primaryBackground, borderWidth: 3, borderColor: colors.ui.semantic.surface.base }} />
-        <View style={{ width: 2, height: 30, backgroundColor: colors.material.stroke }} />
+  const providerTools = <View style={{ gap: 10 }}>
+    {providers.length ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      <TextInput testID="provider-search" accessibilityLabel={t('providerSettings.searchConnections')}
+        value={modelFilter} onChangeText={setModelFilter} autoCapitalize="none" autoCorrect={false}
+        placeholder={t('providerSettings.searchConnections')} placeholderTextColor={colors.textTertiary}
+        style={{ flex: 1, minWidth: 0, minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12,
+          borderRadius: 14, backgroundColor: colors.ui.semantic.surface.muted, color: colors.text, fontSize: 14 }} />
+      <IslePressable testID="provider-management-toggle" accessibilityRole="button" accessibilityLabel={t('providerSettings.manageConnections')}
+        accessibilityState={{ expanded: batchActionsOpen }} onPress={() => { setBatchActionsOpen(value => !value); setBatchMode(false); setSelectedIds(new Set()) }}
+        style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}>
+        <AppIcon name="more" color={colors.textSecondary} size={20} />
+      </IslePressable>
+    </View> : null}
+    {batchActionsOpen ? <View testID="provider-management-actions" style={{ gap: 12 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {SORT_OPTIONS.map(option => <ChoiceIsleChip key={option.id} label={t(option.labelKey)} active={sortMode === option.id} onPress={() => setSortMode(option.id)} />)}
       </View>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '900' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
-      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        <IsleButton compact label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.selectionMode')}
+          onPress={() => { setBatchMode(value => !value); setSelectedIds(new Set()) }} />
+        {batchMode ? <>
+          <IsleButton compact label={t('providerSettings.enableSelected', { count: selectedIds.size })}
+            disabled={!selectedIds.size || activationBusy} onPress={() => void enableEffectiveSelection()} />
+          <IsleButton compact tone="danger" label={t('providerSettings.deleteSelected')}
+            disabled={!selectedIds.size || Boolean(deletingSupplierId)} onPress={() => {
+              const group = { id: 'selection', label: t('providerSettings.selectionMode'), providers: providers.filter(provider => selectedIds.has(provider.id)) }
+              void confirmRemoveSupplierGroup(group)
+            }} />
+        </> : null}
+        <IsleButton compact label={t('modelAvailability.details')} onPress={() => router.push('/settings/model-availability')} />
+        <IsleButton compact tone="amber" label={t('providerSettings.clearInvalid')} onPress={() => void confirmClearInvalidProviders()} />
+        <IsleButton compact tone="danger" label={t('providerSettings.clearAll')} onPress={() => void confirmClearAllProviders()} />
       </View>
+    </View> : null}
+  </View>
+
+  const providerRegistry = visibleProviderItems.length ? (
+    <View accessibilityRole="list" testID="provider-connections" style={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center' }}>
+      {visibleProviderItems.map((provider, index) => <View key={provider.id} role="listitem">
+        {renderProviderItem({ item: provider, index })}
+      </View>)}
     </View>
-  ) : (
-    <View testID="provider-empty-minimal" style={{ minHeight: providers.length ? 54 : 76, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
-      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '500' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
-    </View>
-  )
+  ) : <View testID="provider-empty" style={{ padding: 32, gap: 18, alignItems: 'center' }}>
+    <View accessible={false} importantForAccessibility="no-hide-descendants" style={{ width: 60, height: 60, borderRadius: 20, backgroundColor: colors.ui.semantic.surface.muted, alignItems: 'center', justifyContent: 'center' }}><AppIcon name={providers.length ? 'search' : 'provider-key'} size={26} color={colors.ui.icon.accentForeground} /></View>
+    <Text style={{ color: colors.text, fontSize: 18, lineHeight: 26, fontWeight: '600', textAlign: 'center' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
+    {!providers.length ? <>
+
+      <IsleButton tone="primary" label={t('settingsUx.addConnection')} onPress={() => setImportOpen(true)} />
+    </> : null}
+  </View>
 
   const content = (
     <>
@@ -935,37 +649,28 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
         >
           <ProviderSettingsExperience
             title={t('settings.providerManagement')}
-            subtitle={providerListHint}
+            subtitle=""
             backLabel={t('common.back')}
             addLabel={t('settings.addProvider')}
-            importLabel={t('providerSettings.batchImportProviders')}
-            enabledSummary={`${t('settings.enabled')} ${enabled}/${providers.length}`}
-            visibleSummary={t('providerSettings.providerCount', { count: providerCardGroups.length })}
-            enabledCount={enabled}
-            totalCount={providers.length}
-            visibleCount={providerCardGroups.length}
             compact={compactWidth}
             onBack={onClose ?? closeStandaloneProviderSettings}
-            onAdd={() => setAddOpen(true)}
-            onImport={() => setImportOpen(true)}
+            onAdd={() => setImportOpen(true)}
             attention={providerAttention}
             activation={providerActivation}
-            tools={<View style={{ gap: 8 }}>
-              <IsleButton compact label={t('modelAvailability.details')} onPress={() => router.push('/settings/model-availability')} />
-              {providerTools}
-            </View>}
+            tools={providerTools}
           >
             {providerRegistry}
           </ProviderSettingsExperience>
         </ScrollView>
       </KeyboardAvoidingView>
-      <ProviderFormModal
-        visible={addOpen}
+      {addOpen ? <ProviderFormModal
+        visible
         onClose={() => setAddOpen(false)}
         onSubmit={addProviderFromForm}
-      />
-      <ProviderImportModal
-        visible={importOpen}
+      /> : null}
+      {importOpen ? <ProviderImportModal
+        visible
+        onManual={() => { setImportOpen(false); setAddOpen(true) }}
         importProgress={importProgress}
         persistencePending={importSession.persistencePending}
         onClose={() => {
@@ -974,9 +679,11 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
           setImportOpen(false)
         }}
         onSubmit={importProvidersFromText}
-      />
-      <ProviderConfigurationSheet
-        visible={Boolean(selectedProvider)}
+      /> : null}
+      {selectedProvider ? <ProviderConfigurationSheet
+        visible
+        initialView={providerView}
+        onUse={() => { setExpandedProviderId(null); onProviderConnected?.() }}
         provider={selectedProvider}
         runtimeDetail={selectedProvider ? runtimeDetailByProviderId.get(selectedProvider.id) : undefined}
         deferMount={providers.length > PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT}
@@ -992,7 +699,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onClose, 
           />
         ) : undefined}
         onClose={() => setExpandedProviderId(null)}
-      />
+      /> : null}
     </>
   )
 
@@ -1007,6 +714,8 @@ function ProviderConfigurationSheet({
   provider,
   runtimeDetail,
   deferMount,
+  initialView,
+  onUse,
   sortControl,
   onClose,
 }: {
@@ -1014,29 +723,36 @@ function ProviderConfigurationSheet({
   provider?: AIProvider
   runtimeDetail?: RuntimeDiagnosticsProviderDetail
   deferMount: boolean
+  initialView: 'connection' | 'models'
+  onUse: () => void
   sortControl?: ReactNode
   onClose: () => void
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
+  const motion = useMotionPreference(true)
   const leave = useSettingsLeave()
   const { handleRequestClose } = useKeyboardAwareModalRequestClose(() => {
     void requestSheetClose()
   })
   const sheetHeight = Math.max(360, Math.min(Math.round(height * 0.9), height - Math.max(insets.top, 12) - 8))
+  const sheetRadius = colors.ui.liquidGlass ? colors.ui.radius.panel : 8
   const providerName = provider ? resolveProviderDisplayName(provider, t('providerSettings.customProvider')) : ''
 
   async function requestSheetClose() { await leave(onClose) }
 
   return (
-    <Modal transparent visible={visible && Boolean(provider)} animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={handleRequestClose}>
+    <Modal transparent visible={visible && Boolean(provider)} animationType={motion === 'full' ? 'slide' : 'none'} statusBarTranslucent navigationBarTranslucent onRequestClose={handleRequestClose}>
       <View accessibilityViewIsModal style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Pressable accessible={false} accessibilityRole="none" onPress={() => void requestSheetClose()} style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={{ height: sheetHeight, overflow: 'hidden', borderTopLeftRadius: 8, borderTopRightRadius: 8, backgroundColor: colors.material.sheet.surface, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderBottomWidth: 0, borderColor: colors.material.sheet.border }}>
+          <GlassSurface
+            colors={colors} enabled={Boolean(colors.ui.liquidGlass)} variant="floating" shadow="none"
+            borderRadius={sheetRadius}
+            style={{ height: sheetHeight, overflow: 'hidden', borderTopLeftRadius: sheetRadius, borderTopRightRadius: sheetRadius, backgroundColor: colors.material.sheet.surface, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderBottomWidth: 0, borderColor: colors.material.sheet.border }}
+          >
             <View style={{ alignItems: 'center', paddingTop: 6 }}>
               <View style={{ width: 34, height: 3, borderRadius: 2, backgroundColor: colors.textTertiary, opacity: 0.34 }} />
             </View>
@@ -1044,32 +760,33 @@ function ProviderConfigurationSheet({
               <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
                 <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={16} />
               </View>
-              <Text ellipsizeMode="tail" style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
+              <Text accessibilityRole="header" style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 18, lineHeight: 25, fontWeight: '800', includeFontPadding: false }}>
                 {providerName}
               </Text>
+              <SettingsHelpButton compact topic="models" />
               <IslePressable haptic accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={() => void requestSheetClose()} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
                 <AppIcon name="close" color={colors.textSecondary} size={17} />
               </IslePressable>
             </View>
             <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 18) + 20 }}>
-              <SettingsHelpButton topic="models" />
-              {sortControl ? <View style={{ marginBottom: 10 }}>{sortControl}</View> : null}
               {provider ? (
                 <>
                   <DeferredProviderDetails
                     provider={provider}
                     runtimeDetail={runtimeDetail}
                     expanded
+                    initialView={initialView}
+                    onUse={onUse}
+                    sortControl={sortControl}
                     onExpandedChange={(next) => {
                       if (!next) void requestSheetClose()
                     }}
                     deferMount={deferMount}
                   />
-                  <ProviderUsageQueryEditor key={provider.id} provider={provider} />
                 </>
               ) : null}
             </ScrollView>
-          </View>
+          </GlassSurface>
         </KeyboardAvoidingView>
       </View>
     </Modal>
@@ -1310,208 +1027,41 @@ function useWebVisualKeyboardInset(active: boolean): number {
   return inset
 }
 
-function ProviderListRow({
-  provider,
-  usageSnapshot,
-  position,
-  featured,
-  selected,
-  batchMode,
-  expanded,
-  grouped = false,
-  onToggleSelected,
-  onExpandedChange,
-}: {
-  provider: AIProvider
-  usageSnapshot?: ProviderUsageSnapshot
-  position: number
-  featured: boolean
-  selected: boolean
-  batchMode: boolean
-  expanded: boolean
-  grouped?: boolean
-  onToggleSelected: () => void
-  onExpandedChange: (next: boolean) => void
+function ProviderListRow({ provider, featured, selected, batchMode, expanded, onToggleSelected, onExpandedChange, onEdit }: {
+  provider: AIProvider; position: number; featured: boolean; selected: boolean; batchMode: boolean; expanded: boolean
+  onToggleSelected: () => void; onExpandedChange: (next: boolean) => void; onEdit: () => void
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
   const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
-  const { subtleBorderWidth, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
   const providerUrl = provider.baseUrl?.trim() || t('providerSettings.baseUrl')
-  const providerStateLabel = provider.enabled ? t('settings.enabled') : t('settings.disabled')
-  const usageSummary = providerUsageSummary(usageSnapshot, t)
-  const selectionControl = batchMode ? (
-    <IslePressable
-      haptic
-      focusable
-      onPress={onToggleSelected}
-      accessibilityRole="checkbox"
-      accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')}
-      accessibilityState={{ checked: selected }}
-      style={{ position: 'absolute', top: colors.ui.family === 'monet' ? 4 : 10, right: 4, width: 44, height: 44, borderRadius: colors.ui.family === 'material' ? 0 : 8, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base, borderWidth: subtleBorderWidth, borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}
-    >
-      {selected ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={17} /> : <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.textTertiary }} />}
+  const providerStateLabel = featured && provider.enabled ? t('providerSettings.defaultConnection') : t(provider.enabled ? 'settings.enabled' : 'settings.disabled')
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.ui.section.divider, backgroundColor: selected ? colors.ui.semantic.surface.muted : 'transparent' }}>
+    {batchMode ? <IslePressable accessibilityRole="checkbox" accessibilityLabel={`${t('providerSettings.selectProvider')} ${providerDisplayName}`}
+      accessibilityState={{ checked: selected }} onPress={onToggleSelected}
+      style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}>
+      <AppIcon name={selected ? 'check' : 'list-check'} color={colors.textSecondary} size={18} />
+    </IslePressable> : null}
+    <IslePressable testID={`provider-open-${provider.id}`} accessibilityRole="button"
+      accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`} accessibilityState={{ expanded }}
+      onPress={() => onExpandedChange(!expanded)}
+      style={{ flex: 1, minWidth: 0, minHeight: 76, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: colors.ui.semantic.surface.muted, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={19} /></View>
+      <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+        <Text style={{ color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: '700' }}>{providerDisplayName}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 13, lineHeight: 19 }}>{providerUrl}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{providerStateLabel} · {t('settingsSubsystem.modelCount', { count: modelInventory.selectableModels })}</Text>
+      </View>
+      <AppIcon name="back-next" color={colors.textTertiary} size={16} />
     </IslePressable>
-  ) : null
-
-  if (grouped) {
-    return (
-      <View style={{ minHeight: 68, backgroundColor: selected || expanded ? colors.ui.semantic.surface.muted : 'transparent' }}>
-        <IslePressable
-          haptic
-          focusable
-          onPress={() => onExpandedChange(!expanded)}
-          accessibilityRole="button"
-          accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
-          accessibilityState={{ expanded }}
-          style={{ minHeight: 68, paddingHorizontal: 12, paddingRight: batchMode ? 54 : 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}
-        >
-          <Text style={{ width: 23, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{String(position).padStart(2, '0')}</Text>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
-            <Text ellipsizeMode="tail" style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600', includeFontPadding: false }}>{providerUrl}</Text>
-            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
-          </View>
-          <Text style={{ color: provider.enabled ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{providerStateLabel}</Text>
-          {!batchMode ? <AppIcon name="back-next" color={colors.textTertiary} size={14} /> : null}
-        </IslePressable>
-        {selectionControl}
-      </View>
-    )
-  }
-
-  if (colors.ui.family === 'minimal') {
-    return (
-      <View style={{ minHeight: 74, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider, backgroundColor: selected ? colors.ui.semantic.surface.muted : 'transparent' }}>
-        <IslePressable
-          haptic
-          focusable
-          onPress={() => onExpandedChange(!expanded)}
-          accessibilityRole="button"
-           accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
-          accessibilityState={{ expanded }}
-          style={{ minHeight: 74, paddingHorizontal: 4, paddingRight: batchMode ? 52 : 8, flexDirection: 'row', alignItems: 'center', gap: 11 }}
-        >
-          <View style={{ width: 34, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: provider.enabled ? colors.ui.icon.accentBackground : mutedSurface }}>
-            <AppIcon name="provider-key" color={provider.enabled ? colors.ui.icon.accentForeground : colors.textSecondary} size={17} />
-          </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
-             <Text ellipsizeMode="tail" style={{ marginTop: 2, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600', includeFontPadding: false }}>{providerUrl}</Text>
-             {usageSummary ? <Text testID={`provider-usage-${provider.id}`} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
-          </View>
-          {!batchMode ? (
-            <AppIcon name="back-next" color={colors.textTertiary} size={14} />
-          ) : null}
-        </IslePressable>
-        {selectionControl}
-      </View>
-    )
-  }
-
-  if (colors.ui.family === 'material') {
-    return (
-      <View style={{ minHeight: 66, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider, backgroundColor: expanded ? colors.ui.semantic.surface.muted : 'transparent' }}>
-        <IslePressable
-          haptic
-          focusable
-          onPress={() => onExpandedChange(!expanded)}
-          accessibilityRole="button"
-           accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
-          accessibilityState={{ expanded }}
-          style={{ minHeight: 66, paddingHorizontal: 8, paddingRight: batchMode ? 52 : 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}
-        >
-          <Text style={{ width: 24, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{String(position).padStart(2, '0')}</Text>
-          <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
-            <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
-            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} ellipsizeMode="tail" style={{ marginTop: 1, color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
-          </View>
-           {!batchMode ? (
-             <Text ellipsizeMode="tail" style={{ maxWidth: 142, color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>{providerUrl}</Text>
-          ) : null}
-          {!batchMode ? <AppIcon name="back-next" color={colors.textTertiary} size={14} /> : null}
-        </IslePressable>
-        {selectionControl}
-      </View>
-    )
-  }
-
-  if (featured) {
-    return (
-      <View style={{ flex: 1, borderRadius: PROVIDER_CARD_RADIUS, backgroundColor: raisedSurface, borderWidth: 1, borderColor: expanded || selected ? colors.ui.control.primaryBorder : colors.material.strokeStrong, overflow: 'hidden' }}>
-        <IslePressable
-          haptic
-          focusable
-          onPress={() => onExpandedChange(!expanded)}
-          accessibilityRole="button"
-           accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
-          accessibilityState={{ expanded }}
-          style={{ flex: 1, minWidth: 0, paddingHorizontal: 15, paddingVertical: 13, paddingRight: batchMode ? 52 : 15, flexDirection: 'row', alignItems: 'center', gap: 13 }}
-        >
-          <View style={{ width: 46, height: 46, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
-            <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={21} />
-          </View>
-          <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-            <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', includeFontPadding: false }}>
-              {providerDisplayName}
-            </Text>
-            <Text ellipsizeMode="tail" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>
-               {providerUrl}
-            </Text>
-            {usageSummary ? <Text testID={`provider-usage-${provider.id}`} ellipsizeMode="tail" style={{ color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
-          </View>
-          {!batchMode ? (
-            <View style={{ alignItems: 'flex-end' }}>
-              <AppIcon name="back-next" color={colors.textTertiary} size={15} />
-            </View>
-          ) : null}
-        </IslePressable>
-        {selectionControl}
-      </View>
-    )
-  }
-
-  return (
-    <View
-      style={{
-        flex: 1,
-        borderRadius: PROVIDER_CARD_RADIUS - 2,
-        backgroundColor: raisedSurface,
-        borderWidth: subtleBorderWidth,
-        borderColor: selected
-          ? colors.ui.control.primaryBorder
-          : colors.ui.semantic.chrome.border,
-        overflow: 'hidden',
-      }}
-    >
-      <IslePressable
-        haptic
-        focusable
-        onPress={() => onExpandedChange(!expanded)}
-        accessibilityRole="button"
-         accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
-        accessibilityState={{ expanded }}
-        style={{ flex: 1, minWidth: 0, padding: 14, paddingRight: batchMode ? 52 : 14, justifyContent: 'space-between' }}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-          <View style={{ width: 38, height: 38, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: provider.enabled ? colors.ui.icon.accentBackground : mutedSurface }}>
-            <AppIcon name="provider-key" color={provider.enabled ? colors.ui.icon.accentForeground : colors.textSecondary} size={18} />
-          </View>
-          <AppIcon name="back-next" color={colors.textTertiary} size={14} />
-        </View>
-        <Text ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '900', includeFontPadding: false }}>
-          {providerDisplayName}
-        </Text>
-        <View style={{ gap: 5 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
-             {providerUrl}
-          </Text>
-          {usageSummary ? <Text testID={`provider-usage-${provider.id}`} style={{ color: usageSnapshot?.status === 'ready' ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{usageSummary}</Text> : null}
-        </View>
-      </IslePressable>
-      {selectionControl}
-    </View>
-  )
+    {!batchMode ? <IslePressable testID={`provider-edit-${provider.id}`} accessibilityRole="button"
+      accessibilityLabel={`${t('common.edit')} ${providerDisplayName}`} onPress={onEdit}
+      style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}>
+      <AppIcon name="edit" color={colors.textSecondary} size={18} />
+    </IslePressable> : null}
+  </View>
 }
 
 function DeferredProviderDetails({
@@ -1520,12 +1070,18 @@ function DeferredProviderDetails({
   expanded,
   onExpandedChange,
   deferMount,
+  initialView,
+  onUse,
+  sortControl,
 }: {
   provider: AIProvider
   runtimeDetail?: RuntimeDiagnosticsProviderDetail
   expanded: boolean
   onExpandedChange: (next: boolean) => void
   deferMount: boolean
+  initialView: 'connection' | 'models'
+  onUse: () => void
+  sortControl?: ReactNode
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -1564,7 +1120,8 @@ function DeferredProviderDetails({
   return (
     <View style={{ minWidth: 0, minHeight: PROVIDER_ROW_HEIGHT - 10, marginTop: 3 }}>
       {ready ? (
-        <ApiKeyPanel
+        <ApiKeyPanel initialView={initialView} onUse={onUse}
+          sortControl={sortControl}
           provider={provider}
           runtimeDetail={runtimeDetail}
           expanded={expanded}
@@ -1946,7 +1503,7 @@ function normalizeDraftBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, '').toLowerCase()
 }
 
-function ProviderFormModal({
+export function ProviderFormModal({
   visible,
   onClose,
   onSubmit,
@@ -1975,6 +1532,9 @@ function ProviderFormModal({
   const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   const [modelsText, setModelsText] = useState('')
   const [keysText, setKeysText] = useState('')
+  const [step, setStep] = useState<'connection' | 'models'>('connection')
+  const [presetPickerOpen, setPresetPickerOpen] = useState(false)
+  const [presetQuery, setPresetQuery] = useState('')
   const [protocolOpen, setProtocolOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
@@ -1982,7 +1542,8 @@ function ProviderFormModal({
   const webKeyboardInset = useWebVisualKeyboardInset(visible)
   const preset = getProviderPreset(presetId)
   const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
-  const validationCredentialGroups = useMemo(() => parseCredentialGroups(keysText), [keysText])
+  const validationCredentialGroups = useMemo(() => parseCredentialGroups(keysText, { explicit: true }), [keysText])
+  const invalidTokenInput = Boolean(keysText.trim() && !validationCredentialGroups.length)
   const validationApiKey = validationCredentialGroups.find((group) => group.enabled && group.apiKey?.trim())?.apiKey
     ?? validationCredentialGroups.find((group) => group.apiKey?.trim())?.apiKey
     ?? ''
@@ -2034,6 +1595,9 @@ function ProviderFormModal({
     setBaseUrlDirty(false)
     setModelsText('')
     setKeysText('')
+    setStep('connection')
+    setPresetPickerOpen(false)
+    setPresetQuery('')
     setProtocolOpen(false)
     setAdvancedOpen(false)
     setClipboardState('idle')
@@ -2126,7 +1690,7 @@ function ProviderFormModal({
   }
 
   async function submit() {
-    if (providerConfigIssue || saveLock.current) return
+    if (providerConfigIssue || invalidTokenInput || saveLock.current) return
     const modelList = parseModels(modelsText)
     const provider = applyProviderPreset({
       id: pendingProvider.current?.id ?? `custom-${Date.now().toString(36)}`,
@@ -2154,6 +1718,7 @@ function ProviderFormModal({
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
+    setPresetPickerOpen(false)
     const currentPreset = getProviderPreset(presetId)
     const nextPreset = getProviderPreset(nextPresetId)
     const shouldReplaceName = !nameDirty || !name.trim() || name.trim() === currentPreset.name
@@ -2213,38 +1778,6 @@ function ProviderFormModal({
     setKeysText(value)
   }
 
-  async function readProviderClipboard() {
-    setClipboardState('requesting')
-    dialog.toast({
-      title: t('providerSettings.clipboardPermissionRequest'),
-      message: t('providerSettings.clipboardPermissionMessage'),
-      tone: 'mint',
-      durationMs: 1400,
-    })
-    try {
-      const hasText = await Clipboard.hasStringAsync()
-      if (!hasText) {
-        dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
-        return
-      }
-      const text = await Clipboard.getStringAsync()
-      if (!text.trim()) {
-        dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
-        return
-      }
-      if (!applyProviderImportDraftText(text, 'clipboard')) {
-        dialog.toast({ title: t('providerSettings.clipboardRead'), message: t('providerSettings.clipboardNoConfig'), tone: 'amber' })
-      }
-    } catch (error) {
-      dialog.toast({
-        title: t('providerSettings.clipboardReadFailed'),
-        message: clipboardReadFailureMessage(error, t),
-        tone: 'amber',
-      })
-    } finally {
-      setClipboardState('idle')
-    }
-  }
 
   return (
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
@@ -2261,22 +1794,13 @@ function ProviderFormModal({
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('settings.addProvider')}</Text>
-                  <SettingsHelpButton topic="models" />
+                  <SettingsHelpButton compact topic="models" />
                 </View>
                 <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit}>
                   <AppIcon name="close" color={colors.textSecondary} size={18} />
                 </IsleIconButton>
               </View>
-              <View style={{ paddingTop: 10, alignItems: actionCompact ? 'stretch' : 'flex-start' }}>
-                <IsleButton
-                  label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
-                  compact
-                  icon={<AppIcon name="paste" color={colors.textSecondary} size={16} />}
-                  onPress={() => void readProviderClipboard()}
-                  disabled={clipboardBusy}
-                  style={actionCompact ? { alignSelf: 'stretch' } : undefined}
-                />
-              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }}>{t(step === 'connection' ? 'settingsUx.connectionStep' : 'settingsUx.modelStep')}</Text>
             </View>
             <ScrollView
               ref={bodyScrollRef}
@@ -2287,13 +1811,22 @@ function ProviderFormModal({
               style={{ flexShrink: 1 }}
               contentContainerStyle={{ gap: 8, paddingHorizontal: modalPadding, paddingBottom: 10, backgroundColor: sheetMaterial.body }}
             >
-              <Text accessibilityRole="header" style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>1 · {t('settingsWorkspace.stepProvider')}</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                    {PROVIDER_VENDOR_PRESETS.map((item) => (
-                      <ChoiceIsleChip key={item.id} label={item.name} active={presetId === item.id} onPress={() => selectPreset(item.id)} />
-                    ))}
-                  </ScrollView>
-              <Text accessibilityRole="header" style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>2 · {t('settingsWorkspace.stepConnection')}</Text>
+              {step === 'connection' ? <>
+              <IslePressable testID="provider-preset-picker" accessibilityRole="button" accessibilityState={{ expanded: presetPickerOpen }}
+                onPress={() => setPresetPickerOpen(value => !value)} style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={{ flex: 1 }}><Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('settingsWorkspace.stepProvider')}</Text>
+                  <Text style={{ color: colors.text, fontSize: 16, lineHeight: 24 }}>{preset.name}</Text></View>
+                <AppIcon name={presetPickerOpen ? 'collapse' : 'back-next'} color={colors.textSecondary} size={18} />
+              </IslePressable>
+              {presetPickerOpen ? <View testID="provider-preset-list" style={{ flexDirection: 'column', gap: 4 }}>
+                <IsleField label={t('settingsUx.findProvider')} inputProps={{ value: presetQuery, onChangeText: setPresetQuery, autoCorrect: false, autoCapitalize: 'none' }} />
+                {PROVIDER_VENDOR_PRESETS.filter(item => `${item.name} ${item.id}`.toLowerCase().includes(presetQuery.trim().toLowerCase())).map(item =>
+                  <IslePressable key={item.id} accessibilityRole="radio" accessibilityLabel={item.name} accessibilityState={{ checked: presetId === item.id }} onPress={() => selectPreset(item.id)}
+                    style={{ minHeight: 48, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <Text style={{ flex: 1, color: colors.text, fontSize: 15 }}>{item.name}</Text>
+                    {presetId === item.id ? <AppIcon name="check" color={colors.primary} size={18} /> : null}
+                  </IslePressable>)}
+              </View> : <>
               <View onLayout={rememberFieldLayout('baseUrl')}>
                 <IsleField
                   label={t('providerSettings.baseUrl')}
@@ -2302,6 +1835,7 @@ function ProviderFormModal({
                     onFocus: () => markInputFocused('baseUrl'),
                     onChangeText: handleBaseUrlText,
                     placeholder: preset.baseUrl ?? 'https://example.com/v1',
+                    keyboardType: 'url',
                     autoCapitalize: 'none',
                     autoCorrect: false,
                     accessibilityHint: providerConfigIssueMessage,
@@ -2320,8 +1854,11 @@ function ProviderFormModal({
               </View>
               <View onLayout={rememberFieldLayout('tokens')}>
                 <ProviderTokenField editable={!saving} value={keysText} onChangeText={handleKeysText} onFocus={() => markInputFocused('tokens')} />
+                {invalidTokenInput ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 21 }}>{t('apiKeyPanel.invalidTokenInput')}</Text> : null}
               </View>
-              <Text accessibilityRole="header" style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>3 · {t('settingsWorkspace.stepModel')}</Text>
+              </>}
+              </> : <>
+
                   <View onLayout={rememberFieldLayout('models')}>
                     <IsleField
                       label={t('settings.models')}
@@ -2329,6 +1866,7 @@ function ProviderFormModal({
                       inputProps={{ editable: !saving, value: modelsText, onChangeText: setModelsText, onFocus: () => markInputFocused('models'), placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
                     />
                   </View>
+              </>}
               <IslePressable
                 haptic
                 accessibilityRole="button"
@@ -2385,15 +1923,15 @@ function ProviderFormModal({
                 </View>
               ) : null}
             </ScrollView>
-            {!keyboardVisible ? (
+            {!presetPickerOpen ? (
               <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 8, paddingHorizontal: modalPadding, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 10) + 8, backgroundColor: footerSurface, borderTopWidth: 1, borderTopColor: sheetMaterial.divider }}>
-                <IsleButton label={t('common.cancel')} onPress={closeWithoutSubmit} style={modalActionStyle} />
+                <IsleButton label={t(step === 'connection' ? 'common.cancel' : 'common.back')} onPress={step === 'connection' ? closeWithoutSubmit : () => setStep('connection')} style={modalActionStyle} />
                 <IsleButton
                   testID="provider-form-submit"
-                  label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')}
+                  label={t(saving ? 'settingsWorkspace.saving' : step === 'connection' ? 'settingsUx.nextModels' : 'settingsUx.saveChooseModel')}
                   tone="primary"
-                  onPress={() => void submit()}
-                  disabled={saving || clipboardBusy || Boolean(providerConfigIssue)}
+                  onPress={() => { if (step === 'connection') { Keyboard.dismiss(); setStep('models') } else void submit() }}
+                  disabled={saving || clipboardBusy || Boolean(providerConfigIssue) || invalidTokenInput}
                   style={modalActionStyle}
                 />
               </View>
@@ -2426,22 +1964,31 @@ export function ProviderImportModal({
   importProgress,
   persistencePending = false,
   onClose,
+  onManual,
   onSubmit,
 }: {
   visible: boolean
   importProgress: ProviderImportProgress | null
   persistencePending?: boolean
   onClose: () => void
-  onSubmit: (input: string) => Promise<boolean>
+  onManual?: () => void
+  onSubmit: (input: string, skipExisting?: boolean) => Promise<boolean>
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
-  const { height, width } = useWindowDimensions()
+  const { height, width, fontScale } = useWindowDimensions()
   const motion = useMotionPreference()
   const bodyScrollRef = useRef<ScrollView>(null)
   const [input, setInput] = useState('')
+  const existingProviders = useSettingsStore(state => state.providers)
+  const settings = useSettingsStore(state => state.settings)
+  const [review, setReview] = useState<ReturnType<typeof parseProviderImportText> | null>(null)
+  const [skipExisting, setSkipExisting] = useState(true)
+  const [previewLimit, setPreviewLimit] = useState(8)
+  const conflicts = review?.providers.filter(provider => isExistingProviderImport(provider, existingProviders)).length ?? 0
+  const importableCount = (review?.providers.length ?? 0) - (skipExisting ? conflicts : 0)
   const deferredInput = useDeferredValue(input)
   const inputValue = useRef(input)
   inputValue.current = input
@@ -2478,15 +2025,16 @@ export function ProviderImportModal({
   const logicalLines = countLogicalTextLines(input, IMPORT_INPUT_MAX_LINES + 1)
   const logicalVisibleLines = Math.max(2, logicalLines + 1)
   const logicalHeight = IMPORT_INPUT_VERTICAL_PADDING + logicalVisibleLines * IMPORT_INPUT_LINE_HEIGHT
-  const measuredHeight = contentHeight ? contentHeight + IMPORT_INPUT_VERTICAL_PADDING : logicalHeight
+  const measuredHeight = input && contentHeight ? contentHeight : logicalHeight
   const targetInputHeight = Math.max(logicalHeight, measuredHeight)
-  const inputHeight = Math.min(targetInputHeight, maxInputHeight)
-  const inputScrollEnabled = targetInputHeight > maxInputHeight
+  const inputHeight = Math.min(targetInputHeight, maxInputHeight, 160)
+  const inputScrollEnabled = targetInputHeight > inputHeight
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (keyboardVisible ? 0.82 : compact ? 0.96 : 0.9))
   const sheetMaterial = colors.material.sheet
   const footerSurface = colors.ui.monet ? sheetMaterial.chrome : colors.ui.liquidGlass ? colors.ui.semantic.chrome.background : sheetMaterial.chrome
   const { subtleBorderWidth } = resolveProviderChrome(colors)
-  const footerCompact = width < 380
+  // Text scaling can make a phone effectively narrower without changing its dp width.
+  const footerCompact = width / Math.max(1, fontScale) < 380
   const modalPadding = compactWidth ? 12 : 16
   const modalActionStyle = footerCompact ? { alignSelf: 'stretch' as const, minHeight: 44 } : { flex: 1, minHeight: 44 }
   const detectionLimited = deferredInput.length > PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT
@@ -2498,6 +2046,9 @@ export function ProviderImportModal({
     draftEpoch.current += 1
     inputValue.current = ''
     setInput('')
+    setReview(null)
+    setSkipExisting(true)
+    setPreviewLimit(8)
     setContentHeight(0)
     setClipboardState('idle')
   }
@@ -2555,6 +2106,7 @@ export function ProviderImportModal({
       return false
     }
     inputValue.current = nextInput
+    setReview(null)
     setInput(nextInput)
     scrollBodyToEndSoon()
     return true
@@ -2571,12 +2123,21 @@ export function ProviderImportModal({
       toastImportTextTooLarge()
       return
     }
+    if (!review && !persistencePending) {
+      try {
+        setReview(parseProviderImportText(text, { accessSettings: settings }))
+        Keyboard.dismiss()
+      } catch (error) {
+        dialog.notice({ title: t('providerSettings.importFailed'), message: providerImportFailureMessage(error, t), tone: 'danger' })
+      }
+      return
+    }
     submitLock.current = true
     draftEpoch.current += 1
     setClipboardState('idle')
     setSubmitting(true)
     try {
-      const imported = await onSubmit(text)
+      const imported = await onSubmit(text, skipExisting)
       if (imported) resetDraft()
     } catch (error) {
       dialog.notice({ title: t('providerSettings.importFailed'), message: providerImportFailureMessage(error, t), tone: 'danger' })
@@ -2587,12 +2148,6 @@ export function ProviderImportModal({
     if (importBusy || submitLock.current || persistencePending) return
     const epoch = draftEpoch.current
     setClipboardState('requesting')
-    dialog.toast({
-      title: t('providerSettings.clipboardPermissionRequest'),
-      message: t('providerSettings.clipboardPermissionMessage'),
-      tone: 'mint',
-      durationMs: 1400,
-    })
     try {
       const hasText = await Clipboard.hasStringAsync()
       if (epoch !== draftEpoch.current) return
@@ -2611,7 +2166,8 @@ export function ProviderImportModal({
         dialog.toast({ title: t('providerSettings.clipboardRead'), message: t('providerSettings.importDetectionLimited'), tone: 'amber' })
         return
       }
-      const detected = parseProviderImportText(text)
+      const detected = parseProviderImportText(inputValue.current, { accessSettings: settings })
+      if (detected.providers.length) { setReview(detected); Keyboard.dismiss(); return }
       dialog.toast({
         title: detected.providers.length ? t('providerSettings.clipboardDetected') : t('providerSettings.clipboardRead'),
         message: detected.providers.length
@@ -2652,6 +2208,7 @@ export function ProviderImportModal({
       }
       const text = await readUtf8ImportFile(importUri, {
         size: asset.size,
+        file: asset.file,
         limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
       })
       if (epoch !== draftEpoch.current) return
@@ -2691,7 +2248,7 @@ export function ProviderImportModal({
           >
             <View style={{ minHeight: IMPORT_HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: modalPadding, paddingTop: 10, paddingBottom: 8, backgroundColor: sheetMaterial.chrome, borderBottomWidth: 1, borderBottomColor: sheetMaterial.divider }}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('settings.batchImport')}</Text>
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('providerSettings.importConfiguration')}</Text>
               </View>
               <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit} disabled={importBusy}>
                 <AppIcon name="close" color={colors.textSecondary} size={18} />
@@ -2707,12 +2264,12 @@ export function ProviderImportModal({
               contentContainerStyle={{ paddingHorizontal: modalPadding, paddingTop: 10, paddingBottom: 10, backgroundColor: sheetMaterial.body }}
             >
               <View>
-                <SettingsHelpButton topic="models" />
-                <View style={{ marginBottom: 10 }}>
-                  <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginBottom: 7 }}>{t('providerSettings.importSources')}</Text>
+                {!review ? <View style={{ marginBottom: 16, gap: 10 }}>
+
                   <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 8 }}>
                     <IsleButton
-                      label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
+                      label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settingsUx.pasteConfig')}
+                      tone="primary"
                       compact
                       icon={<AppIcon name="paste" color={colors.textSecondary} size={16} />}
                       onPress={() => void pasteFromClipboard()}
@@ -2728,13 +2285,15 @@ export function ProviderImportModal({
                       style={modalActionStyle}
                     />
                   </View>
-                </View>
+                  {onManual ? <IsleButton testID="provider-manual-entry" label={t('providerSettings.addManually')} disabled={importBusy || persistencePending}
+                    onPress={() => void requestDiscard(onManual)} /> : null}
+                </View> : null}
                 {importProgress ? <ProviderImportProgressCard progress={importProgress} /> : null}
                 {persistencePending && !importBusy ? <Text accessibilityRole="alert" style={{ color: colors.text, fontSize: 14, lineHeight: 22, marginBottom: 10 }}>{t('providerSettings.importSavePending')}</Text> : null}
-                <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginBottom: 6 }}>{t('providerSettings.importContent')}</Text>
                 <View
                   style={{
-                    height: inputHeight,
+                    height: review ? undefined : inputHeight,
+                    paddingVertical: review ? 12 : 0,
                     borderRadius: Math.min(colors.ui.radius.panel, 8),
                     paddingHorizontal: 12,
                     backgroundColor: colors.ui.input.background,
@@ -2748,10 +2307,10 @@ export function ProviderImportModal({
                     elevation: 0,
                   }}
                 >
-                  <TextInput
+                  {!review ? <TextInput
                     value={input}
                     accessibilityLabel={t('providerSettings.importContent')}
-                    onChangeText={value => { inputValue.current = value; setInput(value) }}
+                    onChangeText={value => { inputValue.current = value; setInput(value); setReview(null) }}
                     maxLength={MAX_IMPORT_TEXT_FILE_BYTES}
                     editable={!importBusy && !persistencePending}
                     onFocus={keyboardRequestClose.markKeyboardActive}
@@ -2760,7 +2319,7 @@ export function ProviderImportModal({
                     scrollEnabled={inputScrollEnabled}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    placeholder={'https://api.example.com/v1\nsk-...\nsk-...\n\nhttps://api.other.com/v1\nsk-...'}
+                    placeholder={t('settingsUx.pastePlaceholder')}
                     placeholderTextColor={colors.textTertiary}
                     textAlignVertical="top"
                     style={{
@@ -2774,27 +2333,50 @@ export function ProviderImportModal({
                       lineHeight: IMPORT_INPUT_LINE_HEIGHT,
                       includeFontPadding: false,
                     }}
-                  />
+                  /> : <View testID="provider-import-review" style={{ gap: 10 }}>
+                    <Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>{t('providerSettings.reviewImport')}</Text>
+
+                    {review.providers.slice(0, previewLimit).map(provider => {
+                      let endpoint = ''
+                      try { const url = new URL(provider.baseUrl ?? ''); endpoint = url.origin + url.pathname } catch { /* Invalid addresses are not echoed. */ }
+                      return <View key={provider.id} style={{ gap: 3, paddingVertical: 6 }}>
+                        <Text style={{ color: colors.text, fontWeight: '700' }}>{provider.name}</Text>
+                        <Text style={{ color: colors.textSecondary }}>{endpoint || t('providerSettings.baseUrl')}</Text>
+                        <Text style={{ color: colors.textSecondary }}>{provider.models.slice(0, 3).join(', ') || t('providerSettings.addModelHint')}</Text>
+                        <Text style={{ color: colors.textTertiary }}>{t('providerSettings.importCredentialSummary', { count: provider.credentialGroups?.length || (provider.apiKey ? 1 : 0) })}</Text>
+                      </View>
+                    })}
+                    {review.providers.length > previewLimit ? <IsleButton label={t('providerSettings.importShowMore')} onPress={() => setPreviewLimit(value => value + 8)} /> : null}
+                    {!review.providers.length ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground }}>{review.warnings.join('\n') || t('providerSettings.importEmptyMessage')}</Text>
+                      : review.warnings.length ? <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('providerSettings.importWarnings', { count: review.warnings.length, duplicates: review.duplicates.length })}</Text> : null}
+                    {conflicts ? <View style={{ gap: 6 }}>
+                      <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('providerSettings.importConflicts', { count: conflicts })}</Text>
+                      <IsleButton label={t('providerSettings.importSkipExisting')} tone={skipExisting ? 'primary' : 'soft'} disabled={importBusy || persistencePending} onPress={() => setSkipExisting(true)} />
+                      <IsleButton label={t('providerSettings.importKeepBoth')} tone={!skipExisting ? 'primary' : 'soft'} disabled={importBusy || persistencePending} onPress={() => setSkipExisting(false)} />
+                    </View> : null}
+                    {review.providers.length > 0 && !importableCount ? <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('providerSettings.importNothingNew')}</Text> : null}
+                    <IsleButton label={t('common.edit')} disabled={importBusy || persistencePending} onPress={() => setReview(null)} />
+                  </View>}
                 </View>
-                <Text style={{ color: detectedImportCount ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 8, fontWeight: detectedImportCount ? '900' : '700' }}>
+                {input.trim() ? <Text style={{ color: detectedImportCount ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 8, fontWeight: detectedImportCount ? '900' : '700' }}>
                   {input.trim()
                     ? detectionLimited
                       ? t('providerSettings.importDetectionLimited')
                       : detectedImportCount
                       ? t('providerSettings.importDetected', { count: detectedImportCount })
                       : t('providerSettings.importDetectionEmpty')
-                    : t('providerSettings.importNote')}
-                </Text>
+                    : null}
+                </Text> : null}
               </View>
             </ScrollView>
             <View style={{ minHeight: keyboardVisible ? 56 : IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: keyboardVisible ? 8 : 12, paddingBottom: (keyboardVisible ? 8 : Math.max(insets.bottom, 10) + 10), backgroundColor: footerSurface, borderTopWidth: subtleBorderWidth, borderTopColor: sheetMaterial.divider }}>
                 <IsleButton label={t('common.cancel')} compact onPress={closeWithoutSubmit} disabled={importBusy} style={modalActionStyle} />
                 <IsleButton
-                  label={importBusy ? t('providerSettings.importProgressWorking') : persistencePending ? t('common.retry') : t('providerSettings.import')}
+                  label={importBusy ? t('providerSettings.importProgressWorking') : persistencePending ? t('common.retry') : review ? t('providerSettings.import') : t('providerSettings.reviewImport')}
                   compact
                   tone="primary"
                   busy={importBusy}
-                  disabled={!input.trim() || importBusy}
+                  disabled={!input.trim() || importBusy || (Boolean(review) && !importableCount && !persistencePending)}
                   onPress={() => void submit()}
                   style={modalActionStyle}
                 />

@@ -60,15 +60,15 @@ export function extractUsage(
   }
 
   const usage = json.usage as Record<string, unknown> | undefined
-  const inputTokens = numberValue(usage?.input_tokens) ?? numberValue(usage?.prompt_tokens)
-  const outputTokens = numberValue(usage?.output_tokens) ?? numberValue(usage?.completion_tokens)
+  const inputTokens = aliasCount(usage?.input_tokens, usage?.prompt_tokens)
+  const outputTokens = aliasCount(usage?.output_tokens, usage?.completion_tokens)
   const totalTokens = numberValue(usage?.total_tokens) ?? sumOptional(inputTokens, outputTokens)
   const inputDetails = usage?.input_tokens_details as Record<string, unknown> | undefined
   const promptDetails = usage?.prompt_tokens_details as Record<string, unknown> | undefined
   const outputDetails = usage?.output_tokens_details as Record<string, unknown> | undefined
   const completionDetails = usage?.completion_tokens_details as Record<string, unknown> | undefined
-  const cachedInputTokens = numberValue(inputDetails?.cached_tokens) ?? numberValue(promptDetails?.cached_tokens)
-  const reasoningTokens = includeReasoning ? numberValue(outputDetails?.reasoning_tokens) ?? numberValue(completionDetails?.reasoning_tokens) : undefined
+  const cachedInputTokens = aliasCount(inputDetails?.cached_tokens, promptDetails?.cached_tokens)
+  const reasoningTokens = includeReasoning ? aliasCount(outputDetails?.reasoning_tokens, completionDetails?.reasoning_tokens) : undefined
   if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) return undefined
   return {
     inputTokens,
@@ -85,6 +85,15 @@ export function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
     : undefined
+}
+
+/** Compatible gateways may emit both protocols with zero-filled placeholders.
+ * Aliases overlap: retain the larger observed count, never sum or erase it.
+ */
+function aliasCount(first: unknown, second: unknown): number | undefined {
+  const a = numberValue(first)
+  const b = numberValue(second)
+  return a === undefined ? b : b === undefined ? a : Math.max(a, b)
 }
 
 function sumOptional(...values: (number | undefined)[]): number | undefined {

@@ -7,6 +7,7 @@ export const PROVIDER_CAPABILITIES = [
   'files',
   'audio',
   'tools',
+  'native-search',
   'structured-output',
 ] as const
 

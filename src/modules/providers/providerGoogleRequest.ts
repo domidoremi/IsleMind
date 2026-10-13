@@ -1,10 +1,12 @@
 import type { ProviderContentPart } from './providerContentParts'
 import { toGoogleContentParts } from './providerContentParts'
 import { mergeProviderToolDeclarations } from './providerToolDeclarations'
+import { selectProviderAttachmentMessage } from './providerAttachments'
 
 export interface GoogleRequestMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string | readonly ProviderContentPart[]
+  attachmentTarget?: boolean
 }
 
 export interface GoogleRequestShape {
@@ -51,6 +53,7 @@ export function createGoogleRequestBodyBuilder<
     build(request) {
       const contents: Record<string, unknown>[] = []
       const attachments = dependencies.selectAttachments(request)
+      const attachmentMessage = attachments.length ? selectProviderAttachmentMessage(request.messages) : undefined
       const systemPrompt = [request.systemPrompt, request.contextPrompt].filter(Boolean).join('\n\n')
       const systemInstruction = systemPrompt
         ? { parts: [{ text: systemPrompt }] }
@@ -58,7 +61,7 @@ export function createGoogleRequestBodyBuilder<
 
       for (const message of request.messages) {
         const parts = toGoogleContentParts(message.content)
-        if (message.role === 'user' && message === request.messages[request.messages.length - 1] && attachments.length) {
+        if (message === attachmentMessage) {
           for (const attachment of attachments) {
             const part = dependencies.buildAttachmentPart(attachment)
             if (part) parts.push(part)

@@ -11,7 +11,7 @@ export type ProviderProtocolReferenceCapability =
 
 export interface ProviderToolCapabilityModel {
   chatCompatible?: boolean
-  supportsTools?: boolean
+  supportsTools?: boolean | null
   supportsVision: boolean
   supportsFiles: boolean
   source?: 'built-in' | 'remote' | string
@@ -50,7 +50,7 @@ export interface ProviderNativeToolCompatibilityEvidence {
 export interface ProviderNativeToolCapabilityModel {
   id: string
   chatCompatible?: boolean
-  supportsTools?: boolean
+  supportsTools?: boolean | null
   source?: 'built-in' | 'remote' | string
 }
 
@@ -79,7 +79,7 @@ export interface ProviderNativeToolSupportDecision {
   providerId: string
   providerType: AIProvider['type']
   modelId: string
-  modelSupportsTools: boolean | undefined
+  modelSupportsTools: boolean | null | undefined
   explicitNativeTools: boolean
   compatibilityId: string
   auditState: string

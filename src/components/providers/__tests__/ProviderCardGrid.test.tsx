@@ -117,19 +117,33 @@ describe('ProviderCardGrid', () => {
     expect(source).toContain('accessibilityRole="checkbox"')
     expect(source).toContain('accessibilityState={{ checked: selected }}')
     expect(source).toContain('accessibilityState={{ expanded }}')
-    expect(source).toContain('delayLongPress={520}')
-    expect(source).toContain("accessibilityActions={!batchMode ? [{ name: 'delete'")
+    expect(source).toContain('testID={`provider-edit-${provider.id}`}')
+    expect(source).toContain("t('providerSettings.deleteSelected')")
     expect(source).toContain('confirmRemoveSupplierGroup(group)')
     // Settings typography allows wrapping; the full identity must also remain
     // available to assistive technology in every production row variant.
     const rowButtons = rowSource.match(/<IslePressable\b[\s\S]*?accessibilityState=\{\{ expanded \}\}/g) ?? []
-    expect(rowButtons).toHaveLength(5)
+    expect(rowButtons).toHaveLength(1)
     for (const button of rowButtons) {
       expect(button).toContain('accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}')
     }
     expect(rowSource).not.toContain('numberOfLines=')
+    expect(rowSource).not.toContain('count: provider.models.length')
+    expect(rowSource).toContain('count: modelInventory.selectableModels')
+    expect(rowSource).toContain('useMemo(() => summarizeProviderModelInventory(provider), [provider])')
     expect(rowSource).toContain("provider.baseUrl?.trim() || t('providerSettings.baseUrl')")
     expect(rowSource).not.toContain('getProviderSelectableModels(provider).length')
     expect(rowSource).not.toContain('<DeferredProviderDetails')
+  })
+
+  it('gives the detail sheet a real glass material and keeps help in its header', () => {
+    const source = readFileSync(join(__dirname, '..', 'ProviderSettingsContent.tsx'), 'utf8')
+    const sheet = source.slice(source.indexOf('function ProviderConfigurationSheet('), source.indexOf('function ProviderListRow('))
+    expect(sheet).toContain('<GlassSurface')
+    expect(sheet).toContain('enabled={Boolean(colors.ui.liquidGlass)} variant="floating"')
+    expect(sheet.indexOf('<SettingsHelpButton compact topic="models"')).toBeLessThan(sheet.indexOf('<ScrollView'))
+    expect(sheet).toContain('sortControl={sortControl}')
+    expect(sheet).toContain('await leave(onClose)')
+    expect(sheet).toContain("animationType={motion === 'full' ? 'slide' : 'none'}")
   })
 })

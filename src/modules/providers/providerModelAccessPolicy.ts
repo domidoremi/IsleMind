@@ -152,7 +152,9 @@ function getPolicyAllowedProviderModels(provider: AIProvider, settings?: Provide
   }
 
   const manualModels = dependencies.getProviderManualModels(provider)
-  const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled !== false && group.lastModelSyncStatus === 'ok') ?? []
+  // A failed refresh must not revoke a saved model choice. Access rules and
+  // credential/runtime admission remain independent of this cached catalog.
+  const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled !== false && (group.lastModelSyncStatus === 'ok' || group.lastModelSyncStatus === 'bad')) ?? []
   let usedSyncedSource = false
   for (const group of enabledGroups) {
     let groupHadModels = false
@@ -285,7 +287,7 @@ function* iteratePolicySourceModels(models: string[], provider: ProviderModelAcc
 
 function providerHasAvailableSourceModel(provider: AIProvider, targetModel: string): boolean {
   const manualModels = dependencies.getProviderManualModels(provider)
-  const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled !== false && group.lastModelSyncStatus === 'ok') ?? []
+  const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled !== false && (group.lastModelSyncStatus === 'ok' || group.lastModelSyncStatus === 'bad')) ?? []
   let usedSyncedSource = false
   for (const group of enabledGroups) {
     let groupHadModels = false

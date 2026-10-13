@@ -121,6 +121,7 @@ export function createProviderTracePolicy(dependencies: ProviderTracePolicyDepen
               summarizeToolEvent(record),
               'done',
               stableTraceId(record, 'tool-json'),
+              { clientToolCall: record.type === 'function_call' },
             ))
           }
         }
@@ -147,6 +148,7 @@ export function createProviderTracePolicy(dependencies: ProviderTracePolicyDepen
             summarizeToolEvent(item),
             'done',
             stableTraceId(item, 'tool-json'),
+            { clientToolCall: true },
           ))
         }
       }
@@ -173,6 +175,7 @@ export function createProviderTracePolicy(dependencies: ProviderTracePolicyDepen
               summarizeToolEvent(part.functionCall),
               'done',
               stableTraceId(part.functionCall, 'function-json'),
+              { clientToolCall: true },
             ))
           }
           if (includeReasoning && part.thoughtSignature) {

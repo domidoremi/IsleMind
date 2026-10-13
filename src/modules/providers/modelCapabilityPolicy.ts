@@ -153,7 +153,7 @@ export function resolveModelCapabilityProfile(model: AIModel): ModelCapabilityPr
   const files = documentedBooleanCapability(model, model.supportsFiles, 'file input', baseEvidence)
   const chat = optionalBooleanCapability(model, model.chatCompatible, 'chat generation', baseEvidence, true)
   const streaming = optionalBooleanCapability(model, model.supportsStreaming, 'streaming', baseEvidence)
-  const tools = optionalBooleanCapability(model, model.supportsTools, 'tool calling', baseEvidence)
+  const tools = optionalBooleanCapability(model, model.supportsTools ?? undefined, 'tool calling', baseEvidence)
   const responseFormat = parameterCapability(
     'responseFormat',
     supportedParameters,

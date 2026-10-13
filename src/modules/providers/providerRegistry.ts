@@ -446,7 +446,7 @@ export function createProviderRegistry(dependencies: ProviderRegistryDependencie
     detectProviderPreset: policy.detect,
     probeProviderPreset: (input: ProviderDetectionInput, options: ProviderProbeDeps = {}) => policy.probe(input, { fetch: options.fetch ?? dependencies.fetch, timeoutMs: options.timeoutMs, signal: options.signal }),
     applyProviderPreset: policy.apply,
-    parseCredentialGroups: (input: string) => credentialEntriesToGroups(extractCredentialEntries(input), dependencies),
+    parseCredentialGroups: (input: string, options?: { explicit?: boolean }) => credentialEntriesToGroups(extractCredentialEntries(input, options?.explicit), dependencies),
     parseProviderImportText: (input: string, options: ProviderImportOptions = {}) => parseProviderImportText(input, options, dependencies),
     parseProviderImportDraft: (input: string, options: ProviderImportDraftOptions = {}) => parseProviderImportDraft(input, options, dependencies),
     countDetectedProviderImports: (input: string) => countDetectedProviderImports(input, dependencies),
@@ -550,11 +550,23 @@ function credentialEntriesToGroups(entries: CredentialEntry[], dependencies: Pro
     })
 }
 
-function extractCredentialEntries(input: string): CredentialEntry[] {
+function extractCredentialEntries(input: string, explicit = false): CredentialEntry[] {
   const trimmed = stripImportBoundary(input.trim())
   if (!trimmed) return []
   const parsed = parseCredentialJson(trimmed)
-  if (parsed !== null) return collectCredentialEntries(parsed)
+  if (parsed !== null) return collectCredentialEntries(parsed, {}, explicit)
+  // A token field is authoritative input, unlike mixed configuration prose.
+  // Keep opaque tokens (including JWTs) intact rather than extracting fragments.
+  if (explicit) {
+    return trimmed.split(/[\n,，]+/).flatMap(value => {
+      const token = stripImportBoundary(value)
+      const labeled = token.match(/^([^:：=]+)[:：=]\s*(.*)$/)
+      if (/\s/.test(token) || (labeled && (isCredentialMetadataLabel(labeled[1]) || isNonCredentialImportLabel(labeled[1]) || looksLikeApiKey(labeled[2])))) {
+        return extractCredentialEntries(token)
+      }
+      return splitExplicitCredentialText(token).map(apiKey => ({ apiKey }))
+    })
+  }
   const labeledEntries = extractLabeledCredentialEntries(trimmed)
   const labeledKeys = new Set(labeledEntries.map((item) => item.apiKey))
   return [
@@ -574,12 +586,12 @@ function parseCredentialJson(input: string): unknown | null {
   }
 }
 
-function collectCredentialEntries(value: unknown, context: { label?: string; enabled?: boolean } = {}): CredentialEntry[] {
+function collectCredentialEntries(value: unknown, context: { label?: string; enabled?: boolean } = {}, explicit = false): CredentialEntry[] {
   if (typeof value === 'string') {
-    return splitCredentialText(value).map((apiKey) => ({ ...context, apiKey }))
+    return (explicit ? splitExplicitCredentialText(value) : splitCredentialText(value)).map((apiKey) => ({ ...context, apiKey }))
   }
   if (Array.isArray(value)) {
-    return value.flatMap((item) => collectCredentialEntries(item, context))
+    return value.flatMap((item) => collectCredentialEntries(item, context, explicit))
   }
   if (!value || typeof value !== 'object') return []
   const record = value as Record<string, unknown>
@@ -589,11 +601,11 @@ function collectCredentialEntries(value: unknown, context: { label?: string; ena
   if (label) nextContext.label = label
   if (enabled !== undefined) nextContext.enabled = enabled
   const direct = stringField(record, ['apiKey', 'api_key', 'key', 'token', 'secret', 'accessToken', 'access_token'])
-  const directEntries = direct ? splitCredentialText(direct).map((apiKey) => ({ ...nextContext, apiKey })) : []
+  const directEntries = direct ? splitExplicitCredentialText(direct).map((apiKey) => ({ ...nextContext, apiKey })) : []
   const nestedKeys = ['keys', 'apiKeys', 'api_keys', 'tokens', 'credentialGroups', 'credential_groups', 'groups', 'credentials']
   return [
     ...directEntries,
-    ...nestedKeys.flatMap((key) => collectCredentialEntries(record[key], nextContext)),
+    ...nestedKeys.flatMap((key) => collectCredentialEntries(record[key], nextContext, explicit)),
   ]
 }
 
@@ -612,6 +624,13 @@ function splitCredentialText(input: string): string[] {
     })
 }
 
+// A named credential is authoritative input, not prose to identify by vendor
+// prefix or length. Still reject URLs and whitespace/control characters.
+function splitExplicitCredentialText(input: string): string[] {
+  return input.split(/[\n,，]+/).map(stripImportBoundary)
+    .filter(value => Boolean(value) && !/^https?:\/\//i.test(value) && !/[\s\u0000-\u001f\u007f]/.test(value))
+}
+
 function extractLabeledCredentialEntries(input: string): CredentialEntry[] {
   const entries: CredentialEntry[] = []
   const segments = input
@@ -621,6 +640,11 @@ function extractLabeledCredentialEntries(input: string): CredentialEntry[] {
     .filter(Boolean)
 
   for (const segment of segments) {
+    const explicit = segment.match(/^([^:：=]+)\s*[:：=]\s*(.+)$/)
+    if (explicit && isCredentialMetadataLabel(explicit[1])) {
+      entries.push(...splitExplicitCredentialText(explicit[2]).map(apiKey => ({ apiKey })))
+      continue
+    }
     const matches = Array.from(segment.matchAll(/(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/gi))
     if (!matches.length) continue
     const rawLabel = segment.slice(0, matches[0].index ?? 0)
@@ -764,7 +788,7 @@ function normalizeProviderImportInput(input: string, warnings: string[], depende
   const trimmed = stripImportBoundary(input.trim())
   if (!trimmed) return { text: '', sourceType: 'text' }
   const jsonText = tryNormalizeJsonProviderImport(trimmed, warnings, dependencies)
-  if (jsonText) return { text: jsonText, sourceType: 'json' }
+  if (jsonText !== null) return { text: jsonText, sourceType: 'json' }
   if (looksLikeCsvImport(trimmed)) {
     return { text: normalizeCsvProviderImport(trimmed), sourceType: 'csv' }
   }
@@ -782,8 +806,8 @@ function tryNormalizeJsonProviderImport(input: string, warnings: string[], depen
     }
     return blocks.join('\n\n')
   } catch {
-    warnings.push(dependencies.translate('providerRegistry.jsonParseFallback'))
-    return null
+    warnings.push(dependencies.translate('providerRegistry.jsonParseFailed'))
+    return ''
   }
 }
 
@@ -813,12 +837,16 @@ function jsonProviderObjectToBlock(record: Record<string, unknown>, dependencies
   const models = stringArray(record.models, record.model, record['模型'], record['模型列表'])
   const keys = stringArray(record.apiKey, record.api_key, record.apiKeys, record.api_keys, record.key, record.keys, record.token, record.tokens, record['秘钥'], record['密钥'], record['令牌'])
   const clientCompatibilityProfile = firstString(record.clientCompatibilityProfile, record.client_compatibility_profile)
+  const requestedPreset = firstString(record.presetId, record.preset, record.providerPreset)
+  const presetHint = PROVIDER_PRESETS.some(preset => preset.id === requestedPreset) ? requestedPreset : undefined
+  const wireProtocol = parseProviderWireProtocolText(firstString(record.wireProtocol, record.protocol))
   if (isNewApiChannelConnection && (!baseUrl || !keys.length)) return null
   if (!baseUrl && !name && !keys.length) return null
   const resolvedName = name ?? (baseUrl ? inferProviderNameFromUrl(baseUrl) : undefined) ?? (isNewApiChannelConnection ? providerRegistryPolicy(dependencies).getPreset('newapi').name : undefined)
   const parts = [
     resolvedName ? `Name: ${resolvedName}` : '',
-    isNewApiChannelConnection ? 'Preset: newapi' : '',
+    isNewApiChannelConnection ? 'Preset: newapi' : presetHint ? `Preset: ${presetHint}` : '',
+    wireProtocol ? `Protocol: ${wireProtocol}` : '',
     baseUrl ? `Base URL: ${baseUrl}` : '',
     ...keys.map((key, index) => `Key${index + 1}: ${key}`),
     models.length ? `Models: ${models.join('|')}` : '',
@@ -1089,7 +1117,7 @@ function readImportFields(chunk: string): Map<string, string[]> {
 
 function extractProviderImportCredentialEntries(chunk: string, fields: Map<string, string[]>): CredentialEntry[] {
   const fieldEntries = pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌'])
-    .flatMap(extractCredentialEntries)
+    .flatMap(value => extractCredentialEntries(value))
   const looseEntries = extractCredentialEntries(chunk)
   const seen = new Set<string>()
   return [...fieldEntries, ...looseEntries].filter((entry) => {

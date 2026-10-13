@@ -139,7 +139,9 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
         ...merged,
         supportsVision: supportsVision ?? false,
         supportsFiles: supportsFiles ?? false,
-        supportsTools: supportsTools ?? false,
+        // Keep unknown distinct from a denial, including after JSON persistence.
+        // Names alone remain insufficient; a relay still needs explicit support.
+        supportsTools: supportsTools ?? null,
         preferredEndpoint: preferredEndpoint ?? 'chat-completions',
         reasoningMode,
         reasoningEfforts: reasoningMode ? openAICompatibleReasoningEffortsFromMode(reasoningMode) : undefined,
@@ -359,6 +361,7 @@ export function supportsToolsFromOpenAIModel(model?: OpenAIModelListItem): boole
   if (tags.has('function-calling') || tags.has('function_calling') || tags.has('tools') || tags.has('tool-calling')) return true
   const supportedParameters = openAIModelSupportedParameterSet(model)
   if (['tools', 'tool_choice', 'functions', 'function_call', 'function_calling'].some((item) => supportedParameters.has(item))) return true
+  if (Array.isArray(model?.supported_parameters)) return false
   return undefined
 }
 

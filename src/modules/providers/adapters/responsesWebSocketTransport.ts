@@ -15,7 +15,7 @@ import type {
 import { mergeOpenAIResponseReplayItems } from '../providerReplay'
 import {
   createProviderTextToolCallStreamFilter,
-  executableProviderToolCalls,
+  finalizeProviderToolCalls,
   mergeProviderToolCallParts,
   type ProviderToolCall,
 } from '../providerToolCalls'
@@ -239,7 +239,7 @@ function buildChatCompletionResult(input: {
   providerToolCalls?: ProviderToolCall[]
   responseItems?: Record<string, unknown>[]
 }): ProviderRuntimeCompletionResult {
-  const executableToolCalls = executableProviderToolCalls(input.providerToolCalls)
+  const executableToolCalls = finalizeProviderToolCalls(input.providerToolCalls)
   return {
     text: input.text,
     citations: input.citations,
