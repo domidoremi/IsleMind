@@ -108,13 +108,16 @@ function normalizeInput(input: ContextAssemblyInput): NormalizedInput | undefine
   const conversationId = input.conversationId.trim()
   if (!conversationId) return undefined
   const conversationMessageIds = uniqueNonEmptyStrings(input.conversationMessageIds)
-  if (!conversationMessageIds.length) return undefined
+  const requestText = input.requestText.trim()
+  // A fresh Agent task supplies its own request and intentionally reads no
+  // conversation history. Do not fabricate message provenance for that case.
+  if (!conversationMessageIds.length && !requestText) return undefined
   const requestMessageId = input.requestMessageId?.trim() || undefined
   return {
     conversationId,
     conversationMessageIds,
     ...(requestMessageId ? { requestMessageId } : {}),
-    requestText: input.requestText.trim(),
+    requestText,
   }
 }
 

@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { router, useFocusEffect } from 'expo-router'
-import { ScrollView, Text, View } from 'react-native'
+import { ScrollView, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IslePressable, IsleSearchField } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'

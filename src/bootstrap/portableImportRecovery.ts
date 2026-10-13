@@ -151,6 +151,7 @@ export interface PortableImportRecoveryCoordinatorDependencies<Plan> {
 export type PortableImportRecoveryExecutionResult = Readonly<{
   status: 'committed' | 'rolled_back' | 'recovery_required'
   cancellationObserved: boolean
+  reason?: 'protected_storage_required'
 }>
 
 export type InterruptedPortableImportRecoveryResult = Readonly<{
@@ -162,6 +163,10 @@ class PortableImportParticipantApplyError extends Error {
     super('A portable import participant failed.')
     this.name = 'PortableImportParticipantApplyError'
   }
+}
+
+class PortableImportProtectedStorageError extends Error {
+  readonly name = 'PortableImportProtectedStorageError'
 }
 
 export function createPortableImportRecoveryCoordinator<Plan>(
@@ -328,7 +333,13 @@ export function createPortableImportRecoveryCoordinator<Plan>(
             return { status: 'recovery_required', cancellationObserved }
           }
           return await cleanupAndRemove(envelope)
-            ? { status: 'rolled_back', cancellationObserved }
+            ? {
+                status: 'rolled_back',
+                cancellationObserved,
+                ...(error instanceof PortableImportProtectedStorageError
+                  ? { reason: 'protected_storage_required' as const }
+                  : {}),
+              }
             : { status: 'recovery_required', cancellationObserved }
         }
 
@@ -820,10 +831,12 @@ function createSecureStateParticipant(
     id,
     async prepare(plan, envelope, signal) {
       throwIfCancelled(signal)
-      const sourceProviders = parseProviderInventory(
-        await store.readRaw(APPLICATION_RECORD_KEYS.providers),
+      // Preserved credentials are not participants in a selective restore:
+      // never copy them into recovery sidecars or rewrite them unchanged.
+      const descriptors = plan.preserveSecureState ? [] : buildSecureDescriptors(
+        parseProviderInventory(await store.readRaw(APPLICATION_RECORD_KEYS.providers)),
+        plan.credentialProviders,
       )
-      const descriptors = buildSecureDescriptors(sourceProviders, plan.credentialProviders)
       if (descriptors.length > MAX_SECURE_ITEMS) {
         throw new Error('The portable import secure-state inventory is oversized.')
       }
@@ -832,7 +845,7 @@ function createSecureStateParticipant(
         throwIfCancelled(signal)
         const descriptor = descriptors[index]
         const source = await readSecureDescriptor(descriptor)
-        const target = plan.preserveSecureState ? source : descriptor.target
+        const target = descriptor.target
         const sourceRaw = encodeSecureSidecar(source)
         const targetRaw = encodeSecureSidecar(target)
         prepared.push({
@@ -849,7 +862,7 @@ function createSecureStateParticipant(
         isUnprotectedWebRuntime() &&
         prepared.some((item) => decodeSecureSidecar(item.sourceRaw) !== null || decodeSecureSidecar(item.targetRaw) !== null)
       ) {
-        throw new Error('Credential-bearing portable imports require protected recovery storage.')
+        throw new PortableImportProtectedStorageError('Credential-bearing portable imports require protected recovery storage.')
       }
       const manifest: SecureManifest = {
         schema: SECURE_MANIFEST_SCHEMA,

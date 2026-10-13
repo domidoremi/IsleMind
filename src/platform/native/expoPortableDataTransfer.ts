@@ -1,6 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as Sharing from 'expo-sharing'
+import { Platform } from 'react-native'
 
 import {
   deleteTemporaryImportCopy,
@@ -38,6 +39,18 @@ export function createExpoPortableDataTransferPort(
   return Object.freeze({
     async exportJsonFile(json: string) {
       const filename = createPortableExportFilename(options.now?.() ?? new Date())
+      if (Platform.OS === 'web') {
+        const uri = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+        const link = document.createElement('a')
+        link.href = uri
+        link.download = filename
+        document.body.appendChild(link)
+        try { link.click() } finally {
+          link.remove()
+          setTimeout(() => URL.revokeObjectURL(uri), 30_000)
+        }
+        return { uri }
+      }
       const rootDirectory = FileSystem.documentDirectory ?? FileSystem.cacheDirectory
       if (!rootDirectory) throw new Error('File storage is unavailable.')
 
@@ -83,6 +96,7 @@ export function createExpoPortableDataTransferPort(
         const json = await readUtf8ImportFile(asset.uri, {
           size: asset.size,
           limitBytes: options.maxImportBytes,
+          file: asset.file,
         })
         if (selectionOptions.signal?.aborted) return cancelledSelection()
         return { ok: true, json }

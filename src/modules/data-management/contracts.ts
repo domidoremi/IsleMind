@@ -93,6 +93,7 @@ export type PortableDataImportFailureReason =
   | 'invalid_json'
   | 'invalid_structure'
   | 'operation_cancelled'
+  | 'protected_storage_required'
   | 'persistence_failed'
 
 export type PortableDataImportResult =

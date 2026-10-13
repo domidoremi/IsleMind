@@ -1,5 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
+import { Platform } from 'react-native'
 import { st } from '@/i18n/service'
 import {
   createKnowledgeDocumentImporter,
@@ -51,7 +52,7 @@ export async function importKnowledgeFile(
     throwIfAborted(signal)
 
     const resolvedSize = (await assertImportFileSizeByUri(asset.uri, {
-      ...(asset.size === undefined ? {} : { size: asset.size }),
+      size: asset.file?.size ?? asset.size,
       limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
     })) ?? asset.size ?? 0
     throwIfAborted(signal)
@@ -60,6 +61,7 @@ export async function importKnowledgeFile(
       sourceType = 'text'
       const text = await readUtf8ImportFile(asset.uri, {
         size: resolvedSize,
+        file: asset.file,
         limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
       })
       throwIfAborted(signal)
@@ -186,7 +188,7 @@ function importKnowledgeDocumentThroughTarget(
   }).import(input, { signal })
 }
 
-function validatePickerAsset(value: unknown): { uri: string; name: string; mimeType: string; size?: number } {
+function validatePickerAsset(value: unknown): { uri: string; name: string; mimeType: string; size?: number; file?: Blob } {
   if (!value || typeof value !== 'object') throw new Error('Invalid document picker asset.')
   const candidate = value as Record<string, unknown>
   const uri = validatePickerAssetUri(candidate)
@@ -203,13 +205,16 @@ function validatePickerAsset(value: unknown): { uri: string; name: string; mimeT
   if (rawSize !== undefined && (!Number.isSafeInteger(rawSize) || (rawSize as number) < 0)) {
     throw new Error('Invalid document picker asset size.')
   }
-  return { uri, name, mimeType, ...(rawSize === undefined ? {} : { size: rawSize as number }) }
+  return { uri, name, mimeType, ...(rawSize === undefined ? {} : { size: rawSize as number }),
+    ...(uri.startsWith('blob:') ? { file: candidate.file as Blob } : {}) }
 }
 
 function validatePickerAssetUri(value: unknown): string {
   if (!value || typeof value !== 'object') throw new Error('Invalid document picker asset.')
   const uri = validatePickerText((value as Record<string, unknown>).uri, 'URI', 2_048)
-  if (!/^(?:file|content):\/\//i.test(uri)) throw new Error('Invalid document picker asset URI.')
+  const browserFile = Platform.OS === 'web' && uri.startsWith('blob:') &&
+    typeof Blob !== 'undefined' && (value as { file?: unknown }).file instanceof Blob
+  if (!/^(?:file|content):\/\//i.test(uri) && !browserFile) throw new Error('Invalid document picker asset URI.')
   return uri
 }
 

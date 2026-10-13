@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
-import { AppState, Platform, Text, View } from 'react-native'
+import { AppState, Platform, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IsleSelect } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'

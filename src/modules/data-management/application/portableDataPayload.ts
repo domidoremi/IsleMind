@@ -157,6 +157,7 @@ export interface PortableDataRecoveryPort {
   ): Promise<{
     status: 'committed' | 'rolled_back' | 'recovery_required'
     cancellationObserved: boolean
+    reason?: 'protected_storage_required'
   }>
 }
 
@@ -488,7 +489,9 @@ export function createPortableDataPayloadRuntime(
             kind: 'invalid',
             reason: recovery.cancellationObserved
               ? 'operation_cancelled'
-              : 'persistence_failed',
+              : recovery.status === 'rolled_back' && recovery.reason === 'protected_storage_required'
+                ? 'protected_storage_required'
+                : 'persistence_failed',
           }
         }
         return {
