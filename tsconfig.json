@@ -27,6 +27,6 @@
     "jest.config.js",
     "android",
     "ios",
-    "test-evidence/qa/provider-model-availability-android/install/calibration-entry.tsx"
+    "test-evidence"
   ]
 }

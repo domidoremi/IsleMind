@@ -99,6 +99,12 @@ jobs:
       - name: Provider transport redirect security gate
         run: bun run test:provider-transport-security
 
+      - name: In-app content reporting privacy and consent gate
+        run: bun --no-env-file run test:content-reporting
+
+      - name: Content reporting persistence and HTTP service gate
+        run: bun --no-env-file run test:content-reporting-service
+
       - name: Reasoning runtime compatibility gate
         run: bun run test:reasoning-runtime-compatibility
 

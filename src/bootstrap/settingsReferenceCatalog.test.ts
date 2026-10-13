@@ -1,0 +1,32 @@
+import { loadCapabilityReferenceCatalog, loadSettingsReferenceCatalog } from './settingsReferenceCatalog'
+const mockTools = jest.fn()
+const mockDocuments = jest.fn()
+const mockSkills = jest.fn()
+const mockAgents = jest.fn()
+jest.mock('./conversationToolCatalog', () => ({ listConversationToolManifests: () => mockTools() }))
+jest.mock('./knowledgeRepository', () => ({ knowledgeRepository: { listDocuments: () => mockDocuments() } }))
+jest.mock('./conversationSkills', () => ({ listSkills: () => mockSkills() }))
+jest.mock('./agentDefinitionRepository', () => ({ agentDefinitionRepository: { list: (options: unknown) => mockAgents(options) } }))
+beforeEach(() => {
+  jest.clearAllMocks()
+  mockTools.mockResolvedValue([{ id: 'mcp:s:t', serverName: 'Saved MCP', name: 'Lookup' }])
+  mockDocuments.mockResolvedValue([{ id: 'doc', title: 'Notes' }])
+  mockSkills.mockResolvedValue([{ id: 'skill', name: 'Review' }])
+  mockAgents.mockResolvedValue([])
+})
+it('offers canonical cached references and reads no agent or skill catalog for capability selection', async () => {
+  expect(await loadCapabilityReferenceCatalog()).toEqual({ tools: [{ value: 'mcp:s:t', label: 'Saved MCP / Lookup' }], knowledge: [{ value: 'doc', label: 'Notes' }] })
+  expect(mockAgents).not.toHaveBeenCalled()
+  expect(mockSkills).not.toHaveBeenCalled()
+})
+it('loads agents beyond the first page using the repository page limit', async () => {
+  mockAgents.mockResolvedValueOnce(Array.from({ length: 50 }, (_, i) => ({ id: `a${i}`, name: `Agent ${i}` }))).mockResolvedValueOnce([{ id: 'b', name: 'Last agent' }])
+  const result = await loadSettingsReferenceCatalog()
+  expect(mockAgents.mock.calls).toEqual([[{ afterId: '', limit: 50 }], [{ afterId: 'a49', limit: 50 }]])
+  expect(result.agents).toHaveLength(51)
+  expect(result.skills).toEqual([{ value: 'skill', label: 'Review' }])
+})
+it('does not disguise a local read failure as an empty successful catalog', async () => {
+  mockDocuments.mockRejectedValueOnce(new Error('storage unavailable'))
+  await expect(loadCapabilityReferenceCatalog()).rejects.toThrow('storage unavailable')
+})

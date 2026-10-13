@@ -1,5 +1,6 @@
 import { Suspense, lazy, type ComponentProps, type ComponentType, type ReactNode } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'

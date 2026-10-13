@@ -1,13 +1,15 @@
 import '../src/devLogFilters'
 import '../src/theme/webGlobalStyles'
 import 'react-native-gesture-handler'
+import { useFonts } from 'expo-font'
 import * as Clipboard from 'expo-clipboard'
 import * as Network from 'expo-network'
 import type { ErrorBoundaryProps, NativeStackNavigationOptions } from 'expo-router'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { ActivityIndicator, AppState, Platform, Text, View } from 'react-native'
+import { ActivityIndicator, AppState, Platform, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
@@ -43,6 +45,12 @@ const SETTINGS_PROVIDER_SCREEN_OPTIONS: NativeStackNavigationOptions = {
 
 export default function RootLayout() {
   const boot = useBootstrap()
+  const [fontsLoaded, fontError] = useFonts({
+    NotoSansSC: require('../assets/fonts/NotoSansSC.ttf'),
+    NotoSerifSC: require('../assets/fonts/NotoSerifSC.ttf'),
+    LXGWWenKai: require('../assets/fonts/LXGWWenKai.ttf'),
+  })
+  const appReady = boot.ready && (fontsLoaded || Boolean(fontError))
   useEffect(() => {
     if (!boot.ready || Platform.OS !== 'android') return
     assistantExecutionHost.start()
@@ -73,7 +81,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <IsleThemeProvider>
       <IsleDialogProvider updateNotice={boot.ready ? boot.updateNotice ?? qaUpdateMessage : null}>
-        {boot.ready ? (
+        {appReady ? (
           <Stack
             screenOptions={{
               headerShown: false,

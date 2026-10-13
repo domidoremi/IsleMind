@@ -15,9 +15,20 @@ module.exports = ({ config }) => {
     'android.permission.REQUEST_INSTALL_PACKAGES',
     'android.permission.SYSTEM_ALERT_WINDOW',
   ]
+  // Public build configuration, never a provider/user setting. Missing operations
+  // information disables reporting; it is not permission to ship an unready Play build.
+  const contentReporting = {
+    endpoint: process.env.ISLEMIND_REPORT_ENDPOINT,
+    operator: process.env.ISLEMIND_REPORT_OPERATOR,
+    privacyPolicyUrl: process.env.ISLEMIND_PRIVACY_POLICY_URL,
+  }
+  const reportingValues = Object.values(contentReporting)
+  if (reportingValues.some(Boolean) && !reportingValues.every(value => typeof value === 'string' && value.trim())) {
+    throw new Error('Content reporting requires endpoint, operator and privacy policy build configuration together.')
+  }
   return {
     ...config,
-    extra: { ...config.extra, distributionChannel, agentHarnessEnabled: harnessAdmission === '1' },
+    extra: { ...config.extra, distributionChannel, agentHarnessEnabled: harnessAdmission === '1', contentReporting: reportingValues.every(Boolean) ? contentReporting : null },
     android: distributionChannel === 'google-play' ? {
       ...config.android,
       permissions: (config.android?.permissions || []).filter(permission => !playBlockedPermissions.includes(permission)),
