@@ -251,6 +251,8 @@ export function createAssistantConversationKnowledgeContextRuntime<
         memoryCount: counts.memoryCount,
         knowledgeCount: counts.knowledgeCount,
         sourceCount: counts.sourceCount,
+        memoryEnabled: input.settings.memoryEnabled,
+        knowledgeEnabled: input.settings.knowledgeEnabled,
         ragPlan: context.plan,
         ragQuality: context.quality,
       },

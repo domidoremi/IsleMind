@@ -7,6 +7,7 @@ import { ANDROID_AGENT_LEASE_RENEW_INTERVAL_MS, type AndroidAgentExecutionLease,
 
 export type ExecutionHostPauseReason = 'memory_pressure' | 'background_disabled' | 'execution_lease_lost'
 type Entry = { snapshot?: RunSnapshot; enabled: boolean; generation: number; executions: Set<symbol>; blocked?: ExecutionHostPauseReason;
+  picker?: { onVisible?: () => void };
   lease?: AndroidAgentExecutionLease; acquiring?: { generation: number; promise: Promise<void> }; renewing?: AndroidAgentExecutionLease }
 
 /** Application-scoped native control adapter, not a second run registry or execution engine.
@@ -51,14 +52,14 @@ export function createAssistantExecutionHost(input: {
     }
   }
   async function acquire(entry: Entry): Promise<void> {
-    if (!entry.enabled || !runnable(entry) || entry.lease) return
+    if (!entry.enabled || !runnable(entry) || entry.lease || entry.picker) return
     if (entry.acquiring?.generation === entry.generation) return entry.acquiring.promise
     if (!visible || !input.port.isAvailable()) { pause(entry, 'execution_lease_lost'); return }
     const runId = entry.snapshot!.id
     const acquiredGeneration = entry.generation = ++generation
     const attempt = (async () => {
       const result = await input.port.acquire({ runId, generation: acquiredGeneration, enabled: true })
-      if (entry.generation !== acquiredGeneration || !entry.enabled || !runnable(entry)) {
+      if (entry.generation !== acquiredGeneration || !entry.enabled || !runnable(entry) || entry.picker) {
         if (result.ok && result.lease) await input.port.release(result.lease, 'waiting')
         return
       }
@@ -80,6 +81,7 @@ export function createAssistantExecutionHost(input: {
      * and delegated children. Stored running state alone is never CPU authority. */
     executionStarted({ runId, rootRunId }: { runId: AssistantRunId; rootRunId: AssistantRunId }) {
       const entry = entryFor(rootRunId)
+      if (entry.picker) throw new Error('System picker is awaiting the user')
       const token = Symbol(runId)
       entry.executions.add(token)
       return () => {
@@ -125,10 +127,43 @@ export function createAssistantExecutionHost(input: {
       else await acquire(entry)
     },
     backgroundEnabled(runId: string) { return entries.get(runId)?.enabled === true },
+    /** Only the local, already-authorized SAF picker adapter calls this. Waiting
+     * for a system Activity is not permission to run models or tools offscreen. */
+    async withSystemPicker<T>(runId: AssistantRunId, signal: AbortSignal, open: () => Promise<T>): Promise<T> {
+      input.resources.assertAdmission()
+      const entry = entries.get(runId)
+      if (!visible || !entry || !runnable(entry) || entry.executions.size !== 1 || entry.picker || signal.aborted) {
+        throw new Error('System picker requires a sole active foreground invocation')
+      }
+      const picker: NonNullable<Entry['picker']> = {}
+      entry.picker = picker
+      ++entry.generation
+      release(entry, 'waiting')
+      let rejectAbort!: (error: Error) => void
+      const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject })
+      const cancel = () => rejectAbort(new Error('System picker cancelled'))
+      signal.addEventListener('abort', cancel, { once: true })
+      try {
+        const result = await Promise.race([open(), aborted])
+        // Android's result can arrive before the Activity becomes visible.
+        // Keep the dispatch fence until both the result and foreground return.
+        if (!visible) await Promise.race([new Promise<void>(resolve => { picker.onVisible = resolve }), aborted])
+        if (signal.aborted || entry.blocked) throw new Error(entry.blocked ?? 'System picker cancelled')
+        return result
+      } finally {
+        signal.removeEventListener('abort', cancel)
+        if (entry.picker === picker) {
+          entry.picker = undefined
+          if (!visible && runnable(entry)) pause(entry, 'background_disabled')
+          else if (visible && !signal.aborted) await acquire(entry)
+        }
+      }
+    },
     setVisible(value: boolean) {
       visible = value
-      if (!visible) for (const entry of entries.values()) {
-        if (runnable(entry) && (!entry.enabled || !entry.lease)) pause(entry, 'background_disabled')
+      for (const entry of entries.values()) {
+        if (visible) entry.picker?.onVisible?.()
+        else if (runnable(entry) && !entry.picker && (!entry.enabled || !entry.lease)) pause(entry, 'background_disabled')
       }
     },
     async persisted(snapshot: RunSnapshot) {
@@ -140,19 +175,21 @@ export function createAssistantExecutionHost(input: {
         if (['succeeded', 'failed', 'cancelled'].includes(snapshot.status)) entries.delete(snapshot.id)
         return
       }
-      if (!visible && !entry.lease) { pause(entry, 'background_disabled'); return }
+      if (!visible && !entry.lease && !entry.picker) { pause(entry, 'background_disabled'); return }
       await acquire(entry)
     },
     assertAdmission(runId: string) {
       input.resources.assertAdmission()
       const entry = entries.get(runId)
       if (entry?.blocked) throw new Error(entry.blocked)
+      if (entry?.picker) throw new Error('System picker is awaiting the user')
       if (!visible && (!entry?.enabled || !entry.lease)) throw new Error('background_disabled')
     },
-    /** System pressure recovery is not signalled reliably. Only a user retry clears the latch. */
-    prepareUserResume(runId: AssistantRunId) {
+    /** System pressure recovery is not signalled reliably. Only a foreground user
+     * action clears the latch, including retries that failed before run creation. */
+    prepareUserResume(runId?: AssistantRunId) {
       if (!visible) throw new Error('Resume requires a visible Activity')
-      const entry = entries.get(runId)
+      const entry = runId ? entries.get(runId) : undefined
       if (entry?.executions.size || entry?.snapshot?.status === 'running' || entry?.acquiring || entry?.lease) throw new Error('Run is already active')
       input.resources.setPressure(false)
       input.resources.reserveText(0)()

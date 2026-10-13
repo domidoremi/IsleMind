@@ -5,6 +5,7 @@ import type { AssistantRun, AssistantRunStatus } from './contracts'
 import { HARNESS_PAUSE_REASONS, type HarnessPauseReason } from './harnessPauseReason'
 import type { HarnessCheckpoint } from './harnessCheckpointTypes'
 import { decodeDelegation } from './agentCollaboration'
+import { decodeModelOperationBatch } from './application/modelOperationBatch'
 export type { HarnessCheckpoint } from './harnessCheckpointTypes'
 
 export const HARNESS_CHECKPOINT_SCHEMA = 'islemind.harness-checkpoint.v1' as const
@@ -44,6 +45,7 @@ export function projectRunSnapshot(run: AssistantRun): RunSnapshot {
 export function createHarnessCheckpoint(input: Omit<HarnessCheckpoint, 'schema' | 'requestHash' | 'capabilityRevision'>): HarnessCheckpoint {
   const request = freezeChatRequest(input.request)
   return Object.freeze({ ...input, request, schema: HARNESS_CHECKPOINT_SCHEMA,
+    ...(input.operationBatch ? { operationBatch: decodeModelOperationBatch(input.operationBatch) } : {}),
     requestHash: buildAssistantRequestHash(request), capabilityRevision: buildAssistantCapabilityRevision(request),
     steering: Object.freeze(input.steering.map((entry) => Object.freeze({ ...entry }))),
   })
@@ -78,7 +80,7 @@ export function decodeHarnessState(json: string | null | undefined): {
   const item = value.lifecycleCheckpoint
   if (item === undefined) return { ...ownership, ...(definition ? { agentDefinition: definition } : {}) }
   if (!item || typeof item !== 'object' || Array.isArray(item)
-    || Object.keys(item).length !== (item.waitingReason === undefined ? 12 : 13) || item.schema !== HARNESS_CHECKPOINT_SCHEMA
+    || Object.keys(item).length !== 12 + (item.waitingReason === undefined ? 0 : 1) + (item.operationBatch === undefined ? 0 : 1) || item.schema !== HARNESS_CHECKPOINT_SCHEMA
     || (item.waitingReason !== undefined && !HARNESS_PAUSE_REASONS.includes(item.waitingReason))
     || !['ready', 'provider', 'operation', 'confirmation', 'complete'].includes(item.phase)
     || !['none', 'settled', 'uncertain'].includes(item.effectCertainty)
@@ -97,6 +99,12 @@ export function decodeHarnessState(json: string | null | undefined): {
     throw new Error('Invalid Harness continuation checkpoint.')
   }
   const checkpoint = createHarnessCheckpoint(item)
+  if (checkpoint.operationBatch && (!checkpoint.requiresOperationSession || checkpoint.phase === 'provider'
+    || checkpoint.operationBatch.requestHash !== checkpoint.requestHash
+    || checkpoint.operationBatch.startStepIndex + checkpoint.operationBatch.receipts.length !== checkpoint.stepIndex
+    || checkpoint.operationBatch.receipts.length >= checkpoint.operationBatch.calls.length)) {
+    throw new Error('Invalid queued operation checkpoint')
+  }
   if (checkpoint.requestHash !== item.requestHash || checkpoint.capabilityRevision !== item.capabilityRevision) {
     throw new Error('Harness checkpoint identity mismatch.')
   }

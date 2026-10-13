@@ -38,6 +38,8 @@ import type {
   ModelOperationAuthorizationPolicy,
   ModelOperationAuthorizationVerification,
   Task,
+  TaskExecutor,
+  ExecuteTaskInput,
   TaskPolicyDecision,
   TaskPolicyEvaluator,
   TaskRuntime,
@@ -52,7 +54,7 @@ import {
   type KnowledgeRagReplaySnapshot,
 } from '@/modules/knowledge'
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
-import { clampTraceText, projectProcessTrace, redactSensitiveText } from '@/core'
+import { asAssistantRunId, clampTraceText, projectProcessTrace, redactSensitiveText } from '@/core'
 import { buildWorkArtifactWorkflowOutput } from '@/bootstrap/workArtifactWorkflow'
 
 type TaskBoundExternalToolSource = 'mcp' | 'builtin' | 'app-action' | 'android'
@@ -96,8 +98,10 @@ export interface ExecuteTaskBoundToolInput {
 
 export interface TaskBoundExternalToolExecutionOptions {
   taskId: string
+  assistantRunId?: AssistantRunId
   signal: AbortSignal
   runtimeLog?: TaskBoundToolRuntimeOptions['runtimeLog']
+  effects?: import('@/modules/tasks').TaskEffectRecorder
 }
 
 export interface TaskBoundToolRuntimeDependencies {
@@ -198,7 +202,7 @@ export function createTaskBoundToolRuntime(
         )
       }
 
-      const limits = resolveToolPermissionPolicyLimits(input.options.limits)
+      let limits = resolveToolPermissionPolicyLimits(input.options.limits)
       let permission: ToolPermissionPolicyDecision
       try {
         permission = decideToolPermission(tool, input.options, limits)
@@ -224,10 +228,22 @@ export function createTaskBoundToolRuntime(
         },
       })
       const modelAuthorization = input.modelOperationAuthorization
-      if (modelAuthorization && !modelAuthorization.policy.verify(
-        modelAuthorization.attestation,
-        modelAuthorization.expected,
-      )) {
+      // Verify the request we will actually execute, not a detached copy of the
+      // proposal. A genuine attestation for A cannot authorize tool/arguments B,
+      // a different owning run, a higher permission, or a fabricated approval.
+      const authorizationMatchesRequest = () => !modelAuthorization || (
+        (tool.permission === 'read-only' || modelAuthorization.expected.permissionCeiling === 'destructive'
+          || tool.permission === 'read-write' && modelAuthorization.expected.permissionCeiling === 'read-write')
+        && modelAuthorization.policy.verify(modelAuthorization.attestation, {
+          ...modelAuthorization.expected,
+          runId: input.assistantRunId ?? '',
+          operationId: tool.id,
+          arguments: toolArguments,
+          confirmationStatus: tool.permission !== 'read-only' || tool.requiresConfirmation
+            ? input.options.userConfirmed === true ? 'confirmed' : 'pending' : 'not-required',
+        })
+      )
+      if (!authorizationMatchesRequest()) {
         return toolTaskFailureOutcome(
           tool,
           'policy_denied',
@@ -246,6 +262,12 @@ export function createTaskBoundToolRuntime(
       }
 
       let task = created.value
+      const withEffectEvidence = async (message: string) => {
+        if (tool.source !== 'android') return message
+        try { return [await runtime.getEffectSummary(task.id), message].filter(Boolean).join('\n\n') } catch {
+          return `Local effect evidence is unavailable. Inspect the Tasks ledger before retrying.\n\n${message}`
+        }
+      }
       if (input.options.signal?.aborted && (task.status === 'queued' || task.status === 'awaiting-confirmation' || task.status === 'running')) {
         const cancelled = await runtime.cancel(task.id)
         if (!cancelled.ok) {
@@ -268,7 +290,7 @@ export function createTaskBoundToolRuntime(
         )
       }
       if (task.status === 'awaiting-confirmation') {
-        if (permission.decision !== 'allow' || (tool.requiresConfirmation === true && !input.options.userConfirmed)) {
+        if (permission.decision !== 'allow' || (tool.requiresConfirmation === true && input.options.userConfirmed !== true)) {
           return toolPermissionOutcome(
             tool,
             permission.decision === 'allow' ? durableConfirmationDecision(permission) : permission,
@@ -290,7 +312,7 @@ export function createTaskBoundToolRuntime(
         if (task.failure?.code === 'policy_denied') {
           return toolPermissionOutcome(tool, permission, input.options, limits, task)
         }
-        return toolTaskFailureOutcome(tool, 'execution_failed', 'The durable tool task is already failed.', task)
+        return toolTaskFailureOutcome(tool, 'execution_failed', await withEffectEvidence('The durable tool task is already failed.'), task)
       }
       if (task.status === 'succeeded') {
         if (ragAdapter) {
@@ -313,20 +335,64 @@ export function createTaskBoundToolRuntime(
             limits,
           ))
         }
-        return externalOutcome(replaySucceededExternalTaskResult(tool, task, permission, input.options, limits))
+        const replay = replaySucceededExternalTaskResult(tool, task, permission, input.options, limits)
+        if (tool.source !== 'android') return externalOutcome(replay)
+        let summary: string | undefined
+        try { summary = await runtime.getEffectSummary(task.id) } catch {
+          return toolTaskFailureOutcome(tool, 'evidence_insufficient', 'Local effect evidence is unavailable. Inspect the Tasks ledger before retrying.', task)
+        }
+        const output = [summary, replay.observation.output].filter(Boolean).join('\n\n')
+        return externalOutcome({ ...replay, summary: output,
+          observation: { ...replay.observation, output, blocks: [{ type: 'text', text: output }] } })
       }
       if (task.status === 'cancelled') {
-        return toolTaskFailureOutcome(tool, 'cancelled', 'Agent workflow execution was cancelled.', task)
+        return toolTaskFailureOutcome(tool, 'cancelled', await withEffectEvidence('Agent workflow execution was cancelled.'), task)
       }
       if (task.status !== 'queued') {
-        return toolTaskFailureOutcome(tool, mapTaskRuntimeFailure('task_not_active'), 'The durable tool task is not executable.', task)
+        return toolTaskFailureOutcome(tool, mapTaskRuntimeFailure('task_not_active'), await withEffectEvidence('The durable tool task is not executable.'), task)
       }
+      // An idempotent lookup may return a task admitted under an older policy.
+      // Its queued state/confirmation is evidence, not permission for this call.
+      const currentPermissionFailure = (): TaskBoundToolExecutionOutcome | undefined => {
+        try {
+          limits = resolveToolPermissionPolicyLimits(input.options.limits)
+          permission = decideToolPermission(tool, input.options, limits)
+        } catch {
+          return toolTaskFailureOutcome(tool, 'execution_failed', 'The tool permission decision could not be evaluated.', task)
+        }
+        if (permission.decision !== 'allow' || tool.requiresConfirmation === true && input.options.userConfirmed !== true) {
+          return toolPermissionOutcome(tool,
+            permission.decision === 'allow' ? durableConfirmationDecision(permission) : permission,
+            input.options, limits, task)
+        }
+        return undefined
+      }
+      const permissionFailure = currentPermissionFailure()
+      if (permissionFailure) return permissionFailure
       await dependencies.beforeTaskExecution?.(input, task)
+      // Admission may yield for budget/resource checks; do not carry stale
+      // caller confirmation or limits across that asynchronous boundary.
+      const admissionPermissionFailure = currentPermissionFailure()
+      if (admissionPermissionFailure) return admissionPermissionFailure
+      if (!authorizationMatchesRequest()) {
+        return toolTaskFailureOutcome(tool, 'policy_denied',
+          'The model-operation authorization no longer matches the execution request.', task)
+      }
+      const executeAuthorizedTask = (executor: TaskExecutor, executionInput?: ExecuteTaskInput) => runtime.execute(task.id, {
+        execute(activeTask, options) {
+          // task.started persistence also yields. Check at the final shared
+          // boundary for RAG, artifacts and every external-tool adapter.
+          if (currentPermissionFailure() || !authorizationMatchesRequest()) {
+            throw new Error('The current tool authorization no longer permits dispatch.')
+          }
+          return executor.execute(activeTask, options)
+        },
+      }, executionInput)
 
       if (ragAdapter) {
         let ragSnapshot: KnowledgeRagReplaySnapshot | undefined
         let ragFailureMessage: string | undefined
-        const executed = await runtime.execute(task.id, {
+        const executed = await executeAuthorizedTask({
           async execute(activeTask, options) {
             let execution
             try {
@@ -379,7 +445,7 @@ export function createTaskBoundToolRuntime(
 
       if (workArtifactAdapter) {
         let workArtifactResult: WorkArtifactTaskResult | undefined
-        const executed = await runtime.execute(task.id, {
+        const executed = await executeAuthorizedTask({
           async execute(activeTask, options) {
             workArtifactResult = workArtifactAdapter.execute({
               toolId: activeTask.toolId,
@@ -414,6 +480,7 @@ export function createTaskBoundToolRuntime(
       let executionResult: ExternalToolExecutionResult | undefined
       const executionOptions = (signal: AbortSignal): TaskBoundExternalToolExecutionOptions => ({
         taskId: task.id,
+        ...(input.assistantRunId ? { assistantRunId: input.assistantRunId } : {}),
         signal,
         ...(input.options.runtimeLog ? { runtimeLog: input.options.runtimeLog } : {}),
       })
@@ -432,7 +499,7 @@ export function createTaskBoundToolRuntime(
               dependencies,
               tool,
               toolArguments,
-              executionOptions(options.signal),
+              { ...executionOptions(options.signal), ...(tool.source === 'android' && options.effects ? { effects: options.effects } : {}) },
             )
             const result = normalizeTargetExecutionResult(tool, sourceResult)
             executionResult = result
@@ -443,7 +510,7 @@ export function createTaskBoundToolRuntime(
             return result
           })
 
-      const executed = await runtime.execute(task.id, createToolTaskExecutor(adapter, {
+      const executed = await executeAuthorizedTask(createToolTaskExecutor(adapter, {
         arguments: toolArguments,
       }), {
         ...(input.options.signal ? { cancellationSignal: input.options.signal } : {}),
@@ -451,7 +518,18 @@ export function createTaskBoundToolRuntime(
 
       if (executionResult) {
         const persisted = executed.ok ? executed.value : await runtime.getTask(task.id)
-        const observation = reconcileObservationWithTask(executionResult.observation, persisted ?? task)
+        let effectSummary: string | undefined
+        let evidenceFailed = false
+        if (tool.source === 'android') {
+          try { effectSummary = await runtime.getEffectSummary(task.id) } catch {
+            evidenceFailed = true
+            effectSummary = 'Local effect evidence is unavailable. Changes may already exist. Inspect the Tasks ledger; do not automatically replay this operation.'
+          }
+        }
+        const observation = reconcileObservationWithTask(executionResult.observation, persisted ?? task,
+          evidenceFailed ? 'evidence_insufficient' : executed.ok ? undefined
+            : executed.error.code === 'cancelled' ? 'cancelled'
+              : executed.error.code === 'persistence_failed' ? 'evidence_insufficient' : 'execution_failed', effectSummary)
         return externalOutcome(withExternalTaskMetadata(
           attachExternalPermissionAuditMetadata(
             { ...executionResult, observation },
@@ -881,23 +959,32 @@ function replaySucceededExternalTaskResult(
 function reconcileObservationWithTask(
   observation: ExternalToolObservation,
   task: { status: string },
+  failure?: ExternalToolObservationErrorCode,
+  effectSummary?: string,
 ): ExternalToolObservation {
-  if (task.status !== 'cancelled' || observation.errorCode === 'cancelled') return observation
-  const message = 'Agent workflow execution was cancelled.'
+  const cancelled = task.status === 'cancelled'
+  if (!cancelled && !failure && !effectSummary) return observation
+  const failed = cancelled || !!failure
+  // Put durable evidence first: downstream model context is bounded. Do not
+  // erase applied effects with a generic cancellation message, or inherit an
+  // adapter's success when its receipt failed to commit.
+  const message = [effectSummary, cancelled ? 'Agent workflow execution was cancelled.'
+    : failure ? 'Task execution did not complete with durable evidence.' : '', observation.output].filter(Boolean).join('\n\n')
+  const errorCode = cancelled ? 'cancelled' : failure ?? observation.errorCode
   return {
     ...observation,
-    ok: false,
-    status: 'skipped',
+    ok: failed ? false : observation.ok,
+    status: cancelled ? 'skipped' : failure ? 'error' : observation.status,
     output: message,
     blocks: [{ type: 'text', text: message }],
-    errorCode: 'cancelled',
+    errorCode,
     diagnostic: {
       ...observation.diagnostic,
       content: message,
-      status: 'cancelled',
+      status: cancelled ? 'cancelled' : failure ? 'error' : observation.diagnostic.status,
       metadata: {
         ...(observation.diagnostic.metadata ?? {}),
-        errorCode: 'cancelled',
+        ...(errorCode ? { errorCode } : {}),
       },
     },
   }
@@ -1073,7 +1160,7 @@ function permissionAuditMetadata(
     outputBoundary: tool.outputBoundary,
     requiresConfirmation: tool.requiresConfirmation,
     intentVisible: Boolean(context.intentVisible),
-    userConfirmed: Boolean(context.userConfirmed),
+    userConfirmed: context.userConfirmed === true,
     evidenceReady: permission.evidence.ready,
     evidenceReliable: permission.evidence.reliable,
     evidenceSourceCount: permission.evidence.sources.length,
@@ -1476,9 +1563,14 @@ async function loadDefaultDependencies(): Promise<TaskBoundToolRuntimeDependenci
     },
     async executeAndroidTool(tool, argumentsValue, options) {
       try {
+        const pickerRunId = tool.id === 'android:files.request_directory_access' ? options.assistantRunId : undefined
+        const budget = pickerRunId ? await (await import('./assistantRunGovernance')).assistantRunBudgetStore.get(pickerRunId) : undefined
+        const rootRunId = budget ? asAssistantRunId(budget.rootRunId) : pickerRunId
         return await android.executeAndroidDeviceTool(tool, argumentsValue, {
           signal: options.signal,
+          effects: options.effects,
           runtimeLog: options.runtimeLog,
+          ...(rootRunId ? { withSystemPicker: <T>(open: () => Promise<T>) => assistantExecutionHost.withSystemPicker(rootRunId, options.signal, open) } : {}),
           openStatusNotificationSettings: androidStatusNotification.openAndroidStatusNotificationSettings,
         })
       } catch (error) {

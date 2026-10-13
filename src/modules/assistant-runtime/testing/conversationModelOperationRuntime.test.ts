@@ -22,7 +22,7 @@ async function fixture(permission: 'read-only' | 'read-write' = 'read-write', in
   const createRagRuntime = jest.fn(async () => ({}))
   const dependencies = { createCatalog: async () => ({ ok: true, catalog: { snapshot: snapshot.snapshot, taggedPrompt: prompt.prompt,
     manifests: descriptors.map((item) => ({ ...item, source: 'builtin', enabled: true })) } }),
-    executeExternal, executeInternal: jest.fn(), declinePendingTask: async () => ({ ok: true }), createRagRuntime, now: () => 1,
+    executeExternal, executeInternal: jest.fn(), declinePendingTask: async () => ({ ok: true }), createRagRuntime, now: Date.now,
   } as unknown as ConversationModelOperationSessionDependencies
   const input = { conversation: { id: 'conversation', providerId: 'provider', model: 'gpt-4o', messages: [] },
     provider: { id: 'provider', type: 'openai', models: ['gpt-4o'], capabilities: { nativeTools: true } },
@@ -38,6 +38,385 @@ async function fixture(permission: 'read-only' | 'read-write' = 'read-write', in
   }
   return { session, turn, run, request, executeExternal, createRagRuntime, provider: input.provider, input, dependencies, descriptors }
 }
+
+function batchTurn(f: Awaited<ReturnType<typeof fixture>>) {
+  const turn = f.turn()
+  return { ...turn, calls: turn.request.toolDefinitions!.map((tool, index) => ({
+    callId: `batch-${index}`, name: tool.name, arguments: { target: `item-${index}` },
+    providerMetadata: { providerCallId: `provider-${index}`, thoughtSignature: `signature-${index}` },
+  })) }
+}
+
+test.each([true, false, 'cancel-after-restart'] as const)('Rich activity exposes durable confirmation and applies only the reviewed decision (%s)', async decision => {
+  const approved = decision === true
+  const f = await fixture('read-write')
+  const persistence = createInMemoryRunStore()
+  const runId = asAssistantRunId('rich-confirmation-' + approved)
+  let providerTurns = 0
+  const gateway = { describe: () => undefined, async *stream() {
+    providerTurns++
+    yield { type: 'text-delta' as const, text: approved ? 'Applied after approval.' : 'Declined; no change.' }
+  } }
+  const runtime = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => runId }, providerGateway: gateway })
+  const turn = f.turn()
+  let presented = false
+  const result = await runtime.executeActivity({ runId, kind: 'chat', conversationId: f.request.conversationId,
+    providerId: f.request.providerId, model: f.request.model, request: turn.request,
+    context: { schema: 'islemind.context-snapshot.v1', id: asContextSnapshotId('context'), createdAt: 1,
+      conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [] },
+    executor: { async execute({ continueProviderTurns }) {
+      const outcome = await continueProviderTurns!({ request: turn.request, session: f.session,
+        calls: turn.calls, reasoningReplay: [], outputText: '', stream: gateway.stream })
+      expect(outcome.pendingConfirmation?.operationId).toBe('first')
+      expect((await persistence.get(runId))?.pendingModelOperation).toEqual(outcome.pendingConfirmation)
+      presented = true
+      return {}
+    } },
+  })
+  expect(presented).toBe(true)
+  expect(result.ok && result.value.status).toBe('awaiting-confirmation')
+  expect(f.executeExternal).not.toHaveBeenCalled()
+  expect(providerTurns).toBe(0)
+  const pending = (await persistence.get(runId))!.pendingModelOperation!
+  if (decision === 'cancel-after-restart') {
+    const recovered = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => runId }, providerGateway: gateway })
+    const cancelled = await recovered.cancel(runId)
+    expect(cancelled.ok && cancelled.value.status).toBe('cancelled')
+    expect((await persistence.get(runId))?.status).toBe('cancelled')
+    const staleApproval = await recovered.resumeModelOperation({ runId, session: f.session, approved: true,
+      continuationToken: pending.continuationToken, continuationDigest: pending.continuationDigest })
+    expect(staleApproval.ok).toBe(false)
+    expect(f.executeExternal).not.toHaveBeenCalled()
+    expect(providerTurns).toBe(0)
+    return
+  }
+  const resumed = await runtime.resumeModelOperation({ runId, session: f.session, approved,
+    continuationToken: pending.continuationToken, continuationDigest: pending.continuationDigest })
+  expect(resumed.ok && resumed.value.status).toBe('succeeded')
+  expect(f.executeExternal).toHaveBeenCalledTimes(approved ? 1 : 0)
+  expect(providerTurns).toBe(1)
+})
+
+test('batch dispatch advances exactly once per checkpoint and replays the original native group once', async () => {
+  const f = await fixture('read-only')
+  const turn = batchTurn(f)
+  const first = await f.session.evaluateTurn(turn)
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+  if (first.kind !== 'continue' || !first.operationBatch) throw new Error('Expected a queued second call')
+  expect(first.operationBatch.receipts).toHaveLength(1)
+  expect(first.request.messages).toHaveLength(0) // Never send incomplete native result groups to a provider.
+  const second = await f.session.evaluateTurn({ ...turn, request: first.request, calls: [], stepIndex: 1, operationBatch: first.operationBatch })
+  if (second.kind !== 'continue') throw new Error('Expected completed batch')
+  expect(second.operationBatch).toBeUndefined()
+  expect(f.executeExternal).toHaveBeenCalledTimes(2)
+  const assistant = second.request.messages.filter(message => message.role === 'assistant')
+  expect(assistant).toHaveLength(1)
+  expect(assistant[0].toolCalls).toMatchObject(turn.calls.map(call => ({ callId: call.callId, providerMetadata: call.providerMetadata })))
+  expect(second.request.messages.filter(message => message.role === 'tool').map(message => message.toolCallId)).toEqual(['batch-0', 'batch-1'])
+})
+
+test('failure records a not-executed tail rather than dispatching it or claiming success', async () => {
+  const f = await fixture('read-only')
+  f.executeExternal.mockResolvedValue({ observation: { ok: false, output: 'Disk unavailable', metadata: { taskId: 'task', taskStatus: 'failed' } } })
+  const turn = batchTurn(f)
+  const first = await f.session.evaluateTurn(turn)
+  if (first.kind !== 'continue' || !first.operationBatch) throw new Error('Expected queued tail')
+  const last = await f.session.evaluateTurn({ ...turn, request: first.request, stepIndex: 1, calls: [], operationBatch: first.operationBatch })
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+  if (last.kind !== 'continue') throw new Error('Expected batch feedback')
+  expect(last.receipt).toMatchObject({ status: 'rejected', code: 'batch_stopped', callId: 'batch-1' })
+  expect(last.request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.text).status)).toEqual(['failed', 'rejected'])
+})
+
+test('a native group above the eight-call bound is rejected without partial dispatch', async () => {
+  const f = await fixture('read-only')
+  const turn = batchTurn(f)
+  const result = await f.session.evaluateTurn({ ...turn, calls: Array.from({ length: 9 }, (_, index) => ({ ...turn.calls[0], callId: `large-${index}` })) })
+  expect(result.kind).toBe('continue')
+  if (result.kind === 'continue') expect(result.receipt).toMatchObject({ status: 'rejected', code: 'multiple_operations_requested' })
+  expect(f.executeExternal).not.toHaveBeenCalled()
+})
+
+test('concurrent invocations sharing a session cannot exchange batch continuation contexts', async () => {
+  const f = await fixture('read-only')
+  let release!: () => void
+  let entered!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.executeExternal.mockImplementation(async () => {
+    entered(); await gate
+    return { observation: { ok: true, output: 'done', metadata: { taskId: 'task', taskStatus: 'succeeded' } } }
+  })
+  const turn = batchTurn(f)
+  const first = f.session.evaluateTurn(turn)
+  await started
+  const second = f.session.evaluateTurn({ ...turn, run: { ...f.run, id: asAssistantRunId('other-run') } })
+  await Promise.resolve()
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+  release()
+  const [left, right] = await Promise.all([first, second])
+  if (left.kind !== 'continue' || right.kind !== 'continue') throw new Error('Expected queued results')
+  expect(left.operationBatch?.turnId).toBe('run')
+  expect(right.operationBatch?.turnId).toBe('other-run')
+})
+
+test('each write in a batch needs its own exact confirmation, including after session recreation', async () => {
+  const f = await fixture('read-write')
+  const turn = batchTurn(f)
+  const first = await f.session.evaluateTurn(turn)
+  if (first.kind !== 'awaiting-confirmation') throw new Error('Expected first confirmation')
+  expect(f.executeExternal).not.toHaveBeenCalled()
+  expect(f.session.validatePending({ run: f.run, pending: first.pending })).toBe(true)
+  const recreated = (await createConversationModelOperationSession(f.input, f.dependencies))!
+  const approved = await recreated.resume({ run: f.run, pending: first.pending, approved: true, signal: turn.signal })
+  if (approved.kind !== 'continue' || !approved.operationBatch) throw new Error('Expected pending tail')
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+  const second = await recreated.evaluateTurn({ ...turn, request: approved.request, stepIndex: 1, calls: [], operationBatch: approved.operationBatch })
+  if (second.kind !== 'awaiting-confirmation') throw new Error('Expected independent second confirmation')
+  expect(second.pending.callId).toBe('batch-1')
+  expect(second.pending.continuationToken).not.toBe(first.pending.continuationToken)
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+  const declined = await recreated.resume({ run: f.run, pending: second.pending, approved: false, signal: turn.signal })
+  if (declined.kind !== 'continue') throw new Error('Expected declined feedback')
+  expect(declined.receipt.status).toBe('rejected')
+  expect(declined.operationBatch).toBeUndefined()
+})
+
+test('an expired approval returns a not-executed receipt and stops the queued tail', async () => {
+  const f = await fixture('read-write')
+  const turn = batchTurn(f)
+  const first = await f.session.evaluateTurn(turn)
+  if (first.kind !== 'awaiting-confirmation') throw new Error('Expected first confirmation')
+  const recreated = (await createConversationModelOperationSession(f.input, f.dependencies))!
+  const expired = await recreated.resume({ run: f.run, pending: first.pending, approved: true, authorizationExpired: true, signal: turn.signal })
+  expect(f.executeExternal).not.toHaveBeenCalled()
+  if (expired.kind !== 'continue') throw new Error('Expected model feedback')
+  expect(expired.receipt).toMatchObject({ status: 'rejected', code: 'confirmation_expired', callId: 'batch-0' })
+  const tail = await recreated.evaluateTurn({ ...turn, request: expired.request, stepIndex: 1, calls: [], operationBatch: expired.operationBatch })
+  if (tail.kind !== 'continue') throw new Error('Expected batch feedback')
+  expect(tail.receipt).toMatchObject({ status: 'rejected', code: 'batch_stopped', callId: 'batch-1' })
+  expect(tail.operationBatch).toBeUndefined()
+  expect(tail.request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.text).code))
+    .toEqual(['confirmation_expired', 'batch_stopped'])
+  // The consumed confirmation cannot later be approved as a fresh grant.
+  const again = await recreated.resume({ run: f.run, pending: first.pending, approved: true, signal: turn.signal })
+  expect(again.kind === 'continue' && again.receipt.code).toBe('confirmation_already_consumed')
+  expect(f.executeExternal).not.toHaveBeenCalled()
+})
+
+test('Harness persists the full batch on the first confirmation and resumes each independently approved write', async () => {
+  const f = await fixture('read-write')
+  const persistence = createInMemoryRunStore()
+  const runId = asAssistantRunId('approved-batch')
+  let turns = 0
+  const runtime = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => 'approved-batch' },
+    providerGateway: { describe: () => undefined, async *stream(request) {
+      if (++turns === 1) {
+        for (const [index, tool] of request.toolDefinitions!.entries()) yield { type: 'tool-call', toolCallId: `batch-${index}`, toolName: tool.name, arguments: { target: 'item' } }
+      } else {
+        expect(request.messages.filter(message => message.role === 'tool')).toHaveLength(2)
+        yield { type: 'text-delta', text: 'Both approved operations completed.' }
+      }
+    } } })
+  await runtime.execute({ runId, request: f.request, modelOperationSession: f.session,
+    context: { schema: 'islemind.context-snapshot.v1', id: asContextSnapshotId('context'), createdAt: 1,
+      conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [] } })
+  for (let index = 0; index < 2; index++) {
+    const saved = (await persistence.get(runId))!
+    expect(saved.status).toBe('awaiting-confirmation')
+    expect(saved.lifecycleCheckpoint?.operationBatch?.receipts).toHaveLength(index)
+    expect(saved.pendingModelOperation?.callId).toBe(`batch-${index}`)
+    expect(f.executeExternal).toHaveBeenCalledTimes(index)
+    const pending = saved.pendingModelOperation!
+    const fresh = (await createConversationModelOperationSession(f.input, f.dependencies))!
+    const result = await runtime.resumeModelOperation({ runId, session: fresh, approved: true,
+      continuationToken: pending.continuationToken, continuationDigest: pending.continuationDigest })
+    expect(result.ok).toBe(true)
+  }
+  expect((await persistence.get(runId))?.status).toBe('succeeded')
+  expect(f.executeExternal).toHaveBeenCalledTimes(2)
+  expect(turns).toBe(2)
+})
+
+test('queued calls reject changed request/catalog, tampering and duplicate ids before dispatch', async () => {
+  const f = await fixture('read-only')
+  const turn = batchTurn(f)
+  await expect(f.session.evaluateTurn({ ...turn, calls: [turn.calls[0], turn.calls[0]] })).rejects.toThrow('batch')
+  expect(f.executeExternal).not.toHaveBeenCalled()
+  const first = await f.session.evaluateTurn(turn)
+  if (first.kind !== 'continue' || !first.operationBatch) throw new Error('Expected queue')
+  for (const change of [
+    { request: { ...first.request, model: 'changed' } },
+    { operationBatch: { ...first.operationBatch, receipts: [] } },
+  ]) {
+    await expect(f.session.evaluateTurn({ ...turn, request: first.request, stepIndex: 1, calls: [], operationBatch: first.operationBatch, ...change })).rejects.toThrow()
+  }
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+})
+
+test.each([false, true])('Harness commits each batch receipt before the next dispatch (commit failure: %s)', async failCommit => {
+  const f = await fixture('read-only')
+  const store = createInMemoryRunStore()
+  const runId = asAssistantRunId('batch-runtime')
+  let providerTurns = 0
+  let effects = 0
+  const persistence = { ...store, async appendAndSave(...args: Parameters<typeof store.appendAndSave>) {
+    if (failCommit && args[0].type === 'model-operation.selected') throw new Error('simulated storage failure')
+    return store.appendAndSave(...args)
+  } }
+  f.executeExternal.mockImplementation(async () => {
+    if (++effects === 2) {
+      const receipts = (await store.list(runId)).filter(entry => entry.type === 'model-operation.selected')
+      expect(receipts).toHaveLength(1)
+      expect(receipts[0].data?.receipt).toMatchObject({ callId: 'batch-0', status: 'succeeded' })
+    }
+    return { observation: { ok: true, output: `result-${effects}`, metadata: { taskId: 'task', taskStatus: 'succeeded' } } }
+  })
+  const runtime = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => 'batch-runtime' },
+    providerGateway: { describe: () => undefined, async *stream(request) {
+      if (++providerTurns === 1) {
+        for (const [index, tool] of request.toolDefinitions!.entries()) {
+          yield { type: 'tool-call', toolCallId: `batch-${index}`, toolName: tool.name, arguments: { target: 'item' } }
+        }
+      } else {
+        expect(effects).toBe(2)
+        expect(request.messages.filter(message => message.role === 'tool')).toHaveLength(2)
+        yield { type: 'text-delta', text: 'All recorded.' }
+      }
+    } } })
+  const result = await runtime.execute({ runId, request: f.request, modelOperationSession: f.session,
+    context: { schema: 'islemind.context-snapshot.v1', id: asContextSnapshotId('context'), createdAt: 1,
+      conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [] } })
+  expect(result.ok).toBe(!failCommit)
+  expect(effects).toBe(failCommit ? 1 : 2)
+  expect(providerTurns).toBe(failCommit ? 1 : 2)
+  if (failCommit) {
+    expect((await store.get(runId))?.lifecycleCheckpoint?.recovery).toBe('reconciliation-required')
+  } else {
+    expect((await store.list(runId)).filter(entry => entry.type === 'model-operation.selected')).toHaveLength(2)
+  }
+})
+
+test('cancelling between committed operations preserves the completed receipt and never dispatches the tail', async () => {
+  const f = await fixture('read-only')
+  const persistence = createInMemoryRunStore()
+  const runId = asAssistantRunId('cancel-batch')
+  const runtime = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => 'cancel-batch' },
+    providerGateway: { describe: () => undefined, async *stream(request) {
+      for (const [index, tool] of request.toolDefinitions!.entries()) {
+        yield { type: 'tool-call', toolCallId: `batch-${index}`, toolName: tool.name, arguments: { target: 'item' } }
+      }
+    } } })
+  let cancellation: Promise<unknown> | undefined
+  runtime.subscribe(({ journalEntry }) => {
+    if (journalEntry.type === 'model-operation.selected' && !cancellation) cancellation = runtime.cancel(runId)
+  })
+  await runtime.execute({ runId, request: f.request, modelOperationSession: f.session,
+    context: { schema: 'islemind.context-snapshot.v1', id: asContextSnapshotId('context'), createdAt: 1,
+      conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [] } })
+  await cancellation
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+  expect((await persistence.get(runId))?.status).toBe('cancelled')
+  expect((await persistence.list(runId)).filter(entry => entry.type === 'model-operation.selected').map(entry => entry.data?.receipt))
+    .toEqual([expect.objectContaining({ callId: 'batch-0', status: 'succeeded' })])
+})
+
+test.each(['succeeded', 'failed', 'cancelled'] as const)('cancellation preserves a late %s executor receipt without reviving the run or dispatching the batch tail', async status => {
+  const f = await fixture('read-only')
+  const persistence = createInMemoryRunStore()
+  const runId = asAssistantRunId('late-receipt')
+  let enter!: () => void; let release!: () => void
+  const started = new Promise<void>(resolve => { enter = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.executeExternal.mockImplementation(async () => {
+    enter(); await gate
+    return { observation: { ok: status === 'succeeded', output: 'File receipt: partial copy, 4096 bytes, target draft',
+      metadata: { taskId: 'task', taskStatus: status } } }
+  })
+  let providerTurns = 0
+  const runtime = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => runId },
+    providerGateway: { describe: () => undefined, async *stream(request) {
+      ++providerTurns
+      for (const [index, tool] of request.toolDefinitions!.entries()) {
+        yield { type: 'tool-call', toolCallId: `batch-${index}`, toolName: tool.name, arguments: { target: 'item' } }
+      }
+    } } })
+  const execution = runtime.execute({ runId, request: f.request, modelOperationSession: f.session,
+    context: { schema: 'islemind.context-snapshot.v1', id: asContextSnapshotId('context'), createdAt: 1,
+      conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [] } })
+  await started
+  await runtime.cancel(runId)
+  const stopped = (await persistence.get(runId))!
+  expect(stopped.status).toBe('cancelled')
+  release(); await execution
+  const saved = (await persistence.get(runId))!
+  expect(saved.status).toBe('cancelled')
+  expect(saved.completedAt).toBe(stopped.completedAt)
+  expect(saved.lifecycleCheckpoint?.recovery).toBe('reconciliation-required')
+  expect(saved.lifecycleCheckpoint?.stepIndex).toBe(0)
+  expect(saved.checkpoint).toEqual(stopped.checkpoint)
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+  expect(providerTurns).toBe(1)
+  const receipts = (await persistence.list(runId)).filter(entry => entry.type === 'model-operation.selected')
+  expect(receipts).toHaveLength(1)
+  expect(receipts[0].data).toMatchObject({ afterStop: true, receipt: { status, output: expect.stringContaining('4096 bytes') } })
+  expect((await runtime.resume({ runId, modelOperationSession: f.session })).ok).toBe(false)
+})
+
+test('a definitive result returned after pause checkpoints the native call and resumes only the next operation', async () => {
+  const f = await fixture('read-only')
+  const persistence = createInMemoryRunStore()
+  const runId = asAssistantRunId('paused-late-receipt')
+  let enter!: () => void; let release!: () => void
+  const started = new Promise<void>(resolve => { enter = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.executeExternal.mockImplementationOnce(async () => {
+    enter(); await gate
+    return { observation: { ok: true, output: 'First action really completed', metadata: { taskId: 'task', taskStatus: 'succeeded' } } }
+  })
+  let providerTurns = 0
+  const runtime = createAssistantRuntime({ persistence, clock: { now: Date.now }, ids: { next: () => runId },
+    providerGateway: { describe: () => undefined, async *stream(request) {
+      if (++providerTurns === 1) {
+        for (const [index, tool] of request.toolDefinitions!.entries()) {
+          yield { type: 'tool-call', toolCallId: `batch-${index}`, toolName: tool.name, arguments: { target: 'item' } }
+        }
+      } else {
+        expect(request.messages.filter(message => message.role === 'tool')).toHaveLength(2)
+        yield { type: 'text-delta', text: 'Complete' }
+      }
+    } } })
+  const execution = runtime.execute({ runId, request: f.request, modelOperationSession: f.session,
+    context: { schema: 'islemind.context-snapshot.v1', id: asContextSnapshotId('context'), createdAt: 1,
+      conversationMessageIds: [], memoryIds: [], knowledgeSourceIds: [], attachmentIds: [], approvedToolContextIds: [] } })
+  await started; await runtime.pause(runId); release(); await execution
+  const saved = (await persistence.get(runId))!
+  expect(saved.status).toBe('paused')
+  expect(saved.lifecycleCheckpoint).toMatchObject({ stepIndex: 1, recovery: 'resumable', operationBatch: { receipts: [expect.objectContaining({ status: 'succeeded' })] } })
+  expect(f.executeExternal).toHaveBeenCalledTimes(1)
+  let finish!: () => void
+  const completed = new Promise<void>(resolve => { finish = resolve })
+  const unsubscribe = runtime.subscribe(({ run }) => { if (run.status === 'succeeded' || run.status === 'failed') finish() })
+  expect((await runtime.resume({ runId, modelOperationSession: f.session })).ok).toBe(true)
+  await completed; unsubscribe()
+  expect(f.executeExternal).toHaveBeenCalledTimes(2)
+  expect(providerTurns).toBe(2)
+})
+
+test('a single native receipt after abort keeps the matching call when constructing a safe checkpoint', async () => {
+  const f = await fixture('read-only')
+  const controller = new AbortController()
+  f.executeExternal.mockImplementation(async () => {
+    controller.abort()
+    return { observation: { ok: true, output: 'Completed before cancellation', metadata: { taskId: 'task', taskStatus: 'succeeded' } } }
+  })
+  const outcome = await f.session.evaluateTurn({ ...f.turn(), signal: controller.signal })
+  if (outcome.kind !== 'continue') throw new Error('Expected a definitive receipt checkpoint')
+  expect(outcome.request.messages.map(message => message.role)).toEqual(['assistant', 'tool'])
+  expect(outcome.request.messages[0].toolCalls?.[0].callId).toBe('call')
+  expect(outcome.request.messages[1].toolCallId).toBe('call')
+  expect(outcome.receipt.status).toBe('succeeded')
+})
 
 test('read-write intent is persisted before Tasks admission and approval binds the exact operation', async () => {
   const f = await fixture()

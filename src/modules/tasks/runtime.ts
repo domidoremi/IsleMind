@@ -12,6 +12,9 @@ import type {
   ExecuteTaskInput,
   Task,
   TaskArtifact,
+  TaskEffectIntent,
+  TaskEffectReceipt,
+  TaskEffectRecorder,
   TaskExecutionResult,
   TaskJournalEntry,
   TaskJournalEventType,
@@ -20,6 +23,7 @@ import type {
   TaskRuntimeDependencies,
   TaskRuntimeErrorCode,
 } from './contracts'
+import { freezeTaskEffectIntent, freezeTaskEffectReceipt, MAX_TASK_EFFECTS, summarizeTaskEffects } from './application/taskEffect'
 
 const TASK_TEXT_LIMIT = 2_000
 const TASK_ARTIFACT_LIMIT = 32
@@ -153,10 +157,18 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
         }
 
         let execution: TaskExecutionResult
+        const effects = createEffectRecorder(active, dependencies, () => activeTasks.get(taskId) === active)
         try {
-          execution = await executor.execute(active.task, { signal: active.controller.signal })
-        } catch {
-          if (active.cancellationRequested || active.controller.signal.aborted) {
+          try {
+            execution = await executor.execute(active.task, { signal: active.controller.signal, effects: effects.recorder })
+          } finally {
+            // Drain even when the executor throws or forgets to await a write.
+            // Closing revokes old callbacks before committing a terminal state.
+            await effects.close()
+          }
+        } catch (error) {
+          if (error instanceof TaskPersistenceFailure) throw error
+          if (active.cancellationRequested) {
             const cancelled = await finishCancelled(active, dependencies)
             return err('cancelled', 'The task was cancelled.', { retryable: true, details: { taskId: cancelled.id } })
           }
@@ -167,7 +179,7 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
           })
         }
 
-        if (active.cancellationRequested || active.controller.signal.aborted) {
+        if (active.cancellationRequested) {
           const cancelled = await finishCancelled(active, dependencies)
           return err('cancelled', 'The task was cancelled.', { retryable: true, details: { taskId: cancelled.id } })
         }
@@ -204,8 +216,18 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
           return err('cancelled', 'The task was cancelled.', { retryable: true, details: { taskId: cancelled.id } })
         }
         return ok(succeeded)
-      } catch {
-        if (active.cancellationRequested || active.controller.signal.aborted) {
+      } catch (error) {
+        if (error instanceof TaskPersistenceFailure) {
+          // Best-effort terminalization must not manufacture a receipt. When
+          // storage accepts a later write, the UI can immediately distinguish
+          // missing evidence from an operation that is still executing.
+          try {
+            if (active.cancellationRequested) await finishCancelled(active, dependencies)
+            else await finishFailed(active, dependencies, 'executor_failed', 'Task evidence could not be recorded; inspect local effects before retrying.')
+          } catch { /* A fully unavailable journal remains fenced until recovery. */ }
+          return err('persistence_failed', 'Task evidence could not be recorded. Inspect the operation before retrying.', { retryable: false })
+        }
+        if (active.cancellationRequested) {
           try {
             const cancelled = await finishCancelled(active, dependencies)
             return err('cancelled', 'The task was cancelled.', { retryable: true, details: { taskId: cancelled.id } })
@@ -288,7 +310,12 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
       return dependencies.persistence.get(taskId)
     },
 
-    async recoverInterruptedTasks() {
+    async getEffectSummary(taskId) {
+      const task = await dependencies.persistence.get(taskId)
+      return task ? summarizeTaskEffects(task, await dependencies.persistence.list(taskId)) : undefined
+    },
+
+    async recoverInterruptedTasks(options) {
       let tasks: readonly Task[]
       try {
         tasks = await dependencies.persistence.listRecoverable()
@@ -307,6 +334,14 @@ export function createTaskRuntime(dependencies: TaskRuntimeDependencies): TaskRu
           } else if (task.status === 'awaiting-confirmation') {
             recovered.push(await record(createPassiveTask(task), dependencies, 'task.expired', {
               reason: 'confirmation_expired_after_restart',
+            }, {
+              status: 'expired',
+              completedAt: dependencies.clock.now(),
+            }))
+          } else if (task.status === 'queued' && options?.staleQueuedBefore !== undefined
+            && task.createdAt < options.staleQueuedBefore) {
+            recovered.push(await record(createPassiveTask(task), dependencies, 'task.expired', {
+              reason: 'not_started_before_restart',
             }, {
               status: 'expired',
               completedAt: dependencies.clock.now(),
@@ -415,8 +450,14 @@ async function record(
   return enqueue(active, async () => {
     // Terminal writes and cancellation are monotonic. A delayed artifact or
     // executor result cannot resurrect a stopped task or report it as success.
-    if (isTerminalTask(active.task)) return active.task
-    if (active.cancellationRequested && type !== 'task.cancellation-requested' && type !== 'task.cancelled') {
+    // A still-owned effect may settle after cancellation. Evidence can advance
+    // the journal, but never change terminal status or grant further execution.
+    const effectReceipt = type === 'task.effect-settled'
+    if (isTerminalTask(active.task) && !(effectReceipt && active.task.status === 'cancelled')) {
+      if (type === 'task.effect-started') throw new Error('The task no longer admits effects.')
+      return active.task
+    }
+    if (active.cancellationRequested && type !== 'task.cancellation-requested' && type !== 'task.cancelled' && !effectReceipt) {
       throw new Error('The task was cancelled before this state transition.')
     }
     const next = {
@@ -428,11 +469,67 @@ async function record(
     try {
       await dependencies.persistence.appendAndSave(entry, next)
       active.task = next
+      try { dependencies.onRecorded?.(entry, next) } catch { /* Observation cannot change the durable outcome. */ }
       return next
     } catch {
       throw new TaskPersistenceFailure()
     }
   })
+}
+
+function createEffectRecorder(active: ActiveTask, dependencies: TaskRuntimeDependencies, current: () => boolean) {
+  const effects = new Map<string, 'writing' | 'pending' | 'settled'>()
+  let failure: unknown
+  let accepting = true
+  let nonSuccessful = false
+  let tail: Promise<void> = Promise.resolve()
+  const serialize = <T>(input: T, freeze: (input: T) => T, work: (input: T) => Promise<void>) => {
+    if (!accepting || !current()) return Promise.reject(new Error('Task effect invocation is closed'))
+    // Snapshot at admission, not after an asynchronous queue delay.
+    let snapshot: T
+    try { snapshot = freeze(input) } catch (error) {
+      failure ??= error
+      active.controller.abort()
+      return Promise.reject(error)
+    }
+    const next = tail.then(() => work(snapshot))
+    tail = next.catch(error => {
+      if (!failure || error instanceof TaskPersistenceFailure) failure = error
+      active.controller.abort()
+    })
+    return next
+  }
+  const recorder: TaskEffectRecorder = Object.freeze({
+    begin(input: TaskEffectIntent) {
+      return serialize(input, freezeTaskEffectIntent, async intent => {
+        if (!current() || failure || nonSuccessful || active.controller.signal.aborted || active.task.status !== 'running'
+          || effects.has(intent.id) || effects.size >= MAX_TASK_EFFECTS || [...effects.values()].some(state => state !== 'settled')) {
+          throw new Error('Task effect dispatch is not admitted')
+        }
+        effects.set(intent.id, 'writing')
+        await record(active, dependencies, 'task.effect-started', { intent: { ...intent } })
+        effects.set(intent.id, 'pending')
+      })
+    },
+    settle(input: TaskEffectReceipt) {
+      return serialize(input, freezeTaskEffectReceipt, async receipt => {
+        // Admission is fenced after an error, but an owned in-flight effect must
+        // still be able to record its real outcome (including after cancellation).
+        if (!current() || effects.get(receipt.id) !== 'pending') throw new Error('Task effect receipt has no active intent')
+        await record(active, dependencies, 'task.effect-settled', { receipt: { ...receipt } })
+        effects.set(receipt.id, 'settled')
+        if (receipt.status !== 'succeeded') nonSuccessful = true
+      })
+    },
+  })
+  return { recorder, async close() {
+    accepting = false
+    await tail
+    if (failure) throw failure
+    if (nonSuccessful || [...effects.values()].some(state => state !== 'settled')) {
+      throw new Error('Task effects did not complete successfully; inspect durable evidence before retrying.')
+    }
+  } }
 }
 
 function createJournalEntry(task: Task, occurredAt: number, type: TaskJournalEventType, data: JsonRecord): TaskJournalEntry {

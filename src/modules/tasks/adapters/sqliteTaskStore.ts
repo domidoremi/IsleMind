@@ -5,6 +5,7 @@ import {
   type SqliteExecutor,
 } from '@/platform/storage'
 import * as v from 'valibot'
+import { freezeTaskEffectIntent, freezeTaskEffectReceipt, projectTaskEffect, type TaskEffectHistory } from '../application/taskEffect'
 import type {
   Task,
   TaskArtifact,
@@ -84,7 +85,7 @@ export class TaskPersistenceDataError extends Error {
   }
 }
 
-export function createSqliteTaskPersistence(databaseProvider: SqliteDatabaseProvider): TaskPersistence {
+export function createSqliteTaskPersistence(databaseProvider: SqliteDatabaseProvider): TaskPersistence & TaskEffectHistory {
   let initialized: Promise<void> | undefined
 
   async function database() {
@@ -130,12 +131,52 @@ export function createSqliteTaskPersistence(databaseProvider: SqliteDatabaseProv
           `)
         },
       },
+      { scope: MIGRATION_SCOPE, version: 2, name: 'task-effect-history-indexes', async up(transaction) {
+        await transaction.exec(`
+          CREATE INDEX IF NOT EXISTS assistant_tasks_run_effects_idx ON assistant_tasks(runId, createdAt, id);
+          CREATE INDEX IF NOT EXISTS assistant_task_effects_idx ON assistant_task_journal(taskId, type, sequence);
+        `)
+      } },
     ])
     await initialized
     return value
   }
 
   return {
+    async listEffects(runId, before) {
+      if (before && (!isTimestamp(before.createdAt) || !isBoundedText(before.taskId, 256)
+        || !Number.isSafeInteger(before.sequence) || before.sequence < 1)) throw new TaskPersistenceDataError('Invalid effect cursor')
+      // Select bounded intents first; never load the full run journal or tool
+      // metadata. The receipt join preserves a stable cursor while it updates.
+      const rows = await (await database()).getAll<TaskJournalRow & {
+        createdAt: number; toolId: string; status: TaskStatus; cancellationRequestedAt: number | null;
+        receiptJson: string | null; receiptCount: number
+      }>(`WITH intents AS (
+        SELECT j.*, t.createdAt, t.toolId, t.status, t.cancellationRequestedAt
+        FROM assistant_tasks t JOIN assistant_task_journal j ON j.taskId = t.id
+        WHERE t.runId = ? AND j.type = 'task.effect-started'
+          ${before ? 'AND (t.createdAt, t.id, j.sequence) < (?, ?, ?)' : ''}
+        ORDER BY t.createdAt DESC, t.id DESC, j.sequence DESC LIMIT 21
+      ) SELECT i.*,
+        (SELECT r.dataJson FROM assistant_task_journal r WHERE r.taskId = i.taskId AND r.type = 'task.effect-settled'
+          AND r.sequence > i.sequence AND json_extract(r.dataJson, '$.receipt.id') = json_extract(i.dataJson, '$.intent.id')
+          ORDER BY r.sequence DESC LIMIT 1) AS receiptJson,
+        (SELECT COUNT(*) FROM assistant_task_journal r WHERE r.taskId = i.taskId AND r.type = 'task.effect-settled'
+          AND r.sequence > i.sequence AND json_extract(r.dataJson, '$.receipt.id') = json_extract(i.dataJson, '$.intent.id')) AS receiptCount
+        FROM intents i ORDER BY i.createdAt DESC, i.taskId DESC, i.sequence DESC`,
+        [runId, ...(before ? [before.createdAt, before.taskId, before.sequence] : [])])
+      const selected = rows.slice(0, 20)
+      const entries = selected.map(row => {
+        const entry = parseJournalEntry(row)
+        if (row.receiptCount > 1 || !isTaskStatus(row.status)) throw new TaskPersistenceDataError('Ambiguous effect history')
+        const receiptEntry = row.receiptJson === null ? undefined : parseJournalEntry({ ...row, type: 'task.effect-settled', dataJson: row.receiptJson })
+        return projectTaskEffect({ id: asTaskId(row.taskId), toolId: row.toolId, status: row.status,
+          cancellationRequestedAt: row.cancellationRequestedAt ?? undefined }, row.occurredAt,
+          freezeTaskEffectIntent(entry.data?.intent), receiptEntry ? freezeTaskEffectReceipt(receiptEntry.data?.receipt) : undefined)
+      }).reverse()
+      const last = selected.at(-1)
+      return { entries, ...(rows.length > 20 && last ? { before: { createdAt: last.createdAt, taskId: last.taskId, sequence: last.sequence } } : {}) }
+    },
     async get(taskId) {
       const row = await (await database()).getFirst<TaskRow>(taskSelectSql('WHERE id = ?'), [taskId])
       return row ? parseTask(row) : undefined
@@ -331,7 +372,17 @@ function parseJournalEntry(row: TaskJournalRow): TaskJournalEntry {
     !isTimestamp(row.occurredAt)) {
     throw new TaskPersistenceDataError('A task journal record is invalid.')
   }
+  if ((row.type === 'task.effect-started' || row.type === 'task.effect-settled') && (row.dataJson?.length ?? 0) > 17_000) {
+    throw new TaskPersistenceDataError('Oversized task effect record')
+  }
   const data = parseOptionalJson(row.dataJson, parseJsonRecord)
+  if (row.type === 'task.effect-started' || row.type === 'task.effect-settled') {
+    if ((row.dataJson?.length ?? 0) > 17_000 || !data || Object.keys(data).length !== 1) throw new TaskPersistenceDataError('Invalid task effect record')
+    try {
+      if (row.type === 'task.effect-started') freezeTaskEffectIntent(data.intent)
+      else freezeTaskEffectReceipt(data.receipt)
+    } catch { throw new TaskPersistenceDataError('Invalid task effect record') }
+  }
   return {
     schema: 'islemind.task-journal-entry.v1',
     taskId: asTaskId(row.taskId),
@@ -433,7 +484,7 @@ function isTerminalStatus(value: TaskStatus): boolean {
 
 function isTaskJournalEventType(value: string): value is TaskJournalEventType {
   return value === 'task.created' || value === 'task.confirmed' || value === 'task.started' ||
-    value === 'task.artifact-recorded' || value === 'task.cancellation-requested' ||
+    value === 'task.artifact-recorded' || value === 'task.effect-started' || value === 'task.effect-settled' || value === 'task.cancellation-requested' ||
     value === 'task.succeeded' || value === 'task.failed' || value === 'task.cancelled' || value === 'task.expired'
 }
 

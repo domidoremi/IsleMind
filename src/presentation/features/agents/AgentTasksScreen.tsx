@@ -1,9 +1,11 @@
 import { useCallback, useRef, useState } from 'react'
-import { ScrollView, Switch, Text, View } from 'react-native'
+import { ScrollView, Switch, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IslePanel, IsleSelect } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { sanitizeTraceDisplayText } from '@/core'
 import type { AgentTaskPort } from './agentTaskPort'
 import type { AgentDefinition, AssistantRunSummary } from '@/modules/assistant-runtime'
 
@@ -18,6 +20,7 @@ export function AgentTasksScreen({ runtime, conversationId, onOpenRun, onManageA
   const [taskKind, setTaskKind] = useState<'chat' | 'research' | 'artifact'>('chat')
   const [background, setBackground] = useState(false); const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false); const [loading, setLoading] = useState(true)
+  const [errorDetail, setErrorDetail] = useState<string>()
   const [pageAfter, setPageAfter] = useState(''); const [refresh, setRefresh] = useState(0)
   const locked = useRef(false); const lifetime = useRef(0)
   useFocusEffect(useCallback(() => {
@@ -33,7 +36,7 @@ export function AgentTasksScreen({ runtime, conversationId, onOpenRun, onManageA
       } while (again && epoch === lifetime.current)
       reading = false
     }
-    setLoading(true); setError(false)
+    setLoading(true); setError(false); setErrorDetail(undefined)
     void Promise.all([loadRuns(), runtime.definitions.list({ afterId: pageAfter, limit: 50 }).then((rows) => {
       if (epoch === lifetime.current) { setAgents(rows); setAgentId((current) => rows.some((a) => a.id === current) ? current : rows[0]?.id ?? '') }
     })]).catch(() => { if (epoch === lifetime.current) setError(true) })
@@ -44,18 +47,24 @@ export function AgentTasksScreen({ runtime, conversationId, onOpenRun, onManageA
   const body = { color: colors.textSecondary, fontSize: 14, lineHeight: 21 }
   async function start() {
     if (locked.current || !conversationId || !agentId || !text.trim()) return
-    locked.current = true; setBusy(true); setError(false)
+    locked.current = true; setBusy(true); setError(false); setErrorDetail(undefined)
     const epoch = lifetime.current
     try {
       const input = { conversationId, agentId, text, background, taskKind }
       const run = await runtime.start(input)
       if (epoch === lifetime.current) { setText(''); onOpenRun(run.id) }
-    } catch { if (epoch === lifetime.current) setError(true) }
+    } catch (cause) {
+      if (epoch === lifetime.current) {
+        setError(true)
+        setErrorDetail(cause instanceof Error ? sanitizeTraceDisplayText(cause.message, 400) : undefined)
+      }
+    }
     finally { locked.current = false; setBusy(false) }
   }
   return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, gap: 16 }}>
     <Text style={body}>{t('agentTasks.newRunHint')}</Text>
     {error ? <Text accessibilityRole="alert" style={body}>{t('agentTasks.failed')}</Text> : null}
+    {error && errorDetail ? <Text selectable accessibilityLiveRegion="polite" style={body}>{errorDetail}</Text> : null}
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       <IsleButton label={t('agents.title')} onPress={onManageAgents} disabled={busy} />
       <IsleButton label={t('agentTasks.refresh')} onPress={() => setRefresh((n) => n + 1)} disabled={busy} />

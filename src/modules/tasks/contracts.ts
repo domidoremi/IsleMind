@@ -74,6 +74,8 @@ export type TaskJournalEventType =
   | 'task.confirmed'
   | 'task.started'
   | 'task.artifact-recorded'
+  | 'task.effect-started'
+  | 'task.effect-settled'
   | 'task.cancellation-requested'
   | 'task.succeeded'
   | 'task.failed'
@@ -123,13 +125,40 @@ export interface ConfirmTaskInput {
   confirmationId: string
 }
 
+/** Evidence of an admitted local operation, never a permission or replay token. */
+export interface TaskEffectIntent {
+  readonly id: string
+  readonly kind: 'file'
+  readonly action: 'mkdir' | 'copy' | 'move' | 'rename'
+  readonly sourceUri?: string
+  readonly sourceParentUri?: string
+  readonly targetParentUri?: string
+  readonly targetName?: string
+}
+
+export interface TaskEffectReceipt {
+  readonly id: string
+  readonly status: 'succeeded' | 'failed' | 'cancelled' | 'skipped'
+  readonly effect: 'none' | 'applied' | 'partial' | 'uncertain'
+  readonly targetUri?: string
+  readonly bytesCopied: number
+  readonly completedSteps?: readonly ('created' | 'copied' | 'moved' | 'renamed')[]
+  readonly reason?: string
+}
+
+/** Invocation-scoped callbacks. Executors must await both durability barriers. */
+export interface TaskEffectRecorder {
+  begin(intent: TaskEffectIntent): Promise<void>
+  settle(receipt: TaskEffectReceipt): Promise<void>
+}
+
 export interface TaskExecutionResult {
   artifacts?: readonly TaskArtifact[]
   summary?: string
 }
 
 export interface TaskExecutor {
-  execute(task: Task, options: { signal: AbortSignal }): Promise<TaskExecutionResult>
+  execute(task: Task, options: { signal: AbortSignal; effects: TaskEffectRecorder }): Promise<TaskExecutionResult>
 }
 
 export interface ExecuteTaskInput {
@@ -154,6 +183,7 @@ export interface TaskRuntimeDependencies {
   ids: IdGenerator
   persistence: TaskPersistence
   policyEvaluator: TaskPolicyEvaluator
+  onRecorded?: (entry: TaskJournalEntry, task: Task) => void
 }
 
 export interface TaskRuntime {
@@ -165,5 +195,8 @@ export interface TaskRuntime {
   cancel(taskId: TaskId): Promise<Result<Task, TaskRuntimeErrorCode>>
   expire(taskId: TaskId, reason?: string): Promise<Result<Task, TaskRuntimeErrorCode>>
   getTask(taskId: TaskId): Promise<Task | undefined>
-  recoverInterruptedTasks(): Promise<Result<readonly Task[], 'persistence_failed'>>
+  getEffectSummary(taskId: TaskId): Promise<string | undefined>
+  /** `staleQueuedBefore` is the host process start: admitted tasks that never
+   * started before a restart are expired, so an old confirmation cannot run later. */
+  recoverInterruptedTasks(options?: { staleQueuedBefore?: number }): Promise<Result<readonly Task[], 'persistence_failed'>>
 }

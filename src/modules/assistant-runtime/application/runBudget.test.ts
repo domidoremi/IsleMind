@@ -29,6 +29,14 @@ test('partial usage, missing usage and cancellation never make requests free; la
   expect(runBudgetTotals(budget, 0)).toMatchObject({ actualTokens: 260, estimatedTokens: 0 })
   expect(settleRunAttempt(budget, { attemptId: 'a', sequence: 3, complete: false, settled: true })).toBe(budget)
 })
+
+test('an inconsistent final total cannot erase observed input/output from the shared root budget', () => {
+  let budget = reserveRunAttempt(createRunBudget('root', { ...DEFAULT_RUN_BUDGET, tokens: 500 }), reserve('root'), 0)
+  budget = settleRunAttempt(budget, { attemptId: 'root', sequence: 0, settled: true, complete: true,
+    usage: { source: 'provider', inputTokens: 200, outputTokens: 150, totalTokens: 0, reasoningTokens: 50, cachedInputTokens: 100 } })
+  expect(runBudgetTotals(budget, 0).actualTokens).toBe(350)
+  expect(() => reserveRunAttempt(budget, reserve('auxiliary', 'child'), 0)).toThrow('tokens')
+})
 test('human waiting does not spend active time and unknown prices reject monetary limits', () => {
   let budget = setRunBudgetActive(createRunBudget('root'), true, 100)
   budget = setRunBudgetActive(budget, false, 200)

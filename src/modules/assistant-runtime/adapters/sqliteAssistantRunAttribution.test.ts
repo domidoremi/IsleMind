@@ -24,6 +24,46 @@ function fixture() {
 }
 
 describe('actual attribution persistence (real SQLite)', () => {
+  it('pages the latest state of each operation without loading streams or moving old activities on completion', async () => {
+    const { native, provider } = fixture()
+    const runId = asAssistantRunId('activity-run')
+    try {
+      const persistence = createSqliteAssistantRunPersistence(provider)
+      await persistence.save({ id: runId, kind: 'chat', conversationId: 'c', providerId: 'p', model: 'm',
+        contextSnapshotId: asContextSnapshotId('context'), status: 'running', createdAt: 1, journalSequence: 0 })
+      let sequence = 0
+      const append = async (type: import('../contracts').RunJournalEventType, data: import('@/core').JsonRecord) => {
+        await persistence.append({ schema: 'islemind.assistant-run-journal-entry.v1', runId,
+          sequence: ++sequence, occurredAt: sequence * 10, type, data })
+      }
+      for (let stepIndex = 0; stepIndex < 22; stepIndex++) {
+        await append('run.checkpointed', { phase: 'operation', stepIndex,
+          operation: { callId: 'reused-call', operationId: `tool-${stepIndex}`, inputSummary: '{"password":"private-input","path":"draft"}' } })
+        await append('model-operation.selected', { receipt: { schema: 'islemind.model-operation-receipt.v1', stepIndex,
+          callId: 'reused-call', operationId: `tool-${stepIndex}`, status: 'failed', code: 'execution_failed', output: 'initial failure' } })
+      }
+      for (let index = 0; index < 120; index++) await append('stream.event', { eventType: 'text-delta', text: 'unrelated output' })
+      await append('model-operation.selected', { receipt: { schema: 'islemind.model-operation-receipt.v1', stepIndex: 0,
+        callId: 'reused-call', operationId: 'tool-0', status: 'succeeded', code: 'ok', output: '{"result":"saved","token":"private-output"}' } })
+      const first = await persistence.listOperationActivities!(runId)
+      expect(first.entries).toHaveLength(20)
+      expect(first.entries[0].trace.title).toBe('tool-2')
+      expect(first.entries[19].trace.title).toBe('tool-21')
+      expect(first.before).toBe(5)
+      const reopened = createSqliteAssistantRunPersistence(provider)
+      const older = await reopened.listOperationActivities!(runId, first.before)
+      expect(older.entries).toHaveLength(2)
+      expect(older.before).toBeUndefined()
+      expect(older.entries[0]).toMatchObject({ firstSequence: 1, sequence, trace: { title: 'tool-0', status: 'done', startedAt: 10 } })
+      expect(older.entries[1].trace.status).toBe('error')
+      expect(JSON.stringify([first, older])).not.toMatch(/private-input|private-output|unrelated output/)
+      expect(older.entries[0].trace.content).toContain('saved')
+      expect(older.entries[0].trace.metadata?.inputSummary).toContain('draft')
+      expect(await reopened.listOperationActivities!(asAssistantRunId('other-run'))).toEqual({ entries: [] })
+      await expect(reopened.listOperationActivities!(runId, -1)).rejects.toThrow('Invalid operation activity query')
+    } finally { native.close() }
+  })
+
   it('preserves the original request, actual producer, and unknown legacy state across migration/reopen', async () => {
     const { native, provider } = fixture()
     const request: ChatRequest = { schema: CHAT_REQUEST_SCHEMA, conversationId: 'c', providerId: 'preferred', model: 'alias', messages: [], generationParameterSources: {} }

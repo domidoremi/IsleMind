@@ -20,6 +20,7 @@ import { readApplicationDataRecord } from './applicationDataRecords'
 import { packChatMessages } from './contextPacking'
 import { documentLibrary } from './documentLibrary'
 import { safeHttpUrl } from '@/utils/sourceUrlSafety'
+import { taskEffectHistory } from './taskRuntime'
 
 async function taskSources(id: string) {
   const sources = await assistantRunPersistence.listCitations!(asAssistantRunId(id))
@@ -88,6 +89,8 @@ export const agentTaskRuntime = {
   get: (id: string) => applicationAssistantRuntime.getRun(asAssistantRunId(id)),
   budget: (id: string) => assistantRunBudgetStore.get(id),
   sources: taskSources,
+  activities: (id: string, before?: number) => assistantRunPersistence.listOperationActivities!(asAssistantRunId(id), before),
+  effects: taskEffectHistory,
   subscribe: applicationAssistantRuntime.subscribe,
   backgroundEnabled: assistantExecutionHost.backgroundEnabled,
   async setBackground(id: string, enabled: boolean) { await assistantExecutionHost.enableBackground(asAssistantRunId(id), enabled) },

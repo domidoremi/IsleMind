@@ -1,7 +1,8 @@
 import type { ChatRequest } from '@/core'
 import type { HarnessPauseReason } from './harnessPauseReason'
+import type { ModelOperationBatch } from './application/modelOperationBatch'
 
-/** A completed receipt is part of request; a tool replay is never recovery. */
+/** Completed receipts live in request or the bounded queue; replay is never recovery. */
 export interface HarnessCheckpoint {
   readonly schema: 'islemind.harness-checkpoint.v1'
   readonly request: ChatRequest
@@ -14,6 +15,7 @@ export interface HarnessCheckpoint {
   readonly effectCertainty: 'none' | 'settled' | 'uncertain'
   readonly recovery: 'resumable' | 'reconciliation-required'
   readonly requiresOperationSession: boolean
+  readonly operationBatch?: ModelOperationBatch
   readonly steering: readonly { readonly id: string; readonly text: string; readonly createdAt: number }[]
   readonly waitingReason?: HarnessPauseReason
 }

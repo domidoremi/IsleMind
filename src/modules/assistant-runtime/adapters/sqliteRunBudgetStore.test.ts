@@ -57,6 +57,22 @@ test('corrupt storage fails closed without rewriting history', async () => {
   } finally { native.close() }
 })
 
+test('reopened root/child admission keeps observed usage when a provider reports a smaller total', async () => {
+  const { native, provider } = fixture()
+  try {
+    const store = createSqliteRunBudgetStore(provider)
+    await store.create('root', { ...DEFAULT_RUN_BUDGET, tokens: 500 })
+    await store.attach('root', 'child')
+    await store.reserve('root', { attemptId: 'audio', runId: 'root', inputEstimate: 200, outputReservation: 100 }, 0)
+    await store.settle({ attemptId: 'audio', sequence: 0, settled: true, complete: true,
+      usage: { source: 'provider', inputTokens: 300, outputTokens: 100, totalTokens: 1 } })
+    const reopened = createSqliteRunBudgetStore(provider)
+    expect(runBudgetTotals((await reopened.get('child'))!, 0).actualTokens).toBe(400)
+    await expect(reopened.reserve('child', { attemptId: 'summary', runId: 'child', inputEstimate: 100, outputReservation: 100 }, 0)).rejects.toThrow('tokens')
+    expect(native.query('SELECT COUNT(*) AS count FROM harness_attempt_owners').get().count).toBe(1)
+  } finally { native.close() }
+})
+
 test('persisted child ownership resolves the same root tool budget and active-time union after reopening', async () => {
   const { native, provider } = fixture()
   try {

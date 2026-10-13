@@ -5,11 +5,13 @@ import type { ProviderGateway } from '@/modules/providers'
 import { createAssistantRuntime } from '../runtime'
 import { createAgentDefinition } from '../agentDefinition'
 import { createHarnessCheckpoint, projectRunSnapshot } from '../harnessCheckpoint'
-import type { AssistantModelOperationSession, AssistantModelOperationTurnOutcome, AssistantRun, AssistantRunGovernance, PendingModelOperation } from '../contracts'
+import { isModelOperationConfirmationExpired, MODEL_OPERATION_CONFIRMATION_TTL_MS, type AssistantModelOperationSession, type AssistantModelOperationTurnOutcome, type AssistantRun, type AssistantRunGovernance, type PendingModelOperation } from '../contracts'
 import { createSqliteAssistantRunPersistence } from './sqliteAssistantRunStore'
 import { createSqliteRunBudgetStore } from './sqliteRunBudgetStore'
 import { runBudgetTotals } from '../application/runBudget'
 import { DELEGATE_OPERATION } from '../agentCollaboration'
+import { createModelOperationBatch, advanceModelOperationBatch } from '../application/modelOperationBatch'
+import { buildAssistantRequestHash } from '../application/requestIdentity'
 import { checkProviderContextCapacity, ProviderContextCapacityError } from '@/modules/providers'
 
 function deferred<T = void>() {
@@ -43,7 +45,7 @@ function fixture() {
   let now = 10
   const runtime = (gateway: ProviderGateway) => createAssistantRuntime({ persistence,
     providerGateway: gateway, clock: { now: () => now++ }, ids: { next: () => `run-${now++}` } })
-  return { native, persistence, provider, runtime }
+  return { native, persistence, provider, runtime, advance(ms: number) { now += ms } }
 }
 
 const request: ChatRequest = { schema: CHAT_REQUEST_SCHEMA, conversationId: 'conversation', providerId: 'provider', model: 'model',
@@ -62,6 +64,98 @@ const continuationRequest = (): ChatRequest => ({ ...request, messages: [...requ
   { id: 'receipt', role: 'tool', toolCallId: 'call', name: 'write', text: 'already completed' }] })
 
 describe('Harness lifecycle (real SQLite)', () => {
+  it.each([false, true])('a late operation receipt survives cancellation without changing the terminal fence (commit failure: %s)', async failCommit => {
+    const fx = fixture()
+    const runId = asAssistantRunId('cancelled-receipt')
+    const entered = deferred(); const release = deferred()
+    const persistence = { ...fx.persistence, async appendAndSave(...args: Parameters<typeof fx.persistence.appendAndSave>) {
+      if (failCommit && args[0].data?.afterStop) throw new Error('receipt commit unavailable')
+      return fx.persistence.appendAndSave(...args)
+    } }
+    const runtime = createAssistantRuntime({ persistence, providerGateway: finalGateway(),
+      clock: { now: Date.now }, ids: { next: () => runId } })
+    const operations = session(async input => {
+      await input.onOperationStarted?.({ callId: 'copy', operationId: 'files.copy', inputSummary: 'source → destination' })
+      entered.resolve(); await release.promise
+      return { kind: 'cancelled', receipt: { schema: 'islemind.model-operation-receipt.v1', turnId: runId,
+        stepIndex: 0, catalogRevision: 'catalog', callId: 'copy', operationId: 'files.copy', terminal: true,
+        status: 'cancelled', code: 'cancelled', output: 'Partial copy: 4096 bytes retained at target URI' } }
+    })
+    try {
+      const execution = runtime.execute({ runId, request, context, modelOperationSession: operations })
+      await entered.promise; await runtime.cancel(runId)
+      const stopped = (await fx.persistence.get(runId))!
+      release.resolve(); await execution
+      const reopened = createSqliteAssistantRunPersistence(fx.provider)
+      const saved = (await reopened.get(runId))!
+      expect(saved.status).toBe('cancelled')
+      expect(saved.completedAt).toBe(stopped.completedAt)
+      expect(saved.checkpoint).toEqual(stopped.checkpoint)
+      expect(saved.lifecycleCheckpoint).toEqual(stopped.lifecycleCheckpoint)
+      expect(saved.lifecycleCheckpoint?.effectCertainty).toBe('uncertain')
+      const activities = await reopened.listOperationActivities!(runId)
+      expect(activities.entries).toHaveLength(1)
+      expect(activities.entries[0].trace.status).toBe(failCommit ? 'running' : 'cancelled')
+      if (!failCommit) expect(activities.entries[0].trace.content).toContain('4096 bytes')
+      expect((await fx.runtime(finalGateway()).resume({ runId, modelOperationSession: operations })).ok).toBe(false)
+    } finally { fx.native.close() }
+  })
+
+  it('recreates a paused batch from SQLite and dispatches only its unexecuted tail before the next model turn', async () => {
+    const fx = fixture()
+    const runId = asAssistantRunId('paused-batch')
+    const effects: string[] = []
+    const calls = ['first', 'second'].map(id => ({ callId: id, operationId: id, declaredName: id,
+      catalogRevision: 'catalog', schemaRevision: 'schema', arguments: {} }))
+    const operations: AssistantModelOperationSession = {
+      ...session(async input => {
+        if (!input.operationBatch && !input.calls.length) return { kind: 'no-operation' }
+        const batch = input.operationBatch ?? createModelOperationBatch({ turnId: runId, startStepIndex: 0,
+          catalogRevision: 'catalog', requestHash: buildAssistantRequestHash(input.request), calls, receipts: [], reasoningReplay: [] })
+        const call = batch.calls[batch.receipts.length]
+        effects.push(call.callId)
+        const receipt = { schema: 'islemind.model-operation-receipt.v1' as const, turnId: runId, stepIndex: input.stepIndex,
+          catalogRevision: 'catalog', callId: call.callId, operationId: call.operationId,
+          status: 'succeeded' as const, code: 'ok' as const, terminal: true, output: `${call.callId} finished` }
+        const next = advanceModelOperationBatch(batch, receipt)
+        return { kind: 'continue', receipt,
+          request: next.receipts.length === 2 ? continuationRequest() : input.request,
+          ...(next.receipts.length === 2 ? {} : { operationBatch: next }) }
+      }), supportsOperationBatches: true,
+    }
+    const runtime = fx.runtime({ describe: () => undefined, async *stream() {
+      yield { type: 'tool-call', toolCallId: 'first', toolName: 'first', arguments: {} }
+      yield { type: 'tool-call', toolCallId: 'second', toolName: 'second', arguments: {} }
+    } })
+    let pause: Promise<unknown> | undefined
+    const unsubscribe = runtime.subscribe(({ journalEntry }) => {
+      if (journalEntry.type === 'model-operation.selected' && !pause) pause = runtime.pause(runId)
+    })
+    try {
+      await runtime.execute({ runId, request, context, modelOperationSession: operations })
+      await pause
+      unsubscribe()
+      expect(effects).toEqual(['first'])
+      const saved = await fx.persistence.get(runId)
+      expect(saved?.status).toBe('paused')
+      expect(saved?.lifecycleCheckpoint?.operationBatch?.receipts).toHaveLength(1)
+      expect(saved?.lifecycleCheckpoint?.recovery).toBe('resumable')
+      let modelTurns = 0
+      const recreated = fx.runtime(finalGateway(() => { modelTurns++; expect(effects).toEqual(['first', 'second']) }))
+      expect((await recreated.resume({ runId, modelOperationSession: { ...operations, supportsOperationBatches: false } })).ok).toBe(false)
+      expect(effects).toEqual(['first'])
+      const completed = deferred()
+      recreated.subscribe(({ run }) => { if (run.status === 'succeeded' || run.status === 'failed') completed.resolve() })
+      expect((await recreated.resume({ runId, modelOperationSession: operations })).ok).toBe(true)
+      await completed.promise
+      expect((await fx.persistence.get(runId))?.status).toBe('succeeded')
+      expect(effects).toEqual(['first', 'second'])
+      expect(modelTurns).toBe(1)
+      const receipts = (await fx.persistence.list(runId)).filter(entry => entry.type === 'model-operation.selected')
+      expect(receipts.map(entry => (entry.data?.receipt as { callId: string }).callId)).toEqual(['first', 'second'])
+    } finally { unsubscribe(); fx.native.close() }
+  })
+
   it.each(['running', 'paused', 'succeeded'] as const)('restart closes stale %s budget time at durable activity, excluding offline time', async (status) => {
     const fx = fixture()
     const runId = asAssistantRunId('crashed-budget')
@@ -555,6 +649,53 @@ describe('Harness lifecycle (real SQLite)', () => {
       expect(effects).toBe(1)
       expect((await restarted.approve({ runId, approved: true, session: resumed, continuationToken: 'token', continuationDigest: 'digest' })).ok).toBe(false)
     } finally { fx.native.close() }
+  })
+
+  it('an approval after the confirmation lifetime never dispatches, including across restart', async () => {
+    const fx = fixture()
+    const runId = asAssistantRunId('expired-hitl')
+    const resumes: { approved: boolean; authorizationExpired?: boolean }[] = []
+    const pending: PendingModelOperation = { schema: 'islemind.pending-model-operation.v1', runId, callId: 'call', operationId: 'write', catalogRevision: 'catalog',
+      argumentDigest: 'arguments', idempotencyKey: 'key', continuationToken: 'token', continuationDigest: 'digest', stepIndex: 0, maxSteps: 5,
+      requestedAt: 10, continuationRequest: request, continuationMode: 'native', continuationOutputText: '', continuationState: {} }
+    const operations: AssistantModelOperationSession = { ...session(async () => ({ kind: 'awaiting-confirmation', pending, receipt: { status: 'pending_confirmation' } })),
+      async resume({ approved, authorizationExpired }) {
+        resumes.push({ approved, ...(authorizationExpired ? { authorizationExpired } : {}) })
+        // A compliant session returns a not-executed receipt instead of dispatching.
+        return { kind: 'continue', request: continuationRequest(), receipt: { status: 'rejected', code: authorizationExpired ? 'confirmation_expired' : 'ok' } }
+      } }
+    try {
+      const runtime = fx.runtime(finalGateway())
+      const result = await runtime.executeActivity({ runId, request, context, kind: 'chat', conversationId: request.conversationId,
+        providerId: request.providerId, model: request.model, executor: { async execute(input) {
+          return input.continueProviderTurns!({ request, session: operations, calls: [{ callId: 'call', name: 'write', arguments: {} }], reasoningReplay: [],
+            outputText: '', stream: finalGateway().stream })
+        } } })
+      expect(result.ok && result.value.status).toBe('awaiting-confirmation')
+      fx.advance(MODEL_OPERATION_CONFIRMATION_TTL_MS + 1)
+      const restarted = fx.runtime(finalGateway())
+      await restarted.recoverInterruptedRuns()
+      expect((await restarted.getRun(runId))?.status).toBe('awaiting-confirmation')
+      const finished = deferred()
+      restarted.subscribe(({ run }) => { if (run.status === 'succeeded') finished.resolve() })
+      const resumed = { ...operations, evaluateTurn: async () => ({ kind: 'no-operation' as const }) }
+      expect((await restarted.approve({ runId, approved: true, session: resumed, continuationToken: 'token', continuationDigest: 'digest' })).ok).toBe(true)
+      await finished.promise
+      expect(resumes).toEqual([{ approved: true, authorizationExpired: true }])
+      const journal = await fx.persistence.list(runId)
+      expect(journal.find(entry => entry.type === 'run.confirmation-resolved')?.data).toMatchObject({ approved: false, expired: true, callId: 'call' })
+      expect((await restarted.getRun(runId))?.pendingModelOperation).toBeUndefined()
+      // The consumed confirmation cannot be approved again.
+      expect((await restarted.approve({ runId, approved: true, session: resumed, continuationToken: 'token', continuationDigest: 'digest' })).ok).toBe(false)
+      expect(resumes).toHaveLength(1)
+    } finally { fx.native.close() }
+  })
+
+  it('confirmation lifetime fails closed for clocks moved backwards', () => {
+    expect(isModelOperationConfirmationExpired(1_000, 1_000 + MODEL_OPERATION_CONFIRMATION_TTL_MS)).toBe(false)
+    expect(isModelOperationConfirmationExpired(1_000, 1_001 + MODEL_OPERATION_CONFIRMATION_TTL_MS)).toBe(true)
+    expect(isModelOperationConfirmationExpired(200_000, 100_000)).toBe(true)
+    expect(isModelOperationConfirmationExpired(Number.NaN, 1)).toBe(true)
   })
 
   it('cancelling an active effect persists without its aborted signal and ignores its late receipt', async () => {

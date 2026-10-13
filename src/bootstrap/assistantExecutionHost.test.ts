@@ -35,6 +35,77 @@ function fixture() {
 beforeEach(() => jest.useFakeTimers())
 afterEach(() => jest.useRealTimers())
 
+test('an owned system picker waits without background authority and gates the next dispatch until visible', async () => {
+  const f = fixture(); const id = asAssistantRunId('picker')
+  await f.persisted(f.snapshot(id))
+  await f.persisted(f.snapshot('other'))
+  let finish!: (value: string) => void
+  const result = f.host.withSystemPicker(id, new AbortController().signal,
+    () => new Promise<string>(resolve => { finish = resolve }))
+  f.host.setVisible(false)
+  expect(f.pause.mock.calls).toEqual([['other', 'background_disabled']])
+  expect(f.acquire).not.toHaveBeenCalled()
+  expect(() => f.host.assertAdmission(id)).toThrow()
+  expect(() => f.host.executionStarted({ runId: asAssistantRunId('child'), rootRunId: id })).toThrow()
+  let settled = false
+  void result.then(() => { settled = true })
+  finish('selected'); await Promise.resolve(); await Promise.resolve()
+  expect(settled).toBe(false)
+  f.host.setVisible(true)
+  expect(await result).toBe('selected')
+  expect(f.host.backgroundEnabled(id)).toBe(false)
+  expect(() => f.host.assertAdmission(id)).not.toThrow()
+  f.host.setVisible(false)
+  expect(f.pause).toHaveBeenCalledWith(id, 'background_disabled')
+  f.host.stop()
+})
+
+test('late picker completion after cancellation never restores dispatch authority', async () => {
+  const f = fixture(); const id = asAssistantRunId('picker')
+  await f.persisted(f.snapshot(id))
+  const controller = new AbortController()
+  let finish!: () => void
+  const result = f.host.withSystemPicker(id, controller.signal, () => new Promise<void>(resolve => { finish = resolve }))
+  const rejected = expect(result).rejects.toThrow('cancelled')
+  f.host.setVisible(false); controller.abort(); await rejected
+  expect(f.pause).toHaveBeenCalledWith(id, 'background_disabled')
+  finish(); f.host.setVisible(true); await Promise.resolve()
+  expect(() => f.host.assertAdmission(id)).toThrow('background_disabled')
+  expect(f.acquire).not.toHaveBeenCalled()
+  f.host.stop()
+})
+
+test('system picker waiting releases CPU, remains cancellable and never clears a pressure fence', async () => {
+  const f = fixture(); const id = asAssistantRunId('picker')
+  await f.persisted(f.snapshot(id)); await f.host.enableBackground(id, true)
+  const controller = new AbortController()
+  const result = f.host.withSystemPicker(id, controller.signal, () => new Promise<never>(() => {}))
+  const rejected = expect(result).rejects.toThrow()
+  expect(f.release).toHaveBeenCalledTimes(1)
+  f.host.setVisible(false)
+  await jest.advanceTimersByTimeAsync(10_000)
+  expect(f.renew).not.toHaveBeenCalled()
+  f.pressure({ level: 'critical' })
+  expect(f.pause).toHaveBeenCalledWith(id, 'memory_pressure')
+  controller.abort(); await rejected
+  f.host.setVisible(true)
+  expect(() => f.host.assertAdmission(id)).toThrow('memory_pressure')
+  f.host.stop()
+})
+
+test('system picker scope cannot be opened without a sole active foreground invocation', async () => {
+  const f = fixture(); const id = asAssistantRunId('picker'); const open = jest.fn(async () => 'selected')
+  await expect(f.host.withSystemPicker(id, new AbortController().signal, open)).rejects.toThrow()
+  await f.persisted(f.snapshot(id))
+  const child = f.host.executionStarted({ runId: asAssistantRunId('child'), rootRunId: id })
+  await expect(f.host.withSystemPicker(id, new AbortController().signal, open)).rejects.toThrow()
+  child()
+  f.host.setVisible(false)
+  await expect(f.host.withSystemPicker(id, new AbortController().signal, open)).rejects.toThrow()
+  expect(open).not.toHaveBeenCalled()
+  f.host.stop()
+})
+
 test('stored running without a live invocation can neither acquire nor renew a CPU lease', async () => {
   const f = fixture()
   const id = asAssistantRunId('a')
@@ -156,6 +227,38 @@ test('critical pressure fences dispatch and releases CPU independently of blocke
   await f.persisted(f.snapshot('a', 'paused'))
   f.host.prepareUserResume(asAssistantRunId('a'))
   expect(() => f.host.assertAdmission('a')).not.toThrow()
+  f.host.stop()
+})
+
+test('an explicit foreground retry can recheck pressure before a run was created', () => {
+  const f = fixture()
+  f.pressure({ level: 'critical', cacheTrimOnly: false })
+  expect(() => f.host.assertAdmission('not-created')).toThrow('memory_pressure')
+  f.host.setVisible(false)
+  expect(() => f.host.prepareUserResume()).toThrow('visible Activity')
+  f.host.setVisible(true)
+  expect(() => f.host.assertAdmission('not-created')).toThrow('memory_pressure')
+
+  f.host.prepareUserResume()
+  expect(() => f.host.assertAdmission('not-created')).not.toThrow()
+  expect(f.acquire).not.toHaveBeenCalled()
+  expect(f.pause).not.toHaveBeenCalled()
+  f.pressure({ level: 'critical', cacheTrimOnly: false })
+  expect(() => f.host.assertAdmission('not-created')).toThrow('memory_pressure')
+  f.host.stop()
+})
+
+test('a fresh user send does not resume another pressure-paused run', async () => {
+  const f = fixture()
+  await f.persisted(f.snapshot('existing'))
+  f.pressure({ level: 'critical', cacheTrimOnly: false })
+  expect(f.pause).toHaveBeenCalledWith('existing', 'memory_pressure')
+
+  f.host.prepareUserResume()
+  expect(() => f.host.assertAdmission('new')).not.toThrow()
+  expect(() => f.host.assertAdmission('existing')).toThrow('memory_pressure')
+  expect(() => f.host.prepareUserResume(asAssistantRunId('existing'))).toThrow('already active')
+  expect(f.acquire).not.toHaveBeenCalled()
   f.host.stop()
 })
 

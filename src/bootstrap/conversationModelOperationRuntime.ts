@@ -1,7 +1,14 @@
-import { asTaskId, assertJsonTraversalBudget, clampTraceText, sanitizeTraceMetadataValue, freezeChatRequest, type ChatReasoningReplayPart, type ChatRequest, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
+import { asTaskId, measureJsonCharacters, clampTraceText, sanitizeTraceMetadataValue, freezeChatRequest, type ChatReasoningReplayPart, type ChatRequest, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
 import {
   createFrozenModelOperationCatalog,
   createModelOperationTurnRuntime,
+  createModelOperationBatch,
+  advanceModelOperationBatch,
+  decodeModelOperationBatch,
+  buildAssistantRequestHash,
+  MAX_MODEL_OPERATION_BATCH_CALLS,
+  MODEL_OPERATION_BATCH_JSON_LIMIT,
+  type ModelOperationBatch,
   type AssistantModelOperationProviderCall,
   type AssistantModelOperationSession,
   type ModelOperationCall as RuntimeModelOperationCall,
@@ -55,6 +62,7 @@ export interface ConversationModelOperationRuntimeInput {
 type PendingTaskReference = Readonly<{ taskId: string }> | Readonly<{ notDispatched: true }>
 
 interface CurrentTurn {
+  readonly operationBatch?: ModelOperationBatch
   readonly request: ChatRequest
   readonly outputText: string
   readonly nativeCallIds: ReadonlySet<string>
@@ -174,6 +182,14 @@ export async function createConversationModelOperationSession(
   const limits = resolveWorkflowRunLimitsFromSettings(input.settings)
   const permissionCeiling = resolvePermissionCeiling(limits)
   let currentTurn: CurrentTurn | undefined
+  // A session owns confirmation-consumption state and one continuation context.
+  // Multiple runs may share the port, but their async dispatch contexts must not overlap.
+  let turnTail: Promise<unknown> = Promise.resolve()
+  function serializeTurn<T>(work: () => Promise<T>): Promise<T> {
+    const next = turnTail.then(work)
+    turnTail = next.catch(() => undefined)
+    return next
+  }
   const buildIdempotencyKey = (value: {
     readonly runId: string
     readonly callId: string
@@ -256,7 +272,8 @@ export async function createConversationModelOperationSession(
       if (!attested.ok) {
         return {
           status: 'failed',
-          output: `The operation was rejected by trusted authorization (${attested.code}).`,
+          code: 'authorization_denied',
+          output: `The operation was rejected by trusted authorization (${attested.code}); it was not executed.`,
         }
       }
       const expected = {
@@ -332,6 +349,7 @@ export async function createConversationModelOperationSession(
   })
 
   const session: AssistantModelOperationSession = {
+    supportsOperationBatches: true,
     async forIndependentChild(definition, candidate) {
       if (!scope || !candidate) return undefined
       return independentSessionBindings.get(candidate)?.(definition, {
@@ -357,42 +375,74 @@ export async function createConversationModelOperationSession(
     },
 
     async evaluateTurn(turnInput) {
-      currentTurn = {
-        request: turnInput.request,
-        outputText: turnInput.outputText,
-        nativeCallIds: new Set(turnInput.calls.map((call) => call.callId)),
-        reasoningReplay: turnInput.reasoningReplay,
-        onOperationStarted: turnInput.onOperationStarted,
-      }
-      const normalized = normalizeTurnCalls(
-        snapshot,
-        turnInput.calls,
-        turnInput.outputText,
-        operationIdByProviderName,
-        providerNameByOperationId,
-      )
-      if (normalized.kind === 'none') return { kind: 'no-operation' }
-      if (normalized.kind === 'invalid-tagged-call') {
-        const receipt = invalidTaggedCallReceipt(turnInput.run.id, snapshot.revision, turnInput.stepIndex, normalized.message)
-        return {
-          kind: 'continue',
-          request: buildContinuationRequest(currentTurn, receipt),
-          receipt: toJsonRecord(receipt),
+      return serializeTurn(async () => {
+        const queued = turnInput.operationBatch
+          ? validateBatch(turnInput.operationBatch, turnInput.run.id, turnInput.request, turnInput.stepIndex)
+          : undefined
+        currentTurn = {
+          request: { ...turnInput.request, providerStateBinding: turnInput.request.providerStateBinding ?? {
+            providerId: turnInput.request.providerId, model: turnInput.request.model,
+          } },
+          outputText: turnInput.outputText,
+          nativeCallIds: new Set((queued?.calls ?? turnInput.calls).map((call) => call.callId)),
+          reasoningReplay: queued?.reasoningReplay ?? turnInput.reasoningReplay,
+          onOperationStarted: turnInput.onOperationStarted,
         }
-      }
-      return mapTurnOutcome(await turnRuntime.run({
-        turnId: turnInput.run.id,
-        stepIndex: turnInput.stepIndex,
-        completedSteps: turnInput.stepIndex,
-        maxSteps: limits.maxSteps,
-        calls: normalized.calls,
-        catalog: frozenCatalog,
-        signal: turnInput.signal,
-      }), turnInput.run.id, dependencies.now(), currentTurn)
+        const normalized = queued ? { kind: 'calls' as const, calls: queued.calls } : normalizeTurnCalls(
+          snapshot,
+          turnInput.calls,
+          turnInput.outputText,
+          operationIdByProviderName,
+          providerNameByOperationId,
+        )
+        if (normalized.kind === 'none') return { kind: 'no-operation' }
+        if (normalized.kind === 'invalid-tagged-call') {
+          const receipt = invalidTaggedCallReceipt(turnInput.run.id, snapshot.revision, turnInput.stepIndex, normalized.message)
+          return {
+            kind: 'continue',
+            request: buildContinuationRequest(currentTurn, receipt),
+            receipt: toJsonRecord(receipt),
+          }
+        }
+        let batch = queued
+        if (!batch && normalized.calls.length > 1 && normalized.calls.length <= MAX_MODEL_OPERATION_BATCH_CALLS) {
+          batch = createModelOperationBatch({ turnId: turnInput.run.id, startStepIndex: turnInput.stepIndex,
+            catalogRevision: snapshot.revision, requestHash: buildAssistantRequestHash(currentTurn.request),
+            calls: normalized.calls, receipts: [], reasoningReplay: turnInput.reasoningReplay })
+        }
+        if (batch) currentTurn = { ...currentTurn, operationBatch: batch }
+        const call = batch?.calls[batch.receipts.length]
+        if (batch && call && batch.receipts.some(receipt => receipt.status !== 'succeeded')) {
+          // No implicit dependency assumption: after failure/decline, return one explicit
+          // not-executed receipt per remaining call before asking the LLM to re-plan.
+          return mapTurnOutcome({ kind: 'terminal', continuation: turnInput.request,
+            receipt: { schema: 'islemind.model-operation-receipt.v1', turnId: turnInput.run.id,
+              stepIndex: turnInput.stepIndex, status: 'rejected', code: 'batch_stopped', terminal: true,
+              catalogRevision: snapshot.revision, callId: call.callId, operationId: call.operationId,
+              output: 'Not executed: an earlier operation in this batch failed or was declined. Re-plan from the recorded results.' },
+          }, turnInput.run.id, dependencies.now(), currentTurn)
+        }
+        return mapTurnOutcome(await turnRuntime.run({
+          turnId: turnInput.run.id,
+          stepIndex: turnInput.stepIndex,
+          completedSteps: turnInput.stepIndex,
+          maxSteps: limits.maxSteps,
+          calls: call ? [call] : normalized.calls,
+          catalog: frozenCatalog,
+          signal: turnInput.signal,
+        }), turnInput.run.id, dependencies.now(), currentTurn)
+      })
     },
 
     validatePending({ run, pending }) {
       const state = parsePendingConfirmationState(pending.continuationState)
+      try {
+        const batch = pending.continuationState.operationBatch
+        if (batch !== undefined) {
+          const validated = validateBatch(batch, run.id, pending.continuationRequest, pending.stepIndex)
+          if (!state || stableIdentityHash(validated.calls[validated.receipts.length]) !== stableIdentityHash(state.call)) return false
+        }
+      } catch { return false }
       const entry = state
         ? frozenCatalog.entries.find((candidate) => candidate.operationId === state.call.operationId)
         : undefined
@@ -427,24 +477,41 @@ export async function createConversationModelOperationSession(
     },
 
     async resume(resumeInput) {
-      currentTurn = {
-        request: cloneChatRequest(resumeInput.pending.continuationRequest),
-        outputText: resumeInput.pending.continuationOutputText,
-        nativeCallIds: resumeInput.pending.continuationMode === 'native'
-          ? new Set([resumeInput.pending.callId])
-          : new Set(),
-        reasoningReplay: extractReasoningReplay(resumeInput.pending.continuationRequest),
-        onOperationStarted: resumeInput.onOperationStarted,
-      }
-      const state = resumeInput.pending.continuationState as unknown as
-        ModelOperationPendingConfirmationState<PendingTaskReference>
-      return mapTurnOutcome(await turnRuntime.resume({
-        state,
-        catalog: frozenCatalog,
-        approved: resumeInput.approved,
-        signal: resumeInput.signal,
-      }), resumeInput.run.id, dependencies.now(), currentTurn)
+      return serializeTurn(async () => {
+        if (!session.validatePending({ run: resumeInput.run, pending: resumeInput.pending })) throw new Error('Invalid pending model operation')
+        const batchValue = resumeInput.pending.continuationState.operationBatch
+        const batch = batchValue === undefined ? undefined
+          : validateBatch(batchValue, resumeInput.run.id, resumeInput.pending.continuationRequest, resumeInput.pending.stepIndex)
+        currentTurn = {
+          ...(batch ? { operationBatch: batch } : {}),
+          request: cloneChatRequest(resumeInput.pending.continuationRequest),
+          outputText: resumeInput.pending.continuationOutputText,
+          nativeCallIds: resumeInput.pending.continuationMode === 'native'
+            ? new Set(batch ? batch.calls.map(call => call.callId) : [resumeInput.pending.callId])
+            : new Set(),
+          reasoningReplay: batch?.reasoningReplay ?? extractReasoningReplay(resumeInput.pending.continuationRequest),
+          onOperationStarted: resumeInput.onOperationStarted,
+        }
+        const state = resumeInput.pending.continuationState as unknown as
+          ModelOperationPendingConfirmationState<PendingTaskReference>
+        return mapTurnOutcome(await turnRuntime.resume({
+          state,
+          catalog: frozenCatalog,
+          approved: resumeInput.approved,
+          ...(resumeInput.authorizationExpired ? { authorizationExpired: true } : {}),
+          signal: resumeInput.signal,
+        }), resumeInput.run.id, dependencies.now(), currentTurn)
+      })
     },
+  }
+  function validateBatch(value: unknown, runId: string, request: ChatRequest, stepIndex: number): ModelOperationBatch {
+    const batch = decodeModelOperationBatch(value)
+    if (batch.turnId !== runId || batch.catalogRevision !== snapshot.revision
+      || batch.requestHash !== buildAssistantRequestHash(request)
+      || batch.startStepIndex + batch.receipts.length !== stepIndex || batch.receipts.length >= batch.calls.length) {
+      throw new Error('Queued operations no longer match this run, request or frozen catalog')
+    }
+    return batch
   }
   independentSessionBindings.set(session, async (definition, parent) => {
     if (parent.conversationId !== input.conversation.id) return undefined
@@ -533,20 +600,31 @@ function mapTurnOutcome(
   turn: CurrentTurn,
 ): ReturnType<AssistantModelOperationSession['evaluateTurn']> extends Promise<infer TResult> ? TResult : never {
   if (outcome.kind === 'no_operation') return { kind: 'no-operation' }
-  if (outcome.kind === 'cancelled') {
+  if (outcome.kind === 'cancelled' && outcome.receipt.status === 'cancelled') {
     return { kind: 'cancelled', receipt: toJsonRecord(outcome.receipt) }
   }
-  if (outcome.kind === 'terminal') {
+  if (outcome.kind === 'terminal' || outcome.kind === 'cancelled') {
+    if (turn.operationBatch) {
+      const next = advanceModelOperationBatch(turn.operationBatch, outcome.receipt)
+      const complete = next.receipts.length === next.calls.length
+      return { kind: 'continue', receipt: toJsonRecord(outcome.receipt),
+        request: complete ? buildBatchContinuationRequest(turn, next) : turn.request,
+        ...(complete ? {} : { operationBatch: next }) }
+    }
     return {
       kind: 'continue',
-      request: outcome.continuation,
+      // Pure request construction, not a new provider call. A paused Harness can
+      // checkpoint this definitive receipt; a cancelled Harness records it only.
+      request: outcome.kind === 'terminal' ? outcome.continuation : buildContinuationRequest(turn, outcome.receipt, outcome.call),
       receipt: toJsonRecord(outcome.receipt),
     }
   }
-  const continuationRequest = buildContinuationRequest(turn, outcome.receipt, outcome.state.call)
+  const continuationRequest = turn.operationBatch ? turn.request : buildContinuationRequest(turn, outcome.receipt, outcome.state.call)
   const continuationMode: PendingModelOperation['continuationMode'] =
     turn.nativeCallIds.has(outcome.state.call.callId) ? 'native' : 'structured'
-  const continuationState = toJsonRecord(outcome.state)
+  const continuationState = toJsonRecord({ ...outcome.state,
+    ...(turn.operationBatch ? { operationBatch: turn.operationBatch } : {}) },
+  turn.operationBatch ? 2 * MODEL_OPERATION_BATCH_JSON_LIMIT : undefined)
   const pendingWithoutDigest = {
     schema: 'islemind.pending-model-operation.v1' as const,
     runId,
@@ -566,12 +644,28 @@ function mapTurnOutcome(
   }
   return {
     kind: 'awaiting-confirmation',
+    ...(turn.operationBatch ? { operationBatch: turn.operationBatch } : {}),
     receipt: toJsonRecord(outcome.receipt),
     pending: {
       ...pendingWithoutDigest,
       continuationDigest: stableIdentityHash(pendingContinuationDigestInput(pendingWithoutDigest)),
     },
   }
+}
+
+function buildBatchContinuationRequest(turn: CurrentTurn, batch: ModelOperationBatch): ChatRequest {
+  // Replay the original native assistant group once, with one matching result per
+  // call. Splitting it into assistant/result pairs duplicates signed reasoning and
+  // breaks providers that require all results from a native group together.
+  return { ...turn.request, providerStateBinding: turn.request.providerStateBinding ?? {
+    providerId: turn.request.providerId, model: turn.request.model,
+  }, messages: [...turn.request.messages, {
+    id: `model-operation-batch:${batch.turnId}:${batch.startStepIndex}`, role: 'assistant', text: '',
+    ...(batch.reasoningReplay.length ? { reasoningReplay: batch.reasoningReplay } : {}),
+    toolCalls: batch.calls.map(call => ({ callId: call.callId, name: call.declaredName, arguments: call.arguments as JsonRecord,
+      ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as ChatToolCallProviderMetadata } : {}) })),
+  }, ...batch.receipts.map((receipt, index) => ({ id: `model-operation-result:${receipt.callId}`,
+    role: 'tool' as const, toolCallId: receipt.callId, name: batch.calls[index].declaredName, text: JSON.stringify(receipt) }))] }
 }
 
 function buildContinuationRequest(
@@ -655,8 +749,10 @@ function resolvePermissionCeiling(
 }
 
 function providerOperationName(operationId: string): string {
-  const readable = operationId.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '')
-  return `islemind_${readable.slice(0, 40)}_${stableIdentityHash(operationId).slice(0, 12)}`.slice(0, 64)
+  // Already canonical when handed to the declaration adapter. A truncated
+  // trailing underscore otherwise gets collapsed there and breaks exact lookup.
+  const readable = operationId.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40).replace(/^_+|_+$/g, '')
+  return `islemind_${readable}_${stableIdentityHash(operationId).slice(0, 12)}`.slice(0, 64)
 }
 
 function supportsNativeModelOperationProtocol(provider: AIProvider, modelId: string): boolean {
@@ -685,7 +781,12 @@ async function expireDeclinedModelOperationTask(
   const taskId = asTaskId(state.pending.taskId)
   const task = await runtime.getTask(taskId)
   if (!task || task.runId !== state.turnId || task.toolId !== state.call.operationId ||
-    task.idempotencyKey !== state.idempotencyKey || task.status !== 'awaiting-confirmation') {
+    task.idempotencyKey !== state.idempotencyKey) {
+    return { ok: false, message: 'The declined operation no longer matches its durable task.' }
+  }
+  // Restart recovery may already have closed the unexecuted confirmation.
+  if (task.status === 'expired') return { ok: true }
+  if (task.status !== 'awaiting-confirmation') {
     return { ok: false, message: 'The declined operation no longer matches its durable task.' }
   }
   const expired = await runtime.expire(taskId, 'model_operation_confirmation_declined')
@@ -813,7 +914,7 @@ async function createModelOperationConversationRagRuntime(input: ConversationMod
   })
 }
 
-function toJsonRecord(value: unknown): JsonRecord {
-  assertJsonTraversalBudget(value, 256 * 1024)
+function toJsonRecord(value: unknown, maxCharacters = 256 * 1024): JsonRecord {
+  measureJsonCharacters(value, maxCharacters)
   return JSON.parse(JSON.stringify(value)) as JsonRecord
 }

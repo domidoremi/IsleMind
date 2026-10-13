@@ -184,7 +184,7 @@ function projectPermissionDecision(
         outputBoundary: executionPolicy.outputBoundary,
         requiresConfirmation: executionPolicy.requiresConfirmation,
         intentVisible: Boolean(context.intentVisible),
-        userConfirmed: Boolean(context.userConfirmed),
+        userConfirmed: context.userConfirmed === true,
         evidenceReady: evidence.ready,
         evidenceReliable: evidence.reliable,
         evidenceSourceCount: evidence.sources.length,

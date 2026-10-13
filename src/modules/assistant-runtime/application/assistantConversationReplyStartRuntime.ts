@@ -603,6 +603,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
     readonly conversation: NoInfer<TRuntimeConversation>
     readonly provider: TProvider
     readonly settings: TSettings
+    readonly allowConfirmation: boolean
   }): Promise<AssistantModelOperationSession | undefined>
   filterSendableAttachments(
     attachments: TAttachmentInput | undefined,
@@ -696,17 +697,9 @@ export function createAssistantConversationReplyStartRuntime<
       message: assistantMessage,
       requestController,
     } = session
-    dependencies.projectLifecycleStage?.({
-      conversationId: input.conversationId,
-      assistantMessageId: assistantMessage.id,
-      stage: 'sending',
-    })
+    // Admission is still local preparation, not a sent request or a response.
+    // Keep the session's preparing stage until actual work/dispatch begins.
     const settingsState = dependencies.getProviderSettingsState()
-    dependencies.projectLifecycleStage?.({
-      conversationId: input.conversationId,
-      assistantMessageId: assistantMessage.id,
-      stage: 'waiting',
-    })
     const admission = await dependencies.providerAdmissionRuntime.admit({
       conversationId: input.conversationId,
       assistantMessageId: assistantMessage.id,
@@ -970,6 +963,9 @@ export function createAssistantConversationReplyStartRuntime<
           conversation: runtimeConversation,
           provider,
           settings,
+          // Current confirmation recovery persists text context, not rich
+          // attachment payloads or a special workspace writeback continuation.
+          allowConfirmation: sendableAttachments.length === 0 && workspaceSourceAdmission.status === 'none',
         })
       : undefined
     const sourceMessages =

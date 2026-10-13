@@ -144,7 +144,10 @@ export function setRunBudgetActive(budget: RunBudgetSnapshot, active: boolean, n
 function completeUsageTokens(usage: ProviderUsage | undefined): number | undefined {
   if (usage?.source !== 'provider') return undefined
   if (usage.inputTokens === undefined || usage.outputTokens === undefined) return undefined
-  return usage.totalTokens ?? usage.inputTokens + usage.outputTokens
+  // Some compatible providers return an incomplete/zero total alongside both
+  // counters. A smaller total must not free shared root/child budget. Cache and
+  // reasoning details remain subsets, not additional counters to charge again.
+  return Math.max(usage.totalTokens ?? 0, usage.inputTokens + usage.outputTokens)
 }
 function sanitizeUsage(usage: ProviderUsage | undefined): ProviderUsage | undefined {
   if (!usage) return undefined

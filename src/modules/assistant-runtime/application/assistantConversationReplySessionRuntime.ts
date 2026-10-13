@@ -28,7 +28,7 @@ export interface AssistantConversationReplySessionActivity {
 export interface AssistantConversationReplySessionRuntimeDependencies<
   TConversation extends AssistantConversationReplySessionConversationLike,
 > {
-  stopConversationMessage(conversationId: string): void
+  stopConversationMessage(conversationId: string): void | Promise<void>
   getConversation(conversationId: string): TConversation | undefined
   now(): number
   generateId(): string
@@ -101,7 +101,7 @@ export function createAssistantConversationReplySessionRuntime<
   async function start(
     input: AssistantConversationReplySessionInput,
   ): Promise<AssistantConversationReplySessionOutcome<TConversation>> {
-    dependencies.stopConversationMessage(input.conversationId)
+    await dependencies.stopConversationMessage(input.conversationId)
 
     const conversation = dependencies.getConversation(input.conversationId)
     if (!conversation) {

@@ -3,7 +3,7 @@ export const MODEL_OPERATION_RECEIPT_SCHEMA =
 export const MODEL_OPERATION_CONFIRMATION_SCHEMA =
   'islemind.model-operation-confirmation.v1' as const
 
-const DEFAULT_RECEIPT_OUTPUT_LIMIT = 4_800
+export const DEFAULT_MODEL_OPERATION_RECEIPT_OUTPUT_LIMIT = 4_800
 
 export interface ModelOperationArgumentValidation {
   readonly ok: boolean
@@ -51,6 +51,7 @@ export type ModelOperationReceiptCode =
   | 'ok'
   | 'execution_failed'
   | 'multiple_operations_requested'
+  | 'batch_stopped'
   | 'step_limit_reached'
   | 'catalog_not_frozen'
   | 'catalog_revision_mismatch'
@@ -61,6 +62,8 @@ export type ModelOperationReceiptCode =
   | 'cancelled'
   | 'confirmation_required'
   | 'confirmation_declined'
+  | 'confirmation_expired'
+  | 'authorization_denied'
   | 'confirmation_already_consumed'
   | 'confirmation_state_invalid'
 
@@ -190,6 +193,8 @@ export interface ResumeModelOperationInput<
   readonly state: ModelOperationPendingConfirmationState<TPending>
   readonly catalog: FrozenModelOperationCatalog<TDefinition>
   readonly approved: boolean
+  /** Approval arrived after the host's confirmation lifetime; it never dispatches. */
+  readonly authorizationExpired?: boolean
   readonly signal: AbortSignal
 }
 
@@ -203,6 +208,7 @@ export type ModelOperationTurnOutcome<TContinuation = unknown, TPending = unknow
   | {
       readonly kind: 'cancelled'
       readonly receipt: ModelOperationReceipt
+      readonly call?: ModelOperationCall
     }
   | {
       readonly kind: 'pending_confirmation'
@@ -362,7 +368,7 @@ export function createModelOperationTurnRuntime<
     }
 
     confirmationStates.set(state.continuationId, 'consumed')
-    if (!input.approved) {
+    if (!input.approved || input.authorizationExpired) {
       const declined = await dependencies.declinePending?.(state, input.signal)
       if (declined && !declined.ok) {
         return continueWithReceipt(
@@ -373,8 +379,11 @@ export function createModelOperationTurnRuntime<
         )
       }
       return continueWithReceipt(
-        stateReceipt(state, 'rejected', 'confirmation_declined',
-          'The user declined the pending operation.'),
+        input.approved
+          ? stateReceipt(state, 'rejected', 'confirmation_expired',
+            'The confirmation expired before approval; the operation was not executed. Request it again only if it is still needed.')
+          : stateReceipt(state, 'rejected', 'confirmation_declined',
+            'The user declined the pending operation.'),
         state.call,
         input.signal,
       )
@@ -442,13 +451,14 @@ export function createModelOperationTurnRuntime<
       confirmed: input.confirmed,
       ...(input.pending === undefined ? {} : { pending: input.pending }),
     })
-    if (input.signal.aborted || result.status === 'cancelled') {
-      return cancelledOutcome(
-        input.turnId,
-        input.stepIndex,
-        input.catalog.revision,
-        input.call,
-      )
+    if (result.status === 'cancelled' || input.signal.aborted && result.status !== 'pending_confirmation') {
+      // Stopping the loop is not evidence that an in-flight side effect did not
+      // happen. Keep the executor's actual status/output, without calling the model.
+      return { kind: 'cancelled', call: input.call, receipt: receiptFromCall(input, result.status,
+        result.status === 'succeeded' ? 'ok' : result.status === 'cancelled' ? 'cancelled' : 'execution_failed', result.output) }
+    }
+    if (input.signal.aborted) {
+      return cancelledOutcome(input.turnId, input.stepIndex, input.catalog.revision, input.call)
     }
     if (result.status === 'pending_confirmation') {
       if (input.confirmed) {
@@ -504,11 +514,13 @@ export function createModelOperationTurnRuntime<
       }
     }
 
+    // A trusted authorization refusal happens before any executor dispatch.
+    const denied = result.status === 'failed' && result.code === 'authorization_denied'
     return continueWithReceipt(
       receiptFromCall(
         input,
-        result.status,
-        result.status === 'succeeded' ? 'ok' : 'execution_failed',
+        denied ? 'rejected' : result.status,
+        result.status === 'succeeded' ? 'ok' : denied ? 'authorization_denied' : 'execution_failed',
         result.output,
       ),
       input.call,
@@ -522,12 +534,7 @@ export function createModelOperationTurnRuntime<
     signal: AbortSignal,
   ): Promise<ModelOperationTurnOutcome<TContinuation, TPending>> {
     if (signal.aborted) {
-      return cancelledOutcome(
-        terminalReceipt.turnId,
-        terminalReceipt.stepIndex,
-        terminalReceipt.catalogRevision,
-        call,
-      )
+      return { kind: 'cancelled', receipt: terminalReceipt, ...(call ? { call } : {}) }
     }
     const continuation = await dependencies.continueModel({
       receipt: terminalReceipt,
@@ -707,7 +714,7 @@ function cancelledOutcome<TPending>(
       terminal: true,
       catalogRevision,
       call,
-      outputLimit: DEFAULT_RECEIPT_OUTPUT_LIMIT,
+      outputLimit: DEFAULT_MODEL_OPERATION_RECEIPT_OUTPUT_LIMIT,
     }),
   }
 }
@@ -730,6 +737,6 @@ function normalizeStepCount(value: number): number {
 }
 
 function normalizeOutputLimit(value: number | undefined): number {
-  if (!Number.isFinite(value)) return DEFAULT_RECEIPT_OUTPUT_LIMIT
+  if (!Number.isFinite(value)) return DEFAULT_MODEL_OPERATION_RECEIPT_OUTPUT_LIMIT
   return Math.max(256, Math.min(16_000, Math.floor(value as number)))
 }

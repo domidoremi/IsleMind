@@ -1,6 +1,28 @@
 import { createAssistantConversationReplySessionRuntime } from './assistantConversationReplySessionRuntime'
 
 describe('assistant conversation reply session identity', () => {
+  it('does not append or start a replacement reply if durable cancellation fails', async () => {
+    const appendMessage = jest.fn()
+    const setActiveStream = jest.fn()
+    const failure = new Error('cancellation write failed')
+    let rejectStop!: (error: Error) => void
+    const stopping = new Promise<void>((_resolve, reject) => { rejectStop = reject })
+    const runtime = createAssistantConversationReplySessionRuntime({
+      stopConversationMessage: () => stopping,
+      getConversation: () => ({ providerId: 'unused', model: 'unused' }),
+      now: () => 42, generateId: () => 'replacement', appendMessage, setActiveStream,
+      startConversationTaskActivity: jest.fn(), setStreaming: jest.fn(),
+      createRequestController: () => new AbortController(),
+    })
+    const starting = runtime.start({ conversationId: 'conversation-1' })
+    await Promise.resolve()
+    expect(appendMessage).not.toHaveBeenCalled()
+    rejectStop(failure)
+    await expect(starting).rejects.toBe(failure)
+    expect(appendMessage).not.toHaveBeenCalled()
+    expect(setActiveStream).not.toHaveBeenCalled()
+  })
+
   it('leaves placeholder attribution unknown until evidence identifies the actual producing route', async () => {
     const appended: unknown[] = []
     const runtime = createAssistantConversationReplySessionRuntime({

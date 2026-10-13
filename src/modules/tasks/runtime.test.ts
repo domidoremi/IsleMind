@@ -1,6 +1,7 @@
 import { asTaskId } from '@/core'
 import type { Task, TaskJournalEntry, TaskPersistence } from './contracts'
 import { createTaskRuntime } from './runtime'
+import type { TaskEffectRecorder } from './contracts'
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void
@@ -131,4 +132,91 @@ test('an older durable cancellation marker cannot be dispatched before startup r
   const execute = jest.fn(async () => ({}))
   expect(await f.runtime.execute(f.id, { execute })).toMatchObject({ ok: true, value: { status: 'cancelled' } })
   expect(execute).not.toHaveBeenCalled()
+})
+
+const intent = (id = 'saf-1') => ({ id, kind: 'file' as const, action: 'copy' as const,
+  sourceUri: 'content://files/tree/root/document/source', targetParentUri: 'content://files/tree/root', targetName: 'copy.txt' })
+const receipt = (id = 'saf-1') => ({ id, status: 'succeeded' as const, effect: 'applied' as const, bytesCopied: 10 })
+
+test.each(['task.effect-started', 'task.effect-settled'] as const)('%s commit failure fences later I/O and cannot be swallowed as success or cancellation', async type => {
+  const f = await fixture(); const dispatch = jest.fn()
+  f.hooks.write = async entry => { if (entry.type === type) throw new Error('disk full') }
+  const result = await f.runtime.execute(f.id, { async execute(_, { effects, signal }) {
+    try { await effects.begin(intent()); dispatch(); await effects.settle(receipt()) } catch { /* Deliberately bad executor. */ }
+    expect(signal.aborted).toBe(true)
+    await expect(effects.begin(intent('saf-2'))).rejects.toThrow()
+    return { summary: 'must not be reported as success' }
+  } })
+  expect(result).toMatchObject({ ok: false, error: { code: 'persistence_failed', retryable: false } })
+  expect(dispatch).toHaveBeenCalledTimes(type === 'task.effect-started' ? 0 : 1)
+  expect(f.records.get(f.id)?.status).toBe('failed')
+  expect(f.journal.some(entry => ['task.succeeded', 'task.cancelled'].includes(entry.type))).toBe(false)
+  expect((await f.runtime.recoverInterruptedTasks()).ok).toBe(true)
+  expect(await f.runtime.execute(f.id, { execute: dispatch })).toMatchObject({ ok: false, error: { code: 'task_not_active' } })
+})
+
+test('drains unawaited writes, rejects missing receipts, and revokes old callbacks', async () => {
+  const f = await fixture(); const writing = deferred(); const commit = deferred()
+  let effects!: TaskEffectRecorder
+  f.hooks.write = async entry => { if (entry.type === 'task.effect-started') { writing.resolve(); await commit.promise } }
+  let completed = false
+  const result = f.runtime.execute(f.id, { async execute(_, options) {
+    effects = options.effects
+    void effects.begin(intent())
+    return {}
+  } }).then(value => { completed = true; return value })
+  await writing.promise
+  expect(completed).toBe(false)
+  commit.resolve()
+  expect(await result).toMatchObject({ ok: false, error: { code: 'executor_failed' } })
+  const count = f.journal.length
+  await expect(effects.settle(receipt())).rejects.toThrow('closed')
+  expect(f.journal).toHaveLength(count)
+})
+
+test.each(['applied', 'partial', 'uncertain'] as const)('owned %s receipt may settle after durable cancellation without resurrection', async effect => {
+  const f = await fixture(); const started = deferred(); const finish = deferred()
+  const execution = f.runtime.execute(f.id, { async execute(_, { effects }) {
+    await effects.begin(intent()); started.resolve(); await finish.promise
+    await effects.settle({ ...receipt(), status: effect === 'applied' ? 'succeeded' : 'cancelled', effect })
+    return {}
+  } })
+  await started.promise
+  await f.runtime.cancel(f.id)
+  const cancelled = f.records.get(f.id)!
+  finish.resolve()
+  expect(await execution).toMatchObject({ ok: false, error: { code: 'cancelled' } })
+  expect(f.records.get(f.id)).toMatchObject({ status: 'cancelled', completedAt: cancelled.completedAt })
+  expect(f.journal.at(-1)).toMatchObject({ type: 'task.effect-settled', data: { receipt: { effect } } })
+})
+
+test.each(['duplicate', 'concurrent', 'unknown', 'invalid', 'failed-receipt'] as const)('effect protocol violation %s cannot be hidden by an executor', async scenario => {
+  const f = await fixture()
+  const result = await f.runtime.execute(f.id, { async execute(_, { effects }) {
+    if (scenario === 'invalid') {
+      await expect(effects.begin({ ...intent(), sourceUri: 'file:///private' })).rejects.toThrow()
+    } else if (scenario === 'unknown') {
+      await expect(effects.settle(receipt())).rejects.toThrow()
+    } else {
+      const first = effects.begin(intent())
+      const second = scenario === 'concurrent' ? effects.begin(intent('saf-2')).catch(() => undefined) : undefined
+      await first; await second
+      await effects.settle({ ...receipt(), ...(scenario === 'failed-receipt' ? { status: 'failed' as const } : {}) })
+      if (scenario === 'duplicate') await expect(effects.begin(intent())).rejects.toThrow()
+    }
+    return {}
+  } })
+  expect(result).toMatchObject({ ok: false, error: { code: 'executor_failed' } })
+  expect(f.records.get(f.id)?.status).toBe('failed')
+})
+
+test('64 effects are allowed, the 65th is not dispatched', async () => {
+  const f = await fixture()
+  const result = await f.runtime.execute(f.id, { async execute(_, { effects }) {
+    for (let i = 0; i < 64; i++) { await effects.begin(intent(`saf-${i}`)); await effects.settle(receipt(`saf-${i}`)) }
+    await expect(effects.begin(intent('saf-64'))).rejects.toThrow()
+    return {}
+  } })
+  expect(result.ok).toBe(false)
+  expect(f.journal.filter(entry => entry.type === 'task.effect-settled')).toHaveLength(64)
 })

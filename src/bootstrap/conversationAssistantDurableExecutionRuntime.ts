@@ -21,6 +21,7 @@ import {
   type AssistantRuntimeErrorCode,
   type AssistantModelOperationSession,
   getAssistantRunMessageAttribution,
+  projectOperationActivity,
 } from '@/modules/assistant-runtime'
 import { mergeIdenticalProviderCitations, type ProviderExecutionTarget, type ProviderRuntimeCompletionResult } from '@/modules/providers'
 import {
@@ -43,6 +44,8 @@ import type { Attachment, Message } from '@/types/chatContracts'
 import type { RetrievalSource } from '@/types/contextContracts'
 import { preserveMessageIdentity } from '@/bootstrap/plainChatMessageIdentity'
 import { useChatStore } from '@/store/chatStore'
+import { useChatStreamingStore } from '@/store/chatStreamingStore'
+import { projectPendingModelOperation } from '@/presentation/features/conversations/plainChatProjection'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
 const contextSnapshots = createSqliteContextSnapshotRepository(databaseProvider)
@@ -189,7 +192,7 @@ export function createConversationAssistantDurableExecutionRuntime(
           useChatStore.getState().updateMessage(input.conversationId, input.assistantMessageId, attribution)
         }
       },
-      async execute({ signal, started, checkpointStreamEvent, continueProviderTurns, recordProviderExecutionTarget }) {
+      async execute({ run, signal, started, checkpointStreamEvent, continueProviderTurns, recordProviderExecutionTarget }) {
         // A Harness pause aborts transport work, not the external user's cancel
         // authority. Feeding this signal back to input.requestController would
         // turn every pause (including budget/background pauses) into cancellation.
@@ -220,7 +223,18 @@ export function createConversationAssistantDurableExecutionRuntime(
           if (checkpointFailure) throw checkpointFailure
           return result
         }
+        const observeUserStop = (): boolean => {
+          const message = useChatStore.getState().conversations.find((item) => item.id === input.conversationId)
+            ?.messages.find((item) => item.id === input.assistantMessageId)
+          // UI Stop aborts the registered provider handle, not the caller's
+          // controller. Preserve that explicit cancellation without turning a
+          // Harness pause or a checkpoint failure into a user cancellation.
+          if (checkpointFailure || message?.status !== 'cancelled') return false
+          input.requestController.abort()
+          return true
+        }
         const failActivity = (error: unknown) => {
+          observeUserStop()
           settleActivity({
             outcome: 'failed',
             failureMessage: error instanceof Error
@@ -273,6 +287,20 @@ export function createConversationAssistantDurableExecutionRuntime(
         const abortRequest = () => workController.abort(signal.reason)
         signal.addEventListener('abort', abortRequest, { once: true })
         if (signal.aborted) abortRequest()
+        const unsubscribeOperations = input.modelOperationSession ? assistantRuntime.subscribe((event) => {
+          if (event.run.id !== run.id || !event.journalEntry) return
+          const trace = projectOperationActivity(event.journalEntry)
+          if (!trace) return
+          const streaming = useChatStreamingStore.getState()
+          if (streaming.activeStreams.get(`${input.conversationId}:${input.assistantMessageId}`) === true) {
+            streaming.upsertTrace(input.conversationId, input.assistantMessageId, trace)
+          } else {
+            useChatStore.getState().upsertMessageTrace(input.conversationId, input.assistantMessageId, trace)
+          }
+          useChatStore.getState().transitionMessageLifecycle(input.conversationId, input.assistantMessageId,
+            trace.status === 'running' || trace.status === 'pending' ? 'tool_calling' : 'tool_result',
+            { at: event.journalEntry.occurredAt, traceId: trace.id })
+        }) : undefined
 
         try {
           const previousTargetObserver = preparedDispatch.request.onExecutionTarget
@@ -301,11 +329,17 @@ export function createConversationAssistantDurableExecutionRuntime(
                       if (checkpointFailure) throw checkpointFailure
                       let [result, completionContext] = args
                       if (
-                        firstCalls.length
-                        && input.modelOperationSession
+                        input.modelOperationSession
                         && continueProviderTurns
+                        && (firstCalls.length || result.text.includes('<islemind_tool_call'))
                       ) {
                         const continuationResults: ProviderRuntimeCompletionResult[] = []
+                        const attachmentMessageId = input.attachments.length
+                          ? [...canonicalRequest.messages].reverse().find((message) => message.role === 'user')?.id
+                          : undefined
+                        if (input.attachments.length && !attachmentMessageId) {
+                          throw new Error('The original attachment message is unavailable.')
+                        }
                         const continuationProvider = !executionTarget || executionTarget.providerId === input.provider.id
                           ? input.provider : input.fallbackProviders.find((provider) => provider.id === executionTarget?.providerId)
                         if (!continuationProvider) throw new Error('The actual continuation provider is no longer available.')
@@ -318,9 +352,22 @@ export function createConversationAssistantDurableExecutionRuntime(
                           stream: createProviderRuntimeAdapter({
                             provider: continuationProvider,
                             settings: input.settings,
+                            attachmentMessageId,
                             streamChat: createRichContinuationStream({ ...input, requestController: workController }, continuationResults),
                           }).stream,
                         })
+                        if (continuationResult.pendingConfirmation) {
+                          completionContext.flush()
+                          await projectPendingModelOperation({
+                            conversationId: input.conversationId,
+                            messageId: input.assistantMessageId,
+                          }, continuationResult.pendingConfirmation)
+                          useChatStreamingStore.getState().clearStreaming(input.conversationId, input.assistantMessageId)
+                          // The Harness owns the durable awaiting-confirmation
+                          // state. Do not run normal reply finalization/writeback.
+                          settleActivity({})
+                          return
+                        }
                         result = {
                           ...mergeProviderCompletionResults(result, continuationResults),
                           text: continuationResult.outputText,
@@ -385,7 +432,7 @@ export function createConversationAssistantDurableExecutionRuntime(
             async () => {
               await Promise.resolve()
               if (terminalLifecycleStarted) return
-              if (signal.aborted || input.requestController.signal.aborted) {
+              if (signal.aborted || input.requestController.signal.aborted || observeUserStop()) {
                 failActivity(new Error('The provider stream was cancelled.'))
                 return
               }
@@ -401,6 +448,7 @@ export function createConversationAssistantDurableExecutionRuntime(
 
           return await awaitActivityCompletion()
         } finally {
+          unsubscribeOperations?.()
           signal.removeEventListener('abort', abortRequest)
         }
       },
@@ -554,8 +602,10 @@ function createCanonicalRichRequest(
   )
   const requestedCapabilities = [
     ...(request.attachments.length ? ['attachments'] : []),
-    ...(request.providerToolDeclarations?.length ? ['provider-tools'] : []),
-    ...(request.webSearchMode !== 'off' ? ['web-search'] : []),
+    ...(request.providerToolDeclarations?.length ? ['tools'] : []),
+    // External search is already packed into context. Only provider-native
+    // search needs a wire capability and must survive confirmation recovery.
+    ...(request.webSearchMode === 'native' ? ['native-search'] : []),
     ...(request.remoteCompactEligible ? ['remote-compact'] : []),
   ]
   return {
@@ -594,6 +644,12 @@ function bindCanonicalRichToolDeclarations(
   return Object.freeze({
     request: Object.freeze({
       ...prepared.request,
+      // The canonical prompt includes both packed context and the tagged tool
+      // protocol. Forward it to the first transport, not only to the journal.
+      ...(input.modelOperationSession ? {
+        systemPrompt: canonicalRequest.systemPrompt,
+        contextPrompt: undefined,
+      } : {}),
       maxTokens: canonicalRequest.maxTokens ?? prepared.request.maxTokens,
       generationParameterSources: canonicalRequest.generationParameterSources,
       providerToolDeclarations: declarations?.length
@@ -627,7 +683,8 @@ function createRichContinuationStream(
   ) => streamProviderChat({
     ...request,
     attachments: input.attachments,
-    contextPrompt: input.contextPrompt,
+    // Continuations already carry packed context in the canonical system prompt.
+    contextPrompt: undefined,
     retrievalSources: input.retrievalSources,
     webSearchMode: input.webSearchMode,
     fallbackProviders: input.fallbackProviders,

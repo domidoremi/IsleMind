@@ -10,6 +10,11 @@ export interface AgentTaskPort {
   get(id: string): Promise<AssistantRun | undefined>
   budget(id: string): Promise<RunBudgetSnapshot | undefined>
   sources(id: string): Promise<readonly Extract<StreamEvent, { type: 'citation' }>[]>
+  activities(id: string, before?: number): Promise<import('@/modules/assistant-runtime').OperationActivityPage>
+  effects: {
+    list(id: string, before?: import('@/modules/tasks').TaskEffectCursor): Promise<import('@/modules/tasks').TaskEffectPage>
+    subscribe(listener: (runId: string) => void): () => void
+  }
   subscribe: AssistantRuntime['subscribe']
   backgroundEnabled(id: string): boolean
   setBackground(id: string, enabled: boolean): Promise<void>

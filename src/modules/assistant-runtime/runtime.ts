@@ -16,6 +16,7 @@ import {
   ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
   cloneAssistantContextPlanReceipt,
   isAssistantContextPlanReceipt,
+  isModelOperationConfirmationExpired,
 } from './contracts'
 import { HARNESS_PAUSE_REASONS } from './harnessPauseReason'
 import {
@@ -37,6 +38,7 @@ import type {
   AssistantRunCapturedRequestSnapshot,
   AssistantRunProjection,
   AssistantActivityExecutionResult,
+  AssistantActivityProviderContinuationResult,
   AssistantRuntime,
   AssistantRuntimeDependencies,
   AssistantRuntimeErrorCode,
@@ -494,7 +496,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
                   continuation.onStreamEvent,
                 )
                 return {
-                  outputText: outcome,
+                  ...outcome,
                   eventCount: active.streamEventCount - initialEventCount,
                 }
               },
@@ -667,6 +669,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         active.text.retainRun(active.run, active.outputText)
         const session = await bindAgentSession(saved.agentDefinition, input.session)
         if (!session) return err('run_not_active', 'The operation session is unavailable.', { retryable: false })
+        if (saved.lifecycleCheckpoint?.operationBatch && !session.supportsOperationBatches) {
+          return err('run_not_active', 'Approval requires a batch-aware operation session.', { retryable: false })
+        }
         active.operationSession = session
         if (active.cancellationRequested || active.controller.signal.aborted) {
           const cancelled = await finishCancelled(active)
@@ -682,14 +687,18 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             details: { runId: saved.id },
           })
         }
+        // An old approval is never a standing grant, including across restarts.
+        const expired = input.approved && isModelOperationConfirmationExpired(pending.requestedAt, dependencies.clock.now())
         await record(active, 'run.confirmation-resolved', {
-          approved: input.approved,
+          approved: input.approved && !expired,
+          ...(expired ? { expired: true } : {}),
           callId: pending.callId,
           operationId: pending.operationId,
         }, {
           status: 'running',
           pendingModelOperation: undefined,
           lifecycleCheckpoint: captureCheckpoint(active.text, { request: pending.continuationRequest,
+            ...(saved.lifecycleCheckpoint?.operationBatch ? { operationBatch: saved.lifecycleCheckpoint.operationBatch } : {}),
             stepIndex: pending.stepIndex, outputText: active.outputText, streamEventCount: active.streamEventCount,
             phase: 'operation', effectCertainty: 'uncertain', recovery: 'reconciliation-required',
             requiresOperationSession: true, steering: saved.lifecycleCheckpoint?.steering ?? [] }),
@@ -702,13 +711,18 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           run: active.run,
           pending,
           approved: input.approved,
+          ...(expired ? { authorizationExpired: true } : {}),
           signal: active.controller.signal,
           onOperationStarted: (operation) => recordOperationStarted(active, operation),
         })
-        if (active.cancellationRequested) return cancelledResult(active)
+        if (active.cancellationRequested) {
+          await recordStoppedOperation(active, resumed, pending.stepIndex)
+          return cancelledResult(active)
+        }
         if (active.pauseRequested) return await settlePausedOperation(active, resumed, pending.stepIndex)
         active.text.retainJson('outcome', resumed)
         if (resumed.kind === 'cancelled') {
+          await recordModelOperationSelection(active, resumed)
           const cancelled = await finishCancelled(active)
           return err('cancelled', 'The assistant run was cancelled.', {
             retryable: true,
@@ -1112,6 +1126,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       if (checkpoint.requiresOperationSession && !session) {
         return err('run_not_active', 'Resume requires a fresh validated operation session.', { retryable: false })
       }
+      if (checkpoint.operationBatch && !session?.supportsOperationBatches) {
+        return err('run_not_active', 'Resume requires a batch-aware operation session.', { retryable: false })
+      }
       active = restoreActive(run, input.onPersisted)
       active.text.retainRun(run, checkpoint.outputText)
       active.agentResolver = input.agentResolver
@@ -1176,6 +1193,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     let request = initialRequest
     let stepIndex = initialStepIndex
     let initialTurn = activity?.initialTurn
+    let operationBatch = active.run.lifecycleCheckpoint?.operationBatch
     if (initialTurn) active.text.retainJson('turn', initialTurn)
     active.operationSession = modelOperationSession
 
@@ -1187,7 +1205,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       let calls: readonly import('./contracts').AssistantModelOperationProviderCall[] = initialTurn?.calls ?? []
       let reasoningReplay: readonly ChatReasoningReplayPart[] = initialTurn?.reasoningReplay ?? Object.freeze([])
       let turnOutput = initialTurn?.outputText
-      if (!initialTurn) {
+      if (!initialTurn && !operationBatch) {
         request = delegationRequest(request, active.run, !!active.agentResolver)
         request = await checkpointProviderRequest(active, request, stepIndex, !!modelOperationSession)
         if (active.pauseRequested) return await pausedResult(active)
@@ -1246,6 +1264,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         turnOutput = active.outputText.slice(outputStart)
       }
       initialTurn = undefined
+      if (operationBatch && !modelOperationSession?.supportsOperationBatches) throw new Error('A queued batch requires a batch-aware operation session')
       const delegated = parseDelegation(calls, turnOutput ?? '')
       if (delegated) {
         const root = active.run.agentDefinition
@@ -1279,6 +1298,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       // entering Tasks, including structured actions not visible as tool calls.
       await record(active, 'run.checkpointed', { phase: 'operation', stepIndex }, {
         lifecycleCheckpoint: captureCheckpoint(active.text, { request, stepIndex,
+          ...(operationBatch ? { operationBatch } : {}),
           outputText: active.outputText.slice(0, outputStart), streamEventCount: active.streamEventCount,
           phase: 'operation', effectCertainty: 'uncertain', recovery: 'reconciliation-required',
           requiresOperationSession: true, steering: active.run.lifecycleCheckpoint?.steering ?? [] }),
@@ -1288,9 +1308,13 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       active.text.assertAdmission()
       active.operationDispatched = true
       const outcome = await modelOperationSession.evaluateTurn({ run: active.run, request,
+        ...(operationBatch ? { operationBatch } : {}),
         outputText: turnOutput ?? '', calls: Object.freeze(calls), reasoningReplay, stepIndex, signal: active.controller.signal,
         onOperationStarted: (operation) => recordOperationStarted(active, operation) })
-      if (active.cancellationRequested || isTerminal(active.run)) return cancelledResult(active)
+      if (active.cancellationRequested || isTerminal(active.run)) {
+        await recordStoppedOperation(active, outcome, stepIndex)
+        return cancelledResult(active)
+      }
       if (active.pauseRequested) return await settlePausedOperation(active, outcome, stepIndex)
       active.text.retainJson('outcome', outcome)
       if (outcome.kind === 'no-operation') {
@@ -1323,12 +1347,14 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         }, { status: 'awaiting-confirmation', pendingModelOperation: outcome.pending,
           checkpoint: { outputText: active.outputText, streamEventCount: active.streamEventCount },
           lifecycleCheckpoint: captureCheckpoint(active.text, { ...active.run.lifecycleCheckpoint!,
+            ...(outcome.operationBatch ? { operationBatch: outcome.operationBatch } : {}),
             phase: 'confirmation', effectCertainty: 'none', recovery: 'resumable' }),
         }))
       }
       await recordCompletedOperation(active, outcome, stepIndex + 1)
       if (active.pauseRequested) return await pausedResult(active)
       request = captureRequest(active.text, outcome.request)
+      operationBatch = outcome.operationBatch
       stepIndex += 1
     }
   }
@@ -1377,6 +1403,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     await record(active, 'model-operation.selected', { outcome: outcome.kind, receipt: outcome.receipt }, (run) => ({
       checkpoint: { outputText: active.outputText, streamEventCount: active.streamEventCount },
       lifecycleCheckpoint: captureCheckpoint(active.text, { request: outcome.request, stepIndex: nextStep,
+        ...(outcome.operationBatch ? { operationBatch: outcome.operationBatch } : {}),
         outputText: active.outputText, streamEventCount: active.streamEventCount,
         phase: 'ready', effectCertainty: 'settled', recovery: 'resumable', requiresOperationSession: !!active.operationSession,
         steering: run.lifecycleCheckpoint?.steering ?? [] }),
@@ -1396,8 +1423,28 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       active.text.retainJson('outcome', outcome)
       active.outputText = checkpoint.outputText
       await recordCompletedOperation(active, outcome, stepIndex + 1)
+    } else if (outcome.kind === 'cancelled') {
+      await recordStoppedOperation(active, outcome, stepIndex)
     }
     return pausedResult(active)
+  }
+
+  async function recordStoppedOperation(active: ActiveRun, outcome: AssistantModelOperationTurnOutcome, stepIndex: number) {
+    await active.writeTail
+    if ((outcome.kind !== 'continue' && outcome.kind !== 'cancelled') || activeRuns.get(active.run.id) !== active
+      || !active.operationDispatched || active.run.lifecycleCheckpoint?.stepIndex !== stepIndex) return
+    const receipt = outcome.receipt
+    if (receipt.schema !== 'islemind.model-operation-receipt.v1' || receipt.turnId !== active.run.id
+      || receipt.stepIndex !== stepIndex || receipt.terminal !== true
+      || !['succeeded', 'failed', 'rejected', 'cancelled'].includes(String(receipt.status))
+      || typeof receipt.output !== 'string' || receipt.output.length > 4800
+      || typeof receipt.callId !== 'string' || !receipt.callId || receipt.callId.length > 320
+      || typeof receipt.operationId !== 'string' || !receipt.operationId || receipt.operationId.length > 320) return
+    // Evidence only: never revive the run, advance its queue, replace output or
+    // clear the uncertainty fence. Cancellation can finish before a provider
+    // returns, but the one still-owned operation may append its bounded receipt.
+    await record(active, 'model-operation.selected', { outcome: outcome.kind, receipt, afterStop: true }, {}, undefined, undefined, true)
+    active.operationDispatched = false
   }
 
   async function continueActivityProviderTurns(
@@ -1405,14 +1452,17 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     initialCalls: readonly import('./contracts').AssistantModelOperationProviderCall[],
     initialReasoningReplay: readonly ChatReasoningReplayPart[], initialOutputText: string,
     stream: import('@/modules/providers').ProviderAdapter['stream'], onStreamEvent?: (event: StreamEvent) => void,
-  ): Promise<string> {
+  ): Promise<Omit<AssistantActivityProviderContinuationResult, 'eventCount'>> {
     const outcome = await runProviderTurns(active, initialRequest, undefined, modelOperationSession, 0,
       { stream, describe: dependencies.providerGateway.describe.bind(dependencies.providerGateway) },
       { initialTurn: { calls: initialCalls, reasoningReplay: initialReasoningReplay, outputText: initialOutputText }, onStreamEvent })
-    if (!outcome.ok || active.run.status === 'awaiting-confirmation' || active.run.status === 'paused') {
+    if (!outcome.ok || active.run.status === 'paused' || active.cancellationRequested || active.controller.signal.aborted) {
       throw new Error('The activity continuation is suspended or stopped.')
     }
-    return active.outputText
+    return {
+      outputText: active.outputText,
+      ...(active.run.status === 'awaiting-confirmation' ? { pendingConfirmation: active.run.pendingModelOperation } : {}),
+    }
   }
 
   async function recordExecutionTarget(active: ActiveRun, target: ProviderExecutionTarget): Promise<void> {
@@ -1455,6 +1505,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     patch: Partial<AssistantRun> | ((run: AssistantRun) => Partial<AssistantRun>) = {},
     capturedRequest?: StartAssistantRunInput['request'],
     contextReceipt?: AssistantContextPlanReceipt,
+    receiptAfterStop = false,
   ): Promise<AssistantRun> {
     // Control entries use the run slot's emergency margin: pressure must not
     // prevent an already-admitted invocation from durably stopping.
@@ -1462,7 +1513,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     const release = stopping ? () => undefined : active.text.temporary(data)
     return enqueue(active, async () => {
       // An aborted transport/tool may complete late. Terminal state is monotonic.
-      if (isTerminal(active.run)) return active.run
+      if (isTerminal(active.run) && !(receiptAfterStop && type === 'model-operation.selected'
+        && active.run.status === 'cancelled' && active.operationDispatched && activeRuns.get(active.run.id) === active)) return active.run
       if (type === 'run.succeeded' && (active.pauseRequested || active.cancellationRequested)) return active.run
       const entry: RunJournalEntry = {
         schema: 'islemind.assistant-run-journal-entry.v1',

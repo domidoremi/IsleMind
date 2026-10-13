@@ -7,6 +7,7 @@ import type {
   ContextSnapshotId,
   IdGenerator,
   JsonRecord,
+  ProcessTrace,
   Result,
   StreamEvent,
 } from '@/core'
@@ -14,12 +15,22 @@ import type { ProviderExecutionTarget, ProviderExecutionTargetObserver, Provider
 import type { AssistantConversationWorkspaceWritebackHandoff } from './workspaceWritebackContracts'
 import type { AgentDefinition, FrozenAgentDefinition } from './agentDefinition'
 import type { HarnessCheckpoint } from './harnessCheckpointTypes'
+import type { ModelOperationBatch } from './application/modelOperationBatch'
 import type { HarnessPauseReason } from './harnessPauseReason'
 export type { HarnessPauseReason } from './harnessPauseReason'
 
 export const CONTEXT_SNAPSHOT_SCHEMA = 'islemind.context-snapshot.v1'
 export const RUN_JOURNAL_ENTRY_SCHEMA = 'islemind.assistant-run-journal-entry.v1'
 export const PENDING_MODEL_OPERATION_SCHEMA = 'islemind.pending-model-operation.v1'
+/** A confirmation authorizes one concrete call only within this lifetime. */
+export const MODEL_OPERATION_CONFIRMATION_TTL_MS = 15 * 60_000
+const CONFIRMATION_CLOCK_SKEW_MS = 60_000
+
+/** Fails closed for missing timestamps and clocks moved backwards beyond small skew. */
+export function isModelOperationConfirmationExpired(requestedAt: number, now: number): boolean {
+  if (!Number.isFinite(requestedAt) || !Number.isFinite(now)) return true
+  return now - requestedAt > MODEL_OPERATION_CONFIRMATION_TTL_MS || requestedAt - now > CONFIRMATION_CLOCK_SKEW_MS
+}
 export const ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA = 'islemind.assistant-run-request-snapshot.v1'
 export const ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA = 'islemind.assistant-activity-request-evidence.v1'
 export const ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA = 'islemind.assistant-run-activity-request-snapshot.v1'
@@ -410,6 +421,8 @@ export interface RunJournal {
   list(runId: AssistantRunId): Promise<readonly RunJournalEntry[]>
   /** Bounded citation-only projection; never hydrate the full streamed journal for UI. */
   listCitations?(runId: AssistantRunId): Promise<readonly Extract<StreamEvent, { type: 'citation' }>[]>
+  /** Latest state per operation, paged by its stable first sequence. No prompts or protocol state. */
+  listOperationActivities?(runId: AssistantRunId, before?: number): Promise<OperationActivityPage>
 }
 
 export interface AssistantRunPersistence extends AssistantRunRepository, RunJournal {
@@ -475,6 +488,7 @@ export interface AssistantModelOperationProviderCall {
 }
 
 export interface AssistantModelOperationTurnInput {
+  readonly operationBatch?: ModelOperationBatch
   readonly run: AssistantRun
   readonly request: ChatRequest
   readonly outputText: string
@@ -492,15 +506,18 @@ export type AssistantModelOperationTurnOutcome =
     kind: 'continue'
     request: ChatRequest
     receipt: JsonRecord
+    operationBatch?: ModelOperationBatch
   }>
   | Readonly<{
     kind: 'awaiting-confirmation'
     pending: PendingModelOperation
     receipt: JsonRecord
+    operationBatch?: ModelOperationBatch
   }>
   | Readonly<{ kind: 'cancelled'; receipt: JsonRecord }>
 
 export interface AssistantModelOperationSession {
+  readonly supportsOperationBatches?: boolean
   /** Tasks-owned catalog/permission intersection. Absence forbids Agent tool dispatch. */
   forAgent?(definition: FrozenAgentDefinition, options?: { independentReadOnly: boolean }): Promise<AssistantModelOperationSession | undefined>
   /** Host-only intersection with this invocation's effective frozen authority, not a requested allowlist. */
@@ -515,6 +532,8 @@ export interface AssistantModelOperationSession {
     readonly run: AssistantRun
     readonly pending: PendingModelOperation
     readonly approved: boolean
+    /** Set by the Harness when approval arrived after the confirmation lifetime. */
+    readonly authorizationExpired?: boolean
     readonly signal: AbortSignal
     readonly onOperationStarted?: AssistantModelOperationTurnInput['onOperationStarted']
   }): Promise<AssistantModelOperationTurnOutcome>
@@ -557,6 +576,8 @@ export interface AssistantActivityProviderContinuationInput {
 export interface AssistantActivityProviderContinuationResult {
   readonly outputText: string
   readonly eventCount: number
+  /** A durable wait for user approval, not a completed or failed reply. */
+  readonly pendingConfirmation?: PendingModelOperation
 }
 
 export interface AssistantActivityExecutionInput {
@@ -871,4 +892,15 @@ function isBoundedReceiptFiniteNumber(value: unknown, maxValue: number): value i
     && Number.isFinite(value)
     && value >= 0
     && value <= maxValue
+}
+
+export interface OperationActivity {
+  readonly trace: ProcessTrace
+  readonly sequence: number
+  readonly firstSequence: number
+}
+
+export interface OperationActivityPage {
+  readonly entries: readonly OperationActivity[]
+  readonly before?: number
 }

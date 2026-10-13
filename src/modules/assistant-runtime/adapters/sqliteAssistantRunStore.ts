@@ -3,6 +3,7 @@ import {
   asContextSnapshotId,
   freezeChatRequest,
   isChatRequest,
+  sanitizeTraceDisplayText,
   type ChatRequest,
   type JsonRecord,
 } from '@/core'
@@ -46,6 +47,7 @@ import {
 import { decodeAssistantRunRouteDetails } from '../application/actualExecutionAttribution'
 import { HARNESS_ENGINE_VERSION } from '../application/runBudget'
 import { decodeHarnessState } from '../harnessCheckpoint'
+import { projectOperationActivity } from '../application/operationActivity'
 
 const MIGRATION_SCOPE = 'assistant-runtime'
 const RUN_SCHEMA = 'islemind.assistant-run.v1'
@@ -403,6 +405,43 @@ export function createSqliteAssistantRunPersistence(
         [runId],
       )
       return rows.map(parseJournalEntry)
+    },
+
+    async listOperationActivities(runId, before) {
+      if (!isNonEmptyString(runId) || before !== undefined && (!Number.isSafeInteger(before) || before < 1)) {
+        throw new Error('Invalid operation activity query')
+      }
+      // Group before paging: an old start must never hide a newer receipt on a
+      // different page. SQL reads the journal; JS receives only 21 bounded rows,
+      // never streamed text, prompts, signatures, or the full run checkpoint.
+      const rows = await (await database()).getAll<RunJournalRow & { firstSequence: number; startedAt: number; inputSummary: string | null }>(
+        `WITH events AS (
+          SELECT *, CASE WHEN type = 'run.checkpointed'
+            THEN json_array(json_extract(dataJson, '$.stepIndex'), json_extract(dataJson, '$.operation.callId'))
+            ELSE json_array(json_extract(dataJson, '$.receipt.stepIndex'), json_extract(dataJson, '$.receipt.callId')) END AS activityKey
+          FROM assistant_run_journal WHERE runId = ? AND (
+            (type = 'run.checkpointed' AND json_extract(dataJson, '$.phase') = 'operation'
+              AND json_type(dataJson, '$.operation') = 'object') OR
+            (type IN ('model-operation.selected', 'run.awaiting-confirmation')
+              AND json_extract(dataJson, '$.receipt.schema') = 'islemind.model-operation-receipt.v1'))
+        ), grouped AS (
+          SELECT activityKey, MIN(sequence) AS firstSequence, MAX(sequence) AS lastSequence,
+            MIN(occurredAt) AS startedAt, MAX(json_extract(dataJson, '$.operation.inputSummary')) AS inputSummary
+          FROM events GROUP BY activityKey
+        ) SELECT events.runId, events.sequence, events.type, events.occurredAt, events.dataJson, events.schema,
+            grouped.firstSequence, grouped.startedAt, grouped.inputSummary
+          FROM grouped JOIN events ON events.sequence = grouped.lastSequence
+          WHERE (? IS NULL OR grouped.firstSequence < ?)
+          ORDER BY grouped.firstSequence DESC LIMIT 21`, [runId, before ?? null, before ?? null])
+      const entries = rows.slice(0, 20).map((row) => {
+        if ((row.dataJson?.length ?? 0) > 64 * 1024) throw new AssistantRunPersistenceDataError('Operation activity exceeds limit')
+        const trace = projectOperationActivity(parseJournalEntry(row), 4800)
+        if (!trace) throw new AssistantRunPersistenceDataError('Invalid operation activity')
+        return { sequence: row.sequence, firstSequence: row.firstSequence,
+          trace: { ...trace, startedAt: row.startedAt, metadata: { ...trace.metadata,
+            inputSummary: sanitizeTraceDisplayText(row.inputSummary, 2400) } } }
+      }).reverse()
+      return { entries, ...(rows.length > 20 ? { before: rows[19].firstSequence } : {}) }
     },
 
     async listCitations(runId) {
