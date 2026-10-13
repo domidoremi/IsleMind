@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, View, type ViewStyle } from 'react-native'
+import { StyleSheet, View, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'

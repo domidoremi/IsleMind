@@ -12,7 +12,8 @@ const ProviderSettingsContent = createLazyComponent(
 
 export default function ProviderSettingsScreen() {
   const [backgroundState, setBackgroundState] = useState<IsleBackgroundState>('idle')
-  const params = useLocalSearchParams<{ returnTo?: string | string[] }>()
+  const params = useLocalSearchParams<{ returnTo?: string | string[]; setup?: string }>()
+  const consumeAddIntent = useCallback(() => router.setParams({ setup: undefined }), [])
   const navigateBackFromProviderSettings = useCallback(() => {
     const action = resolveSettingsChildReturnAction(params.returnTo, router.canGoBack())
     if (action.kind === 'back') {
@@ -41,7 +42,7 @@ export default function ProviderSettingsScreen() {
       headerMode="canvas"
     >
       <View style={{ flex: 1 }}>
-        <ProviderSettingsContent onClose={navigateBackFromProviderSettings} onBackgroundStateChange={setBackgroundState} />
+        <ProviderSettingsContent autoOpenAdd={params.setup === 'add'} onAutoOpenAddConsumed={consumeAddIntent} onClose={navigateBackFromProviderSettings} onBackgroundStateChange={setBackgroundState} />
       </View>
     </ThemeDetailFrame>
   )

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { IslePressable } from '@/components/ui/isle'
@@ -37,6 +38,7 @@ export function ContextDiagnosticsSection({
   assetCardSurface,
 }: ContextDiagnosticsSectionProps) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
   const { t } = useTranslation()
   const [selfTestDetailsOpen, setSelfTestDetailsOpen] = useState(false)
   const [ragActivityOpen, setRagActivityOpen] = useState(false)
@@ -84,13 +86,13 @@ export function ContextDiagnosticsSection({
               <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>
                 {selfTestDetailsOpen ? t('contextPanel.hideDiagnosticDetails') : t('contextPanel.showDiagnosticDetails')}
               </Text>
-              <MotiView animate={{ rotate: selfTestDetailsOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+              <MotiView animate={{ rotate: selfTestDetailsOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
                 <AppIcon name="collapse" color={colors.textTertiary} size={16} />
               </MotiView>
             </View>
           </IslePressable>
           {selfTestDetailsOpen ? (
-            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ gap: 8 }}>
+            <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ gap: 8 }}>
               {selfTestResult.steps.map((step, index) => (
                 <AnimatedDiagnosticsRow key={`${step.name}-${index}`} index={index}>
                   <SelfTestRow step={step} assetCardSurface={assetCardSurface} />
@@ -145,14 +147,14 @@ export function ContextDiagnosticsSection({
                   {t('contextPanel.ragDebug.activitySummary', { logs: Math.min(ragLogs.length, 3), jobs: Math.min(indexingJobs.length, 4), failed: failedIndexingJobs })}
                 </Text>
               </View>
-              <MotiView animate={{ rotate: ragActivityOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+              <MotiView animate={{ rotate: ragActivityOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
                 <AppIcon name="collapse" color={colors.textTertiary} size={16} />
               </MotiView>
             </View>
           </IslePressable>
         ) : null}
         {ragActivityOpen ? (
-          <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+          <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}>
             {ragLogs.slice(0, 3).map((log, index) => (
               <AnimatedDiagnosticsRow key={log.id} index={index + 1}>
                 <RagLogRow log={log} assetCardSurface={assetCardSurface} />
@@ -174,9 +176,9 @@ function AnimatedDiagnosticsRow({ index, children }: { index: number; children: 
   const motion = useMotionPreference()
   return (
     <MotiView
-      from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+      from={motion === 'full' ? { opacity: 0, translateY: 8 } : undefined}
       animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1, delay: motion === 'full' ? Math.min(index * 22, 130) : 0 }}
+      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 0, delay: motion === 'full' ? Math.min(index * 22, 130) : 0 }}
     >
       {children}
     </MotiView>

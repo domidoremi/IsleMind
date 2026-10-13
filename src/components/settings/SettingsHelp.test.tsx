@@ -2,9 +2,14 @@ import { useState } from 'react'
 import { AccessibilityInfo, Keyboard, TextInput } from 'react-native'
 import { act, fireEvent, render } from '@testing-library/react-native'
 import { IsleButton } from '@/components/ui/isle'
+import Markdown from 'react-native-markdown-display'
+import { getColors } from '@/theme/colors'
+import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { GuideReader, SettingsHelpButton } from './SettingsHelp'
 
 let mockDimensions = { width: 390, height: 844, scale: 1, fontScale: 1 }
+let mockTheme: CanonicalThemeId = 'minimal'
+let mockMode: 'light' | 'dark' = 'light'
 jest.mock('react-native', () => {
   const original = jest.requireActual('react-native')
   return Object.defineProperties({}, { ...Object.getOwnPropertyDescriptors(original),
@@ -12,7 +17,7 @@ jest.mock('react-native', () => {
   })
 })
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }))
-jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal') }) }))
+jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors(mockMode, mockTheme) }) }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('@/components/ui/isle', () => {
@@ -22,12 +27,32 @@ jest.mock('@/components/ui/isle', () => {
     IsleButton: jest.fn(({ label, onPress }: any) => <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}><Text>{label}</Text></Pressable>),
   }
 })
-jest.mock('react-native-markdown-display', () => ({ children }: any) => {
+jest.mock('react-native-markdown-display', () => jest.fn(({ children }: any) => {
   const { Text } = require('react-native')
   return <Text>{children}</Text>
+}))
+
+beforeEach(() => {
+  mockDimensions = { width: 390, height: 844, scale: 1, fontScale: 1 }
+  mockTheme = 'minimal'
+  mockMode = 'light'
 })
 
-beforeEach(() => { mockDimensions = { width: 390, height: 844, scale: 1, fontScale: 1 } })
+it.each((['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const).flatMap(theme =>
+  (['light', 'dark'] as const).map(mode => [theme, mode] as const),
+))('keeps %s %s typography in manual chapter bodies and headings', async (theme, mode) => {
+  mockTheme = theme
+  mockMode = mode
+  await render(<GuideReader initialSlug="models" onClose={() => undefined} />)
+  const style = jest.mocked(Markdown).mock.calls.at(-1)![0].style!
+  const typography = getColors(mode, theme).design!.semantic.typography
+  const fontFamily = theme === 'monet' ? 'NotoSerifSC' : theme === 'animal-island-ui' ? 'LXGWWenKai' : 'NotoSansSC'
+  expect(style.body).toEqual(expect.objectContaining(typography.body))
+  expect(style.body).toEqual(expect.objectContaining({ fontFamily }))
+  expect(style.heading1).toEqual(expect.objectContaining(typography.headline))
+  expect(style.heading2).toEqual(expect.objectContaining(typography.title))
+  expect(style.heading3).toEqual(expect.objectContaining({ fontFamily }))
+})
 
 it('keeps chapter navigation optional and wraps long section labels at large font sizes', async () => {
   mockDimensions = { width: 320, height: 640, scale: 1, fontScale: 2 }

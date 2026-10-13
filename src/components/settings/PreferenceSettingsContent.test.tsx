@@ -19,9 +19,6 @@ jest.mock('expo-router', () => ({ useNavigation: () => ({ dispatch: jest.fn() })
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: (_: boolean, callback: typeof mockRemove) => { mockRemove = callback } }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
-jest.mock('./theme-experiences/PreferenceSettingsExperiences', () => ({
-  MinimalPreferenceSettingsExperience: ({ identity, generation, interaction, workflow }: any) => <>{identity}{generation}{interaction}{workflow}</>,
-}))
 jest.mock('@/components/ui/isle', () => {
   const { Pressable, Text, TextInput, View } = require('react-native')
   return {
@@ -35,6 +32,28 @@ function Page() {
   return <SettingsEditBoundary><SettingsSectionContext.Provider value={{ register: () => undefined }}><PreferenceSettingsContent /></SettingsSectionContext.Provider></SettingsEditBoundary>
 }
 beforeEach(() => { jest.clearAllMocks(); mockSettings = { defaultTemperature: 0.7 }; mockFlush.mockResolvedValue(undefined); mockConfirm.mockResolvedValue(true) })
+afterEach(() => jest.restoreAllMocks())
+
+it('uses measured content width at large font scale and preserves drafts across reflow', async () => {
+  // Android landscape has room for two columns by window width, but not after
+  // safe-area/page padding and the parent's maxWidth have been applied.
+  const dimensions = jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({ width: 872, height: 393, scale: 2.75, fontScale: 2 })
+  const screen = await render(<Page />)
+  const input = () => screen.getAllByLabelText('chat.temperature').find(node => node.props.onChangeText)!
+  await fireEvent.changeText(input(), '1.25')
+  await fireEvent(screen.getByTestId('preference-settings-content'), 'layout', { nativeEvent: { layout: { width: 808, height: 600 } } })
+  expect(screen.getByTestId('preference-generation-fields')).toHaveStyle({ flexDirection: 'column' })
+  dimensions.mockReturnValue({ width: 1200, height: 800, scale: 2.75, fontScale: 2 })
+  await screen.rerender(<Page />)
+  expect(screen.getByTestId('preference-generation-fields')).toHaveStyle({ flexDirection: 'column' })
+  dimensions.mockReturnValue({ width: 872, height: 393, scale: 2.75, fontScale: 1 })
+  await screen.rerender(<Page />)
+  expect(screen.getByTestId('preference-generation-fields')).toHaveStyle({ flexDirection: 'row' })
+  await fireEvent(screen.getByTestId('preference-settings-content'), 'layout', { nativeEvent: { layout: { width: 350, height: 1000 } } })
+  expect(screen.getByTestId('preference-generation-fields')).toHaveStyle({ flexDirection: 'column' })
+  expect(input().props.value).toBe('1.25')
+  expect(mockUpdate).not.toHaveBeenCalled()
+})
 
 it('keeps exact numeric input on blur, rejects incomplete values, and saves only explicitly', async () => {
   const screen = await render(<Page />)
@@ -51,15 +70,12 @@ it('keeps exact numeric input on blur, rejects incomplete values, and saves only
   expect(mockToast).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'settingsWorkspace.saved' }))
 })
 
-it('retains workflow drafts across folding and clears discarded input without committing', async () => {
+it('guards task navigation and clears discarded workflow input without committing', async () => {
   const screen = await render(<Page />)
-  const toggle = () => screen.getByRole('button', { name: /^preferences.agentWorkflow\./ })
-  await fireEvent.press(toggle())
+  await fireEvent.press(screen.getByTestId('settings-task-workflow'))
   await fireEvent.changeText(screen.getByLabelText('preferences.agentWorkflowMaxSteps'), '6')
-  await fireEvent.press(toggle())
-  expect(screen.queryByLabelText('preferences.agentWorkflowMaxSteps')).toBeNull()
-  expect(screen.getByText('settingsWorkspace.unsaved')).toBeTruthy()
-  await fireEvent.press(toggle())
+  mockConfirm.mockResolvedValueOnce(false)
+  await fireEvent.press(screen.getByTestId('settings-task-workflow'))
   expect(screen.getByLabelText('preferences.agentWorkflowMaxSteps').props.value).toBe('6')
   expect(mockUpdate).not.toHaveBeenCalled()
   await act(async () => { mockRemove({ data: { action: { type: 'POP' } } }); await Promise.resolve() })

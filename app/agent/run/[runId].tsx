@@ -4,10 +4,11 @@ import { createLazyComponent } from '@/utils/lazyLoad'
 import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 
 const Content = createLazyComponent(async () => {
-  const [{ AgentRunScreen }, { agentTaskRuntime }] = await Promise.all([
+  const [{ AgentRunScreen }, { agentTaskRuntime }, { loadWorkspaceEditReview }] = await Promise.all([
     import('@/presentation/features/agents/AgentRunScreen'), import('@/bootstrap/agentTaskRuntime'),
+    import('@/bootstrap/workspaceEditReview'),
   ])
-  return { default: ({ runId }: { runId: string }) => <AgentRunScreen runtime={agentTaskRuntime} runId={runId}
+  return { default: ({ runId }: { runId: string }) => <AgentRunScreen runtime={agentTaskRuntime} runId={runId} loadWorkspaceEditReview={loadWorkspaceEditReview}
     onFreshRun={(conversationId) => router.push({ pathname: '/agent', params: { conversationId } })}
     onOpenRun={(id) => router.push({ pathname: '/agent/run/[runId]', params: { runId: id } })} /> }
 })

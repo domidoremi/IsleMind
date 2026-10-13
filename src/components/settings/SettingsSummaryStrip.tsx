@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useAppTheme } from '@/hooks/useAppTheme'
 export interface SettingsSummaryItem {
   key: string
@@ -11,7 +12,7 @@ export interface SettingsSummaryItem {
 }
 
 export function SettingsSummaryStrip({ items }: { items: SettingsSummaryItem[] }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { width, fontScale } = useWindowDimensions()
   const compact = width / fontScale < 430
   const singleColumn = width / fontScale < 320
@@ -66,14 +67,14 @@ export function SettingsSummaryStrip({ items }: { items: SettingsSummaryItem[] }
 
   if (compact) {
     return (
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', borderRadius: 8, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: dividerColor, backgroundColor: colors.ui.semantic.surface.muted }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', borderRadius: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : colors.ui.radius.panel, overflow: 'hidden', borderWidth: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : StyleSheet.hairlineWidth, borderColor: dividerColor, backgroundColor: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 'transparent' : colors.ui.semantic.surface.muted }}>
         {items.map(renderItem)}
       </View>
     )
   }
 
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', borderRadius: 8, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: dividerColor, backgroundColor: colors.ui.semantic.surface.muted }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', borderRadius: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : colors.ui.radius.panel, overflow: 'hidden', borderWidth: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : StyleSheet.hairlineWidth, borderColor: dividerColor, backgroundColor: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 'transparent' : colors.ui.semantic.surface.muted }}>
       {items.map(renderItem)}
     </View>
   )

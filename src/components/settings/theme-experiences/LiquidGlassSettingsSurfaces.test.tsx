@@ -41,9 +41,8 @@ it.each([
     <LiquidGlassContextSettingsLead section="all" compact={compact} toggles={<Text>Context content</Text>} />
     <LiquidGlassSkillSettingsLead saved={0} workflows={0} enabledWorkflows={0} templates={0} review={0} focused={false} summary={<Text>Skills content</Text>} />
     <LiquidGlassProviderSettingsExperience
-      title="Providers" subtitle="Setup" backLabel="Back" addLabel="Add" importLabel="Import"
-      enabledSummary="None" visibleSummary="None" enabledCount={0} totalCount={0} visibleCount={0}
-      compact={compact} onBack={noop} onAdd={noop} onImport={noop}
+      title="Providers" subtitle="Setup" backLabel="Back" addLabel="Add"
+      compact={compact} onBack={noop} onAdd={noop}
     ><Text>Provider content</Text></LiquidGlassProviderSettingsExperience>
     <LiquidGlassMcpSettingsExperience compact={compact} managementOpen={false} managementTrigger={null} management={null}
       servers={[server, { ...server, id: 'enabled', enabled: true }]} pendingServerId={null} onToggle={noop} onOpenDetails={noop} />

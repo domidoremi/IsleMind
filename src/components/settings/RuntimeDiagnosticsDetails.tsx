@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 

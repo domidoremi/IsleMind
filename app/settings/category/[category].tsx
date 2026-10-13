@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { Text } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { SettingsNavigationContent } from '@/components/settings/SettingsNavigationContent'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
 import { SETTINGS_CATEGORIES, type SettingsCategory } from '@/presentation/features/settings/settingsRegistry'

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 

@@ -83,6 +83,7 @@ interface AddProvidersProgress {
 }
 
 interface AddProvidersOptions {
+  selectDefaultIfEmpty?: boolean
   onProgress?: (progress: AddProvidersProgress) => void
   yieldEvery?: number
   persist?: 'immediate' | 'deferred'
@@ -114,10 +115,14 @@ const defaultSettings: Settings = {
   systemStatusNotificationsEnabled: false,
   defaultTemperature: undefined,
   defaultMaxTokens: undefined,
+  // Local document retrieval is ready by default; automatic memory extraction
+  // remains opt-in because it creates additional model requests.
   memoryEnabled: false,
-  knowledgeEnabled: false,
-  webSearchEnabled: true,
-  webSearchMode: 'tavily',
+  knowledgeEnabled: true,
+  // Search may disclose conversation-derived queries to another service.
+  // Local capabilities are ready; network search needs an explicit choice.
+  webSearchEnabled: false,
+  webSearchMode: 'off',
   knowledgeTopK: 4,
   memoryTopK: 4,
   // FTS5 is the offline, deterministic baseline. Hybrid/vector retrieval is
@@ -136,7 +141,7 @@ const defaultSettings: Settings = {
   ragCrossEncoderEnabled: true,
   ragColbertEnabled: true,
   ragLlmlinguaEnabled: true,
-  searchProvider: 'islemind',
+  searchProvider: 'off',
   autoUpdateCheckEnabled: true,
   providerCatalogVersion: 1,
   skillsEnabled: true,
@@ -307,7 +312,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const urlSettings = sanitizeSettingsUrlFields(storedSettings)
     const rawSettings = normalizeSettingsIdentityPreferences(urlSettings)
     const effectiveLanguage = resolveEffectiveLanguage(rawSettings.language, languageSource, getSystemLanguage())
-    const resolvedSearchProvider = resolveSearchProvider(rawSettings)
+    // Read consent from saved values, not merged defaults. Legacy mode-only
+    // selections must not be replaced by a new installation's provider.
+    const resolvedSearchProvider = resolveSearchProvider({
+      ...settings,
+      webSearchEnabled: settings?.webSearchEnabled ?? Boolean(
+        (settings?.searchProvider && settings.searchProvider !== 'off')
+        || (settings?.webSearchMode && settings.webSearchMode !== 'off')
+      ),
+      searchProvider: settings?.searchProvider ?? (settings?.webSearchMode ? undefined : 'islemind'),
+    })
     const resetCatalog = (rawSettings.providerCatalogVersion ?? PROVIDER_CATALOG_VERSION) < PROVIDER_CATALOG_VERSION
     const savedProviders = providers ? [...providers] : []
     if (resetCatalog) {
@@ -531,7 +545,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const normalized = providers.map((provider) => normalizeProvider({ ...provider, apiKey: '' } as AIProvider))
       const existingIds = new Set(normalized.map((provider) => provider.id))
       const updated = [...normalized, ...state.providers.filter((provider) => !existingIds.has(provider.id))]
-      const defaultProvider = state.settings.defaultProvider ?? normalized[0]?.id ?? null
+      const defaultProvider = state.settings.defaultProvider ?? (options?.selectDefaultIfEmpty === false ? null : normalized[0]?.id ?? null)
       const settings = sanitizeSettingsUrlFields({ ...state.settings, defaultProvider })
       persistProvidersSnapshot(updated, options?.persist)
       persistSettingsSnapshot(settings)

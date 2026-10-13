@@ -2,7 +2,7 @@ import { useLocalSearchParams } from 'expo-router'
 import { createLazyComponent } from '@/utils/lazyLoad'
 import type { SettingsControlPanel } from '@/presentation/features/settings/settingsControlNavigation'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
-import { Text } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 const Content = createLazyComponent(() => import('@/components/settings/SystemSettingsPanelContent').then(module => ({ default: module.SystemSettingsPanelContent })))
 const panels = ['appearance', 'data', 'advanced', 'diagnostics', 'governance', 'updates', 'danger']

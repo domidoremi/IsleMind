@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { BackHandler, findNodeHandle, Keyboard, Platform, ScrollView, TextInput, View, useWindowDimensions } from 'react-native'
+import { BackHandler, findNodeHandle, Keyboard, Platform, ScrollView, View, useWindowDimensions } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import { router, useLocalSearchParams, useNavigation, usePathname } from 'expo-router'
 import { useIsFocused } from 'expo-router/react-navigation'
 import { useTranslation } from 'react-i18next'
@@ -8,10 +9,12 @@ import { IsleScreen } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { resolveSettingsChildReturnAction } from '@/presentation/app-shell/routeReturnPolicy'
+import { restoreAccessibilityFocus } from '@/platform/native/restoreAccessibilityFocus'
+import type { GestureResponderEvent } from 'react-native'
 import { settingsHelpTopic } from '@/presentation/features/settings/settingsRegistry'
 import { SettingsHelpButton } from './SettingsHelp'
 import { SettingsEditBoundary, useSettingsLeave } from './SettingsEditBoundary'
-import { SettingsSectionContext } from './SettingsSection'
+import { SettingsSectionContext, type SettingsTaskNavigation } from './SettingsSection'
 import { LiquidGlassSettingsPageExperience, MaterialSettingsPageExperience, MinimalSettingsPageExperience, MonetSettingsPageExperience } from './theme-experiences/SettingsPageExperiences'
 
 type Props = { title: string; subtitle?: string; children: ReactNode; focusKey?: string; scrollable?: boolean }
@@ -20,7 +23,7 @@ const CONTENT_PADDING_BOTTOM = 48
 export function SettingsPageShell(props: Props) {
   return <SettingsEditBoundary><SettingsPageFrame {...props} /></SettingsEditBoundary>
 }
-function SettingsPageFrame({ title, children, scrollable = true }: Props) {
+function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Props) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const pathname = usePathname()
@@ -53,6 +56,14 @@ function SettingsPageFrame({ title, children, scrollable = true }: Props) {
   const consumed = useRef<string | undefined>(undefined)
   const keyboardFrame = useRef<number | null>(null)
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [taskNavigation, setTaskNavigation] = useState<SettingsTaskNavigation>()
+  const titleRef = useRef<View>(null)
+  const previousTaskTitle = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (previousTaskTitle.current === taskNavigation?.title) return
+    previousTaskTitle.current = taskNavigation?.title
+    if (titleRef.current) return restoreAccessibilityFocus(titleRef.current as unknown as GestureResponderEvent['currentTarget'])
+  }, [taskNavigation?.title])
   const [highlight, setHighlight] = useState<string>()
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   // Native initial routes also emit transitionEnd from onAppear. Their index
@@ -136,12 +147,13 @@ function SettingsPageFrame({ title, children, scrollable = true }: Props) {
     if (highlightTimer.current) clearTimeout(highlightTimer.current)
   }, [])
   const returnToSettings = useCallback(() => {
+    if (taskNavigation && !target) { taskNavigation.onBack(); return }
     void leave(() => {
       const action = resolveSettingsChildReturnAction(params.returnTo, router.canGoBack())
       if (action.kind === 'back') router.back()
       else router.replace(action.pathname)
     })
-  }, [params.returnTo, leave])
+  }, [params.returnTo, leave, taskNavigation, target])
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', event => {
       setKeyboardHeight(event.endCoordinates.height)
@@ -173,14 +185,13 @@ function SettingsPageFrame({ title, children, scrollable = true }: Props) {
   const Experience = canonicalThemeId === 'monet' ? MonetSettingsPageExperience : canonicalThemeId === 'material' ? MaterialSettingsPageExperience : canonicalThemeId === 'liquid-glass' ? LiquidGlassSettingsPageExperience : MinimalSettingsPageExperience
   const leading = <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="sm" glyph="back" onNavigate={returnToSettings} color={colors.text} />
   const content = <View ref={contentRef} collapsable={false} style={{ width: '100%', maxWidth: 860, alignSelf: 'center', flex: scrollable ? undefined : 1 }}>
-    <Experience title={title} rootTitle={t('settings.title')} routeKey={pathname.split('/').filter(Boolean).pop() ?? 'settings'} compact={compact} leading={leading}>
+    <Experience titleRef={titleRef} title={taskNavigation?.title ?? title} trailing={<SettingsHelpButton compact topic={settingsHelpTopic(pathname, target)} />} rootTitle={t('settings.title')} routeKey={pathname.split('/').filter(Boolean).pop() ?? 'settings'} compact={compact} leading={leading}>
       {null}
     </Experience>
-    <SettingsHelpButton topic={settingsHelpTopic(pathname, target)} />
     <View style={scrollable ? undefined : { flex: 1 }}>{children}</View>
   </View>
-  return <IsleScreen padded={false} background="surface" backgroundState={keyboardHeight ? 'input' : 'idle'}>
-    <SettingsSectionContext.Provider value={{ target: focused && !transitioning ? target : undefined, highlight, register }}>
+  return <IsleScreen padded={false} background="default" backgroundState={keyboardHeight ? 'input' : 'idle'}>
+    <SettingsSectionContext.Provider value={{ target: focused && !transitioning ? target : undefined, highlight, register, setTaskNavigation, resetScroll: () => { cancel(); scrollRef.current?.scrollTo({ y: 0, animated: false }) } }}>
       {scrollable ? <ScrollView ref={scrollRef} onLayout={event => {
         scrollLayout.current = { ...scrollLayout.current, height: event.nativeEvent.layout.height, revision: scrollLayout.current.revision + 1 }
         locate()

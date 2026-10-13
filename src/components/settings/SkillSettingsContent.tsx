@@ -1,12 +1,18 @@
+import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useRef } from 'react'
 import { Keyboard } from 'react-native'
 import { useSettingsDraft } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import { useSettingsStore } from '@/store/settingsStore'
+import { SettingsReferenceField } from './SettingsReferenceField'
+import { loadCapabilityReferenceCatalog } from '@/bootstrap/settingsReferenceCatalog'
+import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
+import { getProviderSelectableModels } from '@/utils/providerModels'
 import { IsleToggle } from '@/components/ui/isle'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
@@ -109,6 +115,8 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
     borderColor: canonicalThemeId === 'monet' ? colors.material.stroke : colors.ui.semantic.chrome.border,
   } as const
   const [skills, setSkills] = useState<SkillDefinition[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [toolchainCatalog, setToolchainCatalog] = useState<ToolchainControlPlaneCatalogSnapshot | null>(null)
   const [editingSkillId, setEditingSkillId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -134,10 +142,15 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   const [savedOpen, setSavedOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [operationError, setOperationError] = useState<string>()
   const saveLock = useRef(false)
   const pendingId = useRef<string | undefined>(undefined)
   const editingVersion = useRef<number | undefined>(undefined)
   const enabled = useSettingsStore(state => state.settings.skillsEnabled ?? true)
+  const providers = useSettingsStore(state => state.providers)
+  const [references, setReferences] = useState<Awaited<ReturnType<typeof loadCapabilityReferenceCatalog>>>()
+  const [referenceFailed, setReferenceFailed] = useState(false)
+  const [referenceRefresh, setReferenceRefresh] = useState(0)
   const updateSettings = useSettingsStore(state => state.updateSettings)
   const formSnapshot = JSON.stringify([name, description, systemPrompt, tags, layer, priority, providerId, model, temperature, maxTokens, enabledTools, knowledgeSources, firstUserMessage, expectedReplyFormat, variablesJson, stackPolicy])
   const emptySnapshot = useRef(formSnapshot)
@@ -200,16 +213,29 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }, [])
 
   useEffect(() => {
+    if (!formOpen || !advancedOpen) return
+    let cancelled = false
+    setReferenceFailed(false)
+    void loadCapabilityReferenceCatalog().then(value => { if (!cancelled) setReferences(value) })
+      .catch(() => { if (!cancelled) setReferenceFailed(true) })
+    return () => { cancelled = true }
+  }, [formOpen, advancedOpen, referenceRefresh])
+
+  useEffect(() => {
     if (safeWorkflowFocus || safePluginManifestFocus || reviewRequiredWorkflowCount) setWorkflowsOpen(true)
   }, [reviewRequiredWorkflowCount, safePluginManifestFocus, safeWorkflowFocus])
 
   async function refresh() {
+    try {
     const [nextSkills, nextToolchainCatalog] = await Promise.all([
       listSkills(),
       buildPersistedToolchainCatalogSnapshot(),
     ])
     setSkills(nextSkills)
     setToolchainCatalog(nextToolchainCatalog)
+    setLoaded(true)
+    setLoadFailed(false)
+    } catch { setLoadFailed(true) }
   }
 
   async function registerSkillInToolchain(skill: SkillDefinition) {
@@ -238,10 +264,21 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
     })
   }
 
+  async function runOperation(work: () => Promise<void>, failure = 'settingsWorkspace.saveFailed') {
+    if (saveLock.current) return
+    saveLock.current = true
+    setSaving(true)
+    setOperationError(undefined)
+    try { await work() }
+    catch { setOperationError(failure) }
+    finally { saveLock.current = false; setSaving(false) }
+  }
+
   async function saveSkill() {
     if (saveLock.current) return
     saveLock.current = true
     setSaving(true)
+    setOperationError(undefined)
     Keyboard.dismiss()
     try {
     const prompt = systemPrompt.trim()
@@ -288,7 +325,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
     setFormOpen(false)
     setSkills(current => [...current.filter(item => item.id !== skill.id), skill])
     dialog.toast({ title: editing ? t('skills.updated') : t('skills.created'), message: skill.name, tone: 'mint' })
-    } catch { dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
+    } catch { setOperationError('settingsWorkspace.saveFailed') }
     finally { saveLock.current = false; setSaving(false) }
   }
 
@@ -519,9 +556,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       key: 'saved',
       label: t('skills.overviewSaved'),
       value: String(regularSkills.length),
-      detail: toolchainCatalog
-        ? t('skills.toolchainReady', { ready: toolchainCatalog.registry.counts.ready, total: toolchainCatalog.registry.counts.total })
-        : t('skills.saved'),
+      detail: t('skills.saved'),
       icon: <AppIcon name="skills-sparkles" color={colors.textTertiary} size={15} />,
     },
     {
@@ -533,17 +568,16 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       tone: enabledWorkflowCount ? 'mint' as const : workflowSkills.length ? 'amber' as const : 'default' as const,
     },
     {
-      key: 'templates',
-      label: t('skills.overviewTemplates'),
-      value: String(availableWorkflowTemplateCount),
-      detail: t('skills.workflowTemplateAvailable'),
+      key: 'disabled',
+      label: t('settingsSubsystem.disabledWorkflows'),
+      value: String(workflowSkills.filter(skill => getWorkflowSkillState(skill) !== 'enabled' && !isWorkflowSkillReviewRequired(skill)).length),
       icon: <AppIcon name="list-check" color={colors.textTertiary} size={15} />,
     },
     {
       key: 'review',
       label: t('skills.overviewReview'),
       value: String(reviewRequiredWorkflowCount),
-      detail: safePluginManifestFocus || safeWorkflowFocus ? t('settings.current') : t('common.none'),
+
       icon: <AppIcon name="shield" color={colors.textTertiary} size={15} />,
       tone: reviewRequiredWorkflowCount || safePluginManifestFocus || safeWorkflowFocus ? 'amber' as const : 'mint' as const,
     },
@@ -558,28 +592,18 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         : MinimalSkillSettingsLead
   return (
     <View style={{ gap: 10 }}>
-      <IsleToggle title={t('settings.skills')} active={enabled} onPress={() => updateSettings({ skillsEnabled: !enabled })} />
-      <Lead
-        saved={regularSkills.length}
-        workflows={workflowSkills.length}
-        enabledWorkflows={enabledWorkflowCount}
-        templates={availableWorkflowTemplateCount}
-        review={reviewRequiredWorkflowCount}
-        focused={Boolean(safePluginManifestFocus || safeWorkflowFocus)}
-        summary={summary}
-      />
-      <SkillDisclosureRow
-        title={editingSkillId ? t('skills.edit') : t('skills.create')}
-        detail={t('skills.createSubtitle')}
-        icon={<AppIcon name="spark" color={colors.textTertiary} size={16} />}
-        open={formOpen}
-        onPress={() => {
-          setFormOpen((value) => !value)
-        }}
-      />
-      {formOpen ? (
-        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
-          <SettingsHelpButton topic="tools" />
+      {saving ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
+      {operationError && !formOpen ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t(operationError)}</Text> : null}
+      {!formOpen && !importExportOpen && !templatesOpen && !workflowsOpen && !savedOpen ? <IsleToggle title={t('settings.skills')} active={enabled} onPress={() => updateSettings({ skillsEnabled: !enabled })} /> : null}
+      {!enabled ? <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.paused')}</Text> : null}
+      {loadFailed ? <><Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.loadFailed')}</Text><IsleButton label={t('common.retry')} onPress={() => void refresh()} /></> : null}
+      {!formOpen && !importExportOpen && !templatesOpen && !workflowsOpen && !savedOpen ? <>
+        {loaded ? summary : !loadFailed ? <Text style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }}>{t('settingsSubsystem.regularSkills')}</Text>
+      </> : null}
+      <SettingsTaskWorkspace value={formOpen ? 'edit' : importExportOpen ? 'import' : templatesOpen ? 'templates' : workflowsOpen ? 'workflows' : savedOpen ? 'saved' : null}
+        onTaskChange={id => { if (id !== 'edit') resetForm(); setFormOpen(id === 'edit'); setImportExportOpen(id === 'import'); setTemplatesOpen(id === 'templates'); setWorkflowsOpen(id === 'workflows'); setSavedOpen(id === 'saved') }} tasks={[
+        { id: 'edit', title: editingSkillId ? t('skills.edit') : t('skills.create'), description: t('settingsUx.skillHint'), icon: 'edit', content: <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <View style={{ gap: 10 }}>
           <IsleField label={t('skills.name')} inputProps={{ editable: !saving, value: name, onChangeText: setName, placeholder: t('skills.namePlaceholder') }} />
           <IsleField label={t('skills.description')} inputProps={{ editable: !saving, value: description, onChangeText: setDescription, placeholder: t('skills.descriptionPlaceholder') }} />
@@ -594,31 +618,24 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
             <IsleField style={fieldFlexStyle} label={t('skills.priority')} inputProps={{ editable: !saving, value: priority, onChangeText: setPriority, placeholder: '20', keyboardType: 'numeric' }} />
             <IsleField style={fieldFlexStyle} label={t('skills.temperature')} inputProps={{ editable: !saving, value: temperature, onChangeText: setTemperature, placeholder: '0.3', keyboardType: 'decimal-pad' }} />
           </View>
-          <View style={fieldRowStyle}>
-            <IsleField style={fieldFlexStyle} label={t('skills.providerId')} inputProps={{ editable: !saving, value: providerId, onChangeText: setProviderId, placeholder: 'provider-id' }} />
-            <IsleField style={fieldFlexStyle} label={t('skills.model')} inputProps={{ editable: !saving, value: model, onChangeText: setModel, placeholder: 'model-id' }} />
-          </View>
+          <SettingsReferenceField label={t('skills.providerId')} value={providerId} onChange={setProviderId} multiple={false} disabled={saving}
+            options={providers.map(provider => ({ value: provider.id, label: resolveProviderDisplayName(provider, t('providerSettings.customProvider')) }))} />
+          <SettingsReferenceField label={t('skills.model')} value={model} onChange={setModel} multiple={false} disabled={saving}
+            options={(providerId ? providers.filter(provider => provider.id === providerId) : providers).flatMap(provider => getProviderSelectableModels(provider).map(id => ({ value: id, label: id })))} />
           <IsleField label={t('skills.maxTokens')} inputProps={{ editable: !saving, value: maxTokens, onChangeText: setMaxTokens, placeholder: '4096', keyboardType: 'numeric' }} />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {SKILL_LAYERS.map((item) => (
-              <IsleButton key={item} label={t(`skills.layer.${item}`)} compact tone={layer === item ? 'mint' : 'soft'} onPress={() => setLayer(item)} />
+              <IsleButton key={item} label={t(`skills.layer.${item}`)} disabled={saving} compact tone={layer === item ? 'mint' : 'soft'} onPress={() => setLayer(item)} />
             ))}
-          </ScrollView>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {STACK_POLICIES.map((item) => (
-              <IsleButton key={item} label={t(`skills.stackPolicy.${item}`)} compact tone={stackPolicy === item ? 'mint' : 'soft'} onPress={() => setStackPolicy(item)} />
+              <IsleButton key={item} label={t(`skills.stackPolicy.${item}`)} disabled={saving} compact tone={stackPolicy === item ? 'mint' : 'soft'} onPress={() => setStackPolicy(item)} />
             ))}
-          </ScrollView>
-          <IsleField
-            label={t('skills.enabledTools')}
-            note={t('skills.listFieldNote')}
-            inputProps={{ editable: !saving, value: enabledTools, onChangeText: setEnabledTools, placeholder: 'islemind-builtins:search_web', multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
-          />
-          <IsleField
-            label={t('skills.knowledgeSources')}
-            note={t('skills.listFieldNote')}
-            inputProps={{ editable: !saving, value: knowledgeSources, onChangeText: setKnowledgeSources, placeholder: 'project-docs', multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
-          />
+          </View>
+          {referenceFailed ? <><Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.loadFailed')}</Text><IsleButton label={t('common.retry')} onPress={() => setReferenceRefresh(value => value + 1)} /></> : !references ? <Text style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
+          <SettingsReferenceField label={t('skills.enabledTools')} value={enabledTools} onChange={setEnabledTools} disabled={saving} catalogReady={Boolean(references) && !referenceFailed} options={references?.tools ?? []} />
+          <SettingsReferenceField label={t('skills.knowledgeSources')} value={knowledgeSources} onChange={setKnowledgeSources} disabled={saving} catalogReady={Boolean(references) && !referenceFailed} options={references?.knowledge ?? []} />
           <IsleField
             label={t('skills.firstUserMessage')}
             inputProps={{ editable: !saving, value: firstUserMessage, onChangeText: setFirstUserMessage, placeholder: t('skills.firstUserMessagePlaceholder'), multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
@@ -633,40 +650,43 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
             inputProps={{ editable: !saving, value: variablesJson, onChangeText: setVariablesJson, placeholder: '[{\"name\":\"topic\",\"type\":\"text\"}]', multiline: true, style: { minHeight: 60, maxHeight: 108 } }}
           />
           </View> : null}
+          {operationError ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t(operationError)}</Text> : null}
           <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 10 }}>
             <IsleButton label={t('common.cancel')} disabled={saving} onPress={() => void requestDiscard(() => undefined)} style={actionButtonStyle} />
             <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'skills.saveSkill')} disabled={saving} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void saveSkill()} style={actionButtonStyle} />
           </View>
           </View>
-        </MotiView>
-      ) : null}
-
-      <SkillDisclosureRow
-        title={t('skills.importExport')}
-        detail={t('skills.importExportCollapsedDetail')}
-        icon={<AppIcon name="upload" color={colors.textTertiary} size={16} />}
-        open={importExportOpen}
-        onPress={() => setImportExportOpen((value) => !value)}
-      />
-      {importExportOpen ? (
-        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
+        </MotiView> },
+        { id: 'saved', title: t('skills.saved'), summary: String(regularSkills.length), description: t('skills.savedCollapsedDetail', { count: regularSkills.length }), icon: 'skills-sparkles', content: <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
+          <SkillFoldoutHeader title={`${t('skills.saved')} ${regularSkills.length}`} />
+          <View style={{ gap: 8 }}>
+          {regularSkills.map((skill) => (
+              <IsleListItem
+                key={skill.id}
+                title={skill.name}
+                description={skill.description || skill.systemPrompt}
+                leading={<IsleChip active>{t(`skills.layer.${skill.layer}`)}</IsleChip>}
+                trailing={
+                  <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, alignItems: actionCompact ? 'stretch' : 'center' }}>
+                    {!registeredToolchainSkillIds.has(createPortableSkillToolchainManifest(skill).id) ? <IsleButton label={t('skills.registerToolchain')} disabled={saving} compact icon={<AppIcon name="workflow" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => registerSkillInToolchain(skill))} style={actionButtonStyle} /> : <IsleChip active tone="mint">{t('skills.toolchainRegistered')}</IsleChip>}
+                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t('common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
+                  </View>
+                }
+              />
+            ))}
+            {!regularSkills.length ? <SkillEmptyRow icon={<AppIcon name="skills-sparkles" color={colors.textTertiary} size={15} />} label={t('skills.empty')} detail={t('skills.emptyDetail')} /> : null}
+          </View>
+        </MotiView> },
+        { id: 'import', title: t('skills.importExport'), description: t('skills.importExportCollapsedDetail'), icon: 'upload', content: <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <SkillFoldoutHeader title={t('skills.importExport')} />
           <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 10 }}>
-            <IsleButton label={t('skills.importClipboard')} icon={<AppIcon name="upload" color={colors.textSecondary} size={16} />} onPress={() => void importFromClipboard()} style={actionButtonStyle} />
-            <IsleButton label={t('settings.chooseFile')} icon={<AppIcon name="json" color={colors.textSecondary} size={16} />} onPress={() => void importFromFile()} style={actionButtonStyle} />
+            <IsleButton label={t('skills.importClipboard')} disabled={saving} icon={<AppIcon name="upload" color={colors.textSecondary} size={16} />} onPress={() => void runOperation(() => importFromClipboard())} style={actionButtonStyle} />
+            <IsleButton label={t('settings.chooseFile')} disabled={saving} icon={<AppIcon name="json" color={colors.textSecondary} size={16} />} onPress={() => void runOperation(() => importFromFile())} style={actionButtonStyle} />
           </View>
-        </MotiView>
-      ) : null}
-
-      <SkillDisclosureRow
-        title={t('skills.workflowTemplates')}
-        detail={t('skills.workflowTemplatesCollapsedDetail', { available: availableWorkflowTemplateCount, total: workflowTemplates.length })}
-        icon={<AppIcon name="list-check" color={colors.textTertiary} size={16} />}
-        open={templatesOpen}
-        onPress={() => setTemplatesOpen((value) => !value)}
-      />
-      {templatesOpen ? (
-        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
+        </MotiView> },
+        { id: 'templates', title: t('skills.workflowTemplates'), description: t('skills.workflowTemplatesSubtitle'), icon: 'list-check', content: <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <SkillFoldoutHeader title={t('skills.workflowTemplates')} description={t('skills.workflowTemplatesSubtitle')} />
           <View style={{ gap: 8 }}>
             {workflowTemplates.map((workflow) => {
@@ -681,9 +701,9 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                     <IsleButton
                       label={t(installed ? 'skills.workflowTemplateAlreadyInstalled' : 'skills.installWorkflowTemplate')}
                       compact
-                      disabled={installed}
+                      disabled={saving || installed}
                       icon={<AppIcon name="add" color={colors.textSecondary} size={14} />}
-                      onPress={() => void installWorkflowTemplate(workflow.id)}
+                      onPress={() => void runOperation(() => installWorkflowTemplate(workflow.id))}
                       style={actionCompact ? { alignSelf: 'stretch' } : undefined}
                     />
                   }
@@ -691,19 +711,8 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
               )
             })}
           </View>
-        </MotiView>
-      ) : null}
-
-      <SkillDisclosureRow
-        title={t('skills.agentWorkflows')}
-        detail={t('skills.agentWorkflowsCollapsedDetail', { enabled: enabledWorkflowCount, total: workflowSkills.length, review: reviewRequiredWorkflowCount })}
-        icon={<AppIcon name="workflow" color={colors.textTertiary} size={16} />}
-        open={workflowsOpen}
-        tone={reviewRequiredWorkflowCount || safeWorkflowFocus || safePluginManifestFocus ? 'amber' : undefined}
-        onPress={() => setWorkflowsOpen((value) => !value)}
-      />
-      {workflowsOpen ? (
-        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
+        </MotiView> },
+        { id: 'workflows', title: t('skills.agentWorkflows'), description: t('skills.agentWorkflowsCollapsedDetail', { enabled: enabledWorkflowCount, total: workflowSkills.length, review: reviewRequiredWorkflowCount }), icon: 'workflow', content: <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <SkillFoldoutHeader title={`${t('skills.agentWorkflows')} ${workflowSkills.length}`} description={t('skills.agentWorkflowsSubtitle')} />
           <View style={{ gap: 8 }}>
           {safePluginManifestFocus ? (
@@ -795,14 +804,15 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                   <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, alignItems: actionCompact ? 'stretch' : 'center' }}>
                     <IsleButton
                       label={t(reviewRequired ? 'skills.reviewAndEnableWorkflow' : enabled ? 'skills.disableWorkflow' : 'skills.enableWorkflow')}
+                      disabled={saving}
                       compact
                       icon={enabled ? <AppIcon name="toggle-on" color={colors.textSecondary} size={14} /> : <AppIcon name="toggle-off" color={colors.textSecondary} size={14} />}
-                      onPress={() => void updateWorkflowSkillState(skill)}
+                      onPress={() => void runOperation(() => updateWorkflowSkillState(skill))}
                       style={actionButtonStyle}
                     />
                     <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
-                    <IsleButton label={t('common.share')} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} style={actionButtonStyle} />
-                    <IsleButton label={t('common.delete')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void removeSkill(skill)} style={actionButtonStyle} />
+                    <IsleButton label={t('common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
                   </View>
                 }
               />
@@ -810,40 +820,8 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
           })}
           {!workflowSkills.length ? <SkillEmptyRow icon={<AppIcon name="workflow" color={colors.textTertiary} size={15} />} label={t('skills.agentWorkflowsEmpty')} detail={t('skills.agentWorkflowsEmptyDetail')} /> : null}
           </View>
-        </MotiView>
-      ) : null}
-
-      <SkillDisclosureRow
-        title={t('skills.saved')}
-        detail={t('skills.savedCollapsedDetail', { count: regularSkills.length })}
-        icon={<AppIcon name="skills-sparkles" color={colors.textTertiary} size={16} />}
-        open={savedOpen}
-        onPress={() => setSavedOpen((value) => !value)}
-      />
-      {savedOpen ? (
-        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
-          <SkillFoldoutHeader title={`${t('skills.saved')} ${regularSkills.length}`} />
-          <View style={{ gap: 8 }}>
-          {regularSkills.map((skill) => (
-              <IsleListItem
-                key={skill.id}
-                title={skill.name}
-                description={skill.description || skill.systemPrompt}
-                leading={<IsleChip active>{t(`skills.layer.${skill.layer}`)}</IsleChip>}
-                trailing={
-                  <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, alignItems: actionCompact ? 'stretch' : 'center' }}>
-                    {!registeredToolchainSkillIds.has(createPortableSkillToolchainManifest(skill).id) ? <IsleButton label={t('skills.registerToolchain')} compact icon={<AppIcon name="workflow" color={colors.textSecondary} size={14} />} onPress={() => void registerSkillInToolchain(skill)} style={actionButtonStyle} /> : <IsleChip active tone="mint">{t('skills.toolchainRegistered')}</IsleChip>}
-                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
-                    <IsleButton label={t('common.share')} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} style={actionButtonStyle} />
-                    <IsleButton label={t('common.delete')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void removeSkill(skill)} style={actionButtonStyle} />
-                  </View>
-                }
-              />
-            ))}
-            {!regularSkills.length ? <SkillEmptyRow icon={<AppIcon name="skills-sparkles" color={colors.textTertiary} size={15} />} label={t('skills.empty')} detail={t('skills.emptyDetail')} /> : null}
-          </View>
-        </MotiView>
-      ) : null}
+        </MotiView> },
+      ]} />
     </View>
   )
 }

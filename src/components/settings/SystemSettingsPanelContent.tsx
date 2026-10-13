@@ -1,3 +1,4 @@
+import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { useSettingsDraft } from './SettingsEditBoundary'
 import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import { usePreferenceUndo } from './usePreferenceUndo'
@@ -6,7 +7,8 @@ import { SETTINGS_DESTINATIONS } from '@/presentation/features/settings/settings
 import { SettingsPageShell } from './SettingsPageShell'
 import { RadioGroup } from 'animal-island-ui-rn'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { StyleSheet, Text, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from 'react-native'
+import { StyleSheet, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 
 import { router } from 'expo-router'
 import * as Application from 'expo-application'
@@ -25,6 +27,8 @@ import { IsleProgress } from '@/components/ui/isle'
 import { IsleDisclosure, IsleField, IsleToggle } from '@/components/ui/isle'
 import { type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
 import { SavedSettingsField, useSettingsFieldSession } from './SettingsFieldSession'
+import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
+import { getProviderSelectableModels } from '@/utils/providerModels'
 
 import { type SettingsControlView } from '@/components/settings/theme-experiences/SettingsControlCatalogExperiences'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -471,6 +475,20 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
     }
   }, [expandedGovernanceGroups.observability, expandedGroups.governance, getObservabilitySinkApiKey])
 
+  const dataOperationLock = useRef(false)
+  const [dataBusy, setDataBusy] = useState(false)
+  const [dataFailed, setDataFailed] = useState(false)
+  useSettingsDraft(false, dataBusy, () => undefined)
+  async function runDataOperation(action: () => Promise<void>) {
+    if (dataOperationLock.current) return
+    dataOperationLock.current = true
+    setDataBusy(true)
+    setDataFailed(false)
+    try { await action() }
+    catch { setDataFailed(true) }
+    finally { dataOperationLock.current = false; setDataBusy(false) }
+  }
+
   async function exportJson(options: PortableDataExportOptions = {}) {
     const result = await exportPortableDataToJsonFile({
       ...options,
@@ -480,7 +498,12 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
     const tavernAuditMessage = tavernAudit.hidden || tavernAudit.privatePending || tavernAudit.pending
       ? `\n\n${t('settings.exportTavernAuditNotice', tavernAudit)}`
       : ''
-    dialog.notice({ title: t('settings.exportDone'), message: `${t('settings.exportDoneMessage', { uri: result.publicUri ?? result.uri })}${tavernAuditMessage}`, tone: 'mint' })
+    const uri = result.publicUri ?? result.uri
+    const browserDownload = uri.startsWith('blob:')
+    const message = browserDownload
+      ? t('settings.exportBrowserReadyMessage')
+      : t('settings.exportDoneMessage', { uri })
+    dialog.notice({ title: t(browserDownload ? 'settings.exportReady' : 'settings.exportDone'), message: `${message}${tavernAuditMessage}`, tone: 'mint' })
   }
 
   async function exportPrivateTavernJson() {
@@ -1125,7 +1148,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
           transition={foldoutMotion}
           style={foldoutBodyStyle}
         >
-          <SettingsInlineLabel
+          <View testID="settings-appearance-page" style={{ gap: 24 }}>
+          <SettingsSection id="theme" style={{ gap: 12 }}><SettingsInlineLabel
             title={t('settings.themeFamily')}
             detail={t('settings.themeFamilyCurrent', { value: t(THEME_FAMILY_OPTIONS.find((item) => item.id === activeThemeId)?.labelKey ?? 'settings.themeMinimal') })}
           />
@@ -1143,7 +1167,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               />
             ))}
           </RadioGroup>
-          <SettingsInlineLabel
+          </SettingsSection>
+          <SettingsSection id="mode" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}><SettingsInlineLabel
             title={t('settings.themeMode')}
             detail={t('settings.themeModeCurrent', { value: settings.theme === 'system' ? t('settings.themeSystem') : settings.theme === 'dark' ? t('settings.themeDark') : t('settings.themeLight') })}
           />
@@ -1158,7 +1183,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               />
             ))}
           </RadioGroup>
-          <SettingsInlineLabel
+          </SettingsSection>
+          <SettingsSection id="accent" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}><SettingsInlineLabel
             title={t('settings.themeAccent')}
             detail={settings.themeAccent ?? t('settings.themeAccentDefault')}
           />
@@ -1167,7 +1193,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             draftRef={themeAccentDraft}
             onChange={(themeAccent, event) => selectTheme({ themeAccent }, event)}
           />
-          <SettingsInlineLabel
+          </SettingsSection>
+          <SettingsSection id="background" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}><SettingsInlineLabel
             title={t('settings.backgroundEnvironment')}
             detail={t('settings.backgroundEnvironmentDetail')}
           />
@@ -1210,7 +1237,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               ))}
             </View>
           </RadioGroup>
-          <SettingsInlineLabel
+          </SettingsSection>
+          <SettingsSection id="language" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}><SettingsInlineLabel
             title={t('settings.language')}
             detail={t('settings.languageCurrent', { value: LANGUAGE_OPTIONS.find((item) => item.id === settings.language)?.label ?? settings.language })}
           />
@@ -1221,7 +1249,9 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               </IslePressable>
             ))}
           </View>
-        </MotiView>
+          </SettingsSection>
+          </View>
+</MotiView>
       ) : null}
       </AnimatePresence>
 
@@ -1237,12 +1267,13 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              <DataButton label={t('settings.exportJson')} icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void exportJson()} />
-              <DataButton label={t('settings.exportTavernPrivateJson')} icon={<AppIcon name="shield" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void exportPrivateTavernJson()} />
-              <DataButton label={t('settings.importJson')} icon={<AppIcon name="upload" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void importJson()} />
-            </View>
-            <SettingsInlineLabel
+<View style={{ flexDirection: actionCompact ? 'column' : 'row', gap: 10, marginBottom: 16 }}>
+  <DataButton label={t('settings.exportJson')} icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />} disabled={dataBusy} onPress={() => void runDataOperation(() => exportJson())} />
+  <DataButton label={t('settings.importJson')} icon={<AppIcon name="upload" color={colors.ui.control.primaryForeground} size={18} />} disabled={dataBusy} onPress={() => void runDataOperation(importJson)} />
+</View>
+{dataBusy || dataFailed ? <Text accessibilityLiveRegion="polite" style={{ color: dataFailed ? colors.ui.tone.danger.foreground : colors.textSecondary }}>{t(dataFailed ? 'settingsSubsystem.operationFailed' : 'common.loading')}</Text> : null}
+<SettingsTaskWorkspace inline tasks={[
+ { id: 'selected-export', title: t('settings.exportSelectedJson'), description: t('settingsUx.selectedExportHint'), icon: 'list-check', content: <><SettingsInlineLabel
               title={t('settings.backupCategories')}
               detail={t('settings.backupCategoryCount', { count: portableBackupCategories.length })}
             />
@@ -1266,13 +1297,16 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             <DataButton
               label={t('settings.exportSelectedJson')}
               icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />}
-              disabled={!portableBackupCategories.length}
-              onPress={() => void exportSelectedJson()}
+              disabled={dataBusy || !portableBackupCategories.length}
+              onPress={() => void runDataOperation(exportSelectedJson)}
             />
             <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700', lineHeight: 20 }}>
               {t('settings.importExportDescription')}
             </Text>
-          </MotiView>
+          </> },
+ { id: 'private-export', title: t('settings.exportTavernPrivateJson'), description: t('settings.exportTavernPrivateMessage'), icon: 'shield', content: <IsleButton label={t('settings.exportTavernPrivateJson')} disabled={dataBusy} onPress={() => void runDataOperation(exportPrivateTavernJson)} /> },
+]} />
+</MotiView>
         ) : null}
       </AnimatePresence>
 
@@ -1398,26 +1432,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
-          <IsleDisclosure
-            title={t('settings.governanceRouting')}
-            summary={t('settings.governanceRoutingSummary', {
-              transport: t(`settings.transport${(settings.transportMode ?? 'auto') === 'http' ? 'Http' : (settings.transportMode ?? 'auto') === 'websocket' ? 'WebSocket' : 'Auto'}`),
-              compact: t(`settings.compact${(settings.remoteCompactMode ?? 'auto') === 'required' ? 'Required' : (settings.remoteCompactMode ?? 'auto') === 'auto' ? 'Auto' : 'Off'}`),
-              payload: t(`settings.payload${(settings.payloadPolicyMode ?? 'warn') === 'off' ? 'Off' : (settings.payloadPolicyMode ?? 'warn') === 'warn' ? 'Warn' : 'Block'}`),
-              proxy: t(`settings.proxy${(settings.proxyMode ?? 'off') === 'custom-base-url' ? 'CustomBaseUrl' : (settings.proxyMode ?? 'off') === 'system-detected' ? 'SystemDetected' : 'Off'}`),
-            })}
-            expanded={expandedGovernanceGroups.routing}
-            onPress={() => toggleExpandedGovernanceGroup('routing')}
-          />
-          {expandedGovernanceGroups.routing ? (
-          <MotiView
-            key="governance-routing-foldout"
-            from={target ? undefined : sectionMotion.from}
-            animate={sectionMotion.animate}
-            exit={sectionMotion.exit}
-            transition={foldoutMotion}
-            style={foldoutCardStyle()}
-          >
+<SettingsTaskWorkspace inline onTaskChange={id => setExpandedGovernanceGroups({ routing: id === 'routing', workflow: false, observability: id === 'observability', runtimeLimits: id === 'runtimeLimits', requestShaping: id === 'requestShaping', accessRules: id === 'accessRules' })} tasks={[{ id: 'routing', title: t('settingsUx.governance.routing'), description: t('settingsUx.governanceHints.routing'), icon: 'shield', targets: SETTINGS_DESTINATIONS.filter(entry => entry.parentSection === 'routing').map(entry => entry.section!), content: <>
             <SettingsSection id="governance.transportMode"><SegmentedSetting
               label={t('settings.transportMode')}
               options={TRANSPORT_OPTIONS}
@@ -1496,28 +1511,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 {t('settings.compactExecutionPolicyNote')}
               </Text>
             </View>
-          </MotiView>
-          ) : null}
-          <IsleButton label={t('preferences.agentWorkflow')} onPress={() => pushSettingsChildRoute('/settings/preferences', { section: 'workflow' })} />
-          
-          <IsleDisclosure
-            title={t('settings.observabilitySinkSettings')}
-            summary={t('settings.governanceObservabilitySummary', {
-              mode: t(`settings.observabilitySink${(settings.observabilitySinkMode ?? 'off') === 'off' ? 'Off' : (settings.observabilitySinkMode ?? 'off') === 'local-only' ? 'LocalOnly' : 'External'}`),
-              target: t(`settings.observabilitySinkTarget${(settings.observabilitySinkTarget ?? 'opentelemetry') === 'opentelemetry' ? 'OpenTelemetry' : (settings.observabilitySinkTarget ?? 'opentelemetry') === 'langfuse' ? 'Langfuse' : 'Phoenix'}`),
-            })}
-            expanded={expandedGovernanceGroups.observability}
-            onPress={() => toggleExpandedGovernanceGroup('observability')}
-          />
-          {expandedGovernanceGroups.observability ? (
-          <MotiView
-            key="governance-observability-foldout"
-            from={target ? undefined : sectionMotion.from}
-            animate={sectionMotion.animate}
-            exit={sectionMotion.exit}
-            transition={foldoutMotion}
-            style={foldoutCardStyle()}
-          >
+          </> },
+{ id: 'observability', title: t('settingsUx.governance.observability'), description: t('settingsUx.governanceHints.observability'), icon: 'shield', targets: SETTINGS_DESTINATIONS.filter(entry => entry.parentSection === 'observability').map(entry => entry.section!), content: <>
             <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{t('settings.observabilitySinkSettings')}</Text>
             <SettingsSection id="governance.observabilitySinkMode"><SegmentedSetting
               label={t('settings.observabilitySinkMode')}
@@ -1617,27 +1612,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 onPress={() => updateSettings({ observabilitySinkDevelopmentOnly: settings.observabilitySinkDevelopmentOnly !== true })}
               />
             </View>
-          </MotiView>
-          ) : null}
-          <IsleDisclosure
-            title={t('settings.governanceRuntimeLimits')}
-            summary={t('settings.governanceRuntimeLimitsSummary', {
-              concurrency: settings.sessionConcurrencyLimit ?? 1,
-              timeout: settings.upstreamRequestTimeoutMs ?? 60000,
-              retries: settings.upstreamMaxRetries ?? 1,
-            })}
-            expanded={expandedGovernanceGroups.runtimeLimits}
-            onPress={() => toggleExpandedGovernanceGroup('runtimeLimits')}
-          />
-          {expandedGovernanceGroups.runtimeLimits ? (
-          <MotiView
-            key="governance-runtime-limits-foldout"
-            from={target ? undefined : sectionMotion.from}
-            animate={sectionMotion.animate}
-            exit={sectionMotion.exit}
-            transition={foldoutMotion}
-            style={{ gap: 10 }}
-          >
+          </> },
+{ id: 'runtimeLimits', title: t('settingsUx.governance.runtimeLimits'), description: t('settingsUx.governanceHints.runtimeLimits'), icon: 'shield', targets: SETTINGS_DESTINATIONS.filter(entry => entry.parentSection === 'runtimeLimits').map(entry => entry.section!), content: <>
             <View style={pairedFieldRowStyle}>
               <SettingsSection id="governance.sessionConcurrencyLimit"><SavedSettingsField session={fieldSession} settingKey="sessionConcurrencyLimit"
                 label={t('settings.sessionConcurrencyLimit')}
@@ -1718,26 +1694,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 /></SettingsSection>
               </View>
             </View>
-          </MotiView>
-          ) : null}
-          <IsleDisclosure
-            title={t('settings.governanceRequestShaping')}
-            summary={t('settings.governanceRequestShapingSummary', {
-              rectification: settings.requestRectificationEnabled !== false ? t('settings.enabledState') : t('settings.disabledState'),
-              cache: settings.cacheInjectionEnabled === true ? t('settings.enabledState') : t('settings.disabledState'),
-            })}
-            expanded={expandedGovernanceGroups.requestShaping}
-            onPress={() => toggleExpandedGovernanceGroup('requestShaping')}
-          />
-          {expandedGovernanceGroups.requestShaping ? (
-          <MotiView
-            key="governance-request-shaping-foldout"
-            from={target ? undefined : sectionMotion.from}
-            animate={sectionMotion.animate}
-            exit={sectionMotion.exit}
-            transition={foldoutMotion}
-            style={{ gap: 10 }}
-          >
+          </> },
+{ id: 'requestShaping', title: t('settingsUx.governance.requestShaping'), description: t('settingsUx.governanceHints.requestShaping'), icon: 'shield', targets: SETTINGS_DESTINATIONS.filter(entry => entry.parentSection === 'requestShaping').map(entry => entry.section!), content: <>
             <View style={foldoutCardStyle()}>
               <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{t('settings.rectificationSettings')}</Text>
               <IsleToggle title={t('settings.requestRectificationEnabled')} active={settings.requestRectificationEnabled !== false} onPress={() => updateSettings({ requestRectificationEnabled: settings.requestRectificationEnabled === false })} />
@@ -1751,27 +1709,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               <IsleToggle title={t('settings.cacheInjectionEnabled')} active={settings.cacheInjectionEnabled === true} onPress={() => updateSettings({ cacheInjectionEnabled: settings.cacheInjectionEnabled !== true })} />
               <SettingsSection id="governance.cacheTtl"><SegmentedSetting label={t('settings.cacheTtl')} options={CACHE_TTL_OPTIONS} value={settings.cacheTtl ?? 'default'} onChange={(cacheTtl) => updateSettings({ cacheTtl })} /></SettingsSection>
             </View>
-          </MotiView>
-          ) : null}
-          <IsleDisclosure
-            title={t('settings.governanceAccessAndLogs')}
-            summary={t('settings.governanceAccessAndLogsSummary', {
-              log: settings.runtimeLogEnabled === true ? t('settings.runtimeDiagnosticLogOn') : t('settings.runtimeDiagnosticLogOff'),
-              allow: (settings.providerAllowlist?.length ?? 0) + (settings.modelAllowlist?.length ?? 0),
-              block: (settings.providerBlocklist?.length ?? 0) + (settings.modelBlocklist?.length ?? 0),
-            })}
-            expanded={expandedGovernanceGroups.accessRules}
-            onPress={() => toggleExpandedGovernanceGroup('accessRules')}
-          />
-          {expandedGovernanceGroups.accessRules ? (
-          <MotiView
-            key="governance-access-rules-foldout"
-            from={target ? undefined : sectionMotion.from}
-            animate={sectionMotion.animate}
-            exit={sectionMotion.exit}
-            transition={foldoutMotion}
-            style={foldoutCardStyle()}
-          >
+          </> },
+{ id: 'accessRules', title: t('settingsUx.governance.accessRules'), description: t('settingsUx.governanceHints.accessRules'), icon: 'shield', targets: SETTINGS_DESTINATIONS.filter(entry => entry.parentSection === 'accessRules').map(entry => entry.section!), content: <>
             <IsleToggle
               title={t('settings.runtimeLogEnabled')}
               description={t('settings.runtimeLogDescription', { path: runtimeLogPath ?? '—' })}
@@ -1788,6 +1727,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             /></SettingsSection>
             <SettingsSection id="governance.providerAllowlist"><SavedSettingsField session={fieldSession} settingKey="providerAllowlist"
               label={t('settings.providerAllowlist')}
+              referenceOptions={providers.map(provider => ({ value: provider.id, label: resolveProviderDisplayName(provider, t('providerSettings.customProvider')) }))}
               note={t('settings.listRuleNote')}
               value={joinSettingsList(settings.providerAllowlist)}
               normalize={normalizeSettingsListDraft}
@@ -1797,6 +1737,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             /></SettingsSection>
             <SettingsSection id="governance.providerBlocklist"><SavedSettingsField session={fieldSession} settingKey="providerBlocklist"
               label={t('settings.providerBlocklist')}
+              referenceOptions={providers.map(provider => ({ value: provider.id, label: resolveProviderDisplayName(provider, t('providerSettings.customProvider')) }))}
               note={t('settings.blocklistNote')}
               value={joinSettingsList(settings.providerBlocklist)}
               normalize={normalizeSettingsListDraft}
@@ -1806,6 +1747,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             /></SettingsSection>
             <SettingsSection id="governance.modelAllowlist"><SavedSettingsField session={fieldSession} settingKey="modelAllowlist"
               label={t('settings.modelAllowlist')}
+              referenceOptions={providers.flatMap(provider => getProviderSelectableModels(provider).map(model => ({ value: model, label: model })))}
               note={t('settings.listRuleNote')}
               value={joinSettingsList(settings.modelAllowlist)}
               normalize={normalizeSettingsListDraft}
@@ -1815,6 +1757,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             /></SettingsSection>
             <SettingsSection id="governance.modelBlocklist"><SavedSettingsField session={fieldSession} settingKey="modelBlocklist"
               label={t('settings.modelBlocklist')}
+              referenceOptions={providers.flatMap(provider => getProviderSelectableModels(provider).map(model => ({ value: model, label: model })))}
               note={t('settings.blocklistNote')}
               value={joinSettingsList(settings.modelBlocklist)}
               normalize={normalizeSettingsListDraft}
@@ -1822,9 +1765,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               commitOnSubmit={false}
               inputProps={{ autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             /></SettingsSection>
-          </MotiView>
-          ) : null}
-        </MotiView>
+          </> }, { id: 'workflow', title: t('preferences.agentWorkflow'), description: t('settingsUx.workflowHint'), icon: 'workflow', content: <IsleButton label={t('preferences.agentWorkflow')} onPress={() => pushSettingsChildRoute('/settings/preferences', { section: 'workflow' })} /> }]} />
+</MotiView>
         ) : null}
         </AnimatePresence>
 
@@ -2433,6 +2375,8 @@ function importResultMessage(
   if (!result.ok && result.reason === 'read_failed') return t('settings.importReadFailedMessage')
   if (!result.ok && result.reason === 'invalid_json') return t('settings.importInvalidJsonMessage')
   if (!result.ok && result.reason === 'persistence_failed') return t('settings.importPersistenceFailedMessage')
+  if (!result.ok && result.reason === 'protected_storage_required') return t('settings.importProtectedStorageRequiredMessage')
+  if (!result.ok && (result.reason === 'selection_cancelled' || result.reason === 'operation_cancelled')) return t('settings.importCancelledMessage')
   if (!result.ok) return t('settings.importSkippedMessage')
   if (result.kind === 'mem0') return t('settings.importMem0DoneMessage', { count: result.memories })
   return t('settings.importDoneMessage')

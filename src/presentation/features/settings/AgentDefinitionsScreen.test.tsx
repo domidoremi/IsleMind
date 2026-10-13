@@ -2,6 +2,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
 import { createAgentDefinition } from '@/modules/assistant-runtime'
 import { AgentDefinitionConflictError } from '@/modules/assistant-runtime'
 import { AgentDefinitionsScreen } from './AgentDefinitionsScreen'
+import type { AIProvider } from '@/types/providerContracts'
 
 const mockTranslate = (key: string, values?: Record<string, unknown>) => values?.name ? `${key}:${values.name}` : key
 const mockConfirm = jest.fn().mockResolvedValue(true)
@@ -9,7 +10,7 @@ const mockDispatch = jest.fn()
 const mockPreventRemove = jest.fn()
 jest.mock('expo-router', () => ({ useNavigation: () => ({ dispatch: mockDispatch }) }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: (...args: unknown[]) => mockPreventRemove(...args) }))
-const mockProvider = { id: 'provider', name: 'Provider', baseUrl: '', models: ['model'] }
+const mockProvider: AIProvider = { id: 'provider', name: 'Provider', type: 'openai-compatible', apiKey: '', enabled: true, baseUrl: '', models: ['model'] }
 const mockState = { providers: [mockProvider], settings: { hapticsEnabled: false } }
 jest.mock('@/store/settingsStore', () => ({ useSettingsStore: (select: (state: unknown) => unknown) => select(mockState) }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: mockTranslate }) }))
@@ -35,7 +36,19 @@ function fixture() {
   }
   return { original, management }
 }
-beforeEach(() => { jest.clearAllMocks(); mockConfirm.mockResolvedValue(true) })
+beforeEach(() => { jest.clearAllMocks(); mockConfirm.mockResolvedValue(true); mockState.providers = [mockProvider] })
+
+it('starts with a selectable discovered group model rather than an internal placeholder ID', async () => {
+  mockState.providers = [{ ...mockProvider, models: [], credentialGroups: [
+    { id: 'g', label: 'Saved key', apiKey: '', enabled: true, lastModelSyncStatus: 'ok', availableModels: ['group-model'] },
+  ] }]
+  const { management } = fixture()
+  const view = await render(<AgentDefinitionsScreen management={management} />)
+  await fireEvent.press(view.getByRole('button', { name: 'agents.create' }))
+  await waitFor(() => expect(management.newDraft).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'group-model' })))
+  expect(view.getByRole('button', { name: 'group-model' })).toBeTruthy()
+  expect(view.queryByLabelText('agents.fields.modelId')).toBeNull()
+})
 
 it('renders saved definitions and management-only disclosure; explicit Save uses the expected revision', async () => {
   const { management } = fixture()
@@ -54,12 +67,14 @@ it('renders saved definitions and management-only disclosure; explicit Save uses
 
 it('imports a preview without saving and disables declared tools for text-only models', async () => {
   const { management } = fixture()
-  const view = await render(<AgentDefinitionsScreen management={management} />)
+  const loadReferences = jest.fn().mockResolvedValue({ tools: [], knowledge: [], skills: [], agents: [] })
+  const view = await render(<AgentDefinitionsScreen management={management} loadReferences={loadReferences} />)
   await fireEvent.press(view.getByRole('button', { name: 'agents.import' }))
   await waitFor(() => expect(view.getByText('agents.importPreview')).toBeTruthy())
   expect(view.getByText('agents.textOnlyWarning')).toBeTruthy()
-  expect(view.getByLabelText('agents.fields.allowedToolIds').props.editable).toBe(false)
-  expect(view.getByLabelText('agents.fields.allowedToolIds').props.value).toBe('search')
+  await fireEvent.press(view.getByRole('button', { name: 'settingsWorkspace.advanced' }))
+  expect(view.getByRole('button', { name: 'settingsReferences.manual agents.fields.allowedToolIds' })).toBeDisabled()
+  await waitFor(() => expect(view.getByText('search · agents.unresolved')).toBeTruthy())
   expect(management.save).not.toHaveBeenCalled()
   await view.unmount()
 })
@@ -69,15 +84,18 @@ it('rejects invalid draft budgets locally and preserves a conflicted edit instea
   const view = await render(<AgentDefinitionsScreen management={management} />)
   await waitFor(() => expect(view.getByText('Research')).toBeTruthy())
   await fireEvent.press(view.getByRole('button', { name: 'agents.editNamed:Research' }))
+  await fireEvent.press(view.getByRole('button', { name: 'settingsWorkspace.advanced' }))
   await waitFor(() => expect(view.getByLabelText('agents.fields.tokens')).toBeTruthy())
   await fireEvent.changeText(view.getByLabelText('agents.fields.tokens'), '-1')
   await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
   await waitFor(() => expect(view.getByText('agents.invalid')).toBeTruthy())
+  expect(view.getByRole('alert')).toHaveTextContent('agents.invalid')
   expect(management.save).not.toHaveBeenCalled()
   await fireEvent.changeText(view.getByLabelText('agents.fields.tokens'), '1000')
   management.save.mockRejectedValueOnce(new AgentDefinitionConflictError())
   await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
   await waitFor(() => expect(view.getByText('agents.conflict')).toBeTruthy())
+  expect(view.getByRole('alert')).toHaveTextContent('agents.conflict')
   expect(view.getByLabelText('agents.fields.tokens').props.value).toBe('1000')
   await view.unmount()
 })
@@ -123,5 +141,26 @@ it('guards route Back and preserves a draft when discard is declined', async () 
   expect(view.getByLabelText('agents.fields.name').props.value).toBe('Unsaved')
   await act(async () => { remove({ data: { action } }); await Promise.resolve() })
   expect(mockDispatch).toHaveBeenCalledWith(action)
+  await view.unmount()
+})
+
+it('loads references on demand, retries local read failure and saves selected IDs without authorizing tools', async () => {
+  const { management } = fixture()
+  const loadReferences = jest.fn().mockRejectedValueOnce(new Error('read failed')).mockResolvedValue({
+    tools: [{ value: 'builtin:info', label: 'App information' }], knowledge: [{ value: 'doc-1', label: 'Project notes' }], skills: [], agents: [],
+  })
+  const view = await render(<AgentDefinitionsScreen management={management} loadReferences={loadReferences} />)
+  await fireEvent.press(view.getByRole('button', { name: 'agents.create' }))
+  expect(loadReferences).not.toHaveBeenCalled()
+  await fireEvent.press(view.getByRole('button', { name: 'settingsWorkspace.advanced' }))
+  await waitFor(() => expect(view.getByText('settingsSubsystem.loadFailed')).toBeTruthy())
+  await fireEvent.press(view.getByRole('button', { name: 'common.retry' }))
+  await waitFor(() => expect(loadReferences).toHaveBeenCalledTimes(2))
+  const selectors = view.getAllByRole('button', { name: 'settingsReferences.choose' })
+  expect(selectors[0]).toBeDisabled()
+  await fireEvent.press(selectors[1])
+  await fireEvent.press(view.getByLabelText('Project notes'))
+  await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
+  await waitFor(() => expect(management.save).toHaveBeenCalledWith(expect.objectContaining({ knowledgeIds: ['doc-1'], allowedToolIds: [] }), undefined))
   await view.unmount()
 })

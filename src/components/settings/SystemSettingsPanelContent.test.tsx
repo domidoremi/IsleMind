@@ -8,6 +8,8 @@ import { checkLatestApkRelease, downloadAndOpenApkInstaller, type ApkReleaseInfo
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
 import { IsleButton } from '@/components/ui/isle'
 
+const mockExportData = jest.fn()
+const mockImportData = jest.fn()
 const mockTranslate = (key: string) => key
 const mockState = { providers: [], settings: { theme: 'dark', themeId: 'material', language: 'zh-CN' } }
 let mockMotion = 'full'
@@ -31,12 +33,12 @@ jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => {
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockMotion }))
 jest.mock('@/hooks/useThemeSelection', () => ({ useThemeSelection: () => jest.fn() }))
 jest.mock('./usePreferenceUndo', () => ({ usePreferenceUndo: () => ({ updateSettings: mockUpdateSettings, canUndo: false, undo: jest.fn() }) }))
-jest.mock('./SettingsEditBoundary', () => ({ useSettingsDraft: () => jest.fn() }))
+jest.mock('./SettingsEditBoundary', () => ({ useSettingsDraft: () => jest.fn(), useSettingsLeave: () => async (action: () => void) => action() }))
 jest.mock('./SettingsPageShell', () => ({ SettingsPageShell: ({ children }: { children: React.ReactNode }) => children }))
 jest.mock('@/core', () => ({ userFacingErrorDetail: String }))
 jest.mock('@/i18n', () => ({ changeAppLanguage: jest.fn() }))
 jest.mock('@/modules/integrations', () => ({ resolveSearchProvider: () => 'off' }))
-jest.mock('@/presentation/features/settings/portableDataCommand', () => ({}))
+jest.mock('@/presentation/features/settings/portableDataCommand', () => ({ exportPortableDataToJsonFile: (...args: unknown[]) => mockExportData(...args), importPortableDataFromJsonFile: (...args: unknown[]) => mockImportData(...args) }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: mockTranslate }) }))
 jest.mock('expo-router', () => ({ router: { push: jest.fn(), replace: jest.fn() } }))
 jest.mock('expo-application', () => ({ nativeApplicationVersion: '1.0.0', nativeBuildVersion: '1' }))
@@ -214,4 +216,55 @@ it.each([[1, '47%'], [2, '100%']] as const)('sizes theme previews for %sx system
   jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale })
   const screen = await render(<SystemSettingsPanelContent panel="appearance" />)
   expect(screen.getByTestId('settings-theme-family-minimal')).toHaveStyle({ flexBasis })
+})
+
+it('shows all five appearance sections on one page without task navigation', async () => {
+  const screen = await render(<SystemSettingsPanelContent panel="appearance" />)
+  for (const id of ['theme', 'mode', 'accent', 'background', 'language']) {
+    expect(screen.getByTestId(`settings-section-${id}`)).toBeTruthy()
+    expect(screen.queryByTestId(`settings-task-${id}`)).toBeNull()
+  }
+  expect(screen.getByTestId('settings-theme-family-group')).toBeTruthy()
+  expect(screen.getByTestId('settings-theme-mode-group')).toBeTruthy()
+  expect(screen.getByTestId('settings-background-motion-group')).toBeTruthy()
+  expect(screen.getByLabelText('English')).toBeTruthy()
+  expect(mockUpdateSettings).not.toHaveBeenCalled()
+})
+
+
+it('serializes data operations and exposes a retryable export failure', async () => {
+  let fail!: (error: Error) => void
+  mockExportData.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
+  const screen = await render(<SystemSettingsPanelContent panel="data" />)
+  await fireEvent.press(screen.getByText('settings.exportJson'))
+  expect(screen.getByRole('button', { name: 'settings.exportJson' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'settings.importJson' })).toBeDisabled()
+  await fireEvent.press(screen.getByText('settings.importJson'))
+  expect(mockImportData).not.toHaveBeenCalled()
+  await act(async () => { fail(new Error('disk unavailable')) })
+  expect(screen.getByText('settingsSubsystem.operationFailed')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'settings.exportJson' })).not.toBeDisabled()
+})
+
+it.each([
+  ['selection_cancelled', 'settings.importCancelledMessage'],
+  ['operation_cancelled', 'settings.importCancelledMessage'],
+  ['invalid_json', 'settings.importInvalidJsonMessage'],
+  ['protected_storage_required', 'settings.importProtectedStorageRequiredMessage'],
+])('reports %s accurately and releases the import controls', async (reason, message) => {
+  mockImportData.mockResolvedValueOnce({ ok: false, kind: 'invalid', reason })
+  const screen = await render(<SystemSettingsPanelContent panel="data" />)
+  await fireEvent.press(screen.getByText('settings.importJson'))
+  expect(mockDialog.notice).toHaveBeenCalledWith(expect.objectContaining({ message }))
+  expect(screen.getByRole('button', { name: 'settings.importJson' })).toBeEnabled()
+})
+
+it('reports a browser backup as generated without presenting an expiring blob URL as a saved file', async () => {
+  mockExportData.mockResolvedValueOnce({ uri: 'blob:http://localhost/temporary-backup' })
+  const screen = await render(<SystemSettingsPanelContent panel="data" />)
+  await fireEvent.press(screen.getByText('settings.exportJson'))
+  expect(mockDialog.notice).toHaveBeenCalledWith(expect.objectContaining({
+    title: 'settings.exportReady', message: 'settings.exportBrowserReadyMessage',
+  }))
+  expect(screen.getByRole('button', { name: 'settings.exportJson' })).toBeEnabled()
 })

@@ -1,9 +1,11 @@
+import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { SettingsSection, useSettingsTarget } from './SettingsSection'
 import { useSettingsDraft } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import { SavedSettingsField, useSettingsFieldSession } from './SettingsFieldSession'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
@@ -217,6 +219,13 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const savedResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [memories, setMemories] = useState<MemoryItem[]>([])
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
+  const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'failed'>('loading')
+  const catalogRead = useRef(0)
+  useEffect(() => () => { catalogRead.current += 1 }, [])
+  const [assetBusy, setAssetBusy] = useState(false)
+  const [assetError, setAssetError] = useState(false)
+  const assetLock = useRef(false)
+  useSettingsDraft(false, assetBusy, () => undefined)
   const [embeddingJobs, setEmbeddingJobs] = useState<{ running: number; error: number } | null>(null)
   const [indexingJobs, setIndexingJobs] = useState<RagIndexingJobStatus[]>([])
   const [ragLogs, setRagLogs] = useState<RagEvaluationLog[]>([])
@@ -252,7 +261,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     if (target === 'local-model-mirror') setLocalModelsOpen(true)
     if (target === 'search-provider') setActiveContextSection('search')
   }, [target])
-  const [knowledgeToolsOpen, setKnowledgeToolsOpen] = useState(false)
+  const [knowledgeToolsOpen, setKnowledgeToolsOpen] = useState<boolean | undefined>()
   const showContext = section === 'all' || section === 'context'
   const showMemory = section === 'all' || section === 'memory'
   const showKnowledge = section === 'all' || section === 'knowledge'
@@ -361,7 +370,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       tone: (settings.ragMode ?? 'hybrid') === 'off' ? 'amber' as const : 'mint' as const,
     }] : []),
   ]
-  const knowledgeToolsVisible = knowledgeToolsOpen || hasKnowledgeFilters || knowledgeStatusCounts.failed > 0 || knowledgeStatusCounts.empty > 0 || knowledgeRecoverySummary.recoverableDocuments > 0 || knowledgeRecoverySummary.failedJobs > 0
+  const knowledgeToolsVisible = knowledgeToolsOpen ?? (hasKnowledgeFilters || knowledgeStatusCounts.failed > 0 || knowledgeStatusCounts.empty > 0 || knowledgeRecoverySummary.recoverableDocuments > 0 || knowledgeRecoverySummary.failedJobs > 0)
   const isMinimal = canonicalThemeId === 'minimal'
   const isMaterial = canonicalThemeId === 'material'
   const isMonet = canonicalThemeId === 'monet'
@@ -380,21 +389,42 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   } as const
 
   async function refresh() {
-    const [memoryItems, documentItems, jobs, debug] = await Promise.all([
-      listMemories(['pending', 'active', 'disabled']),
-      listKnowledgeDocuments(),
-      loadRagEmbeddingJobSummary(50),
-      loadRagDebugSnapshot(),
-    ])
-    setMemories(memoryItems)
-    setDocuments(documentItems)
-    setEmbeddingJobs({
-      running: jobs.running,
-      error: jobs.error,
-    })
-    setIndexingJobs(debug.indexingJobs)
-    setRagLogs(debug.evaluations)
-    setLocalModels(await listLocalEmbeddingModelViews(useSettingsStore.getState().settings))
+    const request = ++catalogRead.current
+    setCatalogState('loading')
+    try {
+      const [memoryItems, documentItems, jobs, debug, models] = await Promise.all([
+        listMemories(['pending', 'active', 'disabled']),
+        listKnowledgeDocuments(),
+        loadRagEmbeddingJobSummary(50),
+        loadRagDebugSnapshot(),
+        listLocalEmbeddingModelViews(useSettingsStore.getState().settings),
+      ])
+      if (request !== catalogRead.current) return
+      setMemories(memoryItems)
+      setDocuments(documentItems)
+      setEmbeddingJobs({
+        running: jobs.running,
+        error: jobs.error,
+      })
+      setIndexingJobs(debug.indexingJobs)
+      setRagLogs(debug.evaluations)
+      setLocalModels(models)
+      setCatalogState('ready')
+      } catch { if (request === catalogRead.current) setCatalogState('failed') }
+  }
+
+  async function mutateAssets(operation: () => Promise<void>) {
+    if (assetLock.current) return
+    assetLock.current = true
+    setAssetBusy(true)
+    setAssetError(false)
+    try { await operation() }
+    catch {
+      setAssetError(true)
+      // A batch can be partly persisted. Read it back rather than implying
+      // that every requested change either succeeded or was rolled back.
+      await refresh()
+    } finally { assetLock.current = false; setAssetBusy(false) }
   }
 
   function resetMemoryAssetView() {
@@ -431,7 +461,8 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     if (!confirmed) return
     setConfirmingMemories(true)
     try {
-      await Promise.all(targetMemories.map((memory) => updateMemoryStatus(memory.id, 'active')))
+      const results = await Promise.allSettled(targetMemories.map((memory) => updateMemoryStatus(memory.id, 'active')))
+      if (results.some(result => result.status === 'rejected')) throw new Error('memory_batch_partial_failure')
       await refresh()
       dialog.toast({
         title: t('contextPanel.pendingMemoriesConfirmed', { count: targetMemories.length }),
@@ -454,7 +485,8 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     if (!confirmed) return
     setConfirmingMemories(true)
     try {
-      await Promise.all(targetMemories.map((memory) => deleteMemory(memory.id)))
+      const results = await Promise.allSettled(targetMemories.map((memory) => deleteMemory(memory.id)))
+      if (results.some(result => result.status === 'rejected')) throw new Error('memory_batch_partial_failure')
       await refresh()
       dialog.toast({
         title: t('contextPanel.pendingMemoriesRejected', { count: targetMemories.length }),
@@ -808,13 +840,14 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     />
   ) : null
 
-  const summary = contextSummaryItems.length ? <SettingsSummaryStrip items={contextSummaryItems} /> : undefined
+  const summary = catalogState === 'ready' && contextSummaryItems.length ? <SettingsSummaryStrip items={contextSummaryItems} /> : undefined
   const toggles = (
       <View style={{ gap: isMinimal ? 0 : 8, marginTop: isMinimal ? 0 : 10 }}>
         {showMemory ? (
           <IsleToggle
             icon={<AppIcon name="reasoning" color={colors.text} size={18} />}
             title={t('settings.longMemory')}
+            description={!settings.memoryEnabled ? t('settingsSubsystem.paused') : undefined}
             active={!!settings.memoryEnabled}
             onPress={() => updateSettings({ memoryEnabled: !settings.memoryEnabled })}
           />
@@ -823,6 +856,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           <IsleToggle
             icon={<AppIcon name="knowledge" color={colors.text} size={18} />}
             title={t('settings.localKnowledge')}
+            description={!settings.knowledgeEnabled ? t('settingsSubsystem.paused') : undefined}
             active={!!settings.knowledgeEnabled}
             onPress={() => updateSettings({ knowledgeEnabled: !settings.knowledgeEnabled })}
           />
@@ -855,34 +889,21 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         : MinimalContextSettingsLead
   return (
     <View style={{ paddingBottom: showKnowledge ? 12 : 0 }}>
-      <Lead section={section} summary={summary} toggles={toggles} compact={compact} />
-      {showContext && Platform.OS === 'web' ? (
+      {assetBusy ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
+      {assetError ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.operationFailed')}</Text> : null}
+      {catalogState !== 'ready' ? <View style={{ gap: 8, paddingVertical: 8 }}>
+        <Text accessibilityRole={catalogState === 'failed' ? 'alert' : undefined} accessibilityLiveRegion="polite" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t(catalogState === 'failed' ? 'settingsSubsystem.loadFailed' : 'common.loading')}</Text>
+        {catalogState === 'failed' ? <IsleButton label={t('common.retry')} onPress={() => void refresh()} /> : null}
+      </View> : null}
+      {!activeContextSection ? <Lead section={section} summary={summary} toggles={toggles} compact={compact} /> : null}
+      {showContext && !activeContextSection && Platform.OS === 'web' ? (
         <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, marginTop: 10 }}>
           {t('contextPanel.webCompactStorageWarning')}
         </Text>
       ) : null}
 
-      {showContext ? (
-        <View style={{ marginTop: 10 }}>
-        <IslePressable
-          haptic
-          accessibilityRole="button"
-          accessibilityLabel={`${t('settings.search')}. ${searchProviderLabel(searchProvider)}`}
-          accessibilityState={{ expanded: searchProviderOpen }}
-          onPress={() => toggleContextSection('search')}
-            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
-          >
-            <AppIcon name="context-globe" color={colors.textTertiary} size={16} />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('settings.search')}</Text>
-              <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{searchProviderLabel(searchProvider)} · {settings.webSearchEnabled ? t('settings.enabledState') : t('settings.disabledState')}</Text>
-            </View>
-            <MotiView animate={{ rotate: searchProviderOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
-              <AppIcon name="collapse" color={colors.textTertiary} size={16} />
-            </MotiView>
-          </IslePressable>
-          {searchProviderOpen ? (
-            <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+      {showContext ? <SettingsTaskWorkspace onTaskChange={id => setActiveContextSection(id === 'rag-profile' ? 'rag' : id === 'search-provider' ? 'credentials' : null)} tasks={[
+        { id: 'search-provider', title: t('settings.webSearch'), description: t('settingsUx.searchHint'), summary: searchProviderLabel(searchProvider), icon: 'globe', content: <><MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}>
               <SettingsSection id="search-provider"><View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                 {SEARCH_PROVIDER_OPTIONS.map((mode) => (
                   <IslePressable key={mode} haptic accessibilityLabel={searchProviderLabel(mode)} accessibilityState={{ selected: searchProvider === mode }} onPress={() => selectSearchProvider(mode)} style={contextChipPressableStyle}>
@@ -895,35 +916,25 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                   {t('search.failure.browser_transport_required')}
                 </Text>
               ) : null}
-            </MotiView>
-          ) : null}
-        </View>
-      ) : null}
-
-      {shouldPromoteKnowledgeImport ? knowledgeImportControls : null}
-
-      {showContext ? (
-        <View style={{ marginTop: 10 }}>
-        <IslePressable
-          haptic
-          accessibilityRole="button"
-          accessibilityLabel={`${t('contextPanel.ragMode')}. ${ragSettingsSummary}`}
-          accessibilityState={{ expanded: ragSettingsExpanded }}
-          onPress={() => toggleContextSection('rag')}
-            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
-          >
-            <AppIcon name="search-check" color={colors.textTertiary} size={16} />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.ragMode')}</Text>
-              <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{ragSettingsSummary}</Text>
-            </View>
-            <MotiView animate={{ rotate: ragSettingsExpanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
-              <AppIcon name="collapse" color={colors.textTertiary} size={16} />
-            </MotiView>
-          </IslePressable>
-          {ragSettingsExpanded ? (
-            <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
-              <ContextFoldoutHeader title={t('contextPanel.ragMode')} detail={ragSettingsSummary} />
+            </MotiView>{searchCredentialsAvailable ? <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
+            <ContextFoldoutHeader
+              title={searchProviderLabel(searchProvider)}
+              detail={searchCredentialsConfiguredCount
+                ? t('contextPanel.searchApiActiveDetail', { count: searchCredentialsConfiguredCount })
+                : t('contextPanel.searchApiCollapsedDetail')}
+            />
+            {keysLoadError ? <IsleButton label={t('common.retry')} onPress={() => setKeysLoadRequest(value => value + 1)} /> : null}
+            {searchCredentialPresentation.fields.map((field) => (
+              <IsleField key={field.id} label={field.label} style={{ marginTop: 10 }} inputProps={{ value: searchCredentialFieldValue(field.id), editable: keysReady && !keysSaving, onChangeText: searchCredentialFieldUpdater(field.id), secureTextEntry: field.secureTextEntry, autoCapitalize: 'none', autoCorrect: false, placeholder: field.placeholder }} />
+            ))}
+            {searchCredentialPresentation.showEndpoint ? <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: customSearchEndpointDraft, editable: keysReady && !keysSaving, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchEndpointDraft(value) }, autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} /> : null}
+            {searchCredentialPresentation.showBearerKey ? <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, editable: keysReady && !keysSaving, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchKey(value) }, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} /> : null}
+            <IslePressable haptic accessibilityLabel={saved ? t('common.saved') : t('contextPanel.saveSearchConfig')} disabled={!keysReady || keysSaving} onPress={() => void saveTavilyKey()} style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10 }}>
+              <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{saved ? t('common.saved') : t('contextPanel.saveSearchConfig')}</Text>
+              </IslePressable>
+              {keysReady ? <IsleButton label={t('settingsWorkspace.reload')} disabled={keysSaving} onPress={() => void requestSearchDiscard(() => { setSaved(false); setKeysLoadRequest(value => value + 1) })} /> : null}
+          </MotiView> : null}</> },
+        { id: 'rag-profile', title: t('contextPanel.ragMode'), description: t('settingsUx.retrievalHint'), summary: ragSettingsSummary, icon: 'search-check', targets: ['local-model-mirror'], content: <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
         {embeddingJobs ? (
           <Text style={{ color: embeddingJobs.error ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 6 }}>
             {t('contextPanel.embeddingStatus', { running: embeddingJobs.running, failed: embeddingJobs.error })}
@@ -958,12 +969,12 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.agenticTechniques')}</Text>
             <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{t('contextPanel.agenticTechniquesCollapsedDetail', { count: enabledTechniqueCount })}</Text>
           </View>
-          <MotiView animate={{ rotate: ragTechniquesOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+          <MotiView animate={{ rotate: ragTechniquesOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
             <AppIcon name="collapse" color={colors.textTertiary} size={16} />
           </MotiView>
         </IslePressable>
         {ragTechniquesOpen ? (
-          <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+          <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}>
             <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 10 }}>
               {t('contextPanel.agenticTechniquesHelp')}
             </Text>
@@ -1011,12 +1022,12 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}</Text>
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('contextPanel.localModel.mirrorBaseUrl')}: {mirrorStatus}</Text>
           </View>
-          <MotiView animate={{ rotate: localModelsOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+          <MotiView animate={{ rotate: localModelsOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
             <AppIcon name="collapse" color={colors.textTertiary} size={16} />
           </MotiView>
         </IslePressable>
         {localModelsOpen ? (
-          <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10 }}>
+          <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ marginTop: 10 }}>
             <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>
               {t('contextPanel.localModel.priority')}
             </Text>
@@ -1048,7 +1059,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                       key={view.model.id}
                       from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
                       animate={{ opacity: 1, translateY: 0 }}
-                      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1, delay: motion === 'full' ? Math.min(index * 24, 120) : 0 }}
+                      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 0, delay: motion === 'full' ? Math.min(index * 24, 120) : 0 }}
                     >
                       <LocalModelRow
                         view={view}
@@ -1114,55 +1125,21 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           primaryActionStyle={{ ...fullWidthActionStyle, ...primaryActionSurface(colors) }}
           assetCardSurface={(borderColor) => assetCardSurface(colors, borderColor)}
         />
-            </MotiView>
-          ) : null}
-        </View>
-      ) : null}
-
-      {showContext && searchCredentialsAvailable ? <View style={{ marginTop: 10 }}>
-        <ContextDisclosureRow
-          title={t('contextPanel.searchApi')}
-          detail={`${searchProviderLabel(searchProvider)} · ${searchCredentialsConfiguredCount
-            ? t('contextPanel.searchApiActiveDetail', { count: searchCredentialsConfiguredCount })
-            : t('contextPanel.searchApiCollapsedDetail')}`}
-          icon={<AppIcon name="key" color={colors.textTertiary} size={15} />}
-          open={searchCredentialsExpanded}
-          onPress={() => toggleContextSection('credentials')}
-        />
-        {searchCredentialsExpanded ? (
-          <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
-            <ContextFoldoutHeader
-              title={searchProviderLabel(searchProvider)}
-              detail={searchCredentialsConfiguredCount
-                ? t('contextPanel.searchApiActiveDetail', { count: searchCredentialsConfiguredCount })
-                : t('contextPanel.searchApiCollapsedDetail')}
-            />
-            {keysLoadError ? <IsleButton label={t('common.retry')} onPress={() => setKeysLoadRequest(value => value + 1)} /> : null}
-            {searchCredentialPresentation.fields.map((field) => (
-              <IsleField key={field.id} label={field.label} style={{ marginTop: 10 }} inputProps={{ value: searchCredentialFieldValue(field.id), editable: keysReady && !keysSaving, onChangeText: searchCredentialFieldUpdater(field.id), secureTextEntry: field.secureTextEntry, autoCapitalize: 'none', autoCorrect: false, placeholder: field.placeholder }} />
-            ))}
-            {searchCredentialPresentation.showEndpoint ? <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: customSearchEndpointDraft, editable: keysReady && !keysSaving, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchEndpointDraft(value) }, autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} /> : null}
-            {searchCredentialPresentation.showBearerKey ? <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, editable: keysReady && !keysSaving, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchKey(value) }, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} /> : null}
-            <IslePressable haptic accessibilityLabel={saved ? t('common.saved') : t('contextPanel.saveSearchConfig')} disabled={!keysReady || keysSaving} onPress={() => void saveTavilyKey()} style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10 }}>
-              <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{saved ? t('common.saved') : t('contextPanel.saveSearchConfig')}</Text>
-              </IslePressable>
-              {keysReady ? <IsleButton label={t('settingsWorkspace.reload')} disabled={keysSaving} onPress={() => void requestSearchDiscard(() => { setSaved(false); setKeysLoadRequest(value => value + 1) })} /> : null}
-          </MotiView>
-        ) : null}
-      </View> : null}
-
+            </MotiView> },
+      ]} /> : null}
+      {shouldPromoteKnowledgeImport ? knowledgeImportControls : null}
       {!shouldPromoteKnowledgeImport ? knowledgeImportControls : null}
 
-      {showMemory ? <ContextList
+      {showMemory && catalogState === 'ready' ? <ContextList
         title={t('contextPanel.memoryCount', { count: memories.length })}
         empty={t('contextPanel.noMemories')}
         emptyDetail={t('contextPanel.noMemoriesDetail')}
         emptyVisible={!memories.length}
-        onClear={async () => {
+        onClear={() => mutateAssets(async () => {
           await clearMemories()
           resetMemoryAssetView()
           await refresh()
-        }}
+        })}
       >
         <MemoryReviewSection
           memories={memories}
@@ -1179,7 +1156,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           hasMemoryFilters={hasMemoryFilters}
           canConfirmFilteredMemories={canConfirmFilteredMemories}
           canRejectFilteredMemories={canRejectFilteredMemories}
-          confirmingMemories={confirmingMemories}
+          confirmingMemories={confirmingMemories || assetBusy}
           memoryPreviewLimit={memoryPreviewLimit}
           showAllMemories={showAllMemories}
           contextChipPressableStyle={contextChipPressableStyle}
@@ -1195,16 +1172,16 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           onSetMemoryFilter={setMemoryFilter}
           onResetMemoryFilters={resetMemoryAssetView}
           onSetShowAllMemories={setShowAllMemories}
-          onConfirmPendingMemories={(targetMemories, filtered) => void confirmPendingMemories(targetMemories, filtered)}
-          onRejectPendingMemories={(targetMemories) => void rejectPendingMemories(targetMemories)}
-          onToggleMemory={async (memory) => {
+          onConfirmPendingMemories={(targetMemories, filtered) => void mutateAssets(() => confirmPendingMemories(targetMemories, filtered))}
+          onRejectPendingMemories={(targetMemories) => void mutateAssets(() => rejectPendingMemories(targetMemories))}
+          onToggleMemory={(memory) => mutateAssets(async () => {
             await updateMemoryStatus(memory.id, memory.status === 'active' ? 'disabled' : 'active')
             await refresh()
-          }}
-          onDeleteMemory={async (memory) => {
+          })}
+          onDeleteMemory={(memory) => mutateAssets(async () => {
             await deleteMemory(memory.id)
             await refresh()
-          }}
+          })}
           renderDebugStat={(label, value) => <DebugStat label={label} value={value} />}
           renderItemRow={({ key, title, description, meta, deleteName, trailing, onToggle, onDelete }) => (
             <ItemRow
@@ -1221,16 +1198,16 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         />
       </ContextList> : null}
 
-      {showKnowledge ? <ContextList
+      {showKnowledge && catalogState === 'ready' ? <ContextList
         title={t('contextPanel.knowledgeCount', { count: documents.length })}
         empty={t('contextPanel.noKnowledgeFiles')}
         emptyDetail={t('contextPanel.noKnowledgeFilesDetail')}
         emptyVisible={!documents.length}
-        onClear={async () => {
+        onClear={() => mutateAssets(async () => {
           await clearKnowledge()
           resetKnowledgeAssetView()
           await refresh()
-        }}
+        })}
       >
         {documents.length ? (
           <>
@@ -1241,10 +1218,10 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                 : t('contextPanel.knowledgeToolsCollapsedDetail', { ready: knowledgeStatusCounts.ready, failed: knowledgeStatusCounts.failed, empty: knowledgeStatusCounts.empty })}
               icon={<AppIcon name="filter" color={colors.textTertiary} size={15} />}
               open={knowledgeToolsVisible}
-              onPress={() => setKnowledgeToolsOpen((value) => !value)}
+              onPress={() => setKnowledgeToolsOpen(!knowledgeToolsVisible)}
             />
             {knowledgeToolsVisible ? (
-              <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10 }}>
+              <MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ marginTop: 10 }}>
                 <View testID="knowledge-readiness-summary" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                   <DebugStat label={t('contextPanel.knowledgeReadyCount')} value={String(knowledgeStatusCounts.ready)} />
                   <DebugStat label={t('contextPanel.knowledgeIndexingCount')} value={String(knowledgeStatusCounts.indexing)} />
@@ -1371,10 +1348,10 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             description={t('contextPanel.chunkDescription', { count: document.chunkCount, kb: Math.round(document.size / 1024) })}
             meta={formatKnowledgeMeta(document, t)}
             deleteName={document.title}
-            onDelete={async () => {
+            onDelete={() => mutateAssets(async () => {
               await deleteKnowledgeDocument(document.id)
               await refresh()
-            }}
+            })}
           />
         ))}
         {filteredDocuments.length > knowledgePreviewLimit ? (
@@ -1415,6 +1392,7 @@ function ContextFoldoutHeader({ title, detail }: { title: string; detail?: strin
 
 function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; onPress: () => void }) {
   const { colors, canonicalThemeId } = useAppTheme()
+  const motion = useMotionPreference()
   if (canonicalThemeId === 'minimal') {
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 50, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
@@ -1452,7 +1430,7 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
           <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
           <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{detail}</Text>
         </View>
-        <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+        <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
           <AppIcon name="collapse" color={colors.textTertiary} size={16} />
         </MotiView>
       </IslePressable>
@@ -1472,7 +1450,7 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
         <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
         <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{detail}</Text>
       </View>
-      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
         <AppIcon name="collapse" color={colors.textTertiary} size={16} />
       </MotiView>
     </IslePressable>

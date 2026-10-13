@@ -1,18 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  useWindowDimensions,
-} from 'react-native'
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import { FlashList } from '@shopify/flash-list'
 import { MotiView } from 'moti'
 
@@ -387,6 +376,8 @@ export function UsageStatisticsContent({
   const narrow = width < 360
   const copy = useMemo(() => ({ ...DEFAULT_USAGE_STATISTICS_COPY, ...copyOverrides }), [copyOverrides])
   const [filterSheet, setFilterSheet] = useState<FilterKey | null>(null)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
   const [pricingDraft, setPricingDraft] = useState<PricingDraftState | null>(null)
   const [pricingSubmitting, setPricingSubmitting] = useState(false)
@@ -502,7 +493,7 @@ export function UsageStatisticsContent({
           />
         ) : undefined)}
         <View style={[styles.summaryGrid, narrow && styles.summaryGridNarrow]}>
-          {summaryItems.map((item) => (
+          {summaryItems.filter(item => detailsOpen || ['requests', 'total', 'cost'].includes(item.id)).map((item) => (
             <View
               key={item.id}
               accessible
@@ -521,6 +512,7 @@ export function UsageStatisticsContent({
             </View>
           ))}
         </View>
+        <IsleButton compact label={t(detailsOpen ? 'settingsUx.hideDetails' : 'settingsUx.moreDetails')} onPress={() => setDetailsOpen(value => !value)} />
         {statusDistribution.length ? (
           <View style={styles.statusSummary} accessible accessibilityLabel={statusDistribution.map((item) => `${item.label} ${item.value}`).join('. ')}>
             <View style={[styles.statusTrack, { backgroundColor: colors.ui.semantic.surface.muted }]}>
@@ -540,7 +532,7 @@ export function UsageStatisticsContent({
         ) : null}
       </View>
 
-      {trends.length ? (
+      {detailsOpen && trends.length ? (
         <View style={[styles.section, { borderColor }]}>
           {sectionHeader(copy.trends)}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendStrip}>
@@ -552,10 +544,12 @@ export function UsageStatisticsContent({
       ) : null}
 
       <View style={[styles.section, { borderColor }]}>
+        <IsleButton compact label={copy.filters} onPress={() => setFiltersOpen(value => !value)} />
+        {filtersOpen ? <>
         {sectionHeader(copy.filters, onResetFilters ? (
           <IsleButton compact label={copy.resetFilters} onPress={onResetFilters} />
         ) : undefined)}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterStrip}>
+        <View style={{ gap: 8 }}>
           {filterDefinitions.map((definition) => {
             const selected = definition.options.find((option) => option.value === filters[definition.key])
             return (
@@ -568,7 +562,7 @@ export function UsageStatisticsContent({
               />
             )
           })}
-        </ScrollView>
+        </View>
         <View style={{ marginTop: 8 }}>
           <IsleToggle
             title={copy.includeEstimates}
@@ -577,6 +571,7 @@ export function UsageStatisticsContent({
             onPress={() => onFiltersChange({ ...filters, includeEstimates: !filters.includeEstimates })}
           />
         </View>
+        </> : null}
       </View>
 
       <View style={[styles.section, { borderColor }]}>
@@ -766,7 +761,7 @@ export function UsageStatisticsContent({
       >
         {pricingDraft ? (
           <View key={pricingDraft.key} style={styles.pricingForm}>
-            <SettingsHelpButton topic="usage" />
+            <SettingsHelpButton compact topic="usage" />
             <OptionChips
               disabled={pricingSaving}
               label={copy.provider}

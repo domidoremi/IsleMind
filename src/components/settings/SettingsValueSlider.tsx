@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { PanResponder, Text, View } from 'react-native'
+import { PanResponder, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 /** Preview is local. Only a completed gesture or accessibility step commits. */

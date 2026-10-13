@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IsleField, IslePressable, ThemeExpressionRegion } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
 
 interface KnowledgeImportSectionProps {
   importing: boolean
@@ -26,6 +28,7 @@ export function KnowledgeImportSection({
   onImportPlainText,
 }: KnowledgeImportSectionProps) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
   const { t } = useTranslation()
   const [pasteOpen, setPasteOpen] = useState(false)
   const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
@@ -94,13 +97,13 @@ export function KnowledgeImportSection({
             {plainText.trim() ? t('contextPanel.pasteTextDraftReady', { count: plainText.trim().length }) : t('contextPanel.pasteTextCollapsedHint')}
           </Text>
         </View>
-        <MotiView animate={{ rotate: pasteOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+        <MotiView animate={{ rotate: pasteOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
           <AppIcon name="collapse" color={colors.textTertiary} size={16} />
         </MotiView>
       </IslePressable>
 
       {pasteOpen ? (
-        <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10, ...foldoutPanelStyle }}>
+        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ marginTop: 10, ...foldoutPanelStyle }}>
           <KnowledgeImportFoldoutHeader title={t('contextPanel.pasteTextKnowledge')} detail={plainText.trim() ? t('contextPanel.pasteTextDraftReady', { count: plainText.trim().length }) : t('contextPanel.pasteTextCollapsedHint')} />
           <IsleField
             label={t('contextPanel.knowledgeTitle')}

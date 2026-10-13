@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const source = readFileSync(join(__dirname, '..', 'ApiKeyPanel.tsx'), 'utf8')
+const source = readFileSync(join(__dirname, '..', 'ApiKeyPanel.tsx'), 'utf8').replace(/\r\n/g, '\n')
 
 function sourceBetween(start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -12,6 +12,19 @@ function sourceBetween(start: string, end: string): string {
 }
 
 describe('ApiKeyPanel provider workspace contract', () => {
+  it('exposes an explicit native-tool declaration without probing or granting tool permissions', () => {
+    expect(sourceBetween('const CAPABILITY_KEYS:', 'function panelCardStyle(')).toContain("'nativeTools'")
+    expect(source).toContain("t('apiKeyPanel.nativeToolsDeclarationHint')")
+    const toggleSource = sourceBetween('async function toggleCapability(', 'function applyPresetDraft(')
+    expect(toggleSource).toContain('await updateProvider(provider.id, { capabilities: next })')
+    expect(toggleSource).not.toMatch(/syncAndTestProvider|probeProviderPreset|allowedToolIds|agentWorkflowAllow/)
+    for (const language of ['en', 'ja', 'zh-CN']) {
+      const messages = JSON.parse(readFileSync(join(__dirname, '../../../i18n/resources', `${language}.json`), 'utf8')).apiKeyPanel
+      expect(messages.capability.nativeTools).toBeTruthy()
+      expect(messages.nativeToolsDeclarationHint).toBeTruthy()
+    }
+  })
+
   it('persists token groups and reports the result through a toast', () => {
     const tokenSaveSource = sourceBetween(
       'async function savePendingTokens()',
@@ -27,13 +40,15 @@ describe('ApiKeyPanel provider workspace contract', () => {
     expect(tokenSaveSource).not.toContain('setNotice(')
   })
 
-  it('keeps model fetching on the Models page and connection saving on Connection', () => {
+  it('keeps optional model fetching with models and moves saved connections to model selection', () => {
     expect(source.match(/apiKeyPanel\.fetchModelsAndTest/g)).toHaveLength(1)
+    const workspace = sourceBetween("workspaceView === 'models' ? <View testID=\"provider-model-workspace\"", "workspaceView === 'advanced' ? <ProviderUsageQueryEditor")
+    expect(workspace).toContain("'apiKeyPanel.fetchModelsAndTest'")
+    expect(workspace.indexOf('provider-model-actions')).toBeLessThan(workspace.indexOf('provider-model-choices'))
+    expect(workspace).toContain("if (!hasKey) setWorkspaceView('connection'); else void syncAndTest()")
+    expect(sourceBetween('async function syncAndTest()', 'async function toggleProviderEnabled()')).toContain('testModels: false')
     expect(source).toContain(
-      "workspaceView === 'models' ? (\n            <ActionButton label={t('apiKeyPanel.fetchModelsAndTest')}",
-    )
-    expect(source).toContain(
-      "workspaceView === 'connection' ? (\n            <ActionButton label={t('apiKeyPanel.saveConnection')}",
+      "workspaceView === 'connection' ? (\n            <ActionButton label={t('settingsSubsystem.saveChoose')}",
     )
   })
 

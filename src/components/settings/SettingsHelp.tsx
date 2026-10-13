@@ -1,5 +1,7 @@
+import { APP_FONT_FAMILY } from '@/theme/font'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Keyboard, Linking, Modal, Platform, ScrollView, Text, View, useWindowDimensions, type GestureResponderEvent } from 'react-native'
+import { Keyboard, Linking, Modal, Platform, ScrollView, View, useWindowDimensions, type GestureResponderEvent } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import Markdown, { type RenderFunction } from 'react-native-markdown-display'
 import { SvgXml } from 'react-native-svg'
 import { useTranslation } from 'react-i18next'
@@ -19,6 +21,7 @@ const guideHeadings = { heading1: guideHeading, heading2: guideHeading, heading3
 export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSlug?: string; initialAnchor?: string; onClose: () => void }) {
   const { t, i18n } = useTranslation()
   const { colors } = useAppTheme()
+  const typography = colors.design?.semantic.typography
   const motion = useMotionPreference()
   const { width } = useWindowDimensions()
   const illustrationWidth = Math.max(120, Math.min(720, width - 32) - 40)
@@ -50,13 +53,13 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
     return false
   }
   const markdownStyle = {
-    body: { fontFamily: Platform.OS === 'web' ? 'system-ui' : undefined, fontSize: 16, lineHeight: 26, color: colors.text },
-    heading1: { fontSize: 28, lineHeight: 36, marginBottom: 16, color: colors.text },
-    heading2: { fontSize: 21, lineHeight: 30, marginTop: 20, marginBottom: 8, color: colors.text },
-    heading3: { fontSize: 18, lineHeight: 28, color: colors.text },
-    heading4: { fontSize: 16, lineHeight: 26, color: colors.text },
-    heading5: { fontSize: 16, lineHeight: 26, color: colors.text },
-    heading6: { fontSize: 16, lineHeight: 26, color: colors.text },
+    body: { fontFamily: APP_FONT_FAMILY, fontSize: 16, lineHeight: 26, ...typography?.body, color: colors.text },
+    heading1: { fontSize: 28, lineHeight: 36, ...typography?.headline, marginBottom: 16, color: colors.text },
+    heading2: { fontSize: 21, lineHeight: 30, ...typography?.title, marginTop: 20, marginBottom: 8, color: colors.text },
+    heading3: { fontSize: 18, lineHeight: 28, ...typography?.body, fontWeight: typography?.title.fontWeight ?? '600' as const, color: colors.text },
+    heading4: { fontSize: 16, lineHeight: 26, ...typography?.body, color: colors.text },
+    heading5: { fontSize: 16, lineHeight: 26, ...typography?.body, color: colors.text },
+    heading6: { fontSize: 16, lineHeight: 26, ...typography?.body, color: colors.text },
     link: { color: colors.primary, textDecorationLine: 'underline' as const },
     paragraph: { marginBottom: 12 },
   }
@@ -114,8 +117,9 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
 }
 
 /** The owner stays mounted: reading must never blur-commit or serialize a draft. */
-export function SettingsHelpButton({ topic = 'quick-start' }: { topic?: string }) {
+export function SettingsHelpButton({ topic = 'quick-start', compact = false }: { topic?: string; compact?: boolean }) {
   const { t } = useTranslation()
+  const { colors } = useAppTheme()
   const [open, setOpen] = useState(false)
   const trigger = useRef<GestureResponderEvent['currentTarget'] | null>(null)
   const historyId = useId()
@@ -139,15 +143,16 @@ export function SettingsHelpButton({ topic = 'quick-start' }: { topic?: string }
     if (Platform.OS === 'web' && window.history.state?.settingsGuide === historyId) window.history.back()
     else setOpen(false)
   }
+  function show(event: GestureResponderEvent) {
+    trigger.current = event.currentTarget
+    Keyboard.dismiss()
+    if (Platform.OS === 'web') window.history.pushState({ ...window.history.state, settingsGuide: historyId }, '')
+    setOpen(true)
+  }
   return <>
-    <IsleButton tone="soft" label={t('settingsWorkspace.openManual')} onPress={event => {
-      // Keep the actual control, not its label or a non-accessible wrapper.
-      // Read currentTarget synchronously: React clears it after dispatch.
-      trigger.current = event.currentTarget
-      Keyboard.dismiss()
-      if (Platform.OS === 'web') window.history.pushState({ ...window.history.state, settingsGuide: historyId }, '')
-      setOpen(true)
-    }} />
+    {compact ? <IslePressable accessibilityRole="button" accessibilityLabel={t('settingsWorkspace.openManual')} onPress={show}
+      style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="info" color={colors.textSecondary} size={20} /></IslePressable>
+      : <IsleButton tone="soft" label={t('settingsWorkspace.openManual')} onPress={show} />}
     {open ? <Modal visible statusBarTranslucent navigationBarTranslucent animationType="none" presentationStyle="fullScreen" onRequestClose={close}><GuideReader initialSlug={topic} onClose={close} /></Modal> : null}
   </>
 }

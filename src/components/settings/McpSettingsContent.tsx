@@ -1,3 +1,4 @@
+import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useRef } from 'react'
@@ -5,7 +6,8 @@ import { SettingsSection, useSettingsTarget } from './SettingsSection'
 import { useSettingsDraft } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
@@ -50,6 +52,11 @@ export function McpSettingsContent() {
   const [servers, setServers] = useState<McpServerConfig[]>([])
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [operationError, setOperationError] = useState<string>()
+  const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null)
+  const operationLock = useRef(false)
   const saveLock = useRef(false)
   const draftServerId = useRef<string | null>(null)
   const target = useSettingsTarget()
@@ -59,11 +66,13 @@ export function McpSettingsContent() {
   const [pendingServerId, setPendingServerId] = useState<string | null>(null)
   const [presetsOpen, setPresetsOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
+  const [activeTask, setActiveTask] = useState<string | null>(null)
   const [builtInOpen, setBuiltInOpen] = useState(false)
   const [installingPresetId, setInstallingPresetId] = useState<string | null>(null)
-  const discardDraft = () => { draftServerId.current = null; setName(''); setUrl(''); setAddOpen(false) }
-  const requestCloseDraft = useSettingsDraft(Boolean(name || url), saving, discardDraft)
-  useEffect(() => { if (target === 'mcp-add') { setManagementOpen(true); setAddOpen(true) } }, [target])
+  const discardDraft = () => { draftServerId.current = null; setEditingServer(null); setName(''); setUrl(''); setAddOpen(false); setActiveTask(null) }
+  useSettingsDraft(false, installingPresetId !== null || pendingServerId !== null, () => undefined)
+  const requestCloseDraft = useSettingsDraft(editingServer ? name !== editingServer.name || url !== editingServer.url : Boolean(name || url), saving, discardDraft)
+  useEffect(() => { if (target === 'mcp-add') { setManagementOpen(true); setAddOpen(true); setActiveTask('mcp-add') } }, [target])
   const remotePresets = useMemo(() => listMcpRemotePresets(), [])
   const userServers = useMemo(() => servers.filter((server) => server.id !== 'islemind-builtins'), [servers])
   const installedPresetIds = useMemo(() => new Set(remotePresets.flatMap((preset) => (
@@ -85,8 +94,12 @@ export function McpSettingsContent() {
   }, [])
 
   async function refresh() {
-    const nextServers = await listMcpServers()
-    setServers(nextServers)
+    try {
+      const nextServers = await listMcpServers()
+      setServers(nextServers)
+      setLoaded(true)
+      setLoadFailed(false)
+    } catch { setLoadFailed(true) }
   }
 
   async function addServer() {
@@ -98,13 +111,13 @@ export function McpSettingsContent() {
     if (saveLock.current) return
     saveLock.current = true
     setSaving(true)
+    setOperationError(undefined)
     try {
     const now = Date.now()
     draftServerId.current ??= `mcp-${now}-${Math.random().toString(36).slice(2, 8)}`
+    const endpointChanged = editingServer && normalizeMcpServerUrl(editingServer) !== endpoint
     const server = await upsertMcpServer({
       id: draftServerId.current,
-      name: name.trim() || hostFromUrl(endpoint),
-      url: endpoint,
       transport: 'streamable-http',
       enabled: true,
       status: 'disconnected',
@@ -114,19 +127,27 @@ export function McpSettingsContent() {
       prompts: [],
       approvedToolNames: [],
       createdAt: now,
+      ...editingServer,
+      name: name.trim() || hostFromUrl(endpoint),
+      url: endpoint,
+      ...(endpointChanged ? { status: 'disconnected' as const, tools: [], resources: [], prompts: [], approvedToolNames: [], manifestCachedAt: undefined, manifestExpiresAt: undefined, lastError: undefined } : {}),
       updatedAt: now,
     })
     discardDraft()
+    setSelectedServerId(server.id)
     setServers(current => [...current.filter(item => item.id !== server.id), server])
-    dialog.toast({ title: t('mcp.added'), message: server.name, tone: 'mint' })
+    dialog.toast({ title: t(editingServer ? 'settingsWorkspace.saved' : 'mcp.added'), message: endpointChanged ? t('settingsSubsystem.configurationChanged') : server.name, tone: 'mint' })
     } catch {
+      setOperationError('settingsWorkspace.saveFailed')
       dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
     } finally { saveLock.current = false; setSaving(false) }
   }
 
   async function installPreset(preset: McpRemotePreset) {
-    if (installingPresetId || installedPresetIds.has(preset.id)) return
+    if (operationLock.current || installedPresetIds.has(preset.id)) return
+    operationLock.current = true
     setInstallingPresetId(preset.id)
+    setOperationError(undefined)
     try {
       const now = Date.now()
       const server = await upsertMcpServer({
@@ -144,23 +165,30 @@ export function McpSettingsContent() {
         createdAt: now,
         updatedAt: now,
       })
-      const connected = await refreshMcpManifest(server)
+      // Installing records configuration only. Connection is a separate explicit action.
+      setServers(current => [...current.filter(item => item.id !== server.id), server])
       await refresh()
-      dialog.notice({
-        title: connected.status === 'connected' ? t('mcp.presetConnected') : t('mcp.presetInstalled'),
-        message: connected.status === 'connected'
-          ? t('mcp.refreshSummary', { tools: connected.tools.length, resources: connected.resources.length, prompts: connected.prompts.length })
-          : userFacingErrorDetail(connected.lastError) || t('mcp.presetRetry'),
-        tone: connected.status === 'connected' ? 'mint' : 'amber',
-      })
+      setActiveTask(null)
+      setSelectedServerId(server.id)
+      dialog.toast({ title: t('mcp.presetInstalled'), message: t('settingsSubsystem.savedNotVerified'), tone: 'mint' })
+    } catch {
+      setOperationError('settingsWorkspace.saveFailed')
+      dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
     } finally {
+      operationLock.current = false
       setInstallingPresetId(null)
     }
   }
 
   async function refreshServer(server: McpServerConfig) {
+    if (operationLock.current) return
+    operationLock.current = true
+    setPendingServerId(server.id)
+    setOperationError(undefined)
+    try {
     dialog.toast({ title: t('mcp.refreshing'), message: server.name, tone: 'mint' })
     const next = await refreshMcpManifest(server)
+    setServers(current => current.map(item => item.id === next.id ? next : item))
     await refresh()
     dialog.notice({
       title: next.status === 'connected' ? t('mcp.connected') : t('mcp.refreshFailed'),
@@ -169,25 +197,41 @@ export function McpSettingsContent() {
         : userFacingErrorDetail(next.lastError) || t('error.unknownError'),
       tone: next.status === 'connected' ? 'mint' : 'danger',
     })
+    } catch { setOperationError('mcp.refreshFailed'); dialog.toast({ title: t('mcp.refreshFailed'), tone: 'danger' }) }
+    finally { operationLock.current = false; setPendingServerId(null) }
   }
 
   async function toggleServer(server: McpServerConfig) {
-    if (pendingServerId) return
+    if (operationLock.current) return
+    operationLock.current = true
     setPendingServerId(server.id)
+    setOperationError(undefined)
     try {
       await upsertMcpServer({ ...server, enabled: !server.enabled, updatedAt: Date.now() })
       await refresh()
       dialog.toast({ title: server.enabled ? t('mcp.disabled') : t('mcp.enabled'), message: server.name, tone: server.enabled ? 'amber' : 'mint' })
-    } finally {
+    } catch { setOperationError('settingsWorkspace.saveFailed'); dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) } finally {
+      operationLock.current = false
       setPendingServerId(null)
     }
   }
 
   async function toggleTool(server: McpServerConfig, tool: McpToolManifest) {
-    const tools = server.tools.map((item) => item.name === tool.name ? { ...item, enabled: !item.enabled } : item)
-    const approvedToolNames = tools.filter((item) => item.enabled).map((item) => item.name)
-    await upsertMcpServer({ ...server, tools, approvedToolNames, updatedAt: Date.now() })
+    if (operationLock.current) return
+    operationLock.current = true
+    setPendingServerId(server.id)
+    setOperationError(undefined)
+    try {
+    const enabled = !(tool.enabled && server.approvedToolNames.includes(tool.name))
+    const tools = server.tools.map((item) => item.name === tool.name ? { ...item, enabled } : item)
+    // Legacy/imported enabled flags are not approval. Change only the chosen tool.
+    const approvedToolNames = new Set(server.approvedToolNames)
+    if (enabled) approvedToolNames.add(tool.name)
+    else approvedToolNames.delete(tool.name)
+    await upsertMcpServer({ ...server, tools, approvedToolNames: [...approvedToolNames], updatedAt: Date.now() })
     await refresh()
+    } catch { setOperationError('settingsWorkspace.saveFailed'); dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
+    finally { operationLock.current = false; setPendingServerId(null) }
   }
 
   async function deleteServer(server: McpServerConfig) {
@@ -198,39 +242,53 @@ export function McpSettingsContent() {
       cancelLabel: t('common.cancel'),
       tone: 'danger',
     })
-    if (!confirmed) return
-    await saveMcpServers(userServers.filter((item) => item.id !== server.id))
-    await refresh()
-    dialog.toast({ title: t('mcp.deleted'), message: server.name, tone: 'mint' })
+    if (!confirmed || operationLock.current) return
+    operationLock.current = true
+    setPendingServerId(server.id)
+    setOperationError(undefined)
+    try {
+      const current = await listMcpServers()
+      await saveMcpServers(current.filter(item => item.id !== server.id && item.id !== 'islemind-builtins'))
+      await refresh()
+      setSelectedServerId(null)
+      dialog.toast({ title: t('mcp.deleted'), message: server.name, tone: 'mint' })
+    } catch { setOperationError('settingsWorkspace.saveFailed'); dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
+    finally { operationLock.current = false; setPendingServerId(null) }
   }
 
-  const managementTrigger = (
-        <IslePressable
-          haptic
-          accessibilityRole="button"
-          accessibilityLabel={managementOpen ? t('dialog.close') : t('mcp.showDetails')}
-          accessibilityState={{ expanded: managementOpen }}
-          onPress={() => {
-            setManagementOpen((current) => !current)
-            setSelectedServerId(null)
-          }}
-          style={{ width: 44, height: 44, borderRadius: canonicalThemeId === 'material' ? 4 : canonicalThemeId === 'liquid-glass' ? colors.ui.radius.controlLarge : 8, alignItems: 'center', justifyContent: 'center', backgroundColor: canonicalThemeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted, borderWidth: canonicalThemeId === 'minimal' ? 0 : subtleBorderWidth, borderColor: colors.ui.semantic.chrome.border }}
-        >
-          <AppIcon name={managementOpen ? 'close' : 'settings'} color={colors.textSecondary} size={18} />
-        </IslePressable>
-  )
-  const presetsSection = (
-    <>
-              <McpDisclosureRow
-                title={t('mcp.presetsTitle')}
-                detail={t('mcp.presetsCollapsedDetail', { installed: installedPresetIds.size, total: remotePresets.length })}
-                icon={<AppIcon name="mcp-network" color={colors.textTertiary} size={16} />}
-                open={presetsOpen}
-                onPress={() => setPresetsOpen((value) => !value)}
-              />
-              {presetsOpen ? (
-                <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
-                  <McpFoldoutHeader title={t('mcp.presetsTitle')} description={t('mcp.presetsSubtitle')} />
+  return <View style={{ gap: 12 }}>
+    {operationError ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground }}>{t(operationError)}</Text> : null}
+    {loadFailed ? <View style={{ gap: 8 }}><Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground }}>{t('settingsSubsystem.loadFailed')}</Text><IsleButton label={t('common.retry')} disabled={saving || pendingServerId !== null || installingPresetId !== null} onPress={() => void refresh()} /></View> : null}
+    {!enabled ? <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.paused')}</Text> : null}
+    {!activeTask && !selectedServer ? <IsleToggle title={t('settings.mcp')} active={enabled} onPress={() => updateSettings({ mcpEnabled: !enabled })} /> : null}
+    {!activeTask && !selectedServer ? <>
+      {!loadFailed ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }}>{!loaded ? t('common.loading') : t('settingsSubsystem.remoteSummary', { enabled: userServers.filter(server => server.enabled).length, disabled: userServers.filter(server => !server.enabled).length })}</Text> : null}
+      <View style={{ marginTop: 20, gap: 8 }}>
+      <Text accessibilityRole="header" style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '700' }}>{t('settingsUx.configuredTools')}</Text>
+      {userServers.map(server => <IslePressable key={server.id} accessibilityRole="button" accessibilityLabel={server.name} onPress={() => setSelectedServerId(server.id)}
+        style={{ minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 0.5, borderBottomColor: colors.ui.section.divider }}>
+        <View style={{ flex: 1, minWidth: 0, gap: 4 }}><Text style={{ color: colors.text, fontSize: 16 }}>{server.name}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t(server.enabled ? 'settings.enabled' : 'settings.disabled')} · {t('settingsSubsystem.lastConnection', { status: t(`mcp.status.${server.status}`) })}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('settingsSubsystem.approvedTools', { count: server.tools.filter(tool => tool.enabled && server.approvedToolNames.includes(tool.name)).length, total: server.tools.length })}</Text></View>
+        <AppIcon name="back-next" color={colors.textSecondary} size={18} />
+      </IslePressable>)}
+      {loaded && !userServers.length ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }}>{t('settingsUx.noRemoteTools')}</Text> : null}
+    </View>
+    </> : null}
+    {selectedServer ? <>
+      <IsleButton label={t('settingsUx.allOptions')} onPress={() => void requestCloseDraft(() => setSelectedServerId(null))} />
+      <IsleButton label={t('settingsSubsystem.configuration')} disabled={pendingServerId !== null} onPress={() => { setEditingServer(selectedServer); draftServerId.current = selectedServer.id; setName(selectedServer.name); setUrl(selectedServer.url); setSelectedServerId(null); setActiveTask('mcp-add') }} />
+      <McpServerDetails key={selectedServer.id} busy={pendingServerId !== null} server={selectedServer} onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
+    </> : <SettingsTaskWorkspace value={activeTask} onTaskChange={id => { if (id !== 'mcp-add' && editingServer) discardDraft(); setActiveTask(id ?? null) }} tasks={[
+      { id: 'mcp-add', title: t(editingServer ? 'settingsSubsystem.configuration' : 'mcp.addServer'), description: t('settingsUx.mcpAddHint'), icon: 'add', content: <SettingsSection id="mcp-add"><View style={{ gap: 10 }}>
+          <View style={{ gap: 10 }}>
+            <IsleField label={t('mcp.name')} inputProps={{ editable: !saving, value: name, onChangeText: setName, placeholder: 'Local tools' }} />
+            <IsleField label={t('mcp.url')} inputProps={{ editable: !saving, value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', keyboardType: 'url', autoCapitalize: 'none', autoCorrect: false }} />
+            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={saving} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
+            <IsleButton label={t('settingsWorkspace.cancel')} disabled={saving} onPress={() => void requestCloseDraft(() => undefined)} />
+          </View>
+        </View></SettingsSection> },
+      { id: 'mcp-presets', title: t('mcp.presetsTitle'), description: t('mcp.presetsSubtitle'), icon: 'mcp-network', content: <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
                   <View style={{ gap: 8 }}>
                     {remotePresets.map((preset) => {
                       const installed = installedPresetIds.has(preset.id)
@@ -255,86 +313,10 @@ export function McpSettingsContent() {
                       )
                     })}
                   </View>
-                </MotiView>
-              ) : null}
-
-    </>
-  )
-  const addSection = (
-    <SettingsSection id="mcp-add">
-      <McpDisclosureRow
-        title={t('mcp.addServer')}
-        detail={url.trim() ? hostFromUrl(url.trim()) : t('mcp.addServerCollapsedHint')}
-        icon={<AppIcon name="network" color={colors.textTertiary} size={16} />}
-        open={addOpen}
-        onPress={() => setAddOpen((value) => !value)}
-      />
-      {addOpen ? (
-        <View style={foldoutPanelStyle}>
-          <SettingsHelpButton topic="tools" />
-          <View style={{ gap: 10 }}>
-            <IsleField label={t('mcp.name')} inputProps={{ editable: !saving, value: name, onChangeText: setName, placeholder: 'Local tools' }} />
-            <IsleField label={t('mcp.url')} inputProps={{ editable: !saving, value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', autoCapitalize: 'none', autoCorrect: false }} />
-            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={saving} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
-            <IsleButton label={t('settingsWorkspace.cancel')} disabled={saving} onPress={() => void requestCloseDraft(() => undefined)} />
-          </View>
-        </View>
-      ) : null}
-    </SettingsSection>
-  )
-  const builtInSection = builtInServer ? (
-    <>
-                  <McpDisclosureRow
-                    title={t('mcp.builtIn')}
-                    detail={t('mcp.builtInCollapsedDetail', { tools: builtInServer.tools.length, resources: builtInServer.resources.length, prompts: builtInServer.prompts.length })}
-                    icon={<AppIcon name="tools" color={colors.textTertiary} size={16} />}
-                    open={builtInOpen}
-                    onPress={() => setBuiltInOpen((value) => !value)}
-                  />
-                  {builtInOpen ? (
-                    <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}>
-                      <McpServerDetails server={builtInServer} readonly onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
-                    </MotiView>
-                  ) : null}
-    </>
-  ) : null
-  const managementSections = canonicalThemeId === 'material'
-    ? <>{builtInSection}{addSection}{presetsSection}</>
-    : canonicalThemeId === 'minimal'
-      ? <>{addSection}{presetsSection}{builtInSection}</>
-      : <>{presetsSection}{addSection}{builtInSection}</>
-  const management = (
-    <MotiView from={{ opacity: 0, translateY: -5 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ gap: 10 }}>
-      {selectedServer ? (
-        <McpServerDetails server={selectedServer} onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
-      ) : managementSections}
-    </MotiView>
-  )
-  const Experience = canonicalThemeId === 'monet'
-    ? MonetMcpSettingsExperience
-    : canonicalThemeId === 'material'
-      ? MaterialMcpSettingsExperience
-      : canonicalThemeId === 'liquid-glass'
-        ? LiquidGlassMcpSettingsExperience
-        : MinimalMcpSettingsExperience
-  return (
-    <>
-    <IsleToggle title={t('settings.mcp')} active={enabled} onPress={() => updateSettings({ mcpEnabled: !enabled })} />
-    <Experience
-      managementOpen={managementOpen}
-      managementTrigger={managementTrigger}
-      management={management}
-      servers={userServers}
-      pendingServerId={pendingServerId}
-      emptyState={<McpEmptyRow icon={<AppIcon name="mcp-network" color={colors.textTertiary} size={15} />} label={t('mcp.empty')} detail={t('mcp.emptyDetail')} />}
-      compact={compact}
-      onToggle={(server) => void toggleServer(server)}
-      onOpenDetails={(serverId) => {
-        void requestCloseDraft(() => { setSelectedServerId(serverId); setManagementOpen(true) })
-      }}
-    />
-    </>
-  )
+                </MotiView> },
+      ...(builtInServer ? [{ id: 'mcp-builtins', title: t('mcp.builtIn'), description: t('settingsUx.builtinsHint'), icon: 'tools' as const, content: <McpServerDetails server={builtInServer} busy={pendingServerId !== null} readonly onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} /> }] : []),
+    ]} />}
+  </View>
 }
 
 function McpFoldoutHeader({ title, description }: { title: string; description?: string }) {
@@ -376,6 +358,7 @@ function McpEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string; 
 function McpServerDetails({
   server,
   readonly = false,
+  busy = false,
   onRefresh,
   onToggleServer,
   onToggleTool,
@@ -383,6 +366,7 @@ function McpServerDetails({
 }: {
   server: McpServerConfig
   readonly?: boolean
+  busy?: boolean
   onRefresh: (server: McpServerConfig) => Promise<void>
   onToggleServer: (server: McpServerConfig) => Promise<void>
   onToggleTool: (server: McpServerConfig, tool: McpToolManifest) => Promise<void>
@@ -425,9 +409,9 @@ function McpServerDetails({
   const actionButtonStyle = actionCompact ? { alignSelf: 'stretch' as const } : { flexGrow: 1, flexShrink: 1, flexBasis: '47%' as const, minWidth: 0 }
   const actions = (
     <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, justifyContent: 'flex-end', alignItems: actionCompact ? 'stretch' : 'center' }}>
-      {!readonly ? <IsleButton label={server.enabled ? t('settings.enabledState') : t('settings.disabledState')} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} style={actionButtonStyle} /> : null}
-      <IsleButton label={t('settings.sync')} compact icon={<AppIcon name="refresh" color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} style={actionButtonStyle} />
-      {!readonly ? <IsleButton label={t('common.delete')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void onDelete(server)} style={actionButtonStyle} /> : null}
+      {!readonly ? <IsleButton label={t(server.enabled ? 'mcp.disableServer' : 'mcp.enableServer')} disabled={busy} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} style={actionButtonStyle} /> : null}
+      <IsleButton label={t(busy ? 'mcp.refreshing' : 'settingsSubsystem.refreshManifest')} disabled={busy || !server.enabled} compact icon={<AppIcon name="refresh" color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} style={actionButtonStyle} />
+      {!readonly ? <IsleButton label={t('common.delete')} disabled={busy} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void onDelete(server)} style={actionButtonStyle} /> : null}
     </View>
   )
   return (
@@ -449,9 +433,12 @@ function McpServerDetails({
       <IsleListItem
         title={server.name}
         description={[server.url, t('mcp.refreshSummary', { tools: server.tools.length, resources: server.resources.length, prompts: server.prompts.length })].join('\n')}
-        leading={<IsleChip active={server.status === 'connected'}>{t(`mcp.status.${server.status}`)}</IsleChip>}
+        leading={<IsleChip active={server.enabled}>{t(server.enabled ? 'settings.enabled' : 'settings.disabled')}</IsleChip>}
       />
+      <Text style={{ color: colors.textSecondary }}>{t('settingsSubsystem.lastConnection', { status: t(`mcp.status.${server.status}`) })}</Text>
+      {server.status === 'error' ? <Text accessibilityRole="alert" selectable style={{ color: colors.ui.tone.danger.foreground }}>{t('mcp.refreshFailed')}{userFacingErrorDetail(server.lastError)}</Text> : null}
       {actions}
+      <Text style={{ color: colors.textSecondary }}>{t('settingsSubsystem.approvedTools', { count: server.tools.filter(tool => tool.enabled && server.approvedToolNames.includes(tool.name)).length, total: server.tools.length })}</Text>
       <View style={{ gap: 8 }}>
           <View style={{ borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), padding: 8, gap: 4, backgroundColor: mutedSurface, borderWidth: subtleBorderWidth, borderColor: pluginValidation.ok ? cardBorder : colors.ui.tone.warning.border }}>
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{t('mcp.pluginManifest')}</Text>
@@ -459,7 +446,7 @@ function McpServerDetails({
           </View>
           <McpDisclosureRow
             title={t('mcp.toolsTitle', { count: server.tools.length })}
-            detail={t('mcp.toolsCollapsedDetail', { approved: server.tools.filter((tool) => tool.enabled).length, total: server.tools.length })}
+            detail={t('mcp.toolsCollapsedDetail', { approved: server.tools.filter((tool) => tool.enabled && server.approvedToolNames.includes(tool.name)).length, total: server.tools.length })}
             icon={<AppIcon name="shield" color={colors.textTertiary} size={16} />}
             open={toolsOpen}
             onPress={() => setToolsOpen((value) => !value)}
@@ -471,9 +458,9 @@ function McpServerDetails({
                   key={tool.name}
                   title={tool.name}
                   description={tool.description ?? t('mcp.noDescription')}
-                  active={tool.enabled}
+                  active={tool.enabled && server.approvedToolNames.includes(tool.name)}
                   icon={<AppIcon name="shield" color={colors.text} size={18} />}
-                  onPress={() => readonly ? undefined : void onToggleTool(server, tool)}
+                  onPress={() => readonly || busy ? undefined : void onToggleTool(server, tool)}
                 />
               ))}
               {!server.tools.length ? <McpEmptyRow icon={<AppIcon name="shield" color={colors.textTertiary} size={15} />} label={t('mcp.noTools')} /> : null}

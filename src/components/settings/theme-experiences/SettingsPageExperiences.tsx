@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react'
-import { StyleSheet, Text, View } from 'react-native'
+import type { ReactNode, Ref } from 'react'
+import { StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
@@ -10,6 +11,8 @@ export interface SettingsPageExperienceProps {
   rootTitle: string
   routeKey: string
   compact: boolean
+  titleRef?: Ref<View>
+  trailing?: ReactNode
   leading: ReactNode
   children: ReactNode
 }
@@ -17,22 +20,26 @@ export interface SettingsPageExperienceProps {
 export function MinimalSettingsPageExperience({
   title,
   subtitle,
-  rootTitle: _rootTitle,
+  rootTitle,
   routeKey: _routeKey,
   compact,
   leading,
+  trailing,
+  titleRef,
   children,
 }: SettingsPageExperienceProps) {
   const { colors } = useAppTheme()
+  const { width, fontScale } = useWindowDimensions()
   return (
     <View testID="settings-page-experience-minimal" style={styles.minimalRoot}>
-      <View style={[styles.header, { minHeight: compact ? 52 : 56, borderBottomColor: colors.ui.semantic.chrome.border }]}>
-        {leading}
-        <View pointerEvents="none" style={[styles.minimalSectionMark, { backgroundColor: colors.ui.control.primaryBackground }]} />
+      <View style={[styles.header, { minHeight: compact ? 76 : 86 }]}>
+        <View style={{ minWidth: 44, minHeight: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted }}>{leading}</View>
         <View style={styles.titleBlock}>
-          <Text accessibilityRole="header" style={[styles.minimalTitle, { color: colors.text }]}>{title}</Text>
+          {title !== rootTitle ? <Text style={{ fontSize: 11, lineHeight: 18, color: colors.textSecondary, marginBottom: 2 }}>{rootTitle}</Text> : null}
+          <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.minimalTitle, { color: colors.text, fontSize: width / fontScale < 360 ? 18 : 22 }]}>{title}</Text></View>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textTertiary }]}>{subtitle}</Text> : null}
         </View>
+        {trailing}
       </View>
       <View testID="settings-detail-surface-minimal" style={[styles.content, { paddingTop: compact ? 10 : 12 }]}>{children}</View>
     </View>
@@ -46,6 +53,8 @@ export function LiquidGlassSettingsPageExperience({
   routeKey: _routeKey,
   compact,
   leading,
+  trailing,
+  titleRef,
   children,
 }: SettingsPageExperienceProps) {
   const { colors } = useAppTheme()
@@ -54,9 +63,10 @@ export function LiquidGlassSettingsPageExperience({
       <GlassSurface colors={colors} style={styles.glassHeader}>
         {leading}
         <View style={styles.titleBlock}>
-          <Text accessibilityRole="header" style={[styles.glassTitle, { color: colors.text }]}>{title}</Text>
+          <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.glassTitle, { color: colors.text }]}>{title}</Text></View>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
         </View>
+        {trailing}
       </GlassSurface>
       <View testID="settings-detail-surface-liquid-glass" style={[styles.glassContent, { borderColor: colors.ui.actionBar.itemBorder }]}>
         {children}
@@ -72,6 +82,8 @@ export function MonetSettingsPageExperience({
   routeKey: _routeKey,
   compact,
   leading,
+  trailing,
+  titleRef,
   children,
 }: SettingsPageExperienceProps) {
   const { colors } = useAppTheme()
@@ -81,13 +93,14 @@ export function MonetSettingsPageExperience({
         <View pointerEvents="none" style={[styles.monetHeaderWash, { backgroundColor: colors.ui.icon.accentBackground }]} />
         {leading}
         <View style={styles.titleBlock}>
-          <Text accessibilityRole="header" style={[styles.monetTitle, { color: colors.text }]}>{title}</Text>
+          <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.monetTitle, { color: colors.text }]}>{title}</Text></View>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
           <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.monetBrushRow}>
             <View style={[styles.monetBrushLong, { backgroundColor: colors.primary }]} />
             <View style={[styles.monetBrushShort, { backgroundColor: colors.tertiary }]} />
           </View>
         </View>
+        {trailing}
       </View>
       <View testID="settings-detail-surface-monet" style={[styles.monetContent, { paddingTop: compact ? 12 : 16 }]}>
         <View pointerEvents="none" style={[styles.monetContentSpine, { backgroundColor: colors.primary }]} />
@@ -105,6 +118,8 @@ export function MaterialSettingsPageExperience({
   routeKey: _routeKey,
   compact,
   leading,
+  trailing,
+  titleRef,
   children,
 }: SettingsPageExperienceProps) {
   const { colors } = useAppTheme()
@@ -113,9 +128,10 @@ export function MaterialSettingsPageExperience({
       <View style={[styles.materialHeader, { minHeight: compact ? 58 : 64, backgroundColor: colors.ui.semantic.surface.muted, borderBottomColor: colors.ui.section.divider }]}>
         <View style={[styles.materialLeadingSlot, { backgroundColor: colors.ui.semantic.surface.raised }]}>{leading}</View>
         <View style={styles.titleBlock}>
-          <Text accessibilityRole="header" style={[styles.materialTitle, { color: colors.text }]}>{title}</Text>
+          <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.materialTitle, { color: colors.text }]}>{title}</Text></View>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
         </View>
+        {trailing}
         <View pointerEvents="none" style={[styles.materialHeaderIndicator, { backgroundColor: colors.primary }]} />
       </View>
       <View testID="settings-detail-surface-material" style={[styles.materialContent, { paddingTop: compact ? 12 : 16 }]}>
@@ -131,10 +147,9 @@ const styles = StyleSheet.create({
   glassRoot: { width: '100%', maxWidth: 900 },
   monetRoot: { width: '100%', maxWidth: 900 },
   materialRoot: { width: '100%', maxWidth: 900 },
-  header: { paddingHorizontal: 2, paddingVertical: 5, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  minimalSectionMark: { width: 2, height: 22, opacity: 0.72 },
+  header: { paddingHorizontal: 2, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 14 },
   titleBlock: { flex: 1, minWidth: 0 },
-  minimalTitle: { fontSize: 18, lineHeight: 23, fontWeight: '800', includeFontPadding: false },
+  minimalTitle: { fontSize: 22, lineHeight: 30, fontWeight: '700', includeFontPadding: false },
   subtitle: { marginTop: 1, fontSize: 14, lineHeight: 20, fontWeight: '500', includeFontPadding: false },
   content: { minWidth: 0, gap: 9 },
   glassHeader: { position: 'relative', minHeight: 58, paddingHorizontal: 7, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 10 },

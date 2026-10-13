@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from 'react'
-import { Text, View } from 'react-native'
+import { View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { ISLE_MIN_TOUCH_TARGET, IsleChip, IsleField, IslePressable, ThemeExpressionRegion } from '@/components/ui/isle'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { formatMemoryMeta, memoryReviewFocusKey } from '@/services/contextAssetFormatters'
 import type { MemorySortMode, MemoryStatusFocus } from '@/services/contextAssetFilters'
 import type { MemoryItem, MemorySourceKind } from '@/types/contextContracts'
@@ -99,11 +101,13 @@ export function MemoryReviewSection({
   renderItemRow,
 }: MemoryReviewSectionProps) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
   const { t } = useTranslation()
-  const [filtersOpen, setFiltersOpen] = useState(false)
-  const [reviewOpen, setReviewOpen] = useState(false)
-  const filtersVisible = filtersOpen || hasMemoryFilters
-  const reviewVisible = reviewOpen || memoryReviewFocus !== 'all' || canConfirmFilteredMemories || canRejectFilteredMemories
+  // Search/review entry points can open details initially, but cannot override an explicit close.
+  const [filtersOpen, setFiltersOpen] = useState<boolean | undefined>()
+  const [reviewOpen, setReviewOpen] = useState<boolean | undefined>()
+  const filtersVisible = filtersOpen ?? hasMemoryFilters
+  const reviewVisible = reviewOpen ?? (memoryReviewFocus !== 'all' || canConfirmFilteredMemories || canRejectFilteredMemories)
   const averageConfidenceLabel = memoryReviewSummary.averageConfidence === undefined ? '-' : `${Math.round(memoryReviewSummary.averageConfidence * 100)}%`
 
   return (
@@ -122,7 +126,7 @@ export function MemoryReviewSection({
             accessibilityRole="button"
             accessibilityLabel={`${t('contextPanel.memoryReviewQueue')}. ${t('contextPanel.memoryReviewCollapsedDetail', { pending: pendingMemories.length, low: memoryReviewSummary.lowConfidenceCount, confidence: averageConfidenceLabel })}`}
             accessibilityState={{ expanded: reviewVisible }}
-            onPress={() => setReviewOpen((value) => !value)}
+            onPress={() => setReviewOpen(!reviewVisible)}
             testID="memory-review-disclosure"
             style={{ minHeight: ISLE_MIN_TOUCH_TARGET, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, paddingHorizontal: 12, ...secondaryActionSurface() }}
           >
@@ -133,12 +137,12 @@ export function MemoryReviewSection({
                 {t('contextPanel.memoryReviewCollapsedDetail', { pending: pendingMemories.length, low: memoryReviewSummary.lowConfidenceCount, confidence: averageConfidenceLabel })}
               </Text>
             </View>
-            <MotiView animate={{ rotate: reviewVisible ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+            <MotiView animate={{ rotate: reviewVisible ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
               <AppIcon name="collapse" color={colors.textTertiary} size={16} />
             </MotiView>
           </IslePressable>
           {reviewVisible ? (
-            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+            <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}>
               <View testID="memory-review-summary" style={{ marginBottom: 10 }}>
                 <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>
                   {t('contextPanel.memoryReviewSummary')}
@@ -186,7 +190,7 @@ export function MemoryReviewSection({
                   onPress={() => onConfirmPendingMemories(filteredPendingMemories, true)}
                   disabled={confirmingMemories}
                   accessibilityLabel={t('contextPanel.confirmFilteredPendingMemoriesTitle', { count: filteredPendingMemories.length })}
-                  accessibilityState={confirmingMemories ? { busy: true } : undefined}
+                  accessibilityState={{ busy: confirmingMemories }}
                   style={{ ...fullWidthActionStyle, ...secondaryActionSurface(), marginBottom: 10, opacity: confirmingMemories ? 0.65 : 1 }}
                 >
                   <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>
@@ -200,7 +204,7 @@ export function MemoryReviewSection({
                   onPress={() => onRejectPendingMemories(filteredPendingMemories)}
                   disabled={confirmingMemories}
                   accessibilityLabel={t('contextPanel.rejectFilteredPendingMemoriesTitle', { count: filteredPendingMemories.length })}
-                  accessibilityState={confirmingMemories ? { busy: true } : undefined}
+                  accessibilityState={{ busy: confirmingMemories }}
                   style={{ ...fullWidthActionStyle, ...secondaryActionSurface(), marginBottom: 10, borderColor: colors.ui.tone.danger.border, opacity: confirmingMemories ? 0.65 : 1 }}
                 >
                   <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>
@@ -214,7 +218,7 @@ export function MemoryReviewSection({
                   onPress={() => onConfirmPendingMemories()}
                   disabled={confirmingMemories}
                   accessibilityLabel={t('contextPanel.confirmPendingMemoriesTitle', { count: pendingMemories.length })}
-                  accessibilityState={confirmingMemories ? { busy: true } : undefined}
+                  accessibilityState={{ busy: confirmingMemories }}
                   style={{ ...fullWidthActionStyle, ...primaryActionSurface(), marginBottom: 10, opacity: confirmingMemories ? 0.65 : 1 }}
                 >
                   <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>
@@ -233,7 +237,7 @@ export function MemoryReviewSection({
             accessibilityRole="button"
             accessibilityLabel={`${t('contextPanel.memoryFilters')}. ${hasMemoryFilters ? t('contextPanel.memoryFilterSummary', { count: filteredMemories.length, total: memories.length }) : t('contextPanel.memoryFiltersHint')}`}
             accessibilityState={{ expanded: filtersVisible }}
-            onPress={() => setFiltersOpen((value) => !value)}
+            onPress={() => setFiltersOpen(!filtersVisible)}
             testID="memory-filter-disclosure"
             style={{ minHeight: ISLE_MIN_TOUCH_TARGET, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
           >
@@ -244,12 +248,12 @@ export function MemoryReviewSection({
                 {hasMemoryFilters ? t('contextPanel.memoryFilterSummary', { count: filteredMemories.length, total: memories.length }) : t('contextPanel.memoryFiltersHint')}
               </Text>
             </View>
-            <MotiView animate={{ rotate: filtersVisible ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+            <MotiView animate={{ rotate: filtersVisible ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
               <AppIcon name="collapse" color={colors.textTertiary} size={16} />
             </MotiView>
           </IslePressable>
           {filtersVisible ? (
-            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+            <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}>
               <View testID="memory-status-focus" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                 {([
                   ['all', t('contextPanel.statusFocusAll', { count: memories.length })],

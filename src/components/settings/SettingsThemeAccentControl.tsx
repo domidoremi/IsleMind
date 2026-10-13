@@ -1,6 +1,7 @@
 import { RadioGroup } from 'animal-island-ui-rn'
 import { useEffect, useId, useMemo, useState, type RefObject } from 'react'
-import { Text, View, useWindowDimensions, type GestureResponderEvent } from 'react-native'
+import { View, useWindowDimensions, type GestureResponderEvent } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { IsleButton } from '@/components/ui/isle'

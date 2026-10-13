@@ -2,10 +2,14 @@ import { createContext, useContext, useEffect, useRef, type ReactNode } from 're
 import { View, type StyleProp, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
+export interface SettingsTaskNavigation { title: string; onBack: () => void }
+
 export const SettingsSectionContext = createContext<{
   target?: string
   highlight?: string
   register: (id: string, node: View | null) => void
+  resetScroll?: () => void
+  setTaskNavigation?: (navigation: SettingsTaskNavigation | undefined) => void
 }>({ register: () => undefined })
 export function useSettingsTarget() { return useContext(SettingsSectionContext).target }
 export function SettingsSection({ id, children, style }: { id: string; children: ReactNode; style?: StyleProp<ViewStyle> }) {

@@ -1,27 +1,29 @@
 import { useSettingsDraft } from './SettingsEditBoundary'
-import { SettingsHelpButton } from './SettingsHelp'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Keyboard, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { Keyboard, Platform, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import * as Clipboard from 'expo-clipboard'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { AIProvider } from '@/types/providerContracts'
+import { getProviderConfigIssue } from '@/types/providerBaseUrls'
 import { composeUserFacingError, isUserFacingErrorCode, userFacingErrorCodeKey } from '@/core'
 import type { ModelAlias, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
 import { getModelName } from '@/types/modelCatalog'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, looksLikeProviderImportConnectionText, maskSecret, parseCredentialGroups, parseProviderImportDraft, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
 import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, getCompatibleProviderClientCompatibilityModes, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, normalizeProviderClientCompatibilityMode, shouldSyncWireProtocolFromBaseUrl, type ProviderClientCompatibilityMode } from '@/modules/providers'
 import { resolveProviderConfigDraft } from '@/bootstrap/providerPolicies'
-import { isProviderActivationReady, syncAndTestProvider, summarizeProviderActivation } from '@/bootstrap/providerActivationRuntime'
+import { syncAndTestProvider } from '@/bootstrap/providerActivationRuntime'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useSettingsStore } from '@/store/settingsStore'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
-import { IsleField } from '@/components/ui/isle'
+import { IsleField, IsleSearchField, IsleToggle } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
 import { parseModelEntries } from '@/utils/text'
 import { getProviderManualModels, summarizeProviderModelInventory } from '@/utils/providerModels'
@@ -39,6 +41,9 @@ import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompa
 import type { RuntimeDiagnosticsProviderDetail } from '@/bootstrap/runtimeDiagnostics'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
+import { ProviderUsageQueryEditor } from '@/components/providers/ProviderUsageQueryEditor'
+import { ProviderTokenField } from '@/components/providers/ProviderTokenField'
+import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
@@ -47,6 +52,9 @@ interface ApiKeyPanelProps {
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
   hideHeader?: boolean
+  initialView?: ProviderWorkspaceView
+  onUse?: () => void
+  sortControl?: ReactNode
   style?: StyleProp<ViewStyle>
 }
 
@@ -74,6 +82,7 @@ const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
   'streaming',
   'vision',
   'files',
+  'nativeTools',
   'nativeSearch',
   'reasoningEffort',
   'embeddings',
@@ -148,9 +157,13 @@ export function ApiKeyPanel({
   expanded: controlledExpanded,
   onExpandedChange,
   hideHeader = false,
+  initialView = 'models',
+  onUse,
+  sortControl,
   style,
 }: ApiKeyPanelProps) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference(true)
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const { width, fontScale } = useWindowDimensions()
@@ -161,8 +174,9 @@ export function ApiKeyPanel({
   const settings = useSettingsStore((state) => state.settings)
   const defaultProvider = settings.defaultProvider
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
-  const { activateProviders, isActivationRunning } = useProviderActivationJob()
+  const { isActivationRunning } = useProviderActivationJob()
   const [localExpanded, setLocalExpanded] = useState(initiallyExpanded)
+  const [name, setName] = useState(provider.name)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
   const [presetId, setPresetId] = useState<ProviderPresetId>(initialProviderPresetId(provider))
   const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(initialProviderWireProtocol(provider))
@@ -172,12 +186,17 @@ export function ApiKeyPanel({
   const [aliasDrafts, setAliasDrafts] = useState<ModelAlias[]>(provider.modelAliases ?? [])
   const [draftGroups, setDraftGroups] = useState<ProviderCredentialGroup[]>(provider.credentialGroups ?? [])
   const [modelEditing, setModelEditing] = useState(false)
-  const [workspaceView, setWorkspaceView] = useState<ProviderWorkspaceView>('connection')
+  const [workspaceView, setWorkspaceView] = useState<ProviderWorkspaceView>(initialView)
+  const [modelQuery, setModelQuery] = useState('')
+  const [selectionIssue, setSelectionIssue] = useState<string | null>(null)
+  const [modelFetchFailed, setModelFetchFailed] = useState(false)
   const [modelEvidenceOpen, setModelEvidenceOpen] = useState(false)
   const [providerIdentityOpen, setProviderIdentityOpen] = useState(false)
   const [capabilityOverridesOpen, setCapabilityOverridesOpen] = useState(false)
   const [credentialGroupsOpen, setCredentialGroupsOpen] = useState(false)
   const [groupKeyMasks, setGroupKeyMasks] = useState<Record<string, string>>({})
+  const [credentialReadState, setCredentialReadState] = useState<'idle' | 'loading' | 'ready' | 'missing' | 'failed'>('idle')
+  const [credentialReadRequest, setCredentialReadRequest] = useState(0)
   const [task, setTask] = useState<PanelTask>('idle')
   const syncAndTestAbortController = useRef<AbortController | null>(null)
 
@@ -197,6 +216,9 @@ export function ApiKeyPanel({
   const currentModels = modelEntries.models
   const customModels = useMemo(() => getProviderManualModels(provider), [provider])
   const availableModels = useMemo(() => getPolicyAllowedProviderModels(provider, settings, { limit: API_KEY_PANEL_MODEL_SAMPLE_LIMIT }), [provider, settings])
+  const matchingModels = useMemo(() => modelQuery.trim()
+    ? getPolicyAllowedProviderModels(provider, settings).filter(model => model.toLowerCase().includes(modelQuery.trim().toLowerCase()))
+    : availableModels, [availableModels, modelQuery, provider, settings])
   const remoteModels = useMemo(() => getRemoteModelIds(provider, availableModels), [availableModels, provider])
   const remoteModelGroups = useMemo(() => buildRemoteModelGroups(provider, availableModels, t), [availableModels, provider, t])
   const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
@@ -205,7 +227,9 @@ export function ApiKeyPanel({
   const primaryModel = preferredModel ?? availableModels[0] ?? currentModels[0] ?? t('apiKeyPanel.noModelSet')
   const expanded = controlledExpanded ?? localExpanded
   const groupCount = hydratedGroups.length
-  const hasKey = hydratedGroups.some((group) => group.enabled) || !!credentialText.trim()
+  const hasDraftKey = !!credentialText.trim() || hydratedGroups.some((group) => group.enabled && !!group.apiKey?.trim())
+  const hasKey = hasDraftKey || credentialReadState === 'ready'
+    || (credentialReadState === 'idle' && hydratedGroups.some((group) => group.enabled))
   const credentialEditorExpanded = credentialEditorOpen || credentialText.trim().length > 0
   const isDefault = defaultProvider === provider.id
   const capabilitySummary = buildCapabilitySummary(provider, selectedPreset, t)
@@ -216,10 +240,13 @@ export function ApiKeyPanel({
   const visibleCredentialGroups = credentialGroupsExpanded ? hydratedGroups : hydratedGroups.slice(0, API_KEY_PANEL_CREDENTIAL_GROUP_INLINE_LIMIT)
   const hiddenCredentialGroupCount = Math.max(0, hydratedGroups.length - visibleCredentialGroups.length)
   const checkMessageNeedsAttention = provider.lastModelSyncStatus === 'bad'
+  const modelSyncIssue = checkMessageNeedsAttention
+    ? describeProviderSyncFailure(provider, t) || t('apiKeyPanel.modelFetchFailed')
+    : modelFetchFailed ? t('apiKeyPanel.modelFetchFailed') : null
   const protocolLabel = t(`providerSettings.protocol.${wireProtocol}`)
   const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
   const selectedPresetLabel = presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProvider') : selectedPreset.name
-  const draftSnapshot = JSON.stringify({ baseUrl, presetId, wireProtocol, modelsText, aliasDrafts, draftGroups, credentialText })
+  const draftSnapshot = JSON.stringify({ name, baseUrl, presetId, wireProtocol, modelsText, aliasDrafts, draftGroups, credentialText })
   const baseline = useRef(draftSnapshot)
   const serverBaseline = useRef(providerEditVersion(provider))
   const dirty = draftSnapshot !== baseline.current
@@ -227,9 +254,10 @@ export function ApiKeyPanel({
   dirtyRef.current = dirty
   const saveLock = useRef(false)
   function resetEditor(next = provider) {
-    baseline.current = JSON.stringify({ baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialText: '' })
+    baseline.current = JSON.stringify({ name: next.name, baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialText: '' })
     serverBaseline.current = providerEditVersion(next)
     dirtyRef.current = false
+    setName(next.name)
     setBaseUrl(next.baseUrl ?? '')
     setPresetId(initialProviderPresetId(next))
     setWireProtocol(initialProviderWireProtocol(next))
@@ -251,14 +279,14 @@ export function ApiKeyPanel({
     setAliasDrafts(provider.modelAliases ?? [])
     setDraftGroups(provider.credentialGroups ?? [])
     setModelEditing(false)
-    setWorkspaceView('connection')
     setModelEvidenceOpen(false)
     setProviderIdentityOpen(false)
     setCapabilityOverridesOpen(false)
     setCredentialGroupsOpen(false)
-    setGroupKeyMasks({})
     setCredentialText('')
-  }, [provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol])
+  }, [provider.name, provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol])
+
+  useEffect(() => { setWorkspaceView(initialView); setModelQuery(''); setModelFetchFailed(false) }, [initialView, provider.id])
 
   useEffect(() => () => {
     syncAndTestAbortController.current?.abort()
@@ -271,17 +299,30 @@ export function ApiKeyPanel({
   }, [controlledExpanded, initiallyExpanded, provider.id])
 
   useEffect(() => {
-    if (!expanded) return
+    setGroupKeyMasks({})
+    setCredentialReadState('idle')
+  }, [provider.id])
+
+  useEffect(() => {
+    if (!expanded || workspaceView !== 'connection') {
+      setCredentialReadState(state => state === 'loading' ? 'idle' : state)
+      return
+    }
     let cancelled = false
+    setGroupKeyMasks({})
+    setCredentialReadState('loading')
     void hydrateProviderKey(provider.id).then((keyed) => {
-      if (cancelled || !keyed) return
-      const masks = Object.fromEntries((keyed.credentialGroups ?? []).map((group) => [group.id, maskSecret(group.apiKey ?? '')]))
+      if (cancelled) return
+      const masks = Object.fromEntries((keyed?.credentialGroups ?? []).map((group) => [group.id, maskSecret(group.apiKey ?? '')]))
       setGroupKeyMasks(masks)
+      setCredentialReadState(keyed && (keyed.apiKey.trim() || keyed.credentialGroups?.some(group => group.enabled && group.apiKey?.trim())) ? 'ready' : 'missing')
+    }).catch(() => {
+      if (!cancelled) setCredentialReadState('failed')
     })
     return () => {
       cancelled = true
     }
-  }, [expanded, hydrateProviderKey, provider.id, provider.credentialGroups])
+  }, [expanded, workspaceView, hydrateProviderKey, provider.id, provider.credentialGroups, credentialReadRequest])
 
   async function save(showNotice = true): Promise<boolean> {
     if (saveLock.current) return false
@@ -295,11 +336,18 @@ export function ApiKeyPanel({
     setTask('saving')
     try {
     const pastedGroups = createIncomingGroups(draftGroups.length, credentialText, t)
+    if (credentialText.trim() && !pastedGroups.length) {
+      setSelectionIssue(t('apiKeyPanel.invalidTokenInput'))
+      setWorkspaceView('connection')
+      return false
+    }
+    setSelectionIssue(null)
     const credentialGroups = mergeGroups(draftGroups, pastedGroups, t)
     const models = parseModelEntries(modelsText).models
     const modelAliases = normalizeAliasDrafts(aliasDrafts)
     const applied = applyProviderPreset({
       ...latest,
+      name: name.trim() || latest.name,
       baseUrl: providerConfigDraft.baseUrl,
       credentialMode: providerConfigDraft.credentialMode,
       tokenPlanRegion: providerConfigDraft.tokenPlanRegion,
@@ -329,7 +377,7 @@ export function ApiKeyPanel({
     setModelEditing(false)
     if (showNotice) {
       const message = pastedGroups.length ? t('apiKeyPanel.savedGroups', { count: credentialGroups.length }) : t('apiKeyPanel.savedConfig')
-      dialog.toast({ title: t('apiKeyPanel.providerSaved', { name: providerDisplayName }), message, tone: 'mint' })
+      dialog.toast({ title: t('apiKeyPanel.providerSaved', { name: resolveProviderDisplayName(applied, t('providerSettings.customProvider')) }), message, tone: 'mint' })
     }
     return true
     } catch {
@@ -344,7 +392,7 @@ export function ApiKeyPanel({
   }
 
   async function savePendingTokens() {
-    if (!createIncomingGroups(draftGroups.length, credentialText, t).length) {
+    if (!credentialText.trim()) {
       dialog.toast({ title: t('apiKeyPanel.noTokenAdded'), message: t('apiKeyPanel.enterTokensFirst'), tone: 'amber' })
       return
     }
@@ -453,14 +501,15 @@ export function ApiKeyPanel({
   }
 
   async function syncAndTest() {
-    syncAndTestAbortController.current?.abort()
+    if (syncAndTestAbortController.current) return
     const abortController = new AbortController()
     syncAndTestAbortController.current = abortController
+    setModelFetchFailed(false)
     setTask('syncing')
-    dialog.toast({ title: t('apiKeyPanel.fetchAndTestStarted'), message: providerDisplayName, tone: 'mint' })
     try {
       if (!await save(false)) return
       if (abortController.signal.aborted) return
+      setTask('syncing')
       const current = useSettingsStore.getState().providers.find((item) => item.id === provider.id) ?? provider
       const result = await syncAndTestProvider(current, {
         updateProvider: (providerId, updates) => useSettingsStore.getState().updateProvider(providerId, updates),
@@ -475,14 +524,16 @@ export function ApiKeyPanel({
       if (abortController.signal.aborted || syncAndTestAbortController.current !== abortController) return
       const latest = useSettingsStore.getState().providers.find((item) => item.id === provider.id)
       if (latest) setModelsText(formatModelEntries(latest))
-      const summary = summarizeProviderActivation([result])
-      const ready = isProviderActivationReady(result)
-      if (ready) {
-        updateSettings({ defaultProvider: result.providerId })
-      }
-      dialog.notice({ title: ready ? t('apiKeyPanel.fetchAndTestDone') : t('apiKeyPanel.fetchAndTestNeedsCheck'), message: summary.message, tone: summary.tone })
+      // Fetching a catalog can succeed while this connection remains disabled.
+      // Activation readiness must not turn that success into a warning.
+      setModelFetchFailed(!result.synced)
+      dialog.toast({
+        title: t(result.synced ? 'apiKeyPanel.fetchAndTestDone' : 'apiKeyPanel.fetchAndTestNeedsCheck'),
+        message: result.synced ? t('settingsSubsystem.modelCount', { count: summarizeProviderModelInventory(latest ?? current).selectableModels }) : providerDisplayName,
+        tone: result.synced ? 'mint' : 'amber',
+      })
     } catch (error) {
-      if (!isProviderOperationAbort(error)) throw error
+      if (!isProviderOperationAbort(error)) setModelFetchFailed(true)
     } finally {
       if (syncAndTestAbortController.current === abortController) {
         syncAndTestAbortController.current = null
@@ -500,7 +551,45 @@ export function ApiKeyPanel({
       return
     }
     if (!await save(false)) return
-    void activateProviders([provider.id], 'single')
+    await updateProvider(provider.id, { enabled: true })
+    await useSettingsStore.getState().flushProviderPersistence()
+    dialog.toast({ title: t('providerSettings.configurationSaved'), tone: 'mint' })
+  }
+
+  async function useModel(model: string) {
+    if (isBusy || saveLock.current) return
+    if (dirty && !await save(false)) return
+    setTask('saving')
+    saveLock.current = true
+    setSelectionIssue(null)
+    try {
+      const store = useSettingsStore.getState()
+      const current = store.providers.find(item => item.id === provider.id)
+      if (!current || !getPolicyAllowedProviderModels(current, store.settings).includes(model)) {
+        setSelectionIssue(t('chat.modelNotInProvider', { model, provider: providerDisplayName }))
+        return
+      }
+      const keyed = await store.hydrateProviderKey(provider.id)
+      const credential = keyed?.apiKey.trim() || keyed?.credentialGroups?.find(group => group.enabled && group.apiKey?.trim())?.apiKey
+      const issue = keyed && getProviderConfigIssue(keyed, credential)
+      if (!credential || issue) {
+        setSelectionIssue(!credential ? t('chat.providerMissingKey') : t(issue!.messageKey ?? issue!.message))
+        setWorkspaceView('connection')
+        return
+      }
+      // Choosing a model only changes local preferences. It never probes a
+      // credential, dispatches work or rewrites an existing conversation.
+      await store.updateProvider(provider.id, { enabled: true })
+      await store.flushProviderPersistence()
+      await store.rememberPreferredModel(provider.id, model)
+      store.updateSettings({ defaultProvider: provider.id })
+      await flushPersistedSettings()
+      dialog.toast({ title: t('providerSettings.modelSelected'), message: model, tone: 'mint' })
+      onUse?.()
+    } catch {
+      setSelectionIssue(t('settingsWorkspace.saveFailed'))
+      dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
+    } finally { saveLock.current = false; setTask('idle') }
   }
 
   function setDefaultProvider() {
@@ -576,7 +665,7 @@ export function ApiKeyPanel({
   }
 
   async function getProbeApiKey(): Promise<string | undefined> {
-    const typed = parseCredentialGroups(credentialText)[0]?.apiKey
+    const typed = parseCredentialGroups(credentialText, { explicit: true })[0]?.apiKey
     if (typed) return typed
     const keyed = await hydrateProviderKey(provider.id)
     return keyed?.credentialGroups?.find((group) => group.enabled && group.apiKey?.trim())?.apiKey ?? keyed?.apiKey
@@ -591,7 +680,7 @@ export function ApiKeyPanel({
     <MotiView
       pointerEvents={isBusy ? 'none' : 'auto'}
       animate={{ opacity: provider.enabled ? 1 : 0.82 }}
-      transition={{ type: 'timing', duration: 144 }}
+      transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}
       style={[{
         borderRadius: Math.min(colors.ui.radius.panel, 8),
         padding: compact ? 8 : 10,
@@ -621,24 +710,38 @@ export function ApiKeyPanel({
             </Text>
           </View>
           {provider.lastModelSyncStatus === 'bad' ? <AppIcon name="refresh" color={colors.ui.tone.danger.foreground} size={17} /> : null}
-          <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 176 }}>
+          <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 176 : 0 }}>
             <AppIcon name="collapse" color={colors.textTertiary} size={18} />
           </MotiView>
         </IslePressable>
       ) : null}
 
       {expanded ? (
-        <MotiView from={{ opacity: 0, translateY: -8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: hideHeader ? 0 : 10, gap: 10 }}>
+        <MotiView from={motion === 'full' ? { opacity: 0, translateY: -8 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ marginTop: hideHeader ? 0 : 10, gap: 10 }}>
           <ProviderWorkspaceTabs value={workspaceView} onChange={setWorkspaceView} />
-          <CompactDisclosureRow
-            title={t('apiKeyPanel.workspaceAdvanced')}
-            detail={t('providerSettings.protocol.summary', { protocol: protocolLabel })}
-            icon={<AppIcon name="settings-sliders" color={colors.textTertiary} size={15} />}
-            open={workspaceView === 'advanced'}
-            onPress={() => setWorkspaceView((current) => current === 'advanced' ? 'connection' : 'advanced')}
-          />
-
-          {workspaceView === 'connection' && providerConfigDraft.isProtocolSelectable ? (
+          {workspaceView === 'connection' ? <IsleToggle title={t('settingsUx.useConnection')} description={t('settingsUx.localOnly')}
+            active={provider.enabled} onPress={() => void toggleProviderEnabled()} /> : null}
+          <View accessibilityLiveRegion="polite" style={{ gap: 4 }}>
+            <Text accessibilityRole={credentialReadState === 'failed' ? 'alert' : undefined} style={{ color: colors.text, fontSize: 14, lineHeight: 22 }}>{t(dirty ? 'settingsWorkspace.unsaved' : credentialReadState === 'loading' ? 'common.loading' : credentialReadState === 'failed' ? 'settingsSubsystem.loadFailed' : credentialReadState === 'ready' ? 'settingsSubsystem.connectionReady' : credentialReadState === 'missing' ? 'settingsSubsystem.connectionMissing' : 'settingsSubsystem.savedNotVerified')} · {t(provider.enabled ? 'settings.enabled' : 'settings.disabled')}{isDefault ? ` · ${t('providerSettings.defaultConnection')}` : ''}</Text>
+            {credentialReadState === 'failed' ? <MiniAction label={t('common.retry')} onPress={() => { setWorkspaceView('connection'); setCredentialReadRequest(value => value + 1) }} /> : null}
+            <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('settingsSubsystem.modelCount', { count: modelInventory.selectableModels })}</Text>
+          </View>
+          {selectionIssue ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 21 }}>{selectionIssue}</Text> : null}
+          {provider.lastTestStatus === 'bad' ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 21 }}>{t('providerSettings.previousRequestFailed')}</Text> : null}
+          {workspaceView !== 'advanced' && modelSyncIssue ? (
+            <View testID="provider-model-sync-issue" style={{ padding: 10, gap: 8, ...panelCardStyle(colors, colors.ui.tone.danger.foreground) }}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                <AppIcon name="warning" color={colors.ui.tone.danger.foreground} size={16} />
+                <View accessibilityRole="alert" style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('apiKeyPanel.latestCheck')}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2 }}>{modelSyncIssue}</Text>
+                  {availableModels.length ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2 }}>{t('settingsSubsystem.cachedModels')}</Text> : null}
+                </View>
+              </View>
+              {workspaceView === 'models' && hasKey ? <MiniAction label={t('apiKeyPanel.configureConnection')} disabled={isBusy} onPress={() => setWorkspaceView('connection')} /> : null}
+            </View>
+          ) : null}
+          {workspaceView === 'advanced' && providerConfigDraft.isProtocolSelectable ? (
             <View style={{ padding: 10, gap: 8, ...panelCardStyle(colors) }}>
               <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{t('providerSettings.protocol.title')}</Text>
               <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
@@ -652,6 +755,12 @@ export function ApiKeyPanel({
 
           {workspaceView === 'connection' ? (
             <IsleField
+              label={t('providerSettings.name')}
+              inputProps={{ value: name, onChangeText: setName, autoCorrect: false }}
+            />
+          ) : null}
+          {workspaceView === 'connection' ? (
+            <IsleField
               label={t('providerSettings.baseUrl')}
               inputProps={{
                 value: baseUrl,
@@ -660,20 +769,13 @@ export function ApiKeyPanel({
                 autoCorrect: false,
                 returnKeyType: 'done',
                 placeholder: selectedPreset.baseUrl ?? (resolveProviderConfigDraft({ provider, presetId: DEFAULT_PROVIDER_PRESET_ID }).baseUrl || 'https://new-api.example.com/v1'),
+                keyboardType: 'url',
               }}
             />
           ) : null}
 
           {workspaceView === 'advanced' ? (
             <View style={{ gap: 10 }}>
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                <MiniAction active={isDefault} label={isDefault ? t('settings.default') : t('apiKeyPanel.setDefault')} onPress={setDefaultProvider}>
-                  <AppIcon name="star" color={isDefault ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} fill={isDefault ? colors.ui.control.primaryForeground : 'transparent'} />
-                </MiniAction>
-                <MiniAction active={provider.enabled} label={provider.enabled ? t('apiKeyPanel.enabledState') : t('apiKeyPanel.disabledState')} onPress={() => void toggleProviderEnabled()} disabled={isBusy || isActivationRunning}>
-                  <AppIcon name="power" color={provider.enabled ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} />
-                </MiniAction>
-              </View>
               {runtimeDetail ? <ProviderRuntimeDiagnosticsPanel detail={runtimeDetail} /> : null}
               <View style={{ gap: 8 }}>
                 <SectionHeader
@@ -697,7 +799,7 @@ export function ApiKeyPanel({
                   title={t('apiKeyPanel.autoDetect')}
                   description={`${detection.reason} · ${t('apiKeyPanel.suggestedPreset', { name: detectedPresetLabel })}`}
                   action={
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                       <MiniAction label={t('apiKeyPanel.applyDetection')} onPress={() => void acceptDetection()}>
                         <AppIcon name="search-check" color={colors.textTertiary} size={15} />
                       </MiniAction>
@@ -717,7 +819,7 @@ export function ApiKeyPanel({
                 onPress={() => setProviderIdentityOpen((value) => !value)}
               />
               {providerIdentityOpen ? (
-                <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ padding: 10, ...panelCardStyle(colors) }}>
+                <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ padding: 10, ...panelCardStyle(colors) }}>
                   <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                   {PROVIDER_VENDOR_PRESETS.map((preset) => (
                     <ChoiceButton key={preset.id} active={presetId === preset.id} label={preset.name} onPress={() => selectPreset(preset.id)} />
@@ -734,8 +836,9 @@ export function ApiKeyPanel({
                 onPress={() => setCapabilityOverridesOpen((value) => !value)}
               />
               {capabilityOverridesOpen ? (
-                <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ padding: 10, gap: 8, ...panelCardStyle(colors) }}>
+                <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ padding: 10, gap: 8, ...panelCardStyle(colors) }}>
                   <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{t('apiKeyPanel.capabilityDependencyHint')}</Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{t('apiKeyPanel.nativeToolsDeclarationHint')}</Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                     {CAPABILITY_KEYS.map((key) => (
                       <CapabilityToggle
@@ -748,6 +851,7 @@ export function ApiKeyPanel({
                   </View>
                 </MotiView>
               ) : null}
+              {sortControl}
               <View style={{ paddingTop: 2, alignItems: 'flex-start' }}>
                 <MiniAction label={t('common.delete')} onPress={() => void confirmRemoveProvider()} disabled={isBusy}>
                   <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
@@ -760,13 +864,13 @@ export function ApiKeyPanel({
             <SectionHeader
               title={t('apiKeyPanel.credentialGroups')}
               action={
-                <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                   <MiniAction label={task === 'clipboard' ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')} onPress={() => void readProviderClipboard()} disabled={isBusy}>
                     <AppIcon name="paste" color={colors.textTertiary} size={15} />
                   </MiniAction>
-                  <MiniAction label={t('apiKeyPanel.saveTokens')} onPress={() => void savePendingTokens()} disabled={isBusy || !credentialText.trim()}>
+                  {credentialText.trim() ? <MiniAction label={t('apiKeyPanel.saveTokens')} onPress={() => void savePendingTokens()} disabled={isBusy}>
                     <AppIcon name="check" color={colors.textTertiary} size={15} />
-                  </MiniAction>
+                  </MiniAction> : null}
                 </View>
               }
             />
@@ -790,7 +894,9 @@ export function ApiKeyPanel({
                     group={group}
                     index={index}
                     maskedKey={groupKeyMasks[group.id] || maskSecret(group.apiKey ?? '')}
+                    emptyKeyLabel={t(credentialReadState === 'idle' || credentialReadState === 'loading' ? 'common.loading' : credentialReadState === 'failed' ? 'settingsSubsystem.loadFailed' : provider.credentialGroups?.some(existing => existing.id === group.id) ? 'settingsSubsystem.connectionMissing' : 'apiKeyPanel.newTokenPending')}
                     onChangeLabel={(label) => updateDraftGroup(group.id, { label })}
+                    onChangeKey={(apiKey) => updateDraftGroup(group.id, { apiKey })}
                     onToggle={() => updateDraftGroup(group.id, { enabled: !group.enabled })}
                     onDelete={() => void deleteDraftGroup(group.id)}
                   />
@@ -817,56 +923,63 @@ export function ApiKeyPanel({
                 <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.addTokens')}</Text>
                 <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>{credentialText.trim() ? t('apiKeyPanel.addTokensDraftReady', { count: credentialText.trim().length }) : t('apiKeyPanel.addTokensCollapsedDetail')}</Text>
               </View>
-              <MotiView animate={{ rotate: credentialEditorExpanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+              <MotiView animate={{ rotate: credentialEditorExpanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
                 <AppIcon name="collapse" color={colors.textTertiary} size={16} />
               </MotiView>
             </IslePressable>
             {credentialEditorExpanded ? (
-              <IsleField
-                label={t('apiKeyPanel.addTokens')}
-                note={t('apiKeyPanel.addTokensNote')}
-                inputProps={{
-                  value: credentialText,
-                  onChangeText: handleCredentialText,
-                  secureTextEntry: false,
-                  autoCapitalize: 'none',
-                  autoCorrect: false,
-                  multiline: true,
-                  blurOnSubmit: false,
-                  placeholder: 'sk-...\nsk-...\n{\"keys\":[\"sk-...\"]}',
-                  style: { minHeight: 60, maxHeight: 108, textAlignVertical: 'top' },
-                }}
-              />
+              <ProviderTokenField value={credentialText} onChangeText={handleCredentialText} onFocus={() => undefined} editable={!isBusy} />
             ) : null}
           </View> : null}
 
-          {workspaceView === 'models' ? <View style={{ gap: 10 }}>
-              <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ gap: 10 }}>
+          {workspaceView === 'models' ? <View testID="provider-model-workspace" style={{ gap: 10 }}>
+              {modelEditing ? (
                 <SectionHeader
                   title={t('apiKeyPanel.modelList')}
-                  description={modelEditing ? t('apiKeyPanel.editing') : t('apiKeyPanel.modelInventory', {
-                    remote: modelInventory.remoteModels,
-                    manual: modelInventory.manualModels,
-                    alias: modelInventory.aliases,
-                    selectable: modelInventory.selectableModels,
-                  })}
-                  action={
-                    modelEditing ? (
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
-                        <MiniAction label={t('common.cancel')} onPress={cancelModelEditing}>
-                          <AppIcon name="refresh" color={colors.textTertiary} size={15} />
-                        </MiniAction>
-                        <MiniAction label={t('common.save')} onPress={() => void save()} disabled={isBusy}>
-                          <AppIcon name="check" color={colors.textTertiary} size={15} />
-                        </MiniAction>
-                      </View>
-                    ) : (
-                      <MiniAction label={t('common.edit')} onPress={enterModelEditing}>
-                        <AppIcon name="filter" color={colors.textTertiary} size={15} />
-                      </MiniAction>
-                    )
-                  }
+                  description={t('apiKeyPanel.editing')}
+                  action={<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    <MiniAction label={t('common.cancel')} onPress={cancelModelEditing} disabled={isBusy}>
+                      <AppIcon name="close" color={colors.textTertiary} size={15} />
+                    </MiniAction>
+                    <MiniAction label={t('common.save')} onPress={() => void save()} disabled={isBusy}>
+                      <AppIcon name="check" color={colors.textTertiary} size={15} />
+                    </MiniAction>
+                  </View>}
                 />
+              ) : (
+                <View testID="provider-model-actions" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  <ActionButton
+                    label={t(!hasKey ? 'apiKeyPanel.configureConnection' : task === 'syncing' ? 'apiKeyPanel.fetchAndTestStarted' : modelSyncIssue ? 'apiKeyPanel.retryFetchModels' : 'apiKeyPanel.fetchModelsAndTest')}
+                    busy={task === 'syncing'} secondary={availableModels.length > 0} disabled={isBusy}
+                    onPress={() => { if (!hasKey) setWorkspaceView('connection'); else void syncAndTest() }}
+                  />
+                  <MiniAction label={t('common.edit')} onPress={enterModelEditing} disabled={isBusy}>
+                    <AppIcon name="edit" color={colors.textTertiary} size={15} />
+                  </MiniAction>
+                </View>
+              )}
+              {!modelEditing ? <View testID="provider-model-choices" style={{ gap: 8 }}>
+                {availableModels.length > 5 ? <IsleSearchField accessibilityLabel={t('providerSettings.searchModels')}
+                  value={modelQuery} onChangeText={setModelQuery} autoCapitalize="none" autoCorrect={false}
+                  placeholder={t('providerSettings.searchModels')} clearAccessibilityLabel={t('common.clearSearch')}
+                  onClear={() => setModelQuery('')} /> : null}
+                {matchingModels.slice(0, API_KEY_PANEL_MODEL_SAMPLE_LIMIT).map(model => {
+                  const selected = isDefault && provider.enabled && settings.lastPreferredModel?.providerId === provider.id && settings.lastPreferredModel.model === model
+                  return <IslePressable key={model} testID={`provider-use-model-${model}`} accessibilityRole="button"
+                    accessibilityLabel={`${t(dirty ? 'providerSettings.saveAndUseModel' : 'providerSettings.useModel')} ${model}`}
+                    accessibilityState={{ selected, disabled: isBusy }} disabled={isBusy} onPress={() => void useModel(model)}
+                    style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8,
+                      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
+                    <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 15, lineHeight: 22 }}>{getModelName(model)}</Text>
+                    <Text style={{ flexShrink: 1, color: colors.primary, fontSize: 14, fontWeight: '700' }}>{t(selected ? 'settings.default' : 'settingsUx.use')}</Text>
+                    <AppIcon name={selected ? 'check' : 'back-next'} color={colors.textSecondary} size={16} />
+                  </IslePressable>
+                })}
+                {!availableModels.length ? <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('providerSettings.addModelHint')}</Text> : null}
+                {availableModels.length > 0 && !matchingModels.length ? <Text style={{ color: colors.textSecondary }}>{t('providerSettings.noMatchingModels')}</Text> : null}
+                {availableModels.length >= API_KEY_PANEL_MODEL_SAMPLE_LIMIT ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{t('providerSettings.modelSearchLimit', { count: API_KEY_PANEL_MODEL_SAMPLE_LIMIT })}</Text> : null}
+              </View> : null}
+              <View style={{ gap: 10 }}>
                 {modelEditing ? (
                   <View style={{ gap: 10 }}>
                     {remoteModelGroups.length ? (
@@ -897,7 +1010,6 @@ export function ApiKeyPanel({
                   </View>
                 ) : (
                   <>
-                    <ModelSummary remoteModels={remoteModels} remoteModelGroups={remoteModelGroups} customModels={customModels} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} selectableCount={availableModels.length} />
                     <IslePressable
                       haptic
                       accessibilityRole="button"
@@ -910,42 +1022,30 @@ export function ApiKeyPanel({
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{modelEvidenceOpen ? t('apiKeyPanel.hideCompatibilityDetails') : t('apiKeyPanel.showCompatibilityDetails')}</Text>
                       </View>
-                      <MotiView animate={{ rotate: modelEvidenceOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+                      <MotiView animate={{ rotate: modelEvidenceOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
                         <AppIcon name="collapse" color={colors.textTertiary} size={16} />
                       </MotiView>
                     </IslePressable>
                     {modelEvidenceOpen ? (
-                      <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ gap: 10 }}>
+                      <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ gap: 10 }}>
+                        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('apiKeyPanel.modelInventory', {
+                          remote: modelInventory.remoteModels,
+                          manual: modelInventory.manualModels,
+                          alias: modelInventory.aliases,
+                          selectable: modelInventory.selectableModels,
+                        })}</Text>
                         <ModelCapabilityEvidencePanel provider={provider} modelId={capabilityModel} />
                       </MotiView>
                     ) : null}
                   </>
                 )}
-              </MotiView>
+              </View>
           </View> : null}
 
-          <SettingsHelpButton topic="models" />
+          {workspaceView === 'advanced' ? <ProviderUsageQueryEditor key={provider.id} provider={provider} /> : null}
           {dirty ? <View style={{ gap: 8 }}><Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('settingsWorkspace.unsaved')}</Text><IsleButton label={t('settingsWorkspace.reset')} disabled={isBusy} onPress={() => void dialog.confirm({ title: t('settingsWorkspace.discardTitle'), message: t('settingsWorkspace.discardMessage'), confirmLabel: t('settingsWorkspace.discard'), cancelLabel: t('settingsWorkspace.keepEditing'), tone: 'danger' }).then(ok => { if (ok) resetEditor() })} /></View> : null}
-          {workspaceView === 'connection' && checkMessageNeedsAttention && provider.lastModelSyncMessage ? (
-            <MotiView
-              from={{ opacity: 0, translateY: -4 }}
-              animate={{ opacity: 1, translateY: 0 }}
-              transition={{ type: 'timing', duration: 144 }}
-              style={{ padding: 10, flexDirection: 'row', alignItems: 'flex-start', gap: 8, ...panelCardStyle(colors, colors.ui.tone.danger.foreground) }}
-            >
-              <AppIcon name="warning" color={colors.ui.tone.danger.foreground} size={15} />
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('apiKeyPanel.latestCheck')}</Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2 }}>{describeProviderSyncFailure(provider, t)}</Text>
-              </View>
-            </MotiView>
-          ) : null}
-
-          {workspaceView === 'models' ? (
-            <ActionButton label={t('apiKeyPanel.fetchModelsAndTest')} busy={task === 'syncing'} disabled={!hasKey || isBusy} onPress={() => void syncAndTest()} />
-          ) : null}
           {workspaceView === 'connection' ? (
-            <ActionButton label={t('apiKeyPanel.saveConnection')} busy={task === 'saving'} disabled={isBusy} onPress={() => void save()} />
+            <ActionButton label={t('settingsSubsystem.saveChoose')} busy={task === 'saving'} disabled={isBusy} onPress={() => void save().then(saved => { if (saved) setWorkspaceView('models') })} />
           ) : null}
           {dirty ? <ActionButton label={t('settingsWorkspace.reload')} secondary disabled={isBusy} onPress={() => void requestEditorDiscard(() => resetEditor(useSettingsStore.getState().providers.find(item => item.id === provider.id) ?? provider))} /> : null}
         </MotiView>
@@ -980,7 +1080,7 @@ function clipboardReadFailureMessage(error: unknown, t: TFunction): string {
 }
 
 function createIncomingGroups(offset: number, input: string, t: TFunction): ProviderCredentialGroup[] {
-  return parseCredentialGroups(input).map((group, index) => ({
+  return parseCredentialGroups(input, { explicit: true }).map((group, index) => ({
     ...group,
     label: t('apiKeyPanel.groupName', { index: offset + index + 1 }),
   }))
@@ -1030,8 +1130,9 @@ function ProviderWorkspaceTabs({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const tabs: { value: ProviderWorkspaceView; label: string; icon: Parameters<typeof AppIcon>[0]['name'] }[] = [
-    { value: 'connection', label: t('apiKeyPanel.workspaceConnection'), icon: 'network' },
     { value: 'models', label: t('apiKeyPanel.workspaceModels'), icon: 'model' },
+    { value: 'connection', label: t('apiKeyPanel.workspaceConnection'), icon: 'network' },
+    { value: 'advanced', label: t('apiKeyPanel.workspaceAdvanced'), icon: 'settings-sliders' },
   ]
   return (
     <View
@@ -1090,12 +1191,12 @@ function ChoiceButton({ label, active, onPress }: { label: string; active: boole
 function SectionHeader({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
   const { colors } = useAppTheme()
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-      <View style={{ flex: 1, minWidth: 0 }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10 }}>
+      <View style={{ flexGrow: 1, flexBasis: 160, minWidth: 0 }}>
         <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{title}</Text>
         {description ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2, includeFontPadding: false }}>{description}</Text> : null}
       </View>
-      {action}
+      {action ? <View style={{ maxWidth: '100%' }}>{action}</View> : null}
     </View>
   )
 }
@@ -1116,6 +1217,7 @@ function CompactDisclosureRow({
   onPress: () => void
 }) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference(true)
   const toneToken = tone === 'danger' ? colors.ui.tone.danger : undefined
   const backgroundColor = toneToken?.background ?? (colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted)
   const borderColor = toneToken?.border ?? (colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border)
@@ -1134,7 +1236,7 @@ function CompactDisclosureRow({
         <Text style={{ color: titleColor, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{title}</Text>
         <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1, includeFontPadding: false }}>{detail}</Text>
       </View>
-      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
         <AppIcon name="collapse" color={colors.textTertiary} size={16} />
       </MotiView>
     </IslePressable>
@@ -1198,19 +1300,24 @@ function CredentialGroupRow({
   group,
   index,
   maskedKey,
+  emptyKeyLabel,
   onChangeLabel,
+  onChangeKey,
   onToggle,
   onDelete,
 }: {
   group: ProviderCredentialGroup
   index: number
   maskedKey: string
+  emptyKeyLabel: string
   onChangeLabel: (label: string) => void
+  onChangeKey: (apiKey: string) => void
   onToggle: () => void
   onDelete: () => void
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const [editingKey, setEditingKey] = useState(false)
   const statusText = group.lastModelSyncStatus === 'bad'
     ? t('apiKeyPanel.syncFailed')
     : group.enabled ? undefined : t('apiKeyPanel.disabled')
@@ -1250,11 +1357,14 @@ function CredentialGroupRow({
         </IconIsleChip>
       </View>
       <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', maxWidth: '100%', includeFontPadding: false }}>{maskedKey || t('apiKeyPanel.newTokenPending')}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', maxWidth: '100%', includeFontPadding: false }}>{maskedKey || emptyKeyLabel}</Text>
+        <MiniAction label={t('providerSettings.replaceCredential')} onPress={() => setEditingKey(value => !value)} />
         <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.modelCount', { count: group.availableModels?.length ?? 0 })}</Text>
         {statusText ? <Text style={{ color: group.lastModelSyncStatus === 'bad' ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{statusText}</Text> : null}
         {group.failureCount ? <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.failureCount', { count: group.failureCount })}</Text> : null}
       </View>
+      {editingKey ? <IsleField label={t('providerSettings.replaceCredential')} note={t('providerSettings.replaceCredentialHint')}
+        inputProps={{ value: group.apiKey ?? '', onChangeText: onChangeKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, autoComplete: 'off', placeholder: maskedKey }} /> : null}
     </View>
   )
 }
@@ -1629,12 +1739,12 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
   )
 }
 
-function MiniAction({ label, children, active = false, disabled = false, onPress }: { label: string; children: ReactNode; active?: boolean; disabled?: boolean; onPress: () => void }) {
+function MiniAction({ label, children, active = false, disabled = false, onPress }: { label: string; children?: ReactNode; active?: boolean; disabled?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic accessibilityLabel={label} accessibilityState={{ selected: active, disabled }} disabled={disabled} onPress={onPress} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, ...quietControlSurface(colors, active), opacity: disabled ? 0.5 : 1 }}>
+    <IslePressable haptic accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active, disabled }} disabled={disabled} onPress={onPress} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, maxWidth: '100%', flexShrink: 1, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, ...quietControlSurface(colors, active), opacity: disabled ? 0.5 : 1 }}>
       {children}
-      <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
+      <Text style={{ flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
     </IslePressable>
   )
 }
@@ -1655,5 +1765,5 @@ function ActionButton({ label, busy = false, secondary = false, disabled = false
 }
 
 function providerEditVersion(provider: AIProvider): string {
-  return JSON.stringify([provider.baseUrl, initialProviderPresetId(provider), initialProviderWireProtocol(provider), formatModelEntries(provider), provider.modelAliases ?? [], provider.credentialGroups ?? []])
+  return JSON.stringify([provider.name, provider.baseUrl, initialProviderPresetId(provider), initialProviderWireProtocol(provider), formatModelEntries(provider), provider.modelAliases ?? [], provider.credentialGroups ?? []])
 }

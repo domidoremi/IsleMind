@@ -10,7 +10,7 @@ const PreferenceSettingsContent = createLazyComponent(
 export default function PreferencesSettingsScreen() {
   const { t } = useTranslation()
   return (
-    <SettingsPageShell title={t('settings.preferences')} subtitle={t('settings.preferencesDescription')}>
+    <SettingsPageShell title={t('settings.preferences')}>
       <PreferenceSettingsContent />
     </SettingsPageShell>
   )

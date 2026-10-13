@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FlatList, Text, View } from 'react-native'
+import { FlatList, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { useNetworkState } from 'expo-network'
 import { IsleButton, IsleInput, IslePanel, IsleSelect } from '@/components/ui/isle'
@@ -31,6 +32,8 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
   const [credential, setCredential] = useState('all')
   const [model, setModel] = useState('')
   const [range, setRange] = useState('all')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [operationsOpen, setOperationsOpen] = useState(false)
   const [evidenceSource, setEvidenceSource] = useState<ProviderModelHistoryFilter['source']>()
   const [filter, setFilter] = useState<ProviderModelHistoryFilter>(initialProviderId ? { providerId: initialProviderId } : {})
   const [revision, setRevision] = useState(0)
@@ -99,6 +102,8 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
   const controls = useMemo(() => <>
       <Text style={textStyle}>{t('modelAvailability.historyHint')}</Text>
       {offline ? <Text accessibilityLiveRegion="polite" style={headingStyle}>{t('modelAvailability.offline')} — {t('modelAvailability.offlineHint')}</Text> : null}
+      <IsleButton label={t('usage.filters')} onPress={() => setFiltersOpen(value => !value)} />
+      {filtersOpen ? <>
       <Text style={headingStyle}>{t('modelAvailability.providerFilter')}</Text>
       <IsleSelect value={providerId} options={[{ value: '', label: t('modelAvailability.allProviders') }, ...providers.map((item) => ({ value: item.id, label: providerLabel(item.id) }))]}
         onChange={(id) => { setProviderId(id); setCredential('all') }} />
@@ -112,8 +117,10 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
       <IsleSelect value={evidenceSource ?? 'all'} options={[{ value: 'all', label: t('modelAvailability.allSources') },
         ...(['discovery', 'probe', 'generation', 'lifecycle'] as const).map((value) => ({ value, label: t(`modelAvailability.source.${value}`) }))]}
         onChange={(value) => setEvidenceSource(value === 'all' ? undefined : value as ProviderModelHistoryFilter['source'])} />
-      <IsleButton label={t('modelAvailability.applyFilters')} onPress={applyFilter} />
-      {provider ? <View style={{ gap: 8 }}>
+      <IsleButton label={t('modelAvailability.applyFilters')} onPress={() => { applyFilter(); setFiltersOpen(false) }} />
+      </> : null}
+      {provider ? <IsleButton label={t('settingsWorkspace.advanced')} onPress={() => setOperationsOpen(value => !value)} /> : null}
+      {provider && operationsOpen ? <View style={{ gap: 8 }}>
         {hasCredentialBlockEvidence(provider) ? <Text style={textStyle}>{t('modelAvailability.credentialBlocked')}</Text> : null}
         <Text style={textStyle}>{t('modelAvailability.retestHint')}</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -124,7 +131,7 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
       </View> : null}
       {operationResult ? <Text accessibilityLiveRegion="polite" style={textStyle}>{t(`modelAvailability.operation.${operationResult}`)}</Text> : null}
     </>, [t, textStyle, headingStyle, offline, providerId, providers, providerLabel, credential, credentialOptions,
-      model, range, evidenceSource, applyFilter, provider, operation, getProviderTestModel, settings, runOperation, operationResult])
+      model, range, evidenceSource, applyFilter, provider, operation, getProviderTestModel, settings, runOperation, operationResult, filtersOpen, operationsOpen])
 
   return <FlatList
     testID="model-availability-history"
