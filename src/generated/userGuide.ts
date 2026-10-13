@@ -53,8 +53,8 @@ export const userGuide = {
         "id": "models",
         "slug": "models",
         "title": "模型与回答",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
         "anchors": [
           "goal",
           "steps",
@@ -63,50 +63,52 @@ export const userGuide = {
           "generation",
           "editing"
         ],
-        "body": "# 模型与回答\n\n<a id=\"goal\"></a>\n## 完成什么\n\n配置服务商连接与生成参数。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 选择服务商，再填写连接信息。自定义地址应为 API 基础地址，而非登录网页。\n\n2. 填写凭据和模型，检查后保存。查看手册不会提交草稿；离开时可继续编辑或放弃。\n\n3. 生成参数选模型默认，或按需要指定温度、输出上限。\n\n<a id=\"success\"></a>\n## 成功表现\n\n其他页面只读取已提交值。保存成功不代表连通或免费。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n401/403 检查凭据与权限；404 检查地址、协议、模型名。截图须隐藏密钥。\n\n<a id=\"generation\"></a>\n## 生成参数\n\n- **模型默认**：不发送该项自定义值，由模型和服务商处理；它不是统一固定数值。\n- **自定义**：使用滑杆预览、加减按钮或精确输入。滑杆松手才提交；取消手势不会写入。精确输入需要点击保存，沿用原有范围校验；失焦、折叠和阅读手册均不提交。\n- 有未保存的精确输入时，先保存或重新加载已保存值，再操作滑杆、步进或默认值切换，避免覆盖草稿。工作流数值和助手名称也使用显式保存。\n- 温度影响采样，不保证事实正确；更大的输出上限可能增加用量，模型仍可能使用更低的实际限制。\n- 已提交偏好可撤销；若其他操作已修改同一字段，撤销不会覆盖较新的值。\n\n<a id=\"editing\"></a>\n## 连接草稿与保存失败\n\n打开已有服务商直接编辑连接、凭据和模型，不必重走新建流程。使用说明在当前编辑器上方打开，不会保存草稿。返回或关闭编辑器时，选择继续编辑或放弃更改。\n\n只有持久化完成才提示已保存。失败时保留输入并重试；如果提示外部配置已变化，先放弃当前草稿并重新打开，不要用旧页面覆盖新配置。保存不自动测试或启用服务商；模型测试和用量查询是单独的显式操作，可能访问服务商或计费。\n\n批量导入也会等待保存完成，再询问是否启用。若配置已提交但保存失败，窗口会保留输入并提供重试，不重复添加，也不覆盖之后修改的配置；此时关闭窗口不会撤销已提交的数据。尚未导入的草稿在确认放弃后清除，迟到的文件或剪贴板读取不会恢复它。\n"
+        "body": "# 模型与回答\n\n<a id=\"goal\"></a>\n## 完成什么\n\n配置服务商连接与生成参数。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 在服务商列表点「添加」，选择导入配置或手动添加。导入先在本地核对名称、地址、模型及脱敏凭据摘要；重复连接可跳过或另存，已有配置不会被覆盖。\n\n2. 保存后进入模型页，选择用于新对话的模型。没有模型时可手工填写模型 ID；不要求先测活。\n\n3. 日常切换从首页的模型选择器完成。连接页可改名、改地址和更换凭据，高级参数与批量管理只在需要时打开。\n\n<a id=\"success\"></a>\n## 成功表现\n\n其他页面只读取已提交值。保存成功不代表连通或免费。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n401/403 检查凭据与权限；404 检查地址、协议、模型名。截图须隐藏密钥。\n\n<a id=\"generation\"></a>\n## 生成参数\n\n- **模型默认**：不发送该项自定义值，由模型和服务商处理；它不是统一固定数值。\n- **自定义**：使用滑杆预览、加减按钮或精确输入。滑杆松手才提交；取消手势不会写入。精确输入需要点击保存，沿用原有范围校验；失焦、折叠和阅读手册均不提交。\n- 有未保存的精确输入时，先保存或重新加载已保存值，再操作滑杆、步进或默认值切换，避免覆盖草稿。工作流数值和助手名称也使用显式保存。\n- 温度影响采样，不保证事实正确；更大的输出上限可能增加用量，模型仍可能使用更低的实际限制。\n- 已提交偏好可撤销；若其他操作已修改同一字段，撤销不会覆盖较新的值。\n\n<a id=\"editing\"></a>\n## 连接草稿与保存失败\n\n连接、凭据、模型共用一份草稿；切换页签不丢输入。更换凭据时默认隐藏输入，留空保留旧凭据，点击保存才提交。保存失败保留草稿；配置已被其他操作修改时，需重新打开核对，不能用旧页面覆盖新值。保存与选择模型都不触发测活。选择成功只代表本地偏好已持久化，不表示网络连接成功，也不改已有对话。\n\n导入先核对再保存，不再询问「全部启用并检测」。已提交但落盘失败时可以重试，不重复添加、不回退后续修改；关闭不会撤销已经提交的数据。尚未保存的输入在明确放弃后清除。\n\n获取模型列表、手动用量查询都是独立网络操作，不随页面打开或保存自动运行。用量配置保存后才能手动查询，每次最多一次请求，并显示实际返回的数值。历史失败仍保留为提示，不把网络错误当作凭据无效，也不靠重新测活才能选择模型。\n"
       },
       {
         "id": "personalization",
         "slug": "personalization",
         "title": "个性化",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "anchors": [
-          "goal",
-          "steps",
-          "success",
-          "troubleshooting"
-        ],
-        "body": "# 个性化\n\n<a id=\"goal\"></a>\n## 完成什么\n\n调整外观与交互，不改变模型策略。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 打开个性化 → 主题、背景与语言，预览日夜效果。\n\n2. 按需要调整背景强度与动态；敏感时用静态背景和系统减少动态效果。\n\n3. 在交互、助手名称、系统通知入口调整对应选项。\n\n<a id=\"success\"></a>\n## 成功表现\n\n主题与语言反映在界面上；通知还需要操作系统权限。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n难读时调整背景、字体和对比度。未保存输入不保证在进程退出后恢复。\n"
-      },
-      {
-        "id": "privacy",
-        "slug": "privacy",
-        "title": "数据与隐私",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
+        "updatedAt": "2026-10-06",
+        "reviewedAt": "2026-10-06",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting",
-          "advanced-policy"
+          "font-license"
         ],
-        "body": "# 数据与隐私\n\n<a id=\"goal\"></a>\n## 完成什么\n\n安全备份、恢复并理解数据边界。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 进入备份与恢复，选择导出类别并阅读敏感信息提示。\n\n2. 恢复前检查范围、数量、差异；不确定时先备份。\n\n3. 访问、代理和日志在专门入口修改；清除或重置前确认目标。\n\n<a id=\"success\"></a>\n## 成功表现\n\n保管好导出文件；以实际结果判断恢复成功。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n不要公开上传备份或完整日志；端末数据删除不删除服务商副本。\n\n<a id=\"advanced-policy\"></a>\n## 高级配置的保存边界\n\n代理地址、日志限制和访问列表等文本字段需要显式保存。失焦、收起高级区域或阅读手册不会提交；有草稿时页面会显示未保存入口。重新加载会放弃该字段的输入，读取已提交值。\n\n连接目标、访问规则和日志外发会改变数据边界，不提供通用撤销。启用外部日志前核对目标与脱敏范围；费用未知不代表免费。配置保存失败时输入仍保留，但个别存储写入可能已经完成，不保证跨凭据的原子回滚。\n"
+        "body": "# 个性化\n\n<a id=\"goal\"></a>\n## 完成什么\n\n调整外观与交互，不改变模型策略。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 打开个性化 → 主题、背景与语言，预览日夜效果。\n\n2. 按需要调整背景强度与动态；敏感时用静态背景和系统减少动态效果。\n\n3. 在交互、助手名称、系统通知入口调整对应选项。\n\n<a id=\"success\"></a>\n## 成功表现\n\n主题与语言反映在界面上；通知还需要操作系统权限。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n难读时调整背景、字体和对比度。未保存输入不保证在进程退出后恢复。\n\n\n<a id=\"font-license\"></a>\n\n## 字体许可\n\n默认字体为 Noto Sans SC，随应用离线提供。代码使用等宽字体。以下为随字体分发的原始许可。\n\nCopyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded,\nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE.\n"
+      },
+      {
+        "id": "privacy",
+        "slug": "privacy",
+        "title": "数据与隐私",
+        "updatedAt": "2026-10-04",
+        "reviewedAt": "2026-10-04",
+        "anchors": [
+          "goal",
+          "steps",
+          "success",
+          "troubleshooting",
+          "advanced-policy",
+          "content-reporting"
+        ],
+        "body": "# 数据与隐私\n\n<a id=\"goal\"></a>\n## 完成什么\n\n安全备份、恢复并理解数据边界。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 进入备份与恢复，选择导出类别并阅读敏感信息提示。\n\n2. 恢复前检查范围、数量、差异；不确定时先备份。\n\n3. 访问、代理和日志在专门入口修改；清除或重置前确认目标。\n\n<a id=\"success\"></a>\n## 成功表现\n\n保管好导出文件；以实际结果判断恢复成功。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n不要公开上传备份或完整日志；端末数据删除不删除服务商副本。\n\n<a id=\"advanced-policy\"></a>\n## 高级配置的保存边界\n\n代理地址、日志限制和访问列表等文本字段需要显式保存。失焦、收起高级区域或阅读手册不会提交；有草稿时页面会显示未保存入口。重新加载会放弃该字段的输入，读取已提交值。\n\n连接目标、访问规则和日志外发会改变数据边界，不提供通用撤销。启用外部日志前核对目标与脱敏范围；费用未知不代表免费。配置保存失败时输入仍保留，但个别存储写入可能已经完成，不保证跨凭据的原子回滚。\n\n<a id=\"content-reporting\"></a>\n## 举报 AI 回复\n\n从 AI 回复的更多菜单进入举报，先编辑摘录、选择原因和填写可选备注，再预览并明确发送。发送前核对接收方与隐私政策，手动删除密钥及个人信息；自动脱敏不能保证发现全部敏感内容。举报包包含摘录、原因、备注、举报 ID、应用版本和格式版本，不自动附带完整会话、附件、服务商凭据或内部追踪。接收端仍可能处理 IP 等连接信息。\n\n运营接收方或隐私政策未配置时不能发送。收到回执只表示接收，不代表审核或处置完成。离页、进入后台或停止等待会取消本机等待，但不能撤回接收端可能已收到的举报；失败或超时也不能证明未送达。需要重试时先核对界面，不要反复创建同一举报。\n"
       },
       {
         "id": "quick-start",
         "slug": "quick-start",
         "title": "开始使用",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# 开始使用\n\n<a id=\"goal\"></a>\n## 完成什么\n\n完成第一次对话。云端模型需要网络，服务商可能收费。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 打开设置 → 模型与回答 → 服务商，选择服务商。\n\n2. 填写连接信息并保存，选择已配置的模型。不要把密钥发进聊天。\n\n3. 返回聊天发送简短问题；请求由你的发送或测试操作触发。\n\n<a id=\"success\"></a>\n## 成功表现\n\n收到回复即可继续或新建会话。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n没有模型时检查服务商启用状态、模型名称和权限。见[模型配置](models.md#steps)。\n"
+        "body": "# 开始使用\n\n<a id=\"goal\"></a>\n## 完成什么\n\n完成第一次对话。云端模型需要网络，服务商可能收费。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 打开设置 → 模型与回答 → 服务商 → 添加，导入已有配置或手动填写。不要把密钥发进聊天。\n\n2. 核对并保存连接，再选择用于新对话的模型。保存和选择不发送测试请求。\n\n3. 回到首页直接输入并发送；聊天、工具任务和代码工作使用同一个入口，不必先选模式。\n\n<a id=\"success\"></a>\n## 成功表现\n\n收到回复即可继续或新建会话。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n没有模型时检查服务商启用状态、模型名称和权限。见[模型配置](models.md#steps)。\n"
       },
       {
         "id": "search",
@@ -130,10 +132,11 @@ export const userGuide = {
         "id": "tools",
         "slug": "tools",
         "title": "工具与自动化",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
         "anchors": [
           "agent-tasks",
+          "unified-work",
           "goal",
           "steps",
           "success",
@@ -141,7 +144,7 @@ export const userGuide = {
           "skill-editor",
           "mcp-permissions"
         ],
-        "body": "# 工具与自动化\n\n<a id=\"agent-tasks\"></a>\n## 智能体任务\n\n在设置 → 工具与自动化 → 智能体中创建定义，再从会话选项打开「智能体任务」，选择\n智能体和任务类型。普通聊天不会额外请求独立评审；没有可靠行动能力的模型不能挂载工具。\nSkills 和导入定义不会授予权限，也不会配置服务器凭据。\n\n任务页显示进度、共享预算、子运行、模型报告的来源与待确认操作。批准前检查具体操作和\n参数；模型提供的来源不代表已经核实。只有明确点击保存，完成的结果才会写入 Documents。\n\n每次运行需单独开启后台执行。可按需在 Android 中设置电池「无限制」、锁定最近任务卡片，\n但不能保证厂商系统不杀进程。等待确认会释放执行资源；通知只打开任务，不会自动批准或续跑。\n进程中断后，继续操作会重新检查准入；外部效果未知时不能自动重放。Legacy 记录只读，需新建\n运行并重新授权。智能体定义包含在设置备份中，确认凭证不会恢复。Token 总量可能含估算，\n价格未知不等于免费。\n\n<a id=\"goal\"></a>\n## 完成什么\n\n配置 Skills、MCP、智能体和执行限制。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 在工具与自动化选择所需能力。\n\n2. MCP 可安装模板或填写名称与地址后保存，随后检查连接和各工具权限。安装模板可能联系远程服务。\n\n3. 工作流限制包括步数、每步调用和输出量；先用低风险任务验证。\n\n<a id=\"success\"></a>\n## 成功表现\n\n连接成功和获准执行是不同状态；启用不代表每次回答都调用。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n检查服务地址、网络、审批和全局开关。删除、付费、对外发送仍是高影响操作。\n\n<a id=\"skill-editor\"></a>\n## 编辑 Skill\n\n先填写名称、说明和系统提示词；需要时再展开高级选项，设置模型绑定、工具范围或变量。收起高级选项不会清空输入。变量字段必须符合界面要求的 JSON 数组格式，红色错误状态需要先处理。\n\n显式保存后其他页面才能使用修改。切换到另一份 Skill 或取消时，可以继续编辑或放弃；应用被系统终止后不恢复未保存草稿。导入工作流不等于批准执行，仍须检查权限和审阅状态。\n\n<a id=\"mcp-permissions\"></a>\n## MCP 的连接与授权\n\n填写名称和服务器地址后保存，再按需要刷新清单。保存新地址不会代替连接检查。模板安装可能立即联系模板标注的远程地址；先检查认证方式和工具范围。\n\n连接成功只表示清单可用。逐项授权工具，并检查全局 MCP 开关；不要因一个工具不可用而直接开放所有写入或破坏性权限。\n"
+        "body": "# 工具与自动化\n\n<a id=\"agent-tasks\"></a>\n## 智能体任务（进阶）\n\n在设置 → 工具与自动化 → 智能体中创建定义，再从会话选项打开「智能体任务」，选择\n智能体和任务类型。普通聊天不会额外请求独立评审；没有可靠行动能力的模型不能挂载工具。\nSkills 和导入定义不会授予权限，也不会配置服务器凭据。\n\n任务页显示进度、共享预算、子运行、模型报告的来源与待确认操作。批准前检查具体操作和\n参数；模型提供的来源不代表已经核实。只有明确点击保存，完成的结果才会写入 Documents。\n\n同一回复可能提出多项操作。「第几项 / 共几项」表示确认队列，不是一次批准全部。\n逐项核对源文件、目标位置及动作；拒绝或确认过期会阻止该项及本批后续项，已完成的操作不会回滚。\n过期后只能交回不执行的回执，不能继续批准。模型声称成功不等于文件成功：请检查逐操作回执中的\n目标 URI、复制字节数和完成步骤。部分写入、缺失回执或结果未知时，先核实实际目标，不要重复执行。\n\n每次运行需单独开启后台执行。可按需在 Android 中设置电池「无限制」、锁定最近任务卡片，\n但不能保证厂商系统不杀进程。等待确认会释放执行资源；通知只打开任务，不会自动批准或续跑。\n进程中断后，继续操作会重新检查准入；外部效果未知时不能自动重放。Legacy 记录只读，需新建\n运行并重新授权。智能体定义包含在设置备份中，确认凭证不会恢复。Token 总量可能含估算，\n价格未知不等于免费。\n\n暂停或等待确认后的重启不会自动续跑或刷新批准期限。只有可恢复的暂停运行才能明确继续；\n需核实外部效果的运行不能继续，已停止的运行也不能恢复。停止本机等待不保证供应商停止计费；\n没有完整用量的中断请求仍可能占用预留或估算预算，重启不会清零。\n\n<a id=\"unified-work\"></a>\n## 同一对话中的工具与代码\n\n首页只有一个输入入口。普通回答无需额外规划或独立评审；需要工具时，仍由同一 Model + Harness 执行，遵守已有权限、预算和逐操作确认。智能体定义是可复用的进阶选项，不是首次对话的前提。\n\n输入框「+」中的「代码与文件」按需列出应用自己的工作区路径。选择路径只加入草稿，不发送、不授予权限；发送后模型可能通过已授权工具读取相关内容。也可用附件或粘贴代码请求建议。支持写入的平台会在批准前展示小文件的完整 diff，并重新校验版本；无法安全预览时不能批准。未支持的执行或测试能力不会被描述为已经完成。\n\n回复正文优先，真实过程默认收起，未调用的能力不显示。展开可看实际记录；待授权、失败和不确定的副作用仍直接提示。收起不停止任务，展开不重试请求。\n\n<a id=\"goal\"></a>\n## 完成什么\n\n配置 Skills、MCP、智能体和执行限制。\n\n<a id=\"steps\"></a>\n## 操作步骤\n\n![选择、配置、确认的三步流程](../assets/setup-flow.svg)\n\n1. 在工具与自动化选择所需能力。\n\n2. MCP 可安装模板或填写名称与地址后保存，随后检查连接和各工具权限。安装模板可能联系远程服务。\n\n3. 工作流限制包括步数、每步调用和输出量；先用低风险任务验证。\n\n<a id=\"success\"></a>\n## 成功表现\n\n连接成功和获准执行是不同状态；启用不代表每次回答都调用。\n\n<a id=\"troubleshooting\"></a>\n## 常见问题\n\n检查服务地址、网络、审批和全局开关。删除、付费、对外发送仍是高影响操作。\n\n<a id=\"skill-editor\"></a>\n## 编辑 Skill\n\n先填写名称、说明和系统提示词；需要时再展开高级选项，设置模型绑定、工具范围或变量。收起高级选项不会清空输入。变量字段必须符合界面要求的 JSON 数组格式，红色错误状态需要先处理。\n\n显式保存后其他页面才能使用修改。切换到另一份 Skill 或取消时，可以继续编辑或放弃；应用被系统终止后不恢复未保存草稿。导入工作流不等于批准执行，仍须检查权限和审阅状态。\n\n<a id=\"mcp-permissions\"></a>\n## MCP 的连接与授权\n\n填写名称和服务器地址后保存，再按需要刷新清单。保存新地址不会代替连接检查。模板安装可能立即联系模板标注的远程地址；先检查认证方式和工具范围。\n\n连接成功只表示清单可用。逐项授权工具，并检查全局 MCP 开关；不要因一个工具不可用而直接开放所有写入或破坏性权限。\n"
       },
       {
         "id": "troubleshooting",
@@ -242,9 +245,9 @@ export const userGuide = {
         "id": "models",
         "slug": "models",
         "title": "Models & answers",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
-        "reviewedSourceHash": "fc35fbf27b3169c3642377e0e1958f2555f812a9e671b420389eee34c1c63e3c",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
+        "reviewedSourceHash": "496acde5496b4415906e6eff3ad43d9e8c654ba156497853070ace000fab6f49",
         "anchors": [
           "goal",
           "steps",
@@ -253,53 +256,55 @@ export const userGuide = {
           "generation",
           "editing"
         ],
-        "body": "# Models & answers\n\n<a id=\"goal\"></a>\n## Outcome\n\nConfigure providers and generation parameters.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Choose a provider, then enter connection details. Use an API base address, not the sign-in page.\n\n2. Enter credentials and models, review, and save. Reading the guide does not submit drafts; leaving offers keep editing or discard.\n\n3. Keep model defaults or explicitly customize temperature and output limits.\n\n<a id=\"success\"></a>\n## Success\n\nOther screens read committed values. Saving does not imply connectivity or free usage.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor 401/403 check credentials and permission; for 404 check address, protocol, and model. Redact keys from screenshots.\n\n<a id=\"generation\"></a>\n## Generation parameters\n\n- **Model default** omits the custom value. The model and provider decide; this is not one universal number.\n- **Custom** offers a preview slider, step buttons, and exact input. Releasing the slider commits once; interrupted gestures do not write. Exact input requires Save and uses the existing range validation. Blur, folding, and reading the guide do not submit it.\n- Save or reload pending exact input before using the slider, step buttons, or default selector, so those actions cannot overwrite your draft. Workflow numbers and the assistant name also require explicit saving.\n- Temperature affects sampling, not factual accuracy. A larger output ceiling can increase usage; the model may impose a lower effective limit.\n- Undo restores committed preferences only where a later edit has not changed the same field.\n\n<a id=\"editing\"></a>\n## Connection drafts and save failures\n\nOpen an existing provider to edit its connection, credentials, and models directly. The guide opens above the current editor without saving. Leaving or closing offers Keep editing or Discard changes.\n\nSaved means persistence completed. A failure keeps your input for retry. On an external-change warning, discard the draft and reopen rather than overwriting newer configuration. Saving does not automatically test or enable a provider. Model tests and usage queries are separate explicit actions and may contact or incur charges from the provider.\n\nBatch import also waits for saving to finish before asking whether to enable providers. If configuration was applied but saving failed, the window keeps your input and offers Retry without adding duplicates or overwriting later changes. Closing at that point does not undo applied data. Discarding an unsubmitted draft clears it; late file or clipboard reads cannot restore it.\n"
+        "body": "# Models & answers\n\n<a id=\"goal\"></a>\n## Outcome\n\nConfigure providers and generation parameters.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Choose Add in the provider list, then import configuration or add manually. Review names, addresses, models and hidden-credential counts locally before importing. Skip matching connections or save additional copies without overwriting existing settings.\n\n2. After saving, choose a model for new chats on the Models page. Add a model ID manually if necessary; no health probe is required.\n\n3. For daily switching, use the model selector on Home. Connection contains the name, address and credential editor; advanced settings and batch management stay out of the main flow.\n\n<a id=\"success\"></a>\n## Success\n\nOther screens read committed values. Saving does not imply connectivity or free usage.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor 401/403 check credentials and permission; for 404 check address, protocol, and model. Redact keys from screenshots.\n\n<a id=\"generation\"></a>\n## Generation parameters\n\n- **Model default** omits the custom value. The model and provider decide; this is not one universal number.\n- **Custom** offers a preview slider, step buttons, and exact input. Releasing the slider commits once; interrupted gestures do not write. Exact input requires Save and uses the existing range validation. Blur, folding, and reading the guide do not submit it.\n- Save or reload pending exact input before using the slider, step buttons, or default selector, so those actions cannot overwrite your draft. Workflow numbers and the assistant name also require explicit saving.\n- Temperature affects sampling, not factual accuracy. A larger output ceiling can increase usage; the model may impose a lower effective limit.\n- Undo restores committed preferences only where a later edit has not changed the same field.\n\n<a id=\"editing\"></a>\n## Connection drafts and save failures\n\nConnection, credentials and models share one draft; changing tabs keeps the input. Replacement credentials are hidden by default, a blank replacement keeps the saved credential, and Save commits the changes. Persistence failures keep the draft. If another operation changed the configuration, reopen and review it rather than overwriting newer values. Saving and model selection do not run health probes. Selection success means local preferences are durable, not that a network connection succeeded; existing chats are unchanged.\n\nImport is review then save, with no invitation to enable and test every connection. If data was applied but persistence failed, Retry does not duplicate imports or undo subsequent changes. Closing does not undo data already applied. Unsubmitted input is cleared only after explicit discard.\n\nFetching a model list and manually querying usage are separate network actions; opening a page or saving does not run them. Save the usage configuration before querying. A manual query makes at most one request and displays the returned numbers. Historical failures remain warnings: a network failure does not prove a bad credential or require a new probe before selecting a model.\n"
       },
       {
         "id": "personalization",
         "slug": "personalization",
         "title": "Personalization",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "a0cf82aea3982b6c2af81577ea1257ede26fcfe50f8a015f47fa642e58810e07",
-        "anchors": [
-          "goal",
-          "steps",
-          "success",
-          "troubleshooting"
-        ],
-        "body": "# Personalization\n\n<a id=\"goal\"></a>\n## Outcome\n\nAdjust appearance and interaction, not model policies.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Personalization → Theme, background & language and check light and dark appearances.\n\n2. Adjust motion and intensity; use static backgrounds and OS reduced motion when needed.\n\n3. Use interaction, identity, and notification entries for their respective options.\n\n<a id=\"success\"></a>\n## Success\n\nTheme and language affect the interface; notifications also require OS permission.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor readability adjust background, text size, and contrast. Unsaved input is not guaranteed after process termination.\n"
-      },
-      {
-        "id": "privacy",
-        "slug": "privacy",
-        "title": "Data & privacy",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
-        "reviewedSourceHash": "6bf383e7288849b79597f1bd3f135e9beb98f8f62d9e11a609325c5dcb86c973",
+        "updatedAt": "2026-10-06",
+        "reviewedAt": "2026-10-06",
+        "reviewedSourceHash": "36ce8be17c0fde34d4d7f0842bb6259dd7f33e16095232882aecb108ac3457be",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting",
-          "advanced-policy"
+          "font-license"
         ],
-        "body": "# Data & privacy\n\n<a id=\"goal\"></a>\n## Outcome\n\nBack up and restore safely with clear data boundaries.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Backup & restore, choose categories, and read sensitive-data warnings.\n\n2. Check scope, counts, and differences before restore; back up first if unsure.\n\n3. Edit access, proxy, and logs in their own entry; confirm targets before erase or reset.\n\n<a id=\"success\"></a>\n## Success\n\nKeep exported files secure; judge restore by its actual result.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nNever publish backups or raw logs; deleting device data does not delete provider copies.\n\n<a id=\"advanced-policy\"></a>\n## Saving advanced configuration\n\nText fields such as proxy addresses, log limits, and access lists require explicit save. Blur, collapsing advanced sections, or reading the guide does not submit them. A Not saved entry reveals pending fields. Reload discards that field's input and reads committed values.\n\nConnection targets, access rules, and log export change data boundaries and have no generic Undo. Before enabling external logs, check the destination and redaction scope. Unknown cost does not mean free. A failed save preserves input, but individual storage writes may already have completed; atomic rollback across credentials is not guaranteed.\n"
+        "body": "# Personalization\n\n<a id=\"goal\"></a>\n## Outcome\n\nAdjust appearance and interaction, not model policies.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Personalization → Theme, background & language and check light and dark appearances.\n\n2. Adjust motion and intensity; use static backgrounds and OS reduced motion when needed.\n\n3. Use interaction, identity, and notification entries for their respective options.\n\n<a id=\"success\"></a>\n## Success\n\nTheme and language affect the interface; notifications also require OS permission.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nFor readability adjust background, text size, and contrast. Unsaved input is not guaranteed after process termination.\n\n\n<a id=\"font-license\"></a>\n\n## Font license\n\nNoto Sans SC is bundled offline as the default font. Code uses a monospace font. Original license follows.\n\nCopyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded,\nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE.\n"
+      },
+      {
+        "id": "privacy",
+        "slug": "privacy",
+        "title": "Data & privacy",
+        "updatedAt": "2026-10-04",
+        "reviewedAt": "2026-10-04",
+        "reviewedSourceHash": "0758810b3dc930e9c827cae18871638d97477c01425fe65277f362bb5a8f2b73",
+        "anchors": [
+          "goal",
+          "steps",
+          "success",
+          "troubleshooting",
+          "advanced-policy",
+          "content-reporting"
+        ],
+        "body": "# Data & privacy\n\n<a id=\"goal\"></a>\n## Outcome\n\nBack up and restore safely with clear data boundaries.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Backup & restore, choose categories, and read sensitive-data warnings.\n\n2. Check scope, counts, and differences before restore; back up first if unsure.\n\n3. Edit access, proxy, and logs in their own entry; confirm targets before erase or reset.\n\n<a id=\"success\"></a>\n## Success\n\nKeep exported files secure; judge restore by its actual result.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nNever publish backups or raw logs; deleting device data does not delete provider copies.\n\n<a id=\"advanced-policy\"></a>\n## Saving advanced configuration\n\nText fields such as proxy addresses, log limits, and access lists require explicit save. Blur, collapsing advanced sections, or reading the guide does not submit them. A Not saved entry reveals pending fields. Reload discards that field's input and reads committed values.\n\nConnection targets, access rules, and log export change data boundaries and have no generic Undo. Before enabling external logs, check the destination and redaction scope. Unknown cost does not mean free. A failed save preserves input, but individual storage writes may already have completed; atomic rollback across credentials is not guaranteed.\n\n<a id=\"content-reporting\"></a>\n## Reporting an AI reply\n\nOpen Report from an AI reply's More menu, edit the excerpt, choose a reason and optional note, then preview and explicitly send. Check the recipient and privacy policy first, and manually remove keys and personal information: automatic redaction cannot find every sensitive detail. The report contains the excerpt, reason, note, report ID, app version, and schema version. It does not automatically attach the full conversation, attachments, provider credentials, or internal traces. The recipient may still process connection information such as your IP address.\n\nSending is unavailable without a configured operator and privacy policy. A receipt confirms reception, not completed review or action. Leaving the page, backgrounding the app, or stopping the wait cancels local waiting but cannot retract a report the recipient may already have received. Failure or timeout does not prove non-delivery. Check the screen before retrying rather than repeatedly creating the same report.\n"
       },
       {
         "id": "quick-start",
         "slug": "quick-start",
         "title": "Get started",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "a439bd98ca2b785939f19634d326ec91da5d00a848185b0087d6171247fe6881",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
+        "reviewedSourceHash": "8109dda9ae13deecc4d6ab68a3e929a39557b79f2ed0d09efb7cfbefcb06ab46",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# Get started\n\n<a id=\"goal\"></a>\n## Outcome\n\nComplete your first conversation. Cloud models need a connection and may incur charges.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Settings → Models & answers → Providers and choose a provider.\n\n2. Enter connection details, save, and select a configured model. Never paste keys into chat.\n\n3. Return to chat and send a short question. Sending or testing explicitly starts a request.\n\n<a id=\"success\"></a>\n## Success\n\nA reply means you can continue or start another conversation.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nIf no model is available, check provider status, model name, and permissions. See [Models](models.md#steps).\n"
+        "body": "# Get started\n\n<a id=\"goal\"></a>\n## Outcome\n\nComplete your first conversation. Cloud models need a connection and may incur charges.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Open Settings → Models & answers → Providers → Add, then import configuration or enter it manually. Never paste keys into chat.\n\n2. Review and save the connection, then choose a model for new chats. Saving and selecting send no test requests.\n\n3. Return to Home, type and send. Answers, tool tasks and code share one entry; no mode choice is required.\n\n<a id=\"success\"></a>\n## Success\n\nA reply means you can continue or start another conversation.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nIf no model is available, check provider status, model name, and permissions. See [Models](models.md#steps).\n"
       },
       {
         "id": "search",
@@ -324,10 +329,11 @@ export const userGuide = {
         "id": "tools",
         "slug": "tools",
         "title": "Tools & automation",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
-        "reviewedSourceHash": "57e861ba74d188877734d46287c894cede667274b2cb79563b01956781607a4a",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
+        "reviewedSourceHash": "a96a0e72441574fc6b7aee6b79e347a068f4d3c582f4613100c79f9e176bd995",
         "anchors": [
+          "unified-work",
           "goal",
           "steps",
           "success",
@@ -336,7 +342,7 @@ export const userGuide = {
           "mcp-permissions",
           "agent-tasks"
         ],
-        "body": "# Tools & automation\n\n<a id=\"goal\"></a>\n## Outcome\n\nConfigure Skills, MCP, agents, and execution limits.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Select the capability in Tools & automation.\n\n2. Install an MCP template or enter a name and address and save. Check connection and tool permissions. Template installation may contact a remote service.\n\n3. Limit workflow steps, calls per step, and output; validate with a low-risk task first.\n\n<a id=\"success\"></a>\n## Success\n\nConnection and execution approval are separate. Enabling does not mean every answer calls a tool.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nCheck endpoint, network, approvals, and global switches. Deletion, paid actions, and external messages remain consequential.\n\n<a id=\"skill-editor\"></a>\n## Edit a Skill\n\nStart with the name, description, and system prompt. Expand advanced options only for model bindings, tool scope, or variables. Collapsing them keeps your input. Variables must use the JSON array format required by the editor; resolve the error state before saving.\n\nOther pages use changes only after explicit save. Switching Skills or cancelling offers keep editing or discard. Unsaved drafts do not survive process termination. Importing a workflow does not approve execution; review permissions and approval status.\n\n<a id=\"mcp-permissions\"></a>\n## MCP connection and authorization\n\nSave a name and server address, then refresh the manifest when needed. Saving an address is not a connection check. Installing a template may immediately contact its remote address; review authentication and tool scope first.\n\nConnected means a manifest is available, not that every tool is authorized. Approve tools individually and check the global MCP switch. Do not enable all write or destructive permissions just to fix an unavailable tool.\n\n<a id=\"agent-tasks\"></a>\n## Agent tasks\n\nCreate an Agent in Settings → Tools and automation → Agents, then open **Agent tasks**\nfrom a conversation's options. Select an Agent and task type; ordinary chat does not\nadd independent review. Models without reliable action capability cannot mount tools.\nSkills and imported definitions do not grant permissions or configure server credentials.\n\nThe task screen shows progress, shared model/tool/token budgets, children, reported\nsources and any pending confirmation. Review the concrete operation and parameters\nbefore approving. A source reported by a model is not automatically verified. Save a\ncompleted result to Documents only with the explicit save action.\n\nBackground execution is optional and must be enabled for each run. Android battery\n“Unrestricted” and locking the app in Recents may help, but OEMs can still kill it.\nWaiting for you releases execution resources. A notification only opens the task.\nAfter interruption, Continue rechecks admission; an unknown external effect cannot\nbe automatically replayed. Legacy records are read-only: start a new run with fresh\nauthorization instead. Agent definitions are included in Settings backups, but approvals\nare not restored. Token totals may contain estimates; unknown prices are not zero.\n"
+        "body": "# Tools & automation\n\n<a id=\"unified-work\"></a>\n## Tools and code in one chat\n\nHome has one input. Ordinary answers need no extra planning or independent review. Tool work uses the same Model + Harness, with existing permissions, budgets and per-operation approval. Reusable Agent definitions are advanced options, not a prerequisite for a first chat.\n\nCode & files under the input’s + button lists app-owned workspace paths only when opened. Choosing a path adds it to the draft without sending or granting permission; after Send, authorized tools may read relevant content. Attachments or pasted code can also be used for advice. Where writing is supported, small-file changes show a complete diff before approval and recheck the revision. An unsafe or incomplete preview cannot be approved. Unsupported execution or tests are never claimed as completed.\n\nThe answer comes first. Actual activity is collapsed by default, and unused capabilities do not appear. Expand to inspect real records; pending approval, failures and uncertain effects remain visible. Collapsing does not stop work, and expanding does not retry requests.\n\n<a id=\"goal\"></a>\n## Outcome\n\nConfigure Skills, MCP, agents, and execution limits.\n\n<a id=\"steps\"></a>\n## Steps\n\n![Choose, configure, confirm](../assets/setup-flow.svg)\n\n1. Select the capability in Tools & automation.\n\n2. Install an MCP template or enter a name and address and save. Check connection and tool permissions. Template installation may contact a remote service.\n\n3. Limit workflow steps, calls per step, and output; validate with a low-risk task first.\n\n<a id=\"success\"></a>\n## Success\n\nConnection and execution approval are separate. Enabling does not mean every answer calls a tool.\n\n<a id=\"troubleshooting\"></a>\n## Common problems\n\nCheck endpoint, network, approvals, and global switches. Deletion, paid actions, and external messages remain consequential.\n\n<a id=\"skill-editor\"></a>\n## Edit a Skill\n\nStart with the name, description, and system prompt. Expand advanced options only for model bindings, tool scope, or variables. Collapsing them keeps your input. Variables must use the JSON array format required by the editor; resolve the error state before saving.\n\nOther pages use changes only after explicit save. Switching Skills or cancelling offers keep editing or discard. Unsaved drafts do not survive process termination. Importing a workflow does not approve execution; review permissions and approval status.\n\n<a id=\"mcp-permissions\"></a>\n## MCP connection and authorization\n\nSave a name and server address, then refresh the manifest when needed. Saving an address is not a connection check. Installing a template may immediately contact its remote address; review authentication and tool scope first.\n\nConnected means a manifest is available, not that every tool is authorized. Approve tools individually and check the global MCP switch. Do not enable all write or destructive permissions just to fix an unavailable tool.\n\n<a id=\"agent-tasks\"></a>\n## Agent tasks (advanced)\n\nCreate an Agent in Settings → Tools and automation → Agents, then open **Agent tasks**\nfrom a conversation's options. Select an Agent and task type; ordinary chat does not\nadd independent review. Models without reliable action capability cannot mount tools.\nSkills and imported definitions do not grant permissions or configure server credentials.\n\nThe task screen shows progress, shared model/tool/token budgets, children, reported\nsources and any pending confirmation. Review the concrete operation and parameters\nbefore approving. A source reported by a model is not automatically verified. Save a\ncompleted result to Documents only with the explicit save action.\n\nA single reply may propose several operations. The item position is a confirmation\nqueue, not approval for the entire batch. Check each source, destination and action.\nDeclining or expiry blocks that item and the remaining batch; completed operations\nare not rolled back. An expired confirmation can only return a non-execution receipt.\nA model's success claim is not proof of a file change: inspect each operation's target\nURI, copied byte count and completed steps. For partial writes, missing receipts or\nunknown outcomes, inspect the actual target before requesting another operation.\n\nBackground execution is optional and must be enabled for each run. Android battery\n“Unrestricted” and locking the app in Recents may help, but OEMs can still kill it.\nWaiting for you releases execution resources. A notification only opens the task.\nAfter interruption, Continue rechecks admission; an unknown external effect cannot\nbe automatically replayed. Legacy records are read-only: start a new run with fresh\nauthorization instead. Agent definitions are included in Settings backups, but approvals\nare not restored. Token totals may contain estimates; unknown prices are not zero.\n\nRestarting a paused or confirmation-waiting run does not resume it automatically or\nextend its approval deadline. Only resumable paused runs allow explicit continuation;\nruns needing external-effect reconciliation and stopped runs cannot continue.\nStopping locally does not guarantee the provider stops billing. Interrupted requests\nwithout complete usage may retain reserved or estimated budget across restarts.\n"
       },
       {
         "id": "troubleshooting",
@@ -440,9 +446,9 @@ export const userGuide = {
         "id": "models",
         "slug": "models",
         "title": "モデルと回答",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
-        "reviewedSourceHash": "fc35fbf27b3169c3642377e0e1958f2555f812a9e671b420389eee34c1c63e3c",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
+        "reviewedSourceHash": "496acde5496b4415906e6eff3ad43d9e8c654ba156497853070ace000fab6f49",
         "anchors": [
           "goal",
           "steps",
@@ -451,53 +457,55 @@ export const userGuide = {
           "generation",
           "editing"
         ],
-        "body": "# モデルと回答\n\n<a id=\"goal\"></a>\n## 目的\n\n接続と生成パラメーターを設定します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. サービスを選び、接続情報を入力します。ログインページではなく API ベース URL を使います。\n\n2. 認証情報とモデルを確認して保存します。ガイドで下書きは確定されず、移動時に継続か破棄を選べます。\n\n3. モデルの既定値を使うか、温度と出力上限を指定します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n他画面は確定済みの値だけを使います。保存は接続成功や無料利用を意味しません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n401/403 は認証と権限、404 は URL・方式・モデル名を確認します。画像からキーを隠してください。\n\n<a id=\"generation\"></a>\n## 生成パラメーター\n\n- **モデルのデフォルト**はカスタム値を送信せず、モデルとプロバイダーに任せます。共通の固定値ではありません。\n- **カスタム**ではスライダー、増減ボタン、数値入力を使えます。スライダーは指を離した時だけ確定し、中断した操作は書き込みません。数値入力は「保存」で確定し、既存の範囲チェックが適用されます。フォーカスを外す、折りたたむ、ガイドを読む操作では保存されません。\n- 下書きを上書きしないよう、未保存の数値を保存するか保存済みの値を再読み込みしてから、スライダー、増減ボタン、デフォルト切り替えを操作してください。ワークフローの数値とアシスタント名も明示的に保存します。\n- 温度はサンプリングに影響しますが、正確さを保証しません。出力上限を増やすと使用量が増える場合があり、モデル側の上限が優先されることもあります。\n- 元に戻す操作は、その後変更されていない項目だけに適用されます。\n\n<a id=\"editing\"></a>\n## 接続の下書きと保存失敗\n\n既存のプロバイダーは接続、認証情報、モデルを直接編集できます。ガイドは編集画面の上に開き、下書きを保存しません。画面を離れる時は編集の継続か変更の破棄を選びます。\n\n永続化が完了してから保存済みと表示します。失敗時は入力を保持して再試行できます。外部変更の警告が出た場合は、下書きを破棄して開き直してください。保存だけではプロバイダーをテストしたり有効にしたりしません。モデルのテストと使用量の照会は個別の明示的な操作であり、通信や課金が発生する場合があります。\n\n一括インポートも保存の完了を待ってから、有効にするかを確認します。設定の適用後に保存が失敗した場合は、入力を保持して再試行できます。重複追加や、その後の変更の上書きは行いません。この状態で閉じても適用済みのデータは元に戻りません。未送信の下書きは破棄の確認後に消去され、遅れて完了したファイルやクリップボードの読み取りでも復元されません。\n"
+        "body": "# モデルと回答\n\n<a id=\"goal\"></a>\n## 目的\n\n接続と生成パラメーターを設定します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. プロバイダー一覧の「追加」からインポートまたは手動追加を選びます。保存前に名前、URL、モデル、非表示の認証情報件数を端末内で確認します。重複はスキップか別接続として保存でき、既存設定は上書きしません。\n\n2. 保存後、モデル画面で新しい会話に使うモデルを選びます。必要ならモデル ID を手入力できます。死活監視のテストは前提ではありません。\n\n3. 普段の切り替えはホームのモデル選択から行います。接続画面で名前、URL、認証情報を変更でき、高度な設定と一括管理は必要な時だけ開きます。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n他画面は確定済みの値だけを使います。保存は接続成功や無料利用を意味しません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n401/403 は認証と権限、404 は URL・方式・モデル名を確認します。画像からキーを隠してください。\n\n<a id=\"generation\"></a>\n## 生成パラメーター\n\n- **モデルのデフォルト**はカスタム値を送信せず、モデルとプロバイダーに任せます。共通の固定値ではありません。\n- **カスタム**ではスライダー、増減ボタン、数値入力を使えます。スライダーは指を離した時だけ確定し、中断した操作は書き込みません。数値入力は「保存」で確定し、既存の範囲チェックが適用されます。フォーカスを外す、折りたたむ、ガイドを読む操作では保存されません。\n- 下書きを上書きしないよう、未保存の数値を保存するか保存済みの値を再読み込みしてから、スライダー、増減ボタン、デフォルト切り替えを操作してください。ワークフローの数値とアシスタント名も明示的に保存します。\n- 温度はサンプリングに影響しますが、正確さを保証しません。出力上限を増やすと使用量が増える場合があり、モデル側の上限が優先されることもあります。\n- 元に戻す操作は、その後変更されていない項目だけに適用されます。\n\n<a id=\"editing\"></a>\n## 接続の下書きと保存失敗\n\n接続、認証情報、モデルは同じ下書きを共有し、タブを変えても入力を保持します。新しい認証情報は初期状態で非表示です。空欄なら保存済み情報を維持し、「保存」で確定します。永続化に失敗しても下書きを保持します。外部変更があれば開き直して確認してください。保存やモデル選択で死活監視は行いません。選択成功はローカル設定の永続化を意味し、接続成功ではありません。既存の会話も変更しません。\n\nインポートは確認して保存するだけで、全接続の有効化とテストは勧めません。適用後の永続化が失敗した場合も、再試行で重複追加や後の変更の巻き戻しはしません。閉じても適用済みデータは取り消されません。未送信の入力は明示的な破棄で消去します。\n\nモデル一覧の取得と使用量の手動照会は個別の通信操作です。画面を開いたり保存したりしても実行しません。使用量設定の保存後に手動照会でき、リクエストは一度だけで、返された数値を表示します。以前の失敗は警告として保持します。ネットワークエラーを認証情報の無効と断定せず、モデル選択に再テストを要求しません。\n"
       },
       {
         "id": "personalization",
         "slug": "personalization",
         "title": "カスタマイズ",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "a0cf82aea3982b6c2af81577ea1257ede26fcfe50f8a015f47fa642e58810e07",
-        "anchors": [
-          "goal",
-          "steps",
-          "success",
-          "troubleshooting"
-        ],
-        "body": "# カスタマイズ\n\n<a id=\"goal\"></a>\n## 目的\n\nモデル方針を変えずに外観と操作を調整します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. カスタマイズ → テーマ・背景・言語で明暗の表示を確認します。\n\n2. 背景の動きと強さを調整し、必要なら静止背景と OS の動きを減らす設定を使います。\n\n3. 操作、名前、通知はそれぞれの項目で変更します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\nテーマと言語が反映され、通知には OS の許可も必要です。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n読みづらい場合は背景、文字サイズ、コントラストを調整します。プロセス終了後の未保存入力は保証されません。\n"
-      },
-      {
-        "id": "privacy",
-        "slug": "privacy",
-        "title": "データとプライバシー",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
-        "reviewedSourceHash": "6bf383e7288849b79597f1bd3f135e9beb98f8f62d9e11a609325c5dcb86c973",
+        "updatedAt": "2026-10-06",
+        "reviewedAt": "2026-10-06",
+        "reviewedSourceHash": "36ce8be17c0fde34d4d7f0842bb6259dd7f33e16095232882aecb108ac3457be",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting",
-          "advanced-policy"
+          "font-license"
         ],
-        "body": "# データとプライバシー\n\n<a id=\"goal\"></a>\n## 目的\n\n保存範囲を理解して安全にバックアップ・復元します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. バックアップと復元で種類と機密情報の警告を確認します。\n\n2. 復元の範囲、件数、差分を確認し、不明なら先にバックアップします。\n\n3. アクセス、プロキシ、ログは専用項目で変更し、消去前に対象を確認します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n書き出したファイルを保管し、実際の結果で復元を確認します。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\nバックアップや未加工ログを公開しないでください。端末で消去してもサービス側のコピーは残ります。\n\n<a id=\"advanced-policy\"></a>\n## 詳細設定の保存範囲\n\nプロキシのアドレス、ログの上限、アクセスリストなどのテキスト項目は明示的に保存します。フォーカスを外す、折りたたむ、ガイドを読むだけでは保存されません。未保存の入口から編集中の項目を表示できます。再読み込みはその項目の入力を破棄し、確定済みの値を読み込みます。\n\n接続先、アクセス規則、ログの外部送信には汎用の元に戻す操作はありません。外部ログを有効にする前に送信先と秘匿化の範囲を確認してください。費用不明は無料を意味しません。保存失敗時にも入力は保持されますが、一部の書き込みが完了している可能性があり、複数の認証情報をまとめた原子的なロールバックは保証されません。\n"
+        "body": "# カスタマイズ\n\n<a id=\"goal\"></a>\n## 目的\n\nモデル方針を変えずに外観と操作を調整します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. カスタマイズ → テーマ・背景・言語で明暗の表示を確認します。\n\n2. 背景の動きと強さを調整し、必要なら静止背景と OS の動きを減らす設定を使います。\n\n3. 操作、名前、通知はそれぞれの項目で変更します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\nテーマと言語が反映され、通知には OS の許可も必要です。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\n読みづらい場合は背景、文字サイズ、コントラストを調整します。プロセス終了後の未保存入力は保証されません。\n\n\n<a id=\"font-license\"></a>\n\n## フォントライセンス\n\n既定の Noto Sans SC はアプリに同梱されています。コードには等幅フォントを使用します。以下は原文のライセンスです。\n\nCopyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded,\nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE.\n"
+      },
+      {
+        "id": "privacy",
+        "slug": "privacy",
+        "title": "データとプライバシー",
+        "updatedAt": "2026-10-04",
+        "reviewedAt": "2026-10-04",
+        "reviewedSourceHash": "0758810b3dc930e9c827cae18871638d97477c01425fe65277f362bb5a8f2b73",
+        "anchors": [
+          "goal",
+          "steps",
+          "success",
+          "troubleshooting",
+          "advanced-policy",
+          "content-reporting"
+        ],
+        "body": "# データとプライバシー\n\n<a id=\"goal\"></a>\n## 目的\n\n保存範囲を理解して安全にバックアップ・復元します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. バックアップと復元で種類と機密情報の警告を確認します。\n\n2. 復元の範囲、件数、差分を確認し、不明なら先にバックアップします。\n\n3. アクセス、プロキシ、ログは専用項目で変更し、消去前に対象を確認します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n書き出したファイルを保管し、実際の結果で復元を確認します。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\nバックアップや未加工ログを公開しないでください。端末で消去してもサービス側のコピーは残ります。\n\n<a id=\"advanced-policy\"></a>\n## 詳細設定の保存範囲\n\nプロキシのアドレス、ログの上限、アクセスリストなどのテキスト項目は明示的に保存します。フォーカスを外す、折りたたむ、ガイドを読むだけでは保存されません。未保存の入口から編集中の項目を表示できます。再読み込みはその項目の入力を破棄し、確定済みの値を読み込みます。\n\n接続先、アクセス規則、ログの外部送信には汎用の元に戻す操作はありません。外部ログを有効にする前に送信先と秘匿化の範囲を確認してください。費用不明は無料を意味しません。保存失敗時にも入力は保持されますが、一部の書き込みが完了している可能性があり、複数の認証情報をまとめた原子的なロールバックは保証されません。\n\n<a id=\"content-reporting\"></a>\n## AI の返信を報告する\n\nAI の返信のその他メニューから報告を開き、抜粋を編集して理由と任意の補足を入力し、プレビュー後に明示的に送信します。送信先とプライバシーポリシーを確認し、キーや個人情報を手動で取り除いてください。自動の秘匿化ですべての機密情報を検出できるとは限りません。報告には抜粋、理由、補足、報告 ID、アプリと形式のバージョンが含まれます。会話全体、添付ファイル、サービスの認証情報、内部トレースは自動添付されません。受信側が IP アドレスなどの接続情報を処理する場合はあります。\n\n運営者やプライバシーポリシーが未設定の場合は送信できません。受領の表示は審査や対応の完了を意味しません。画面を離れる、アプリをバックグラウンドにする、待機を停止する操作は端末側の待機を中止しますが、すでに届いた可能性のある報告は撤回できません。失敗やタイムアウトも未着の証明にはなりません。再試行前に画面を確認し、同じ報告を繰り返し新規作成しないでください。\n"
       },
       {
         "id": "quick-start",
         "slug": "quick-start",
         "title": "はじめに",
-        "updatedAt": "2026-09-23",
-        "reviewedAt": "2026-09-23",
-        "reviewedSourceHash": "a439bd98ca2b785939f19634d326ec91da5d00a848185b0087d6171247fe6881",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
+        "reviewedSourceHash": "8109dda9ae13deecc4d6ab68a3e929a39557b79f2ed0d09efb7cfbefcb06ab46",
         "anchors": [
           "goal",
           "steps",
           "success",
           "troubleshooting"
         ],
-        "body": "# はじめに\n\n<a id=\"goal\"></a>\n## 目的\n\n最初の会話を始めます。クラウドモデルには通信が必要で、料金が発生する場合があります。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. 設定 → モデルと回答 → プロバイダーでサービスを選びます。\n\n2. 接続情報を保存し、設定済みモデルを選びます。キーはチャットに貼り付けないでください。\n\n3. チャットで短い質問を送信します。送信やテストの操作でリクエストが始まります。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n回答が届いたら、会話を続けるか新しい会話を作れます。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\nモデルがない場合は有効化、モデル名、権限を確認します。[モデル設定](models.md#steps)を参照してください。\n"
+        "body": "# はじめに\n\n<a id=\"goal\"></a>\n## 目的\n\n最初の会話を始めます。クラウドモデルには通信が必要で、料金が発生する場合があります。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. 設定 → モデルと回答 → プロバイダー → 追加から、設定をインポートするか手入力します。キーは会話に貼り付けないでください。\n\n2. 接続を確認して保存し、新しい会話に使うモデルを選びます。保存と選択ではテストを送信しません。\n\n3. ホームでそのまま入力して送信します。回答、ツール作業、コードは同じ入口を使い、モード選択は不要です。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n回答が届いたら、会話を続けるか新しい会話を作れます。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\nモデルがない場合は有効化、モデル名、権限を確認します。[モデル設定](models.md#steps)を参照してください。\n"
       },
       {
         "id": "search",
@@ -522,11 +530,12 @@ export const userGuide = {
         "id": "tools",
         "slug": "tools",
         "title": "ツールと自動化",
-        "updatedAt": "2026-09-24",
-        "reviewedAt": "2026-09-24",
-        "reviewedSourceHash": "57e861ba74d188877734d46287c894cede667274b2cb79563b01956781607a4a",
+        "updatedAt": "2026-10-05",
+        "reviewedAt": "2026-10-05",
+        "reviewedSourceHash": "a96a0e72441574fc6b7aee6b79e347a068f4d3c582f4613100c79f9e176bd995",
         "anchors": [
           "agent-tasks",
+          "unified-work",
           "goal",
           "steps",
           "success",
@@ -534,7 +543,7 @@ export const userGuide = {
           "skill-editor",
           "mcp-permissions"
         ],
-        "body": "# ツールと自動化\n\n<a id=\"agent-tasks\"></a>\n## エージェントタスク\n\n設定の「ツールと自動化」でエージェントを作成し、会話のオプションからタスク画面を開きます。\n通常のチャットは独立レビューを追加しません。信頼できるアクション能力のないモデルではツールを\n利用できません。Skills や定義のインポートで権限やサーバー認証情報が設定されることはありません。\n\nタスク画面では進捗、共有予算、子タスク、モデルが提示した出典、確認待ちの操作を確認できます。\n具体的な操作と引数を確認してから承認してください。提示された出典は検証済みとは限りません。\n完成した結果を Documents に保存するには、明示的な保存操作が必要です。\n\nバックグラウンド実行は実行ごとに有効化します。Android の電池設定を「制限なし」にする、\n最近のアプリでロックする等の設定が役立つ場合がありますが、OEM による終了は防げません。\n確認待ちは実行リソースを解放し、通知はタスクを開くだけです。中断後の続行では再確認し、外部効果が\n不明な操作は自動再実行しません。Legacy 記録は読み取り専用です。新しい実行で再承認してください。\n定義は設定バックアップに含まれますが承認は復元されません。トークン数には推定値が含まれる場合があり、\n料金不明は無料を意味しません。\n\n<a id=\"goal\"></a>\n## 目的\n\nSkills、MCP、エージェントと実行上限を設定します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. ツールと自動化で機能を選びます。\n\n2. MCP テンプレートを導入するか名前と URL を保存し、接続と各権限を確認します。導入時に外部接続する場合があります。\n\n3. 手順数、呼び出し回数、出力量を制限し、低リスクの作業で試します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n接続と実行承認は別の状態です。有効化しても毎回使われるとは限りません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\nURL、通信、承認、全体設定を確認します。削除、課金、外部送信には注意が必要です。\n\n<a id=\"skill-editor\"></a>\n## Skill を編集する\n\n名前、説明、システムプロンプトから入力します。モデルの割り当て、ツール範囲、変数が必要な場合だけ詳細設定を開きます。折りたたんでも入力は消えません。変数は指定の JSON 配列形式で入力し、エラーを解消してから保存します。\n\n他の画面には明示的に保存した変更だけが反映されます。別の Skill への切り替えやキャンセル時には、編集の継続か破棄を選べます。プロセス終了後の下書き復元はありません。ワークフローのインポートは実行の承認ではありません。権限と審査状態を確認してください。\n\n<a id=\"mcp-permissions\"></a>\n## MCP の接続と承認\n\n名前とサーバーアドレスを保存し、必要に応じてマニフェストを更新します。アドレスの保存は接続確認ではありません。テンプレートのインストール時には記載された接続先へ直ちに通信する場合があるため、認証方式とツール範囲を先に確認します。\n\n接続済みは一覧が利用できる状態であり、すべてのツールの承認を意味しません。ツールごとの承認と MCP 全体のスイッチを確認してください。利用できないツールを直すために、すべての書き込み権限や破壊的操作を許可しないでください。\n"
+        "body": "# ツールと自動化\n\n<a id=\"agent-tasks\"></a>\n## エージェントタスク（高度な機能）\n\n設定の「ツールと自動化」でエージェントを作成し、会話のオプションからタスク画面を開きます。\n通常のチャットは独立レビューを追加しません。信頼できるアクション能力のないモデルではツールを\n利用できません。Skills や定義のインポートで権限やサーバー認証情報が設定されることはありません。\n\nタスク画面では進捗、共有予算、子タスク、モデルが提示した出典、確認待ちの操作を確認できます。\n具体的な操作と引数を確認してから承認してください。提示された出典は検証済みとは限りません。\n完成した結果を Documents に保存するには、明示的な保存操作が必要です。\n\n一つの応答で複数の操作が提案されることがあります。項目番号は確認待ちの順番であり、\n一括承認ではありません。操作ごとに元ファイル、保存先、操作内容を確認してください。\n拒否や期限切れはその項目と同じバッチの残りを実行させませんが、完了した操作は取り消しません。\n期限切れ後は実行しない結果を返すことだけが可能です。モデルの成功報告だけで判断せず、\n各操作の結果にある対象 URI、コピー済みバイト数、完了手順を確認してください。\n部分書き込み、結果の欠落や不明な外部効果がある場合は、再実行せず実際の対象を先に確認します。\n\nバックグラウンド実行は実行ごとに有効化します。Android の電池設定を「制限なし」にする、\n最近のアプリでロックする等の設定が役立つ場合がありますが、OEM による終了は防げません。\n確認待ちは実行リソースを解放し、通知はタスクを開くだけです。中断後の続行では再確認し、外部効果が\n不明な操作は自動再実行しません。Legacy 記録は読み取り専用です。新しい実行で再承認してください。\n定義は設定バックアップに含まれますが承認は復元されません。トークン数には推定値が含まれる場合があり、\n料金不明は無料を意味しません。\n\n一時停止中や確認待ちの実行は、アプリを再起動しても自動再開せず、承認期限も延長されません。\n再開可能な一時停止状態でのみ明示的に続行できます。外部効果の確認が必要な実行や停止済みの\n実行は続行できません。端末側の停止はサービス側の課金停止を保証しません。完全な使用量を\n取得できなかった中断リクエストの予約量や推定量は、再起動後も予算に残ることがあります。\n\n<a id=\"unified-work\"></a>\n## 一つの会話でツールとコードを扱う\n\nホームの入力欄は一つです。通常の回答に追加の計画や独立レビューは不要です。ツール作業も同じ Model + Harness が担い、既存の権限、予算、操作ごとの承認を守ります。再利用するエージェント定義は高度な選択肢であり、初回会話の前提ではありません。\n\n入力欄の「+」にある「コードとファイル」を開いた時だけ、アプリ内のワークスペースのパスを一覧表示します。選択は下書きへの追加だけで、送信や権限の付与は行いません。送信後は許可済みツールで関連内容を読み取る場合があります。添付や貼り付けでコードの相談もできます。書き込み対応環境では小さなファイルの変更全体を差分表示し、承認後にも版を確認します。安全に全体を確認できない変更は承認できません。未対応の実行やテストを完了したとは表示しません。\n\n回答本文を優先し、実際の処理は初期状態で折りたたみます。未使用の能力は表示しません。詳細は展開して確認でき、承認待ち、失敗、不明な外部効果は常に確認できます。折りたたみで処理は止まらず、展開で再試行もしません。\n\n<a id=\"goal\"></a>\n## 目的\n\nSkills、MCP、エージェントと実行上限を設定します。\n\n<a id=\"steps\"></a>\n## 手順\n\n![選択・設定・確認](../assets/setup-flow.svg)\n\n1. ツールと自動化で機能を選びます。\n\n2. MCP テンプレートを導入するか名前と URL を保存し、接続と各権限を確認します。導入時に外部接続する場合があります。\n\n3. 手順数、呼び出し回数、出力量を制限し、低リスクの作業で試します。\n\n<a id=\"success\"></a>\n## 完了の確認\n\n接続と実行承認は別の状態です。有効化しても毎回使われるとは限りません。\n\n<a id=\"troubleshooting\"></a>\n## よくある問題\n\nURL、通信、承認、全体設定を確認します。削除、課金、外部送信には注意が必要です。\n\n<a id=\"skill-editor\"></a>\n## Skill を編集する\n\n名前、説明、システムプロンプトから入力します。モデルの割り当て、ツール範囲、変数が必要な場合だけ詳細設定を開きます。折りたたんでも入力は消えません。変数は指定の JSON 配列形式で入力し、エラーを解消してから保存します。\n\n他の画面には明示的に保存した変更だけが反映されます。別の Skill への切り替えやキャンセル時には、編集の継続か破棄を選べます。プロセス終了後の下書き復元はありません。ワークフローのインポートは実行の承認ではありません。権限と審査状態を確認してください。\n\n<a id=\"mcp-permissions\"></a>\n## MCP の接続と承認\n\n名前とサーバーアドレスを保存し、必要に応じてマニフェストを更新します。アドレスの保存は接続確認ではありません。テンプレートのインストール時には記載された接続先へ直ちに通信する場合があるため、認証方式とツール範囲を先に確認します。\n\n接続済みは一覧が利用できる状態であり、すべてのツールの承認を意味しません。ツールごとの承認と MCP 全体のスイッチを確認してください。利用できないツールを直すために、すべての書き込み権限や破壊的操作を許可しないでください。\n"
       },
       {
         "id": "troubleshooting",

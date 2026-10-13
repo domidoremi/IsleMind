@@ -2,11 +2,20 @@
 id: "tools"
 slug: "tools"
 title: "Tools & automation"
-updatedAt: "2026-09-24"
-reviewedAt: "2026-09-24"
-reviewedSourceHash: "57e861ba74d188877734d46287c894cede667274b2cb79563b01956781607a4a"
+updatedAt: "2026-10-05"
+reviewedAt: "2026-10-05"
+reviewedSourceHash: "a96a0e72441574fc6b7aee6b79e347a068f4d3c582f4613100c79f9e176bd995"
 ---
 # Tools & automation
+
+<a id="unified-work"></a>
+## Tools and code in one chat
+
+Home has one input. Ordinary answers need no extra planning or independent review. Tool work uses the same Model + Harness, with existing permissions, budgets and per-operation approval. Reusable Agent definitions are advanced options, not a prerequisite for a first chat.
+
+Code & files under the input’s + button lists app-owned workspace paths only when opened. Choosing a path adds it to the draft without sending or granting permission; after Send, authorized tools may read relevant content. Attachments or pasted code can also be used for advice. Where writing is supported, small-file changes show a complete diff before approval and recheck the revision. An unsafe or incomplete preview cannot be approved. Unsupported execution or tests are never claimed as completed.
+
+The answer comes first. Actual activity is collapsed by default, and unused capabilities do not appear. Expand to inspect real records; pending approval, failures and uncertain effects remain visible. Collapsing does not stop work, and expanding does not retry requests.
 
 <a id="goal"></a>
 ## Outcome
@@ -49,7 +58,7 @@ Save a name and server address, then refresh the manifest when needed. Saving an
 Connected means a manifest is available, not that every tool is authorized. Approve tools individually and check the global MCP switch. Do not enable all write or destructive permissions just to fix an unavailable tool.
 
 <a id="agent-tasks"></a>
-## Agent tasks
+## Agent tasks (advanced)
 
 Create an Agent in Settings → Tools and automation → Agents, then open **Agent tasks**
 from a conversation's options. Select an Agent and task type; ordinary chat does not
@@ -61,6 +70,14 @@ sources and any pending confirmation. Review the concrete operation and paramete
 before approving. A source reported by a model is not automatically verified. Save a
 completed result to Documents only with the explicit save action.
 
+A single reply may propose several operations. The item position is a confirmation
+queue, not approval for the entire batch. Check each source, destination and action.
+Declining or expiry blocks that item and the remaining batch; completed operations
+are not rolled back. An expired confirmation can only return a non-execution receipt.
+A model's success claim is not proof of a file change: inspect each operation's target
+URI, copied byte count and completed steps. For partial writes, missing receipts or
+unknown outcomes, inspect the actual target before requesting another operation.
+
 Background execution is optional and must be enabled for each run. Android battery
 “Unrestricted” and locking the app in Recents may help, but OEMs can still kill it.
 Waiting for you releases execution resources. A notification only opens the task.
@@ -68,3 +85,9 @@ After interruption, Continue rechecks admission; an unknown external effect cann
 be automatically replayed. Legacy records are read-only: start a new run with fresh
 authorization instead. Agent definitions are included in Settings backups, but approvals
 are not restored. Token totals may contain estimates; unknown prices are not zero.
+
+Restarting a paused or confirmation-waiting run does not resume it automatically or
+extend its approval deadline. Only resumable paused runs allow explicit continuation;
+runs needing external-effect reconciliation and stopped runs cannot continue.
+Stopping locally does not guarantee the provider stops billing. Interrupted requests
+without complete usage may retain reserved or estimated budget across restarts.

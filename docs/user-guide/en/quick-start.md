@@ -2,9 +2,9 @@
 id: "quick-start"
 slug: "quick-start"
 title: "Get started"
-updatedAt: "2026-09-23"
-reviewedAt: "2026-09-23"
-reviewedSourceHash: "a439bd98ca2b785939f19634d326ec91da5d00a848185b0087d6171247fe6881"
+updatedAt: "2026-10-05"
+reviewedAt: "2026-10-05"
+reviewedSourceHash: "8109dda9ae13deecc4d6ab68a3e929a39557b79f2ed0d09efb7cfbefcb06ab46"
 ---
 # Get started
 
@@ -18,11 +18,11 @@ Complete your first conversation. Cloud models need a connection and may incur c
 
 ![Choose, configure, confirm](../assets/setup-flow.svg)
 
-1. Open Settings → Models & answers → Providers and choose a provider.
+1. Open Settings → Models & answers → Providers → Add, then import configuration or enter it manually. Never paste keys into chat.
 
-2. Enter connection details, save, and select a configured model. Never paste keys into chat.
+2. Review and save the connection, then choose a model for new chats. Saving and selecting send no test requests.
 
-3. Return to chat and send a short question. Sending or testing explicitly starts a request.
+3. Return to Home, type and send. Answers, tool tasks and code share one entry; no mode choice is required.
 
 <a id="success"></a>
 ## Success

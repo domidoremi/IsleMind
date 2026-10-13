@@ -87,7 +87,6 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 ```powershell
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
-$env:ANIMAL_ISLAND_UI_REF='<配套 UI 的完整提交 SHA>'
 node scripts/prepare-animal-island-ui.js
 bun install --frozen-lockfile
 bun run doctor
@@ -95,7 +94,7 @@ bun run doctor
 
 RN 主题 fork 必须与 IsleMind 位于同级目录。`bun install` 直接链接并构建其声明；通用主题组件问题在 fork 修复，不在 IsleMind 重复移植。职责边界与 CI/EAS 配置见 [UI 接入说明](src/components/ui/isle/README.md)。
 
-将占位符替换为与应用源码配套的 UI 完整提交 SHA，不使用浮动分支，也不使用缺少必需本地修改的旧 HEAD。准备脚本拒绝缺失/不匹配的固定引用并保留已有工作。GitHub 工作流读取仓库变量 `ANIMAL_ISLAND_UI_REF`；EAS 环境需单独设置同一值。当前未提交源码的限制见[发布前提](docs/release/google-play.md#配套构建输入与并发边界)。
+准备脚本默认固定与当前源码配套、已保存的 UI 提交。可用 `ANIMAL_ISLAND_UI_REF` 覆盖，但必须是兼容的完整提交 SHA，不得使用浮动分支。脚本检查 HEAD 和源码干净状态，不重置已有工作。如果为 GitHub 工作流覆盖默认值，EAS 环境也需单独设置同一值；未设置变量时两者均使用源码中的固定值。最终源码验证要求见[发布前提](docs/release/google-play.md#配套构建输入与并发边界)。
 
 ## 运行 Android
 

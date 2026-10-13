@@ -2,9 +2,9 @@
 id: "models"
 slug: "models"
 title: "Models & answers"
-updatedAt: "2026-09-24"
-reviewedAt: "2026-09-24"
-reviewedSourceHash: "fc35fbf27b3169c3642377e0e1958f2555f812a9e671b420389eee34c1c63e3c"
+updatedAt: "2026-10-05"
+reviewedAt: "2026-10-05"
+reviewedSourceHash: "496acde5496b4415906e6eff3ad43d9e8c654ba156497853070ace000fab6f49"
 ---
 # Models & answers
 
@@ -18,11 +18,11 @@ Configure providers and generation parameters.
 
 ![Choose, configure, confirm](../assets/setup-flow.svg)
 
-1. Choose a provider, then enter connection details. Use an API base address, not the sign-in page.
+1. Choose Add in the provider list, then import configuration or add manually. Review names, addresses, models and hidden-credential counts locally before importing. Skip matching connections or save additional copies without overwriting existing settings.
 
-2. Enter credentials and models, review, and save. Reading the guide does not submit drafts; leaving offers keep editing or discard.
+2. After saving, choose a model for new chats on the Models page. Add a model ID manually if necessary; no health probe is required.
 
-3. Keep model defaults or explicitly customize temperature and output limits.
+3. For daily switching, use the model selector on Home. Connection contains the name, address and credential editor; advanced settings and batch management stay out of the main flow.
 
 <a id="success"></a>
 ## Success
@@ -46,8 +46,8 @@ For 401/403 check credentials and permission; for 404 check address, protocol, a
 <a id="editing"></a>
 ## Connection drafts and save failures
 
-Open an existing provider to edit its connection, credentials, and models directly. The guide opens above the current editor without saving. Leaving or closing offers Keep editing or Discard changes.
+Connection, credentials and models share one draft; changing tabs keeps the input. Replacement credentials are hidden by default, a blank replacement keeps the saved credential, and Save commits the changes. Persistence failures keep the draft. If another operation changed the configuration, reopen and review it rather than overwriting newer values. Saving and model selection do not run health probes. Selection success means local preferences are durable, not that a network connection succeeded; existing chats are unchanged.
 
-Saved means persistence completed. A failure keeps your input for retry. On an external-change warning, discard the draft and reopen rather than overwriting newer configuration. Saving does not automatically test or enable a provider. Model tests and usage queries are separate explicit actions and may contact or incur charges from the provider.
+Import is review then save, with no invitation to enable and test every connection. If data was applied but persistence failed, Retry does not duplicate imports or undo subsequent changes. Closing does not undo data already applied. Unsubmitted input is cleared only after explicit discard.
 
-Batch import also waits for saving to finish before asking whether to enable providers. If configuration was applied but saving failed, the window keeps your input and offers Retry without adding duplicates or overwriting later changes. Closing at that point does not undo applied data. Discarding an unsubmitted draft clears it; late file or clipboard reads cannot restore it.
+Fetching a model list and manually querying usage are separate network actions; opening a page or saving does not run them. Save the usage configuration before querying. A manual query makes at most one request and displays the returned numbers. Historical failures remain warnings: a network failure does not prove a bad credential or require a new probe before selecting a model.

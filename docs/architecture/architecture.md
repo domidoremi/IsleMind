@@ -358,7 +358,8 @@ These rules describe required/documented behavior, not newly executed failure ca
 - The contextual guide is a full-screen reading layer owned by its editor. Opening it dismisses the keyboard without submitting forms. Closing restores the activating button, not input focus or an outer wrapper: capture the press event's `currentTarget` during dispatch. Web uses that control's focus; Android's `AndroidAccessibilityFocus` bridge waits for its native window to regain focus before requesting accessibility focus, without opening an IME. Reopening, owner unmount, native detachment and bridge invalidation cancel pending restoration. This requires a rebuilt native host; older hosts fall back to React Native's accessibility event and do not establish reliable Android modal return focus. `/help` and `/help/[slug]` reuse the reader independently. Markdown under `docs/user-guide` is the single source; see the documentation index for fingerprint review and CI generation rules.
 - Field location waits for page focus, transition and measured layout, including native appearance for an initial route at stack index zero. Anchor restoration and search use the same content-height readiness check, preventing scroll clamping against the previous layout. Request identity, layout revision, leaving, unmounting or user dragging invalidates stale callbacks. Font/width changes use a visible anchor and relative offset; unchanged layouts are not forcibly restored. Native focus, keyboard, large-text and performance claims require platform evidence, not typechecking alone.
 - Android dynamic-font retention requires both `plugins/android-font-scale` and the pinned React Native 0.86.3 patch. The Activity handles `fontScale`, updates DeviceInfo/display metrics and remeasures the existing Fabric root even behind a full-screen guide; it does not remount editors or serialize drafts. The backport of [React Native #57246](https://github.com/facebook/react-native/pull/57246) invalidates measurable Yoga nodes on every layout commit, with font-only root invalidation as well. Manifest/Activity handling alone leaves stale text measurements and must not be used without the C++ fix.
-- Isolated Android 35 x86_64 testing covers foreground and background/resume 100% ↔ 200% changes while a guide is open, matching cold-start label dimensions, retaining the draft across rotation and keeping the IME closed on return. This does not establish process-death, real-device, arm64 or iOS behavior. `LayoutMetrics` changes ABI: rebuild RN and its native consumers, never pair patched headers with an old native host. The plugin selects Android source builds and disables iOS precompiled RN/Expo modules for the same ABI reason; iOS compilation/runtime still requires macOS validation. See [native build requirements](../release/google-play.md#动态字号修复的原生构建要求).
+- Preference columns use measured content width divided by the current font scale, not window width: safe areas, parent max-width and padding reduce the actual space available. Until the first layout they stay in one column, without remounting draft owners. A 200% landscape clipping regression was reproduced and fixed on the isolated arm64 QA package on M2007J3SC (Android 31).
+- Isolated Android 35 x86_64 testing covers foreground and background/resume 100% ↔ 200% changes while a guide is open, matching cold-start label dimensions. Authorized Android 31 arm64 testing additionally covers dynamic guide text resizing, drafts across guide open/close, rotation and same-process background return, and a closed IME on return. TalkBack 12 keyboard navigation returned visible accessibility focus to Help after closing the guide; full touch gestures and TTS were not certified. These tests do not establish process-death, multi-OEM, sustained background/power or iOS behavior. `LayoutMetrics` changes ABI: rebuild RN and its native consumers, never pair patched headers with an old native host. The plugin selects Android source builds and disables iOS precompiled RN/Expo modules for the same ABI reason; iOS compilation/runtime still requires macOS validation. See [native build requirements](../release/google-play.md#动态字号修复的原生构建要求).
 
 Presentation owns routing, screens, feature controllers, localization binding, and reusable visual components. Domain and application layers emit stable codes and parameters, not translated strings.
 
@@ -564,6 +565,49 @@ tool. Tasks cancellation stops the loop even without a caller AbortSignal. A pos
 adapter flag cannot override a non-success Tasks state. Input/output summaries are
 bounded and redacted; display summaries exclude private reasoning/protocol blocks.
 
+Task detail uses that same receipt projection. Its read-only facade queries the
+latest state of each run/step/call in SQLite before paging by the stable first
+sequence (20 activities per page). Completing an older action cannot move it to
+another page or leave an obsolete running state on a history page. The view does
+not load the full stream journal. Token events update the output snapshot without
+triggering budget/source reads; metadata refreshes are serialized and coalesced.
+Failed activity reads are explicit, not an empty successful history. Unsettled
+activities remain incomplete/uncertain rather than inheriting overall success.
+Confirmation previews allowlist the operation and bounded arguments, redact
+secrets, show queue position, and exclude provider signatures/replay/tokens. An
+unavailable complete preview disables approval, not refusal; approval still sends
+the exact rendered continuation token and digest.
+The Tasks binding re-verifies the actual tool, copied arguments, owning run,
+permission ceiling and confirmation state, including after asynchronous admission.
+A valid attestation attached to a different request does not grant that request authority.
+
+Native model turns can propose up to eight calls. The Harness schedules them in
+order, one dispatch per durable boundary, rather than parallelizing operations
+whose dependencies or effects are unknown. Each completed receipt and the exact
+remaining queue are committed together before the next call. The existing
+single-operation admission runtime still checks catalog/schema revisions, argument
+digests, Tasks idempotency and confirmation for each call. Failure or declined
+approval produces separate not-executed receipts for the remaining calls, then
+returns the whole result group to the LLM for a new decision. Every write keeps its
+own exact confirmation; approving one call does not approve the queue.
+
+`ModelOperationBatch` snapshots call arguments, provider replay data and receipts;
+its cursor is the receipt count and is bound to the run, starting step, frozen
+catalog and original request hash. The hash detects drift, not authorization.
+Static calls/replay data have a 128 KiB serialized budget, with reserved space for
+eight 4,800-character receipts in a 512 KiB queue. A pending-confirmation envelope
+can additionally contain its exact current call (bounded to 1 MiB). Context and run
+budgets still apply. Completed native groups are replayed as one assistant call
+group plus matching tool results, without duplicating signed reasoning.
+
+A safe pause between calls resumes the unexecuted tail from SQLite before making
+another model request. An interrupted dispatch remains reconciliation-required;
+a failed receipt commit never starts the next call. Recovery requires a fresh,
+batch-aware scoped session; old readers reject the extended checkpoint instead of
+silently dropping queued work. Sessions serialize overlapping invocations so their
+continuation/confirmation state cannot leak into another run. Tagged single-call
+turns retain their existing protocol and use the same per-operation boundary.
+
 The application-scoped `applicationAssistantRuntime` owns new Chat, Rich continuation,
 workflow and Agent execution. Provider adapters supply model events; the Harness owns
 the loop and durable lifecycle; Tasks remains the authority for concrete effects.
@@ -602,6 +646,54 @@ reported as its actual state. This is not OS-level preemption or rollback of an
 effect already performed; cross-runtime dispatch remains fenced by SQLite journal
 sequence, not by an in-memory liveness claim.
 
+### Android SAF execution boundary
+
+`src/platform/native/androidFileOperations.ts` requires native file contract v1;
+older hosts do not advertise file scan/apply tools and never fall back to an
+uncancellable Expo write. Rebuild the native host to enable this contract. The
+directory picker remains a separate visible, user-controlled authorization step.
+The bridge retains its old method signatures, but routes their I/O through the
+same implementation rather than maintaining an unrestricted legacy executor.
+
+`AndroidSafFileOperations` runs outside the RN bridge on one process-wide worker
+with eight queue slots, including across bridge reloads. Requests have a 60-second
+deadline (native bounds: 1–120 seconds, including queue time). Queries carry a
+`CancellationSignal`, traversal is limited to 1,000 entries / depth six and 5,000
+queried rows per invocation; copies use a 64 KiB buffer and a 64 MiB byte ceiling.
+Scan response text is additionally capped at 256 Ki UTF-16 units across fields,
+with 4,096-unit URI/ID, 255-unit name and 200-unit MIME limits. Oversized provider
+fields fail with `response_limit`, not a successful or silently incomplete scan;
+this bounds retained bridge output, not memory already allocated by the provider.
+Each mutation rechecks persisted read/write SAF grants and document membership in
+the selected tree. Unsupported membership checks fail closed. These checks do not
+replace Harness confirmation or create new system permissions.
+
+Cancellation is cooperative, not rollback or guaranteed provider preemption. A
+blocked provider retains its worker slot until it returns. A receipt separates
+`succeeded/failed/cancelled` from `none/applied/partial/uncertain` effects, preserving
+the last provider-confirmed destination URI, completed steps and confirmed copied bytes. A failing
+write may have written additional bytes; a failed rename may invalidate that last
+URI. Copies are not silently deleted, and a move followed by a failed rename is
+not reported as an unchanged source. Bridge loss after dispatch is uncertain,
+never proof of no effect. The existing durable dispatch fence remains necessary;
+these native receipts are not a durable native replay journal.
+
+Apply/undo batches accept at most 32 manifests and keep at most two compact native
+receipts per manifest, including implicitly created destination directories.
+Receipt accumulation stops subsequent I/O after 24,000 serialized characters;
+the last completed receipt is retained. The receipt list precedes secondary
+bounded display details, and conflicts remain skipped, not successful changes.
+Only native status/effects—not an overall answer—support completion claims.
+
+`scripts/android-file-operations-tests.js` checks plugin generation. Its `--jvm`
+mode compiles all plugin Kotlin against existing Android/React Android classes and
+runs the actual queue/copy regression fixture. Set
+`ISLEMIND_KOTLIN_COMPILER_CLASSPATH` to the installed compiler and runtime jars,
+`ISLEMIND_ANDROID_COMPILE_CLASSPATH` to SDK `android.jar` plus React Android
+`classes.jar`, and use the qualified Android JDK. This exercises JVM scheduling and
+stream behavior, not SAF providers, Android lifecycle or OEM cancellation; those
+still require an authorized isolated Android integration run.
+
 ### Definitions, delegation and authorization
 
 - Agent definitions are strict, revisioned records with instructions, model/capability
@@ -629,7 +721,10 @@ The default shared root budget is 24 actual model attempts, 48 tool executions,
 human waiting does not count). Attempt IDs atomically reserve and settle SQLite
 records. Repeated cumulative usage replaces a record rather than adding it; complete
 usage replaces estimates, partial usage retains outstanding reservation, and cancelled
-or failed requests are not free. Unknown prices stay unknown and cannot satisfy an
+or failed requests are not free. A provider's final total cannot be smaller than its
+reported input plus output for admission purposes; cache/reasoning subsets are not
+added again. This lower bound also applies to reopened SQLite root/child budgets.
+Unknown prices stay unknown and cannot satisfy an
 amount cap. These are dispatch limits, not an exact billing ceiling or remote rollback.
 
 Before restart recovery writes new events, stale active-time intervals close at the
@@ -657,9 +752,27 @@ and one server-overflow repair, sharing those limits across transports and fallb
 only plain old history is locally summarized, without an unaccounted model call.
 Unknown media accounting, an oversized envelope or an irreducible request fails
 closed rather than dropping the current task or lowering the safety margin.
-The current final-request adapter has image bounds but no PDF/audio measurement;
-provider PDF extraction is therefore refused before transport. Importer cancellation
-tests at the extraction port do not qualify PDF transport or lift this restriction.
+The final-request adapter has image bounds and a deliberately narrow inline audio
+estimate: listed Google Gemini models, `audio/wav`, signed 16-bit PCM mono/stereo,
+at most 8 MiB and five minutes. It validates canonical Base64, RIFF/chunk lengths,
+sample/byte rates and frame alignment on the actual wire payload, without decoding
+or allocating a binary copy. Duration is derived from frames, never caller metadata.
+Only padding/JUNK chunks may accompany one format and one data chunk; compressed,
+extended, truncated or ambiguous containers and remote references remain rejected.
+The documented 32 tokens/second rule is rounded up with a framing allowance, then
+joins text and output reservations in the existing final gate and root-attempt ledger.
+This is a conservative admission estimate, not a bill or a new audio-picker/codec
+feature. Actual model tokenization, native performance and broader audio formats
+remain unverified. PDF still needs a reliable adapter measurement and fails closed.
+The 2026-09-27 correction closes a serialization mismatch: Google `inline_data`,
+OpenAI Chat `file` and Perplexity `file_url` previously escaped media detection.
+Regression tests now exercise real attachment writers for those protocols, Responses
+and Anthropic, and verify unmeasured PDFs stop before HTTP transport/accounting or
+compression. WebSocket object envelopes use the same gate. Media payload strings
+remain subject to conservative serialized-size, depth and node limits; only their
+known binary/URL fields skip text token estimation, not arbitrary metadata or tool
+arguments. Importer cancellation tests at the extraction port do not qualify PDF
+transport or lift the measurement restriction.
 
 Until their adapters carry root attempt reservations, pre-run application-model
 summaries are downgraded to local structured packing (`harness_admission_required`),
@@ -733,6 +846,52 @@ unrelated roots keep their scopes. Old disposers cannot revoke a new invocation.
 A definitive Tasks receipt from the paused invocation's matching in-flight operation
 may settle its recovery checkpoint without changing the pause or dispatching again;
 ordinary late output and post-cancellation receipts cannot resume it.
+The one still-owned in-flight operation may append a matching bounded receipt
+after cancellation, preserving its actual status/output. This evidence-only write
+does not change the terminal status, completion time, output, queue cursor or
+uncertainty fence. A failed receipt commit leaves that fence intact. Stopping the
+model-operation loop no longer substitutes generic cancellation text for a result
+already returned by its executor; constructing a safe paused continuation does
+not call the model.
+
+Android apply/undo now also uses a Tasks-owned, invocation-scoped effect recorder.
+Every mutation (including implicit mkdir) awaits an atomic `task.effect-started`
+commit before native dispatch, then a `task.effect-settled` commit before the next
+mutation. At most 64 effects are admitted per invocation, one in flight at a time;
+each allowlisted intent/receipt is bounded to 16 KiB. Duplicate IDs, malformed or
+unpaired receipts, missing settlements and failed commits fence further dispatch.
+Closing the invocation drains queued evidence writes and revokes old callbacks.
+A still-owned receipt may commit after cancellation without changing the task's
+terminal state or completion time. Native success that crossed an abort retains
+its actual status; conflict skips remain not-executed, not success. A skipped
+mutation stops dependent operations. No automatic rollback or replay is implied.
+
+The Tasks SQLite adapter pages these effects by stable task/intent sequence (20
+per page), separately from model text and tool metadata. Missing final evidence
+on a stopped task is uncertain, never successful or proof of no change. Agent
+detail subscribes to committed Tasks updates, including receipts arriving after
+Harness cancellation; read errors are explicit. A compact effect-count summary
+precedes model-visible output and survives idempotent task lookups, while full
+source/destination URIs, confirmed bytes and steps remain in the local ledger.
+Failed evidence persistence cannot inherit an adapter's successful observation.
+Host Jest and real SQLite reopen/fault tests exercise these boundaries; Web
+rendering checks cover partial/unknown/skipped/read-error states and liquid-glass
+materials. They do not substitute for Android provider and process-lifecycle
+qualification, or make SQLite and SAF an exactly-once distributed transaction.
+
+An authorized offline, separate-package probe on M2007J3SC / Android API 31
+executed the original Kotlin SAF adapter and bounded executor against a private
+test DocumentsProvider in a separate process. It exercised persisted-grant checks
+and revocation, tree-member rejection, mkdir/copy/move/rename, conflict skips,
+unknown-size copy limits, cooperative cancellation with retained partial files,
+scan depth/entry/row limits, queue capacity/deadlines, and grant/file retention
+across force-stop/restart. Copy limits are ceilings, not promises to fill the last
+buffer: confirmed bytes matched the retained file and did not exceed 64 MiB.
+This is ART/ContentResolver evidence using same-UID test-provider grants, **not**
+system picker consent, a production DocumentsProvider, the React Native bridge,
+OEM background survival, or full production-app/Tasks lifecycle certification.
+The disposable test package was removed after evidence collection; no production
+application or user files were used by the probe.
 Notification identity and immutable explicit PendingIntent are retained
 through `STOP_FOREGROUND_DETACH`; a stale stop cannot dispose a new start. This reduces
 the app-created notification gap, not OEM process-kill risk. `UI_HIDDEN` is cache-only;

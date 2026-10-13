@@ -83,7 +83,6 @@ LLM は次の操作を提案し、Harness がコンテキスト・ツール範�
 ```powershell
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
-$env:ANIMAL_ISLAND_UI_REF='<対応する UI の完全なコミット SHA>'
 node scripts/prepare-animal-island-ui.js
 bun install --frozen-lockfile
 bun run doctor
@@ -91,7 +90,7 @@ bun run doctor
 
 RN テーマ fork は IsleMind と同じ親ディレクトリに配置します。`bun install` がリンクと型宣言のビルドを行います。汎用テーマ修正は fork 側で行い、IsleMind に再移植しません。[UI 連携](src/components/ui/isle/README.md)に責務と CI/EAS の設定を記載しています。
 
-プレースホルダーはアプリのソースと対応する UI の完全なコミット SHA に置き換えてください。変動するブランチや、必要なローカル変更を含まない古い HEAD は使いません。準備スクリプトは固定値の欠落・不一致を拒否し、既存の作業を保持します。GitHub はリポジトリ変数 `ANIMAL_ISLAND_UI_REF` を読み取ります。EAS にも同じ値を別途設定してください。未コミットのソースに関する制約は[リリース前提条件](docs/release/google-play.md#配套构建输入与并发边界)を参照してください。
+準備スクリプトは対応する保存済み UI コミットを既定値として固定します。`ANIMAL_ISLAND_UI_REF` で上書きする場合は、互換性のある完全なコミット SHA を指定し、変動するブランチは使わないでください。HEAD とソースのクリーン状態を確認し、既存の作業をリセットしません。GitHub で上書きする場合は EAS にも同じ値を別途設定してください。未設定なら両方ともソース内の固定値を使用します。最終ソースの検証条件は[リリース前提条件](docs/release/google-play.md#配套构建输入与并发边界)を参照してください。
 
 ## Android で実行
 

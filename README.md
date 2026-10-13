@@ -95,7 +95,6 @@ distribution checksum again after native regeneration.
 ```bash
 git clone https://github.com/domidoremi/IsleMind.git
 cd IsleMind
-export ANIMAL_ISLAND_UI_REF='<full paired UI commit SHA>'
 node scripts/prepare-animal-island-ui.js
 bun install --frozen-lockfile
 bun run doctor
@@ -103,7 +102,7 @@ bun run doctor
 
 The RN theme fork must be a sibling directory. `bun install` links it and builds its declarations; fix reusable theme components in that fork, not in IsleMind. See [UI integration](src/components/ui/isle/README.md) for ownership and CI/EAS setup.
 
-Replace the placeholder with the full UI revision paired with these application sources, not a moving branch or a HEAD that omits required local changes. Preparation rejects missing/mismatched pins and leaves existing work untouched. GitHub jobs read the `ANIMAL_ISLAND_UI_REF` repository variable; configure the same value separately for EAS. See [release prerequisites](docs/release/google-play.md#配套构建输入与并发边界) for the current uncommitted-source limitation.
+The preparation script pins the saved UI revision paired with these sources by default. An optional `ANIMAL_ISLAND_UI_REF` override must be a full compatible commit SHA, not a moving branch. Preparation checks HEAD and source cleanliness without resetting existing work. If overriding the pin for GitHub jobs, configure the same value separately for EAS; an unset variable uses the checked-in default in both. See [release prerequisites](docs/release/google-play.md#配套构建输入与并发边界) for final-source validation requirements.
 
 ## Run on Android
 
