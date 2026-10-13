@@ -122,6 +122,7 @@ function loadChatEmptyStateContract() {
       return {
         Platform: { OS: 'test' },
         Text: 'Text',
+        TextInput: Object.assign(() => null, { State: {} }),
         View: 'View',
         useWindowDimensions: () => ({ width: 320, height: 568 }),
       }
@@ -137,6 +138,9 @@ function loadChatEmptyStateContract() {
     }
     if (request === '@/components/ui/AppIcon') {
       return { AppIcon: 'AppIcon', appIconStroke: { fine: 1, strong: 2 } }
+    }
+    if (request === './theme-experiences/ChatEmptyStateExperience') {
+      return { ChatEmptyStateExperience: 'ChatEmptyStateExperience' }
     }
     if (request === '@/components/ui/isle') {
       return {
@@ -659,7 +663,7 @@ async function run() {
 
   const writeTool = sampleTool({ name: 'set_language', source: 'app-action', permission: 'read-write' })
   const writePolicy = resolveManifestExecutionPolicy(writeTool)
-  assert.equal(writePolicy.requiresConfirmation, true, 'read-write tools require confirmation or visible intent')
+  assert.equal(writePolicy.requiresConfirmation, true, 'read-write tools require explicit confirmation')
 
   const androidRead = sampleTool({ name: 'android.files.scan', source: 'android', permission: 'read-only' })
   const androidReadPolicy = resolveManifestExecutionPolicy(androidRead)
@@ -669,16 +673,20 @@ async function run() {
   const missingEvidenceDecisions = [undefined, 'chat', 'agent', 'companion'].map((mode) =>
     decideWorkflowToolPermission(writeTool, { ...(mode ? { mode } : {}), intentVisible: true }))
   assert.ok(missingEvidenceDecisions.every((decision) => decision.decision === 'confirm'), 'product mode cannot bypass the read-write evidence gate')
-  assert.ok(missingEvidenceDecisions.every((decision) => decision.code === 'evidence_insufficient'), 'missing evidence remains explicit for every historical mode input')
+  assert.ok(missingEvidenceDecisions.every((decision) => decision.code === 'permission_required'), 'visible intent does not replace explicit permission for any historical mode input')
+  assert.ok(missingEvidenceDecisions.every((decision) => decision.trace.metadata?.evidenceReady === false), 'missing evidence remains explicit in permission traces')
 
   const evidenceContext = {
     intentVisible: true,
     evidenceSources: ['agent-plan:test', 'source:visible-agent-request'],
     evidenceSummary: 'Visible plan reviewed before execution.',
   }
-  const admittedDecisions = [undefined, 'chat', 'agent', 'companion'].map((mode) =>
+  const unconfirmedDecisions = [undefined, 'chat', 'agent', 'companion'].map((mode) =>
     decideWorkflowToolPermission(writeTool, { ...evidenceContext, ...(mode ? { mode } : {}) }))
-  assert.ok(admittedDecisions.every((decision) => decision.decision === 'allow'), 'Chat and historical mode inputs admit the same evidence-backed read-write action')
+  assert.ok(unconfirmedDecisions.every((decision) => decision.decision === 'confirm' && decision.code === 'permission_required'), 'evidence and historical mode inputs cannot authorize a read-write action')
+  const admittedDecisions = [undefined, 'chat', 'agent', 'companion'].map((mode) =>
+    decideWorkflowToolPermission(writeTool, { ...evidenceContext, userConfirmed: true, ...(mode ? { mode } : {}) }))
+  assert.ok(admittedDecisions.every((decision) => decision.decision === 'allow'), 'explicit confirmation admits the same action without a historical mode branch')
   assert.ok(admittedDecisions.every((decision) => decision.trace.metadata?.riskLevel === 'state-changing'), 'permission traces retain tool risk')
   assert.ok(admittedDecisions.every((decision) => decision.trace.metadata?.evidenceReady === true), 'permission traces retain evidence readiness')
 

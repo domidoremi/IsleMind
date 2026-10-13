@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { parse } = require('@babel/parser')
-const { prepareAnimalIslandUi, linkAnimalIslandUiRuntimes, sharedRuntimes } = require('./prepare-animal-island-ui')
+const { prepareAnimalIslandUi, linkAnimalIslandUiRuntimes, sharedRuntimes, pairedUiRevision } = require('./prepare-animal-island-ui')
 const { collectReleaseInputFiles } = require('./release-freshness-contract')
 
 const root = path.resolve(__dirname, '..')
@@ -119,7 +119,7 @@ check('install builds declarations and release freshness includes the fork', () 
     const source = read('.github/workflows/' + workflow + '.yml')
     const prepare = source.indexOf('node scripts/prepare-animal-island-ui.js')
     assert.ok(prepare >= 0 && prepare < source.indexOf('bun install --frozen-lockfile'))
-    assert.ok(source.includes('ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}'), 'each runner must pass the configured full paired UI revision')
+    assert.ok(source.includes('ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}'), 'each runner must pass the optional paired UI revision override')
   }
   assert.ok(collectReleaseInputFiles(root).includes(path.resolve(fork, 'src/components/Button/Button.tsx')))
 })
@@ -145,6 +145,19 @@ check('CI bootstrap preserves existing work and rejects the Web branch', () => {
     fs.writeFileSync(manifestPath, JSON.stringify(forkManifest))
     assert.equal(prepareAnimalIslandUi({ root: app, ref: '', git }), sibling)
     assert.equal(prepareAnimalIslandUi({ root: app, ref: 'a'.repeat(40), git }), sibling)
+    const previousRef = process.env.ANIMAL_ISLAND_UI_REF
+    try {
+      delete process.env.ANIMAL_ISLAND_UI_REF
+      assert.match(pairedUiRevision, /^[a-f0-9]{40}$/)
+      const pinnedGit = (_executable, args) => args.includes('rev-parse') ? pairedUiRevision : ''
+      assert.equal(prepareAnimalIslandUi({ root: app, git: pinnedGit }), sibling, 'CI/EAS use the saved pair without external variable configuration')
+      assert.throws(() => prepareAnimalIslandUi({ root: app, git }), /left untouched/, 'default pin also checks an existing checkout')
+      process.env.ANIMAL_ISLAND_UI_REF = 'a'.repeat(40)
+      assert.equal(prepareAnimalIslandUi({ root: app, git }), sibling, 'explicit full-SHA overrides remain supported')
+    } finally {
+      if (previousRef === undefined) delete process.env.ANIMAL_ISLAND_UI_REF
+      else process.env.ANIMAL_ISLAND_UI_REF = previousRef
+    }
     for (const status of [' M src/index.ts', '?? src/new.ts']) {
       dirty = status
       assert.throws(() => prepareAnimalIslandUi({ root: app, ref: 'a'.repeat(40), git }), /matching HEAD alone/)

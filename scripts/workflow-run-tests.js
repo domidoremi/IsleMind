@@ -1,6 +1,15 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
+const { mock } = require('bun:test')
+
+// These cases inject their own execution ports. Do not initialize React Native
+// merely by importing the default composition; accidental use must still fail.
+mock.module('../src/bootstrap/assistantExecutionHostRuntime.ts', () => ({
+  assistantExecutionHost: {
+    assertAdmission() { throw new Error('Unexpected native admission in an injected host fixture') },
+  },
+}))
 
 const root = path.resolve(__dirname, '..')
 

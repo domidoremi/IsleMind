@@ -81,7 +81,7 @@ function run() {
   const writeTool = sampleTool({ name: 'set_language', permission: 'read-write' })
   const missingEvidence = decideWorkflowToolPermission(writeTool, { intentVisible: true })
   assert.equal(missingEvidence.decision, 'confirm', 'visible read-write tools pause without evidence')
-  assert.equal(missingEvidence.code, 'evidence_insufficient', 'missing evidence uses the evidence gate code')
+  assert.equal(missingEvidence.code, 'permission_required', 'a visible plan is not approval of a concrete write')
   assert.equal(missingEvidence.trace.metadata?.evidenceSourceCount, 0, 'missing evidence trace has zero sources')
 
   const backedWrite = decideWorkflowToolPermission(writeTool, {
@@ -89,8 +89,9 @@ function run() {
     evidenceSources: ['agent-plan:abc', 'source:visible-agent-request'],
     evidenceSummary: 'Visible Agent plan and current request were reviewed before execution.',
   })
-  assert.equal(backedWrite.decision, 'allow', 'evidence-backed read-write tools can proceed')
-  assert.equal(backedWrite.trace.metadata?.allowReason, 'evidence-backed-visible-action', 'allow reason records evidence-backed visibility')
+  assert.equal(backedWrite.decision, 'confirm', 'evidence-backed read-write tools still require user approval')
+  assert.equal(backedWrite.code, 'permission_required', 'evidence cannot grant write permission')
+  assert.equal(backedWrite.trace.metadata?.allowReason, undefined, 'evidence never becomes an implicit allow reason')
   assert.deepEqual(backedWrite.trace.metadata?.evidenceSources, ['agent-plan:abc', 'source:visible-agent-request'], 'trace records evidence sources')
   assert.equal(backedWrite.trace.metadata?.evidenceReliable, true, 'trace records reliable evidence readiness')
   assert.equal(backedWrite.trace.metadata?.evidenceReliableSourceCount, 1, 'trace counts reliable evidence sources')
@@ -99,19 +100,46 @@ function run() {
   assert.equal(confirmedWrite.decision, 'allow', 'explicit confirmation can resume a visible write without new evidence')
   assert.equal(confirmedWrite.trace.metadata?.allowReason, 'user-confirmed', 'confirmation override is auditable')
 
+  for (const userConfirmed of [1, 'true', 'false', [], {}]) {
+    for (const permission of ['read-write', 'destructive']) {
+      const malformedConfirmation = decideWorkflowToolPermission(sampleTool({ name: 'invalid.confirmation', permission }), {
+        intentVisible: true, userConfirmed, evidenceSources: ['test:reviewed'],
+        limits: { allowDestructiveTools: true },
+      })
+      assert.equal(malformedConfirmation.decision, 'confirm', 'only the boolean true is concrete confirmation')
+      assert.equal(malformedConfirmation.trace.metadata?.userConfirmed, false, 'audit cannot claim a malformed value was confirmation')
+    }
+  }
+
   const destructiveTool = sampleTool({ name: 'danger.delete', permission: 'destructive' })
   const destructiveMissingEvidence = decideWorkflowToolPermission(destructiveTool, {
     limits: { allowDestructiveTools: true },
   })
   assert.equal(destructiveMissingEvidence.decision, 'confirm', 'policy-allowed destructive tools still need evidence')
-  assert.equal(destructiveMissingEvidence.code, 'evidence_insufficient', 'destructive missing evidence is explicit')
+  assert.equal(destructiveMissingEvidence.code, 'permission_required', 'a destructive permission ceiling is not user approval')
 
   const destructiveBacked = decideWorkflowToolPermission(destructiveTool, {
     evidenceSources: ['agent-plan:danger-review', 'test:danger-review-fixture'],
     limits: { allowDestructiveTools: true },
   })
-  assert.equal(destructiveBacked.decision, 'allow', 'evidence-backed destructive tools can follow explicit allow policy')
-  assert.equal(destructiveBacked.trace.metadata?.allowReason, 'evidence-backed-configured-destructive', 'destructive evidence allow reason is auditable')
+  assert.equal(destructiveBacked.decision, 'confirm', 'even reliable evidence cannot approve a destructive action')
+  assert.equal(destructiveBacked.code, 'permission_required')
+  assert.equal(destructiveBacked.trace.metadata?.allowReason, undefined)
+
+  const destructiveConfirmed = decideWorkflowToolPermission(destructiveTool, {
+    userConfirmed: true,
+    limits: { allowDestructiveTools: true },
+  })
+  assert.equal(destructiveConfirmed.decision, 'allow', 'a permitted destructive action can proceed after concrete confirmation')
+  assert.equal(destructiveConfirmed.trace.metadata?.allowReason, 'user-confirmed')
+  for (const [tool, limits] of [[writeTool, { allowReadWriteTools: false }], [destructiveTool, { allowDestructiveTools: false }]]) {
+    const denied = decideWorkflowToolPermission(tool, {
+      intentVisible: true, userConfirmed: true, evidenceSources: ['test:reviewed'], limits,
+    })
+    assert.equal(denied.decision, 'deny', 'confirmation and evidence cannot exceed the permission ceiling')
+    assert.equal(denied.code, 'permission_required')
+    assert.equal(denied.trace.metadata?.allowReason, undefined)
+  }
 
   const evidenceSummary = metadataSummary(backedWrite.trace.metadata)
   assert.ok(evidenceSummary.includes('2 evidence sources'), 'trace UI exposes evidence source count')

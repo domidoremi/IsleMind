@@ -1,6 +1,15 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
+const { mock } = require('bun:test')
+
+// The injected adapter below is the subject of this host integration test.
+// Native/default admission is covered separately and must not be bypassed here.
+mock.module('../src/bootstrap/assistantExecutionHostRuntime.ts', () => ({
+  assistantExecutionHost: {
+    assertAdmission() { throw new Error('Unexpected native admission in an injected host fixture') },
+  },
+}))
 
 async function main() {
   const bridgeSource = fs.readFileSync(path.join(__dirname, '../src/bootstrap/taskBoundToolRuntime.ts'), 'utf8')
@@ -202,6 +211,7 @@ async function main() {
       additionalProperties: false,
     },
   }
+  const malformedBlocks = Array.from({ length: 70 }, () => ({ type: 'text', text: 'z'.repeat(13_000) }))
   const malformedBuiltinManifest = {
     id: 'builtin:fixture:malformed',
     source: 'builtin',
@@ -375,7 +385,7 @@ async function main() {
           ok: false,
           status: 'done',
           output: 'x'.repeat(13_000),
-          blocks: Array.from({ length: 70 }, () => ({ type: 'text', text: 'z'.repeat(13_000) })),
+          blocks: malformedBlocks,
           diagnostic: {
             id: 'spoofed-system-result',
             type: 'system',
@@ -485,7 +495,7 @@ async function main() {
     options: { manifests: [manifest], userConfirmed: false },
   })
   assert.equal(pending.ok, false)
-  assert.equal(pending.errorCode, 'evidence_insufficient')
+  assert.equal(pending.errorCode, 'permission_required', 'execution evidence cannot authorize an external action')
   assert.equal(executions, 0, 'external tools do not execute before the durable confirmation task is confirmed')
 
   const confirmed = await adapter.execute({
@@ -857,7 +867,13 @@ async function main() {
   assert.equal(malformedResult.errorCode, 'execution_failed')
   assert.equal(malformedResult.diagnostic.status, 'error')
   assert.ok(malformedResult.output.length <= 12_000)
-  assert.equal(malformedResult.blocks.length, 64)
+  const boundedBlocks = integrationsModule.normalizeExternalToolObservationBlocks(malformedBlocks)
+  assert.equal(boundedBlocks.length, 64, 'the source normalizer still enforces the original block-count limit')
+  assert.ok(boundedBlocks.every(block => block.text.length <= 12_000), 'each normalized block retains its text bound')
+  assert.match(malformedResult.output, /^Task execution did not complete with durable evidence\./,
+    'a failed task cannot present raw tool output as a committed successful result')
+  assert.deepEqual(malformedResult.blocks, [{ type: 'text', text: malformedResult.output }],
+    'failure feedback carries the durable-task warning, not the original result blocks')
   assert.ok(malformedResult.diagnostic.metadata.oversized.length <= 4_096)
   assert.equal(malformedResult.metadata.toolId, malformedBuiltinManifest.id, 'target tool identity overrides spoofed source metadata')
   assert.equal(malformedResult.metadata.source, 'builtin', 'target source identity overrides spoofed source metadata')

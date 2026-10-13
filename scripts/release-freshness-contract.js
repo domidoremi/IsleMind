@@ -20,6 +20,7 @@ const releaseBuildInputPaths = [
   'patches/react-native@0.86.3.patch',
   'babel.config.js',
   'metro.config.js',
+  'tsconfig.json',
   'react-native.config.js',
   'scripts/android-release-build-contract.js',
   'scripts/android-build-toolchain.js',
@@ -31,6 +32,7 @@ const releaseBuildInputPaths = [
   'scripts/prepare-model-bundle.js',
   'scripts/patch-onnxruntime-16kb.js',
   'scripts/prepare-animal-island-ui.js',
+  'scripts/user-guide.js',
   'scripts/release-apk-paths.js',
   'scripts/release-freshness-contract.js',
   'scripts/validate-android-release-signing.js',
@@ -141,11 +143,24 @@ function collectReleaseInputFiles(root) {
       if (releaseSourceExtensions.has(ext) || ext === '.json') files.push(file)
     }
   }
+  // Bundled typography changes the rendered artifact just like source code.
+  for (const file of listFiles(path.join(root, 'assets', 'fonts'))) {
+    if (/\.(?:ttf|otf|woff2?|txt)$/.test(file)) files.push(file)
+  }
+  // Metro regenerates the offline reader before bundling. Hash its actual
+  // source inputs too, not only yesterday's generated TypeScript output.
+  for (const file of listFiles(path.join(root, 'docs', 'user-guide'))) {
+    if (/\.(?:md|svg)$/.test(file)) files.push(file)
+  }
   // The theme is compiled directly from the sibling fork. A theme edit must
   // invalidate APK evidence just like an application source edit does.
   const fork = path.resolve(root, '../animal-island-ui')
   if (fs.existsSync(path.join(fork, 'package.json'))) {
-    files.push(path.join(fork, 'package.json'))
+    // A matching package/HEAD does not identify declaration or transform inputs.
+    // Keep this allowlist separate from generated dist and local credentials.
+    for (const name of ['package.json', 'tsconfig.json', 'tsconfig.build.json', 'babel.config.js']) {
+      files.push(path.join(fork, name))
+    }
     for (const file of listFiles(path.join(fork, 'src'))) {
       if (/\.(?:[jt]sx?|json|svg|png|jpe?g|webp|ttf|otf)$/.test(file) && !/\.test\.[jt]sx?$/.test(file)) files.push(file)
     }

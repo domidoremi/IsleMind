@@ -2244,6 +2244,56 @@ async function assertPortableImportRecoveryBehavior() {
     )
     resetSecureStorageFaults()
 
+    // A browser cannot create protected credential before-images. A selective
+    // restore must not create them at all, because it preserves secure state.
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
+    const previousPlatform = reactNativePlatform.OS
+    const webSecurePrefix = '@islemind/secure/'
+    const webProviderKey = webSecurePrefix + credentialProviderKey
+    const webGroupKey = webSecurePrefix + credentialGroupKey
+    const previousWebSecrets = new Map([...memoryStorage].filter(([key]) => key.startsWith(webSecurePrefix)))
+    try {
+      Object.defineProperty(globalThis, 'document', { configurable: true, value: {} })
+      reactNativePlatform.OS = 'web'
+      memoryStorage.set(webProviderKey, oldProviderSecret)
+      memoryStorage.set(webGroupKey, oldGroupSecret)
+      const beforeRecords = new Map(['@islemind/settings', '@islemind/providers', '@islemind/skills', '@islemind/mcp-servers']
+        .map(key => [key, memoryStorage.get(key)]))
+      const beforeSecrets = new Map([...memoryStorage].filter(([key]) => key.startsWith(webSecurePrefix)))
+      const secureWrites = []
+      asyncStorageFaults.setItem = key => { if (key.startsWith(webSecurePrefix)) secureWrites.push(key); return null }
+      asyncStorageFaults.removeItem = key => { if (key.startsWith(webSecurePrefix)) secureWrites.push(key); return null }
+      const webPayload = JSON.parse(credentialImportPayload([]))
+      webPayload.providers[0].apiKey = ''
+
+      assert.deepEqual(
+        await importAllDataDetailed(JSON.stringify(webPayload)),
+        { ok: false, kind: 'invalid', reason: 'protected_storage_required' },
+        'credential-bearing full Web restore reports the security limitation, not a transient persistence failure',
+      )
+      for (const [key, value] of beforeRecords) assert.equal(memoryStorage.get(key), value, 'refused Web restore leaves application records unchanged')
+      assert.equal(memoryStorage.has(PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY), false, 'refused Web restore finishes preparation cleanup')
+
+      assert.deepEqual(
+        await importAllDataDetailed(JSON.stringify({
+          schema: 'islemind.portable-backup.v2', version: 2, createdAt: webPayload.exportedAt,
+          selection: { mode: 'selective', categories: ['providers', 'models'] }, payload: webPayload,
+        })),
+        { ok: true, kind: 'islemind', conversations: 0 },
+        'selective Web restore commits without copying or mutating existing credentials',
+      )
+      assert.equal(JSON.parse(memoryStorage.get('@islemind/providers'))[0].name, 'Portable credential replacement provider')
+      assert.deepEqual(new Map([...memoryStorage].filter(([key]) => key.startsWith(webSecurePrefix))), beforeSecrets, 'both refusal and selective restore preserve every Web credential')
+      assert.deepEqual(secureWrites, [], 'neither path writes plaintext recovery sidecars or rewrites preserved credentials')
+    } finally {
+      resetAsyncStorageFaults()
+      reactNativePlatform.OS = previousPlatform
+      if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument)
+      else delete globalThis.document
+      for (const key of memoryStorage.keys()) if (key.startsWith(webSecurePrefix)) memoryStorage.delete(key)
+      for (const [key, value] of previousWebSecrets) memoryStorage.set(key, value)
+    }
+
     const atomicRows = []
     let memoryInsertCount = 0
     let importTransactionCount = 0
@@ -3447,8 +3497,8 @@ function assertReleaseVersionsAligned() {
   )
   assert.match(
     contextPanelSource,
-    /activeContextSection[\s\S]*toggleContextSection[\s\S]*showContext && searchCredentialsAvailable/,
-    'ContextPanel keeps Search, RAG, and provider credentials mutually exclusive and hides irrelevant credentials'
+    /showContext \? <SettingsTaskWorkspace[\s\S]*id: 'search-provider'[\s\S]*searchCredentialsAvailable \?[\s\S]*id: 'rag-profile'/,
+    'ContextPanel combines search with relevant credentials and keeps RAG in a separate on-demand task'
   )
   assert.ok(
     !architectureBoundaryResult.reviewFindings.some((item) => /src\/components\/settings\/ContextPanel\.tsx/.test(item.issue)),
@@ -15895,7 +15945,7 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
   const { createConversationAssistantDurableExecutionRuntime } = require('../src/bootstrap/conversationAssistantDurableExecutionRuntime.ts')
   let caseSequence = 0
 
-  async function runCase(kind) {
+  async function runCase(kind, searchMode) {
     caseSequence += 1
     const conversationId = `durable-dispatch-conversation-${caseSequence}`
     const assistantMessageId = `durable-dispatch-assistant-${caseSequence}`
@@ -16135,10 +16185,10 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
         apiKey: 'durable-group-secret',
         enabled: true,
       }],
-      ...(kind === 'tool-declaration-parity'
+      ...(kind === 'tool-declaration-parity' || searchMode !== undefined
         ? {
             models: ['durable-dispatch-model'],
-            capabilities: { nativeTools: true },
+            capabilities: { nativeTools: true, nativeSearch: true },
           }
         : {}),
     }
@@ -16157,7 +16207,7 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
       upstreamModel: 'durable-dispatch-upstream-model',
       systemPrompt: 'system',
       settings: {},
-      attachments: [{
+      attachments: searchMode !== undefined ? [] : [{
         id: 'durable-attachment',
         type: 'text',
         uri: 'content://durable/attachment?grant=secret',
@@ -16174,14 +16224,14 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
         title: 'Durable source',
         content: 'source content',
       }],
-      webSearchMode: 'off',
+      webSearchMode: searchMode ?? 'off',
       fallbackProviders: [],
-      remoteCompactEligible: true,
-      remoteCompactFallback: {
+      remoteCompactEligible: searchMode === undefined,
+      remoteCompactFallback: searchMode === undefined ? {
         messages: [{ role: 'user', content: 'local compact fallback' }],
         contextPrompt: 'fallback context',
-      },
-      previousResponseId: 'durable-previous-response',
+      } : undefined,
+      previousResponseId: searchMode === undefined ? 'durable-previous-response' : undefined,
       providerToolDeclarations: kind === 'tool-declaration-parity'
         ? legacyProviderToolDeclarations
         : undefined,
@@ -16257,15 +16307,36 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
       'durable-dispatch-user',
       `${kind} canonical Rich request reuses Plain message-identity preservation`,
     )
-    assert.ok(activityInputAtRunCreation.request.requestedCapabilities.includes('attachments'))
-    assert.ok(activityInputAtRunCreation.request.requestedCapabilities.includes('remote-compact'))
+    const capabilities = activityInputAtRunCreation.request.requestedCapabilities ?? []
+    assert.equal(capabilities.includes('attachments'), searchMode === undefined)
+    assert.equal(capabilities.includes('remote-compact'), searchMode === undefined)
+    assert.equal(capabilities.includes('native-search'), searchMode === 'native')
+    assert.equal(capabilities.includes('web-search'), false, 'External search context is not a provider wire capability')
+    if (searchMode !== undefined) {
+      const { createProviderRuntimeAdapter } = require('../src/bootstrap/providerRuntime.ts')
+      const { createProviderGateway } = require('../src/modules/providers/providerGateway.ts')
+      let dispatchCount = 0
+      const gateway = createProviderGateway([createProviderRuntimeAdapter({
+        provider,
+        async streamChat(request, _onChunk, onDone) {
+          dispatchCount += 1
+          assert.equal(request.webSearchMode, searchMode === 'native' ? 'native' : undefined)
+          assert.ok(request.systemPrompt.includes('durable context'), 'Pre-retrieved search context survives recovery')
+          return { controller: new AbortController(), done: Promise.resolve().then(() => onDone({ text: 'continued', traces: [] })) }
+        },
+      })])
+      const events = []
+      for await (const event of gateway.stream(activityInputAtRunCreation.request, { signal: new AbortController().signal })) events.push(event)
+      assert.equal(dispatchCount, 1, 'The actual frozen Rich request passes the continuation gateway')
+      assert.ok(events.some((event) => event.type === 'text-delta' && event.text === 'continued'))
+    }
     assert.equal(
       preparedProviderRequest.remoteCompactEligible,
-      true,
+      searchMode === undefined,
       `${kind} canonical capture does not alter initial remote compact dispatch`,
     )
-    assert.equal(preparedProviderRequest.previousResponseId, 'durable-previous-response')
-    assert.equal(preparedProviderRequest.attachments[0].base64, 'durable-binary-secret')
+    assert.equal(preparedProviderRequest.previousResponseId, searchMode === undefined ? 'durable-previous-response' : undefined)
+    if (searchMode === undefined) assert.equal(preparedProviderRequest.attachments[0].base64, 'durable-binary-secret')
     assert.equal('requestEvidence' in activityInputAtRunCreation, false)
     const serializedRequestEvidence = JSON.stringify(activityInputAtRunCreation.request)
     for (const secret of [
@@ -16294,6 +16365,8 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
 
     if (kind === 'tool-declaration-parity') {
       assert.ok(canonicalChatRequest, 'Rich initial dispatch prepares the canonical model-operation request')
+      assert.ok(canonicalChatRequest.requestedCapabilities.includes('tools'), 'Rich native-tool continuation uses the gateway tools capability')
+      assert.equal(canonicalChatRequest.requestedCapabilities.includes('provider-tools'), false, 'Display-only provider-tools label must not block native continuation')
       assert.equal(prepareRequestCount, 1, 'Rich initial and continuation use one frozen catalog preparation')
       const expectedDeclarations = toRuntimeChatRequestForTest(
         { provider, settings: {} },
@@ -16521,6 +16594,9 @@ async function assertAssistantConversationDurableDispatchLifecycleBehavior() {
   }
 
   await runCase('success')
+  await runCase('success', 'native')
+  await runCase('success', 'tavily')
+  await runCase('success', 'off')
   await runCase('tool-declaration-parity')
   await runCase('provider-failure')
   await runCase('provider-failure-projection-throws')
@@ -16667,6 +16743,8 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
       workspaceBindInput: undefined,
       workspaceBindOptions: undefined,
       workspaceTerminalInput: undefined,
+      modelOperationInput: undefined,
+      lifecycleStages: [],
     }
     const terminalStage = options.terminalStage
     const terminalOutcomes = {
@@ -16679,6 +16757,9 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
       provider_streaming: Object.freeze({ kind: 'failed' }),
     }
     const runtime = createAssistantConversationReplyStartRuntime({
+      projectLifecycleStage(input) {
+        state.lifecycleStages.push({ stage: input.stage, after: state.events.at(-1) })
+      },
       workspaceSourceRuntime: {
         async resolve(sourceInput, sourceOptions) {
           state.events.push('workspace_source')
@@ -16781,7 +16862,11 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
       filterSendableAttachments(attachments) {
         state.events.push('attachments')
         assert.equal(attachments, latestUserAttachments)
-        return sendableAttachments
+        return options.sendableAttachments ?? sendableAttachments
+      },
+      async createModelOperationSession(input) {
+        state.modelOperationInput = input
+        return undefined
       },
       getSettings() {
         state.events.push('runtime_settings')
@@ -16867,6 +16952,14 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
   const input = Object.freeze({ conversationId: sessionConversation.id })
   const success = createHarness()
   const successOutcome = await success.runtime.start(input)
+  assert.deepEqual(success.state.lifecycleStages, [
+    { stage: 'working', after: 'provider_admission' },
+    { stage: 'sending', after: 'request_planning' },
+  ],
+    'local admission and context preparation must not fabricate sent requests or received model responses')
+  const cancelledBeforeDispatch = createHarness({ terminalStage: 'provider_admission' })
+  await cancelledBeforeDispatch.runtime.start(input)
+  assert.deepEqual(cancelledBeforeDispatch.state.lifecycleStages, [], 'cancelled admission never reports a model request')
   assert.deepEqual(success.state.events, [
     'reply_session',
     'provider_settings',
@@ -17097,6 +17190,7 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
   assert.equal(noWorkspace.state.contextInput.workspaceContext, undefined)
   assert.equal(noWorkspace.state.events.includes('workspace_terminal_projection'), false, 'ordinary Chat projects no workspace terminal failure')
   assert.equal(noWorkspace.state.dispatchInput.runId, undefined, 'ordinary Chat keeps durable run allocation inside the durable runtime')
+  assert.equal(noWorkspace.state.modelOperationInput.allowConfirmation, false, 'attachment payloads cannot be lost across confirmation recovery')
   assert.deepEqual(noWorkspace.state.handoffInput, {
     conversationId: sessionConversation.id,
     assistantMessageId: assistantMessage.id,
@@ -17106,6 +17200,15 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     hasAttachments: true,
     requestController: controller,
   })
+
+  for (const workspace of [false, true]) {
+    const confirmation = createHarness({ sendableAttachments: [], ...(workspace ? {} : {
+      workspaceSourceOutcome: { status: 'none' }, workspaceAdmissionOutcome: { status: 'none' },
+    }) })
+    assert.equal((await confirmation.runtime.start(input)).kind, 'completed')
+    assert.equal(confirmation.state.modelOperationInput.allowConfirmation, !workspace,
+      'only text-only Rich requests without a special workspace writeback can suspend for confirmation')
+  }
 
   const fallbackConstraint = Object.freeze({ identity: { providerId: provider.id, model: 'temporary-upstream',
     credentialSource: { kind: 'primary' }, protocolAdapterId: 'openai-chat', endpointVariant: 'native' },
@@ -20646,7 +20749,44 @@ async function assertProviderRemoteCompactLifecycleBehavior() {
   await Promise.resolve()
 }
 
-function assertWebSearchSettingsPolicyBehavior() {
+async function assertWebSearchSettingsPolicyBehavior() {
+  const previousState = useSettingsStore.getState()
+  const previousSavedSettings = memoryStorage.get('@islemind/settings')
+  try {
+    for (const [saved, expected] of [
+      [null, 'off'],
+      [{ skillsEnabled: false, mcpEnabled: false, knowledgeEnabled: false, memoryEnabled: true }, 'off'],
+      [{ webSearchEnabled: true }, 'islemind'],
+      [{ webSearchEnabled: true, webSearchMode: 'native' }, 'native'],
+      [{ webSearchEnabled: true, webSearchMode: 'tavily' }, 'tavily'],
+      [{ searchProvider: 'custom' }, 'custom'],
+      [{ webSearchMode: 'native' }, 'native'],
+      [{ webSearchEnabled: true, searchProvider: 'google', webSearchMode: 'tavily' }, 'google'],
+      [{ webSearchEnabled: false, searchProvider: 'islemind' }, 'off'],
+    ]) {
+      if (saved) memoryStorage.set('@islemind/settings', JSON.stringify(saved))
+      else memoryStorage.delete('@islemind/settings')
+      await useSettingsStore.getState().load()
+      await flushPersistedSettings()
+      const loaded = useSettingsStore.getState().settings
+      assert.equal(loaded.searchProvider, expected, 'fresh search is opt-in and saved modern/legacy selections win over defaults')
+      assert.equal(loaded.webSearchEnabled, expected !== 'off')
+      for (const key of ['skillsEnabled', 'mcpEnabled', 'knowledgeEnabled', 'memoryEnabled']) {
+        if (saved?.[key] !== undefined) assert.equal(loaded[key], saved[key], `hydration preserves the existing ${key} choice`)
+      }
+      if (!saved) {
+        assert.equal(loaded.knowledgeEnabled, true, 'local retrieval is ready without sending data elsewhere')
+        assert.equal(loaded.memoryEnabled, false, 'automatic extra model requests remain opt-in')
+        assert.equal(loaded.observabilitySinkMode, 'off')
+        assert.equal(loaded.systemStatusNotificationsEnabled, false)
+        assert.equal(loaded.agentWorkflowAllowDestructiveTools, 'confirm')
+      }
+    }
+  } finally {
+    useSettingsStore.setState({ settings: previousState.settings, providers: previousState.providers })
+    if (previousSavedSettings === undefined) memoryStorage.delete('@islemind/settings')
+    else memoryStorage.set('@islemind/settings', previousSavedSettings)
+  }
   assert.deepEqual(
     [...SEARCH_PROVIDER_OPTIONS],
     ['islemind', 'native', 'tavily', 'google', 'bing', 'custom', 'off'],
@@ -24014,17 +24154,17 @@ codex    ${FAKE_KEY_D} "
   assert.notEqual(addProviderFromFormStart, -1, 'provider settings keeps the single-provider onboarding function')
   assert.notEqual(publishImportProgressStart, -1, 'provider settings keeps the import flow after single-provider onboarding')
   const addProviderFromFormSource = providerSettingsContentSource.slice(addProviderFromFormStart, publishImportProgressStart)
-  assert.ok(addProviderFromFormSource.includes('await addProvider(provider)'), 'add provider persists the explicitly saved configuration')
+  assert.ok(addProviderFromFormSource.includes('await store.addProviders([provider], { selectDefaultIfEmpty: false })'), 'add provider persists without implicitly selecting a default model')
   assert.ok(addProviderFromFormSource.includes('await store.updateProvider(provider.id, provider)'), 'retrying a saved provider updates its existing identity')
   assert.ok(addProviderFromFormSource.includes('await store.flushProviderPersistence()') && addProviderFromFormSource.includes('await flushPersistedSettings()'), 'add provider waits for durable provider and settings writes')
   assert.equal(addProviderFromFormSource.includes('probeProviderPreset('), false, 'saving provider configuration does not authorize a network probe')
   assert.equal(addProviderFromFormSource.includes('activateProviders('), false, 'saving provider configuration does not automatically activate or test a model')
-  assert.ok(addProviderFromFormSource.includes('if (!previousDefault) store.updateSettings({ defaultProvider: null })'), 'saving an untested provider does not automatically select it as the default')
+  assert.equal(addProviderFromFormSource.includes('defaultProvider:'), false, 'saving configuration never temporarily changes or restores the default model')
   assert.ok(providerActivationJobSource.includes('testModels: false'), 'provider onboarding fetches the model catalog without model health testing')
   assert.equal(providerActivationJobSource.includes('testModels: true'), false, 'provider onboarding cannot send model health test requests')
   assert.equal(apiKeyPanelSource.includes('<ModelTestCapabilityPanel'), false, 'provider settings does not expose model-test evidence as an onboarding action')
   assert.ok(apiKeyPanelSource.includes('readProviderClipboard'), 'single provider editor exposes clipboard provider import handling')
-  assert.ok(apiKeyPanelSource.includes('onChangeText: handleCredentialText'), 'single provider editor routes multi-token input through provider import auto-detection')
+  assert.match(apiKeyPanelSource, /<ProviderTokenField\b(?=[^>]*\bvalue=\{credentialText\})(?=[^>]*\bonChangeText=\{handleCredentialText\})/, 'single provider editor routes multi-token input through provider import auto-detection')
   assert.ok(skillSettingsContentSource.includes("await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)"), 'skill export clears its temporary share file after the share flow completes')
   assert.ok(skillSettingsContentSource.includes("await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })"), 'skill import clears cached picker copies after reading import files')
   assert.ok(providerSettingsContentSource.includes("await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })"), 'provider import clears cached picker copies after reading import files')
@@ -24216,7 +24356,7 @@ https://gateway.example/messages`
   assert.equal(invalidProbe.ok, false, 'provider preset probe rejects invalid custom base URLs before network probe')
   assert.match(invalidProbe.reason, /http:\/\/|https:\/\//i, 'provider preset probe surfaces the invalid custom base URL reason')
 
-  assertWebSearchSettingsPolicyBehavior()
+  await assertWebSearchSettingsPolicyBehavior()
 
   await assertBuiltInSearchRuntimeBehavior()
   await assertBuiltInRemoteCrawlRuntimeBehavior()
@@ -24484,8 +24624,8 @@ https://gateway.example/messages`
   assert.deepEqual(getProviderAvailableModels(testedReadyProvider), ['gpt-4o-mini', 'claude-3-5-sonnet-20241022'], 'provider available models merge provider and synced group models')
   assert.equal(
     isProviderConversationReady({ ...testedReadyProvider, lastTestStatus: 'bad', lastTestModel: 'gpt-4o-mini' }),
-    false,
-    'failed model tests still block chat readiness'
+    true,
+    'historical request failures do not force probing before local model selection'
   )
   assert.equal(classifyMemoryCandidateForTest('用户偏好：使用中文回答'), 'none', 'stable user preferences are accepted as memory candidates')
   assert.equal(classifyMemoryCandidateForTest('用户 API Key 是 sk-secret-test'), 'sensitive', 'memory candidates reject API keys and secrets')
@@ -24943,7 +25083,13 @@ https://gateway.example/messages`
   assert.deepEqual(failedSynced.models, ['stale-default-model'], 'failed credential sync keeps existing model catalog without marking it usable')
   assert.equal(failedSynced.credentialGroups[0].lastModelSyncStatus, 'bad')
   assert.equal(failedSynced.credentialGroups[0].lastModelSyncMessage.includes(`key-${groups[0].id}`), false, 'credential sync failure messages redact the active secret')
-  assert.deepEqual(getProviderAvailableModels(failedSynced), [], 'failed credential sync does not expose stale models as account-available')
+  assert.equal(failedSynced.lastModelSyncStatus, 'bad', 'retaining a cached catalog does not rewrite the failed refresh as success')
+  assert.deepEqual(getProviderAvailableModels(failedSynced), ['gpt-4o-mini'], 'failed refresh preserves the previously discovered selection, not unrelated provider defaults')
+  assert.deepEqual(
+    getProviderAvailableModels({ ...failedSynced, credentialGroups: failedSynced.credentialGroups.map(group => ({ ...group, enabled: false })) }),
+    [],
+    'retained catalog entries do not bypass an explicitly disabled credential group',
+  )
   const formatted500 = formatProviderHttpErrorForTest(
     500,
     JSON.stringify({ error: { type: 'upstream_error', message: 'No auth credentials found', request_id: 'req_123' } }),
@@ -27873,21 +28019,21 @@ https://gateway.example/messages`
   }, 'openai')
   assert.deepEqual(
     extractedOpenAIToolCalls?.[0],
-    { id: 'fc_1', callId: 'call_1', name: 'search_web', arguments: { query: 'IsleMind' }, rawArguments: '{"query":"IsleMind"}', argumentsComplete: true },
-    'provider tool call helper extracts OpenAI Responses function calls'
+    { id: 'fc_1', callId: 'call_1', name: 'search_web', arguments: { query: 'IsleMind' }, rawArguments: '{"query":"IsleMind"}', argumentsComplete: true, argumentsDelta: false, nameDelta: false },
+    'provider tool call helper extracts OpenAI Responses function calls as complete snapshots, not stream deltas'
   )
   assert.deepEqual(
     extractProviderToolCalls({ content: [{ type: 'tool_use', id: 'tool_1', name: 'read_context', input: { scope: 'note' } }] }, 'anthropic')?.[0],
-    { id: 'tool_1', name: 'read_context', arguments: { scope: 'note' }, rawArguments: { scope: 'note' }, argumentsComplete: true },
-    'provider tool call helper extracts Anthropic tool_use blocks'
+    { id: 'tool_1', name: 'read_context', arguments: { scope: 'note' }, rawArguments: { scope: 'note' }, argumentsComplete: true, argumentsDelta: false, nameDelta: false },
+    'provider tool call helper extracts Anthropic tool_use blocks as complete snapshots'
   )
   const mergedProviderToolCalls = mergeProviderToolCallParts([
-    { id: 'fc_stream', callId: 'call_stream', index: 0, name: 'search_web', arguments: {}, rawArguments: '{"query":', argumentsComplete: false },
-    { id: 'fc_stream', index: 0, name: '', arguments: {}, rawArguments: '"IsleMind"}', argumentsComplete: false },
+    { id: 'fc_stream', callId: 'call_stream', index: 0, name: 'search_web', arguments: {}, rawArguments: '{"query":', argumentsComplete: false, argumentsDelta: true, nameDelta: true },
+    { id: 'fc_stream', index: 0, name: '', arguments: {}, rawArguments: '"IsleMind"}', argumentsComplete: false, argumentsDelta: true },
   ])
   assert.deepEqual(
     mergedProviderToolCalls[0],
-    { id: 'fc_stream', callId: 'call_stream', index: 0, name: 'search_web', arguments: { query: 'IsleMind' }, rawArguments: '{"query":"IsleMind"}', argumentsComplete: true },
+    { id: 'fc_stream', callId: 'call_stream', index: 0, name: 'search_web', arguments: { query: 'IsleMind' }, rawArguments: '{"query":"IsleMind"}', argumentsComplete: true, argumentsDelta: true, nameDelta: true },
     'provider tool call helper merges streamed argument fragments'
   )
   assert.deepEqual(
@@ -31259,7 +31405,7 @@ function assertProviderModelDiscoveryBehavior() {
   assert.equal(newApiRichModel?.preferredEndpoint, 'responses', 'provider model discovery maps explicit relay Responses endpoint metadata')
   assert.equal(newApiRichModel?.reasoningMode, 'openai-effort', 'provider model discovery maps reasoning_effort metadata to OpenAI-compatible reasoning controls')
   const newApiWeakKnownModel = newApiSyncedModels.find((model) => model.id === 'newapi/gpt-5.2')
-  assert.equal(newApiWeakKnownModel?.supportsTools, false, 'metadata-gated relay discovery does not inherit tools from a known model name without remote evidence')
+  assert.equal(newApiWeakKnownModel?.supportsTools, null, 'metadata-gated relay discovery preserves unknown tool support without inheriting model-name evidence')
   assert.equal(newApiWeakKnownModel?.supportsVision, false, 'metadata-gated relay discovery does not inherit vision from a known model name without remote evidence')
   assert.equal(newApiWeakKnownModel?.supportsFiles, false, 'metadata-gated relay discovery does not inherit files from a known model name without remote evidence')
   assert.equal(newApiWeakKnownModel?.preferredEndpoint, 'chat-completions', 'metadata-gated relay discovery keeps Chat Completions as the default unless Responses is explicit')
@@ -31269,7 +31415,7 @@ function assertProviderModelDiscoveryBehavior() {
     data: [{ id: 'sub2api/qwen3.7-max', name: 'Qwen3.7 Max', architecture: { input_modalities: ['text'] } }],
   }, 'openai-compatible', { providerPresetId: 'sub2api' })
   assert.equal(sub2apiWeakModels[0].reasoningMode, undefined, 'Sub2API weak model metadata does not inherit Qwen thinking controls by model name alone')
-  assert.equal(sub2apiWeakModels[0].supportsTools, false, 'Sub2API weak model metadata does not inherit provider-native tools by model name alone')
+  assert.equal(sub2apiWeakModels[0].supportsTools, null, 'Sub2API weak model metadata preserves unknown tool support rather than inventing a denial or support claim')
 }
 
 function assertProviderCompatibilityContractBehavior() {
@@ -42780,7 +42926,7 @@ async function runFocused() {
     return
   }
   if (focus === 'web-search-settings-policy') {
-    assertWebSearchSettingsPolicyBehavior()
+    await assertWebSearchSettingsPolicyBehavior()
     return
   }
   if (focus === 'built-in-search-runtime') {

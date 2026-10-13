@@ -4514,7 +4514,10 @@ async function testModelOperationTurnRuntimeBoundaries(runtimeModule) {
   })
   postEffectCancellation = undefined
   assert.equal(cancelledAfterEffect.kind, 'cancelled')
-  assert.equal(cancelledAfterEffect.receipt.code, 'cancelled')
+  assert.equal(cancelledAfterEffect.receipt.code, 'ok', 'stopping the loop must not erase an already completed effect')
+  assert.equal(cancelledAfterEffect.receipt.status, 'succeeded', 'receipt status describes execution, not the run cancellation request')
+  assert.equal(cancelledAfterEffect.receipt.output.length, 256, 'late receipt output retains the same bound')
+  assert.equal(cancelledAfterEffect.receipt.callId, call.callId, 'late evidence remains tied to the exact call')
   assert.equal(dispatchCount, 2, 'post-effect cancellation observes exactly one durable dispatch')
   assert.equal(
     continuationCount,

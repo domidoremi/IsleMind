@@ -303,6 +303,11 @@ function assertSourceIntegration() {
   const chatSetupSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatSetupWorkspace.tsx'), 'utf8')
   const chatAiConfigurationSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatAiConfigurationSheet.tsx'), 'utf8')
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const settingsNavigationSource = fs.readFileSync(path.join(root, 'src/components/settings/SettingsNavigationContent.tsx'), 'utf8')
+  const systemSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/SystemSettingsPanelContent.tsx'), 'utf8')
+  const settingsPageSource = fs.readFileSync(path.join(root, 'src/components/settings/SettingsPageShell.tsx'), 'utf8')
+  const settingsTaskSource = fs.readFileSync(path.join(root, 'src/components/settings/SettingsTaskWorkspace.tsx'), 'utf8')
+  const messageActivityTimelineSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageActivityTimeline.tsx'), 'utf8')
   const searchFieldSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/SearchField.tsx'), 'utf8')
   const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   const providerSettingsRouteSource = fs.readFileSync(path.join(root, 'app/settings/providers.tsx'), 'utf8')
@@ -323,7 +328,8 @@ function assertSourceIntegration() {
   assert.ok(historyScreenSource.includes('common.backToChat') && historyScreenSource.includes('conversation.title') && historyScreenSource.includes('chat.newConversation'), 'History owns return, title, search, and new conversation actions')
   const historyEmptyStateSource = historyScreenSource.match(/kind="history-empty"[\s\S]*?\/>/)?.[0] ?? ''
   assert.doesNotMatch(historyEmptyStateSource, /actionLabel|actionGlyph|onAction/, 'History empty state does not duplicate the persistent new-conversation action')
-  assert.ok(settingsScreenSource.includes('common.backToChat') && settingsScreenSource.includes("searchLabel={t('settings.search')}"), 'Settings owns return, title, and search actions')
+  assert.match(settingsScreenSource, /<SettingsNavigationContent[\s\S]*shellNavigation=\{shellNavigation\}[\s\S]*onHome=\{onHome\}/, 'Settings forwards shell navigation and return to its shared navigation content')
+  assert.ok(settingsNavigationSource.includes('common.backToChat') && settingsNavigationSource.includes("t('settings.title')") && settingsNavigationSource.includes("accessibilityLabel={t('settings.search')}"), 'Settings navigation owns accessible return, title, and search actions')
   assert.ok(chatHeaderSource.includes("t('conversation.title')") && chatPersistentHeaderSource.includes('chat.newConversation') && chatPersistentHeaderSource.includes('settings.title'), 'Chat owns the conversation entry, new conversation, and settings header actions')
   assert.match(chatPersistentHeaderSource, /width: ISLE_MIN_TOUCH_TARGET,[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'Chat header navigation exposes physical 44dp controls')
   assert.ok(chatHeaderSource.includes('onOpenModelPicker') && chatHeaderSource.includes('<ChatAiConfigurationSheet') && chatSetupSource.includes('<ChatAiConfigurationSheet') && chatAiConfigurationSource.includes('chat-ai-configuration-panel'), 'Chat model triggers reach one unified AI configuration sheet')
@@ -339,9 +345,11 @@ function assertSourceIntegration() {
   assert.ok(mainPagerSource.includes('aria-hidden={!active}'), 'web pager pages expose hidden state for inactive pages')
   assert.match(mainPagerSource, /const MAIN_PAGER_PATH_BY_PAGE:[\s\S]*history: '\/conversations'[\s\S]*home: '\/'[\s\S]*settings: '\/settings'/, 'pager centralizes all three compatible top-level aliases')
   assert.match(runtimeDiagnosticsDetailsSource, /runtimeDiagnosticCompactValue[\s\S]{0,1000}capable: diagnostics\.compact\.capableProviders/, 'runtime diagnostics interpolate compact capable-provider counts')
-  assert.match(settingsScreenSource, /function SettingsToggleRow[\s\S]{0,1800}<Text numberOfLines=\{3\}/, 'advanced notification details retain three readable mobile lines')
-  assert.ok(settingsScreenSource.includes('<IsleSearchField') && searchFieldSource.includes('style={{ width: 44, height: 44'), 'Settings search exposes a shared physical 44dp clear action')
-  assert.ok(settingsScreenSource.includes('controlSearchPlaceholder') && searchFieldSource.includes('minHeight: 44'), 'Settings search input exposes a physical 44dp target')
+  const settingsToggleSource = systemSettingsSource.split('function SettingsToggleRow')[1]?.split('function SettingsMiniSwitch')[0] ?? ''
+  assert.match(settingsToggleSource, /<Text[^>]*>\s*\{description\}/, 'notification descriptions remain visible in the system settings toggle')
+  assert.doesNotMatch(settingsToggleSource, /numberOfLines=/, 'notification titles and descriptions wrap fully at large text sizes')
+  assert.ok(settingsNavigationSource.includes('<IsleSearchField') && searchFieldSource.includes('style={{ width: 44, height: 44'), 'Settings search exposes a shared physical 44dp clear action')
+  assert.ok(settingsNavigationSource.includes("placeholder={t('settings.search')}") && searchFieldSource.includes('minHeight: 44'), 'Settings search input exposes a physical 44dp target')
   assert.match(apiKeyPanelSource, /function ChoiceButton[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider model choices expose physical 44dp targets')
   assert.match(apiKeyPanelSource, /function CapabilityToggle[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider capability toggles expose physical 44dp targets')
   assert.match(apiKeyPanelSource, /function IconIsleChip[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'provider credential icon actions expose physical 44dp targets')
@@ -372,12 +380,12 @@ function assertSourceIntegration() {
   assert.match(mainPagerSource, /<RetainedHomeScreenContent[\s\S]*?active=\{page === 'home'\}/, 'Home refresh work follows the settled active page, not the visual target')
   assert.match(mainPagerSource, /<RetainedConversationsScreenContent[\s\S]*onHome=\{showHome\}/, 'History keeps its direct Home-return action')
   assert.match(mainPagerSource, /<RetainedSettingsScreenContent onHome=\{showHome\} \/>/, 'Settings keeps a stable direct Home-return action without visibility-driven re-renders')
-  assert.match(settingsScreenSource, /export const SettingsScreenContent = memo\(function SettingsScreenContent/, 'the retained Settings tree memoizes parent-only pager updates')
-  assert.doesNotMatch(settingsScreenSource, /usePathname/, 'returning to Settings does not introduce route-driven scroll resets')
-  assert.match(settingsScreenSource, /const resetControlScroll = useCallback\([\s\S]*?scrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/, 'explicit catalog/detail changes reset stale offsets before the content shrinks')
-  assert.match(settingsScreenSource, /const toggleControlView = useCallback\([\s\S]*?if \(nextView === controlView\) return[\s\S]*?resetControlScroll\(\)/, 'reselecting the current tab preserves the current scroll context')
-  assert.match(settingsScreenSource, /if \(!expandedGroups\.advanced\) return[\s\S]*refreshSystemStatusNotificationStatus/, 'native notification status loads only when its panel is disclosed')
-  assert.match(settingsScreenSource, /if \(!expandedGroups\.governance \|\| !expandedGovernanceGroups\.observability\) return[\s\S]*getObservabilitySinkApiKey/, 'secure observability credentials load only when their disclosure is visible')
+  assert.match(settingsNavigationSource, /export const SettingsNavigationContent = memo\(function SettingsNavigationContent/, 'the retained Settings tree memoizes parent-only pager updates')
+  assert.doesNotMatch(settingsScreenSource + settingsNavigationSource, /usePathname/, 'returning to Settings does not introduce route-driven scroll resets')
+  assert.match(settingsPageSource, /resetScroll: \(\) => \{ cancel\(\); scrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/, 'explicit task/detail navigation can reset stale offsets before content shrinks')
+  assert.match(settingsTaskSource, /if \(inline \|\| !navigating\.current\) return[\s\S]*?resetScroll\?\.\(\)[\s\S]*?\}, \[selected\]\)/, 'task scroll reset follows explicit selection changes, not ordinary re-renders')
+  assert.match(systemSettingsSource, /if \(panel !== 'advanced'\) return[\s\S]*refreshSystemStatusNotificationStatus/, 'native notification status loads only on its settings page')
+  assert.match(systemSettingsSource, /if \(!expandedGroups\.governance \|\| !expandedGovernanceGroups\.observability \|\| observabilityKeyLoaded\) return[\s\S]*getObservabilitySinkApiKey/, 'secure observability credentials load only when their disclosure is visible')
 
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   const chatActiveWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveWorkspace.tsx'), 'utf8')
@@ -464,28 +472,29 @@ function assertSourceIntegration() {
   assert.ok(chatOptionsSource.includes('SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH') && chatOptionsSource.includes('numberOfLines={1}'), 'model alias editing stays bounded and canonical identity text truncates on narrow screens')
   assert.match(chatOptionsSource, /selectProviderAccessibilityHint[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]*selectModelAccessibilityHint[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'AI configuration provider and model chips expose physical 44dp targets')
   assert.match(runtimeRepairIntentSource, /function RuntimeRepairIntentButton[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'runtime repair actions expose physical 44dp targets')
-  assert.match(providerSettingsSource, /placeholder=\{t\('providerSettings\.filterModels'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider model search exposes a physical 44dp input target')
-  assert.match(providerSettingsSource, /accessibilityLabel=\{t\('common\.clearSearch'\)\}[\s\S]{0,300}width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'provider model search clear action exposes a physical 44dp target')
+  assert.match(apiKeyPanelSource, /<IsleSearchField accessibilityLabel=\{t\('providerSettings\.searchModels'\)\}/, 'model search uses the shared theme-aware 44dp search input')
+  assert.match(apiKeyPanelSource, /clearAccessibilityLabel=\{t\('common\.clearSearch'\)\}[\s\S]*onClear=\{\(\) => setModelQuery\(''\)\}/, 'model search provides the shared accessible clear action')
   assert.match(providerSettingsSource, /function ChoiceIsleChip[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider filter choices expose physical 44dp targets')
   assert.match(providerSettingsSource, /advancedInterfaceSettings[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider advanced settings disclosure exposes a physical 44dp target')
   assert.match(messageBubbleSource, /<MessageSources\s/, 'message bubbles render their captured sources through the source-list component')
   assert.match(messageSourcesSource, /accessibilityLabel=\{t\('messageBubble\.openCapturedSource'[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'captured source links expose physical 44dp targets')
-  assert.match(messageBubbleSource, /function MessageProcessLayer[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'message process disclosures expose physical 44dp targets')
-  assert.ok(messageBubbleSource.includes('getAssistantThinkingLabel') && messageBubbleSource.includes('numberOfLines={1}'), 'named assistant activity reuses the bounded single-line process status on mobile')
+  assert.match(messageActivityTimelineSource, /messageBubble\.process[\s\S]{0,1000}minHeight: ISLE_MIN_TOUCH_TARGET/, 'the shared message process disclosure exposes a physical 44dp target')
+  assert.match(messageActivityTimelineSource, /minHeight: canExpand \? ISLE_MIN_TOUCH_TARGET/, 'individual expandable activities retain physical 44dp targets')
+  assert.ok(messageBubbleSource.includes('<MessageActivityTimeline') && messageActivityTimelineSource.includes('messageActivityLabel(current, t)'), 'message status is delegated to the shared real-activity timeline')
   assert.equal(messageBubbleSource.includes('<ProcessAnchor'), false, 'reply process status does not render the retired circular anchor')
   assert.equal(messageBubbleSource.includes('function ProcessSpinner'), false, 'reply process status does not retain the circular spinner implementation')
-  assert.ok(messageBubbleSource.includes("const activeTrace = selectActiveProcessTrace(traces, message.status)") && messageBubbleSource.includes('activeTrace && !isGenericModelRequestTrace(activeTrace)'), 'active search, retrieval, reasoning, and tool traces take priority over the generic writing label')
+  assert.match(messageActivityTimelineSource, /const current = \[\.\.\.rows\]\.reverse\(\)\.find\(row => row\.state === 'running'\)/, 'the latest actual running activity takes priority over the terminal summary')
   assert.doesNotMatch(emptyStateSource, /from=\{\{|<MotiView/, 'empty states render immediately without automatic mount animation')
   assert.doesNotMatch(globalGenerationStatusSource, /from=|<AnimatePresence|<MotiView/, 'global generation status renders immediately without entrance or exit animation')
   assert.doesNotMatch(providerSettingsSource, /from=\{\{ opacity: 0, translateY: (?:6|8|32) \}\}/, 'provider progress cards and modal shells do not restore automatic mount animation')
   assert.doesNotMatch(sourceDetailScreenSource, /from=\{\{ opacity: motion === 'full'/, 'source loading indicators pulse without a first-mount fade')
   assert.ok(
-    messageBubbleSource.includes("grammar === 'precision'") &&
-      messageBubbleSource.includes("grammar === 'material'") &&
-      messageBubbleSource.includes("'.'.repeat(motion === 'full' ? dotCount : 3)") &&
-      messageBubbleSource.includes('setInterval(() =>') &&
-      messageBubbleSource.includes("const shimmer = active && motion === 'full' && grammar !== 'precision'") &&
-      messageBubbleSource.includes('loop: shimmer'),
+    messageActivityTimelineSource.includes("resolveThemeComponentExpression(canonicalThemeId, 'aiResponse').motion") &&
+      messageActivityTimelineSource.includes("grammar === 'material'") &&
+      messageActivityTimelineSource.includes("'.'.repeat(motion === 'full' ? dotCount : 3)") &&
+      messageActivityTimelineSource.includes('return () => clearInterval(timer)') &&
+      messageActivityTimelineSource.includes("const shimmer = active && motion === 'full' && grammar !== 'precision'") &&
+      messageActivityTimelineSource.includes('loop: shimmer'),
     'reply process labels preserve theme-specific precision, Material, organic, and fluid status motion',
   )
   assert.ok(
@@ -572,7 +581,8 @@ function assertSourceIntegration() {
     'floating Composer owns explicit independent surfaces and an anchored model menu',
   )
   assert.ok(chatActiveWorkspaceMessageListPropsSource.includes('multimodalPolicy') && chatActiveMessageFeedSource.includes('multimodalPolicy={multimodalPolicy}') && chatActiveMessageEmptyStateSource.includes('multimodalPolicy={multimodalPolicy}'), 'empty conversation boundary displays provider/media readiness')
-  assert.ok(chatEmptyStateSource.includes('onInspectProvider={onProviders}'), 'empty compact boundary routes provider-fixable gaps without adding another card')
+  assert.match(chatEmptyStateSource, /context="conversation"[\s\S]*boundary=\{\/\*[^]*?\*\/ null\}/, 'empty conversations do not mount dormant capability scores')
+  assert.ok(floatingComposerSource.includes('onOpenConfiguration={() => {'), 'the composer retains a direct configuration action without an empty-state readiness card')
   assert.ok(chatSetupWorkspaceSource.includes("onOpenTools={() => setComposerPanel('more')}") && chatActiveMessageEmptyStateSource.includes("onOpenTools={() => setComposerPanel('more')}"), 'compact boundary can open composer tools without adding another mobile card')
   assert.ok(chatWorkspaceSource.includes("pushChatSettingsRoute('/settings/memory', { focus: 'review' })"), 'compact boundary can route pending memory to review without adding another mobile card')
   assert.ok(chatSetupWorkspaceSource.includes('memoryStatus={boundaryMemoryStatus}') && chatActiveWorkspaceMessageListPropsSource.includes('memoryStatus') && chatActiveMessageFeedSource.includes('memoryStatus={memoryStatus}'), 'compact boundary receives source-level memory status without a tall drawer')

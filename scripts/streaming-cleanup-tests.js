@@ -235,8 +235,8 @@ function run() {
   )
   assert.match(
     conversationReplyStartSource,
-    /const conversationMessageRuntime: ConversationMessageRuntime = \{\s*dispatchAfterUserProjection: conversationReplyDispatchController\.dispatch,\s*startAfterHistoryProjection: startConversationAssistantReplyAfterHistoryProjection,\s*startConfirmedWorkflowReply: startConversationChatWorkflowReply,[\s\S]*?async resumePendingModelOperation\(conversationId, assistantMessageId, runId, approved\)[\s\S]*?resumeConversationModelOperation\(\{[\s\S]*?runId,[\s\S]*?approved,[\s\S]*?projection: createPlainChatProjection\([\s\S]*?listConversationToolManifests,\s*resolveConversationTool,\s*saveApprovedWorkflowSkillSuggestion,\s*\}[\s\S]*?bindConversationMessageRuntime\(conversationMessageRuntime\)/,
-    'bootstrap alone installs the combined dispatch, target reply-start, confirmed workflow, model-operation resume, catalog, and workflow-skill runtime',
+    /const conversationMessageRuntime: ConversationMessageRuntime = \{\s*dispatchAfterUserProjection: conversationReplyDispatchController\.dispatch,\s*startAfterHistoryProjection: startUserRequestedAssistantReply,\s*startConfirmedWorkflowReply: startUserRequestedChatWorkflowReply,[\s\S]*?cancelResponseRun: cancelConversationResponseRun,[\s\S]*?async resumePendingModelOperation\(conversationId, assistantMessageId, runId, approved, identity\)[\s\S]*?resumeConversationModelOperation\(\{[\s\S]*?runId,[\s\S]*?approved,\s*\.\.\.identity,[\s\S]*?projection: createPlainChatProjection\([\s\S]*?listConversationToolManifests,\s*resolveConversationTool,\s*saveApprovedWorkflowSkillSuggestion,\s*\}[\s\S]*?bindConversationMessageRuntime\(conversationMessageRuntime\)/,
+    'bootstrap alone installs dispatch, reply-start, workflow, durable cancellation, identity-bound resume, catalog, and workflow-skill runtime',
   )
   assert.equal(fs.existsSync(chatRunnerPath), false, 'the fully migrated Chat facade cannot be restored')
 

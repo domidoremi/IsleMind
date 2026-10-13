@@ -3,6 +3,8 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 
 const repository = 'https://github.com/domidoremi/animal-island-ui.git'
+// Saved RN 0.86.3-compatible input; update only after paired-source validation.
+const pairedUiRevision = '122151919fcf4f29a6dd4d77ed674c2dcd67a2cc'
 const sharedRuntimes = ['react', 'react-native', 'react-native-svg']
 
 /** Outside-root workspaces cannot resolve hoisted dependencies by walking upwards.
@@ -48,7 +50,7 @@ function linkAnimalIslandUiRuntimes({ root = path.resolve(__dirname, '..') } = {
 }
 
 /** Provision the sibling workspace for CI/EAS; never replace a developer's checkout. */
-function prepareAnimalIslandUi({ root = path.resolve(__dirname, '..'), ref = process.env.ANIMAL_ISLAND_UI_REF, git = execFileSync } = {}) {
+function prepareAnimalIslandUi({ root = path.resolve(__dirname, '..'), ref = process.env.ANIMAL_ISLAND_UI_REF || pairedUiRevision, git = execFileSync } = {}) {
   const directory = path.resolve(root, '../animal-island-ui')
   if (ref && !/^[a-f0-9]{40}$/i.test(ref)) throw new Error('ANIMAL_ISLAND_UI_REF must be a full commit SHA.')
   if (!fs.existsSync(directory)) {
@@ -78,4 +80,4 @@ if (require.main === module) {
   if (process.argv.includes('--link-runtimes')) linkAnimalIslandUiRuntimes()
   else prepareAnimalIslandUi()
 }
-module.exports = { prepareAnimalIslandUi, linkAnimalIslandUiRuntimes, sharedRuntimes }
+module.exports = { prepareAnimalIslandUi, linkAnimalIslandUiRuntimes, sharedRuntimes, pairedUiRevision }

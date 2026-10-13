@@ -48,9 +48,11 @@ async function main() {
   await testWorkflowSkillSaveAction(workflowSaveModule)
   testProductionMessageRuntimeBoundary()
   testStopFlushesBeforeTerminalProjectionAndKeepsConversationScope(controlModule)
+  await testRecoveredConfirmationCancellation(controlModule)
   await testStaleRecoveryCommitsBuffersAndIsIdempotent(controlModule)
   await testStaleRecoveryUsesDurableOwner(controlModule)
   await testRetryStopsBeforeTrimAndAwaitsReplyStart(controlModule)
+  await testCancelledEmptyReplyCanRestart(controlModule)
   await testRegenerateStopsBeforeExactRemovalAndAwaitsReplyStart(controlModule)
   await testControlReplyStartFailuresPropagate(controlModule)
 
@@ -1418,6 +1420,25 @@ async function testRetryStopsBeforeTrimAndAwaitsReplyStart(controlModule) {
   assert.equal(settled, true)
 }
 
+async function testCancelledEmptyReplyCanRestart(controlModule) {
+  const user = createControlMessage('user-cancelled', 'user', 'done', { content: 'A local task.' })
+  const fixture = createControlFixture(controlModule, {
+    conversations: [createControlConversation('conversation-cancelled', [
+      user,
+      createControlMessage('assistant-cancelled', 'assistant', 'cancelled', { content: '' }),
+    ])],
+  })
+
+  assert.equal(fixture.events.length, 0, 'cancelled messages do not restart automatically')
+  await fixture.controller.retry('conversation-cancelled', 'assistant-cancelled')
+  assert.deepEqual(fixture.getConversation('conversation-cancelled').messages, [user], 'retry preserves the user request, not the cancelled response')
+  assert.equal(fixture.events.filter(event => event === 'start:conversation-cancelled').length, 1)
+  assert.ok(
+    fixture.events.indexOf('trim:conversation-cancelled:user-cancelled') < fixture.events.indexOf('start:conversation-cancelled'),
+    'explicit retry uses fresh reply startup, not pending tool-operation approval',
+  )
+}
+
 async function testRegenerateStopsBeforeExactRemovalAndAwaitsReplyStart(controlModule) {
   let releaseStart
   const startDone = new Promise((resolve) => {
@@ -1564,6 +1585,88 @@ async function testStaleRecoveryUsesDurableOwner(controlModule) {
   assert.equal(racing.getMessage(conversationId, messageId).status, 'streaming')
 }
 
+async function testRecoveredConfirmationCancellation(controlModule) {
+  const conversationId = 'recovered-confirmation'
+  const messageId = 'pending-response'
+  const run = { id: 'pending-run', conversationId, responseMessageId: messageId, status: 'awaiting-confirmation' }
+  const conversations = [createControlConversation(conversationId, [
+    createControlMessage('user', 'user', 'done'),
+    createControlMessage(messageId, 'assistant', 'streaming'),
+  ])]
+  const cancellations = []
+  let finishCancellation
+  let projections = 0
+  const fixture = createControlFixture(controlModule, {
+    conversations,
+    getLatestResponseRun: async () => run,
+    cancelResponseRun: (runId) => {
+      cancellations.push(runId)
+      return new Promise((resolve) => { finishCancellation = resolve })
+    },
+    async recoverProjection(terminal) {
+      assert.equal(terminal.status, 'cancelled')
+      projections += 1
+      fixture.getMessage(conversationId, messageId).status = 'cancelled'
+    },
+  })
+  const stopping = fixture.controller.stop(conversationId)
+  const duplicate = fixture.controller.stop(conversationId)
+  await Promise.resolve()
+  assert.deepEqual(cancellations, [run.id], 'Stop reaches the durable owner once without a live stream')
+  assert.equal(projections, 0, 'cancellation is not projected before its journal write succeeds')
+  finishCancellation({ ...run, status: 'cancelled' })
+  await Promise.all([stopping, duplicate])
+  assert.equal(projections, 1, 'duplicate Stop shares the in-flight cancellation')
+  assert.equal(fixture.getMessage(conversationId, messageId).status, 'cancelled')
+  assert.deepEqual(fixture.finishedTasks, [], 'presentation does not fabricate an observational cancellation')
+
+  let failCancellation = true
+  const failure = new Error('cancellation persistence failed')
+  const failed = createControlFixture(controlModule, {
+    conversations,
+    getLatestResponseRun: async () => run,
+    async cancelResponseRun() {
+      if (failCancellation) throw failure
+      return { ...run, status: 'cancelled' }
+    },
+    async recoverProjection() { failed.getMessage(conversationId, messageId).status = 'cancelled' },
+  })
+  await assert.rejects(failed.controller.retry(conversationId, messageId), error => error === failure)
+  assert.equal(failed.getMessage(conversationId, messageId).status, 'streaming')
+  assert.equal(failed.events.some(event => /^(trim|start):/.test(event)), false, 'failed Stop cannot trim history or start another request')
+  failCancellation = false
+  await failed.controller.stop(conversationId)
+  assert.equal(failed.getMessage(conversationId, messageId).status, 'cancelled', 'failed cancellation remains retryable')
+
+  let finishLookup
+  const racing = createControlFixture(controlModule, {
+    conversations,
+    getLatestResponseRun: () => new Promise(resolve => { finishLookup = resolve }),
+    cancelResponseRun: async () => { assert.fail('newly live work must not be cancelled by stale lookup') },
+  })
+  const racedStop = racing.controller.stop(conversationId)
+  const live = { messageId: 'new-response', controller: new AbortController() }
+  racing.activeStreams.set(conversationId, live)
+  finishLookup(run)
+  await assert.rejects(racedStop, /conversation_stop_target_changed/)
+  assert.equal(racing.activeStreams.get(conversationId), live)
+  assert.equal(live.controller.signal.aborted, false)
+
+  let finishWrite
+  const writeRace = createControlFixture(controlModule, {
+    conversations,
+    getLatestResponseRun: async () => run,
+    cancelResponseRun: () => new Promise(resolve => { finishWrite = resolve }),
+    recoverProjection: async () => { assert.fail('a completed cancellation cannot overwrite a newer live stream') },
+  })
+  const racedRetry = writeRace.controller.retry(conversationId, messageId)
+  await Promise.resolve()
+  writeRace.activeStreams.set(conversationId, live)
+  finishWrite({ ...run, status: 'cancelled' })
+  await assert.rejects(racedRetry, /conversation_stop_target_changed/)
+  assert.equal(writeRace.events.some(event => /^(trim|start):/.test(event)), false)
+}
+
 function createControlFixture(controlModule, options = {}) {
   const conversations = structuredClone(options.conversations ?? [])
   const events = []
@@ -1594,6 +1697,7 @@ function createControlFixture(controlModule, options = {}) {
   const findConversation = (conversationId) => conversations.find((conversation) => conversation.id === conversationId)
   const findMessage = (conversationId, messageId) => findConversation(conversationId)?.messages.find((message) => message.id === messageId)
   const controller = controlModule.createConversationControlController({
+    cancelResponseRun: options.cancelResponseRun ?? (async () => { assert.fail('unexpected durable cancellation') }),
     buildEstimatedUsage(inputMessages, outputText) {
       return {
         inputTokens: inputMessages.reduce((total, message) => total + message.content.length, 0),
@@ -1970,6 +2074,7 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
     /conversation_message_runtime_uninitialized/,
     'unbound durable lookup fails closed instead of treating messages as orphans',
   )
+  await assert.rejects(runtimeBindingModule.cancelConversationResponseRunRuntime('pending-run'), /conversation_message_runtime_uninitialized/)
   await assert.rejects(
     runtimeBindingModule.dispatchConversationMessageRuntime(input),
     (error) => error instanceof Error
@@ -2093,12 +2198,15 @@ async function testConversationMessageRuntimeBinding(runtimeBindingModule) {
     async getLatestResponseRun(conversationId, responseMessageId) {
       return { id: 'read-only-run', conversationId, responseMessageId }
     },
+    async cancelResponseRun(runId) { return { id: runId, status: 'cancelled' } },
     listConversationToolManifests: boundListConversationToolManifests,
     resolveConversationTool: boundResolveConversationTool,
     saveApprovedWorkflowSkillSuggestion: boundSaveApprovedWorkflowSkillSuggestion,
   }
   runtimeBindingModule.bindConversationMessageRuntime(boundRuntime)
   runtimeBindingModule.bindConversationMessageRuntime(boundRuntime)
+  assert.deepEqual(await runtimeBindingModule.cancelConversationResponseRunRuntime('pending-run'), { id: 'pending-run', status: 'cancelled' })
+  assert.throws(() => runtimeBindingModule.bindConversationMessageRuntime({ ...boundRuntime, cancelResponseRun: async () => undefined }), /conversation_message_runtime_already_bound/)
   assert.deepEqual(
     await runtimeBindingModule.getLatestConversationResponseRunRuntime('conversation-gap', 'message-gap'),
     { id: 'read-only-run', conversationId: 'conversation-gap', responseMessageId: 'message-gap' },
@@ -2470,8 +2578,10 @@ function testProductionMessageRuntimeBoundary() {
     'the message bubble saves workflow skills through the presentation command',
   )
   assert.ok(
-    messageBubbleActionsSource.includes('confirmConversationAction(conversationId, message.id)'),
-    'the message bubble confirms actions through the presentation command',
+    messageBubbleActionsSource.includes('confirmConversationAction(conversationId, message.id, async run =>') &&
+      messageBubbleActionsSource.includes('agentConfirmationPreview(run)') &&
+      messageBubbleActionsSource.includes('await loadWorkspaceEditReview(pending, controller.signal)'),
+    'the message bubble confirms actions through the presentation command with visible operation and file review',
   )
   assert.equal(messageBubbleActionsSource.includes("from '@/services/chatRunner'"), false, 'message actions never import the legacy runner')
   assert.equal(actionCommandSource.includes("from '@/services/chatRunner'"), false, 'the presentation action command does not import the legacy runner')
@@ -2577,9 +2687,13 @@ function testProductionMessageRuntimeBoundary() {
     'repeated startup returns before stream, review, or message rebinding and marks completion only after every binding succeeds',
   )
   assert.ok(adapterSource.includes('dispatchAfterUserProjection: conversationReplyDispatchController.dispatch'), 'bootstrap composes post-user dispatch into the installed runtime')
-  assert.ok(adapterSource.includes('startAfterHistoryProjection: startConversationAssistantReplyAfterHistoryProjection'), 'bootstrap composes the target reply starter into the installed runtime')
-  assert.ok(adapterSource.includes('startConfirmedWorkflowReply: startConversationChatWorkflowReply'), 'bootstrap composes confirmed workflow startup into the installed runtime')
-  assert.ok(adapterSource.includes('async resumePendingModelOperation(conversationId, assistantMessageId, runId, approved)'), 'bootstrap composes same-run model-operation resume into the installed runtime')
+  assert.ok(adapterSource.includes('startAfterHistoryProjection: startUserRequestedAssistantReply'), 'history retry enters explicit foreground resource readmission')
+  assert.ok(adapterSource.includes('startAssistantReply: startUserRequestedAssistantReply'), 'typed sends use the same explicit resource readmission')
+  assert.match(adapterSource, /async function startUserRequestedAssistantReply\(conversationId: string\): Promise<void> \{\s*assistantExecutionHost\.prepareUserResume\(\)\s*await startConversationAssistantReplyAfterHistoryProjection\(conversationId\)\s*\}/, 'foreground resource readmission precedes the unchanged target reply starter')
+  assert.match(adapterSource, /const startUserRequestedChatWorkflowReply: typeof startConversationChatWorkflowReply = async \(\.\.\.args\) => \{\s*assistantExecutionHost\.prepareUserResume\(\)\s*await startConversationChatWorkflowReply\(\.\.\.args\)\s*\}/, 'explicit structured workflow starts recheck resources without changing workflow arguments')
+  assert.ok(adapterSource.includes('startConfirmedWorkflowReply: startUserRequestedChatWorkflowReply'), 'bootstrap composes confirmed workflow startup into the installed runtime')
+  assert.ok(adapterSource.includes('async resumePendingModelOperation(conversationId, assistantMessageId, runId, approved, identity)'), 'bootstrap composes identity-bound same-run model-operation resume into the installed runtime')
+  assert.match(adapterSource, /resumeConversationModelOperation\(\{[^}]*approved,\s*\.\.\.identity,/, 'bootstrap forwards the reviewed continuation identity to runtime admission')
   assert.ok(adapterSource.includes('listConversationToolManifests,'), 'bootstrap composes the neutral tool catalog into the installed runtime')
   assert.ok(
     adapterSource.includes('saveApprovedWorkflowSkillSuggestion,'),

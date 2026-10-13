@@ -3344,8 +3344,10 @@ const requiredContracts = [
       ['src/bootstrap/conversationReplyStart.ts', /createChatWorkflowRuntime: createChatWorkflowRuntime/],
       ['src/bootstrap/conversationReplyStart.ts', /cancellationSignal: controller\.signal/],
       ['src/bootstrap/conversationReplyStart.ts', /dispatchAfterUserProjection: conversationReplyDispatchController\.dispatch/],
-      ['src/bootstrap/conversationReplyStart.ts', /const conversationMessageRuntime: ConversationMessageRuntime = \{[^]*?startAfterHistoryProjection: startConversationAssistantReplyAfterHistoryProjection[^]*?export function initializeConversationReplyStart\(\): void \{[^]*?registerStreamAborter\(stopConversationMessage\)[^]*?bindConversationMessageRuntime\(conversationMessageRuntime\)/],
-      ['src/bootstrap/conversationReplyStart.ts', /startConfirmedWorkflowReply: startConversationChatWorkflowReply/],
+      ['src/bootstrap/conversationReplyStart.ts', /const conversationMessageRuntime: ConversationMessageRuntime = \{[^]*?startAfterHistoryProjection: startUserRequestedAssistantReply[^]*?export function initializeConversationReplyStart\(\): void \{[^]*?registerStreamAborter\(stopConversationMessage\)[^]*?bindConversationMessageRuntime\(conversationMessageRuntime\)/],
+      ['src/bootstrap/conversationReplyStart.ts', /startConfirmedWorkflowReply: startUserRequestedChatWorkflowReply/],
+      ['src/bootstrap/conversationReplyStart.ts', /async function startUserRequestedAssistantReply\(conversationId: string\): Promise<void> \{\s*assistantExecutionHost\.prepareUserResume\(\)\s*await startConversationAssistantReplyAfterHistoryProjection\(conversationId\)/],
+      ['src/bootstrap/conversationReplyStart.ts', /const startUserRequestedChatWorkflowReply: typeof startConversationChatWorkflowReply = async \(\.\.\.args\) => \{\s*assistantExecutionHost\.prepareUserResume\(\)\s*await startConversationChatWorkflowReply\(\.\.\.args\)/],
       ['src/bootstrap/conversationReplyStart.ts', /startOrdinaryReply: startConversationAssistantReplyAfterHistoryProjection/],
       ['scripts/toolchain-runtime-compatibility-tests.js', /deletedToolchainEventStackPaths/],
       ['scripts/toolchain-runtime-compatibility-tests.js', /retiredToolchainRuntimeEvents/],
@@ -3395,6 +3397,10 @@ const requiredContracts = [
 ]
 
 const allowedNetworkAdapterFiles = new Set([
+  // User-confirmed content reports have their own bounded transport. They must
+  // not inherit Provider routing/credentials or expose fetch to presentation.
+  'src/bootstrap/contentReporting.ts',
+  'src/modules/conversations/adapters/httpContentReporting.ts',
   'src/bootstrap/providerTransport.ts',
   'src/bootstrap/androidTrustedWebFetch.ts',
   'src/modules/providers/providerRegistry.ts',
@@ -5067,7 +5073,7 @@ function checkNetworkBoundaries(projectRoot, sourceFiles) {
   return buildCheck({
     id: 'network-adapter-containment',
     title: 'Network Adapter Containment',
-    capability: 'Network calls in app source must stay in provider, update, search, MCP, or trusted built-in adapter modules.',
+    capability: 'Network calls in app source must stay in explicit provider, update, search, MCP, content-reporting, or trusted built-in adapter modules.',
     issues: disallowed.map((hit) => `Unexpected network call outside adapter boundary at ${hit.file}:${hit.line}.`),
     review: [],
     evidence: fetchHits.map((hit) => `${hit.file}:${hit.line}`),
@@ -5430,8 +5436,8 @@ function runArchitectureBoundaryAuditSelfTest() {
     assert.equal(result.summary.checks, 14, 'architecture audit self-test includes the agentic workflow, toolchain runtime, ChatWorkspace extraction, types barrel, and review budget checks')
     assert.equal(
       result.summary.blockingIssues,
-      7,
-      `architecture audit self-test requires network, grouped UI data-store, types barrel, provider presentation budget, and production matrix blockers; got ${result.blockingIssues.map((item) => `${item.checkId}:${item.issue}`).join(' | ')}`
+      8,
+      `architecture audit self-test requires UI/report-policy network, grouped UI data-store, types barrel, provider presentation budget, and production matrix blockers; got ${result.blockingIssues.map((item) => `${item.checkId}:${item.issue}`).join(' | ')}`
     )
     assert.equal(result.summary.reviewFindings, 1, 'architecture audit self-test keeps provider presentation evidence explicit')
     const agenticContractCheck = result.checks.find((check) => check.id === 'agentic-workflow-engine-boundary')
@@ -10273,6 +10279,16 @@ function runArchitectureBoundaryAuditSelfTest() {
       'architecture audit self-test blocks fetch outside adapter files'
     )
     assert.ok(
+      !result.blockingIssues.some((item) => item.checkId === 'network-adapter-containment'
+        && /(?:bootstrap\/contentReporting|conversations\/adapters\/httpContentReporting)\.ts/.test(item.issue)),
+      'architecture audit self-test admits only the explicit reporting adapter/composition files'
+    )
+    assert.ok(
+      result.blockingIssues.some((item) => item.checkId === 'network-adapter-containment'
+        && /conversations\/application\/BadReport\.ts/.test(item.issue)),
+      'architecture audit self-test still rejects network I/O in reporting application policy'
+    )
+    assert.ok(
       !result.blockingIssues.some((item) => /src\/platform\/native\/androidApkUpdates\.ts/.test(item.issue)),
       'architecture audit self-test keeps app update fetch inside the approved adapter boundary'
     )
@@ -12156,6 +12172,9 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     ['src/components/BadNetwork.tsx', "export async function BadNetwork() { return fetch('/bad') }"],
+    ['src/bootstrap/contentReporting.ts', 'export const transport = (url, init) => expoFetch(url, init)'],
+    ['src/modules/conversations/adapters/httpContentReporting.ts', 'export const submit = (input) => input.fetch(input.endpoint)'],
+    ['src/modules/conversations/application/BadReport.ts', "export const submit = () => fetch('/bad-report')"],
     ['src/components/BadTypesBarrel.tsx', "import type { Conversation } from '@/types'\nexport type BadTypesBarrel = Conversation"],
     ['src/components/BadLegacyReasoningType.tsx', "import type { ReasoningEffort } from '@/types/providerContracts'\nexport type BadLegacyReasoningType = ReasoningEffort"],
     ['src/platform/native/androidApkUpdates.ts', "export async function checkUpdates() { return fetch('https://updates.example') }"],
@@ -15612,10 +15631,18 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         'listConversationToolManifests()',
         'createPlainChatProjection({ conversation, assistantMessageId, provider, })',
         'const chatWorkspaceReviewRuntimeResolver = resolveChatWorkspaceReviewRuntime',
+        'async function startUserRequestedAssistantReply(conversationId: string): Promise<void> {',
+        'assistantExecutionHost.prepareUserResume()',
+        'await startConversationAssistantReplyAfterHistoryProjection(conversationId)',
+        '}',
+        'const startUserRequestedChatWorkflowReply: typeof startConversationChatWorkflowReply = async (...args) => {',
+        'assistantExecutionHost.prepareUserResume()',
+        'await startConversationChatWorkflowReply(...args)',
+        '}',
         'const conversationMessageRuntime: ConversationMessageRuntime = {',
         'dispatchAfterUserProjection: conversationReplyDispatchController.dispatch,',
-        'startAfterHistoryProjection: startConversationAssistantReplyAfterHistoryProjection,',
-        'startConfirmedWorkflowReply: startConversationChatWorkflowReply,',
+        'startAfterHistoryProjection: startUserRequestedAssistantReply,',
+        'startConfirmedWorkflowReply: startUserRequestedChatWorkflowReply,',
         '  saveApprovedWorkflowSkillSuggestion,',
         '}',
         'export function initializeConversationReplyStart(): void {',

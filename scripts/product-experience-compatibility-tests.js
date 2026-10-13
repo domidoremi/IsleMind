@@ -20,6 +20,7 @@ const {
   matchesSettingsControlSearch,
   normalizeSettingsControlSearch,
 } = require('../src/presentation/features/settings/settingsControlSearch.ts')
+const { buildSettingsIndex, searchSettingsIndex } = require('../src/presentation/features/settings/settingsRegistry.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProductExperienceCompatibilityHook) return
@@ -133,15 +134,17 @@ function run() {
   assert.equal(deduped.policy.errorDeduplicated, true, 'chat errors are deduplicated')
   assert.equal(deduped.policy.notificationStrategy, 'grouped', 'chat repeated errors are grouped')
   const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
+  const activityTimelineSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageActivityTimeline.tsx'), 'utf8')
+  const activityRowsSource = fs.readFileSync(path.join(root, 'src/components/chat/messageActivityRows.ts'), 'utf8')
   assert.ok(messageBubbleSource.includes('<Modal') && messageBubbleSource.includes('testID="message-action-sheet"') && messageBubbleSource.includes('statusBarTranslucent'), 'message actions render in a screen-level modal outside virtualized-list clipping')
   assert.equal(messageBubbleSource.includes('measureInWindow'), false, 'message actions do not depend on stale or clipped bubble coordinates')
   assert.ok(messageBubbleSource.includes('Gesture.LongPress()') && messageBubbleSource.includes('openActionBarFromLongPress'), 'message actions remain available from a message long press')
   assert.equal(messageBubbleSource.includes('AppIcon name="more"'), false, 'message bubbles do not expose a persistent top-right overflow button')
   assert.ok(
-    /function AnimatedProcessStatusText\(\{ active, label, tone, icon, motion, grammar, statusMotionPhase, stageStartedAt, previewText \}[\s\S]*?const shimmer = active && motion === 'full' && grammar !== 'precision'[\s\S]*?setInterval\(\(\) =>[\s\S]*?<AppIcon name=\{icon\}[\s\S]*?loop: shimmer/.test(messageBubbleSource) &&
-      messageBubbleSource.includes("grammar === 'precision'") &&
-      messageBubbleSource.includes("grammar === 'material'") &&
-      messageBubbleSource.includes("'.'.repeat(motion === 'full' ? dotCount : 3)") &&
+    /function AnimatedProcessStatusText\(\{ active, label, tone, icon, motion, grammar, statusMotionPhase, stageStartedAt, previewText \}[\s\S]*?const shimmer = active && motion === 'full' && grammar !== 'precision'[\s\S]*?setInterval\(\(\) =>[\s\S]*?<AppIcon name=\{icon\}[\s\S]*?loop: shimmer/.test(activityTimelineSource) &&
+      activityTimelineSource.includes("grammar !== 'precision'") &&
+      activityTimelineSource.includes("grammar === 'material'") &&
+      activityTimelineSource.includes("'.'.repeat(motion === 'full' ? dotCount : 3)") &&
       !messageBubbleSource.includes('function ProcessSpinner') &&
       !messageBubbleSource.includes('<ProcessAnchor'),
     'active reply stages use theme-specific status motion, reduced-motion fallbacks, and no circular anchor',
@@ -162,9 +165,10 @@ function run() {
   assert.match(messageBubbleSource, /function WorkArtifactQuickActions\([\s\S]*?minHeight: 44,\s*flexShrink: 0,/, 'work-artifact quick-action rows reserve a non-shrinking 44dp layout height')
   assert.match(messageBubbleSource, /canConfirmAction && !multiSelectActive[\s\S]*?<PendingActionQuickAction onPress=\{\(\) => onConfirmAction\?\.\(message\)\}/, 'confirmable pending actions expose a direct message-level confirmation control')
   assert.match(messageBubbleSource, /function PendingActionQuickAction\([\s\S]*?testID="message-pending-action-confirm"[\s\S]*?minHeight: 44,/, 'pending-action confirmation remains discoverable, accessible, and touch-sized without a message long press')
-  assert.ok(messageBubbleSource.includes('let maxTraceDuration = 0'), 'message thinking duration avoids allocating duration arrays')
-  assert.ok(messageBubbleSource.includes('const summaries: string[] = []'), 'message thinking summaries are collected in one pass')
-  assert.ok(messageBubbleSource.includes('resolveChatAssistantDisplayName(configuredAssistantDisplayName)') && messageBubbleSource.includes('getAssistantThinkingLabel'), 'generic live thinking status uses the configured Chat assistant name without historical mode authority')
+  assert.match(messageBubbleSource, /useMemo\(\(\) => collectMessageActivityRows\(displayMessage, processTraces\), \[displayMessage, processTraces\]\)/, 'recorded activity projection is memoized rather than rebuilt for unrelated bubble changes')
+  assert.match(activityRowsSource, /const traceRows = new Map\(visibleTraces\.map[\s\S]*safeActivitySummary\(entry\.summary\)/, 'activity details are assembled once per visible trace and reasoning uses sanitized display summaries')
+  const chatIdentitySource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  assert.ok(chatIdentitySource.includes('resolveChatAssistantDisplayName') && chatIdentitySource.includes('getMessageActivityLabel(streamingMessage, t, assistantDisplayName)'), 'live activity naming uses the configured assistant identity at the workspace boundary')
 
   const longTask = diagnostic(evaluation, 'long-running-task-feedback')
   assertReady(longTask)
@@ -219,9 +223,9 @@ function assertSourceIntegration() {
   assert.ok(providerSettingsSource.includes('useProviderActivationJob'), 'provider settings uses the activation job boundary')
   assert.ok(providerSettingsSource.includes('PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT'), 'provider import modal bounds live detection parsing')
   assert.ok(providerSettingsSource.includes('countLogicalTextLines'), 'provider import modal counts large pasted text without line-array allocation')
-  assert.ok(providerSettingsSource.includes('providerAttentionItems.length ?'), 'provider settings hides overview chips unless a provider state needs attention')
-  assert.ok(providerSettingsSource.includes('providers.length > 3 || listToolsActive'), 'provider settings hides search and sort tools until the provider list needs them')
-  assert.ok(providerSettingsSource.includes('providers.length > 1 || batchActionsActive'), 'provider settings hides batch controls for single-provider setups')
+  assert.match(providerSettingsSource, /const providerAttention = providerModelAccessHasRules \? <SettingsSummaryStrip/, 'provider overview only adds a policy notice when access rules actually apply')
+  assert.match(providerSettingsSource, /providers\.length \? <View[\s\S]*?testID="provider-search"/, 'provider search is absent when no connection exists')
+  assert.match(providerSettingsSource, /batchActionsOpen \? <View testID="provider-management-actions"[\s\S]*?batchMode \? <>/, 'sort and batch operations mount only after opening management and selection controls')
   assert.equal((providerSettingsSource.match(/<IsleOverlayPressable accessible=\{false\} accessibilityRole="none"/g) ?? []).length, 2, 'provider add and import sheets keep touch-dismiss backdrops out of the accessibility tree')
   assert.doesNotMatch(providerSettingsSource, /<IsleOverlayPressable accessibilityLabel=\{t\('dialog\.close'\)\} accessibilityRole="button" onPress=\{(?:closeWithoutSubmit|onClose)\}/, 'provider sheets do not announce duplicate backdrop close buttons alongside their visible close controls')
   assert.match(providerSettingsSource, /function ProviderFormModal[\s\S]*?<View\s+accessibilityViewIsModal\s+style=\{\{ maxHeight: sheetMaxHeight[\s\S]*?function countLogicalTextLines/, 'provider add sheet isolates screen-reader focus inside the modal surface')
@@ -262,26 +266,24 @@ function assertSourceIntegration() {
       providerPanelSource.includes("{ value: 'connection'") &&
       providerPanelSource.includes("{ value: 'models'") &&
       !providerPanelSource.includes("{ value: 'overview'") &&
-      providerPanelSource.includes("open={workspaceView === 'advanced'}"),
-    'provider details expose connection and models as primary tasks while advanced controls stay in one disclosure'
+      providerPanelSource.includes("workspaceView === 'advanced' ?"),
+    'provider details expose connection and models as primary tasks while advanced controls mount only in their own view'
   )
 
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const settingsNavigationSource = fs.readFileSync(path.join(root, 'src/components/settings/SettingsNavigationContent.tsx'), 'utf8')
+  const systemSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/SystemSettingsPanelContent.tsx'), 'utf8')
   const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
-  const settingsControlExperienceSource = fs.readFileSync(path.join(root, 'src/components/settings/theme-experiences/SettingsControlCatalogExperiences.tsx'), 'utf8')
   assert.ok(
-    settingsScreenSource.includes('SettingsControlNavigation') &&
-      settingsScreenSource.includes('SettingsControlCatalog') &&
-      settingsControlExperienceSource.includes('settings-control-catalog-minimal') &&
-      settingsControlExperienceSource.includes('settings-control-catalog-monet') &&
-      settingsControlExperienceSource.includes('settings-control-catalog-material') &&
-      settingsControlExperienceSource.includes('settings-control-catalog-liquid-glass'),
-    'settings home keeps searchable AI and system control views while each theme owns its directory geometry'
+    settingsScreenSource.includes('<SettingsNavigationContent') &&
+      ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'].every(theme => settingsNavigationSource.includes(`canonicalThemeId === '${theme}'`)) &&
+      settingsNavigationSource.includes('width / fontScale'),
+    'settings home uses one theme-native directory with font-aware layout rather than separate AI and system catalogs'
   )
-  assert.ok(settingsScreenSource.includes("t('settings.controlSearchPlaceholder')"), 'settings home exposes one search entry for settings and capabilities')
-  assert.match(settingsScreenSource, /const aiSearchMatches = aiControlEntries\.filter[\s\S]*matchesSettingsControlSearch[\s\S]*const systemSearchMatches = systemControlEntries\.filter[\s\S]*controlView === 'ai' && !aiSearchMatches\.length && systemSearchMatches\.length/, 'settings search can move between AI and system control catalogs when the active tab has no match')
-  assert.match(settingsScreenSource, /const focusedControlEntries = normalizedSettingsSearch\s*\?\s*visibleControlEntries/, 'settings search results are not hidden by an already expanded system panel')
-  for (const routeFieldKey of [
+  assert.equal((settingsNavigationSource.match(/<IsleSearchField /g) ?? []).length, 1, 'settings home exposes one search entry for settings and capabilities')
+  assert.match(settingsNavigationSource, /buildSettingsIndex\(key => t\(key\)\)[\s\S]*searchSettingsIndex\(index, settled\)/, 'settings search covers the complete localized registry regardless of category')
+  assert.match(settingsNavigationSource, /settled\.trim\(\) \? <SettingsListSurface[\s\S]*settings-search-results[\s\S]*: children/, 'search results replace the directory without mounting editors')
+  const legacySearchKeys = [
     'providerSettings.protocol.title',
     'usage.totalTokens',
     'preferences.generationSubtitle',
@@ -296,8 +298,14 @@ function assertSourceIntegration() {
     'settings.proxyBaseUrl',
     'settings.checkApk',
     'settings.systemStatusNotifications',
-  ]) {
-    assert.ok(settingsScreenSource.includes(`t('${routeFieldKey}')`) || settingsScreenSource.includes(`t('${routeFieldKey}',`), `settings search indexes ${routeFieldKey}`)
+  ]
+  for (const locale of ['en', 'ja', 'zh-CN']) {
+    const resource = JSON.parse(fs.readFileSync(path.join(root, `src/i18n/resources/${locale}.json`), 'utf8'))
+    const translate = key => key.split('.').reduce((node, part) => node?.[part], resource) ?? key
+    const index = buildSettingsIndex(translate)
+    for (const key of legacySearchKeys) {
+      assert.ok(searchSettingsIndex(index, translate(key)).length, `${locale} settings search still finds ${key}`)
+    }
   }
   const contextSearchEntry = {
     title: 'Context',
@@ -309,21 +317,23 @@ function assertSourceIntegration() {
   const sourceScreenSource = fs.readFileSync(path.join(root, 'src/presentation/features/conversations/SourceDetailScreen.tsx'), 'utf8')
   assert.match(sourceScreenSource, /const conversation = useChatStore\(\(state\) => state\.conversations\.find\(\(item\) => item\.id === conversationId\)\)/, 'Source reader subscribes only to the requested conversation')
   assert.doesNotMatch(sourceScreenSource, /const conversations = useChatStore\(\(state\) => state\.conversations\)/, 'unrelated conversation updates do not rerender the Source reader')
-  assert.ok(settingsScreenSource.includes('settingsAttentionItems.length ?'), 'settings status chips stay hidden unless attention is needed')
+  assert.ok(!settingsNavigationSource.includes('SettingsSummaryStrip') && settingsNavigationSource.includes('provider.enabled && provider.id === state.settings.defaultProvider'), 'the directory avoids duplicate status chips and only calls an enabled selected provider the default connection')
   assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticMediaGeneration') && runtimeDiagnosticsDetailsSource.includes('adapterProofWorklist'), 'settings diagnostics expose media generation readiness as proof counts only')
   assert.ok(!settingsScreenSource.includes('function SettingsQuickLink'), 'settings home removes the old arrow-row settings directory')
   assert.ok(!settingsScreenSource.includes('expandedAppearanceGroups'), 'appearance settings no longer require nested disclosure taps')
-  assert.ok(settingsScreenSource.includes('CommittedSettingsField'), 'high-frequency Settings inputs isolate drafts from the full Settings screen render')
-  assert.match(settingsScreenSource, /value=\{String\(settings\.remoteCompactThreshold \?\? 0\.8\)\}[\s\S]*onCommit=\{updateRemoteCompactThreshold\}/, 'remote compact threshold commits only after draft normalization')
-  assert.doesNotMatch(settingsScreenSource, /onChangeText: updateRemoteCompactThreshold/, 'remote compact threshold does not persist on every keypress')
-  assert.doesNotMatch(settingsScreenSource, /onChangeText: \(proxyBaseUrl\) => updateSettings/, 'proxy URL does not persist on every keypress')
-  assert.doesNotMatch(settingsScreenSource, /onChangeText: \(observabilitySinkEndpointUrl\) => updateSettings/, 'observability endpoint does not persist on every keypress')
-  assert.match(settingsScreenSource, /commitOnSubmit=\{false\}[\s\S]*normalize=\{normalizeSettingsListDraft\}/, 'allow and block lists commit normalized drafts on blur without treating newline as submit')
+  assert.ok(systemSettingsSource.includes('SavedSettingsField') && systemSettingsSource.includes('useSettingsFieldSession()'), 'system text inputs keep drafts in the existing explicit-save session')
+  assert.match(systemSettingsSource, /value=\{String\(settings\.remoteCompactThreshold \?\? 0\.8\)\}[\s\S]*onCommit=\{updateRemoteCompactThreshold\}/, 'remote compact threshold commits only after draft normalization')
+  assert.doesNotMatch(systemSettingsSource, /onChangeText: updateRemoteCompactThreshold/, 'remote compact threshold does not persist on every keypress')
+  assert.doesNotMatch(systemSettingsSource, /onChangeText: \(proxyBaseUrl\) => updateSettings/, 'proxy URL does not persist on every keypress')
+  assert.doesNotMatch(systemSettingsSource, /onChangeText: \(observabilitySinkEndpointUrl\) => updateSettings/, 'observability endpoint does not persist on every keypress')
+  for (const key of ['providerAllowlist', 'providerBlocklist', 'modelAllowlist', 'modelBlocklist']) {
+    assert.match(systemSettingsSource, new RegExp(`settingKey="${key}"[\\s\\S]*?normalize=\\{normalizeSettingsListDraft\\}[\\s\\S]*?commitOnSubmit=\\{false\\}`), `${key} normalizes its explicitly saved draft without treating newline as submit`)
+  }
 
   const preferenceSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/PreferenceSettingsContent.tsx'), 'utf8')
   assert.ok(!preferenceSettingsSource.includes('SettingsSummaryStrip'), 'preference settings avoid duplicate overview chips above the actual controls')
-  assert.ok(!preferenceSettingsSource.includes('identityOpen') && preferenceSettingsSource.includes('PreferenceIdentityField'), 'preference settings expose assistant identity directly')
-  assert.ok(preferenceSettingsSource.includes('PreferenceCapabilityTile') && preferenceSettingsSource.includes('workflowOpen'), 'preference settings keep daily capability switches visible and only defer workflow boundaries')
+  assert.match(preferenceSettingsSource, /SavedSettingsField[\s\S]*?settingKey="assistantDisplayName"/, 'preference identity uses an explicit saved field')
+  assert.match(preferenceSettingsSource, /alwaysVisible=\{\['identity', 'interaction', 'generation'\]\}[\s\S]*id: 'workflow'/, 'daily preferences remain visible while advanced workflow boundaries use the shared task disclosure')
   const expectedWorkflowLabels = {
     en: { singular: 'Workflow', plural: 'Workflows' },
     ja: { singular: 'ワークフロー', plural: 'ワークフロー' },
@@ -540,9 +550,9 @@ function assertSourceIntegration() {
   assert.ok(searchConfigSaveSource.includes("updateSettings(settingsUpdates)"), 'search configuration commits non-secret drafts through one explicit Settings update')
   assert.doesNotMatch(contextPanelSource, /onChangeText: \(customSearchEndpoint\) => updateSettings/, 'custom search endpoint input does not persist the complete Settings snapshot per keypress')
   assert.doesNotMatch(contextPanelSource, /case 'googleSearchCx':[\s\S]{0,160}updateSettings/, 'Google CX input does not persist the complete Settings snapshot per keypress')
-  assert.match(contextPanelSource, /useEffect\(\(\) => setCustomSearchEndpointDraft\(settings\.customSearchEndpoint \?\? ''\), \[settings\.customSearchEndpoint\]\)/, 'custom search endpoint draft follows imported and reset Settings values')
-  assert.match(contextPanelSource, /function commitLocalModelMirror\(\) \{[\s\S]*?updateSettings\(\{ localModelDownloadMirrorBaseUrl: nextMirrorBaseUrl \}\)/, 'local-model mirror configuration commits one normalized Settings update')
-  assert.match(contextPanelSource, /value: localModelMirrorDraft,[\s\S]{0,240}onChangeText: setLocalModelMirrorDraft,[\s\S]{0,240}onBlur: commitLocalModelMirror,[\s\S]{0,240}onSubmitEditing: commitLocalModelMirror/, 'local-model mirror input keeps a draft and commits on blur or keyboard submission')
+  assert.match(contextPanelSource, /useEffect\(\(\) => \{ if \(!keysDirty\) \{[\s\S]*?setCustomSearchEndpointDraft\(settings\.customSearchEndpoint \?\? ''\)[\s\S]*?\}, \[settings\.customSearchEndpoint\]\)/, 'custom search endpoint follows imported settings only when no local draft would be overwritten')
+  assert.match(contextPanelSource, /<SavedSettingsField[\s\S]*?settingKey="localModelDownloadMirrorBaseUrl"[\s\S]*?normalize=\{value => value\.trim\(\)\}[\s\S]*?onCommit=\{value => updateSettings\(\{ localModelDownloadMirrorBaseUrl: value \}\)\}/, 'local-model mirror normalizes a field-session draft and persists only on explicit save')
+  assert.doesNotMatch(contextPanelSource, /on(?:Blur|SubmitEditing): commitLocalModelMirror/, 'leaving or submitting the mirror input does not silently save the draft')
   assert.doesNotMatch(contextPanelSource, /onChangeText: \(localModelDownloadMirrorBaseUrl\) => updateSettings/, 'local-model mirror input does not persist the complete Settings snapshot per keypress')
   assert.match(contextPanelSource, /function ContextList\([\s\S]*?minHeight: 44,[\s\S]*?style=\{\{ width: 44, height: 44,/, 'context knowledge and memory clear controls reserve explicit 44dp rows and hit targets')
 
