@@ -1,14 +1,6 @@
 import { useState, type Ref } from 'react'
-import {
-  Platform,
-  StyleSheet,
-  TextInput,
-  View,
-  type StyleProp,
-  type TextInputProps,
-  type TextStyle,
-  type ViewStyle,
-} from 'react-native'
+import { Platform, StyleSheet, View, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
+import { TextInput } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { Input as NativeInput } from 'animal-island-ui-rn'
 
@@ -78,7 +70,7 @@ export function IsleSearchField({
   const [clearHintVisible, setClearHintVisible] = useState(false)
   if (canonicalThemeId === 'animal-island-ui') {
     return <NativeInput value={value} defaultValue={defaultValue} disabled={!editable} onChangeText={onChangeText} onFocus={onFocus} onBlur={onBlur}
-      allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={inputStyle}
+      allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={[design?.semantic.typography.body, inputStyle]}
       inputProps={{ ...props, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={inputRef} style={[{ minHeight: 44 }, containerStyle]}
       prefix={<AppIcon name="search" color={colors.textSecondary} size={18} />}
       suffix={pending ? <HighFrameSpinner color={colors.textSecondary} size={16} /> : undefined} />
@@ -198,6 +190,7 @@ export function IsleSearchField({
         accessibilityState={{ ...accessibilityState, disabled, busy: pending || accessibilityState?.busy }}
         placeholderTextColor={colors.ui.input.placeholderForeground}
         style={[
+          design?.semantic.typography.body,
           {
             flex: 1,
             minWidth: 0,
@@ -206,7 +199,7 @@ export function IsleSearchField({
             color: disabled ? colors.ui.input.disabledForeground : colors.text,
             fontSize: compact ? Math.max(12, metrics.fontSize - 1) : metrics.fontSize,
             lineHeight: compact ? 18 : 20,
-            fontWeight: metrics.fontWeight,
+            fontWeight: design?.semantic.typography.label.fontWeight ?? metrics.fontWeight,
             letterSpacing: minimal ? 0.1 : 0,
             includeFontPadding: false,
             textAlignVertical: 'center',

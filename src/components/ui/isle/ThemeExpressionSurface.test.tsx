@@ -6,6 +6,23 @@ import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { ThemeExpressionSurface } from './ThemeExpressionSurface'
 
 describe('ThemeExpressionSurface markdown nesting', () => {
+  it.each(['light', 'dark'] as const)(
+    'pairs the island user foreground with its message background in %s mode',
+    async mode => {
+      for (const accent of [undefined, '#2357BD']) {
+        const colors = getColors(mode, 'animal-island-ui', undefined, accent)
+        const screen = await render(
+          <ThemeExpressionSurface family="animal-island-ui" colors={colors} kind="message" isUser testID="island-user-bubble">
+            <Text style={{ color: colors.ui.message.userForeground }}>User message</Text>
+          </ThemeExpressionSurface>,
+        )
+        expect(StyleSheet.flatten(screen.getByTestId('island-user-bubble').props.style).backgroundColor)
+          .toBe(colors.ui.message.userBackground)
+        await screen.unmount()
+      }
+    },
+  )
+
   it.each<CanonicalThemeId>(['minimal', 'monet', 'material', 'liquid-glass'])(
     'does not shrink the intrinsic user-message width a second time in %s',
     async family => {

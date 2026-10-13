@@ -11,6 +11,8 @@ import { IsleImage } from './Image'
 import { IsleTag } from './Tag'
 import { IsleThemeProvider } from './IsleThemeProvider'
 import { IsleSearchField } from './SearchField'
+import { IsleButton as AppButton, IsleChip as AppChip } from './Controls'
+import { IsleIconButton } from './Primitives'
 
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: jest.fn() }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: jest.fn(() => 'none') }))
@@ -32,6 +34,24 @@ beforeEach(() => {
   setTheme()
   jest.mocked(useMotionPreference).mockReturnValue('none')
 })
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
+  'preserves %s typography through public buttons and editable fields', async family => {
+    setTheme(family)
+    const type = getColors('light', family).design!.semantic.typography
+    const screen = await render(<>
+      <AppButton label="Theme action" />
+      <AppButton label="Explicit typography" textStyle={{ fontSize: 19 }} />
+      <AppChip>Theme chip</AppChip>
+      <IsleInput accessibilityLabel="Theme input" value="draft" onChangeText={jest.fn()} />
+    </>)
+    expect(screen.getByText('Theme action')).toHaveStyle(type.label)
+    expect(screen.getByText('Explicit typography')).toHaveStyle({ fontSize: 19 })
+    expect(screen.getByText('Theme chip')).toHaveStyle(type.label)
+    expect(screen.getByLabelText('Theme input')).toHaveStyle(type.body)
+    expect(screen.getByLabelText('Theme input').props.value).toBe('draft')
+  },
+)
 
 it('re-exports the actual fork implementations rather than duplicate ports', () => {
   expect(IsleCollapse).toBe(Collapse)
@@ -180,6 +200,16 @@ it('animates search focus colors without moving or replacing the editable field'
   expect(frame.props.transition.duration).toBe(THEME_MOTION_DURATIONS.monet.emphasis)
   expect(frame.props.animate.scale).toBeUndefined()
   expect(frame.props.animate.translateY).toBeUndefined()
+})
+
+it.each(['light', 'dark'] as const)('keeps %s glass icon content above its decorative material and preserves activation', async (mode) => {
+  setTheme('liquid-glass', mode)
+  const onPress = jest.fn()
+  const screen = await render(<IsleIconButton label="Close" onPress={onPress}><Text>×</Text></IsleIconButton>)
+  expect(screen.getByTestId('glass-icon-content')).toHaveStyle({ position: 'relative', zIndex: 1 })
+  expect(screen.getByText('×')).toBeTruthy()
+  await fireEvent.press(screen.getByRole('button', { name: 'Close' }))
+  expect(onPress).toHaveBeenCalledTimes(1)
 })
 
 it.each(['light', 'dark'] as const)('keeps %s glass controls on one rounded shell without native content shadows', async (mode) => {

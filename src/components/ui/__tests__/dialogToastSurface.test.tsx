@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text } from 'react-native'
 
 import { getColors } from '@/theme/colors'
 import { IsleDialogProvider, useIsleDialog } from '../isle/Dialog'
+import { IsleThemeProvider } from '../isle/IsleThemeProvider'
 
 let mockMotion = 'none'
 let mockTheme = 'minimal'
@@ -51,6 +52,23 @@ it('dismisses only the cancelled pending confirmation and settles it false', asy
   expect(await outcome).toBe(false)
   expect(view.queryByText('Use another provider?')).toBeNull()
   await view.unmount()
+})
+
+it('keeps the Animal Island dialog title in the app theme font and cancellation usable', async () => {
+  mockTheme = 'animal-island-ui'
+  let outcome: Promise<boolean> | undefined
+  function ConfirmTrigger() {
+    const dialog = useIsleDialog()
+    return <Pressable accessibilityLabel="Ask" onPress={() => {
+      outcome = dialog.confirm({ title: 'Island confirmation' })
+    }} />
+  }
+  const screen = await render(<IsleThemeProvider><IsleDialogProvider><ConfirmTrigger /></IsleDialogProvider></IsleThemeProvider>)
+  await fireEvent.press(screen.getByLabelText('Ask'))
+  expect(screen.getByText('Island confirmation')).toHaveStyle({ fontFamily: 'LXGWWenKai' })
+  await fireEvent.press(screen.getByText('common.cancel'))
+  expect(await outcome).toBe(false)
+  expect(screen.queryByText('Island confirmation')).toBeNull()
 })
 
 it.each(['minimal', 'monet', 'material', 'liquid-glass'])('%s confirmation remains readable and settles without waiting for its animation', async (theme) => {

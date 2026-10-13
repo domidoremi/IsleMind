@@ -360,6 +360,7 @@ function isExplicitIconColor(requestedColor: string, colors: ReturnType<typeof u
   return requestedColor === colors.text ||
     requestedColor === colors.textSecondary ||
     requestedColor === colors.textTertiary ||
+    requestedColor === colors.ui.code.text ||
     requestedColor === colors.ui.control.primaryForeground ||
     requestedColor === colors.ui.control.dangerForeground ||
     requestedColor === colors.ui.tone.danger.foreground ||

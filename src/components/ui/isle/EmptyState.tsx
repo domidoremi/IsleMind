@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
@@ -94,9 +95,9 @@ export function IsleEmptyState({ title, description, actionLabel, actionGlyph, a
             accessibilityLabel={description ? `${title}. ${description}` : title}
             accessibilityLiveRegion="polite"
           >
-            <Text style={{ color: colors.text, fontSize: compact ? 18 : 20, lineHeight: compact ? 24 : 26, fontWeight: material ? '600' : '700', textAlign: contentAlignment }}>{title}</Text>
+            <Text style={{ ...colors.design?.semantic.typography.title, color: colors.text, textAlign: contentAlignment }}>{title}</Text>
             {description ? (
-              <Text style={{ color: colors.textSecondary, fontSize: compact ? 13 : 13.5, lineHeight: compact ? 19 : 20, textAlign: contentAlignment, marginTop: 6 }}>
+              <Text style={{ ...colors.design?.semantic.typography.body, color: colors.textSecondary, textAlign: contentAlignment, marginTop: 6 }}>
                 {description}
               </Text>
             ) : null}

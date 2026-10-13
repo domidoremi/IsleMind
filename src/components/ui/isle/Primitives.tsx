@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { Platform, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
+import { Platform, StyleSheet, View, useWindowDimensions, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
@@ -73,7 +74,10 @@ export function IsleIconButton({
         style={[{ width: dimension, height: dimension, minHeight: dimension, borderRadius: radius }, style]}
       >
         <GlassSurface colors={colors} variant="navigation" borderRadius={radius} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          {children}
+          {/* Inline SVGs otherwise paint underneath the positioned Web blur. */}
+          <View testID="glass-icon-content" pointerEvents="none" style={{ position: 'relative', zIndex: 1 }}>
+            {children}
+          </View>
         </GlassSurface>
       </PressableScale>
     )

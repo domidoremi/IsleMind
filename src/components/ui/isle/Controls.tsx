@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, View, type PressableProps, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
+import { StyleSheet, View, type PressableProps, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IsleButton as BaseIsleButton, type IsleButtonType } from './IsleKit'
 import { IsleChip as BaseIsleChip, type IsleChipTone } from './Chip'
@@ -39,7 +40,7 @@ export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, d
       size={compact ? 'small' : 'middle'}
       block={block}
       style={style}
-      textStyle={[{ fontSize: 14, lineHeight: 20 }, textStyle]}
+      textStyle={textStyle}
     />
   )
 }

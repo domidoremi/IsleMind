@@ -1,3 +1,4 @@
+import { fontFamilyForTheme } from '@/theme/font'
 /**
  * Product theme design tokens.
  *
@@ -279,18 +280,13 @@ const baseSpacing: ThemeSpacingTokens = {
   page: 64,
 }
 
-const type = (fontSize: number, lineHeight: number, fontWeight: ThemeTypographyToken['fontWeight'], letterSpacing = 0): ThemeTypographyToken => ({
-  fontFamily: 'System',
-  fontSize,
-  lineHeight,
-  fontWeight,
-  letterSpacing,
-})
-
 const typographyFor = (family: ThemeFamily): ThemeTypographyTokens => {
+  const type = (fontSize: number, lineHeight: number, fontWeight: ThemeTypographyToken['fontWeight'], letterSpacing = 0): ThemeTypographyToken => ({
+    fontFamily: fontFamilyForTheme(family), fontSize, lineHeight, fontWeight, letterSpacing,
+  })
   if (family === 'animal-island-ui') return {
-    display: type(32, 40, '800'), headline: type(24, 32, '700'), title: type(20, 28, '700'),
-    body: type(animalIslandTheme.fontSize.base, 22, '500'), label: type(animalIslandTheme.fontSize.base, 20, '600'), caption: type(animalIslandTheme.fontSize.sm, 18, '500'),
+    display: type(34, 44, '400'), headline: type(27, 36, '400'), title: type(22, 30, '400'),
+    body: type(17, 26, '400'), label: type(16, 22, '400'), caption: type(14, 20, '400'),
     code: { ...type(13, 20, '500'), fontFamily: 'monospace' },
   }
   if (family === 'minimal') return {
@@ -304,8 +300,8 @@ const typographyFor = (family: ThemeFamily): ThemeTypographyTokens => {
     code: { ...type(13, 20, '500'), fontFamily: 'monospace' },
   }
   if (family === 'monet') return {
-    display: type(34, 44, '600'), headline: type(26, 35, '600'), title: type(19, 27, '600'),
-    body: type(16, 24, '400'), label: type(13, 19, '600'), caption: type(12, 18, '500'),
+    display: type(40, 52, '400'), headline: type(28, 40, '400'), title: type(21, 30, '400'),
+    body: type(16, 28, '400'), label: type(14, 22, '400'), caption: type(12, 20, '400'),
     code: { ...type(13, 20, '500'), fontFamily: 'monospace' },
   }
   return {

@@ -1,17 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import {
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  type PressableProps,
-  type StyleProp,
-  type TextInputProps,
-  type TextStyle,
-  type ViewStyle,
-} from 'react-native'
+import { Platform, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
+import { Text, TextInput } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { Button as NativeButton, Input as NativeInput, Switch as NativeSwitch, Card as NativeCard, Select as NativeSelect, Progress as NativeProgress } from 'animal-island-ui-rn'
 import { useTranslation } from 'react-i18next'
@@ -171,7 +160,8 @@ export function IsleButton({
   const link = type === 'link'
   const text = type === 'text' || link
   const height = controlHeight(size)
-  const fontSize = textSize(size)
+  const labelTypography = design?.semantic.typography.label
+  const fontSize = (labelTypography?.fontSize ?? textSize('middle')) + textSize(size) - textSize('middle')
   const disabledStyle = disabledContentStyle(palette)
   const enabledForeground = danger && primary ? control.dangerForeground : link ? control.link : danger ? palette.ui.tone.danger.foreground : primary ? control.primaryForeground : palette.text
   const foreground = disabled ? disabledStyle.foreground : enabledForeground
@@ -229,7 +219,7 @@ export function IsleButton({
   if (palette.themeId === 'animal-island-ui') {
     return <NativeButton type={type} size={size} danger={danger} ghost={ghost} block={block} loading={loading} disabled={disabled}
       icon={icon} onPress={onPress} accessibilityLabel={accessibilityLabel ?? label} accessibilityRole={accessibilityRole}
-      accessibilityState={accessibilityState} testID={testID} textStyle={textStyle} style={[style, { minHeight: minimumButtonHeight }]}>
+      accessibilityState={accessibilityState} testID={testID} textStyle={[labelTypography, { fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4) }, textStyle]} style={[style, { minHeight: minimumButtonHeight }]}>
       {children ?? label}
     </NativeButton>
   }
@@ -241,7 +231,7 @@ export function IsleButton({
     </View>
   ) : undefined
   const contentNode = children || label ? (
-    <Text numberOfLines={1} style={[{ flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(16, fontSize + 4), fontWeight: design?.semantic.typography.label.fontWeight ?? (primary ? '700' : '600'), letterSpacing: design?.semantic.typography.label.letterSpacing ?? 0, includeFontPadding: false, textAlignVertical: 'center' }, textStyle]}>
+    <Text numberOfLines={1} style={[labelTypography, { flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), fontWeight: labelTypography?.fontWeight ?? (primary ? '700' : '600'), includeFontPadding: false, textAlignVertical: 'center' }, textStyle]}>
       {children ?? label}
     </Text>
   ) : undefined
@@ -420,7 +410,7 @@ export function IsleInput({
           onContentSizeChange: (event) => {
             if (multiline) setMultilineContentHeight(event.nativeEvent.contentSize.height)
             onContentSizeChange?.(event)
-          } }} inputStyle={inputStyle}
+          } }} inputStyle={[design?.semantic.typography.body, inputStyle]}
         style={{ minHeight: inputMinimumHeight, height: multiline ? multilineShellHeight : inputMinimumHeight }} />
     </View>
   }
@@ -499,9 +489,10 @@ export function IsleInput({
                   padding: 0,
                   paddingVertical: multiline ? 10 : 0,
                   color: disabled ? input.disabledForeground : palette.colors.text,
-                  fontSize: textSize(size),
-                  fontWeight: '500',
-                  lineHeight: multiline ? 20 : undefined,
+                  ...design?.semantic.typography.body,
+                  fontSize: (design?.semantic.typography.body.fontSize ?? textSize('middle')) + textSize(size) - textSize('middle'),
+                  fontWeight: design?.semantic.typography.body.fontWeight ?? '500',
+                  lineHeight: design?.semantic.typography.body.lineHeight ?? (multiline ? 20 : undefined),
                   textAlignVertical: multiline ? 'top' : 'center',
                   includeFontPadding: false,
                 },

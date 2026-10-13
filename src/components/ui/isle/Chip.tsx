@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native'
+import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -57,7 +58,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
         borderColor,
         translateY: 0,
       }}
-      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+      transition={{ type: 'timing', duration: motion === 'full' ? colors.design?.semantic.motion.interaction ?? motionTokens.duration.fast : 0 }}
       style={[
         {
           minHeight: 28,
@@ -75,7 +76,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
         style,
       ]}
     >
-      <Text style={{ color: foreground, fontSize: 14, lineHeight: 20, fontWeight: family === 'material' ? '500' : '600', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
+      <Text style={{ ...colors.design?.semantic.typography.label, color: foreground, includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
     </MotiView>
   )
 }

@@ -95,7 +95,7 @@ function surfaceMaterialFor(props: ThemeExpressionSurfaceProps): ThemeSurfaceMat
 }
 
 /**
- * One renderer contract, four expression grammars. Business children and
+ * One renderer contract, five expression grammars. Business children and
  * accessibility state stay outside this layer; only the visual composition is
  * selected here.
  */
@@ -111,7 +111,11 @@ function renderAnimalIsland(props: ThemeExpressionSurfaceProps) {
   const content = props.kind === 'message-content' || props.kind === 'markdown' || props.kind === 'code-block'
   if (content) return <View testID={props.testID} style={{ backgroundColor: 'transparent', minWidth: 0 }}>{props.children}</View>
   return <View onLayout={props.onLayout} style={{ minWidth: 0, maxWidth: '100%', alignSelf: props.kind === 'message' && props.isUser ? 'flex-end' : 'stretch' }}>
-    <NativeCard testID={props.testID} style={{ padding: props.kind === 'message' ? 12 : props.horizontalPadding ?? 12, minWidth: 0, maxWidth: '100%' }}>
+    <NativeCard testID={props.testID} style={{ padding: props.kind === 'message' ? 14 : props.horizontalPadding ?? 12, minWidth: 0, maxWidth: '100%',
+      ...(props.kind === 'message' && props.isUser ? { backgroundColor: props.colors.ui.message.userBackground } : null),
+      borderRadius: 6, borderBottomRightRadius: props.kind === 'composer' ? 22 : 6,
+      borderLeftWidth: props.kind === 'chrome' ? 0 : 3, borderLeftColor: props.colors.ui.section.divider,
+      ...(props.selected || props.alertBorder ? { borderWidth: 2, borderColor: props.alertBorder ?? props.colors.primary } : null) }}>
       {props.children}
     </NativeCard>
   </View>
@@ -153,9 +157,10 @@ function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpr
         isChrome ? styles.minimalChrome : null,
         props.kind === 'composer' ? styles.minimalComposer : null,
         {
-          backgroundColor: contentBackground,
+          backgroundColor: isChrome || props.kind === 'composer' ? 'transparent' : contentBackground,
           borderColor: props.alertBorder ?? material.border,
           borderWidth: props.selected ? 2 : ownsMaterial && material.border !== 'transparent' ? StyleSheet.hairlineWidth : component.border === 'divider' && isCodeBlock ? StyleSheet.hairlineWidth : 0,
+          ...(isChrome || props.kind === 'composer' ? { borderWidth: props.alertBorder ? 1 : 0, borderTopWidth: isChrome ? 0 : 1, borderBottomWidth: isChrome ? StyleSheet.hairlineWidth : 0 } : null),
           shadowColor: material.shadowColor,
           shadowOpacity: ownsMaterial ? material.shadowOpacity : 0,
           shadowRadius: ownsMaterial ? material.shadowBlur : 0,
@@ -216,6 +221,7 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
                 : material.background,
           borderColor: props.alertBorder ?? material.border,
           borderWidth: isContent || isMarkdown || isAssistantMessage ? 0 : props.selected ? 2 : ownsMaterial && material.border !== 'transparent' ? StyleSheet.hairlineWidth : component.border === 'none' ? 0 : StyleSheet.hairlineWidth,
+          ...(isAssistantMessage || props.kind === 'composer' ? { borderLeftWidth: isAssistantMessage ? 1 : 3, borderLeftColor: props.colors.ui.section.divider } : null),
           shadowColor: material.shadowColor,
           shadowOpacity: ownsMaterial ? material.shadowOpacity : 0,
           shadowRadius: ownsMaterial ? material.shadowBlur : 0,
@@ -224,15 +230,6 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
         },
       ]}
     >
-      {isMessage && props.isUser ? (
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetPaperWash, { backgroundColor: props.colors.ui.icon.accentBackground }]} />
-      ) : null}
-      {isMessage && props.isUser ? (
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetPaperWashSecondary, { backgroundColor: props.colors.ui.semantic.surface.muted }]} />
-      ) : null}
-      {isMessage ? (
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.monetMessageBrush, props.isUser ? styles.monetMessageBrushUser : styles.monetMessageBrushAssistant, { backgroundColor: props.isUser ? props.colors.tertiary : props.colors.primary }]} />
-      ) : null}
       {contentFrame}
     </View>
   )
@@ -358,16 +355,16 @@ const styles = StyleSheet.create({
   minimalContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 5, minHeight: 0, overflow: 'hidden' },
   minimalMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', overflow: 'hidden' },
   minimalCodeBlock: { width: '100%', minHeight: 0, borderRadius: 4, padding: 0 },
-  minimalChrome: { minHeight: 50, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 6, overflow: 'hidden' },
-  minimalComposer: { paddingHorizontal: 8, paddingVertical: 7, borderRadius: 6, overflow: 'hidden' },
+  minimalChrome: { minHeight: 50, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
+  minimalComposer: { paddingHorizontal: 2, paddingVertical: 7, borderRadius: 0, overflow: 'hidden' },
   minimalMessageIndex: { position: 'absolute', top: 0, right: 0, width: 24, height: 2 },
   monetBase: { minHeight: 48, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderTopLeftRadius: 16, borderTopRightRadius: 9, borderBottomRightRadius: 18, borderBottomLeftRadius: 11, paddingHorizontal: 11, paddingVertical: 8 },
-  monetChrome: { minHeight: 50, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 14 },
-  monetComposer: { marginHorizontal: 0, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 14 },
-  monetUserMessage: { alignSelf: 'flex-end', marginRight: 4, borderTopLeftRadius: 22, borderTopRightRadius: 10, borderBottomRightRadius: 9, borderBottomLeftRadius: 16 },
+  monetChrome: { minHeight: 54, paddingHorizontal: 0, paddingVertical: 2, borderRadius: 2 },
+  monetComposer: { marginHorizontal: 0, paddingHorizontal: 14, paddingVertical: 12, borderTopLeftRadius: 2, borderTopRightRadius: 2, borderBottomRightRadius: 2, borderBottomLeftRadius: 2 },
+  monetUserMessage: { alignSelf: 'flex-end', marginRight: 0, paddingHorizontal: 16, paddingVertical: 12, borderTopLeftRadius: 2, borderTopRightRadius: 2, borderBottomRightRadius: 2, borderBottomLeftRadius: 2 },
   // Assistant replies stay on the shared reading column: transparent flow plus
   // one identity accent instead of an inset card per message.
-  monetAssistantMessage: { width: '100%', alignSelf: 'flex-start', marginTop: 2, marginBottom: 2, paddingHorizontal: 0, paddingTop: 8, paddingBottom: 4 },
+  monetAssistantMessage: { width: '100%', alignSelf: 'flex-start', marginTop: 10, marginBottom: 8, paddingLeft: 14, paddingRight: 0, paddingTop: 2, paddingBottom: 2, borderRadius: 0 },
   monetContent: { width: '100%', minWidth: 0, maxWidth: '100%', gap: 8, minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, overflow: 'hidden' },
   monetMarkdown: { width: '100%', minWidth: 0, maxWidth: '100%', minHeight: 0, justifyContent: 'flex-start', borderRadius: 0, paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   monetCodeBlock: { width: '100%', minHeight: 0, borderTopLeftRadius: 9, borderTopRightRadius: 7, borderBottomRightRadius: 15, borderBottomLeftRadius: 8, padding: 0 },
@@ -388,7 +385,7 @@ const styles = StyleSheet.create({
   monetComposerPigmentShort: { width: 30, borderRadius: 2 },
   materialBase: { minHeight: 48, minWidth: 0, maxWidth: '100%', justifyContent: 'center', overflow: 'hidden', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
   materialChrome: { minHeight: 50, borderRadius: 12, paddingHorizontal: 0, paddingVertical: 0 },
-  materialComposer: { marginHorizontal: 0, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 12 },
+  materialComposer: { marginHorizontal: 0, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 28 },
   materialUserMessage: { alignSelf: 'flex-end', marginRight: 4, borderTopLeftRadius: 20, borderTopRightRadius: 5, borderBottomRightRadius: 20, borderBottomLeftRadius: 20, paddingHorizontal: 15, paddingVertical: 10 },
   // Assistant replies share the reading column with a single tonal wash; no
   // per-message card, no inset margins, no decorative indicator rail.

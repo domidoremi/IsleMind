@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable, IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
@@ -7,7 +8,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 
 type ThemeDetailFrameProps = {
-  kind: 'source' | 'missing-chat' | 'providers' | 'usage' | 'documents' | 'agents'
+  kind: 'source' | 'missing-chat' | 'providers' | 'usage' | 'documents' | 'agents' | 'report'
   title: string
   subtitle?: string
   onBack: () => void

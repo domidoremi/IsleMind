@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { AccessibilityInfo, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { AccessibilityInfo, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 import { AnimatePresence, MotiView } from 'moti'
 import { Modal as NativeModal } from 'animal-island-ui-rn'
 import { useTranslation } from 'react-i18next'
@@ -260,7 +261,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
       {children}
       {/* Mount on demand so Web's portal is above already-open editor modals. */}
       {dialog && (canonicalThemeId === 'animal-island-ui' ? (
-        <NativeModal open={!!dialog} variant="game" typewriter={false} title={dialog?.title}
+        <NativeModal open={!!dialog} variant="game" typewriter={false} title={dialog.title ? <Text>{dialog.title}</Text> : undefined}
           onClose={() => closeDialog(false)} testID="animal-island-dialog"
           contentInsets={{ top: modalPaddingTop, right: modalPaddingHorizontal, bottom: modalPaddingBottom, left: modalPaddingHorizontal }}
           width={dialogMaxWidth} style={{ maxHeight: dialogMaxHeight }}

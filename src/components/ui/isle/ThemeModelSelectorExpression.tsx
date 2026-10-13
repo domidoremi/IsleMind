@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { glassShadowStyle } from './glassShadowStyle'
-import { StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { Text } from '@/components/ui/AppText'
 
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import type { useAppTheme } from '@/hooks/useAppTheme'
