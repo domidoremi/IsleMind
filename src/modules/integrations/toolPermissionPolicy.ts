@@ -186,8 +186,9 @@ export function decideToolPermission(
       return decision('deny', 'permission_required', 'Read-write tool execution is disabled by policy.', evidence)
     }
     // A visible plan, a model-supplied source, and a permission ceiling are
-    // not user approval of this concrete operation.
-    return context.userConfirmed
+    // not user approval of this concrete operation. Never coerce a serialized
+    // or untyped value (including the string "false") into confirmation.
+    return context.userConfirmed === true
       ? decision('allow', undefined, 'Read-write tool execution was explicitly confirmed.', evidence, 'user-confirmed')
       : decision('confirm', 'permission_required', 'Read-write tool execution requires explicit confirmation.', evidence)
   }
@@ -195,7 +196,7 @@ export function decideToolPermission(
   if (limits.allowDestructiveTools === false) {
     return decision('deny', 'permission_required', 'Destructive tool execution is disabled by policy.', evidence)
   }
-  if (!context.userConfirmed) {
+  if (context.userConfirmed !== true) {
     return decision('confirm', 'permission_required', 'Destructive tool execution requires explicit confirmation.', evidence)
   }
   return decision(

@@ -364,14 +364,19 @@ async function admitApplicationBuiltInTask(input: {
       errorCode: 'permission_required',
     }
   }
-  if (task.status !== 'running' || task.policy.outcome !== 'allowed' || !task.idempotencyKey.trim()) {
+  const confirmed = Number.isFinite(task.confirmationConfirmedAt)
+  // Tasks retain the original requires-confirmation policy after approval.
+  // Only its durable confirmation, not a UI flag, admits that running task.
+  const policyAdmitted = task.policy.outcome === 'allowed'
+    || task.policy.outcome === 'requires-confirmation' && confirmed
+  if (task.status !== 'running' || !policyAdmitted || !task.idempotencyKey.trim()) {
     return {
       ok: false,
       reason: 'The durable task is not actively admitted for application mutation.',
       errorCode: 'permission_required',
     }
   }
-  if (input.tool.permission === 'destructive' && !Number.isFinite(task.confirmationConfirmedAt)) {
+  if (input.tool.permission === 'destructive' && !confirmed) {
     return {
       ok: false,
       reason: 'The destructive application operation requires durable confirmation.',

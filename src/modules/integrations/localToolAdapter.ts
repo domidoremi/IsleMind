@@ -10,7 +10,7 @@ export interface LocalToolDescriptor {
 
 export type LocalToolExecutor = (
   request: ToolRequest,
-  options: { signal: AbortSignal },
+  options: Parameters<ToolAdapter['execute']>[1],
 ) => Promise<ToolResult>
 
 /** Creates a source-specific local adapter without granting it a task lifecycle. */

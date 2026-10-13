@@ -1,5 +1,5 @@
 import type { JsonRecord, JsonValue, TaskId } from '@/core'
-import type { TaskArtifact, TaskExecutionResult, TaskExecutor } from '@/modules/tasks'
+import type { TaskArtifact, TaskExecutionResult, TaskExecutor, TaskEffectRecorder } from '@/modules/tasks'
 
 export const INTEGRATION_SOURCES = ['mcp', 'builtin', 'android'] as const
 
@@ -76,7 +76,7 @@ export interface ExternalToolExecutionResult extends ToolResult {
 
 export interface ToolAdapter {
   definition: ToolDefinition
-  execute(request: ToolRequest, options: { signal: AbortSignal }): Promise<ToolResult>
+  execute(request: ToolRequest, options: { signal: AbortSignal; effects?: TaskEffectRecorder }): Promise<ToolResult>
 }
 
 export interface ToolTaskExecutorInput {

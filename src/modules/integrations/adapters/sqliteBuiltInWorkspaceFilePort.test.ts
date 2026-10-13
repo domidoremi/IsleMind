@@ -162,3 +162,35 @@ test('separate Tasks runtimes cannot dispatch the same durable operation twice',
   expect(results.filter(result => result.ok)).toHaveLength(1)
   expect((await persistence.get(created.value.id))?.status).toBe('succeeded')
 })
+
+test('receipt insertion failure rolls back the file mutation and permits exactly one retry', async () => {
+  const f = fixture()
+  const relativePath = 'workspace/atomic.txt'
+  await f.seed(relativePath, 'old value')
+  const before = await f.files.readText(relativePath, { signal: f.signal, maxBytes: 100 })
+  const input = { relativePath, text: 'new value', mimeType: 'text/plain', expectedRevision: before.revision, idempotencyKey: 'receipt-failure' }
+  // Fail inside real SQLite after the file UPDATE, before its receipt commits.
+  f.native.exec(`CREATE TEMP TRIGGER fail_edit_receipt
+    BEFORE INSERT ON integrations_builtin_workspace_file_receipts
+    WHEN NEW.idempotencyKey = 'receipt-failure'
+    BEGIN
+      SELECT CASE WHEN (SELECT textContent FROM integrations_builtin_workspace_files
+        WHERE workspaceScopeId = NEW.workspaceScopeId AND relativePath = NEW.relativePath) = 'new value'
+        THEN RAISE(ABORT, 'injected receipt failure after file mutation')
+        ELSE RAISE(ABORT, 'file mutation boundary not reached') END;
+    END`)
+  await expect(f.files.editTextAtomic(input, { signal: f.signal }))
+    .rejects.toThrow('injected receipt failure after file mutation')
+  const reopened = f.createPort()
+  expect(await reopened.readText(relativePath, { signal: f.signal, maxBytes: 100 })).toEqual(before)
+  const receiptCount = () => f.native.query(`SELECT count(*) AS count FROM integrations_builtin_workspace_file_receipts
+    WHERE workspaceScopeId = ? AND idempotencyKey = ?`).get('agent-workspace', input.idempotencyKey).count
+  expect(receiptCount()).toBe(0)
+
+  f.native.exec('DROP TRIGGER fail_edit_receipt')
+  const applied = await reopened.editTextAtomic(input, { signal: f.signal })
+  expect(applied.status).toBe('applied')
+  expect((await reopened.readText(relativePath, { signal: f.signal, maxBytes: 100 })).text).toBe('new value')
+  expect(await f.createPort().editTextAtomic(input, { signal: f.signal })).toEqual({ ...applied, status: 'replayed' })
+  expect(receiptCount()).toBe(1)
+})
