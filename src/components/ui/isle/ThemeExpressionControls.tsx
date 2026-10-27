@@ -167,7 +167,7 @@ export function ThemeCardExpressionLayers({ family, colors, interactive, titleCa
 }
 
 const styles = StyleSheet.create({
-  row: { position: 'relative', minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  row: { position: 'relative', minWidth: 0, maxWidth: '100%', flexShrink: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   icon: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   label: { minWidth: 0, flexShrink: 1 },
   minimalRule: { position: 'absolute', left: 0, right: 0, bottom: -4, height: 1, opacity: 0.72 },

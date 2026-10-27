@@ -1,4 +1,4 @@
-import { fireEvent, render } from '@testing-library/react-native'
+import { act, fireEvent, render } from '@testing-library/react-native'
 import { StyleSheet, Text } from 'react-native'
 import { Collapse, Image, Modal, Tag, useTheme } from 'animal-island-ui-rn'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -14,6 +14,14 @@ import { IsleSearchField } from './SearchField'
 import { IsleButton as AppButton, IsleChip as AppChip } from './Controls'
 import { IsleIconButton } from './Primitives'
 
+let mockNativeSelectChange: (value: string) => void
+jest.mock('animal-island-ui-rn', () => {
+  const actual = jest.requireActual('animal-island-ui-rn')
+  return { ...actual, Select: (props: any) => {
+    mockNativeSelectChange = props.onChange
+    return require('react').createElement(actual.Select, props)
+  } }
+})
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: jest.fn() }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: jest.fn(() => 'none') }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
@@ -35,6 +43,43 @@ beforeEach(() => {
   jest.mocked(useMotionPreference).mockReturnValue('none')
 })
 
+it.each(['light', 'dark'] as const)('keeps the native search text shrinkable without dropping %s pending state or events', async mode => {
+  setTheme('animal-island-ui', mode)
+  const onChange = jest.fn()
+  const onChangeText = jest.fn()
+  const onClear = jest.fn()
+  const screen = await render(<IsleThemeProvider>
+    <IsleSearchField testID="shrink-search" defaultValue="  temperature  " pending
+      selection={{ start: 2, end: 2 }} inputStyle={{ fontSize: 24, lineHeight: 26 }}
+      clearAccessibilityLabel="Clear search" onChange={onChange} onChangeText={onChangeText} onClear={onClear} />
+  </IsleThemeProvider>)
+  const field = screen.getByTestId('shrink-search-input')
+  expect(field).toHaveStyle({ flex: 1, minWidth: 0, fontSize: 24, lineHeight: 26 })
+  expect(field.props.accessibilityState).toMatchObject({ disabled: false, busy: true })
+  expect(field.props.selection).toEqual({ start: 2, end: 2 })
+  const event = { nativeEvent: { text: 'native', target: 7, eventCount: 1 } }
+  await fireEvent(field, 'change', event)
+  expect(onChange).toHaveBeenCalledWith(event)
+  await fireEvent.press(screen.getByRole('button', { name: 'Clear search' }))
+  expect(onClear).toHaveBeenCalledTimes(1)
+  expect(onChangeText).toHaveBeenLastCalledWith('')
+  expect(screen.getByTestId('shrink-search-input').props.value).toBe('')
+})
+
+it.each(['light', 'dark'] as const)('inherits the common shrink policy through the %s public input adapter', async mode => {
+  setTheme('animal-island-ui', mode)
+  const onChangeText = jest.fn()
+  const screen = await render(<IsleThemeProvider>
+    <IsleInput testID="shrink-public" defaultValue="draft" allowClear
+      prefix={<Text>prefix</Text>} suffix={<Text>suffix</Text>}
+      inputStyle={{ fontSize: 24, lineHeight: 26 }} onChangeText={onChangeText} />
+  </IsleThemeProvider>)
+  expect(screen.getByTestId('shrink-public')).toHaveStyle({ flex: 1, minWidth: 0, fontSize: 24, lineHeight: 26 })
+  await fireEvent.press(screen.getByRole('button', { name: 'common.clear' }))
+  expect(screen.getByTestId('shrink-public').props.value).toBe('')
+  expect(onChangeText).toHaveBeenLastCalledWith('')
+})
+
 it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
   'preserves %s typography through public buttons and editable fields', async family => {
     setTheme(family)
@@ -52,6 +97,23 @@ it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as 
     expect(screen.getByLabelText('Theme input').props.value).toBe('draft')
   },
 )
+
+it.each(['disable', 'remove', 'value', 'unmount'])('retires captured native selection callbacks on %s', async change => {
+  const onChange = jest.fn()
+  const options = [{ value: 'candidate', label: 'Candidate' }]
+  const tree = (disabled = false, value = '', choices = options) => <IsleThemeProvider>
+    <IsleSelect placeholder="Choose" options={choices} value={value} disabled={disabled} onChange={onChange} />
+  </IsleThemeProvider>
+  const screen = await render(tree())
+  await fireEvent.press(screen.getByText('Choose'))
+  const oldSelect = mockNativeSelectChange
+  if (change === 'disable') { await screen.rerender(tree(true)); await screen.rerender(tree(false)) }
+  else if (change === 'remove') await screen.rerender(tree(false, '', []))
+  else if (change === 'value') await screen.rerender(tree(false, 'new value'))
+  else await screen.unmount()
+  await act(() => oldSelect('candidate'))
+  expect(onChange).not.toHaveBeenCalled()
+})
 
 it('re-exports the actual fork implementations rather than duplicate ports', () => {
   expect(IsleCollapse).toBe(Collapse)
@@ -83,6 +145,60 @@ it.each(['light', 'dark'] as const)('renders the fork button and preserves busy/
   await fireEvent.press(screen.getByTestId('save'))
   expect(onPress).not.toHaveBeenCalled()
 })
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
+  'explicitly clears a finished %s button busy state without dropping caller states', async family => {
+    setTheme(family)
+    const onPress = jest.fn()
+    const tree = (loading: boolean) => <IsleThemeProvider>
+      <IsleButton label="Save" loading={loading} accessibilityState={{ expanded: true }} onPress={onPress} />
+    </IsleThemeProvider>
+    const screen = await render(tree(true))
+    expect(screen.getByRole('button', { name: 'Save' }).props.accessibilityState).toMatchObject({ busy: true, expanded: true })
+    await fireEvent.press(screen.getByRole('button', { name: 'Save' }))
+    expect(onPress).not.toHaveBeenCalled()
+
+    await screen.rerender(tree(false))
+    const finished = screen.getByRole('button', { name: 'Save' })
+    expect(finished.props.accessibilityState).toMatchObject({ busy: false, expanded: true })
+    expect(finished).toBeEnabled()
+    await fireEvent.press(finished)
+    expect(onPress).toHaveBeenCalledTimes(1)
+
+    await screen.unmount()
+  },
+)
+
+// The fork button owns busy through loading; the local controls also accept caller busy state.
+it.each(['minimal', 'monet', 'material', 'liquid-glass'] as const)(
+  'preserves an explicit caller busy state for the %s button', async family => {
+    setTheme(family)
+    const screen = await render(<IsleButton label="Save" accessibilityState={{ busy: true, expanded: true }} />)
+    expect(screen.getByRole('button', { name: 'Save' }).props.accessibilityState).toMatchObject({ busy: true, expanded: true })
+    await screen.unmount()
+  },
+)
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
+  'explicitly restores %s input accessibility when it becomes editable again', async family => {
+    setTheme(family)
+    const onChangeText = jest.fn()
+    const tree = (editable: boolean) => <IsleThemeProvider>
+      <IsleInput accessibilityLabel="Draft" value="draft" editable={editable} accessibilityState={{ busy: true }} onChangeText={onChangeText} />
+    </IsleThemeProvider>
+    const screen = await render(tree(false))
+    expect(screen.getByLabelText('Draft')).toBeDisabled()
+    expect(screen.getByLabelText('Draft').props.accessibilityState).toMatchObject({ disabled: true, busy: true })
+    await screen.rerender(tree(true))
+    const resumed = screen.getByLabelText('Draft')
+    expect(resumed.props.accessibilityState).toMatchObject({ disabled: false, busy: true })
+    expect(resumed).toBeEnabled()
+    expect(resumed.props.value).toBe('draft')
+    await fireEvent.changeText(resumed, 'resumed')
+    expect(onChangeText).toHaveBeenCalledWith('resumed')
+    await screen.unmount()
+  },
+)
 
 it('keeps uncontrolled input and switch values when changing themes in a mounted tree', async () => {
   const onChangeText = jest.fn()
@@ -135,6 +251,28 @@ it('maps app option values to the fork and cannot select disabled choices', asyn
   await fireEvent.press(screen.getByText('Available'))
   expect(onChange).toHaveBeenCalledWith('on')
 })
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
+  '%s closes an open selector when its parent becomes disabled and does not reopen on resume', async theme => {
+    setTheme(theme)
+    const onChange = jest.fn()
+    const tree = (disabled: boolean) => <IsleThemeProvider><IsleSelect placeholder="Choose" disabled={disabled}
+      options={[{ label: 'Candidate', value: 'candidate' }]} onChange={onChange} /></IsleThemeProvider>
+    const screen = await render(tree(false))
+    await fireEvent.press(screen.getByText('Choose'))
+    expect(screen.getByText('Candidate')).toBeTruthy()
+    await screen.rerender(tree(true))
+    const candidate = screen.queryByText('Candidate')
+    if (candidate) await fireEvent.press(candidate)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.queryByText('Candidate')).toBeNull()
+    await screen.rerender(tree(false))
+    expect(screen.queryByText('Candidate')).toBeNull()
+    await fireEvent.press(screen.getByText('Choose'))
+    await fireEvent.press(screen.getByText('Candidate'))
+    expect(onChange).toHaveBeenCalledWith('candidate')
+  },
+)
 
 it.each(['minimal', 'monet', 'material', 'liquid-glass'] as const)('%s focus decorates without remounting the input or dropping its draft', async (theme) => {
   setTheme(theme)

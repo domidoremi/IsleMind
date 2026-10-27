@@ -1,6 +1,6 @@
 import { createRef } from 'react'
 import { render } from '@testing-library/react-native'
-import { StyleSheet, TextInput as NativeInput } from 'react-native'
+import { Platform, StyleSheet, TextInput as NativeInput } from 'react-native'
 import { AppFontContext, Text, TextInput } from './AppText'
 import { fontFamilyForTheme } from '@/theme/font'
 
@@ -31,4 +31,64 @@ it('changes the actual family without remounting an input or replacing explicit 
     expect(ref.current).toBe(input)
     expect(screen.getByTestId('code')).toHaveStyle({ fontFamily: 'monospace' })
   }
+})
+
+async function onPlatform(os: 'web' | 'ios', operation: () => Promise<void>) {
+  const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+  Object.defineProperty(Platform, 'OS', { configurable: true, value: os })
+  try { await operation() }
+  finally { Object.defineProperty(Platform, 'OS', descriptor) }
+}
+
+it('uses font-relative web line boxes for labels and editable text', async () => {
+  await onPlatform('web', async () => {
+    const screen = await render(<>
+      <Text testID="label" style={{ fontSize: 12, lineHeight: 16 }}>Completed 7 steps</Text>
+      <TextInput testID="input" style={{ fontSize: 12, lineHeight: 16 }} value="Kept editable draft" />
+    </>)
+    expect(StyleSheet.flatten(screen.getByTestId('label').props.style).lineHeight).toBe('1.5')
+    expect(StyleSheet.flatten(screen.getByTestId('input').props.style).lineHeight).toBe('1.5')
+    expect(screen.getByTestId('input').props.value).toBe('Kept editable draft')
+  })
+})
+
+it('derives web line boxes from the final merged typography without replacing code fonts', async () => {
+  await onPlatform('web', async () => {
+    const screen = await render(<Text testID="code" style={[
+      { fontSize: 12, lineHeight: 16 },
+      { fontSize: 20, lineHeight: 36, fontFamily: 'monospace', color: '#123456' },
+    ]}>code()</Text>)
+    const style = StyleSheet.flatten(screen.getByTestId('code').props.style)
+    expect(style.lineHeight).toBe('1.8')
+    expect(style.fontFamily).toBe('monospace')
+    expect(style.color).toBe('#123456')
+  })
+})
+
+it('keeps native numeric line heights and font-scaling props unchanged', async () => {
+  await onPlatform('ios', async () => {
+    const screen = await render(<>
+      <Text testID="native-label" allowFontScaling={false} style={{ fontSize: 12, lineHeight: 16 }}>Native label</Text>
+      <TextInput testID="native-input" allowFontScaling style={{ fontSize: 12, lineHeight: 16 }} value="Native draft" />
+    </>)
+    expect(StyleSheet.flatten(screen.getByTestId('native-label').props.style).lineHeight).toBe(16)
+    expect(StyleSheet.flatten(screen.getByTestId('native-input').props.style).lineHeight).toBe(16)
+    expect(screen.getByTestId('native-label').props.allowFontScaling).toBe(false)
+    expect(screen.getByTestId('native-input').props.allowFontScaling).toBe(true)
+  })
+})
+
+it('updates web typography without replacing the input, draft or imperative ref', async () => {
+  await onPlatform('web', async () => {
+    const ref = createRef<NativeInput>()
+    const tree = (fontSize: number) => <TextInput
+      ref={ref} testID="web-input" value={'Unchanged two-line\ndraft'}
+      style={{ fontSize, lineHeight: fontSize + 4 }}
+    />
+    const screen = await render(tree(12))
+    const input = ref.current
+    await screen.rerender(tree(20))
+    expect(ref.current).toBe(input)
+    expect(screen.getByTestId('web-input').props.value).toBe('Unchanged two-line\ndraft')
+  })
 })

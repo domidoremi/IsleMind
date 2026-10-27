@@ -28,7 +28,24 @@ check('workspace resolves directly to the sibling RN fork', () => {
   assert.equal(forkManifest.exports['./theme']['react-native'], './src/theme/index.ts')
 })
 
-for (const name of ['Tag', 'Skeleton', 'Image', 'BackTop']) {
+check('workspace lock retains the native dependency maps and exact dayjs integrity', () => {
+  const lock = require('json5').parse(read('bun.lock'))
+  const workspace = lock.workspaces['../animal-island-ui']
+  for (const group of ['dependencies', 'devDependencies', 'peerDependencies']) {
+    assert.deepEqual(workspace[group] ?? {}, forkManifest[group] ?? {}, group + ' must match the native manifest')
+  }
+  const npmLock = JSON.parse(readFork('package-lock.json'))
+  const date = npmLock.packages['node_modules/dayjs']
+  assert.ok(date?.version && date.integrity, 'the existing native lock supplies the date version and integrity')
+  assert.deepEqual(lock.packages['animal-island-ui-rn/dayjs'], [
+    `dayjs@${date.version}`, '', {}, date.integrity,
+  ])
+  const installed = require(require.resolve('dayjs/package.json', { paths: [fork] }))
+  assert.equal(installed.version, date.version)
+  // Matching metadata is not frozen-install acceptance: Bun also diffs workspace lifecycle hooks.
+})
+
+for (const name of ['Tag', 'Skeleton', 'Image', 'BackTop', 'Avatar', 'Badge', 'Calendar', 'CountUp', 'Rate', 'Upload']) {
   check(name + ' is a fork re-export, not a maintained local port', () => {
     const source = read('src/components/ui/isle/' + name + '.tsx')
     const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
@@ -37,6 +54,97 @@ for (const name of ['Tag', 'Skeleton', 'Image', 'BackTop']) {
     assert.ok(read('src/components/ui/isle/index.ts').includes("export * from './" + name + "'"))
   })
 }
+
+check('all 40 upstream components have native exports, type/build coverage and colocated Jest cases', () => {
+  const components = fs.readdirSync(path.join(fork, 'src/components'), { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && fs.existsSync(path.join(fork, 'src/components', entry.name, entry.name + '.tsx')))
+    .map(entry => entry.name).sort()
+  assert.equal(components.length, 40)
+  const main = readFork('src/index.ts')
+  const typecheck = readFork('tsconfig.json')
+  const build = readFork('tsconfig.build.json')
+  const jestConfig = require(path.join(fork, 'jest.config.js'))
+  for (const name of components) {
+    const directory = 'src/components/' + name
+    assert.match(readFork(directory + '/' + name + '.tsx'), /from\s+['"]react-native['"]/)
+    assert.ok(main.includes("from './components/" + name + "'"), name + ' export')
+    assert.ok(typecheck.includes('"' + directory + '"'), name + ' typecheck')
+    assert.ok(build.includes('"' + directory + '"'), name + ' build')
+    assert.ok(jestConfig.testMatch.includes('<rootDir>/' + directory + '/*.test.tsx'), name + ' tests')
+    assert.ok(fs.existsSync(path.join(fork, directory, name + '.test.tsx')), name + ' colocated test')
+    assert.ok(fs.existsSync(path.join(fork, 'dist/components', name, name + '.d.ts')), name + ' built declaration')
+  }
+  assert.ok(build.includes('"src/**/*.test.tsx"'), 'test files are excluded from published JS')
+})
+
+check('the new native API types are available through the package and pure host aliases', () => {
+  const types = {
+    Avatar: ['AvatarProps', 'AvatarGroupProps', 'AvatarSize', 'AvatarShape'],
+    Badge: ['BadgeProps', 'BadgeSize', 'BadgeColor'],
+    Calendar: ['CalendarProps', 'CalendarEvent', 'CalendarColor'],
+    CountUp: ['CountUpProps', 'CountUpRenderState', 'CountUpEasing', 'CountUpCompleteResult'],
+    Rate: ['RateProps', 'RateSize'],
+    Upload: ['UploadProps', 'UploadNativeFile', 'UploadFile', 'UploadPickerOptions', 'UploadCustomRequestOptions'],
+  }
+  for (const [name, names] of Object.entries(types)) {
+    const source = read('src/components/ui/isle/' + name + '.tsx')
+    for (const type of names) {
+      assert.ok(readFork('src/index.ts').includes(type), type + ' package type')
+      assert.ok(readFork('dist/index.d.ts').includes(type), type + ' built package type')
+      assert.ok(source.includes(type + ' as Isle' + type), type + ' pure host alias')
+    }
+  }
+})
+
+check('bounded native API references preserve exact source declarations and self-contained links', () => {
+  const references = {
+    'native-profile.md': ['Avatar/Avatar.tsx', 'Badge/Badge.tsx'],
+    'native-calendar.md': ['Calendar/monthGrid.ts', 'Calendar/Calendar.tsx'],
+    'native-count-rate.md': ['CountUp/CountUp.tsx', 'Rate/Rate.tsx'],
+    'native-upload.md': ['Upload/nativeFiles.ts', 'Upload/Upload.tsx'],
+    'native-select.md': ['Select/Select.tsx'],
+  }
+  const directory = 'skills/animal-island-ui-style/references/components'
+  for (const [file, sources] of Object.entries(references)) {
+    const text = readFork(directory + '/' + file)
+    assert.ok(text.split('\n').length <= 200, file + ' stays bounded')
+    const declarations = new Map()
+    for (const source of sources) {
+      const content = readFork('src/components/' + source)
+      const ast = parse(content, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
+      for (const node of ast.program.body) {
+        if (node.type === 'ExportNamedDeclaration' && node.declaration?.id) {
+          declarations.set(node.declaration.id.name, content.slice(node.start, node.end))
+        }
+      }
+    }
+    let count = 0
+    for (const block of text.matchAll(/```ts\n([\s\S]*?)\n```/g)) {
+      const code = block[1]
+      const ast = parse(code, { sourceType: 'module', plugins: ['typescript'] })
+      for (const node of ast.program.body) {
+        assert.equal(node.type, 'ExportNamedDeclaration', file + ' native declaration')
+        assert.equal(code.slice(node.start, node.end), declarations.get(node.declaration.id.name),
+          file + ' verbatim ' + node.declaration.id.name)
+        count++
+      }
+    }
+    assert.ok(count > 0, file + ' has native declarations')
+    for (const link of text.matchAll(/\]\(([^)]+\.md)\)/g)) {
+      assert.ok(fs.existsSync(path.resolve(fork, directory, link[1])), file + ' link ' + link[1])
+    }
+  }
+})
+
+check('dayjs is the existing library date dependency and the host lock includes its workspace edge', () => {
+  assert.equal(forkManifest.dependencies.dayjs, '^1.11.23')
+  const lock = parse('const lock = ' + read('bun.lock'), { sourceType: 'script' }).program.body[0].declarations[0].init
+  assert.equal(lock.type, 'ObjectExpression', 'Bun text lock remains an object')
+  const source = read('bun.lock')
+  assert.ok(source.includes('"dayjs": "^1.11.23"'))
+  assert.ok(source.includes('"animal-island-ui-rn/dayjs": ["dayjs@1.11.23"'), 'the self-contained workspace retains its installed date runtime')
+  assert.equal(manifest.dependencies.dayjs, undefined, 'no duplicate application-owned date dependency')
+})
 
 check('customized application controls dispatch to the fork', () => {
   const kit = read('src/components/ui/isle/IsleKit.tsx')
@@ -104,13 +212,21 @@ check('library owns native overlay safety, disabled options and motion', () => {
   for (const value of ['onRequestClose={onClose}', 'accessibilityViewIsModal', '<ScrollView', 'keyboardShouldPersistTaps="handled"', 'contentInsets']) assert.ok(modal.includes(value), value)
   assert.ok(readFork('src/components/Input/Input.tsx').includes('inputRef'))
   assert.ok(readFork('src/components/Select/Select.tsx').includes('disabled={option.disabled}'))
-  for (const name of ['Button', 'Switch', 'Card', 'Modal', 'Progress', 'Select', 'Tooltip']) {
+  for (const name of ['Button', 'Switch', 'Card', 'Modal', 'Progress', 'Select', 'Tooltip', 'Badge', 'CountUp', 'Rate', 'Loading', 'Drawer']) {
     const source = readFork('src/components/' + name + '/' + name + '.tsx')
     assert.ok(source.includes('useTheme'))
     assert.ok(source.includes('reducedMotion'))
   }
 })
 
+check('new native Upload fails closed and selection, cancellation and temporary URI ownership stay with the host', () => {
+  const upload = readFork('src/components/Upload/Upload.tsx')
+  const transport = readFork('src/components/Upload/transport.ts')
+  for (const contract of ['!!onPickFiles', 'customRequest', 'controller.signal', 'snapshotNativeFile', 'identity(found) !== admittedIdentity']) assert.ok(upload.includes(contract), contract)
+  assert.ok(upload.includes('selection alone is not an upload'))
+  assert.ok(transport.includes('XMLHttpRequest'))
+  assert.doesNotMatch(upload + transport, /revokeObjectURL|unlinkSync|deleteAsync|requestPermissionsAsync/)
+})
 check('install builds declarations and release freshness includes the fork', () => {
   assert.ok(manifest.scripts.postinstall.includes('build:ui'))
   assert.ok(manifest.scripts['build:ui'].includes('--cwd ../animal-island-ui build'))

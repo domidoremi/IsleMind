@@ -21,11 +21,12 @@ export interface IsleButtonProps {
   tone?: IsleTone
   compact?: boolean
   block?: boolean
+  multiline?: boolean
   style?: StyleProp<ViewStyle>
   textStyle?: StyleProp<TextStyle>
 }
 
-export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, disabled = false, busy = false, tone = 'soft', compact = false, block = false, style, textStyle }: IsleButtonProps) {
+export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, disabled = false, busy = false, tone = 'soft', compact = false, block = false, multiline = false, style, textStyle }: IsleButtonProps) {
   return (
     <BaseIsleButton
       label={label}
@@ -39,6 +40,7 @@ export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, d
       onPress={onPress}
       size={compact ? 'small' : 'middle'}
       block={block}
+      multiline={multiline}
       style={style}
       textStyle={textStyle}
     />

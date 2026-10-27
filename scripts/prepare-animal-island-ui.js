@@ -4,7 +4,7 @@ const { execFileSync } = require('node:child_process')
 
 const repository = 'https://github.com/domidoremi/animal-island-ui.git'
 // Saved RN 0.86.3-compatible input; update only after paired-source validation.
-const pairedUiRevision = '122151919fcf4f29a6dd4d77ed674c2dcd67a2cc'
+const pairedUiRevision = 'b1ead69a8918d46dcc45466f120b8529e1ca2015'
 const sharedRuntimes = ['react', 'react-native', 'react-native-svg']
 
 /** Outside-root workspaces cannot resolve hoisted dependencies by walking upwards.

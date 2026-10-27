@@ -28,6 +28,15 @@ import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 
 type DialogTone = AppFeedbackTone
 
+const DIALOG_ACTION_LAYOUT: ViewStyle = {
+  flexBasis: 160,
+  flexGrow: 1,
+  flexShrink: 1,
+  minWidth: 0,
+  maxWidth: '100%',
+  alignSelf: 'stretch',
+}
+
 export interface IsleDialogChip {
   label: string
   tone?: DialogTone
@@ -265,10 +274,10 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
           onClose={() => closeDialog(false)} testID="animal-island-dialog"
           contentInsets={{ top: modalPaddingTop, right: modalPaddingHorizontal, bottom: modalPaddingBottom, left: modalPaddingHorizontal }}
           width={dialogMaxWidth} style={{ maxHeight: dialogMaxHeight }}
-          footer={dialog ? <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-            {dialog.kind === 'confirm' ? <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => closeDialog(false)} /> : null}
+          footer={dialog ? <View testID="dialog-actions" style={{ width: '100%', flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {dialog.kind === 'confirm' ? <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} multiline onPress={() => closeDialog(false)} style={{ minWidth: 0, maxWidth: '100%', flexShrink: 1 }} /> : null}
             <IsleButton label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
-              tone={dialogActionTone(dialog)} onPress={() => closeDialog(true)} />
+              multiline tone={dialogActionTone(dialog)} onPress={() => closeDialog(true)} style={{ minWidth: 0, maxWidth: '100%', flexShrink: 1 }} />
           </View> : null}>
           {dialog ? <View accessibilityRole="alert" style={{ gap: 10, width: '100%' }}>
             {dialog.message ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }}>{dialog.message}</Text> : null}
@@ -624,19 +633,21 @@ function MinimalDialogSurface({ dialog, onClose }: { dialog: DialogState; onClos
           </View>
         ) : null}
       </DialogScrollableContent>
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, padding: 16 }}>
+      <View testID="dialog-actions" style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8, padding: 16 }}>
         {dialog.kind === 'confirm' ? (
           <IsleButton
             label={dialog.cancelLabel ?? t('common.cancel')}
+            multiline
             onPress={() => onClose(false)}
-            style={{ flex: 1, minWidth: 0 }}
+            style={DIALOG_ACTION_LAYOUT}
           />
         ) : null}
         <IsleButton
           label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
+          multiline
           tone={dialogActionTone(dialog)}
           onPress={() => onClose(true)}
-          style={{ flex: 1, minWidth: 0 }}
+          style={DIALOG_ACTION_LAYOUT}
         />
       </View>
     </View>
@@ -682,15 +693,16 @@ function MonetDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose:
           ) : null}
           {dialog.renderBody ? <View style={{ marginTop: 13 }}>{dialog.renderBody()}</View> : null}
       </DialogScrollableContent>
-      <View style={{ padding: 14, flexDirection: 'row', gap: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.material.stroke, backgroundColor: material.chrome }}>
+      <View testID="dialog-actions" style={{ padding: 14, flexDirection: 'row', flexWrap: 'wrap', gap: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.material.stroke, backgroundColor: material.chrome }}>
         {dialog.kind === 'confirm' ? (
-          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.82, minWidth: 0, borderRadius: 18 }} />
+          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} multiline onPress={() => onClose(false)} style={{ ...DIALOG_ACTION_LAYOUT, flexGrow: 0.82, borderRadius: 18 }} />
         ) : null}
         <IsleButton
           label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
+          multiline
           tone={dialogActionTone(dialog)}
           onPress={() => onClose(true)}
-          style={{ flex: 1.18, minWidth: 0, borderRadius: 18 }}
+          style={{ ...DIALOG_ACTION_LAYOUT, flexGrow: 1.18, borderRadius: 18 }}
         />
       </View>
       </IslePanel>
@@ -730,15 +742,16 @@ function MaterialDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
         ) : null}
         {dialog.renderBody ? <View style={{ marginTop: 16 }}>{dialog.renderBody()}</View> : null}
       </DialogScrollableContent>
-      <View style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', gap: 8, backgroundColor: material.chrome }}>
+      <View testID="dialog-actions" style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', flexWrap: 'wrap', gap: 8, backgroundColor: material.chrome }}>
         {dialog.kind === 'confirm' ? (
-          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.85, minWidth: 0, borderRadius: 22 }} />
+          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} multiline onPress={() => onClose(false)} style={{ ...DIALOG_ACTION_LAYOUT, flexGrow: 0.85, borderRadius: 22 }} />
         ) : null}
         <IsleButton
           label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
+          multiline
           tone={dialogActionTone(dialog)}
           onPress={() => onClose(true)}
-          style={{ flex: 1.15, minWidth: 0, borderRadius: 22 }}
+          style={{ ...DIALOG_ACTION_LAYOUT, flexGrow: 1.15, borderRadius: 22 }}
         />
       </View>
     </View>
@@ -779,9 +792,9 @@ function LiquidGlassDialogSurface({ dialog, onClose }: { dialog: DialogState; on
             </View>
           ) : null}
         </DialogScrollableContent>
-        <View style={{ padding: 12, flexDirection: 'row', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.ui.semantic.chrome.border }}>
-          {dialog.kind === 'confirm' ? <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 1, minWidth: 0, borderRadius: 22 }} /> : null}
-          <IsleButton label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')} tone={dialogActionTone(dialog)} onPress={() => onClose(true)} style={{ flex: 1, minWidth: 0, borderRadius: 22 }} />
+        <View testID="dialog-actions" style={{ padding: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.ui.semantic.chrome.border }}>
+          {dialog.kind === 'confirm' ? <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} multiline onPress={() => onClose(false)} style={{ ...DIALOG_ACTION_LAYOUT, borderRadius: 22 }} /> : null}
+          <IsleButton label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')} multiline tone={dialogActionTone(dialog)} onPress={() => onClose(true)} style={{ ...DIALOG_ACTION_LAYOUT, borderRadius: 22 }} />
         </View>
       </IslePanel>
     </View>

@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Platform, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { Text, TextInput } from '@/components/ui/AppText'
+import { resolveWebTextMetricsStyle } from '@/components/ui/webTextMetrics'
 import { MotiView } from 'moti'
 import { Button as NativeButton, Input as NativeInput, Switch as NativeSwitch, Card as NativeCard, Select as NativeSelect, Progress as NativeProgress } from 'animal-island-ui-rn'
 import { useTranslation } from 'react-i18next'
@@ -130,6 +131,7 @@ export function IsleButton({
   block = false,
   loading = false,
   disabled = false,
+  multiline = false,
   onPress,
   style,
   textStyle,
@@ -148,6 +150,7 @@ export function IsleButton({
   block?: boolean
   loading?: boolean
   disabled?: boolean
+  multiline?: boolean
   onPress?: NonNullable<PressableProps['onPress']>
   style?: StyleProp<ViewStyle>
   textStyle?: StyleProp<TextStyle>
@@ -211,15 +214,18 @@ export function IsleButton({
             ? 0
             : StyleSheet.hairlineWidth
   const resolvedShadowOpacity = shadowOpacity
-  const buttonAccessibilityState = loading
-    ? { ...accessibilityState, busy: true }
-    : accessibilityState
+  const buttonAccessibilityState = {
+    ...accessibilityState,
+    busy: loading || accessibilityState?.busy === true,
+  }
   const flattenedStyle = StyleSheet.flatten(style)
   const minimumButtonHeight = resolveMinimumTouchTargetHeight(height, flattenedStyle, ISLE_MIN_TOUCH_TARGET)
   if (palette.themeId === 'animal-island-ui') {
-    return <NativeButton type={type} size={size} danger={danger} ghost={ghost} block={block} loading={loading} disabled={disabled}
+    const labelStyle = [labelTypography, { fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4) }, textStyle]
+    const metrics = resolveWebTextMetricsStyle(labelStyle)
+    return <NativeButton type={type} size={size} danger={danger} ghost={ghost} block={block} loading={loading} disabled={disabled} multiline={multiline}
       icon={icon} onPress={onPress} accessibilityLabel={accessibilityLabel ?? label} accessibilityRole={accessibilityRole}
-      accessibilityState={accessibilityState} testID={testID} textStyle={[labelTypography, { fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4) }, textStyle]} style={[style, { minHeight: minimumButtonHeight }]}>
+      accessibilityState={buttonAccessibilityState} testID={testID} textStyle={metrics ? [...labelStyle, metrics] : labelStyle} style={[style, { minHeight: minimumButtonHeight }]}>
       {children ?? label}
     </NativeButton>
   }
@@ -231,7 +237,7 @@ export function IsleButton({
     </View>
   ) : undefined
   const contentNode = children || label ? (
-    <Text numberOfLines={1} style={[labelTypography, { flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), fontWeight: labelTypography?.fontWeight ?? (primary ? '700' : '600'), includeFontPadding: false, textAlignVertical: 'center' }, textStyle]}>
+    <Text numberOfLines={multiline ? undefined : 1} style={[labelTypography, { flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), fontWeight: labelTypography?.fontWeight ?? (primary ? '700' : '600'), includeFontPadding: false, textAlignVertical: 'center' }, multiline ? { textAlign: 'center' } : null, textStyle]}>
       {children ?? label}
     </Text>
   ) : undefined
@@ -266,6 +272,7 @@ export function IsleButton({
                  ? palette.ui.radius.controlLarge
                  : controlRadius(size, palette),
           paddingHorizontal: size === 'small' ? 12 : size === 'large' ? 18 : 14,
+          paddingVertical: multiline ? 8 : undefined,
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'center',
@@ -477,7 +484,10 @@ export function IsleInput({
                 onContentSizeChange?.(event)
               }}
               accessibilityLabel={props.accessibilityLabel ?? (typeof label === 'string' ? label : undefined)}
-              accessibilityState={disabled ? { ...props.accessibilityState, disabled: true } : props.accessibilityState}
+              accessibilityState={{
+                ...props.accessibilityState,
+                disabled: disabled || props.accessibilityState?.disabled === true,
+              }}
               aria-invalid={status === 'error' || undefined}
               placeholderTextColor={input.placeholderForeground}
               style={[
@@ -802,13 +812,30 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
   const accentMotion = useThemeMotion('accent')
   const motion = menuMotion.intensity
   const [open, setOpen] = useState(false)
+  const selectionSnapshot = JSON.stringify([value, options.map(option => [option.value, option.label, !!option.disabled])])
+  const selection = useRef({ snapshot: selectionSnapshot, disabled, onChange })
+  if (selection.current.snapshot !== selectionSnapshot || selection.current.disabled !== disabled) {
+    selection.current = { snapshot: selectionSnapshot, disabled, onChange }
+  } else {
+    selection.current.onChange = onChange
+  }
+  const reviewedSelection = selection.current
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  function select(next: string) {
+    if (!mounted.current || selection.current !== reviewedSelection || selection.current.disabled ||
+      !options.some(option => option.value === next && !option.disabled)) return
+    selection.current.onChange?.(next)
+    setOpen(false)
+  }
   useEffect(() => {
     if (disabled) setOpen(false)
   }, [disabled])
   const selected = options.find((option) => option.value === value)
   if (palette.themeId === 'animal-island-ui') {
-    return <NativeSelect options={options.map((option) => ({ key: option.value, label: option.label, disabled: option.disabled }))}
-      value={value ?? ''} placeholder={placeholder} disabled={disabled} onChange={(next) => onChange?.(next)} style={style} />
+    // The fork owns its menu state; remount it to retire an open menu on disable.
+    return <NativeSelect key={disabled ? 'disabled' : 'enabled'} options={options.map((option) => ({ key: option.value, label: option.label, disabled: option.disabled }))}
+      value={value ?? ''} placeholder={placeholder} disabled={disabled} onChange={select} style={style} />
   }
   const selectExpression = palette.colors.design ? resolveThemeComponentExpression(palette.colors.design.family, 'dropdown') : null
   const activeOptionBackground = palette.ui.tone.success.background
@@ -831,7 +858,7 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
             <AppIcon name="collapse" color={palette.colors.textSecondary} size={15} />
           </MotiView>
         }
-        onPress={() => setOpen((current) => !current)}
+        onPress={() => { if (mounted.current && selection.current === reviewedSelection && !selection.current.disabled) setOpen((current) => !current) }}
         style={{ alignSelf: 'stretch', justifyContent: 'space-between' }}
       />
       {/* Remove closed options immediately; exiting rows must never accept taps. */}
@@ -853,11 +880,7 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
                     disabled={optionDisabled}
                     accessibilityLabel={option.label}
                     accessibilityState={{ selected: optionActive }}
-                    onPress={() => {
-                      if (disabled || optionDisabled) return
-                      onChange?.(option.value)
-                      setOpen(false)
-                    }}
+                    onPress={() => select(option.value)}
                     interactionProfile={selectExpression?.motion ?? 'default'}
                     style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(palette.ui.radius.controlSmall, 8), paddingHorizontal: 10, justifyContent: 'center' }}
                   >
@@ -971,6 +994,8 @@ export interface IsleProgressProps {
   durationMs?: number
   indeterminate?: boolean
   fillColor?: string
+  accessibilityLabel?: string
+  testID?: string
   style?: StyleProp<ViewStyle>
 }
 
@@ -985,6 +1010,8 @@ export function IsleProgress({
   durationMs,
   indeterminate = false,
   fillColor,
+  accessibilityLabel,
+  testID,
   style,
 }: IsleProgressProps) {
   const palette = useIslePalette()
@@ -993,14 +1020,17 @@ export function IsleProgress({
   const visualPercent = indeterminate ? Math.max(PROGRESS_INSIDE_MIN_FILL, safePercent || PROGRESS_INSIDE_MIN_FILL) : safePercent
   const trackHeight = size === 'small' ? 7 : size === 'large' ? 12 : 9
   const infoFontSize = size === 'small' ? 10 : size === 'large' ? 12 : 11
-  const info = infoFormat ? infoFormat(safePercent) : `${Math.round(safePercent)}%`
+  const requestedDuration = durationMs ?? (palette.themeId === 'animal-island-ui' ? 250 : 176)
+  const safeDuration = Number.isFinite(requestedDuration) && requestedDuration >= 0 ? Math.min(requestedDuration, 2147483647) : 0
   if (palette.themeId === 'animal-island-ui') {
     return <NativeProgress percent={safePercent} size={size} showInfo={showInfo} infoFormat={infoFormat} indeterminate={indeterminate}
-      fillColor={fillColor} duration={motion === 'full' ? (durationMs ?? 250) / 1000 : 0} style={style} />
+      fillColor={fillColor} duration={motion === 'full' ? safeDuration / 1000 : 0}
+      aria-label={accessibilityLabel} testID={testID} style={style} />
   }
+  const info = infoFormat ? infoFormat(safePercent) : indeterminate ? '' : `${Math.round(safePercent)}%`
   const isInside = showInfo && infoPosition === 'inside'
   const infoInsideVisible = isInside && visualPercent >= PROGRESS_INSIDE_MIN_FILL
-  const resolvedDuration = durationMs ?? (motion === 'full' ? 176 : 1)
+  const resolvedDuration = motion === 'full' ? safeDuration : 1
   const progressBackground = palette.ui.section.divider
   const progressFill = fillColor ?? palette.ui.control.primaryBackground
   const infoColor = palette.colors.textSecondary
@@ -1008,7 +1038,10 @@ export function IsleProgress({
 
   const track = (
     <View
+      accessible
       accessibilityRole="progressbar"
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
       accessibilityValue={indeterminate ? { min: 0, max: 100, text: typeof info === 'string' ? info : undefined } : { min: 0, max: 100, now: Math.round(safePercent), text: typeof info === 'string' ? info : undefined }}
       style={{ alignSelf: 'stretch', flexGrow: 1, flexShrink: 1, height: trackHeight, minWidth: 56, borderRadius: palette.ui.radius.chip, backgroundColor: progressBackground, overflow: 'hidden' }}
     >
