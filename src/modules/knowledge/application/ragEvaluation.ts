@@ -2,6 +2,7 @@ import type { Conversation } from '@/types/chatContracts'
 import type { RagEvaluationResult, RetrievalSource } from '@/types/contextContracts'
 import type { Settings } from '@/types/settingsContracts'
 import { runAgenticRag, verifyRagGeneration } from './ragOrchestration'
+import type { KnowledgeRepositoryOperationOptions } from '../contracts'
 export const RAG_RETRIEVAL_EVAL_SCHEMA = 'islemind.rag-retrieval-eval.v1'
 export const RAG_RETRIEVAL_MODES = ['baseline', 'hybrid', 'agentic'] as const
 
@@ -315,9 +316,18 @@ export const RAG_RETRIEVAL_BENCHMARK_CASES: RagRetrievalBenchmarkCase[] = [
   },
 ]
 
-export async function evaluateRagGoldSet(settings: Settings, conversation?: Partial<Conversation>): Promise<RagEvaluationRun> {
+export async function evaluateRagGoldSet(
+  settings: Settings,
+  conversation?: Partial<Conversation>,
+  operation: KnowledgeRepositoryOperationOptions = {},
+): Promise<RagEvaluationRun> {
+  operation = { ...operation }
+  throwIfGoldEvaluationCancelled(operation.signal)
+  settings = { ...settings }
+  conversation = conversation ? { ...conversation } : undefined
   const cases: RagCaseEvaluation[] = []
   for (const item of RAG_GOLD_CASES) {
+    throwIfGoldEvaluationCancelled(operation.signal)
     const pack = await runAgenticRag({
       query: item.query,
       conversationTitle: conversation?.title,
@@ -328,7 +338,9 @@ export async function evaluateRagGoldSet(settings: Settings, conversation?: Part
         ? item.evidence.map((source) => ({ ...source, id: `${source.id}-advanced`, sourceReason: source.sourceReason ?? 'gold-advanced' }))
         : [],
       now: () => Date.now(),
+      signal: operation.signal,
     })
+    throwIfGoldEvaluationCancelled(operation.signal)
     const answer = `${item.expectedTerms.join(' ')} [1]`
     const verification = verifyRagGeneration({ answer, query: item.query, citations: pack.citations, quality: pack.quality })
     const relevance = scoreTerms(item.expectedTerms, pack.contextPrompt)
@@ -356,6 +368,13 @@ export async function evaluateRagGoldSet(settings: Settings, conversation?: Part
     fallbackReasons: Array.from(new Set(cases.flatMap((item) => item.fallbackReasons))),
   }
   return run
+}
+
+function throwIfGoldEvaluationCancelled(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const error = new Error('RAG gold evaluation was cancelled.')
+  error.name = 'AbortError'
+  throw error
 }
 
 export async function runRagRetrievalBenchmark(settings: RagEvaluationSettings, options: RagRetrievalBenchmarkOptions = {}): Promise<RagRetrievalBenchmarkRun> {

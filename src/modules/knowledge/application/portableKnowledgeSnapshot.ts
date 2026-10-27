@@ -121,8 +121,9 @@ export function createPortableKnowledgeSnapshotService(
       throwIfAborted(options.signal)
       if (!memories.length) return
       const now = dependencies.clock.now()
+      // Portable claims are not local approval or retrieval evidence.
       const records = memories
-        .map((memory) => toImportedMemoryWrite(memory, now))
+        .map((memory) => toImportedMemoryWrite({ ...memory, status: 'pending', lastConfirmedAt: undefined, lastHitAt: undefined }, now))
         .filter((memory): memory is KnowledgeMemoryWrite => memory !== undefined)
       throwIfAborted(options.signal)
       await dependencies.repository.importMemories(records, { signal: options.signal })

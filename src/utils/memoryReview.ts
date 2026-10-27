@@ -37,11 +37,11 @@ export function buildMemoryReviewSummary(
   }
 }
 
-export function filterPendingMemoriesForReview(
-  memories: MemoryItem[],
+export function filterPendingMemoriesForReview<Memory extends MemoryItem>(
+  memories: Memory[],
   focus: MemoryReviewQueueFocus = 'all',
   lowConfidenceThreshold = MEMORY_REVIEW_LOW_CONFIDENCE_THRESHOLD
-): MemoryItem[] {
+): Memory[] {
   const pendingMemories = memories.filter((memory) => memory.status === 'pending')
   if (focus === 'all') return pendingMemories
   if (focus === 'lowConfidence') {

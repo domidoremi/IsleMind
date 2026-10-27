@@ -92,6 +92,13 @@ export interface KnowledgeRepositoryOperationOptions {
   signal?: AbortSignal
 }
 
+export class KnowledgeRepositoryConflictError extends Error {
+  constructor() {
+    super('The saved knowledge or memory changed. Review the current records before trying again.')
+    this.name = 'KnowledgeRepositoryConflictError'
+  }
+}
+
 /** Port for the durable memory store used by the target candidate use case. */
 export interface MemoryCandidateRepository {
   listAll(options?: KnowledgeRepositoryOperationOptions): Promise<readonly MemoryCandidateRecord[]>
@@ -161,6 +168,17 @@ export interface KnowledgeMemoryWrite {
   updatedAt?: number
 }
 
+export interface KnowledgeMemoryMutationOptions extends KnowledgeRepositoryOperationOptions {
+  expectedMemory?: Readonly<KnowledgeMemoryRecord>
+  /** Null explicitly means no other active logical fact was shown during review. */
+  expectedActiveMemory?: Readonly<KnowledgeMemoryRecord> | null
+}
+
+export interface KnowledgeMemoryClearOptions extends KnowledgeRepositoryOperationOptions {
+  /** A guarded clear only removes these records; new/unseen records are retained. */
+  expectedMemories?: readonly KnowledgeMemoryRecord[]
+}
+
 export interface KnowledgeMemoryListInput<Status extends KnowledgeMemoryStatus = KnowledgeMemoryStatus> extends KnowledgeRepositoryOperationOptions {
   statuses?: readonly Status[]
 }
@@ -194,10 +212,10 @@ export interface KnowledgeMemoryRepository extends MemoryCandidateRepository {
   updateMemoryStatus(
     id: string,
     status: KnowledgeMemoryStatus,
-    options?: KnowledgeRepositoryOperationOptions,
+    options?: KnowledgeMemoryMutationOptions,
   ): Promise<void>
-  deleteMemory(id: string, options?: KnowledgeRepositoryOperationOptions): Promise<void>
-  clearMemories(options?: KnowledgeRepositoryOperationOptions): Promise<void>
+  deleteMemory(id: string, options?: KnowledgeMemoryMutationOptions): Promise<void>
+  clearMemories(options?: KnowledgeMemoryClearOptions): Promise<void>
   searchMemories(input: KnowledgeMemorySearchInput): Promise<readonly KnowledgeMemorySearchHit[]>
   importMemories(
     memories: readonly KnowledgeMemoryWrite[],
@@ -223,6 +241,20 @@ export interface KnowledgeDocumentRecord {
   contentHash?: string
   createdAt: number
   updatedAt: number
+}
+
+export interface KnowledgeDocumentMutationOptions extends KnowledgeRepositoryOperationOptions {
+  expectedDocument?: Readonly<KnowledgeDocumentRecord>
+}
+
+export interface KnowledgeDocumentStatusMutationOptions extends KnowledgeDocumentMutationOptions {
+  /** Recovery may acknowledge only the source chunks that were actually indexed. */
+  expectedChunks?: readonly KnowledgeChunkRecord[]
+}
+
+export interface KnowledgeDocumentClearOptions extends KnowledgeRepositoryOperationOptions {
+  /** A guarded clear only removes these records; new/unseen records are retained. */
+  expectedDocuments?: readonly KnowledgeDocumentRecord[]
 }
 
 /** A persisted chunk keeps source and indexing provenance for later retrieval. */
@@ -299,13 +331,13 @@ export interface KnowledgeDocumentRepository {
     documentId?: string,
     options?: KnowledgeRepositoryOperationOptions,
   ): Promise<readonly KnowledgeChunkRecord[]>
-  deleteDocument(id: string, options?: KnowledgeRepositoryOperationOptions): Promise<void>
-  clearDocuments(options?: KnowledgeRepositoryOperationOptions): Promise<void>
+  deleteDocument(id: string, options?: KnowledgeDocumentMutationOptions): Promise<void>
+  clearDocuments(options?: KnowledgeDocumentClearOptions): Promise<void>
   updateDocumentStatus(
     id: string,
     status: KnowledgeDocumentStatus,
     error?: string,
-    options?: KnowledgeRepositoryOperationOptions,
+    options?: KnowledgeDocumentStatusMutationOptions,
   ): Promise<void>
   replaceSnapshot(
     snapshot: KnowledgeRepositorySnapshot,

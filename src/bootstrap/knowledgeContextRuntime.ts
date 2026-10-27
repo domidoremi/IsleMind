@@ -13,7 +13,9 @@ import {
 import { st } from '@/i18n/service'
 import { logContextOperation } from '@/services/runtimeHealthLog'
 import { useSettingsStore } from '@/store/settingsStore'
+import { snapshotProviderConfiguration } from '@/modules/providers'
 import type { Conversation, Message } from '@/types/chatContracts'
+import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 import type { Settings } from '@/types/settingsContracts'
@@ -55,6 +57,26 @@ export interface RetrievedConversationFlareContext {
   quality?: RagEvaluationResult
 }
 
+export interface ConversationKnowledgeContextOptions {
+  settings?: Settings
+  provider?: AIProvider | null
+}
+
+function captureConversationKnowledgeContext(
+  conversation: Conversation,
+  draftMessage: Message,
+  options: ConversationKnowledgeContextOptions,
+) {
+  const state = useSettingsStore.getState()
+  return {
+    conversation: snapshotProviderConfiguration(conversation),
+    draftMessage: snapshotProviderConfiguration(draftMessage),
+    settings: snapshotProviderConfiguration(options.settings ?? state.settings),
+    provider: snapshotProviderConfiguration(options.provider),
+    providers: snapshotProviderConfiguration(state.providers),
+  }
+}
+
 /**
  * Bootstrap composition for the conversation knowledge path. The target RAG
  * use case owns planning/packing while this binding supplies app settings,
@@ -64,9 +86,12 @@ export async function retrieveConversationKnowledgeContext(
   conversation: Conversation,
   draftMessage: Message,
   signal?: AbortSignal,
+  options: ConversationKnowledgeContextOptions = {},
 ): Promise<RetrievedConversationKnowledgeContext> {
+  throwIfCancelled(signal)
+  const captured = captureConversationKnowledgeContext(conversation, draftMessage, options)
   return executionResources.runLocal(signal ?? new AbortController().signal,
-    () => retrieveConversationKnowledgeContextInLocalJob(conversation, draftMessage, signal))
+    () => retrieveCapturedConversationKnowledgeContext(captured, signal))
 }
 
 /** Bootstrap-only workflow binding: Tasks already owns the whole local RAG job.
@@ -76,7 +101,17 @@ export async function retrieveConversationKnowledgeContextInLocalJob(
   conversation: Conversation,
   draftMessage: Message,
   signal?: AbortSignal,
+  options: ConversationKnowledgeContextOptions = {},
 ): Promise<RetrievedConversationKnowledgeContext> {
+  throwIfCancelled(signal)
+  return retrieveCapturedConversationKnowledgeContext(captureConversationKnowledgeContext(conversation, draftMessage, options), signal)
+}
+
+async function retrieveCapturedConversationKnowledgeContext(
+  captured: ReturnType<typeof captureConversationKnowledgeContext>,
+  signal?: AbortSignal,
+): Promise<RetrievedConversationKnowledgeContext> {
+  const { conversation, draftMessage, settings } = captured
   throwIfCancelled(signal)
   try {
     await Promise.all([
@@ -96,7 +131,6 @@ export async function retrieveConversationKnowledgeContextInLocalJob(
     return { sources: [], prompt: '' }
   }
 
-  const settings = useSettingsStore.getState().settings
   // Retrieval intent is user/conversation-local. Never ship the private
   // system prompt to an embedding or search adapter: it is instructions, not
   // evidence about what the user is asking.
@@ -130,7 +164,10 @@ export async function retrieveConversationKnowledgeContextInLocalJob(
     }
   }
 
-  const provider = conversation.providerId ? await useSettingsStore.getState().hydrateProviderKey(conversation.providerId) : null
+  const provider = snapshotProviderConfiguration(captured.provider !== undefined ? captured.provider
+    : conversation.providerId ? await useSettingsStore.getState().hydrateProviderKey(conversation.providerId, {
+      signal, providers: captured.providers, settings,
+    }) : null)
   throwIfCancelled(signal)
   const modelConfig = getModelConfig(
     provider ? resolveProviderModelAlias(provider, conversation.model ?? '') : conversation.model ?? '',
@@ -209,9 +246,16 @@ export async function retrieveConversationFlareContext(input: {
   excludeChunkIds?: string[]
   limit?: number
   signal?: AbortSignal
+  settings?: Settings
 }): Promise<RetrievedConversationFlareContext> {
+  const settings = snapshotProviderConfiguration(input.settings ?? useSettingsStore.getState().settings)
+  input = {
+    ...input,
+    conversation: snapshotProviderConfiguration(input.conversation),
+    excludeChunkIds: input.excludeChunkIds ? [...input.excludeChunkIds] : undefined,
+    settings,
+  }
   throwIfCancelled(input.signal)
-  const settings = useSettingsStore.getState().settings
   if (!settings.knowledgeEnabled || settings.ragMode === 'off') {
     return { sources: [], prompt: '', trace: [] }
   }

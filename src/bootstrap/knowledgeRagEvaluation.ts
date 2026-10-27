@@ -14,6 +14,8 @@ import {
   summarizeRagEvaluationRun,
   type KnowledgeProviderEmbeddingJobRecord,
   type RagEvaluationRun,
+  type KnowledgeDocumentClearOptions,
+  type KnowledgeRepositoryOperationOptions,
 } from '@/modules/knowledge'
 
 export interface RagDebugSnapshot {
@@ -31,14 +33,21 @@ export interface RagEmbeddingJobSummary {
 export async function runRagGoldEvaluation(
   settings: Settings,
   conversation?: Partial<Conversation>,
+  operation: KnowledgeRepositoryOperationOptions = {},
 ): Promise<RagEvaluationRun> {
-  const run = await evaluateRagGoldSet(settings, conversation)
+  operation = { ...operation }
+  throwIfRagDiagnosticCancelled(operation.signal)
+  settings = { ...settings }
+  conversation = conversation ? { ...conversation } : undefined
+  const run = await evaluateRagGoldSet(settings, conversation, operation)
+  throwIfRagDiagnosticCancelled(operation.signal)
   await ragEvaluationRepository.log({
     query: 'islemind-rag-gold-set',
     quality: summarizeRagEvaluationRun(run),
     sourceCount: run.cases.reduce((sum, item) => sum + item.sourceCount, 0),
     fallbackReasons: run.fallbackReasons,
   })
+  throwIfRagDiagnosticCancelled(operation.signal)
   return run
 }
 
@@ -64,12 +73,25 @@ export async function loadRagEmbeddingJobSummary(limit = 50): Promise<RagEmbeddi
   }
 }
 
-export async function rebuildRagKnowledgeEmbeddings(options: KnowledgeIndexingOptions = {}): Promise<number> {
-  const count = await rebuildKnowledgeEmbeddings(options)
+export async function rebuildRagKnowledgeEmbeddings(
+  options: KnowledgeIndexingOptions = {},
+  operation: KnowledgeDocumentClearOptions = {},
+): Promise<number> {
+  const count = await rebuildKnowledgeEmbeddings(options, operation)
   await clearKnowledgeIndexCaches()
   return count
 }
 
-export async function clearRagQueryCaches(): Promise<void> {
-  await clearKnowledgeIndexCaches()
+export async function clearRagQueryCaches(operation: KnowledgeRepositoryOperationOptions = {}): Promise<void> {
+  operation = { ...operation }
+  throwIfRagDiagnosticCancelled(operation.signal)
+  await clearKnowledgeIndexCaches(operation)
+  throwIfRagDiagnosticCancelled(operation.signal)
+}
+
+function throwIfRagDiagnosticCancelled(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const error = new Error('RAG diagnostic was cancelled.')
+  error.name = 'AbortError'
+  throw error
 }

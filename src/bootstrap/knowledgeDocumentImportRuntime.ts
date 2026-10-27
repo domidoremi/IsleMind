@@ -10,9 +10,12 @@ import {
 import { generateProviderText } from '@/bootstrap/providerRuntime'
 import { createKnowledgeDocumentIndex, knowledgeRepository } from '@/bootstrap/knowledgeRepository'
 import { useSettingsStore } from '@/store/settingsStore'
+import { ProviderContextCapacityError, snapshotProviderConfiguration } from '@/modules/providers'
 import type { AIProvider } from '@/types/providerContracts'
+import type { Settings } from '@/types/settingsContracts'
 import {
   MAX_IMPORT_TEXT_FILE_BYTES,
+  assertImportFileSize,
   assertImportFileSizeByUri,
   deleteTemporaryImportCopy,
   isFileTooLargeError,
@@ -25,17 +28,28 @@ const PICKER_MIME_TYPES = ['text/*', 'application/json', 'application/javascript
 
 export interface KnowledgeDocumentImportOptions {
   signal: AbortSignal
+  settings?: Settings
+  waitForProviderUpgrades?: boolean
+}
+
+export interface KnowledgeDocumentImportResult {
+  ok: boolean
+  message: string
+  reason?: 'pdf_capacity_unavailable'
 }
 
 export async function importKnowledgeFile(
   provider: AIProvider | undefined,
   model: string | undefined,
   options: KnowledgeDocumentImportOptions,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<KnowledgeDocumentImportResult> {
+  options = captureKnowledgeImportOptions(options)
+  provider = snapshotProviderConfiguration(provider)
   const { signal } = options
   let importUri: string | undefined
   let importTitle: string | undefined
   let sourceType: 'text' | 'pdf' | undefined
+  let extractingPdf = false
   try {
     throwIfAborted(signal)
     const picked = await DocumentPicker.getDocumentAsync({
@@ -68,7 +82,7 @@ export async function importKnowledgeFile(
       await importKnowledgeDocumentThroughTarget(
         { title: asset.name, mimeType: asset.mimeType, size: resolvedSize, text, sourceUri: asset.name },
         provider,
-        signal,
+        options,
       )
       return { ok: true, message: st('contextImport.importedFile', { name: asset.name }) }
     }
@@ -76,8 +90,9 @@ export async function importKnowledgeFile(
     if (asset.mimeType === 'application/pdf' || asset.name.toLowerCase().endsWith('.pdf')) {
       sourceType = 'pdf'
       if (!provider?.apiKey || !model) return { ok: false, message: st('contextImport.pdfNeedsKey') }
-      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 })
+      const base64 = await readKnowledgePdfBase64(asset, signal)
       throwIfAborted(signal)
+      extractingPdf = true
       const text = await generateProviderText({
         provider,
         model,
@@ -96,14 +111,16 @@ export async function importKnowledgeFile(
         maxTokens: 12000,
         generationParameterSources: { temperature: 'internal-policy', maxTokens: 'internal-policy' },
         usageContext: { source: 'knowledge' },
+        settings: options.settings,
         signal,
       })
+      extractingPdf = false
       throwIfAborted(signal)
       if (!text.trim()) return { ok: false, message: st('contextImport.pdfExtractFailed') }
       await importKnowledgeDocumentThroughTarget(
         { title: asset.name, mimeType: asset.mimeType, size: resolvedSize, text, sourceUri: asset.name },
         provider,
-        signal,
+        options,
       )
       return { ok: true, message: st('contextImport.pdfImported', { name: asset.name }) }
     }
@@ -122,6 +139,9 @@ export async function importKnowledgeFile(
       model,
       error,
     }).catch(() => undefined)
+    if (extractingPdf && error instanceof ProviderContextCapacityError && error.code === 'media_estimate_unavailable') {
+      return { ok: false, message: st('contextImport.pdfCapacityUnavailable'), reason: 'pdf_capacity_unavailable' }
+    }
     throw error
   } finally {
     await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })
@@ -133,22 +153,26 @@ export async function importKnowledgePlainText(
   text: string,
   provider: AIProvider | undefined,
   options: KnowledgeDocumentImportOptions,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<KnowledgeDocumentImportResult> {
+  options = captureKnowledgeImportOptions(options)
+  provider = snapshotProviderConfiguration(provider)
+  const { signal } = options
   const resolvedTitle = title.trim() || st('contextImport.pastedTextTitle', { time: new Date().toLocaleString() })
   try {
-    throwIfAborted(options.signal)
-    await initializeKnowledgeRepository(options.signal)
-    throwIfAborted(options.signal)
+    throwIfAborted(signal)
+    await initializeKnowledgeRepository(signal)
+    throwIfAborted(signal)
     const content = text.trim()
     if (!content) return { ok: false, message: st('contextImport.emptyText') }
     await importKnowledgeDocumentThroughTarget(
       { title: resolvedTitle, mimeType: 'text/plain', size: content.length, text: content },
       provider,
-      options.signal,
+      options,
     )
+    throwIfAborted(signal)
     return { ok: true, message: st('contextImport.pastedTextImported') }
   } catch (error) {
-    if (options.signal.aborted || isCancellationError(error)) throw createAbortError()
+    if (signal.aborted || isCancellationError(error)) throw createAbortError()
     await logContextOperation({
       phase: 'knowledge_import',
       status: 'error',
@@ -162,6 +186,31 @@ export async function importKnowledgePlainText(
   }
 }
 
+async function readKnowledgePdfBase64(asset: { uri: string; file?: Blob }, signal: AbortSignal): Promise<string> {
+  if (!asset.file) {
+    return FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 })
+  }
+  // Web pickers supply the File itself; native filesystem reads cannot resolve its blob URI.
+  assertImportFileSize(asset.file.size, MAX_IMPORT_TEXT_FILE_BYTES)
+  const bytes = new Uint8Array(await asset.file.arrayBuffer())
+  throwIfAborted(signal)
+  assertImportFileSize(bytes.byteLength, MAX_IMPORT_TEXT_FILE_BYTES)
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    throwIfAborted(signal)
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  }
+  return btoa(binary)
+}
+
+function captureKnowledgeImportOptions(options: KnowledgeDocumentImportOptions): KnowledgeDocumentImportOptions {
+  return {
+    signal: options.signal,
+    settings: snapshotProviderConfiguration(options.settings ?? useSettingsStore.getState().settings),
+    waitForProviderUpgrades: options.waitForProviderUpgrades === true,
+  }
+}
+
 async function initializeKnowledgeRepository(signal: AbortSignal): Promise<void> {
   await Promise.all([
     knowledgeRepository.listMemories({ signal }),
@@ -169,23 +218,41 @@ async function initializeKnowledgeRepository(signal: AbortSignal): Promise<void>
   ])
 }
 
-function importKnowledgeDocumentThroughTarget(
+async function importKnowledgeDocumentThroughTarget(
   input: { title: string; mimeType: string; size: number; text: string; sourceUri?: string },
   provider: AIProvider | undefined,
-  signal: AbortSignal,
+  options: KnowledgeDocumentImportOptions,
 ) {
-  const settings = useSettingsStore.getState().settings
-  return createKnowledgeDocumentImportUseCase({
-    port: createKnowledgeDocumentImporter({
-      repository: knowledgeRepository,
-      index: createKnowledgeDocumentIndex({
-        provider,
-        embeddingMode: settings.embeddingMode ?? 'hybrid',
-        localEmbeddingModelId: settings.localEmbeddingModelId,
-        localEmbeddingModelSource: settings.localEmbeddingModelSource,
-      }),
-    }),
-  }).import(input, { signal })
+  const { signal, settings } = options
+  const upgrades: Promise<void>[] = []
+  const port = createKnowledgeDocumentImporter({
+    repository: knowledgeRepository,
+    index: createKnowledgeDocumentIndex({
+      provider,
+      embeddingMode: settings?.embeddingMode ?? 'hybrid',
+      localEmbeddingModelId: settings?.localEmbeddingModelId,
+      localEmbeddingModelSource: settings?.localEmbeddingModelSource,
+    }, settlement => { upgrades.push(settlement) }),
+  })
+  let settled: Promise<void> | undefined
+  try {
+    return await createKnowledgeDocumentImportUseCase({
+      port: {
+        import(normalized, options) {
+          const pending = port.import(normalized, options)
+          settled = pending.then(() => undefined, () => undefined)
+          return pending
+        },
+      },
+    }).import(input, { signal })
+  } finally {
+    // The use case cancels promptly; this binding owns cleanup/readback admission.
+    await settled
+    if (signal.aborted || options.waitForProviderUpgrades) {
+      await Promise.all(upgrades)
+      throwIfAborted(signal)
+    }
+  }
 }
 
 function validatePickerAsset(value: unknown): { uri: string; name: string; mimeType: string; size?: number; file?: Blob } {

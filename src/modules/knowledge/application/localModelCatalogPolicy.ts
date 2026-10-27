@@ -272,7 +272,7 @@ export function createLocalEmbeddingModelCatalogPolicy(
       records,
       failed,
       installedModelIds: models
-        .filter((model) => records[model.id]?.source === 'downloaded')
+        .filter((model) => ownEntry(records, model.id)?.source === 'downloaded')
         .map((model) => model.id),
       orphanedModelIds,
     }
@@ -319,7 +319,7 @@ export function createLocalEmbeddingModelCatalogPolicy(
       if (
         !model.experimental
         && isRunnableModel(model)
-        && state.records[model.id]?.source === 'downloaded'
+        && ownEntry(state.records, model.id)?.source === 'downloaded'
         && await verifyAvailability(model, 'downloaded', options.signal)
       ) {
         return { model, source: 'downloaded', reason: 'downloaded-fallback' }
@@ -384,13 +384,13 @@ function projectModelView(
   bundledIdSet: ReadonlySet<string>,
 ): LocalEmbeddingModelView {
   const planned = !isRunnableModel(model)
-  const record = state.records[model.id]
+  const record = ownEntry(state.records, model.id)
   const bundled = bundledIdSet.has(model.id)
   const downloaded = record?.source === 'downloaded'
   const active = !planned
     && preference.localEmbeddingModelId === model.id
     && preference.localEmbeddingModelSource !== 'none'
-  const failed = state.failed[model.id]
+  const failed = ownEntry(state.failed, model.id)
   const source = active
     ? preference.localEmbeddingModelSource === 'downloaded'
       || preference.localEmbeddingModelSource === 'bundled'
@@ -409,7 +409,7 @@ function projectModelView(
     ? 'planned'
     : active
       ? 'enabled'
-      : failed
+      : failed !== undefined
         ? 'verify-failed'
         : downloaded
           ? 'downloaded'
@@ -461,11 +461,17 @@ function cloneModel(model: v.InferOutput<typeof modelSchema>): LocalEmbeddingMod
   }
 }
 
+// Hash paths stay literal under assignment-style spread transforms.
 function cloneStateRecord(record: LocalModelStateRecord): LocalModelStateRecord {
   return {
     ...record,
-    ...(record.sha256 ? { sha256: { ...record.sha256 } } : {}),
+    ...(record.sha256 ? { sha256: Object.fromEntries(Object.entries(record.sha256)) } : {}),
   }
+}
+
+// Catalog ids are own data keys, not inherited object members.
+function ownEntry<T>(entries: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(entries, key) ? entries[key] : undefined
 }
 
 function assertUniqueModelFiles(model: LocalEmbeddingModel): void {

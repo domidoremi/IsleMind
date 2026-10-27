@@ -29,7 +29,7 @@ export function buildKnowledgeRecoverySummary(
     indexingDocuments: indexing.length,
     failedJobs: failedJobs.length,
     runningJobs: runningJobs.length,
-    recoverableDocuments: failed.length + empty.length,
+    recoverableDocuments: failed.length + empty.length + indexing.length,
     lastError,
   }
 }

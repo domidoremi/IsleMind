@@ -1,7 +1,8 @@
 import type { RetrievalSource } from '@/types/contextContracts'
 import { Platform } from 'react-native'
-import type { SearchProviderId } from '@/types/settingsContracts'
+import type { SearchProviderId, Settings } from '@/types/settingsContracts'
 import { useSettingsStore } from '@/store/settingsStore'
+import { snapshotProviderConfiguration } from '@/modules/providers'
 import { st } from '@/i18n/service'
 import {
   BuiltInCapabilityPolicyError,
@@ -26,14 +27,20 @@ export interface WebSearchRuntimeResult {
 
 export interface WebSearchRuntimeOptions {
   signal?: AbortSignal
+  settings?: Settings
+  configuration?: WebSearchProviderConfiguration
 }
 
-const webSearchProviderAdapter = createWebSearchProviderAdapter({
-  resolveConfiguration: resolveWebSearchConfiguration,
-  fetch: (input, init) => globalThis.fetch(input, init),
-  platform: Platform.OS === 'web' ? 'web' : 'native',
-  now: () => new Date(),
-})
+function createOperationWebSearchAdapter(options: WebSearchRuntimeOptions) {
+  const configuration = options.configuration ? { ...options.configuration } : undefined
+  const settings = configuration ? undefined : snapshotProviderConfiguration(options.settings ?? useSettingsStore.getState().settings)
+  return createWebSearchProviderAdapter({
+    resolveConfiguration: async operation => configuration ?? resolveWebSearchConfiguration(operation, settings),
+    fetch: (input, init) => globalThis.fetch(input, init),
+    platform: Platform.OS === 'web' ? 'web' : 'native',
+    now: () => new Date(),
+  })
+}
 
 export async function searchExternalWeb(
   query: string,
@@ -42,6 +49,8 @@ export async function searchExternalWeb(
 ): Promise<WebSearchRuntimeResult> {
   const signal = options.signal ?? new AbortController().signal
   try {
+    throwIfAborted(signal)
+    const webSearchProviderAdapter = createOperationWebSearchAdapter(options)
     const result = await webSearchProviderAdapter.search({ query, limit }, { signal })
     return projectRuntimeResult(result)
   } catch (error) {
@@ -91,10 +100,12 @@ export const builtInWebSearchPort: BuiltInWebSearchPort = {
 
 async function resolveWebSearchConfiguration(
   options: { signal: AbortSignal },
+  admittedSettings?: Settings,
 ): Promise<WebSearchProviderConfiguration> {
   throwIfAborted(options.signal)
   const store = useSettingsStore.getState()
-  const provider = resolveSearchProvider(store.settings)
+  const settings = snapshotProviderConfiguration(admittedSettings ?? store.settings)
+  const provider = resolveSearchProvider(settings)
   switch (provider) {
     case 'off':
     case 'native':
@@ -112,7 +123,7 @@ async function resolveWebSearchConfiguration(
       return {
         provider,
         apiKey,
-        searchEngineId: store.settings.googleSearchCx,
+        searchEngineId: settings.googleSearchCx,
       }
     }
     case 'bing': {
@@ -121,7 +132,7 @@ async function resolveWebSearchConfiguration(
       return {
         provider,
         apiKey,
-        endpoint: getBingCompatibleEndpoint(store.settings),
+        endpoint: getBingCompatibleEndpoint(settings),
       }
     }
     case 'custom': {
@@ -130,7 +141,7 @@ async function resolveWebSearchConfiguration(
       return {
         provider,
         apiKey,
-        endpoint: store.settings.customSearchEndpoint,
+        endpoint: settings.customSearchEndpoint,
       }
     }
   }

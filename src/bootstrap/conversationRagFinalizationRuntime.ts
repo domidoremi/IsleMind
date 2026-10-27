@@ -4,6 +4,7 @@ import {
 } from '@/modules/knowledge'
 import type { ProcessTrace } from '@/core'
 import type { Conversation } from '@/types/chatContracts'
+import type { Settings } from '@/types/settingsContracts'
 import type {
   MessageCitation,
   RagEvaluationResult,
@@ -28,7 +29,8 @@ export const conversationRagFinalizationRuntime =
     RagEvaluationResult,
     RagGenerationVerification,
     RagTraceStep,
-    ProcessTrace
+    ProcessTrace,
+    Settings
   >({
     verifyGeneration: verifyRagGeneration,
     retrieveSupplementalEvidence: retrieveConversationFlareContext,

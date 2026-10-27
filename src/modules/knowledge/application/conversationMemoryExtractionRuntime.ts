@@ -1,11 +1,15 @@
+import { snapshotPlainData } from '@/core'
+
 export interface ConversationMemoryExtractionInput<
   TMessage,
   TProvider,
+  TSettings = unknown,
 > {
   readonly conversationId: string
   readonly assistantMessageId: string
   readonly messages: readonly TMessage[]
   readonly provider: TProvider
+  readonly settings?: TSettings
   readonly model: string
   readonly memoryEnabled: boolean
   readonly signal?: AbortSignal
@@ -57,28 +61,31 @@ export interface ConversationMemoryExtractionProjection {
   readonly transition: ConversationMemoryExtractionTransition
 }
 
-export interface ConversationMemoryExtractor<TMessage, TProvider> {
+export interface ConversationMemoryExtractor<TMessage, TProvider, TSettings = unknown> {
   extract(
     conversationId: string,
     messages: readonly TMessage[],
     provider: TProvider,
     model: string,
     signal?: AbortSignal,
+    configuration?: { readonly settings?: TSettings },
   ): Promise<readonly string[]>
 }
 
-export interface ConversationMemoryExtractionRuntimeDependencies<TMessage, TProvider> {
-  readonly extractor: ConversationMemoryExtractor<TMessage, TProvider>
+export interface ConversationMemoryExtractionRuntimeDependencies<TMessage, TProvider, TSettings = unknown> {
+  readonly extractor: ConversationMemoryExtractor<TMessage, TProvider, TSettings>
   readonly projectTransition: (projection: ConversationMemoryExtractionProjection) => void
   readonly nonErrorFailureMessage: string
+  readonly cancellationMessage?: string
 }
 
 export function createConversationMemoryExtractionRuntime<
   TMessage,
   TProvider,
->(dependencies: ConversationMemoryExtractionRuntimeDependencies<TMessage, TProvider>) {
+  TSettings = unknown,
+>(dependencies: ConversationMemoryExtractionRuntimeDependencies<TMessage, TProvider, TSettings>) {
   function project(
-    input: ConversationMemoryExtractionInput<TMessage, TProvider>,
+    input: ConversationMemoryExtractionInput<TMessage, TProvider, TSettings>,
     transition: ConversationMemoryExtractionTransition,
   ): void {
     try {
@@ -95,8 +102,15 @@ export function createConversationMemoryExtractionRuntime<
 
   return {
     async run(
-      input: ConversationMemoryExtractionInput<TMessage, TProvider>,
+      input: ConversationMemoryExtractionInput<TMessage, TProvider, TSettings>,
     ): Promise<ConversationMemoryExtractionTerminalTransition> {
+      input = {
+        ...input,
+        messages: snapshotPlainData(input.messages),
+        provider: snapshotPlainData(input.provider),
+        settings: snapshotPlainData(input.settings),
+      }
+      if (input.signal?.aborted) return cancelled()
       if (!input.memoryEnabled) {
         const transition: ConversationMemoryExtractionSkippedTransition = {
           status: 'skipped',
@@ -107,6 +121,7 @@ export function createConversationMemoryExtractionRuntime<
       }
 
       project(input, { status: 'running' })
+      if (input.signal?.aborted) return cancelled()
       try {
         const added = await dependencies.extractor.extract(
           input.conversationId,
@@ -114,7 +129,9 @@ export function createConversationMemoryExtractionRuntime<
           input.provider,
           input.model,
           input.signal,
+          ...(input.settings === undefined ? [] : [{ settings: input.settings }]),
         )
+        if (input.signal?.aborted) return cancelled()
         const transition: ConversationMemoryExtractionCompletedTransition = {
           status: 'completed',
           addedCount: added.length,
@@ -123,6 +140,7 @@ export function createConversationMemoryExtractionRuntime<
         project(input, transition)
         return transition
       } catch (error) {
+        if (input.signal?.aborted) return cancelled()
         const message = error instanceof Error
           ? error.message
           : dependencies.nonErrorFailureMessage
@@ -130,6 +148,16 @@ export function createConversationMemoryExtractionRuntime<
           error instanceof Error && error.name === 'AbortError'
             ? { status: 'cancelled', message }
             : { status: 'failed', message }
+        project(input, transition)
+        return transition
+      }
+
+      function cancelled(): ConversationMemoryExtractionCancelledTransition {
+        const transition: ConversationMemoryExtractionCancelledTransition = {
+          status: 'cancelled',
+          message: dependencies.cancellationMessage
+            ?? 'Memory extraction was cancelled; already-admitted changes may remain.',
+        }
         project(input, transition)
         return transition
       }

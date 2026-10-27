@@ -12,13 +12,17 @@ import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import { st } from '@/i18n/service'
 import type { ProcessTrace } from '@/core'
 import type { Conversation, Message } from '@/types/chatContracts'
+import type { Settings } from '@/types/settingsContracts'
+import type { AIProvider } from '@/types/providerContracts'
 
 export const conversationKnowledgeContextRuntime =
   createAssistantConversationKnowledgeContextRuntime<
     Conversation,
     Message,
     RetrievedConversationKnowledgeContext,
-    ProcessTrace
+    ProcessTrace,
+    Settings,
+    AIProvider
   >({
     retrieve: retrieveConversationKnowledgeContext,
     createEmptyContext() {

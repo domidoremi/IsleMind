@@ -1,10 +1,16 @@
 import {
+  assertKnowledgeDocumentUnchanged,
+  assertKnowledgeChunkSourcesUnchanged,
+  snapshotKnowledgeChunk,
   createKnowledgeQueryEmbeddingUseCase,
   createSqliteKnowledgeAgenticIndex,
   createSqliteKnowledgeColbertIndex,
   createSqliteKnowledgeHybridIndex,
   createSqliteKnowledgeRepository,
+  snapshotKnowledgeMutationOptions,
   type KnowledgeDocumentIndexPort,
+  type KnowledgeDocumentMutationOptions,
+  type KnowledgeDocumentClearOptions,
   type KnowledgeRepositoryOperationOptions,
   type KnowledgeRepositorySnapshot,
 } from '@/modules/knowledge'
@@ -13,6 +19,7 @@ import {
   getProviderCompatibilityEvidenceForProvider,
   providerCompatibilityCapabilityCanBeSentForProvider,
   resolveProviderCompatibilityCapabilityStatus,
+  snapshotProviderConfiguration,
 } from '@/modules/providers'
 import type { AIProvider } from '@/types/providerContracts'
 import type { KnowledgeChunk } from '@/types/contextContracts'
@@ -139,15 +146,25 @@ export const knowledgeAgenticIndex = createSqliteKnowledgeAgenticIndex(databaseP
 })
 
 /** Composition-root binding for target vector and agentic indexes. */
-export function createKnowledgeDocumentIndex(indexing: KnowledgeIndexingOptions = {}): KnowledgeDocumentIndexPort {
+export function createKnowledgeDocumentIndex(
+  indexing: KnowledgeIndexingOptions = {},
+  observeProviderUpgrade?: (settlement: Promise<void>) => void,
+): KnowledgeDocumentIndexPort {
+  indexing = snapshotProviderConfiguration(indexing)
   return {
     async synchronize(document, chunks, operation) {
-      await knowledgeHybridIndex.synchronizeEmbeddings(chunks, { ...indexing, signal: operation.signal })
+      const { signal } = operation
+      chunks = chunks.map(snapshotKnowledgeChunk)
+      throwIfAborted(signal)
+      await knowledgeHybridIndex.synchronizeEmbeddings(chunks, { ...indexing, signal })
+      throwIfAborted(signal)
       if (indexing.refreshAgenticIndex !== false) {
-        await knowledgeColbertIndex.synchronize(chunks, { signal: operation.signal })
-        await knowledgeAgenticIndex.synchronize(chunks, { signal: operation.signal })
+        await knowledgeColbertIndex.synchronize(chunks, { signal })
+        throwIfAborted(signal)
+        await knowledgeAgenticIndex.synchronize(chunks, { signal })
+        throwIfAborted(signal)
       }
-      await launchProviderEmbeddingUpgrade(chunks, indexing, operation.signal)
+      await launchProviderEmbeddingUpgrade(chunks, indexing, signal, observeProviderUpgrade)
     },
   }
 }
@@ -156,25 +173,35 @@ export async function synchronizeKnowledgeChunkIndexes(
   chunks: Parameters<typeof knowledgeHybridIndex.synchronizeEmbeddings>[0],
   indexing: KnowledgeIndexingOptions = {},
   signal = new AbortController().signal,
+  observeProviderUpgrade?: (settlement: Promise<void>) => void,
 ): Promise<void> {
+  indexing = snapshotProviderConfiguration(indexing)
+  chunks = snapshotProviderConfiguration(chunks)
+  throwIfAborted(signal)
   await knowledgeHybridIndex.synchronizeEmbeddings(chunks, { ...indexing, signal })
+  throwIfAborted(signal)
   if (indexing.refreshAgenticIndex !== false) {
     await knowledgeColbertIndex.synchronize(chunks, { signal })
+    throwIfAborted(signal)
     await knowledgeAgenticIndex.synchronize(chunks, { signal })
+    throwIfAborted(signal)
   }
-  await launchProviderEmbeddingUpgrade(chunks, indexing, signal)
+  await launchProviderEmbeddingUpgrade(chunks, indexing, signal, observeProviderUpgrade)
 }
 
 async function launchProviderEmbeddingUpgrade(
   chunks: Parameters<typeof knowledgeHybridIndex.upgradeProviderEmbeddings>[0],
   indexing: KnowledgeIndexingOptions,
   signal: AbortSignal,
+  observeSettlement?: (settlement: Promise<void>) => void,
 ): Promise<void> {
+  throwIfAborted(signal)
   if (!indexing.provider || indexing.embeddingMode === 'local') return
   const request = knowledgeHybridIndex.upgradeProviderEmbeddings(chunks, {
     provider: indexing.provider,
     signal,
   })
+  observeSettlement?.(request.then(() => undefined, () => undefined))
   const state = {
     configured: Boolean(indexing.provider.apiKey?.trim()),
     supportsEmbeddings: providerCompatibilityCapabilityCanBeSentForProvider(
@@ -190,36 +217,157 @@ async function launchProviderEmbeddingUpgrade(
   void request.catch(() => undefined)
 }
 
-export async function rebuildKnowledgeEmbeddings(indexing: KnowledgeIndexingOptions = {}): Promise<number> {
-  const chunks = await knowledgeRepository.listChunks()
-  await synchronizeKnowledgeChunkIndexes(chunks, { ...indexing, refreshAgenticIndex: false })
-  return chunks.length
+export async function rebuildKnowledgeEmbeddings(
+  indexing: KnowledgeIndexingOptions = {},
+  operation: KnowledgeDocumentClearOptions = {},
+): Promise<number> {
+  operation = snapshotKnowledgeMutationOptions(operation)
+  indexing = snapshotProviderConfiguration(indexing)
+  const signal = operation.signal ?? new AbortController().signal
+  throwIfAborted(signal)
+  const initial = await knowledgeRepository.loadSnapshot({ signal })
+  throwIfAborted(signal)
+  const documents = (operation.expectedDocuments ?? initial.documents).map(document => ({ ...document }))
+  for (const document of documents) {
+    assertKnowledgeDocumentUnchanged(initial.documents.find(item => item.id === document.id), document)
+  }
+  const ids = new Set(documents.map(document => document.id))
+  const chunks = initial.chunks.filter(chunk => ids.has(chunk.documentId)).map(snapshotKnowledgeChunk)
+  const upgrades: Promise<void>[] = []
+  try {
+    // Explicit recovery owns the full local index and upgrade settlement.
+    await synchronizeKnowledgeChunkIndexes(chunks, { ...indexing, refreshAgenticIndex: true }, signal,
+      settlement => upgrades.push(settlement))
+    await Promise.all(upgrades)
+    throwIfAborted(signal)
+    const current = await knowledgeRepository.loadSnapshot({ signal })
+    throwIfAborted(signal)
+    for (const document of documents) {
+      assertKnowledgeDocumentUnchanged(current.documents.find(item => item.id === document.id), document)
+    }
+    assertKnowledgeChunkSourcesUnchanged(current.chunks.filter(chunk => ids.has(chunk.documentId)), chunks)
+    for (const document of documents) {
+      const documentChunks = chunks.filter(chunk => chunk.documentId === document.id)
+      if (document.status === 'ready' || document.chunkCount <= 0 || documentChunks.length !== document.chunkCount) continue
+      throwIfAborted(signal)
+      await knowledgeRepository.updateDocumentStatus(document.id, 'ready', undefined, {
+        signal, expectedDocument: document, expectedChunks: documentChunks,
+      })
+    }
+    throwIfAborted(signal)
+    return chunks.length
+  } catch (error) {
+    await Promise.all(upgrades)
+    try {
+      // Repair only the affected scope from durable source, never an old snapshot or a provider.
+      const recoverySignal = new AbortController().signal
+      for (const id of ids) await deleteKnowledgeDocumentIndexes(id, { signal: recoverySignal })
+      const current = await knowledgeRepository.loadSnapshot({ signal: recoverySignal })
+      await synchronizeKnowledgeChunkIndexes(current.chunks.filter(chunk => ids.has(chunk.documentId)), {}, recoverySignal)
+    } catch (recoveryError) {
+      throw new AggregateError([error, recoveryError], 'Knowledge rebuild and derived-index recovery both failed.')
+    }
+    throw error
+  }
 }
 
-export async function clearKnowledgeIndexCaches(): Promise<void> {
-  await knowledgeHybridIndex.clearCache()
+export async function clearKnowledgeIndexCaches(operation: KnowledgeRepositoryOperationOptions = {}): Promise<void> {
+  operation = { ...operation }
+  throwIfAborted(operation.signal)
+  await knowledgeHybridIndex.clearCache(operation)
+  throwIfAborted(operation.signal)
 }
 
-export async function deleteKnowledgeDocumentIndexes(documentId: string): Promise<void> {
-  await knowledgeHybridIndex.deleteDocumentEmbeddings(documentId)
-  await knowledgeColbertIndex.deleteDocument(documentId)
-  await knowledgeAgenticIndex.deleteDocument(documentId)
+export async function deleteKnowledgeDocumentIndexes(
+  documentId: string,
+  operation: KnowledgeRepositoryOperationOptions = {},
+): Promise<void> {
+  operation = { ...operation }
+  throwIfAborted(operation.signal)
+  await knowledgeHybridIndex.deleteDocumentEmbeddings(documentId, operation)
+  throwIfAborted(operation.signal)
+  await knowledgeColbertIndex.deleteDocument(documentId, operation)
+  throwIfAborted(operation.signal)
+  await knowledgeAgenticIndex.deleteDocument(documentId, operation)
+  throwIfAborted(operation.signal)
 }
 
-export async function deleteKnowledgeDocumentRecords(documentId: string): Promise<void> {
-  await deleteKnowledgeDocumentIndexes(documentId)
-  await knowledgeRepository.deleteDocument(documentId)
+export async function deleteKnowledgeDocumentRecords(
+  documentId: string,
+  operation: KnowledgeDocumentMutationOptions = {},
+): Promise<void> {
+  operation = snapshotKnowledgeMutationOptions(operation)
+  throwIfAborted(operation.signal)
+  if (operation.expectedDocument !== undefined) {
+    const current = (await knowledgeRepository.listDocuments(operation)).find(document => document.id === documentId)
+    assertKnowledgeDocumentUnchanged(current, operation.expectedDocument)
+  }
+  try {
+    // ColBERT cleanup still needs canonical chunks. Recheck the guard in the
+    // canonical transaction and repair derived indexes if a late conflict wins.
+    await deleteKnowledgeDocumentIndexes(documentId, operation)
+    throwIfAborted(operation.signal)
+    await knowledgeRepository.deleteDocument(documentId, operation)
+  } catch (error) {
+    if (operation.expectedDocument !== undefined) await recoverKnowledgeDocumentIndexes([documentId], error)
+    throw error
+  }
 }
 
-export async function clearKnowledgeIndexes(): Promise<void> {
-  await knowledgeHybridIndex.clearEmbeddings()
-  await knowledgeColbertIndex.clear()
-  await knowledgeAgenticIndex.clear()
+export async function clearKnowledgeIndexes(operation: KnowledgeRepositoryOperationOptions = {}): Promise<void> {
+  operation = { ...operation }
+  throwIfAborted(operation.signal)
+  await knowledgeHybridIndex.clearEmbeddings(operation)
+  throwIfAborted(operation.signal)
+  await knowledgeColbertIndex.clear(operation)
+  throwIfAborted(operation.signal)
+  await knowledgeAgenticIndex.clear(operation)
+  throwIfAborted(operation.signal)
 }
 
-export async function clearKnowledgeRecords(): Promise<void> {
-  await clearKnowledgeIndexes()
-  await knowledgeRepository.clearDocuments()
+export async function clearKnowledgeRecords(operation: KnowledgeDocumentClearOptions = {}): Promise<void> {
+  operation = snapshotKnowledgeMutationOptions(operation)
+  throwIfAborted(operation.signal)
+  if (operation.expectedDocuments === undefined) {
+    try {
+      await clearKnowledgeIndexes(operation)
+      throwIfAborted(operation.signal)
+      await knowledgeRepository.clearDocuments(operation)
+    } catch (error) {
+      await recoverKnowledgeDocumentIndexes(undefined, error)
+      throw error
+    }
+    return
+  }
+  const current = await knowledgeRepository.listDocuments(operation)
+  for (const expected of operation.expectedDocuments) {
+    assertKnowledgeDocumentUnchanged(current.find(document => document.id === expected.id), expected)
+  }
+  const ids = operation.expectedDocuments.map(document => document.id)
+  try {
+    for (const id of ids) await deleteKnowledgeDocumentIndexes(id, operation)
+    throwIfAborted(operation.signal)
+    await knowledgeRepository.clearDocuments(operation)
+  } catch (error) {
+    await recoverKnowledgeDocumentIndexes(ids, error)
+    throw error
+  }
+}
+
+async function recoverKnowledgeDocumentIndexes(documentIds: readonly string[] | undefined, originalError: unknown): Promise<void> {
+  try {
+    const signal = new AbortController().signal
+    if (documentIds === undefined) {
+      await synchronizeKnowledgeChunkIndexes(await knowledgeRepository.listChunks(undefined, { signal }), {}, signal)
+      return
+    }
+    for (const id of documentIds) {
+      const chunks = await knowledgeRepository.listChunks(id, { signal })
+      await synchronizeKnowledgeChunkIndexes(chunks, {}, signal)
+    }
+  } catch (recoveryError) {
+    throw new AggregateError([originalError, recoveryError], 'Knowledge deletion and derived-index recovery both failed.')
+  }
 }
 
 /** Replaces portable context records, then rebuilds every target-owned knowledge index. */
@@ -254,7 +402,7 @@ export async function replaceKnowledgeContextSnapshot(
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return
-  const error = new Error('Knowledge snapshot replacement was cancelled.')
+  const error = new Error('The knowledge operation was cancelled.')
   error.name = 'AbortError'
   throw error
 }

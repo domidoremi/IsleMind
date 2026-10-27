@@ -2,6 +2,7 @@ import {
   deleteInstalledLocalModelArtifacts,
   installLocalModelArtifacts,
 } from '@/bootstrap/localModelArtifactInstaller'
+import { snapshotPlainData } from '@/core/plainDataSnapshot'
 import {
   localEmbeddingModelCatalogPolicy,
   localEmbeddingModels,
@@ -19,6 +20,7 @@ import {
   type LocalEmbeddingTokenizer,
   type LocalModelDownloadProgress,
   type LocalModelStateRecord,
+  type LocalModelStateRecoveryReview,
 } from '@/modules/knowledge'
 
 export type {
@@ -52,13 +54,32 @@ export function listLocalEmbeddingModelViews(
   return localEmbeddingModelCatalogPolicy.listModelViews(preference, { signal })
 }
 
+export async function reviewLocalEmbeddingModelStateRecovery(
+  signal?: AbortSignal,
+): Promise<LocalModelStateRecoveryReview | null> {
+  throwIfAborted(signal)
+  try {
+    const review = await localModelStateRepository.reviewInvalidState({ signal })
+    throwIfAborted(signal)
+    return review
+  } catch (error) {
+    throwIfAborted(signal)
+    throw error
+  }
+}
+
 export async function downloadLocalEmbeddingModel(
   modelId: string,
   options: LocalEmbeddingDownloadOptions = {},
 ): Promise<LocalEmbeddingModelRecord> {
-  const model = localEmbeddingModelCatalogPolicy.requireModel(modelId)
+  const operationOptions = { ...options }
+  throwIfAborted(operationOptions.signal)
+  const model = snapshotPlainData(localEmbeddingModelCatalogPolicy.requireModel(modelId))
+  await localModelStateRepository.loadState({ signal: operationOptions.signal })
+  throwIfAborted(operationOptions.signal)
   try {
-    const installed = await installLocalModelArtifacts(model, options)
+    const installed = await installLocalModelArtifacts(model, operationOptions)
+    throwIfAborted(operationOptions.signal)
     const record: LocalEmbeddingModelRecord = {
       modelId: model.id,
       source: 'downloaded',
@@ -67,11 +88,16 @@ export async function downloadLocalEmbeddingModel(
       bytes: installed.bytes,
       sha256: installed.sha256,
     }
-    await localModelStateRepository.recordInstalledModel(record, { signal: options.signal })
+    await localModelStateRepository.recordInstalledModel(record, { signal: operationOptions.signal })
     return record
   } catch (error) {
-    throwIfAborted(options.signal)
-    await markLocalEmbeddingModelFailure(model.id, errorMessage(error), options.signal)
+    throwIfAborted(operationOptions.signal)
+    try {
+      await markLocalEmbeddingModelFailure(model.id, errorMessage(error), operationOptions.signal)
+    } catch {
+      // A diagnostic write cannot replace the failure that stopped installation.
+      throwIfAborted(operationOptions.signal)
+    }
     throw error
   }
 }
@@ -80,15 +106,24 @@ export async function deleteDownloadedLocalEmbeddingModel(
   modelId: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  throwIfAborted(signal)
+  await localModelStateRepository.loadState({ signal })
+  throwIfAborted(signal)
   const { releaseOnnxEmbeddingResources } = await import('./knowledgeEmbeddingProvider')
+  throwIfAborted(signal)
   await releaseOnnxEmbeddingResources()
+  throwIfAborted(signal)
   await deleteInstalledLocalModelArtifacts(modelId, signal)
+  throwIfAborted(signal)
   await localModelStateRepository.removeModel(modelId, { signal })
 }
 
 export async function clearLocalEmbeddingModelState(signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal)
   const { releaseOnnxEmbeddingResources } = await import('./knowledgeEmbeddingProvider')
+  throwIfAborted(signal)
   await releaseOnnxEmbeddingResources()
+  throwIfAborted(signal)
   await localModelStateRepository.clear({ signal })
 }
 

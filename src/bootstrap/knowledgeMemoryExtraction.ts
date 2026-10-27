@@ -7,12 +7,18 @@ import {
 import { st } from '@/i18n/service'
 import { useSettingsStore } from '@/store/settingsStore'
 import { logContextOperation } from '@/services/runtimeHealthLog'
+import { snapshotProviderConfiguration } from '@/modules/providers'
 import type { Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
+import type { Settings } from '@/types/settingsContracts'
 
 const memoryExtraction = createMemoryExtractionUseCase(
   createMemoryCandidatePersistenceUseCase(knowledgeRepository),
 )
+
+export interface ConversationMemoryExtractionOptions {
+  settings?: Settings
+}
 
 export async function extractConversationMemories(
   conversationId: string,
@@ -20,8 +26,11 @@ export async function extractConversationMemories(
   provider?: AIProvider,
   model?: string,
   signal?: AbortSignal,
+  options: ConversationMemoryExtractionOptions = {},
 ): Promise<string[]> {
-  const settings = useSettingsStore.getState().settings
+  const settings = snapshotProviderConfiguration(options.settings ?? useSettingsStore.getState().settings)
+  messages = snapshotProviderConfiguration(messages)
+  provider = snapshotProviderConfiguration(provider)
   return memoryExtraction.extract({
     conversationId,
     messages,
@@ -44,6 +53,7 @@ export async function extractConversationMemories(
               maxTokens: 512,
               generationParameterSources: { temperature: 'internal-policy', maxTokens: 'internal-policy' },
               usageContext: { source: 'memory', correlationId: conversationId },
+              settings,
               ...(requestSignal ? { signal: requestSignal } : {}),
             }),
             onFailure: (error: unknown) => logContextOperation({

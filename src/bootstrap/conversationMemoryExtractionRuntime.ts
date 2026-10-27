@@ -1,4 +1,4 @@
-import type { ProcessTrace } from '@/core'
+import { snapshotPlainData, type ProcessTrace } from '@/core'
 import {
   createConversationMemoryExtractionRuntime,
   type ConversationMemoryExtractionTransition,
@@ -8,6 +8,7 @@ import { completeTrace } from '@/services/chatTraceUtils'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
+import type { Settings } from '@/types/settingsContracts'
 import { st } from '@/i18n/service'
 
 export function runConversationMemoryExtraction(input: {
@@ -16,14 +17,22 @@ export function runConversationMemoryExtraction(input: {
   messages: readonly Message[]
   provider: AIProvider
   model: string
+  settings?: Settings
   signal?: AbortSignal
   recordTrace(trace: ProcessTrace): void
 }) {
+  input = {
+    ...input,
+    settings: snapshotPlainData(input.settings ?? useSettingsStore.getState().settings),
+    provider: snapshotPlainData(input.provider),
+    messages: snapshotPlainData(input.messages),
+  }
   const startedAt = Date.now()
   const id = memoryExtractionTraceId()
-  const memoryEnabled = useSettingsStore.getState().settings.memoryEnabled === true
+  const settings = input.settings as Settings
+  const memoryEnabled = settings.memoryEnabled === true
   const providerAvailable = Boolean(input.provider.apiKey)
-  const runtime = createConversationMemoryExtractionRuntime<Message, AIProvider>({
+  const runtime = createConversationMemoryExtractionRuntime<Message, AIProvider, Settings>({
     extractor: { extract: extractConversationMemories },
     projectTransition(projection) {
       input.recordTrace(buildMemoryExtractionTrace({
@@ -36,6 +45,7 @@ export function runConversationMemoryExtraction(input: {
       }))
     },
     nonErrorFailureMessage: st('chatRunner.trace.memoryExtractFailed'),
+    cancellationMessage: st('chatRunner.trace.memoryExtractCancelled'),
   })
   return runtime.run({
     conversationId: input.conversationId,
@@ -43,7 +53,8 @@ export function runConversationMemoryExtraction(input: {
     messages: input.messages,
     provider: input.provider,
     model: input.model,
-    memoryEnabled: useSettingsStore.getState().settings.memoryEnabled === true,
+    settings,
+    memoryEnabled,
     signal: input.signal,
   })
 }

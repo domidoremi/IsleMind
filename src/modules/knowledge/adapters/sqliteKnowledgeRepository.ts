@@ -8,17 +8,30 @@ import {
 import * as v from 'valibot'
 import { sqliteKnowledgeScope } from './sqliteKnowledgeScope'
 import {
+  assertKnowledgeDocumentUnchanged,
+  assertKnowledgeChunkSourcesUnchanged,
+  assertKnowledgeMemoryUnchanged,
+  knowledgeMemoryLogicalKey,
+  snapshotKnowledgeMutationOptions,
+} from '../domain/knowledgeMutationGuard'
+import {
+  KnowledgeRepositoryConflictError,
   LOCAL_USER_MEMORY_SCOPE_ID,
   KNOWLEDGE_CHUNK_RECORD_SCHEMA,
   KNOWLEDGE_DOCUMENT_RECORD_SCHEMA,
   KNOWLEDGE_MEMORY_RECORD_SCHEMA,
   type KnowledgeChunkRecord,
   type KnowledgeDocumentRecord,
+  type KnowledgeDocumentMutationOptions,
+  type KnowledgeDocumentClearOptions,
   type KnowledgeDocumentStatus,
+  type KnowledgeDocumentStatusMutationOptions,
   type KnowledgeEmbeddingProvider,
   type KnowledgeFtsSearchHit,
   type KnowledgeFtsSearchInput,
   type KnowledgeMemoryListInput,
+  type KnowledgeMemoryMutationOptions,
+  type KnowledgeMemoryClearOptions,
   type KnowledgeMemoryRecord,
   type KnowledgeMemoryScope,
   type KnowledgeMemorySearchHit,
@@ -328,14 +341,18 @@ export function createSqliteKnowledgeRepository(
   async function updateMemoryStatus(
     id: string,
     status: KnowledgeMemoryStatus,
-    operation: KnowledgeRepositoryOperationOptions = {},
+    operation: KnowledgeMemoryMutationOptions = {},
   ): Promise<void> {
+    operation = snapshotKnowledgeMutationOptions(operation)
     const memoryId = normalizeIdentifier(id, 'memory id')
     const normalizedStatus = normalizeMemoryStatus(status)
     const value = await database(operation.signal)
     const now = assertTimestamp(clock.now(), 'clock timestamp')
     await value.transaction(async (transaction) => {
       const target = await readMemoryById(transaction, memoryId, operation.signal)
+      if (operation.expectedMemory !== undefined) {
+        assertKnowledgeMemoryUnchanged(target, operation.expectedMemory)
+      }
       if (!target) {
         await run(transaction,
           'UPDATE memories SET status = ?, updatedAt = ? WHERE id = ?',
@@ -354,6 +371,13 @@ export function createSqliteKnowledgeRepository(
       }
 
       const active = await readActiveMemoryForLogicalKey(transaction, target, operation.signal)
+      if (operation.expectedMemory !== undefined || operation.expectedActiveMemory !== undefined) {
+        if (operation.expectedActiveMemory) {
+          assertKnowledgeMemoryUnchanged(active, operation.expectedActiveMemory)
+        } else if (active) {
+          throw new KnowledgeRepositoryConflictError()
+        }
+      }
       if (active && active.id !== target.id) {
         await writeMemoryRecord(transaction, {
           ...active,
@@ -372,18 +396,40 @@ export function createSqliteKnowledgeRepository(
     })
   }
 
-  async function deleteMemory(id: string, operation: KnowledgeRepositoryOperationOptions = {}): Promise<void> {
+  async function deleteMemory(id: string, operation: KnowledgeMemoryMutationOptions = {}): Promise<void> {
+    operation = snapshotKnowledgeMutationOptions(operation)
     const memoryId = normalizeIdentifier(id, 'memory id')
     const value = await database(operation.signal)
     await value.transaction(async (transaction) => {
+      if (operation.expectedMemory !== undefined) {
+        assertKnowledgeMemoryUnchanged(
+          await readMemoryById(transaction, memoryId, operation.signal),
+          operation.expectedMemory,
+        )
+      }
       await run(transaction, 'DELETE FROM memory_fts WHERE id = ?', [memoryId], operation.signal)
       await run(transaction, 'DELETE FROM memories WHERE id = ?', [memoryId], operation.signal)
     })
   }
 
-  async function clearMemories(operation: KnowledgeRepositoryOperationOptions = {}): Promise<void> {
+  async function clearMemories(operation: KnowledgeMemoryClearOptions = {}): Promise<void> {
+    operation = snapshotKnowledgeMutationOptions(operation)
     const value = await database(operation.signal)
     await value.transaction(async (transaction) => {
+      if (operation.expectedMemories !== undefined) {
+        for (const expected of operation.expectedMemories) {
+          const id = normalizeIdentifier(expected.id, 'memory id')
+          assertKnowledgeMemoryUnchanged(
+            await readMemoryById(transaction, id, operation.signal),
+            expected,
+          )
+        }
+        for (const expected of operation.expectedMemories) {
+          await run(transaction, 'DELETE FROM memory_fts WHERE id = ?', [expected.id], operation.signal)
+          await run(transaction, 'DELETE FROM memories WHERE id = ?', [expected.id], operation.signal)
+        }
+        return
+      }
       await run(transaction, 'DELETE FROM memory_fts', [], operation.signal)
       await run(transaction, 'DELETE FROM memories', [], operation.signal)
     })
@@ -483,7 +529,11 @@ export function createSqliteKnowledgeRepository(
         const duplicateIndex = findMemoryDuplicateIndex(records, incoming)
         const next = duplicateIndex < 0
           ? incoming
-          : mergeMemoryRecords(records[duplicateIndex], incoming, assertTimestamp(clock.now(), 'clock timestamp'))
+          : {
+              ...mergeMemoryRecords(records[duplicateIndex], incoming, assertTimestamp(clock.now(), 'clock timestamp')),
+              // Re-importing a duplicate must not undo a local review decision.
+              status: records[duplicateIndex].status,
+            }
         if (duplicateIndex < 0) records.push(next)
         else records[duplicateIndex] = next
         await writeMemoryRecord(transaction, next, operation.signal)
@@ -497,18 +547,37 @@ export function createSqliteKnowledgeRepository(
     id: string,
     status: KnowledgeDocumentStatus,
     error?: string,
-    operation: KnowledgeRepositoryOperationOptions = {},
+    operation: KnowledgeDocumentStatusMutationOptions = {},
   ): Promise<void> {
+    operation = snapshotKnowledgeMutationOptions(operation)
     const documentId = normalizeIdentifier(id, 'document id')
     const normalizedStatus = normalizeDocumentStatus(status)
     const normalizedError = optionalText(error, 'document error', MAX_DOCUMENT_SOURCE_LENGTH)
     const value = await database(operation.signal)
-    await run(
-      value,
-      'UPDATE knowledge_documents SET status = ?, error = ?, updatedAt = ? WHERE id = ?',
-      [normalizedStatus, normalizedError ?? null, clock.now(), documentId],
-      operation.signal,
-    )
+    await value.transaction(async transaction => {
+      if (operation.expectedDocument !== undefined) {
+        assertKnowledgeDocumentUnchanged(
+          await readDocumentById(transaction, documentId, operation.signal), operation.expectedDocument,
+        )
+      }
+      if (operation.expectedChunks !== undefined) {
+        const rows = await transaction.getAll<Record<string, unknown>>(
+          `SELECT id, documentId, title, content, ordinal, chunkIndex, sentenceStart, sentenceEnd, semanticBoundary,
+                  headingPathJson, entitiesJson, relationsJson, summaryNodeId, parentChunkId, qualityScore,
+                  embeddingModelId, rerankSignalsJson, embeddingProvider, lastHitAt, createdAt
+           FROM knowledge_chunks WHERE documentId = ? ORDER BY ordinal ASC`,
+          [documentId],
+        )
+        throwIfAborted(operation.signal)
+        assertKnowledgeChunkSourcesUnchanged(rows.map(normalizeChunkRow), operation.expectedChunks)
+      }
+      await run(
+        transaction,
+        'UPDATE knowledge_documents SET status = ?, error = ?, updatedAt = ? WHERE id = ?',
+        [normalizedStatus, normalizedError ?? null, clock.now(), documentId],
+        operation.signal,
+      )
+    })
   }
 
   async function saveDocument(
@@ -742,19 +811,42 @@ export function createSqliteKnowledgeRepository(
     throwIfAborted(operation.signal)
   }
 
-  async function deleteDocument(id: string, operation: KnowledgeRepositoryOperationOptions = {}): Promise<void> {
+  async function deleteDocument(id: string, operation: KnowledgeDocumentMutationOptions = {}): Promise<void> {
+    operation = snapshotKnowledgeMutationOptions(operation)
     const documentId = normalizeIdentifier(id, 'document id')
     const value = await database(operation.signal)
     await value.transaction(async (transaction) => {
+      if (operation.expectedDocument !== undefined) {
+        assertKnowledgeDocumentUnchanged(
+          await readDocumentById(transaction, documentId, operation.signal),
+          operation.expectedDocument,
+        )
+      }
       await run(transaction, 'DELETE FROM knowledge_fts WHERE documentId = ?', [documentId], operation.signal)
       await run(transaction, 'DELETE FROM knowledge_chunks WHERE documentId = ?', [documentId], operation.signal)
       await run(transaction, 'DELETE FROM knowledge_documents WHERE id = ?', [documentId], operation.signal)
     })
   }
 
-  async function clearDocuments(operation: KnowledgeRepositoryOperationOptions = {}): Promise<void> {
+  async function clearDocuments(operation: KnowledgeDocumentClearOptions = {}): Promise<void> {
+    operation = snapshotKnowledgeMutationOptions(operation)
     const value = await database(operation.signal)
     await value.transaction(async (transaction) => {
+      if (operation.expectedDocuments !== undefined) {
+        for (const expected of operation.expectedDocuments) {
+          const id = normalizeIdentifier(expected.id, 'document id')
+          assertKnowledgeDocumentUnchanged(
+            await readDocumentById(transaction, id, operation.signal),
+            expected,
+          )
+        }
+        for (const expected of operation.expectedDocuments) {
+          await run(transaction, 'DELETE FROM knowledge_fts WHERE documentId = ?', [expected.id], operation.signal)
+          await run(transaction, 'DELETE FROM knowledge_chunks WHERE documentId = ?', [expected.id], operation.signal)
+          await run(transaction, 'DELETE FROM knowledge_documents WHERE id = ?', [expected.id], operation.signal)
+        }
+        return
+      }
       await run(transaction, 'DELETE FROM knowledge_fts', [], operation.signal)
       await run(transaction, 'DELETE FROM knowledge_chunks', [], operation.signal)
       await run(transaction, 'DELETE FROM knowledge_documents', [], operation.signal)
@@ -1241,7 +1333,7 @@ function normalizeMemorySensitivity(value: string | null | undefined): Knowledge
 }
 
 function normalizeMemoryLogicalKey(value: string, label: string): string {
-  const normalized = value.normalize('NFKC').trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  const normalized = knowledgeMemoryLogicalKey(value)
   if (!normalized || normalized.length > MAX_MEMORY_FACT_FIELD_LENGTH) {
     throw new KnowledgeRepositoryDataError(`The ${label} is invalid.`)
   }
@@ -1283,6 +1375,21 @@ async function readMemoryById(
   )
   throwIfAborted(signal)
   return row ? normalizeMemoryRow(row) : undefined
+}
+
+async function readDocumentById(
+  database: SqliteExecutor,
+  id: string,
+  signal: AbortSignal | undefined,
+): Promise<KnowledgeDocumentRecord | undefined> {
+  const row = await database.getFirst<Record<string, unknown>>(
+    `SELECT id, title, mimeType, size, chunkCount, status, error, sourceUri, rawPath,
+            contentHash, createdAt, updatedAt
+     FROM knowledge_documents WHERE id = ? LIMIT 1`,
+    [id],
+  )
+  throwIfAborted(signal)
+  return row ? normalizeDocumentRow(row) : undefined
 }
 
 async function readActiveMemoryForLogicalKey(

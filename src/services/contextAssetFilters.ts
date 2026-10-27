@@ -6,15 +6,15 @@ export type KnowledgeStatusFocus = 'all' | 'ready' | 'extracting' | 'error' | 'e
 export type MemorySortMode = 'updated' | 'created' | 'lastUsed'
 export type KnowledgeSortMode = 'updated' | 'title' | 'chunks' | 'needsReview'
 
-export function filterAndSortMemories(
-  memories: MemoryItem[],
+export function filterAndSortMemories<Memory extends MemoryItem>(
+  memories: Memory[],
   options: {
     statusFocus: MemoryStatusFocus
     reviewFocus: MemoryReviewQueueFocus
     filter: string
     sortMode: MemorySortMode
   }
-): MemoryItem[] {
+): Memory[] {
   const normalizedFilter = normalizeAssetFilter(options.filter)
   const statusFocused = options.statusFocus === 'all'
     ? memories
@@ -28,14 +28,14 @@ export function filterAndSortMemories(
   return sortMemories(reviewFiltered, options.sortMode)
 }
 
-export function filterAndSortKnowledgeDocuments(
-  documents: KnowledgeDocument[],
+export function filterAndSortKnowledgeDocuments<Document extends KnowledgeDocument>(
+  documents: Document[],
   options: {
     statusFocus: KnowledgeStatusFocus
     filter: string
     sortMode: KnowledgeSortMode
   }
-): KnowledgeDocument[] {
+): Document[] {
   const normalizedFilter = normalizeAssetFilter(options.filter)
   const statusFocused = options.statusFocus === 'all'
     ? documents
@@ -69,7 +69,7 @@ export function knowledgeAssetEmptyMessage(focus: KnowledgeStatusFocus, filter: 
   return t('contextPanel.noEmptyKnowledge')
 }
 
-export function sortMemories(memories: MemoryItem[], mode: MemorySortMode): MemoryItem[] {
+export function sortMemories<Memory extends MemoryItem>(memories: Memory[], mode: MemorySortMode): Memory[] {
   return [...memories].sort((left, right) => {
     if (mode === 'created') return right.createdAt - left.createdAt
     if (mode === 'lastUsed') return (right.lastHitAt ?? 0) - (left.lastHitAt ?? 0)
@@ -77,7 +77,7 @@ export function sortMemories(memories: MemoryItem[], mode: MemorySortMode): Memo
   })
 }
 
-export function sortKnowledgeDocuments(documents: KnowledgeDocument[], mode: KnowledgeSortMode): KnowledgeDocument[] {
+export function sortKnowledgeDocuments<Document extends KnowledgeDocument>(documents: Document[], mode: KnowledgeSortMode): Document[] {
   return [...documents].sort((left, right) => {
     if (mode === 'title') return left.title.localeCompare(right.title)
     if (mode === 'chunks') return right.chunkCount - left.chunkCount

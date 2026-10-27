@@ -1,3 +1,5 @@
+import { snapshotPlainData } from '@/core'
+
 export interface ConversationRagCitationLike {
   readonly id: string
   readonly chunkId?: string
@@ -83,13 +85,14 @@ export interface ConversationRagSupplementalTraceLike {
   readonly metadata?: Readonly<Record<string, unknown>>
 }
 
-export interface ConversationRagSupplementalRetrievalInput<TConversation> {
+export interface ConversationRagSupplementalRetrievalInput<TConversation, TSettings = unknown> {
   readonly conversation: TConversation
   readonly query: string
   readonly followupQuery: string
   readonly excludeChunkIds: string[]
   readonly limit: 4
   readonly signal: AbortSignal
+  readonly settings?: TSettings
 }
 
 export interface ConversationRagSupplementalRetrievalResult<
@@ -138,6 +141,7 @@ export interface ConversationRagFinalizationRuntimeDependencies<
   TVerification extends ConversationRagGenerationVerification,
   TRawTrace extends ConversationRagSupplementalTraceLike,
   TTrace,
+  TSettings = unknown,
 > {
   verifyGeneration(input: {
     readonly answer: string
@@ -146,7 +150,7 @@ export interface ConversationRagFinalizationRuntimeDependencies<
     readonly quality?: TQuality
   }): TVerification
   retrieveSupplementalEvidence(
-    input: ConversationRagSupplementalRetrievalInput<TConversation>,
+    input: ConversationRagSupplementalRetrievalInput<TConversation, TSettings>,
   ): Promise<ConversationRagSupplementalRetrievalResult<TSource, TRawTrace>>
   logEvaluation(input: ConversationRagEvaluationLogInput<TPlan>): Promise<void>
   now(): number
@@ -189,6 +193,7 @@ export interface ConversationRagSupplementalEvidenceInput<
   TSource extends TCitation,
   TPlan extends ConversationRagPlanLike,
   TVerification extends ConversationRagGenerationVerification,
+  TSettings = unknown,
 > {
   readonly conversationId: string
   readonly assistantMessageId: string
@@ -198,6 +203,7 @@ export interface ConversationRagSupplementalEvidenceInput<
   readonly citations: TCitation[]
   readonly verification: TVerification
   readonly signal: AbortSignal
+  readonly settings?: TSettings
 }
 
 export interface ConversationRagSupplementalEvidenceCompleted<
@@ -266,6 +272,7 @@ export function createConversationRagFinalizationRuntime<
   TVerification extends ConversationRagGenerationVerification,
   TRawTrace extends ConversationRagSupplementalTraceLike,
   TTrace,
+  TSettings = unknown,
 >(
   dependencies: ConversationRagFinalizationRuntimeDependencies<
     TConversation,
@@ -275,7 +282,8 @@ export function createConversationRagFinalizationRuntime<
     TQuality,
     TVerification,
     TRawTrace,
-    TTrace
+    TTrace,
+    TSettings
   >,
 ) {
   function verifyInitialGeneration(
@@ -321,9 +329,19 @@ export function createConversationRagFinalizationRuntime<
       TCitation,
       TSource,
       TPlan,
-      TVerification
+      TVerification,
+      TSettings
     >,
   ): Promise<ConversationRagSupplementalEvidenceOutcome<TCitation, TSource>> {
+    input = {
+      ...input,
+      conversation: snapshotPlainData(input.conversation),
+      plan: snapshotPlainData(input.plan),
+      contextSources: snapshotPlainData(input.contextSources),
+      citations: snapshotPlainData(input.citations),
+      verification: snapshotPlainData(input.verification),
+      settings: snapshotPlainData(input.settings),
+    }
     const skipReason = resolveSupplementalEvidenceSkipReason(input)
     if (skipReason) {
       return {
@@ -346,9 +364,12 @@ export function createConversationRagFinalizationRuntime<
           .filter((id): id is string => Boolean(id)),
         limit: 4,
         signal: input.signal,
+        ...(input.settings === undefined ? {} : { settings: input.settings }),
       })
+      if (input.signal.aborted) return cancelled()
 
       for (const rawTrace of supplemental.trace) {
+        if (input.signal.aborted) return cancelled()
         recordCompleted(input, {
           id: rawTrace.id,
           type: 'retrieval',
@@ -364,6 +385,7 @@ export function createConversationRagFinalizationRuntime<
           },
         })
       }
+      if (input.signal.aborted) return cancelled()
 
       if (!supplemental.prompt || !supplemental.sources.length) {
         return {
@@ -395,6 +417,7 @@ export function createConversationRagFinalizationRuntime<
           revisionSkipped: true,
         },
       })
+      if (input.signal.aborted) return cancelled()
       return {
         status: 'completed',
         sources: supplemental.sources,
@@ -402,6 +425,9 @@ export function createConversationRagFinalizationRuntime<
         evidenceAttached: true,
       }
     } catch (error) {
+      if (input.signal.aborted || error instanceof Error && error.name === 'AbortError') {
+        return cancelled()
+      }
       recordCompleted(input, {
         id: dependencies.traceId('flare-error'),
         type: 'retrieval',
@@ -419,6 +445,10 @@ export function createConversationRagFinalizationRuntime<
         sources: [],
         citations: input.citations,
       }
+    }
+
+    function cancelled(): ConversationRagSupplementalEvidenceSkipped<TCitation, TSource> {
+      return { status: 'skipped', reason: 'request_aborted', sources: [], citations: input.citations }
     }
   }
 
