@@ -121,6 +121,7 @@ export const conversationAssistantFinalizationRuntime =
         assistantMessageId: input.assistantMessageId,
         onStreamEvent: input.onStreamEvent,
         onExecutionTarget: input.onExecutionTarget,
+        ...(input.providerContinuation ? { providerContinuation: input.providerContinuation } : {}),
       })
       return runtime.execute({
         ...input,

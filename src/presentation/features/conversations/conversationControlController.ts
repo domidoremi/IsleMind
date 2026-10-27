@@ -142,7 +142,7 @@ export function createConversationControlController(
       const latest = dependencies.getMessage(conversationId, messageId)
       if (!latest || (latest.status !== 'streaming' && latest.status !== 'sending')) continue
       if (run) {
-        if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled') {
+        if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled' || run.status === 'paused') {
           await dependencies.recoverProjection(run)
         }
         // A nonterminal durable owner, including pending confirmation, is not

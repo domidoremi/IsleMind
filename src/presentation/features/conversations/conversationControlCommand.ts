@@ -23,7 +23,8 @@ import { describeUserFacingError, type ProcessTrace } from '@/core'
 import {
   createConversationControlController,
 } from './conversationControlController'
-import { cancelConversationResponseRunRuntime, getLatestConversationResponseRunRuntime, startConversationReplyAfterHistoryProjectionRuntime } from './conversationMessageRuntimeBinding'
+import { cancelConversationResponseRunRuntime, getLatestConversationResponseRunRuntime, resumePausedConversationResponseRuntime, startConversationReplyAfterHistoryProjectionRuntime } from './conversationMessageRuntimeBinding'
+import { getPausedConversationResponseAction } from './pausedConversationResponseAction'
 import { recoverChatProjection } from './plainChatProjection'
 
 function createControlTraceId(prefix: string): string {
@@ -144,6 +145,12 @@ export const stopConversationMessage = (conversationId: string): void | Promise<
   return stopping
 }
 export const recoverStaleConversationMessages = controller.recoverStale
+export const resumePausedConversationMessage = async (conversationId: string, message: Message): Promise<boolean> => {
+  if (isConversationLocked(conversationId)) return false
+  const identity = getPausedConversationResponseAction(message)
+  if (!identity) return false
+  return resumePausedConversationResponseRuntime(conversationId, message.id, identity)
+}
 export const retryConversationMessage = async (conversationId: string, assistantMessageId: string): Promise<void> => {
   if (isConversationLocked(conversationId)) return
   await controller.retry(conversationId, assistantMessageId)

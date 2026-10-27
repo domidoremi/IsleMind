@@ -124,12 +124,13 @@ export const conversationAssistantReplyStartRuntime =
     getSettings() {
       return useSettingsStore.getState().settings
     },
-    createModelOperationSession(input: { conversation: BoundConversation; provider: AIProvider; settings: Settings; allowConfirmation: boolean }) {
+    createModelOperationSession(input: { conversation: BoundConversation; provider: AIProvider; settings: Settings; allowConfirmation: boolean; signal?: AbortSignal }) {
       return createConversationModelOperationSession({
         conversation: input.conversation,
         provider: input.provider,
         settings: input.settings,
         allowConfirmation: input.allowConfirmation,
+        ...(input.signal ? { signal: input.signal } : {}),
       })
     },
     filterSendableAttachments,

@@ -1,6 +1,6 @@
-import type { StreamEvent } from '@/core'
+import { snapshotPlainData, type StreamEvent } from '@/core'
 import type { Message } from '@/types/chatContracts'
-import type { ProviderExecutionTargetObserver } from '@/modules/providers'
+import type { ProviderContinuationAdmission, ProviderExecutionTargetObserver } from '@/modules/providers'
 import type { AssistantConversationDetachedWorkLease } from './assistantConversationDetachedWorkRegistry'
 import type { AssistantConversationWorkspaceWritebackHandoff } from './assistantConversationWorkspaceWritebackHandoffRuntime'
 
@@ -191,10 +191,12 @@ export interface AssistantConversationMcpRevisionInput<
   TPackedMessage,
   TMcpTool,
   TProviderTools,
+  TSettings = unknown,
 > {
   readonly conversationId: string
   readonly assistantMessageId: string
   readonly provider: TProvider
+  readonly settings?: TSettings
   readonly conversation: TConversation
   readonly systemPrompt: string
   readonly messages: readonly TPackedMessage[]
@@ -205,6 +207,7 @@ export interface AssistantConversationMcpRevisionInput<
   readonly signal: AbortSignal
   readonly onStreamEvent?: (event: StreamEvent) => void
   readonly onExecutionTarget?: ProviderExecutionTargetObserver
+  readonly providerContinuation?: ProviderContinuationAdmission
 }
 
 export interface AssistantConversationFinalizationRuntimeInput<
@@ -224,6 +227,7 @@ export interface AssistantConversationFinalizationRuntimeInput<
   TRemoteCompactStrategy,
   TRemoteCompactCapabilityKind,
   TRemoteCompactClassification,
+  TSettings = unknown,
 > {
   readonly conversationId: string
   readonly assistantMessageId: string
@@ -235,6 +239,7 @@ export interface AssistantConversationFinalizationRuntimeInput<
   readonly context: TContext
   readonly runtimeConversation: TConversation
   readonly provider: TProvider
+  readonly settings?: TSettings
   readonly modelTraceId: string
   readonly nativeSearchTraceId: string
   readonly providerWebSearchMode: 'native' | 'off'
@@ -258,6 +263,7 @@ export interface AssistantConversationFinalizationRuntimeInput<
   readonly contextFragments?: readonly TContextFragment[]
   readonly onStreamEvent?: (event: StreamEvent) => void
   readonly onExecutionTarget?: ProviderExecutionTargetObserver
+  readonly providerContinuation?: ProviderContinuationAdmission
 }
 
 export interface AssistantConversationProviderFailureInput<TError> {
@@ -327,7 +333,8 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
     TProvider,
     TPackedMessage,
     TMcpTool,
-    TProviderTools
+    TProviderTools,
+    TSettings
   >): Promise<AssistantConversationFinalizationRevision<TUsage> | null | undefined>
   resolveSupplementalEvidence(input: {
     readonly conversationId: string
@@ -337,6 +344,7 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
     readonly contextSources: readonly TSource[]
     readonly citations: TCitation[]
     readonly verification: TVerification
+    readonly settings?: TSettings
     readonly signal: AbortSignal
   }): Promise<AssistantConversationFinalizationSupplementalEvidence<TCitation, TSource>>
   now(): number
@@ -428,6 +436,7 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
     readonly assistantMessageId: string
     readonly messages: TConversation['messages']
     readonly provider: TProvider
+    readonly settings?: TSettings
     readonly model: string
     readonly signal: AbortSignal
     readonly recordTrace: (trace: TTrace) => void
@@ -547,7 +556,8 @@ export function createAssistantConversationFinalizationRuntime<
       TContextFragment,
       TRemoteCompactStrategy,
       TRemoteCompactCapabilityKind,
-      TRemoteCompactClassification
+      TRemoteCompactClassification,
+      TSettings
     >,
   ): Promise<AssistantConversationFinalizationOutcome<
     TCitation,
@@ -558,6 +568,26 @@ export function createAssistantConversationFinalizationRuntime<
     TSuccessPlan,
     TSkipPlan
   >> {
+    input = {
+      ...input,
+      settings: snapshotPlainData(input.settings ?? dependencies.getSettings()),
+      provider: snapshotPlainData(input.provider),
+      runtimeConversation: snapshotPlainData(input.runtimeConversation),
+      context: snapshotPlainData(input.context),
+      result: snapshotPlainData(input.result),
+      packedMessages: snapshotPlainData(input.packedMessages),
+      mcpTools: snapshotPlainData(input.mcpTools),
+      providerTools: snapshotPlainData(input.providerTools),
+      providerContinuation: input.providerContinuation ? Object.freeze({
+        provider: snapshotPlainData(input.providerContinuation.provider),
+        model: input.providerContinuation.model,
+        admit: input.providerContinuation.admit,
+      }) : undefined,
+      workspaceWritebackHandoff: snapshotPlainData(input.workspaceWritebackHandoff),
+      contextWindowState: snapshotPlainData(input.contextWindowState),
+      contextFragments: snapshotPlainData(input.contextFragments),
+    }
+    const settings = input.settings as TSettings
     input.chunkFlush()
     await dependencies.flushStreamingMessage(input.conversationId, input.assistantMessageId)
     clearMatchingActiveStream(input.conversationId, input.assistantMessageId)
@@ -596,6 +626,7 @@ export function createAssistantConversationFinalizationRuntime<
         conversationId: input.conversationId,
         assistantMessageId: input.assistantMessageId,
         provider: input.provider,
+        settings,
         conversation: input.runtimeConversation,
         systemPrompt: input.systemPrompt,
         messages: input.packedMessages,
@@ -606,6 +637,7 @@ export function createAssistantConversationFinalizationRuntime<
         signal: input.requestController.signal,
         onStreamEvent: input.onStreamEvent,
         onExecutionTarget: input.onExecutionTarget,
+        ...(input.providerContinuation ? { providerContinuation: input.providerContinuation } : {}),
       })
       if (revision?.text.trim()) {
         finalOutput = revision.text
@@ -625,6 +657,7 @@ export function createAssistantConversationFinalizationRuntime<
       contextSources: input.context.sources,
       citations: finalCitations,
       verification,
+      settings,
       signal: input.requestController.signal,
     })
     if (supplementalEvidence.status === 'completed') {
@@ -691,7 +724,7 @@ export function createAssistantConversationFinalizationRuntime<
         remoteClassification: input.remoteCompactClassification,
         inputTokens: input.remoteCompactInputTokens ?? terminalUsage.inputTokens,
         messageCount,
-        settings: dependencies.getSettings(),
+        settings,
         previousResponseId: input.previousResponseId,
         contextWindowState: input.contextWindowState,
         contextFragments: input.contextFragments,
@@ -826,27 +859,27 @@ export function createAssistantConversationFinalizationRuntime<
         conversationId: input.conversationId,
         workId: `memory-extraction:${input.assistantMessageId}`,
       })
-      const extractionInput = {
-        conversationId: input.conversationId,
-        assistantMessageId: input.assistantMessageId,
-        messages: committedConversation.messages,
-        provider: input.provider,
-        model: input.upstreamModel,
-        signal: detachedWork.signal,
-        recordTrace(trace: TTrace) {
-          dependencies.recordTrace({
-            conversationId: input.conversationId,
-            assistantMessageId: input.assistantMessageId,
-            trace,
-          })
-        },
-      }
-
       // Memory extraction is deliberately fire-and-forget. Promise.resolve
       // observes both promise rejection and non-Promise/thenable returns;
       // the synchronous branch covers an extractor that throws before it
       // returns a promise. Either path settles this exact lease once.
       try {
+        const extractionInput = {
+          conversationId: input.conversationId,
+          assistantMessageId: input.assistantMessageId,
+          messages: snapshotPlainData(committedConversation.messages),
+          provider: input.provider,
+          settings,
+          model: input.upstreamModel,
+          signal: detachedWork.signal,
+          recordTrace(trace: TTrace) {
+            dependencies.recordTrace({
+              conversationId: input.conversationId,
+              assistantMessageId: input.assistantMessageId,
+              trace,
+            })
+          },
+        }
         const extraction = dependencies.extractMemory(extractionInput)
         void Promise.resolve(extraction).then(
           () => detachedWork.release(),

@@ -16,13 +16,15 @@ export const conversationProviderAdmissionRuntime = createProviderConversationAd
     const requiredCapabilities = provider ? requiredFallbackCapabilities({ provider, model: preferred.model,
       attachments: latestUser?.attachments, reasoningEffort: input.conversation.reasoningEffort,
       webSearchMode: input.settings.webSearchEnabled && input.settings.webSearchMode === 'native' ? 'native' : undefined }) : ['text']
-    return providerChatResolutionRuntime.resolvePreferred({ preferred, signal: input.signal, settings: input.settings, requiredCapabilities,
+    return providerChatResolutionRuntime.resolvePreferred({ preferred, providers: input.providers, signal: input.signal, settings: input.settings, requiredCapabilities,
       confirmFallback: (candidate, signal) => requestProviderFallbackConfirmation({ conversationId: input.conversation.id, preferred, candidate, signal }) })
   },
   providerHasModel: providerHasPolicyModel,
-  async hydrateProviderKey(providerId, signal) {
+  async hydrateProviderKey(providerId, signal, configuration) {
     if (signal.aborted) return null
-    const provider = await useSettingsStore.getState().hydrateProviderKey(providerId) ?? null
+    const provider = await useSettingsStore.getState().hydrateProviderKey(providerId, {
+      ...configuration, signal,
+    }) ?? null
     return signal.aborted ? null : provider
   },
   getProviderConfigIssue,

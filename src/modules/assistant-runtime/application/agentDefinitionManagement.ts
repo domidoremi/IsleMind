@@ -10,7 +10,7 @@ export interface AgentDefinitionManagement extends AgentDefinitionRepository {
   newDraft(input: { name: string; providerId: string; modelId: string }): AgentDefinition
   /** Preview only, with a fresh local identity. Nothing is saved or enabled by importing. */
   importDraft(signal?: AbortSignal): Promise<AgentDefinition | undefined>
-  exportSaved(id: string): Promise<void>
+  exportSaved(id: string, signal?: AbortSignal): Promise<void>
 }
 
 export function createAgentDefinitionManagement({ repository, files, newId }: {
@@ -29,8 +29,10 @@ export function createAgentDefinitionManagement({ repository, files, newId }: {
       const imported = decodeAgentDefinition(result.json)
       return parseAgentDefinition({ ...imported, id: newId(), revision: 1 })
     },
-    async exportSaved(id) {
+    async exportSaved(id, signal) {
+      if (signal?.aborted) return
       const definition = await repository.get(id)
+      if (signal?.aborted) return
       if (!definition) throw new Error('Agent definition not found')
       await files.exportJsonFile(encodeAgentDefinition(definition))
     },

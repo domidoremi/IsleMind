@@ -38,6 +38,28 @@ export function createConversationRunUseCase(
       return dependencies.assistantRuntime.cancel(runId)
     },
 
+    async resumePausedRun(input) {
+      if (input.cancellationSignal?.aborted) return err('cancelled', 'Continuation was cancelled.', { retryable: false })
+      let session
+      try {
+        session = await dependencies.createModelOperationSession?.()
+      } catch (error) {
+        return err('provider_failed', error instanceof Error ? error.message : 'The operation catalog could not be restored.', { retryable: true })
+      }
+      if (input.cancellationSignal?.aborted) return err('cancelled', 'Continuation was cancelled.', { retryable: false })
+      return dependencies.assistantRuntime.resume({
+        runId: input.runId,
+        expectedJournalSequence: input.expectedJournalSequence,
+        ...(session ? { modelOperationSession: session } : {}),
+        ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
+        ...(dependencies.providerGatewayOptions ? { providerGatewayOptions: dependencies.providerGatewayOptions } : {}),
+        onPersisted: async ({ run, journalEntry }) => {
+          await project(input.projection, { conversationId: run.conversationId, run, journalEntry })
+        },
+        ...(input.onSettled ? { onSettled: input.onSettled } : {}),
+      })
+    },
+
     async resumeModelOperation(input) {
       let session
       try {

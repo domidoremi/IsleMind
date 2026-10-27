@@ -1,6 +1,7 @@
 import {
   createAssistantRunId,
   freezeChatRequest,
+  snapshotPlainData,
   systemClock,
   type AssistantRunId,
   type IdGenerator,
@@ -23,7 +24,8 @@ import {
   getAssistantRunMessageAttribution,
   projectOperationActivity,
 } from '@/modules/assistant-runtime'
-import { mergeIdenticalProviderCitations, type ProviderExecutionTarget, type ProviderRuntimeCompletionResult } from '@/modules/providers'
+import { mergeIdenticalProviderCitations, snapshotProviderRuntimeRequest,
+  type ProviderExecutionTarget, type ProviderRuntimeCompletionResult } from '@/modules/providers'
 import {
   createProviderRuntimeAdapter,
   streamProviderChat,
@@ -46,6 +48,7 @@ import { preserveMessageIdentity } from '@/bootstrap/plainChatMessageIdentity'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import { projectPendingModelOperation } from '@/presentation/features/conversations/plainChatProjection'
+import { captureProviderRichContinuationBinding, type ProviderRichContinuationBinding } from './providerRichContinuationBinding'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
 const contextSnapshots = createSqliteContextSnapshotRepository(databaseProvider)
@@ -139,9 +142,8 @@ export function createConversationAssistantDurableExecutionRuntime(
     let preparedDispatch: ProviderPreparedDispatch
     let canonicalRequest: ChatRequest
     try {
-      // Request preparation does not invoke the lifecycle callback. Keep the
-      // caller's exact input object while viewing the richer completion return
-      // through the legacy void-return provider-dispatch type.
+      if (input.requestController.signal.aborted) return { kind: 'terminal', outcome: { kind: 'cancelled' } }
+      input = snapshotRichDispatchInput(input)
       preparedDispatch = dependencies.providerDispatchRuntime.prepare(
         input as unknown as ProviderDispatchInput,
       )
@@ -161,7 +163,15 @@ export function createConversationAssistantDurableExecutionRuntime(
       return { kind: 'terminal', outcome: { kind: 'failed', error } }
     }
 
-    const contextOutcome = await dependencies.createContextSnapshot(input)
+    let contextOutcome: Awaited<ReturnType<typeof dependencies.createContextSnapshot>>
+    try {
+      contextOutcome = await dependencies.createContextSnapshot(input)
+    } catch (error) {
+      if (input.requestController.signal.aborted) return { kind: 'terminal', outcome: { kind: 'cancelled' } }
+      dependencies.projectStartFailure(input)
+      return { kind: 'terminal', outcome: { kind: 'failed', error } }
+    }
+    if (input.requestController.signal.aborted) return { kind: 'terminal', outcome: { kind: 'cancelled' } }
     if (!contextOutcome.ok) {
       if (contextOutcome.error.code === 'cancelled') {
         return { kind: 'terminal', outcome: { kind: 'cancelled' } }
@@ -178,7 +188,8 @@ export function createConversationAssistantDurableExecutionRuntime(
       conversationId: input.conversationId,
       responseMessageId: input.assistantMessageId,
       providerId: input.provider.id,
-      model: input.upstreamModel,
+      // Keep original request identity until the wire observer records its actual producer.
+      model: canonicalRequest.model,
       request: canonicalRequest,
       contextReceipt: input.contextReceipt,
       context: contextOutcome.value.snapshot,
@@ -198,6 +209,8 @@ export function createConversationAssistantDurableExecutionRuntime(
         // turn every pause (including budget/background pauses) into cancellation.
         const workController = new AbortController()
         let executionTarget: ProviderExecutionTarget | undefined
+        let continuationBinding: ProviderRichContinuationBinding | undefined
+        let continuationsOpen = true
         let terminalLifecycleStarted = false
         let activitySettled = false
         let checkpointFailure: unknown
@@ -250,11 +263,16 @@ export function createConversationAssistantDurableExecutionRuntime(
             firstCalls.push({
               callId: event.toolCallId,
               name: event.toolName,
-              arguments: event.arguments ?? {},
-              ...(event.providerMetadata ? { providerMetadata: event.providerMetadata } : {}),
+              arguments: snapshotPlainData(event.arguments ?? {}),
+              ...(event.providerMetadata ? { providerMetadata: snapshotPlainData(event.providerMetadata) } : {}),
             })
           } else if (event.type === 'provider-continuation-state') {
-            firstReasoningReplay = event.reasoningReplay ?? Object.freeze([])
+            if (executionTarget && (event.binding.providerId !== executionTarget.providerId || event.binding.model !== executionTarget.model)) {
+              checkpointFailure = new Error('The continuation replay does not match its actual producing route.')
+              workController.abort(checkpointFailure)
+              return
+            }
+            firstReasoningReplay = snapshotPlainData(event.reasoningReplay ?? [])
           }
           if (typeof checkpointStreamEvent !== 'function' || checkpointFailure) return
           const next = checkpointStreamEvent(event)
@@ -308,9 +326,20 @@ export function createConversationAssistantDurableExecutionRuntime(
             ...preparedDispatch.request,
             signal: workController.signal,
             onExecutionTarget: async (target: Parameters<NonNullable<typeof recordProviderExecutionTarget>>[0]) => {
-              await previousTargetObserver?.(target)
-              try { await recordProviderExecutionTarget?.(target); executionTarget = target }
+              const captured = snapshotPlainData(target)
+              await previousTargetObserver?.(captured)
+              try { await recordProviderExecutionTarget?.(captured); executionTarget = captured }
               catch (error) { checkpointFailure = error; throw error }
+              if (preparedDispatch.request.executionConstraint) {
+                continuationBinding = await captureProviderRichContinuationBinding(
+                  { ...snapshotProviderRuntimeRequest(preparedDispatch.request), signal: workController.signal },
+                  captured,
+                  {
+                    signal: input.requestController.signal,
+                    isCurrent: () => continuationsOpen && !activitySettled && !checkpointFailure && !signal.aborted,
+                  },
+                )
+              }
             },
           } }
           const providerDispatchOutcome =
@@ -333,6 +362,9 @@ export function createConversationAssistantDurableExecutionRuntime(
                         && continueProviderTurns
                         && (firstCalls.length || result.text.includes('<islemind_tool_call'))
                       ) {
+                        if (preparedDispatch.request.executionConstraint && !continuationBinding) {
+                          throw new Error('The admitted Rich turn has no actual producing-route binding.')
+                        }
                         const continuationResults: ProviderRuntimeCompletionResult[] = []
                         const attachmentMessageId = input.attachments.length
                           ? [...canonicalRequest.messages].reverse().find((message) => message.role === 'user')?.id
@@ -340,21 +372,33 @@ export function createConversationAssistantDurableExecutionRuntime(
                         if (input.attachments.length && !attachmentMessageId) {
                           throw new Error('The original attachment message is unavailable.')
                         }
-                        const continuationProvider = !executionTarget || executionTarget.providerId === input.provider.id
-                          ? input.provider : input.fallbackProviders.find((provider) => provider.id === executionTarget?.providerId)
+                        const continuationProvider = continuationBinding?.provider
+                          ?? (!executionTarget || executionTarget.providerId === input.provider.id
+                            ? input.provider : input.fallbackProviders.find((provider) => provider.id === executionTarget?.providerId))
                         if (!continuationProvider) throw new Error('The actual continuation provider is no longer available.')
+                        const adapter = createProviderRuntimeAdapter({
+                          provider: continuationProvider,
+                          settings: input.settings,
+                          attachmentMessageId,
+                          streamChat: createRichContinuationStream({ ...input, requestController: workController },
+                            continuationResults, continuationBinding),
+                        })
                         const continuationResult = await continueProviderTurns({
                           request: canonicalRequest,
                           session: input.modelOperationSession,
                           calls: firstCalls,
                           reasoningReplay: firstReasoningReplay,
                           outputText: result.text,
-                          stream: createProviderRuntimeAdapter({
-                            provider: continuationProvider,
-                            settings: input.settings,
-                            attachmentMessageId,
-                            streamChat: createRichContinuationStream({ ...input, requestController: workController }, continuationResults),
-                          }).stream,
+                          stream(request, options) {
+                            if (continuationBinding && (!request.providerStateBinding
+                              || request.providerStateBinding.providerId !== continuationBinding.constraint.identity.providerId
+                              || request.providerStateBinding.model !== continuationBinding.constraint.identity.model
+                              || request.providerId !== request.providerStateBinding.providerId
+                              || request.model !== request.providerStateBinding.model)) {
+                              throw new Error('The canonical continuation does not match its actual producing route.')
+                            }
+                            return adapter.stream(request, options)
+                          },
                         })
                         if (continuationResult.pendingConfirmation) {
                           completionContext.flush()
@@ -378,6 +422,11 @@ export function createConversationAssistantDurableExecutionRuntime(
                         ...completionContext,
                         onStreamEvent: queueStreamEvent,
                         onExecutionTarget: attributedDispatch.request.onExecutionTarget,
+                        ...(continuationBinding ? { providerContinuation: Object.freeze({
+                          provider: continuationBinding.provider,
+                          model: continuationBinding.constraint.identity.model,
+                          admit: continuationBinding.bind,
+                        }) } : {}),
                       })
                       // Finalization may execute provider/MCP revisions that
                       // emit additional normalized events. Fence terminal run
@@ -448,6 +497,7 @@ export function createConversationAssistantDurableExecutionRuntime(
 
           return await awaitActivityCompletion()
         } finally {
+          continuationsOpen = false
           unsubscribeOperations?.()
           signal.removeEventListener('abort', abortRequest)
         }
@@ -669,9 +719,33 @@ function freezePreparedValue<Value>(value: Value): Value {
   return Object.freeze(value)
 }
 
+function snapshotRichDispatchInput(
+  input: ConversationAssistantDurableDispatchInput,
+): ConversationAssistantDurableDispatchInput {
+  const snapshots = new WeakMap<object, unknown>()
+  return {
+    ...input,
+    provider: snapshotPlainData(input.provider, snapshots),
+    settings: snapshotPlainData(input.settings, snapshots),
+    runtimeConversation: snapshotPlainData(input.runtimeConversation, snapshots),
+    attachments: snapshotPlainData(input.attachments, snapshots),
+    messages: snapshotPlainData(input.messages, snapshots),
+    retrievalSources: snapshotPlainData(input.retrievalSources, snapshots),
+    fallbackProviders: snapshotPlainData(input.fallbackProviders, snapshots),
+    remoteCompactFallback: snapshotPlainData(input.remoteCompactFallback, snapshots),
+    providerToolDeclarations: snapshotPlainData(input.providerToolDeclarations, snapshots),
+    executionConstraint: snapshotPlainData(input.executionConstraint, snapshots),
+    sourceMessages: snapshotPlainData(input.sourceMessages, snapshots),
+    approvedToolContextIds: snapshotPlainData(input.approvedToolContextIds, snapshots),
+    contextReceipt: snapshotPlainData(input.contextReceipt, snapshots),
+    workspaceWritebackHandoff: snapshotPlainData(input.workspaceWritebackHandoff, snapshots),
+  }
+}
+
 function createRichContinuationStream(
   input: ConversationAssistantDurableDispatchInput,
   results: ProviderRuntimeCompletionResult[],
+  binding?: ProviderRichContinuationBinding,
 ) {
   return async (
     request: Parameters<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>[0],
@@ -680,24 +754,27 @@ function createRichContinuationStream(
     onError: Parameters<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>[3],
     onCitations?: Parameters<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>[4],
     onTrace?: Parameters<NonNullable<Parameters<typeof createProviderRuntimeAdapter>[0]['streamChat']>>[5],
-  ) => streamProviderChat({
-    ...request,
-    attachments: input.attachments,
-    // Continuations already carry packed context in the canonical system prompt.
-    contextPrompt: undefined,
-    retrievalSources: input.retrievalSources,
-    webSearchMode: input.webSearchMode,
-    fallbackProviders: input.fallbackProviders,
-    remoteCompactEligible: false,
-    remoteCompactFallback: undefined,
-    previousResponseId: undefined,
-  }, onChunk, (result) => {
+  ) => {
+    const continuationRequest = {
+      ...request,
+      attachments: input.attachments,
+      // Continuations already carry packed context in the canonical system prompt.
+      contextPrompt: undefined,
+      retrievalSources: input.retrievalSources,
+      webSearchMode: input.webSearchMode,
+      fallbackProviders: input.fallbackProviders,
+      remoteCompactEligible: false,
+      remoteCompactFallback: undefined,
+      previousResponseId: undefined,
+    }
+    return streamProviderChat(binding ? await binding.bind(continuationRequest) : continuationRequest, onChunk, (result) => {
       results.push(result)
       onDone(result)
     }, onError, onCitations, onTrace).then((handle) => {
-    void handle.done.catch(() => undefined)
-    return handle
-  })
+      void handle.done.catch(() => undefined)
+      return handle
+    })
+  }
 }
 
 function mergeProviderCompletionResults(

@@ -16,6 +16,7 @@ export const RESPONSE_LIFECYCLE_STAGES: readonly ResponseLifecycleStage[] = [
   'tool_calling',
   'tool_result',
   'generating',
+  'paused',
   'completed',
   'error',
   'cancelled',
@@ -182,6 +183,16 @@ export function lifecycleStageForMessageStatus(status: MessageStatus): ResponseL
     case 'cancelled':
       return 'cancelled'
   }
+}
+
+export function isMessageResponseActive(message: {
+  role?: string
+  status?: string
+  responseLifecycle?: { stage?: string }
+}): boolean {
+  return message.role === 'assistant'
+    && (message.status === 'streaming' || message.status === 'sending')
+    && message.responseLifecycle?.stage !== 'paused'
 }
 
 export function lifecycleStageForTrace(

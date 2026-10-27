@@ -1,6 +1,7 @@
 import { createPlainChatProjection, projectPendingModelOperation, recoverChatProjection } from './plainChatProjection'
 import type { PlainChatProjectionInput } from './plainChatController'
-import type { AssistantRun, PendingModelOperation } from '@/modules/assistant-runtime'
+import type { AssistantRun, HarnessPauseReason, PendingModelOperation } from '@/modules/assistant-runtime'
+import { HARNESS_ENGINE_VERSION } from '@/modules/assistant-runtime'
 import type { Message } from '@/types/chatContracts'
 
 let mockMessage: Message
@@ -10,9 +11,11 @@ const mockFlushMessage = jest.fn()
 const mockFinishTask = jest.fn()
 const mockUpsertTrace = jest.fn()
 const mockLifecycle = jest.fn()
+const mockSetStreaming = jest.fn()
 const mockUpdateMessage = jest.fn((_conversationId: string, _messageId: string, patch: Partial<Message>) => {
   Object.assign(mockMessage, patch)
 })
+const mockResetContent = jest.fn()
 
 jest.mock('@/store/chatStore', () => ({
   useChatStore: { getState: () => ({
@@ -23,7 +26,7 @@ jest.mock('@/store/chatStore', () => ({
   }) },
 }))
 jest.mock('@/store/chatStreamingStore', () => ({
-  useChatStreamingStore: { getState: () => ({ flushStreamingMessage: mockFlushBuffers, upsertTrace: mockUpsertTrace, resetContent: jest.fn(), setStreaming: jest.fn() }) },
+  useChatStreamingStore: { getState: () => ({ flushStreamingMessage: mockFlushBuffers, upsertTrace: mockUpsertTrace, resetContent: mockResetContent, setStreaming: mockSetStreaming }) },
 }))
 jest.mock('@/services/chatStreamLifecycle', () => ({ hasActiveStream: () => mockLive }))
 jest.mock('@/services/tokenUsage', () => ({
@@ -148,4 +151,195 @@ it('removes a recovered authorization only after authoritative cancellation, inc
   expect(mockMessage.status).toBe('cancelled')
   expect(mockMessage.retrievalTrace).toEqual([evidence])
   expect(mockFlushMessage).toHaveBeenCalledTimes(1)
+})
+
+it('does not create an optimistic lifecycle for a projection whose owner already expired', () => {
+  createPlainChatProjection({ conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap' } as PlainChatProjectionInput,
+    jest.fn(), () => false)
+  expect(mockLifecycle).not.toHaveBeenCalled()
+})
+
+it('does not project terminal events after ownership changes', async () => {
+  let current = true
+  const projection = createPlainChatProjection({ conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap' } as PlainChatProjectionInput,
+    jest.fn(), () => current)
+  jest.clearAllMocks()
+  current = false
+  await projection({ conversationId: run.conversationId, run })
+  expect(mockFlushBuffers).not.toHaveBeenCalled()
+  expect(mockUpdateMessage).not.toHaveBeenCalled()
+  expect(mockFinishTask).not.toHaveBeenCalled()
+})
+
+it('retains the projection ownership predicate inside the asynchronous terminal flush', async () => {
+  let current = true
+  const owns = () => current
+  mockFlushBuffers.mockImplementationOnce(async (_conversation, _message, guard) => {
+    expect(guard).toBe(owns)
+    current = false
+  })
+  const projection = createPlainChatProjection({ conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap' } as PlainChatProjectionInput,
+    jest.fn(), owns)
+  await projection({ conversationId: run.conversationId, run })
+  expect(mockFlushBuffers).toHaveBeenCalledWith('conversation-gap', 'message-gap', owns)
+  expect(mockUpdateMessage).not.toHaveBeenCalled()
+  expect(mockFinishTask).not.toHaveBeenCalled()
+})
+
+it('preserves recovery ownership through the awaited buffer flush', async () => {
+  let current = true
+  const owns = () => current
+  mockFlushBuffers.mockImplementationOnce(async (_conversation, _message, guard) => {
+    expect(guard).toBe(owns)
+    current = false
+  })
+  await recoverChatProjection(run, owns)
+  expect(mockFlushBuffers).toHaveBeenCalledWith('conversation-gap', 'message-gap', owns)
+  expect(mockUpdateMessage).not.toHaveBeenCalled()
+})
+
+const pausedRun = (reason: HarnessPauseReason = 'context_capacity'): AssistantRun => ({
+  ...run,
+  engineVersion: HARNESS_ENGINE_VERSION,
+  journalSequence: 8,
+  status: 'paused',
+  completedAt: undefined,
+  result: undefined,
+  lifecycleCheckpoint: { waitingReason: reason, phase: 'provider', recovery: 'resumable' } as AssistantRun['lifecycleCheckpoint'],
+})
+const pauseEvent = (reason?: HarnessPauseReason) => ({
+  conversationId: run.conversationId,
+  run: pausedRun(reason),
+  journalEntry: {
+    schema: 'islemind.assistant-run-journal-entry.v1' as const,
+    runId: run.id, sequence: 8, occurredAt: 40, type: 'run.paused' as const,
+  },
+})
+
+it.each(['context_capacity', 'budget_exhausted', 'process_restart'] as const)(
+  'projects %s as a durable nonterminal pause, not waiting, failure or completion', async reason => {
+    const terminal = jest.fn()
+    const projection = createPlainChatProjection({
+      conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap',
+    } as PlainChatProjectionInput, terminal)
+    await projection(pauseEvent(reason))
+    expect(mockFlushBuffers).toHaveBeenCalledWith('conversation-gap', 'message-gap')
+    expect(mockLifecycle).toHaveBeenLastCalledWith('conversation-gap', 'message-gap', 'paused', {
+      at: 40, summary: `agentTasks.reason.${reason}`, traceId: `harness-pause-v1:${run.id}:8`,
+    })
+    expect(mockFlushMessage).toHaveBeenCalledWith('conversation-gap', 'message-gap')
+    expect(mockMessage.status).toBe('streaming')
+    expect(mockMessage.completedAt).toBeUndefined()
+    expect(mockFinishTask).not.toHaveBeenCalled()
+    expect(terminal).not.toHaveBeenCalled()
+  },
+)
+
+it.each(['operation', 'confirmation', 'pending-decision', 'complete', 'reconciliation', 'child', 'legacy'])(
+  'keeps an unsafe %s pause visible without issuing a resumable UI identity', async variant => {
+    const durable = pausedRun()
+    if (variant === 'operation' || variant === 'confirmation' || variant === 'complete') durable.lifecycleCheckpoint = { ...durable.lifecycleCheckpoint!, phase: variant }
+    if (variant === 'pending-decision') durable.pendingModelOperation = {} as PendingModelOperation
+    if (variant === 'reconciliation') durable.lifecycleCheckpoint = { ...durable.lifecycleCheckpoint!, recovery: 'reconciliation-required' }
+    if (variant === 'child') durable.parentRunId = run.id
+    if (variant === 'legacy') durable.engineVersion = undefined
+    await recoverChatProjection(durable)
+    expect(mockLifecycle).toHaveBeenLastCalledWith('conversation-gap', 'message-gap', 'paused',
+      expect.objectContaining({ traceId: `harness-pause:${run.id}` }))
+    expect(mockFinishTask).not.toHaveBeenCalled()
+  },
+)
+
+it.each(['', 'Completed tool summary'])('resets interrupted text to the durable resume baseline %j', async outputText => {
+  mockMessage.content = 'Interrupted provider partial'
+  mockMessage.responseLifecycle = { stage: 'paused', startedAt: 10, stageStartedAt: 40, history: [] }
+  const projection = createPlainChatProjection({
+    conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap',
+  } as PlainChatProjectionInput, jest.fn())
+  expect(mockResetContent).not.toHaveBeenCalled()
+  await projection({
+    conversationId: run.conversationId, run: { ...run, status: 'running', checkpoint: { outputText, streamEventCount: 1 }, journalSequence: 9 },
+    journalEntry: { ...pauseEvent().journalEntry, sequence: 9, type: 'run.resumed' },
+  })
+  expect(mockResetContent).toHaveBeenCalledWith('conversation-gap', 'message-gap', outputText)
+  expect(mockSetStreaming).toHaveBeenCalledWith('conversation-gap', 'message-gap')
+})
+
+it('retains saved source citations when a resumed request adds another source', async () => {
+  mockMessage.citations = [{ id: 'retained', type: 'knowledge', title: 'Saved source' }]
+  const projection = createPlainChatProjection({
+    conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap',
+  } as PlainChatProjectionInput, jest.fn())
+  await projection({
+    conversationId: run.conversationId, run: { ...run, status: 'running', journalSequence: 10 },
+    journalEntry: { ...pauseEvent().journalEntry, sequence: 10, type: 'stream.event',
+      data: { eventType: 'citation', citationId: 'new-source', title: 'New source' } },
+  })
+  expect(mockMessage.citations?.map(citation => citation.id)).toEqual(['retained', 'new-source'])
+})
+
+it('does not acknowledge a paused projection before its persistence settles', async () => {
+  let persist!: () => void
+  mockFlushMessage.mockReturnValueOnce(new Promise<void>(resolve => { persist = resolve }))
+  let acknowledged = false
+  const recovery = recoverChatProjection(pausedRun('process_restart')).then(() => { acknowledged = true })
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(mockLifecycle).toHaveBeenCalledWith('conversation-gap', 'message-gap', 'paused', expect.any(Object))
+  expect(acknowledged).toBe(false)
+  persist()
+  await recovery
+  expect(acknowledged).toBe(true)
+  expect(mockFinishTask).not.toHaveBeenCalled()
+})
+
+it('leaves a new live owner untouched during pause recovery', async () => {
+  mockFlushBuffers.mockImplementationOnce(async () => { mockLive = true })
+  await recoverChatProjection(pausedRun())
+  expect(mockLifecycle).not.toHaveBeenCalled()
+  expect(mockFlushMessage).not.toHaveBeenCalled()
+})
+
+it('keeps cancellation authoritative while a pause flush is pending', async () => {
+  mockFlushBuffers.mockImplementationOnce(async () => { mockMessage.status = 'cancelled' })
+  await recoverChatProjection(pausedRun())
+  expect(mockLifecycle).not.toHaveBeenCalled()
+  expect(mockMessage.status).toBe('cancelled')
+})
+
+it('retains the pause projection ownership fence through its awaited flush', async () => {
+  let current = true
+  const owns = () => current
+  mockFlushBuffers.mockImplementationOnce(async (_conversation, _message, guard) => {
+    expect(guard).toBe(owns)
+    current = false
+  })
+  await recoverChatProjection(pausedRun(), owns)
+  expect(mockFlushBuffers).toHaveBeenCalledWith('conversation-gap', 'message-gap', owns)
+  expect(mockLifecycle).not.toHaveBeenCalled()
+  expect(mockFinishTask).not.toHaveBeenCalled()
+})
+
+it('reopens paused presentation only for durable resume and ignores an older pause', async () => {
+  const projection = createPlainChatProjection({
+    conversation: { id: 'conversation-gap' }, assistantMessageId: 'message-gap',
+  } as PlainChatProjectionInput, jest.fn())
+  await projection(pauseEvent())
+  jest.clearAllMocks()
+  await projection({
+    conversationId: run.conversationId, run: { ...run, status: 'running' },
+    journalEntry: { ...pauseEvent().journalEntry, sequence: 9, occurredAt: 50, type: 'stream.event',
+      data: { eventType: 'trace' } },
+  })
+  expect(mockLifecycle).not.toHaveBeenCalled()
+  await projection({
+    conversationId: run.conversationId, run: { ...run, status: 'running', journalSequence: 10 },
+    journalEntry: { ...pauseEvent().journalEntry, sequence: 10, occurredAt: 60, type: 'run.resumed' },
+  })
+  expect(mockSetStreaming).toHaveBeenCalledWith('conversation-gap', 'message-gap')
+  expect(mockLifecycle).toHaveBeenLastCalledWith('conversation-gap', 'message-gap', 'working', { at: 60 })
+  jest.clearAllMocks()
+  await projection(pauseEvent())
+  expect(mockLifecycle).not.toHaveBeenCalled()
+  expect(mockFlushBuffers).not.toHaveBeenCalled()
 })

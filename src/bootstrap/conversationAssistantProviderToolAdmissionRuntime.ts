@@ -50,6 +50,7 @@ export const conversationAssistantProviderToolAdmissionRuntime =
         settings: input.settings,
         nativeToolSupported: input.nativeToolSupported,
         wireProtocol: input.wireProtocol,
+        ...(input.signal ? { signal: input.signal } : {}),
       })
     },
     buildManifestTrace(context) {

@@ -1,5 +1,6 @@
 import {
   resolveGenerationParameterSources,
+  snapshotPlainData,
   type GenerationParameterKey,
   type GenerationParameterSources,
   type StreamEvent,
@@ -253,7 +254,7 @@ export function createAssistantConversationProviderDispatchRuntime<
   ): AssistantConversationProviderPreparedDispatch<ProviderRequest> {
     const snapshots = new WeakMap<object, unknown>()
     const request: ProviderRequest = Object.freeze({
-      provider: snapshotPreparedValue(input.provider, snapshots),
+      provider: snapshotPlainData(input.provider, snapshots),
       model: input.runtimeConversation.model,
       requestedModel: input.runtimeConversation.model,
       systemPrompt: input.systemPrompt,
@@ -262,28 +263,28 @@ export function createAssistantConversationProviderDispatchRuntime<
       topK: input.runtimeConversation.topK,
       reasoningEffort: input.runtimeConversation.reasoningEffort,
       maxTokens: input.runtimeConversation.maxTokens,
-      generationParameterSources: snapshotPreparedValue(
+      generationParameterSources: snapshotPlainData(
         resolveGenerationParameterSources({
           values: input.runtimeConversation,
           overrides: input.runtimeConversation.generationParameterOverrides,
         }),
         snapshots,
       ),
-      attachments: snapshotPreparedValue(input.attachments, snapshots),
-      messages: snapshotPreparedValue(input.messages, snapshots),
+      attachments: snapshotPlainData(input.attachments, snapshots),
+      messages: snapshotPlainData(input.messages, snapshots),
       contextPrompt: input.contextPrompt,
-      retrievalSources: snapshotPreparedValue(input.retrievalSources, snapshots),
+      retrievalSources: snapshotPlainData(input.retrievalSources, snapshots),
       webSearchMode: input.webSearchMode,
       signal: input.requestController.signal,
       conversationId: input.conversationId,
       sessionId: input.conversationId,
-      settings: snapshotPreparedValue(input.settings, snapshots),
-      fallbackProviders: snapshotPreparedValue(input.fallbackProviders, snapshots),
+      settings: snapshotPlainData(input.settings, snapshots),
+      fallbackProviders: snapshotPlainData(input.fallbackProviders, snapshots),
       remoteCompactEligible: input.remoteCompactEligible,
-      remoteCompactFallback: snapshotPreparedValue(input.remoteCompactFallback, snapshots),
+      remoteCompactFallback: snapshotPlainData(input.remoteCompactFallback, snapshots),
       previousResponseId: input.previousResponseId,
-      ...(input.executionConstraint ? { executionConstraint: snapshotPreparedValue(input.executionConstraint, snapshots) } : {}),
-      providerToolDeclarations: snapshotPreparedValue(
+      ...(input.executionConstraint ? { executionConstraint: snapshotPlainData(input.executionConstraint, snapshots) } : {}),
+      providerToolDeclarations: snapshotPlainData(
         input.providerToolDeclarations,
         snapshots,
       ),
@@ -351,36 +352,4 @@ export function createAssistantConversationProviderDispatchRuntime<
   }
 
   return { prepare, dispatchPrepared, dispatch }
-}
-
-function snapshotPreparedValue<Value>(
-  value: Value,
-  snapshots: WeakMap<object, unknown>,
-): Value {
-  if (value === null || typeof value !== 'object') return value
-
-  const source = value as object
-  const existing = snapshots.get(source)
-  if (existing !== undefined) return existing as Value
-
-  if (Array.isArray(value)) {
-    const snapshot: unknown[] = []
-    snapshots.set(source, snapshot)
-    for (const child of value) {
-      snapshot.push(snapshotPreparedValue(child, snapshots))
-    }
-    return Object.freeze(snapshot) as Value
-  }
-
-  const prototype = Object.getPrototypeOf(value)
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new Error('Prepared provider request data must use plain objects and arrays.')
-  }
-
-  const snapshot = Object.create(prototype) as Record<string, unknown>
-  snapshots.set(source, snapshot)
-  for (const [key, child] of Object.entries(value)) {
-    snapshot[key] = snapshotPreparedValue(child, snapshots)
-  }
-  return Object.freeze(snapshot) as Value
 }

@@ -1,4 +1,4 @@
-import type { AssistantRunId } from '@/core'
+import { snapshotPlainData, type AssistantRunId } from '@/core'
 import type { ProviderChatExecutionConstraint } from '@/modules/providers'
 import type { AssistantContextPlanReceipt, AssistantModelOperationSession } from '../contracts'
 import { buildAssistantContextPlanReceipt } from './contextPlanReceipt'
@@ -307,6 +307,7 @@ export interface AssistantConversationReplyStartInput {
 export type AssistantConversationReplyStartTerminalStage =
   | 'reply_session'
   | 'provider_admission'
+  | 'provider_tool_admission'
   | 'plain_chat_handoff'
   | 'context_acquisition'
   | 'workspace_writeback_handoff'
@@ -467,6 +468,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       readonly conversationId: string
       readonly assistantMessageId: string
       readonly provider: TProvider
+      readonly providers?: TProviders
       readonly runtimeConversation: NoInfer<TRuntimeConversation>
       readonly lastUserMessage?: TConversation['messages'][number]
       readonly workspaceContext?: TWorkspaceContext
@@ -491,9 +493,10 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       readonly requestedModel: string
       readonly settings: TSettings
       readonly mcpContext: TMcpContext
+      readonly signal?: AbortSignal
     }): Promise<AssistantConversationReplyStartProviderToolAdmissionOutcome<
       TProviderToolContext
-    >>
+    > | { readonly kind: 'cancelled' }>
   }
   readonly requestPlanningRuntime: {
     plan(input: {
@@ -536,6 +539,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       readonly context: TContext
       readonly runtimeConversation: NoInfer<TRuntimeConversation>
       readonly provider: TProvider
+      readonly settings: TSettings
       readonly modelTraceId: string
       readonly nativeSearchTraceId: string
       readonly providerWebSearchMode: TProviderWebSearchMode
@@ -604,6 +608,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
     readonly provider: TProvider
     readonly settings: TSettings
     readonly allowConfirmation: boolean
+    readonly signal?: AbortSignal
   }): Promise<AssistantModelOperationSession | undefined>
   filterSendableAttachments(
     attachments: TAttachmentInput | undefined,
@@ -687,19 +692,23 @@ export function createAssistantConversationReplyStartRuntime<
   async function start(
     input: AssistantConversationReplyStartInput,
   ): Promise<AssistantConversationReplyStartOutcome> {
+    input = { ...input }
     const session = await dependencies.replySessionRuntime.start(input)
     if (session.kind === 'missing') {
       return { kind: 'terminal', stage: 'reply_session', outcome: session }
     }
 
     const {
-      conversation,
-      message: assistantMessage,
+      conversation: sessionConversation,
+      message: sessionMessage,
       requestController,
     } = session
+    const conversation = snapshotPlainData(sessionConversation)
+    const assistantMessage = snapshotPlainData(sessionMessage)
     // Admission is still local preparation, not a sent request or a response.
     // Keep the session's preparing stage until actual work/dispatch begins.
-    const settingsState = dependencies.getProviderSettingsState()
+    const settingsState = snapshotPlainData(dependencies.getProviderSettingsState())
+    const settings = settingsState.settings
     const admission = await dependencies.providerAdmissionRuntime.admit({
       conversationId: input.conversationId,
       assistantMessageId: assistantMessage.id,
@@ -731,16 +740,17 @@ export function createAssistantConversationReplyStartRuntime<
       return { kind: 'terminal', stage: 'provider_admission', outcome: admission }
     }
 
+    const admitted = snapshotPlainData(admission)
     const {
       conversation: preferenceConversation,
       provider,
       upstreamModel,
       modelConfig,
-    } = admission
+    } = admitted
     // Execution is an ephemeral view. The full-save barrier below must retain
     // the user's authoritative preference even when admission chose a fallback.
-    const runtimeConversation = admission.executionModel
-      ? { ...preferenceConversation, providerId: provider.id, model: admission.executionModel }
+    const runtimeConversation = admitted.executionModel
+      ? snapshotPlainData({ ...preferenceConversation, providerId: provider.id, model: admitted.executionModel })
       : preferenceConversation
     dependencies.projectLifecycleStage?.({
       conversationId: input.conversationId,
@@ -770,14 +780,13 @@ export function createAssistantConversationReplyStartRuntime<
         outcome: { kind: 'cancelled' },
       }
     }
-    const latestConversation = dependencies.getLatestConversation(
+    const latestConversation = snapshotPlainData(dependencies.getLatestConversation(
       input.conversationId,
-    )
+    ))
     const lastUserMessage = findLastUserMessage(latestConversation?.messages)
-    const sendableAttachments = dependencies.filterSendableAttachments(
+    const sendableAttachments = snapshotPlainData(dependencies.filterSendableAttachments(
       lastUserMessage?.attachments,
-    )
-    const settings = dependencies.getSettings()
+    ))
     const terminateWorkspaceWritebackHandoff = (
       outcome: AssistantConversationReplyStartWorkspaceWritebackHandoffTerminal,
     ): AssistantConversationReplyStartOutcome => {
@@ -852,7 +861,7 @@ export function createAssistantConversationReplyStartRuntime<
         settings,
         hasAttachments: sendableAttachments.length > 0,
         requestController,
-        ...(admission.executionConstraint ? { executionConstraint: admission.executionConstraint } : {}),
+        ...(admitted.executionConstraint ? { executionConstraint: admitted.executionConstraint } : {}),
       })
       if (plainChatHandoff.kind !== 'continue') {
         return {
@@ -868,6 +877,7 @@ export function createAssistantConversationReplyStartRuntime<
         conversationId: input.conversationId,
         assistantMessageId: assistantMessage.id,
         provider,
+        providers: settingsState.providers,
         runtimeConversation,
         lastUserMessage,
         workspaceContext: workspaceSourceAdmission.status === 'ready'
@@ -956,7 +966,11 @@ export function createAssistantConversationReplyStartRuntime<
         requestedModel: runtimeConversation.model,
         settings,
         mcpContext,
+        signal: requestController.signal,
       })
+    if (providerToolAdmissionOutcome.kind === 'cancelled' || requestController.signal.aborted) {
+      return { kind: 'terminal', stage: 'provider_tool_admission', outcome: { kind: 'cancelled' } }
+    }
     const { providerToolContext } = providerToolAdmissionOutcome
     const modelOperationSession = dependencies.createModelOperationSession
       ? await dependencies.createModelOperationSession({
@@ -966,8 +980,12 @@ export function createAssistantConversationReplyStartRuntime<
           // Current confirmation recovery persists text context, not rich
           // attachment payloads or a special workspace writeback continuation.
           allowConfirmation: sendableAttachments.length === 0 && workspaceSourceAdmission.status === 'none',
+          signal: requestController.signal,
         })
       : undefined
+    if (requestController.signal.aborted) {
+      return { kind: 'terminal', stage: 'provider_tool_admission', outcome: { kind: 'cancelled' } }
+    }
     const sourceMessages =
       latestConversation?.messages.filter(
         (message) => message.id !== assistantMessage.id,
@@ -1039,7 +1057,7 @@ export function createAssistantConversationReplyStartRuntime<
         assistantMessageId: assistantMessage.id,
         requestController,
         runtimeConversation,
-        ...(admission.executionConstraint ? { executionConstraint: admission.executionConstraint } : {}),
+        ...(admitted.executionConstraint ? { executionConstraint: admitted.executionConstraint } : {}),
         provider,
         upstreamModel,
         systemPrompt,
@@ -1071,6 +1089,7 @@ export function createAssistantConversationReplyStartRuntime<
             context,
             runtimeConversation,
             provider,
+            settings,
             modelTraceId,
             nativeSearchTraceId,
             providerWebSearchMode,

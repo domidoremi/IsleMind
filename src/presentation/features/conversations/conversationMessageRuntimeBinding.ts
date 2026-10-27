@@ -47,12 +47,19 @@ export interface ConversationMessageRuntime {
   startConfirmedWorkflowReply: ConversationConfirmedWorkflowReplyRuntimeStart
   getLatestResponseRun(conversationId: string, responseMessageId: string): Promise<AssistantRun | undefined>
   cancelResponseRun(runId: AssistantRun['id']): Promise<AssistantRun>
+  resumePausedResponse?: (
+    conversationId: string,
+    assistantMessageId: string,
+    identity: import('./pausedConversationResponseAction').PausedConversationResponseIdentity,
+    signal?: AbortSignal,
+  ) => Promise<boolean>
   resumePendingModelOperation?: (
     conversationId: string,
     assistantMessageId: string,
     runId: string,
     approved: boolean,
     identity: { continuationToken: string; continuationDigest: string },
+    signal?: AbortSignal,
   ) => Promise<boolean>
   listConversationToolManifests(): Promise<ConversationToolCatalogManifest[]>
   resolveConversationTool(
@@ -81,6 +88,7 @@ export function bindConversationMessageRuntime(
       startConfirmedWorkflowReply: nextRuntime.startConfirmedWorkflowReply,
       getLatestResponseRun: nextRuntime.getLatestResponseRun,
       cancelResponseRun: nextRuntime.cancelResponseRun,
+      resumePausedResponse: nextRuntime.resumePausedResponse,
       resumePendingModelOperation: nextRuntime.resumePendingModelOperation,
       listConversationToolManifests: nextRuntime.listConversationToolManifests,
       resolveConversationTool: nextRuntime.resolveConversationTool,
@@ -178,10 +186,23 @@ export async function resumePendingConversationModelOperationRuntime(
   runId: string,
   approved: boolean,
   identity: { continuationToken: string; continuationDigest: string },
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const resume = runtime?.resumePendingModelOperation
   if (!resume) return false
+  if (signal) return resume(conversationId, assistantMessageId, runId, approved, identity, signal)
   return resume(conversationId, assistantMessageId, runId, approved, identity)
+}
+
+export async function resumePausedConversationResponseRuntime(
+  conversationId: string,
+  assistantMessageId: string,
+  identity: import('./pausedConversationResponseAction').PausedConversationResponseIdentity,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const resume = runtime?.resumePausedResponse
+  if (!resume) return false
+  return resume(conversationId, assistantMessageId, identity, signal)
 }
 
 export async function getLatestConversationResponseRunRuntime(
@@ -209,6 +230,7 @@ function hasSameRuntimeMethods(
     && currentRuntime.startConfirmedWorkflowReply === nextRuntime.startConfirmedWorkflowReply
     && currentRuntime.getLatestResponseRun === nextRuntime.getLatestResponseRun
     && currentRuntime.cancelResponseRun === nextRuntime.cancelResponseRun
+    && currentRuntime.resumePausedResponse === nextRuntime.resumePausedResponse
     && currentRuntime.resumePendingModelOperation === nextRuntime.resumePendingModelOperation
     && currentRuntime.listConversationToolManifests === nextRuntime.listConversationToolManifests
     && currentRuntime.resolveConversationTool === nextRuntime.resolveConversationTool

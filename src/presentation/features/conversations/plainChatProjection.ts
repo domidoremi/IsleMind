@@ -1,5 +1,5 @@
 import type { AssistantRun, PendingModelOperation } from '@/modules/assistant-runtime'
-import { getAssistantRunMessageAttribution } from '@/modules/assistant-runtime'
+import { getAssistantRunMessageAttribution, HARNESS_ENGINE_VERSION } from '@/modules/assistant-runtime'
 import type { ConversationRunProjection, ConversationRunProjectionEvent } from '@/modules/conversations'
 import type { ContextCitation } from '@/modules/knowledge'
 import { finishConversationTaskActivityForMessage } from '@/modules/tasks'
@@ -20,19 +20,26 @@ import {
 export function createPlainChatProjection(
   input: PlainChatProjectionInput,
   onTerminalPersisted: () => void,
+  isCurrent?: () => boolean,
 ): ConversationRunProjection {
-  useChatStore.getState().transitionMessageLifecycle(
-    input.conversation.id,
-    input.assistantMessageId,
-    'waiting',
-  )
+  const paused = getMessage(input.conversation.id, input.assistantMessageId)?.responseLifecycle?.stage === 'paused'
+  if (!paused && (!isCurrent || isCurrent())) useChatStore.getState().transitionMessageLifecycle(
+      input.conversation.id,
+      input.assistantMessageId,
+      'waiting',
+    )
   const state: ProjectionState = {
     conversationId: input.conversation.id,
     messageId: input.assistantMessageId,
-    citations: [],
+    citations: [...(getMessage(input.conversation.id, input.assistantMessageId)?.citations ?? [])],
     suppressTextUntilContinuation: false,
+    paused,
+    ...(isCurrent ? { isCurrent } : {}),
   }
   return async (event) => {
+    if (state.isCurrent && !state.isCurrent()) return
+    const sequence = event.journalEntry?.sequence ?? event.run.journalSequence
+    if (state.harnessLifecycleSequence !== undefined && sequence < state.harnessLifecycleSequence) return
     const attribution = getAssistantRunMessageAttribution(event.run)
     if (attribution) {
       const message = getMessage(state.conversationId, state.messageId)
@@ -41,6 +48,26 @@ export function createPlainChatProjection(
       }
     }
     projectContextCitations(state, event.contextCitations)
+    if (event.run.status === 'paused') {
+      state.paused = true
+      state.harnessLifecycleSequence = sequence
+      await projectPausedProjection(state, event.run, false, event.journalEntry?.occurredAt)
+      return
+    }
+    if (event.journalEntry?.type === 'run.resumed') {
+      state.paused = false
+      state.harnessLifecycleSequence = sequence
+      // Match the exact durable pre-request baseline, not the partial text from
+      // the interrupted attempt. Completed tool receipts remain in the request.
+      useChatStreamingStore.getState().resetContent(state.conversationId, state.messageId,
+        event.run.checkpoint?.outputText ?? event.run.lifecycleCheckpoint?.outputText ?? '')
+      useChatStreamingStore.getState().setStreaming(state.conversationId, state.messageId)
+      useChatStore.getState().transitionMessageLifecycle(state.conversationId, state.messageId, 'working', {
+        at: event.journalEntry.occurredAt,
+      })
+      return
+    }
+    if (state.paused && !isTerminalStatus(event.run.status)) return
     const activity = modelOperationActivity(event)
     if (activity) {
       useChatStreamingStore.getState().upsertTrace(state.conversationId, state.messageId, activity)
@@ -90,9 +117,10 @@ export function createPlainChatProjection(
 }
 
 export async function projectPendingModelOperation(
-  state: Pick<ProjectionState, 'conversationId' | 'messageId'>,
+  state: Pick<ProjectionState, 'conversationId' | 'messageId' | 'isCurrent'>,
   pending: PendingModelOperation,
 ): Promise<void> {
+  if (state.isCurrent && !state.isCurrent()) return
   const source = pending.operationId.startsWith('mcp:')
     ? 'mcp'
     : pending.operationId.startsWith('android:')
@@ -129,7 +157,8 @@ export async function projectPendingModelOperation(
       },
     },
   })
-  await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
+  if (state.isCurrent) await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId, state.isCurrent)
+  else await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
 }
 
 function removePendingModelOperationTrace(state: ProjectionState): void {
@@ -166,18 +195,21 @@ export async function finishPlainChatProjectionFailure(
   useChatStore.getState().setError(message)
 }
 
-export async function recoverChatProjection(run: AssistantRun): Promise<void> {
-  // Historical Agent records are terminally reconciled through the same Chat
+export async function recoverChatProjection(run: AssistantRun, isCurrent?: () => boolean): Promise<void> {
+  // Historical Agent records are reconciled through the same Chat
   // projection; the persisted discriminator remains read compatibility only.
   const messageId = resolveChatRecoveryMessageId(run)
-  if (!messageId || !isTerminalStatus(run.status)) return
-  await finalizeProjection({
+  if (!messageId || (!isTerminalStatus(run.status) && run.status !== 'paused')) return
+  const state: ProjectionState = {
     conversationId: run.conversationId,
     messageId,
     citations: [],
     suppressTextUntilContinuation: false,
     usage: undefined,
-  }, run, true)
+    ...(isCurrent ? { isCurrent } : {}),
+  }
+  if (run.status === 'paused') await projectPausedProjection(state, run, true)
+  else await finalizeProjection(state, run, true)
 }
 
 export function isPlainChatMessageCancelled(conversationId: string, messageId: string): boolean {
@@ -189,7 +221,36 @@ interface ProjectionState {
   messageId: string
   citations: MessageCitation[]
   suppressTextUntilContinuation: boolean
+  paused?: boolean
+  harnessLifecycleSequence?: number
   usage?: MessageUsage
+  isCurrent?: () => boolean
+}
+
+async function projectPausedProjection(state: ProjectionState, run: AssistantRun, recovering: boolean, at = Date.now()): Promise<void> {
+  const current = () => {
+    if ((state.isCurrent && !state.isCurrent()) || (recovering && hasActiveStream(state.conversationId))) return undefined
+    const message = getMessage(state.conversationId, state.messageId)
+    return message?.status === 'streaming' || message?.status === 'sending' ? message : undefined
+  }
+  if (!current()) return
+  if (state.isCurrent) await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId, state.isCurrent)
+  else await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
+  if (!current()) return
+  const reason = run.lifecycleCheckpoint?.waitingReason
+  const checkpoint = run.lifecycleCheckpoint
+  const resumable = !run.parentRunId && !run.pendingModelOperation && run.engineVersion === HARNESS_ENGINE_VERSION
+    && checkpoint?.recovery === 'resumable' && checkpoint.phase !== 'operation'
+    && checkpoint.phase !== 'confirmation' && checkpoint.phase !== 'complete'
+    && Number.isSafeInteger(run.journalSequence) && run.journalSequence > 0
+  // The compact message remains unfinished; pause is not success, failure, or
+  // cancellation and must never admit a destructive action or an implicit retry.
+  useChatStore.getState().transitionMessageLifecycle(state.conversationId, state.messageId, 'paused', {
+    at,
+    summary: reason ? st(`agentTasks.reason.${reason}`) : st('agentTasks.status.paused'),
+    traceId: resumable ? `harness-pause-v1:${run.id}:${run.journalSequence}` : `harness-pause:${run.id}`,
+  })
+  await useChatStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
 }
 
 function projectStreamEvent(state: ProjectionState, event: ConversationRunProjectionEvent): void {
@@ -276,6 +337,7 @@ function projectContextCitations(
 }
 
 async function finalizeProjection(state: ProjectionState, run: AssistantRun, recovering = false): Promise<void> {
+  if (state.isCurrent && !state.isCurrent()) return
   const status = currentMessageStatus(state.conversationId, state.messageId)
   if (!status || status === 'cancelled') return
   if (recovering && (hasActiveStream(state.conversationId) || (status !== 'streaming' && status !== 'sending'))) return
@@ -284,12 +346,13 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun, rec
   // The provider runtime can deliver its terminal event while the last text
   // delta is still queued in the presentation store; reading first would
   // finalize a stale response and drop that buffered suffix.
-  await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
+  if (state.isCurrent) await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId, state.isCurrent)
+  else await useChatStreamingStore.getState().flushStreamingMessage(state.conversationId, state.messageId)
 
   const current = getMessage(state.conversationId, state.messageId)
   // Cancellation or a newer live/terminal projection may win during the flush.
   // Duplicate recovery must not project or finish the same task a second time.
-  if (!current || current.status === 'cancelled') return
+  if (!current || current.status === 'cancelled' || (state.isCurrent && !state.isCurrent())) return
   if (recovering && (hasActiveStream(state.conversationId) || (current.status !== 'streaming' && current.status !== 'sending'))) return
   removePendingModelOperationTrace(state)
   const conversation = useChatStore.getState().conversations.find((item) => item.id === state.conversationId)

@@ -1,5 +1,6 @@
 import {
   createResponseLifecycle,
+  isMessageResponseActive,
   lifecycleStageForTrace,
   normalizeResponseLifecycle,
   responseLifecycleElapsedMs,
@@ -7,8 +8,31 @@ import {
   safeResponseLifecycleSummary,
   transitionResponseLifecycle,
 } from './responseLifecycle'
+import { collectLifecycleActivitySteps } from './lifecycleActivityTimeline'
 
 describe('response lifecycle', () => {
+  it('retains nonterminal pause history and resumes without inventing completion', () => {
+    const working = createResponseLifecycle(100, 'working')
+    const paused = transitionResponseLifecycle(working, 'paused', 150, { summary: 'Capacity admission is paused.' })
+    expect(paused.stage).toBe('paused')
+    expect(paused.completedAt).toBeUndefined()
+    expect(collectLifecycleActivitySteps(paused).at(-1)).toMatchObject({ stage: 'paused', live: false })
+    expect(normalizeResponseLifecycle(paused, 100, 'streaming')).toEqual(paused)
+    const resumed = transitionResponseLifecycle(paused, 'working', 220)
+    expect(resumed.stage).toBe('working')
+    expect(resumed.completedAt).toBeUndefined()
+    expect(resumed.history[1]).toMatchObject({ stage: 'paused', startedAt: 150, completedAt: 220 })
+  })
+
+  it('does not advertise an unfinished paused response as active generation', () => {
+    const message = { role: 'assistant', status: 'streaming', responseLifecycle: { stage: 'paused' } }
+    expect(isMessageResponseActive(message)).toBe(false)
+    expect(isMessageResponseActive({ ...message, responseLifecycle: { stage: 'working' } })).toBe(true)
+    expect(isMessageResponseActive({ ...message, status: 'sending', responseLifecycle: undefined })).toBe(true)
+    expect(isMessageResponseActive({ ...message, status: 'done', responseLifecycle: undefined })).toBe(false)
+    expect(isMessageResponseActive({ ...message, role: 'user', responseLifecycle: undefined })).toBe(false)
+  })
+
   it('records real stage boundaries without resetting a repeated stage timer', () => {
     const created = createResponseLifecycle(100, 'preparing')
     const thinking = transitionResponseLifecycle(created, 'thinking', 140)

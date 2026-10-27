@@ -5,6 +5,10 @@ import { AgentDefinitionConflictError, type AgentDefinitionRepository, type Agen
 const SCOPE = 'assistant-agent-definitions'
 interface DefinitionRow { id: string; revision: number; definitionJson: string }
 
+function assertAgentDefinitionOperationActive(signal?: AbortSignal): void {
+  if (signal?.aborted) throw Object.assign(new Error('Agent definition operation cancelled'), { name: 'AbortError' })
+}
+
 export function createSqliteAgentDefinitionRepository(provider: SqliteDatabaseProvider): AgentDefinitionRepository & AgentDefinitionSnapshotRepository {
   let initialized: Promise<void> | undefined
   async function database() {
@@ -65,11 +69,14 @@ export function createSqliteAgentDefinitionRepository(provider: SqliteDatabasePr
       const row = await (await database()).getFirst<DefinitionRow>('SELECT id, revision, definitionJson FROM assistant_agent_definitions WHERE id = ?', [id])
       return row ? decode(row) : undefined
     },
-    async save(input, expectedRevision) {
+    async save(input, expectedRevision, signal) {
+      assertAgentDefinitionOperationActive(signal)
       const definition = parseAgentDefinition(input)
       if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) throw new TypeError('Invalid expected revision')
       return (await database()).transaction(async (tx) => {
+        assertAgentDefinitionOperationActive(signal)
         const row = await tx.getFirst<DefinitionRow>('SELECT id, revision, definitionJson FROM assistant_agent_definitions WHERE id = ?', [definition.id])
+        assertAgentDefinitionOperationActive(signal)
         if (row) decode(row) // Corruption is never overwritten as if it were an empty record.
         if (expectedRevision === undefined ? !!row : !row || row.revision !== expectedRevision) throw new AgentDefinitionConflictError()
         if (expectedRevision !== undefined && definition.revision !== expectedRevision) throw new AgentDefinitionConflictError()
@@ -77,12 +84,20 @@ export function createSqliteAgentDefinitionRepository(provider: SqliteDatabasePr
         await tx.run(`INSERT INTO assistant_agent_definitions (id, revision, definitionJson) VALUES (?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, definitionJson = excluded.definitionJson`,
         [saved.id, saved.revision, JSON.stringify(saved)])
+        assertAgentDefinitionOperationActive(signal)
         return saved
       })
     },
-    async remove(id, expectedRevision) {
+    async remove(id, expectedRevision, signal) {
+      assertAgentDefinitionOperationActive(signal)
       if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new TypeError('Invalid expected revision')
-      const result = await (await database()).run('DELETE FROM assistant_agent_definitions WHERE id = ? AND revision = ?', [id, expectedRevision])
+      const db = await database()
+      assertAgentDefinitionOperationActive(signal)
+      const result = await db.transaction(async tx => {
+        // Recheck after the platform queue, before the delete can start.
+        assertAgentDefinitionOperationActive(signal)
+        return tx.run('DELETE FROM assistant_agent_definitions WHERE id = ? AND revision = ?', [id, expectedRevision])
+      })
       if (result.changes !== 1) throw new AgentDefinitionConflictError()
     },
     async clear() { await (await database()).run('DELETE FROM assistant_agent_definitions') },

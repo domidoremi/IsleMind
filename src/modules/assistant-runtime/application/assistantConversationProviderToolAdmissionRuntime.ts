@@ -1,3 +1,5 @@
+import { snapshotPlainData } from '@/core'
+
 export interface AssistantConversationProviderToolAdmissionProviderLike {
   readonly id: string
   readonly wireProtocol?: string
@@ -37,6 +39,7 @@ export interface AssistantConversationProviderToolAdmissionInput<
   readonly requestedModel: string
   readonly settings: TSettings
   readonly mcpContext: TMcpContext
+  readonly signal?: AbortSignal
 }
 
 export interface AssistantConversationProviderToolAdmissionRuntimeDependencies<
@@ -59,6 +62,7 @@ export interface AssistantConversationProviderToolAdmissionRuntimeDependencies<
     readonly settings: TSettings
     readonly nativeToolSupported: boolean
     readonly wireProtocol?: TProvider['wireProtocol']
+    readonly signal?: AbortSignal
   }): Promise<TProviderToolContext | undefined>
   buildManifestTrace(context: TProviderToolContext): TTrace
   buildSkippedTrace(support: TSupport): TTrace
@@ -103,6 +107,10 @@ export interface AssistantConversationProviderToolAdmissionOutcome<
   readonly gatewayOutcome: TGatewayOutcome
 }
 
+export interface AssistantConversationProviderToolAdmissionCancelled {
+  readonly kind: 'cancelled'
+}
+
 /**
  * Owns ordinary-conversation provider-tool admission and gateway projection.
  * Concrete capability, declaration, diagnostic, and trace effects remain
@@ -142,26 +150,39 @@ export function createAssistantConversationProviderToolAdmissionRuntime<
     TSupport,
     TProviderToolContext,
     TGatewayOutcome
-  >> {
-    const support = dependencies.resolveSupport(
+  > | AssistantConversationProviderToolAdmissionCancelled> {
+    if (input.signal?.aborted) return { kind: 'cancelled' }
+    input = { ...input, provider: snapshotPlainData(input.provider), modelConfig: snapshotPlainData(input.modelConfig),
+      settings: snapshotPlainData(input.settings), mcpContext: snapshotPlainData(input.mcpContext) }
+    const support = snapshotPlainData(dependencies.resolveSupport(
       input.provider,
       input.modelConfig,
-    )
-    const providerToolContext = await dependencies.admitProviderTools({
-      conversationId: input.conversationId,
-      assistantMessageId: input.assistantMessageId,
-      provider: input.provider,
-      modelPreferredEndpoint: input.modelConfig.preferredEndpoint,
-      settings: input.settings,
-      nativeToolSupported: support.supported,
-      wireProtocol: input.provider.wireProtocol,
-    })
+    ))
+    if (input.signal?.aborted) return { kind: 'cancelled' }
+    let admitted: TProviderToolContext | undefined
+    try {
+      admitted = await dependencies.admitProviderTools({
+        conversationId: input.conversationId,
+        assistantMessageId: input.assistantMessageId,
+        provider: input.provider,
+        modelPreferredEndpoint: input.modelConfig.preferredEndpoint,
+        settings: input.settings,
+        nativeToolSupported: support.supported,
+        wireProtocol: input.provider.wireProtocol,
+        ...(input.signal ? { signal: input.signal } : {}),
+      })
+    } catch (error) {
+      if (input.signal?.aborted) return { kind: 'cancelled' }
+      throw error
+    }
+    if (input.signal?.aborted) return { kind: 'cancelled' }
+    const providerToolContext = snapshotPlainData(admitted)
 
     if (providerToolContext !== undefined) {
       record(input, dependencies.buildManifestTrace(providerToolContext))
     } else if (support.reason === 'blocked_contract_tools_unclaimed') {
       record(input, dependencies.buildSkippedTrace(support))
-      void dependencies.appendUnclaimedCompatibilityLog({
+      if (!input.signal?.aborted) void dependencies.appendUnclaimedCompatibilityLog({
         conversationId: input.conversationId,
         provider: input.provider,
         model: input.upstreamModel,
@@ -171,7 +192,8 @@ export function createAssistantConversationProviderToolAdmissionRuntime<
       })
     }
 
-    const gatewayOutcome = dependencies.emitGatewayOutcome({
+    if (input.signal?.aborted) return { kind: 'cancelled' }
+    const gatewayOutcome = snapshotPlainData(dependencies.emitGatewayOutcome({
       conversationId: input.conversationId,
       provider: input.provider,
       model: input.upstreamModel,
@@ -184,21 +206,24 @@ export function createAssistantConversationProviderToolAdmissionRuntime<
         enabled: input.settings.runtimeLogEnabled,
         maxBytes: input.settings.runtimeLogMaxBytes,
       },
-    })
+    }))
+    if (input.signal?.aborted) return { kind: 'cancelled' }
     record(input, dependencies.buildGatewayTrace(gatewayOutcome))
 
-    return {
+    if (input.signal?.aborted) return { kind: 'cancelled' }
+    return snapshotPlainData({
       kind: 'ready',
       support,
       providerToolContext,
       gatewayOutcome,
-    }
+    })
   }
 
   function record(
-    input: { readonly conversationId: string; readonly assistantMessageId: string },
+    input: { readonly conversationId: string; readonly assistantMessageId: string; readonly signal?: AbortSignal },
     trace: TTrace,
   ): void {
+    if (input.signal?.aborted) return
     dependencies.recordTrace({
       conversationId: input.conversationId,
       assistantMessageId: input.assistantMessageId,

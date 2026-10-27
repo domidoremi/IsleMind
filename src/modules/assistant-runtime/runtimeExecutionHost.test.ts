@@ -226,6 +226,71 @@ test('a resumed invocation keeps its own lease when the old aborted provider fin
   fx.host.stop()
 })
 
+test('a stale selected pause cannot resume a later journal sequence and settlement is separate from admission', async () => {
+  const entered = deferred(), oldFinish = deferred(), resumedEntered = deferred(), resumedFinish = deferred()
+  let requests = 0
+  const fx = fixture({ describe: () => undefined, async *stream() {
+    if (++requests === 1) { entered.resolve(); await oldFinish.promise }
+    else { resumedEntered.resolve(); await resumedFinish.promise; yield { type: 'text-delta', text: 'continued' } }
+  } })
+  const initial = fx.runtime.execute({ runId: rootId, request, context })
+  await entered.promise
+  await fx.runtime.pause(rootId)
+  await initial
+  const sequence = (await fx.persistence.get(rootId))!.journalSequence
+  const rejected = jest.fn()
+  const stale = await fx.runtime.resume({ runId: rootId, expectedJournalSequence: sequence - 1, onSettled: rejected })
+  expect(stale.ok ? undefined : stale.error.code).toBe('run_not_active')
+  expect(rejected).toHaveBeenCalledTimes(1)
+  expect(requests).toBe(1)
+  const settled = deferred()
+  const onSettled = jest.fn(async result => { expect(result.ok && result.value.status).toBe('succeeded'); settled.resolve() })
+  fx.host.prepareUserResume(rootId)
+  const admitted = await fx.runtime.resume({ runId: rootId, expectedJournalSequence: sequence, onSettled })
+  expect(admitted.ok && admitted.value.status).toBe('running')
+  await resumedEntered.promise
+  expect(onSettled).not.toHaveBeenCalled()
+  resumedFinish.resolve()
+  await settled.promise
+  expect(requests).toBe(2)
+  expect(onSettled).toHaveBeenCalledTimes(1)
+  oldFinish.resolve()
+  fx.host.stop()
+})
+
+test('resume settlement reports a post-admission persistence failure without inventing a durable terminal state', async () => {
+  const entered = deferred(), oldFinish = deferred()
+  let requests = 0
+  const fx = fixture({ describe: () => undefined, async *stream() {
+    if (++requests === 1) { entered.resolve(); await oldFinish.promise }
+    else yield { type: 'text-delta', text: 'cannot persist' }
+  } })
+  const initial = fx.runtime.execute({ runId: rootId, request, context })
+  await entered.promise
+  await fx.runtime.pause(rootId)
+  await initial
+  const sequence = (await fx.persistence.get(rootId))!.journalSequence
+  const append = fx.persistence.appendAndSave
+  fx.persistence.appendAndSave = async (...args) => {
+    if (args[0].type === 'stream.event') throw new Error('synthetic disk failure')
+    return append(...args)
+  }
+  const settled = deferred()
+  const onSettled = jest.fn(result => {
+    expect(result.ok ? undefined : result.error.code).toBe('persistence_failed')
+    settled.resolve()
+    throw new Error('disposable observer failure')
+  })
+  fx.host.prepareUserResume(rootId)
+  const admitted = await fx.runtime.resume({ runId: rootId, expectedJournalSequence: sequence, onSettled })
+  expect(admitted.ok && admitted.value.status).toBe('running')
+  await settled.promise
+  expect((await fx.persistence.get(rootId))?.status).toBe('running')
+  expect(onSettled).toHaveBeenCalledTimes(1)
+  oldFinish.resolve()
+  fx.host.stop()
+})
+
 test('confirmation resumption owns a fresh scope and pause releases it before an approved operation drains', async () => {
   const entered = deferred(); const finish = deferred()
   const fx = fixture({ describe: () => undefined, async *stream() {} })

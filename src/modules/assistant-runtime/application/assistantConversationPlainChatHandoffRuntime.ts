@@ -1,3 +1,4 @@
+import { snapshotPlainData } from '@/core'
 import type { ProviderChatExecutionConstraint } from '@/modules/providers'
 
 export interface AssistantConversationPlainChatConversationLike {
@@ -140,6 +141,13 @@ export function createAssistantConversationPlainChatHandoffRuntime<
       TSettings
     >,
   ): Promise<AssistantConversationPlainChatHandoffOutcome<TConversation>> {
+    input = {
+      ...input,
+      settings: snapshotPlainData(input.settings),
+      provider: snapshotPlainData(input.provider),
+      runtimeConversation: snapshotPlainData(input.runtimeConversation),
+      executionConstraint: snapshotPlainData(input.executionConstraint),
+    }
     if (!dependencies.isEligible({
       conversation: input.runtimeConversation,
       hasAttachments: input.hasAttachments,

@@ -37,11 +37,11 @@ export const conversationAssistantContextAcquisitionRuntime =
     ProcessTrace,
     ChatErrorCode
   >({
-    listFallbackProviders() {
-      return useSettingsStore.getState().getConfiguredProviders()
+    listFallbackProviders(options) {
+      return useSettingsStore.getState().getConfiguredProviders(options)
     },
-    getKnowledgeSettings() {
-      return useSettingsStore.getState().settings
+    getKnowledgeSettings(settings) {
+      return settings
     },
     resolveKnowledgeContext(input) {
       return conversationKnowledgeContextRuntime.resolveContext(input)

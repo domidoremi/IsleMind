@@ -33,7 +33,7 @@ export function collectLifecycleActivitySteps(
     steps.push({ stage: entry.stage, startedAt: entry.startedAt, completedAt: entry.completedAt, live: false })
   }
   const last = steps[steps.length - 1]
-  if (last && !isTerminalResponseLifecycleStage(lifecycle.stage) && last.stage === lifecycle.stage && last.completedAt === undefined) {
+  if (last && lifecycle.stage !== 'paused' && !isTerminalResponseLifecycleStage(lifecycle.stage) && last.stage === lifecycle.stage && last.completedAt === undefined) {
     last.live = true
   }
   return steps.slice(-12)

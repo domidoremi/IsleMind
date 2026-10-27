@@ -1,4 +1,4 @@
-import type { Clock } from '@/core'
+import { snapshotPlainData, type Clock } from '@/core'
 import type {
   AssistantChatWorkflowAssembledContext,
   AssistantChatWorkflowRunHandle,
@@ -156,6 +156,9 @@ export function createConversationChatWorkflowReplyStarter(
     content: string,
     options: ConversationChatWorkflowReplyStartOptions = {},
   ): Promise<void> => {
+    conversation = snapshotPlainData(conversation)
+    options = snapshotPlainData(options)
+    const settings = snapshotPlainData(dependencies.readSettings())
     await dependencies.stopConversation(conversation.id)
 
     const startedAt = dependencies.clock.now()
@@ -194,7 +197,6 @@ export function createConversationChatWorkflowReplyStarter(
     let releaseTaskCancellation = (): void => undefined
 
     try {
-      const settings = dependencies.readSettings()
       const requestMessage = [...conversation.messages]
         .reverse()
         .find((message) => message.role === 'user')

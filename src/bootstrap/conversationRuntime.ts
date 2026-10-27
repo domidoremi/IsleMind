@@ -25,6 +25,7 @@ import {
 import {
   createSameProviderFallbackResolver,
   createProviderGateway,
+  snapshotProviderConfiguration,
   type ProviderRuntimeChatSettings,
   type SameProviderFallbackDescriptor,
   type ProviderChatExecutionConstraint,
@@ -138,6 +139,13 @@ export function createConversationRuntime(
 export function createPlainChatRuntime(
   input: PlainChatRuntimeInput,
 ): ConversationRunUseCase {
+  input = {
+    ...input,
+    conversation: snapshotProviderConfiguration(input.conversation),
+    provider: snapshotProviderConfiguration(input.provider),
+    settings: snapshotProviderConfiguration(input.settings),
+    ...(input.executionConstraint ? { executionConstraint: snapshotProviderConfiguration(input.executionConstraint) } : {}),
+  }
   return createConversationRuntime({
     provider: input.provider,
     providerSettings: input.settings,
@@ -148,7 +156,7 @@ export function createPlainChatRuntime(
       port: createConversationContextRetrievalPort<Message, Conversation>({
         conversation: input.conversation,
         retrieveContext: (conversation, message, { signal }) => (
-          retrieveConversationKnowledgeContext(conversation, message, signal)
+          retrieveConversationKnowledgeContext(conversation, message, signal, { settings: input.settings, provider: input.provider })
         ),
       }),
     }),
@@ -166,6 +174,7 @@ function createPlainChatRequestPreparation(input: {
   settings: Settings
   executionModel?: string
 }): ConversationRunRequestPreparation {
+  input = { ...input, provider: snapshotProviderConfiguration(input.provider), settings: snapshotProviderConfiguration(input.settings) }
   return {
     async prepare(preparation) {
       throwIfAborted(preparation.cancellationSignal)
@@ -322,8 +331,10 @@ export async function resumeConversationModelOperation(input: {
   approved: boolean
   continuationToken: string
   continuationDigest: string
+  cancellationSignal?: AbortSignal
   projection: Parameters<ConversationRunUseCase['resumeModelOperation']>[0]['projection']
 }): Promise<boolean> {
+  if (input.cancellationSignal?.aborted) return false
   // This entry is invoked by the visible confirmation UI, never by a notification.
   assistantExecutionHost.prepareUserResume(asAssistantRunId(input.runId))
   const runtime = createPlainChatRuntime(input)
@@ -332,7 +343,33 @@ export async function resumeConversationModelOperation(input: {
     approved: input.approved,
     continuationToken: input.continuationToken,
     continuationDigest: input.continuationDigest,
+    ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
     projection: input.projection,
   })
   return result.ok && result.value.status !== 'awaiting-confirmation'
+}
+
+export async function resumePausedConversationRun(input: {
+  conversation: Conversation
+  provider: AIProvider
+  settings: Settings
+  runId: string
+  expectedJournalSequence: number
+  cancellationSignal?: AbortSignal
+  projection: Parameters<ConversationRunUseCase['resumePausedRun']>[0]['projection']
+  onSettled?: Parameters<ConversationRunUseCase['resumePausedRun']>[0]['onSettled']
+}): Promise<boolean> {
+  if (input.cancellationSignal?.aborted) return false
+  assistantExecutionHost.prepareUserResume(asAssistantRunId(input.runId))
+  const runtime = createPlainChatRuntime(input)
+  // The Harness reuses its checkpoint request and completed receipts. This is
+  // not a new turn, history trim, preference rewrite, or approval of a tool.
+  const result = await runtime.resumePausedRun({
+    runId: asAssistantRunId(input.runId),
+    expectedJournalSequence: input.expectedJournalSequence,
+    ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
+    projection: input.projection,
+    ...(input.onSettled ? { onSettled: input.onSettled } : {}),
+  })
+  return result.ok && result.value.status !== 'paused'
 }

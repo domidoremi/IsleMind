@@ -22,7 +22,7 @@ function fixture() {
     tail = result.then(() => undefined, () => undefined)
     return result
   } }
-  return { native, provider: { get: async () => database } }
+  return { native, executor, provider: { get: async () => database } }
 }
 const agent = (id = 'agent-1') => createAgentDefinition({ id, name: 'Research', providerId: 'provider', modelId: 'model' })
 
@@ -103,5 +103,50 @@ test('future repository migrations fail closed', async () => {
     await createSqliteAgentDefinitionRepository(provider).save(agent())
     native.query('INSERT INTO platform_schema_migrations VALUES (?, ?, ?, ?)').run('assistant-agent-definitions', 2, 'future', 0)
     await expect(createSqliteAgentDefinitionRepository(provider).get('agent-1')).rejects.toThrow('Unsupported agent repository schema')
+  } finally { native.close() }
+})
+
+test('cancelled editor deletion rechecks its signal after a pending database lookup', async () => {
+  const { native, provider } = fixture()
+  try {
+    const store = createSqliteAgentDefinitionRepository(provider)
+    const original = await store.save(agent())
+    const database = await provider.get()
+    const get = provider.get
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    provider.get = async () => { await gate; return database }
+    const controller = new AbortController()
+    const pending = store.remove(original.id, original.revision, controller.signal)
+    controller.abort()
+    release()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    provider.get = get
+    expect(await store.get(original.id)).toEqual(original)
+  } finally { native.close() }
+})
+
+test('cancelled editor save rolls back when cancellation arrives during its transactional target read', async () => {
+  const { native, provider, executor } = fixture()
+  try {
+    const store = createSqliteAgentDefinitionRepository(provider)
+    const original = await store.save(agent())
+    const getFirst = executor.getFirst.bind(executor)
+    let started!: () => void
+    const reading = new Promise<void>(resolve => { started = resolve })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    executor.getFirst = async (...args) => {
+      if (args[0].includes('FROM assistant_agent_definitions')) { started(); await gate }
+      return getFirst(...args)
+    }
+    const controller = new AbortController()
+    const pending = store.save({ ...original, name: 'Late draft' }, original.revision, controller.signal)
+    await reading
+    controller.abort()
+    release()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    executor.getFirst = getFirst
+    expect(await store.get(original.id)).toEqual(original)
   } finally { native.close() }
 })

@@ -1,3 +1,5 @@
+import { snapshotPlainData } from '@/core'
+
 export interface AssistantConversationContextAcquisitionProviderLike {
   readonly id: string
 }
@@ -52,13 +54,18 @@ export interface AssistantConversationContextAcquisitionRuntimeDependencies<
   TTrace,
   TErrorCode,
 > {
-  listFallbackProviders(): Promise<TFallbackProviders>
-  getKnowledgeSettings(): TKnowledgeSettings
+  listFallbackProviders(options?: {
+    readonly settings?: TSettings
+    readonly providers?: readonly TProvider[]
+    readonly signal?: AbortSignal
+  }): Promise<TFallbackProviders>
+  getKnowledgeSettings(settings: TSettings): TKnowledgeSettings
   resolveKnowledgeContext(input: {
     readonly conversationId: string
     readonly assistantMessageId: string
     readonly conversation: TConversation
     readonly userMessage?: TUserMessage
+    readonly provider?: TProvider | null
     readonly settings: TKnowledgeSettings
     readonly signal: AbortSignal
   }): Promise<AssistantConversationKnowledgeAcquisitionOutcomeLike<TKnowledgeContext>>
@@ -99,6 +106,7 @@ export interface AssistantConversationContextAcquisitionInput<
   readonly conversationId: string
   readonly assistantMessageId: string
   readonly provider: TProvider
+  readonly providers?: readonly TProvider[]
   readonly runtimeConversation: TConversation
   readonly lastUserMessage?: TUserMessage
   readonly workspaceContext?: TWorkspaceContext
@@ -107,6 +115,7 @@ export interface AssistantConversationContextAcquisitionInput<
 }
 
 export type AssistantConversationContextAcquisitionStage =
+  | 'providers'
   | 'knowledge'
   | 'after_knowledge'
   | 'mcp'
@@ -189,19 +198,36 @@ export function createAssistantConversationContextAcquisitionRuntime<
     TWebSources,
     AssistantConversationMcpAcquisitionReadyLike<TMcpTool, TTrace>
   >> {
+    input = {
+      ...input,
+      provider: snapshotPlainData(input.provider),
+      providers: snapshotPlainData(input.providers),
+      settings: snapshotPlainData(input.settings),
+      runtimeConversation: snapshotPlainData(input.runtimeConversation),
+      lastUserMessage: snapshotPlainData(input.lastUserMessage),
+      workspaceContext: snapshotPlainData(input.workspaceContext),
+    }
+    if (isCancelled(input)) return { kind: 'cancelled', stage: 'providers' }
+    const knowledgeSettings = snapshotPlainData(dependencies.getKnowledgeSettings(input.settings))
     let fallbackProviders: TFallbackProviders
     try {
-      fallbackProviders = await dependencies.listFallbackProviders()
+      fallbackProviders = snapshotPlainData(await dependencies.listFallbackProviders({
+        settings: input.settings,
+        ...(input.providers === undefined ? {} : { providers: input.providers }),
+        signal: input.signal,
+      }))
     } catch {
       fallbackProviders = [input.provider] as unknown as TFallbackProviders
     }
+    if (isCancelled(input)) return { kind: 'cancelled', stage: 'providers' }
 
     const knowledgeOutcome = await dependencies.resolveKnowledgeContext({
       conversationId: input.conversationId,
       assistantMessageId: input.assistantMessageId,
       conversation: input.runtimeConversation,
       userMessage: input.lastUserMessage,
-      settings: dependencies.getKnowledgeSettings(),
+      provider: input.provider,
+      settings: knowledgeSettings,
       signal: input.signal,
     })
     if (knowledgeOutcome.kind === 'cancelled') {

@@ -49,7 +49,7 @@ export interface ConversationActionConfirmationControllerDependencies<
 }
 
 export interface ConversationActionConfirmationController {
-  confirm(conversationId: string, assistantMessageId: string): Promise<boolean>
+  confirm(conversationId: string, assistantMessageId: string, signal?: AbortSignal): Promise<boolean>
 }
 
 interface ConfirmationTarget<
@@ -57,11 +57,13 @@ interface ConfirmationTarget<
   TPendingAction extends ConversationActionPendingAction<TRequest>,
 > {
   assistantIndex: number
-  assistantMessage: Message
+  assistantMessage: Pick<Message, 'id' | 'timestamp'>
   lastNonCancelledMessageId: string
   pendingAction: TPendingAction
-  previousUser: Message
+  previousUser: Pick<Message, 'id' | 'content' | 'timestamp'>
   request: TRequest
+  context: Omit<Conversation, 'messages' | 'updatedAt'>
+  remainingMessages: Message[]
 }
 
 /**
@@ -81,10 +83,12 @@ export function createConversationActionConfirmationController<
     TRunLimits
   >,
 ): ConversationActionConfirmationController {
+  const confirming = new Set<string>()
+
   function readTarget(conversation: Conversation, assistantMessageId: string): ConfirmationTarget<TRequest, TPendingAction> | undefined {
     const assistantIndex = conversation.messages.findIndex((message) => message.id === assistantMessageId)
     const assistantMessage = assistantIndex >= 0 ? conversation.messages[assistantIndex] : undefined
-    if (!assistantMessage || assistantMessage.role !== 'assistant') return undefined
+    if (!assistantMessage || assistantMessage.role !== 'assistant' || assistantMessage.status === 'cancelled') return undefined
     if (conversation.messages.slice(assistantIndex + 1).some((message) => message.status !== 'cancelled')) return undefined
 
     const pendingAction = dependencies.getPendingAction(assistantMessage)
@@ -103,45 +107,63 @@ export function createConversationActionConfirmationController<
 
     return {
       assistantIndex,
-      assistantMessage,
+      assistantMessage: { id: assistantMessage.id, timestamp: assistantMessage.timestamp },
       lastNonCancelledMessageId: lastNonCancelledMessage.id,
-      pendingAction,
-      previousUser,
-      request,
+      pendingAction: snapshotJsonValue(pendingAction),
+      previousUser: { id: previousUser.id, content: previousUser.content, timestamp: previousUser.timestamp },
+      request: snapshotJsonValue(request),
+      context: snapshotConversationContext(conversation),
+      remainingMessages: snapshotJsonValue(conversation.messages.filter(message => message.id !== assistantMessageId)),
     }
   }
 
   return {
-    async confirm(conversationId, assistantMessageId) {
-      const initialConversation = dependencies.getConversation(conversationId)
-      if (!initialConversation) return false
-      const initial = readTarget(initialConversation, assistantMessageId)
-      if (!initial) return false
+    async confirm(conversationId, assistantMessageId, signal) {
+      if (signal?.aborted || confirming.has(conversationId)) return false
+      confirming.add(conversationId)
+      try {
+        const initialConversation = dependencies.getConversation(conversationId)
+        if (!initialConversation) return false
+        const initial = readTarget(initialConversation, assistantMessageId)
+        if (!initial) return false
 
-      const manifests = await dependencies.listToolManifests()
+        const manifests = await dependencies.listToolManifests()
 
-      // Manifest discovery crosses an async boundary. Re-read every mutable
-      // input before stop/removal and reject any confirmation or identity drift.
-      const currentConversation = dependencies.getConversation(conversationId)
-      if (!currentConversation) return false
-      const current = readTarget(currentConversation, assistantMessageId)
-      if (!current || !sameConfirmationTarget(initial, current)) return false
-      if (!dependencies.resolveConfirmedTool({
-        pendingAction: current.pendingAction,
-        manifests,
-      })) return false
+        // Capture consent by value and revalidate after each asynchronous owner.
+        if (signal?.aborted) return false
+        const currentConversation = dependencies.getConversation(conversationId)
+        if (!currentConversation) return false
+        const current = readTarget(currentConversation, assistantMessageId)
+        if (!current || !sameConfirmationTarget(initial, current)) return false
+        if (!dependencies.resolveConfirmedTool({
+          pendingAction: current.pendingAction,
+          manifests,
+        })) return false
 
-      await dependencies.stopConversation(conversationId)
-      dependencies.removeMessage(conversationId, current.assistantMessage.id)
-      const nextConversation = dependencies.getConversation(conversationId)
-      if (!nextConversation) return false
+        if (signal?.aborted) return false
+        await dependencies.stopConversation(conversationId)
+        if (signal?.aborted) return false
+        const stoppedConversation = dependencies.getConversation(conversationId)
+        const stopped = stoppedConversation && readTarget(stoppedConversation, assistantMessageId)
+        if (!stopped || !sameConfirmationTarget(initial, stopped)) return false
 
-      await dependencies.startWorkflowReply(nextConversation, current.previousUser.content, {
-        explicitToolRequest: current.request,
-        limits: dependencies.getRunLimits(),
-        userConfirmed: true,
-      })
-      return true
+        dependencies.removeMessage(conversationId, initial.assistantMessage.id)
+        const nextConversation = dependencies.getConversation(conversationId)
+        if (!nextConversation || signal?.aborted
+          || !sameJsonValue(initial.context, snapshotConversationContext(nextConversation))
+          || !sameJsonValue(initial.remainingMessages, nextConversation.messages)) return false
+
+        const limits = dependencies.getRunLimits()
+        if (signal?.aborted) return false
+        await dependencies.startWorkflowReply(nextConversation, initial.previousUser.content, {
+          explicitToolRequest: initial.request,
+          limits,
+          userConfirmed: true,
+        })
+        return true
+      } finally {
+        confirming.delete(conversationId)
+      }
     },
   }
 }
@@ -153,8 +175,10 @@ function sameConfirmationTarget<
   return left.assistantIndex === right.assistantIndex
     && left.lastNonCancelledMessageId === right.lastNonCancelledMessageId
     && left.assistantMessage.id === right.assistantMessage.id
+    && left.assistantMessage.timestamp === right.assistantMessage.timestamp
     && left.previousUser.id === right.previousUser.id
     && left.previousUser.content === right.previousUser.content
+    && left.previousUser.timestamp === right.previousUser.timestamp
     && left.pendingAction.id === right.pendingAction.id
     && left.pendingAction.confirmable === right.pendingAction.confirmable
     && left.pendingAction.toolId === right.pendingAction.toolId
@@ -162,7 +186,23 @@ function sameConfirmationTarget<
     && left.pendingAction.serverId === right.pendingAction.serverId
     && left.pendingAction.source === right.pendingAction.source
     && left.pendingAction.permission === right.pendingAction.permission
+    && sameJsonValue(left.pendingAction, right.pendingAction)
     && sameToolRequest(left.request, right.request)
+    && sameJsonValue(left.context, right.context)
+    && sameJsonValue(left.remainingMessages, right.remainingMessages)
+}
+
+function snapshotConversationContext(conversation: Conversation): Omit<Conversation, 'messages' | 'updatedAt'> {
+  const { messages: _messages, updatedAt: _updatedAt, ...context } = conversation
+  return snapshotJsonValue(context)
+}
+
+function snapshotJsonValue<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(snapshotJsonValue) as T
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, snapshotJsonValue(item)])) as T
+  }
+  return value
 }
 
 function sameToolRequest(left: ConversationActionToolRequest, right: ConversationActionToolRequest): boolean {

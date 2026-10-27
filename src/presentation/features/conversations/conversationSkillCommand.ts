@@ -2,7 +2,7 @@ import type {
   ConversationSkillApplication,
   SkillApplyInput,
 } from '@/modules/conversations'
-import type { SkillDefinition } from '@/types/skillContracts'
+import type { ConversationSkillMutationOptions, SkillDefinition } from '@/types/skillContracts'
 
 export const CONVERSATION_SKILL_RUNTIME_UNINITIALIZED_ERROR =
   'conversation_skill_runtime_uninitialized'
@@ -37,12 +37,12 @@ export function saveSkills(skills: readonly SkillDefinition[]) {
   return requireApplication().saveSkills(skills)
 }
 
-export function upsertSkill(skill: SkillDefinition) {
-  return requireApplication().upsertSkill(skill)
+export function upsertSkill(skill: SkillDefinition, options?: ConversationSkillMutationOptions) {
+  return requireApplication().upsertSkill(skill, options)
 }
 
-export function deleteSkill(id: string) {
-  return requireApplication().deleteSkill(id)
+export function deleteSkill(id: string, options?: ConversationSkillMutationOptions) {
+  return requireApplication().deleteSkill(id, options)
 }
 
 export function createBaseSkill(

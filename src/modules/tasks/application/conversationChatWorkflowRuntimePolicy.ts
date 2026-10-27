@@ -1,4 +1,4 @@
-import type { AssistantRunId, Clock, ProcessTrace } from '@/core'
+import { snapshotPlainData, type AssistantRunId, type Clock, type ProcessTrace } from '@/core'
 import type { Attachment, Conversation, Message, MessageUsage } from '@/types/chatContracts'
 import type {
   RagCitation,
@@ -46,6 +46,7 @@ export type ConversationChatWorkflowContextRetriever = (
   conversation: Conversation,
   draftMessage: Message,
   signal?: AbortSignal,
+  configuration?: { readonly settings?: Settings; readonly provider?: null },
 ) => Promise<ConversationChatWorkflowRetrievedContext>
 
 export type ConversationChatWorkflowRuntimeToolRisk = 'low' | 'sensitive-read' | 'state-changing' | 'destructive'
@@ -386,6 +387,16 @@ export function createConversationChatWorkflowRuntimePolicy(dependencies: Conver
   async function resolveConversationChatWorkflowAssistantMessage(
     input: ConversationChatWorkflowRuntimeInput,
   ): Promise<ConversationChatWorkflowRuntimeResolution> {
+    input = {
+      ...input,
+      settings: snapshotPlainData(input.settings),
+      conversation: snapshotPlainData(input.conversation),
+      manifests: snapshotPlainData(input.manifests),
+      explicitToolRequest: snapshotPlainData(input.explicitToolRequest),
+      enabledWorkflowIds: snapshotPlainData(input.enabledWorkflowIds),
+      blockedWorkflowStates: snapshotPlainData(input.blockedWorkflowStates),
+      limits: snapshotPlainData(input.limits),
+    }
     if (input.attachments?.length) {
       return skippedWorkflowRuntimeResolution(
         'attachments',
@@ -779,10 +790,17 @@ export function createConversationChatWorkflowRuntimePolicy(dependencies: Conver
   function createRetrieveContextRagRuntime(input: ConversationChatWorkflowRuntimeInput): ConversationRagRuntime | undefined {
     const retrieveContext = input.retrieveContext
     if (!retrieveContext) return undefined
+    input = {
+      ...input,
+      settings: snapshotPlainData(input.settings),
+      conversation: snapshotPlainData(input.conversation),
+    }
 
     return {
       buildContextPack: async (request: ConversationRagContextPackRequest, options?: ConversationRagRuntimeOptions) => {
-        throwIfRuntimeRagCancelled(options?.signal)
+        request = snapshotPlainData(request)
+        const signal = options?.signal
+        throwIfRuntimeRagCancelled(signal)
         const startedAt = resolveRuntimeNow(input)
         const contextConversation: Conversation = {
           ...input.conversation,
@@ -790,8 +808,12 @@ export function createConversationChatWorkflowRuntimePolicy(dependencies: Conver
           systemPrompt: request.systemPrompt ?? input.conversation.systemPrompt,
         }
         const draftMessage = createConversationRagDraftMessage(request.query, startedAt)
-        const retrieved = await retrieveContext(contextConversation, draftMessage, options?.signal)
-        throwIfRuntimeRagCancelled(options?.signal)
+        const retrieved = await retrieveContext(contextConversation, draftMessage, signal, {
+          settings: input.settings,
+          // Workflow context remains local before any root model authorization.
+          provider: null,
+        })
+        throwIfRuntimeRagCancelled(signal)
         return buildRagContextPackFromRetrievedContext({
           retrieved,
           request,

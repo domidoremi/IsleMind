@@ -1,4 +1,4 @@
-import type { SkillDefinition, SkillSnapshot } from '@/types/skillContracts'
+import type { ConversationSkillMutationOptions, SkillDefinition, SkillSnapshot } from '@/types/skillContracts'
 import type {
   WorkflowDefinitionDecodeResult,
   WorkflowDefinitionPermission,
@@ -89,6 +89,7 @@ export interface SaveWorkflowSkillSuggestionInput {
   suggestion: WorkflowSkillSuggestion
   approval?: WorkflowSkillApproval
   now?: number
+  signal?: AbortSignal
 }
 
 export interface SaveWorkflowSkillSuggestionResult {
@@ -108,6 +109,7 @@ export interface SaveWorkflowSkillStateInput {
   approval?: WorkflowSkillApproval
   manifests?: WorkflowDefinitionToolManifest[]
   now?: number
+  signal?: AbortSignal
 }
 
 export interface SaveWorkflowSkillStateResult {
@@ -138,7 +140,11 @@ export interface WorkflowSkillPolicyDependencies
 
 export interface WorkflowSkillPersistencePort {
   listSkills(): Promise<SkillDefinition[]>
-  upsertSkill(skill: SkillDefinition): Promise<SkillDefinition>
+  upsertSkill(skill: SkillDefinition, options?: ConversationSkillMutationOptions): Promise<SkillDefinition>
+}
+
+function assertWorkflowSkillOperationActive(signal?: AbortSignal): void {
+  if (signal?.aborted) throw Object.assign(new Error('Workflow skill operation cancelled'), { name: 'AbortError' })
 }
 
 export interface WorkflowSkillPolicy {
@@ -458,6 +464,8 @@ function createWorkflowSkillSuggestionFromRun(input: CreateWorkflowSkillSuggesti
 async function saveApprovedWorkflowSkillSuggestion(
   input: SaveWorkflowSkillSuggestionInput
 ): Promise<SaveWorkflowSkillSuggestionResult> {
+  const signal = input.signal
+  assertWorkflowSkillOperationActive(signal)
   const { suggestion } = input
   if (!input.approval?.approved) {
     return buildBlockedSaveResult(suggestion, 'approval_required')
@@ -481,6 +489,7 @@ async function saveApprovedWorkflowSkillSuggestion(
     updatedAt: now,
   }
   const existingSkill = await findExistingWorkflowSkill(approvedSkill.id)
+  assertWorkflowSkillOperationActive(signal)
   if (existingSkill) {
     if (isSameWorkflowSkill(existingSkill, normalized.workflow.id)) {
       return {
@@ -496,7 +505,7 @@ async function saveApprovedWorkflowSkillSuggestion(
   if (JSON.stringify(approvedSkill).length > WORKFLOW_SKILL_PAYLOAD_CHAR_LIMIT) {
     return buildBlockedSaveResult(suggestion, 'payload_too_large')
   }
-  const saved = await upsertSkill(approvedSkill)
+  const saved = await upsertSkill(approvedSkill, { expectedSkill: null, signal })
   return {
     ok: true,
     status: 'saved',
@@ -599,13 +608,17 @@ async function listWorkflowSkills(options: ListWorkflowSkillsOptions = {}): Prom
 async function saveApprovedWorkflowSkillState(
   input: SaveWorkflowSkillStateInput
 ): Promise<SaveWorkflowSkillStateResult> {
+  const signal = input.signal
+  assertWorkflowSkillOperationActive(signal)
   if (!input.approval?.approved) {
     return buildBlockedStateResult('approval_required')
   }
   if (!isWorkflowSkill(input.skill)) {
     return buildBlockedStateResult('not_agent_workflow')
   }
+  const expected = JSON.parse(JSON.stringify(input.skill)) as SkillDefinition
   const existingSkill = await findExistingWorkflowSkill(input.skill.id)
+  assertWorkflowSkillOperationActive(signal)
   if (!existingSkill || !isSameWorkflowSkill(existingSkill, extractWorkflowIdFromSkill(input.skill) ?? '')) {
     return buildBlockedStateResult('missing_skill')
   }
@@ -618,7 +631,7 @@ async function saveApprovedWorkflowSkillState(
     approvedAt: input.approval.approvedAt ?? now,
   }
   const skill = buildWorkflowSkillStateUpdate(existingSkill, input.state, now, approval)
-  const saved = await upsertSkill(skill)
+  const saved = await upsertSkill(skill, { expectedSkill: expected, signal })
   return {
     ok: true,
     status: 'saved',

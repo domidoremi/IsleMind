@@ -1,4 +1,4 @@
-import { asTaskId, measureJsonCharacters, clampTraceText, sanitizeTraceMetadataValue, freezeChatRequest, type ChatReasoningReplayPart, type ChatRequest, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
+import { asTaskId, measureJsonCharacters, clampTraceText, sanitizeTraceMetadataValue, freezeChatRequest, snapshotPlainData, type ChatReasoningReplayPart, type ChatRequest, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
 import {
   createFrozenModelOperationCatalog,
   createModelOperationTurnRuntime,
@@ -43,6 +43,7 @@ import { resolveProviderNativeToolDeclarationTarget } from '@/bootstrap/provider
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
 import type { Settings } from '@/types/settingsContracts'
 import { assertAgentModelBinding } from './agentModelBinding'
 import { KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST } from '@/modules/knowledge'
@@ -57,6 +58,8 @@ export interface ConversationModelOperationRuntimeInput {
   readonly agentScope?: FrozenAgentDefinition
   /** Host-only independent reads. MCP/provider annotations are not trusted for this. */
   readonly independentReadOnly?: boolean
+  /** Discovery lifetime only; resumed operations have their own runtime-owned signal. */
+  readonly signal?: AbortSignal
 }
 
 type PendingTaskReference = Readonly<{ taskId: string }> | Readonly<{ notDispatched: true }>
@@ -112,10 +115,20 @@ export async function createConversationModelOperationSession(
   input: ConversationModelOperationRuntimeInput,
   dependencies: ConversationModelOperationSessionDependencies = DEFAULT_MODEL_OPERATION_SESSION_DEPENDENCIES,
 ): Promise<AssistantModelOperationSession | undefined> {
-  input = { ...input, conversation: { ...input.conversation,
-    ...(input.conversation.knowledgeSources ? { knowledgeSources: [...input.conversation.knowledgeSources] } : {}) } }
+  if (input.signal?.aborted) return undefined
+  input = { ...input, conversation: snapshotPlainData(input.conversation),
+    provider: snapshotPlainData(input.provider), settings: snapshotPlainData(input.settings),
+    agentScope: snapshotPlainData(input.agentScope) }
   if (!input.conversation.providerId?.trim() || !input.conversation.model?.trim()) return undefined
-  const created = await dependencies.createCatalog(input.settings)
+  let created: Awaited<ReturnType<typeof dependencies.createCatalog>>
+  try {
+    created = await dependencies.createCatalog(input.settings)
+  } catch (error) {
+    if (input.signal?.aborted) return undefined
+    throw error
+  }
+  if (input.signal?.aborted) return undefined
+  created = snapshotPlainData(created)
   if (!created.ok) throw new Error(created.message)
   if (created.catalog.snapshot.operations.length === 0) return undefined
 
@@ -135,8 +148,8 @@ export async function createConversationModelOperationSession(
   if (!tagged.ok) throw new Error(tagged.message)
   const taggedPrompt = tagged.prompt
   if (snapshot.operations.length === 0) return undefined
-  const manifests = created.catalog.manifests.filter((manifest) =>
-    snapshot.operations.some((operation) => operation.id === manifest.id))
+  const manifests = snapshotPlainData(created.catalog.manifests.filter((manifest) =>
+    snapshot.operations.some((operation) => operation.id === manifest.id)))
   const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]))
   const operationIdentities = new Map(snapshot.operations.map((operation) => [operation.id,
     stableIdentityHash({ operation, manifest: manifestById.get(operation.id) ?? null })]))
@@ -179,7 +192,7 @@ export async function createConversationModelOperationSession(
       },
     })),
   })
-  const limits = resolveWorkflowRunLimitsFromSettings(input.settings)
+  const limits = snapshotPlainData(resolveWorkflowRunLimitsFromSettings(input.settings))
   const permissionCeiling = resolvePermissionCeiling(limits)
   let currentTurn: CurrentTurn | undefined
   // A session owns confirmation-consumption state and one continuation context.
@@ -285,6 +298,8 @@ export async function createConversationModelOperationSession(
         permissionCeiling,
         confirmationStatus,
       }
+      const ragRuntime = await dependencies.createRagRuntime(input)
+      if (dispatchInput.signal.aborted) throw new DOMException('Operation cancelled.', 'AbortError')
       const taskInput = {
         stepId: attested.value.idempotencyKey,
         assistantRunId: dispatchInput.turnId as PendingModelOperation['runId'],
@@ -312,7 +327,7 @@ export async function createConversationModelOperationSession(
             enabled: input.settings.runtimeLogEnabled,
             maxBytes: input.settings.runtimeLogMaxBytes,
           },
-          ragRuntime: await dependencies.createRagRuntime(input),
+          ragRuntime,
         },
       }
       const observation = isInternalManifest(manifest)
@@ -757,7 +772,7 @@ function providerOperationName(operationId: string): string {
 
 function supportsNativeModelOperationProtocol(provider: AIProvider, modelId: string): boolean {
   if (provider.capabilities?.nativeTools !== true) return false
-  const model = getModelConfig(modelId, provider.type, provider.modelConfigs)
+  const model = getModelConfig(resolveProviderModelAlias(provider, modelId), provider.type, provider.modelConfigs)
   if (model.supportsTools === false) return false
   return Boolean(resolveProviderNativeToolDeclarationTarget(provider.type, {
     preferredEndpoint: model.preferredEndpoint === 'responses' ? 'responses' : 'chat',

@@ -1,5 +1,5 @@
-import type { StreamEvent } from '@/core'
-import type { ProviderExecutionTargetObserver } from '@/modules/providers'
+import { snapshotPlainData, type StreamEvent } from '@/core'
+import type { ProviderContinuationAdmission, ProviderExecutionTargetObserver } from '@/modules/providers'
 import type { AssistantConversationWorkspaceWritebackHandoff } from './assistantConversationWorkspaceWritebackHandoffRuntime'
 
 export interface AssistantConversationStreamLifecycleProviderLike {
@@ -15,6 +15,7 @@ export interface AssistantConversationStreamLifecycleCompletionContext {
   readonly flush: () => void
   readonly onStreamEvent?: (event: StreamEvent) => void
   readonly onExecutionTarget?: ProviderExecutionTargetObserver
+  readonly providerContinuation?: ProviderContinuationAdmission
 }
 
 export interface AssistantConversationStreamLifecycleCapture<
@@ -31,12 +32,14 @@ export interface AssistantConversationStreamLifecycleCapture<
   TRemoteCompactClassification,
   TContextWindowState,
   TContextFragment,
+  TSettings = unknown,
 > {
   readonly conversationId: string
   readonly assistantMessageId: string
   readonly context: TContext
   readonly runtimeConversation: TConversation
   readonly provider: TProvider
+  readonly settings?: TSettings
   readonly modelTraceId: string
   readonly nativeSearchTraceId: string
   readonly providerWebSearchMode: TProviderSearchMode
@@ -73,6 +76,7 @@ export interface AssistantConversationStreamLifecycleFinalizationInput<
   TRemoteCompactClassification,
   TContextWindowState,
   TContextFragment,
+  TSettings = unknown,
 > extends AssistantConversationStreamLifecycleCapture<
     TContext,
     TConversation,
@@ -86,7 +90,8 @@ export interface AssistantConversationStreamLifecycleFinalizationInput<
     TRemoteCompactCapabilityKind,
     TRemoteCompactClassification,
     TContextWindowState,
-    TContextFragment
+    TContextFragment,
+    TSettings
   > {
   readonly result: TCompletionResult
   readonly requestController: AbortController
@@ -152,6 +157,7 @@ export interface AssistantConversationStreamLifecycleRuntimeDependencies<
   TContextWindowState,
   TContextFragment,
   TFinalizationResult = unknown,
+  TSettings = unknown,
 > {
   finalize(input: AssistantConversationStreamLifecycleFinalizationInput<
     TCompletionResult,
@@ -167,7 +173,8 @@ export interface AssistantConversationStreamLifecycleRuntimeDependencies<
     TRemoteCompactCapabilityKind,
     TRemoteCompactClassification,
     TContextWindowState,
-    TContextFragment
+    TContextFragment,
+    TSettings
   >): Promise<TFinalizationResult>
   failProvider(input: AssistantConversationStreamLifecycleProviderFailureInput<
     TProviderError,
@@ -202,6 +209,7 @@ export function createAssistantConversationStreamLifecycleRuntime<
   TContextWindowState,
   TContextFragment,
   TFinalizationResult = unknown,
+  TSettings = unknown,
 >(
   dependencies: AssistantConversationStreamLifecycleRuntimeDependencies<
     TCompletionResult,
@@ -219,7 +227,8 @@ export function createAssistantConversationStreamLifecycleRuntime<
     TRemoteCompactClassification,
     TContextWindowState,
     TContextFragment,
-    TFinalizationResult
+    TFinalizationResult,
+    TSettings
   >,
 ) {
   type Capture = AssistantConversationStreamLifecycleCapture<
@@ -235,7 +244,8 @@ export function createAssistantConversationStreamLifecycleRuntime<
     TRemoteCompactCapabilityKind,
     TRemoteCompactClassification,
     TContextWindowState,
-    TContextFragment
+    TContextFragment,
+    TSettings
   >
 
   function build(
@@ -245,6 +255,19 @@ export function createAssistantConversationStreamLifecycleRuntime<
     TProviderError,
     TFinalizationResult
   > {
+    input = {
+      ...input,
+      settings: snapshotPlainData(input.settings),
+      provider: snapshotPlainData(input.provider),
+      runtimeConversation: snapshotPlainData(input.runtimeConversation),
+      context: snapshotPlainData(input.context),
+      providerTools: snapshotPlainData(input.providerTools),
+      packedMessages: snapshotPlainData(input.packedMessages),
+      mcpTools: snapshotPlainData(input.mcpTools),
+      workspaceWritebackHandoff: snapshotPlainData(input.workspaceWritebackHandoff),
+      contextWindowState: snapshotPlainData(input.contextWindowState),
+      contextFragments: snapshotPlainData(input.contextFragments),
+    }
     return {
       async complete(result, lifecycle) {
         return dependencies.finalize({
@@ -254,6 +277,7 @@ export function createAssistantConversationStreamLifecycleRuntime<
           context: input.context,
           runtimeConversation: input.runtimeConversation,
           provider: input.provider,
+          ...(input.settings === undefined ? {} : { settings: input.settings }),
           modelTraceId: input.modelTraceId,
           nativeSearchTraceId: input.nativeSearchTraceId,
           providerWebSearchMode: input.providerWebSearchMode,
@@ -267,6 +291,7 @@ export function createAssistantConversationStreamLifecycleRuntime<
           chunkFlush: lifecycle.flush,
           ...(lifecycle.onStreamEvent ? { onStreamEvent: lifecycle.onStreamEvent } : {}),
           ...(lifecycle.onExecutionTarget ? { onExecutionTarget: lifecycle.onExecutionTarget } : {}),
+          ...(lifecycle.providerContinuation ? { providerContinuation: lifecycle.providerContinuation } : {}),
           upstreamModel: input.upstreamModel,
           remoteCompactEligible: input.remoteCompactEligible,
           remoteCompactMode: input.remoteCompactMode,

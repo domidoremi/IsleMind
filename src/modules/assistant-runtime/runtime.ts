@@ -154,7 +154,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         return ok(paused)
       }, true)
     },
-    resume(input) { return launch((onPersisted) => resumePaused({ ...input, onPersisted }), input.onPersisted) },
+    resume(input) { return launch((onPersisted) => resumePaused({ ...input, onPersisted }), input.onPersisted, input.onSettled) },
     approve(input) {
       if (!input.continuationToken || !input.continuationDigest) {
         return Promise.resolve(err('run_not_active', 'Approval requires the exact pending continuation identity.', { retryable: false }))
@@ -1063,13 +1063,18 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
   function launch(
     execute: (projection: AssistantRunProjection) => ReturnType<AssistantRuntime['execute']>,
     projection?: AssistantRunProjection,
+    onSettled?: ResumeAssistantRunInput['onSettled'],
   ): ReturnType<AssistantRuntime['execute']> {
     return new Promise((resolve) => {
+      const settle = async (result: Awaited<ReturnType<AssistantRuntime['execute']>>) => {
+        try { await onSettled?.(result) } catch { /* Disposable lifetime observer. */ }
+        resolve(result)
+      }
       void execute(async (event) => {
         try { await projection?.(event) } catch { /* Disposable view. */ }
         if (event.journalEntry.type === 'run.started' || event.journalEntry.type === 'run.resumed'
           || event.journalEntry.type === 'run.confirmation-resolved') resolve(ok(event.run))
-      }).then(resolve, () => resolve(err('provider_failed', 'The assistant run could not start.', { retryable: false })))
+      }).then(settle, () => settle(err('provider_failed', 'The assistant run could not start.', { retryable: false })))
     })
   }
 
@@ -1117,9 +1122,14 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     try {
       const run = await dependencies.persistence.get(input.runId)
       if (!run) return err('run_not_found', 'The assistant run does not exist.', { retryable: false })
+      if (input.expectedJournalSequence !== undefined
+        && (!Number.isSafeInteger(input.expectedJournalSequence) || input.expectedJournalSequence !== run.journalSequence)) {
+        return err('run_not_active', 'The selected pause has changed. Inspect the current run before continuing.', { retryable: false })
+      }
       const checkpoint = run.lifecycleCheckpoint
       if (run.parentRunId || run.engineVersion !== HARNESS_ENGINE_VERSION || run.status !== 'paused' || !checkpoint
-        || checkpoint.recovery !== 'resumable' || checkpoint.phase === 'operation' || checkpoint.phase === 'complete') {
+        || run.pendingModelOperation || checkpoint.recovery !== 'resumable' || checkpoint.phase === 'operation'
+        || checkpoint.phase === 'confirmation' || checkpoint.phase === 'complete') {
         return err('run_not_active', 'This run requires reconciliation or has no safe continuation.', { retryable: false })
       }
       const session = await bindAgentSession(run.agentDefinition, input.modelOperationSession)

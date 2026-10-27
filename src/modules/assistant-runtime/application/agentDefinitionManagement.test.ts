@@ -34,3 +34,24 @@ test('export rereads the saved definition and emits only the validated document'
   expect(JSON.parse(files.exportJsonFile.mock.calls[0][0])).toEqual(definition)
   expect(repository.save).not.toHaveBeenCalled()
 })
+
+test('cancellation during the saved-definition read prevents a later local file export', async () => {
+  const { repository, files, management } = fixture()
+  let resolve!: (value: typeof definition) => void
+  repository.get.mockImplementationOnce(() => new Promise<typeof definition>(settle => { resolve = settle }))
+  const controller = new AbortController()
+  const pending = management.exportSaved('original', controller.signal)
+  controller.abort()
+  resolve(definition)
+  await pending
+  expect(files.exportJsonFile).not.toHaveBeenCalled()
+})
+
+test('an already-cancelled export does not read storage or open a file operation', async () => {
+  const { repository, files, management } = fixture()
+  const controller = new AbortController()
+  controller.abort()
+  await management.exportSaved('original', controller.signal)
+  expect(repository.get).not.toHaveBeenCalled()
+  expect(files.exportJsonFile).not.toHaveBeenCalled()
+})

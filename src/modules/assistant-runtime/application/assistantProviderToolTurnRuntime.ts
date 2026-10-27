@@ -1,3 +1,5 @@
+import { snapshotPlainData } from '@/core'
+
 export interface ProviderToolLimits {
   maxToolCallsPerStep: number
   outputCharLimit?: number
@@ -43,6 +45,7 @@ export interface ProviderToolAdmissionInput<TProvider> {
   settings: unknown
   nativeToolSupported: boolean
   wireProtocol?: string
+  signal?: AbortSignal
 }
 
 export function createAssistantProviderToolTurnRuntime<
@@ -54,6 +57,8 @@ export function createAssistantProviderToolTurnRuntime<
   dependencies: ProviderToolTurnRuntimeDependencies<TProvider, TManifest, TTool, TAdapter>,
 ) {
   async function admit(input: ProviderToolAdmissionInput<TProvider>): Promise<ProviderToolRuntimeContext<TManifest, TTool, TAdapter> | undefined> {
+    if (input.signal?.aborted) return undefined
+    input = { ...input, provider: snapshotPlainData(input.provider), settings: snapshotPlainData(input.settings) }
     if (!input.nativeToolSupported) return undefined
     const target = dependencies.resolveDeclarationTarget(input.provider, {
       preferredEndpoint: input.modelPreferredEndpoint,
@@ -61,24 +66,34 @@ export function createAssistantProviderToolTurnRuntime<
       wireProtocol: input.wireProtocol,
     })
     if (!target) return undefined
-    const limits = dependencies.resolveLimits(input.settings)
+    const limits = snapshotPlainData(dependencies.resolveLimits(input.settings))
     if (limits.allowReadOnlyTools === false) return undefined
-    const manifests = Object.freeze([
-      ...dependencies.filterManifests(await dependencies.listManifests(), input.settings),
-    ])
+    let discovered: readonly TManifest[]
+    try {
+      discovered = await dependencies.listManifests()
+    } catch (error) {
+      if (input.signal?.aborted) return undefined
+      throw error
+    }
+    if (input.signal?.aborted) return undefined
+    const manifests = snapshotPlainData(
+      dependencies.filterManifests(snapshotPlainData(discovered), input.settings),
+    )
     if (manifests.length > 64) {
       throw new Error(`Model operation catalog contains ${manifests.length} operations; the limit is 64.`)
     }
     const permissionCeiling = resolvePermissionCeiling(limits)
     if (!permissionCeiling) return undefined
-    const adapter = dependencies.buildDeclarations({ manifests, target, permissionCeiling, maxTools: 64 })
+    if (input.signal?.aborted) return undefined
+    const adapter = snapshotPlainData(dependencies.buildDeclarations({ manifests, target, permissionCeiling, maxTools: 64 }))
     if (!adapter.tools.length) return undefined
-    return {
-      adapter: { ...adapter, toolNameMap: adapter.toolNameMap },
+    const context = snapshotPlainData({
+      adapter,
       manifests,
       catalogRevision: dependencies.resolveCatalogRevision(manifests),
       limits: { ...limits, maxToolCallsPerStep: 1 },
-    }
+    })
+    return input.signal?.aborted ? undefined : context
   }
 
   return { admit }

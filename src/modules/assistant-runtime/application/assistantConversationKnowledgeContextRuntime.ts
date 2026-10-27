@@ -1,3 +1,5 @@
+import { snapshotPlainData } from '@/core'
+
 export interface AssistantConversationKnowledgeSourceLike {
   readonly type: string
   readonly title: string
@@ -71,11 +73,17 @@ export interface AssistantConversationKnowledgeContextRuntimeDependencies<
   TUserMessage,
   TContext extends AssistantConversationKnowledgeContextLike,
   TTrace,
+  TSettings extends AssistantConversationKnowledgeSettingsEvidence = AssistantConversationKnowledgeSettingsEvidence,
+  TProvider = unknown,
 > {
   retrieve(
     conversation: TConversation,
     userMessage: TUserMessage,
     signal: AbortSignal,
+    configuration?: {
+      readonly settings?: TSettings
+      readonly provider?: TProvider | null
+    },
   ): Promise<TContext>
   createEmptyContext(): TContext
   isCancellation(error: unknown, signal: AbortSignal): boolean
@@ -97,12 +105,15 @@ export interface AssistantConversationKnowledgeContextRuntimeDependencies<
 export interface AssistantConversationKnowledgeContextRuntimeInput<
   TConversation,
   TUserMessage,
+  TSettings extends AssistantConversationKnowledgeSettingsEvidence = AssistantConversationKnowledgeSettingsEvidence,
+  TProvider = unknown,
 > {
   readonly conversationId: string
   readonly assistantMessageId: string
   readonly conversation: TConversation
   readonly userMessage?: TUserMessage
-  readonly settings: AssistantConversationKnowledgeSettingsEvidence
+  readonly settings: TSettings
+  readonly provider?: TProvider | null
   readonly signal: AbortSignal
 }
 
@@ -149,17 +160,28 @@ export function createAssistantConversationKnowledgeContextRuntime<
   TUserMessage,
   TContext extends AssistantConversationKnowledgeContextLike,
   TTrace,
+  TSettings extends AssistantConversationKnowledgeSettingsEvidence = AssistantConversationKnowledgeSettingsEvidence,
+  TProvider = unknown,
 >(
   dependencies: AssistantConversationKnowledgeContextRuntimeDependencies<
     TConversation,
     TUserMessage,
     TContext,
-    TTrace
+    TTrace,
+    TSettings,
+    TProvider
   >,
 ) {
   async function resolveContext(
-    input: AssistantConversationKnowledgeContextRuntimeInput<TConversation, TUserMessage>,
+    input: AssistantConversationKnowledgeContextRuntimeInput<TConversation, TUserMessage, TSettings, TProvider>,
   ): Promise<AssistantConversationKnowledgeContextOutcome<TContext>> {
+    input = {
+      ...input,
+      conversation: snapshotPlainData(input.conversation),
+      userMessage: snapshotPlainData(input.userMessage),
+      settings: snapshotPlainData(input.settings),
+      provider: snapshotPlainData(input.provider),
+    }
     if (input.signal.aborted) return { kind: 'cancelled' }
 
     const contextTraceId = dependencies.traceId('context')
@@ -201,6 +223,10 @@ export function createAssistantConversationKnowledgeContextRuntime<
         input.conversation,
         input.userMessage,
         input.signal,
+        {
+          settings: input.settings,
+          ...(input.provider === undefined ? {} : { provider: input.provider }),
+        },
       )
     } catch (error) {
       if (input.signal.aborted || dependencies.isCancellation(error, input.signal)) {
@@ -301,9 +327,11 @@ export function createAssistantConversationKnowledgeContextRuntime<
       })
     }
 
+    if (input.signal.aborted) return { kind: 'cancelled' }
     return { kind: 'ready', context, counts }
 
     function record(trace: TTrace): void {
+      if (input.signal.aborted) return
       dependencies.recordTrace({
         conversationId: input.conversationId,
         assistantMessageId: input.assistantMessageId,

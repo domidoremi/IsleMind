@@ -24,6 +24,57 @@ it('forwards the exact reviewed continuation to the shared Harness', async () =>
   expect(resume).toHaveBeenCalledWith(expect.objectContaining({ continuationToken: 'reviewed-token', continuationDigest: 'reviewed-digest' }))
 })
 
+it('resumes only the selected checkpoint with a fresh session, without preparing or starting a new request', async () => {
+  const { dependencies, getExecuteCalls } = createDependencies(async () => { throw new Error('must not reassemble context') })
+  const resume = jest.fn(async () => err('run_not_active' as const, 'changed pause'))
+  const projection = jest.fn()
+  const onSettled = jest.fn()
+  const session = {} as AssistantModelOperationSession
+  const createSession = jest.fn(async () => session)
+  const useCase = createConversationRunUseCase({
+    ...dependencies, createModelOperationSession: createSession,
+    assistantRuntime: { ...dependencies.assistantRuntime, resume },
+  })
+  const signal = new AbortController().signal
+  await useCase.resumePausedRun({ runId: asAssistantRunId('selected-run'), expectedJournalSequence: 9,
+    cancellationSignal: signal, projection, onSettled })
+  expect(createSession).toHaveBeenCalledTimes(1)
+  expect(resume).toHaveBeenCalledWith(expect.objectContaining({
+    runId: 'selected-run', expectedJournalSequence: 9, modelOperationSession: session,
+    cancellationSignal: signal, onSettled,
+  }))
+  expect(getExecuteCalls()).toBe(0)
+  expect(projection).not.toHaveBeenCalled()
+})
+
+it('keeps cancellation authoritative while the fresh operation session is being restored', async () => {
+  const { dependencies } = createDependencies(async () => { throw new Error('unused') })
+  let finish!: (value: AssistantModelOperationSession) => void
+  const resume = jest.fn()
+  const useCase = createConversationRunUseCase({
+    ...dependencies, createModelOperationSession: () => new Promise(resolve => { finish = resolve }),
+    assistantRuntime: { ...dependencies.assistantRuntime, resume },
+  })
+  const controller = new AbortController()
+  const continuation = useCase.resumePausedRun({ runId: asAssistantRunId('run'), expectedJournalSequence: 9, cancellationSignal: controller.signal })
+  controller.abort()
+  finish({} as AssistantModelOperationSession)
+  expect((await continuation).ok).toBe(false)
+  expect(resume).not.toHaveBeenCalled()
+})
+
+it('leaves the durable pause intact when its operation catalog cannot be restored', async () => {
+  const { dependencies } = createDependencies(async () => { throw new Error('unused') })
+  const resume = jest.fn()
+  const useCase = createConversationRunUseCase({
+    ...dependencies, createModelOperationSession: async () => { throw new Error('catalog unavailable') },
+    assistantRuntime: { ...dependencies.assistantRuntime, resume },
+  })
+  const result = await useCase.resumePausedRun({ runId: asAssistantRunId('run'), expectedJournalSequence: 9 })
+  expect(result.ok ? undefined : result.error.code).toBe('provider_failed')
+  expect(resume).not.toHaveBeenCalled()
+})
+
 function createDependencies(
   assemble: NonNullable<ConversationRunUseCaseDependencies['contextSnapshotAssembler']>['assemble'],
 ) {

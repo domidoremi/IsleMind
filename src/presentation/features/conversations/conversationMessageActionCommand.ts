@@ -17,7 +17,7 @@ import type {
 import { stopConversationMessage } from '@/presentation/features/conversations/conversationControlCommand'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import type { Message } from '@/types/chatContracts'
+import type { Conversation, Message } from '@/types/chatContracts'
 import type { AssistantRun } from '@/modules/assistant-runtime'
 
 import { createConversationActionConfirmationController } from './conversationActionConfirmationController'
@@ -106,30 +106,64 @@ export function branchConversationFromMessage(conversationId: string, messageId:
   return useChatStore.getState().createBranchDraft(conversationId, messageId)
 }
 
+const reviewingOperations = new Set<string>()
+
 export async function confirmConversationAction(
   conversationId: string,
   assistantMessageId: string,
   review?: (run: AssistantRun) => Promise<boolean | 'decline'>,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  const message = useChatStore.getState().conversations
-    .find((conversation) => conversation.id === conversationId)
-    ?.messages.find((item) => item.id === assistantMessageId)
-  const runId = message ? pendingModelOperationRunId(message) : undefined
-  if (runId) {
-    const run = await getLatestConversationResponseRunRuntime(conversationId, assistantMessageId)
-    const pending = run?.pendingModelOperation
-    if (!review || !run || run.id !== runId || !pending || run.status !== 'awaiting-confirmation') return false
-    const approved = await review(run)
-    if (approved === false) return false
-    return resumePendingConversationModelOperationRuntime(
-      conversationId,
-      assistantMessageId,
-      runId,
-      approved === true,
-      { continuationToken: pending.continuationToken, continuationDigest: pending.continuationDigest },
-    )
+  if (signal?.aborted || reviewingOperations.has(conversationId)) return false
+  reviewingOperations.add(conversationId)
+  try {
+    const conversation = useChatStore.getState().conversations.find(item => item.id === conversationId)
+    const message = conversation?.messages.find((item) => item.id === assistantMessageId)
+    const runId = message ? pendingModelOperationRunId(message) : undefined
+    if (runId) {
+      const timestamp = message!.timestamp
+      const snapshot = confirmationConversationSnapshot(conversation!)
+      if (!review || !currentPendingModelOperation(conversationId, assistantMessageId, runId, timestamp, snapshot)) return false
+      const run = await getLatestConversationResponseRunRuntime(conversationId, assistantMessageId)
+      const pending = run?.pendingModelOperation
+      if (signal?.aborted || !run || run.id !== runId || run.conversationId !== conversationId
+        || run.responseMessageId !== assistantMessageId || !pending || run.status !== 'awaiting-confirmation'
+        || !currentPendingModelOperation(conversationId, assistantMessageId, runId, timestamp, snapshot)) return false
+      // The preview object may be caller-owned; approval binds primitive identity.
+      const identity = { continuationToken: pending.continuationToken, continuationDigest: pending.continuationDigest }
+      const approved = await review(run)
+      if ((approved !== true && approved !== 'decline') || signal?.aborted
+        || !currentPendingModelOperation(conversationId, assistantMessageId, runId, timestamp, snapshot)) return false
+      if (signal) return await resumePendingConversationModelOperationRuntime(
+        conversationId, assistantMessageId, runId, approved === true, identity, signal,
+      )
+      return await resumePendingConversationModelOperationRuntime(
+        conversationId,
+        assistantMessageId,
+        runId,
+        approved === true,
+        identity,
+      )
+    }
+    return await actionConfirmationController.confirm(conversationId, assistantMessageId, signal)
+  } finally {
+    reviewingOperations.delete(conversationId)
   }
-  return actionConfirmationController.confirm(conversationId, assistantMessageId)
+}
+
+function currentPendingModelOperation(conversationId: string, messageId: string, runId: string, timestamp: number, snapshot: string): boolean {
+  const conversation = useChatStore.getState().conversations.find(item => item.id === conversationId)
+  const index = conversation?.messages.findIndex(item => item.id === messageId) ?? -1
+  const message = index >= 0 ? conversation!.messages[index] : undefined
+  return Boolean(message && message.role === 'assistant' && message.status !== 'cancelled'
+    && message.timestamp === timestamp && pendingModelOperationRunId(message) === runId
+    && confirmationConversationSnapshot(conversation!) === snapshot
+    && !conversation!.messages.slice(index + 1).some(item => item.status !== 'cancelled'))
+}
+
+function confirmationConversationSnapshot(conversation: Conversation): string {
+  const { updatedAt: _updatedAt, ...snapshot } = conversation
+  return JSON.stringify(snapshot)
 }
 
 function pendingModelOperationRunId(message: Message): string | undefined {

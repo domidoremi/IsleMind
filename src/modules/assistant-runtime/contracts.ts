@@ -687,12 +687,16 @@ export interface AssistantRuntime {
 
 export interface ResumeAssistantRunInput {
   readonly runId: AssistantRunId
+  /** Exact pause selected by the user; a later pause is a different decision. */
+  readonly expectedJournalSequence?: number
   readonly agentResolver?: AssistantAgentResolver
   readonly modelOperationSession?: AssistantModelOperationSession
   readonly cancellationSignal?: AbortSignal
   readonly providerGatewayOptions?: Omit<ProviderGatewayOptions, 'signal'>
   readonly providerGateway?: ProviderGateway
   readonly onPersisted?: AssistantRunProjection
+  /** Admission returns early; this disposable observer releases caller lifetimes. */
+  readonly onSettled?: (result: Result<AssistantRun, AssistantRuntimeErrorCode>) => void | Promise<void>
 }
 
 function isReceiptBudget(value: unknown): boolean {

@@ -3,6 +3,7 @@ import type {
   AssistantRun,
   AssistantContextPlanReceipt,
   AssistantRuntime,
+  ResumeAssistantRunInput,
   ContextSnapshot,
   RunJournalEntry,
 } from '@/modules/assistant-runtime'
@@ -96,6 +97,14 @@ export interface ResumeConversationModelOperationInput {
   projection?: ConversationRunProjection
 }
 
+export interface ResumePausedConversationRunInput {
+  runId: AssistantRunId
+  expectedJournalSequence: number
+  cancellationSignal?: AbortSignal
+  projection?: ConversationRunProjection
+  onSettled?: ResumeAssistantRunInput['onSettled']
+}
+
 export type ConversationRunErrorCode =
   | 'conversation_not_found'
   | 'conversation_load_failed'
@@ -129,6 +138,7 @@ export interface ConversationRunUseCaseDependencies {
 export interface ConversationRunUseCase {
   start(input: StartConversationRunInput): ConversationRunHandle
   cancel(runId: AssistantRunId): Promise<Result<AssistantRun, ConversationRunErrorCode>>
+  resumePausedRun(input: ResumePausedConversationRunInput): Promise<Result<AssistantRun, ConversationRunErrorCode>>
   resumeModelOperation(input: ResumeConversationModelOperationInput): Promise<Result<AssistantRun, ConversationRunErrorCode>>
   recoverInterruptedRuns(projection?: ConversationRunProjection): Promise<Result<readonly AssistantRun[], 'persistence_failed'>>
 }

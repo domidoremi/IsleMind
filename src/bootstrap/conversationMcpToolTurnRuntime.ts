@@ -1,9 +1,10 @@
-import type { ProcessTrace, StreamEvent } from '@/core'
+import { snapshotPlainData, type ProcessTrace, type StreamEvent } from '@/core'
 import {
   createAssistantMcpToolTurnRuntime,
   type AssistantTaggedToolManifestLike,
 } from '@/modules/assistant-runtime'
-import type { ProviderExecutionTargetObserver, ProviderRuntimeCompletionResult } from '@/modules/providers'
+import type { ProviderContinuationAdmission, ProviderExecutionTargetObserver, ProviderRuntimeChatRequest,
+  ProviderRuntimeCompletionResult } from '@/modules/providers'
 import {
   BUILT_IN_CAPABILITY_SERVER_ID,
   parseMcpToolRequest,
@@ -49,27 +50,33 @@ export function createConversationMcpToolTurnRuntime(input: {
   assistantMessageId: string
   onStreamEvent?: (event: StreamEvent) => void
   onExecutionTarget?: ProviderExecutionTargetObserver
+  providerContinuation?: ProviderContinuationAdmission
 }) {
-  return createAssistantMcpToolTurnRuntime<
+  input = { ...input, providerContinuation: input.providerContinuation ? Object.freeze({
+    provider: snapshotPlainData(input.providerContinuation.provider),
+    model: input.providerContinuation.model,
+    admit: input.providerContinuation.admit,
+  }) : undefined }
+  const runtime = createAssistantMcpToolTurnRuntime<
     AIProvider,
     Settings,
     McpToolUsage,
     ResolvedTaggedTool
   >({
     parseRequest: parseMcpToolRequest,
-    findTool(tools, request, manifests) {
+    findTool(tools, request, manifests, settings) {
       const selected = findMcpTool([...tools], request)
       if (selected) {
         const manifest = findTaggedToolManifest(manifests, {
           serverId: selected.server.id,
           toolName: selected.tool.name,
         }) ?? manifestFromResolvedTool(selected)
-        return isAdmittedTaggedTool(manifest)
+        return isAdmittedTaggedTool(manifest, settings)
           ? { ...selected, manifest }
           : undefined
       }
       const manifest = findTaggedToolManifest(manifests, request)
-      return manifest && isAdmittedTaggedTool(manifest)
+      return manifest && isAdmittedTaggedTool(manifest, settings)
         ? resolvedToolFromManifest(manifest)
         : undefined
     },
@@ -123,7 +130,8 @@ export function createConversationMcpToolTurnRuntime(input: {
         temperatureCap: parameterInput.temperatureCap,
       })
     },
-    synthesize: (request) => synthesizeMcpToolAnswer(request, input.onStreamEvent, input.onExecutionTarget),
+    synthesize: (request) => synthesizeMcpToolAnswer(request, input.onStreamEvent,
+      input.onExecutionTarget, input.providerContinuation),
     sanitizeAnswer: sanitizeToolRevisionAnswerText,
     translate: st,
     buildTraceMetadata(metadataInput) {
@@ -138,6 +146,15 @@ export function createConversationMcpToolTurnRuntime(input: {
     traceId: mcpToolTraceId,
     now: Date.now,
   })
+  return {
+    execute(request: Parameters<typeof runtime.execute>[0]) {
+      return runtime.execute(input.providerContinuation ? {
+        ...request,
+        provider: input.providerContinuation.provider,
+        conversation: { ...request.conversation, model: input.providerContinuation.model },
+      } : request)
+    },
+  }
 }
 
 function findTaggedToolManifest(
@@ -209,16 +226,17 @@ function resolvedToolFromManifest(
   }
 }
 
-function isAdmittedTaggedTool(manifest: AssistantTaggedToolManifestLike): boolean {
+function isAdmittedTaggedTool(manifest: AssistantTaggedToolManifestLike, settings?: Settings): boolean {
   if (!manifest.enabled) return false
   if (manifest.source !== 'builtin' || manifest.name !== 'search_web') return true
-  return shouldExposeLocalSearchTool(useSettingsStore.getState().settings)
+  return settings !== undefined && shouldExposeLocalSearchTool(settings)
 }
 
 async function synthesizeMcpToolAnswer(
   request: Record<string, unknown>,
   onStreamEvent?: (event: StreamEvent) => void,
   onExecutionTarget?: ProviderExecutionTargetObserver,
+  admission?: ProviderContinuationAdmission,
 ) {
   let text = ''
   let usage: McpToolUsage
@@ -237,8 +255,11 @@ async function synthesizeMcpToolAnswer(
   const reporter = createRichStreamEventReporter(onStreamEvent, {
     ...(binding ? { binding } : {}),
   })
+  const admittedRequest = admission
+    ? await admission.admit(providerRequest as unknown as ProviderRuntimeChatRequest)
+    : providerRequest
   const handle = await streamProviderChat(
-    { ...providerRequest, onExecutionTarget: async (target: Parameters<ProviderExecutionTargetObserver>[0]) => {
+    { ...admittedRequest, onExecutionTarget: async (target: Parameters<ProviderExecutionTargetObserver>[0]) => {
       await onExecutionTarget?.(target)
       reporter.setBinding({ providerId: target.providerId, model: target.model })
     } } as unknown as Parameters<typeof streamProviderChat>[0],

@@ -7,7 +7,7 @@ import {
 } from '@/modules/providers'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
-import type { SkillDefinition, SkillSnapshot } from '@/types/skillContracts'
+import type { ConversationSkillMutationOptions, SkillDefinition, SkillSnapshot } from '@/types/skillContracts'
 import { parseAgentSkillMarkdown } from './agentSkillMarkdown'
 
 export interface SkillImportResult {
@@ -103,8 +103,8 @@ export interface ConversationSkillRecordPort {
 export interface ConversationSkillRepository {
   listSkills(): Promise<SkillDefinition[]>
   saveSkills(skills: readonly SkillDefinition[]): Promise<void>
-  upsertSkill(skill: SkillDefinition): Promise<SkillDefinition>
-  deleteSkill(id: string): Promise<void>
+  upsertSkill(skill: SkillDefinition, options?: ConversationSkillMutationOptions): Promise<SkillDefinition>
+  deleteSkill(id: string, options?: ConversationSkillMutationOptions): Promise<void>
 }
 
 export type ConversationSkillApplication = ConversationSkillPolicy & ConversationSkillRepository
@@ -114,6 +114,27 @@ export class ConversationSkillRecordDataError extends Error {
     super('Conversation skill records are invalid.')
     this.name = 'ConversationSkillRecordDataError'
   }
+}
+
+export class ConversationSkillConflictError extends Error {
+  constructor() {
+    super('The saved skill changed, was removed, or already exists.')
+    this.name = 'ConversationSkillConflictError'
+  }
+}
+
+function equalSkillValues(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => equalSkillValues(value, right[index]))
+  }
+  const a = left as Record<string, unknown>
+  const b = right as Record<string, unknown>
+  const keys = Object.keys(a).filter(key => a[key] !== undefined)
+  return keys.length === Object.keys(b).filter(key => b[key] !== undefined).length && keys.every(key =>
+    Object.prototype.hasOwnProperty.call(b, key) && equalSkillValues(a[key], b[key]))
 }
 
 export function createConversationSkillPolicy(
@@ -499,11 +520,32 @@ export function createConversationSkillRepository(input: {
     return runMutation(() => writeNormalized(skills))
   }
 
-  function upsertSkill(skill: SkillDefinition): Promise<SkillDefinition> {
+  function snapshotSkill(skill: Readonly<SkillDefinition>): SkillDefinition {
+    const normalized = input.normalizeSkill(skill)
+    if (!normalized) throw new ConversationSkillRecordDataError()
+    return JSON.parse(JSON.stringify(normalized)) as SkillDefinition
+  }
+
+  function checkMutation(
+    current: SkillDefinition | undefined,
+    expected: Readonly<SkillDefinition> | null | undefined,
+    signal?: AbortSignal,
+  ): void {
+    if (signal?.aborted) throw Object.assign(new Error('Skill operation cancelled'), { name: 'AbortError' })
+    if (expected === null ? !!current : expected !== undefined && (!current || !equalSkillValues(current, expected))) {
+      throw new ConversationSkillConflictError()
+    }
+  }
+
+  async function upsertSkill(skill: SkillDefinition, options?: ConversationSkillMutationOptions): Promise<SkillDefinition> {
+    // Capture before entering the queue so later caller edits cannot change consent.
+    const normalized = snapshotSkill(skill)
+    const expected = options?.expectedSkill == null ? options?.expectedSkill : snapshotSkill(options.expectedSkill)
+    const signal = options?.signal
     return runMutation(async () => {
-      const normalized = input.normalizeSkill(skill)
-      if (!normalized) throw new ConversationSkillRecordDataError()
+      if (signal?.aborted) throw Object.assign(new Error('Skill operation cancelled'), { name: 'AbortError' })
       const skills = await listSkills()
+      checkMutation(skills.find(item => item.id === normalized.id), expected, signal)
       await writeNormalized([
         normalized,
         ...skills.filter((item) => item.id !== normalized.id),
@@ -512,9 +554,13 @@ export function createConversationSkillRepository(input: {
     })
   }
 
-  function deleteSkill(id: string): Promise<void> {
+  async function deleteSkill(id: string, options?: ConversationSkillMutationOptions): Promise<void> {
+    const expected = options?.expectedSkill == null ? options?.expectedSkill : snapshotSkill(options.expectedSkill)
+    const signal = options?.signal
     return runMutation(async () => {
+      if (signal?.aborted) throw Object.assign(new Error('Skill operation cancelled'), { name: 'AbortError' })
       const skills = await listSkills()
+      checkMutation(skills.find(item => item.id === id), expected, signal)
       await writeNormalized(skills.filter((item) => item.id !== id))
     })
   }

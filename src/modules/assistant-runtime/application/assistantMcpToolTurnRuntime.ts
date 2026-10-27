@@ -3,7 +3,7 @@
  * concrete parsing, task, trace, localization, and provider adapters.
  */
 
-import type { ProcessTrace, StreamEvent, ToolContentBlock } from '@/core'
+import { snapshotPlainData, type ProcessTrace, type StreamEvent, type ToolContentBlock } from '@/core'
 import type {
   ContextArtifactAuthority,
   ContextArtifactPointer,
@@ -114,10 +114,12 @@ export interface AssistantMcpPendingActionProjectionInput {
 export interface AssistantMcpToolTurnInput<
   TProvider = unknown,
   TResolved extends AssistantMcpResolvedTool = AssistantMcpResolvedTool,
+  TSettings = unknown,
 > {
   conversationId: string
   assistantMessageId: string
   provider: TProvider
+  settings?: TSettings
   conversation: AssistantMcpConversationLike
   systemPrompt: string
   messages: readonly unknown[]
@@ -140,6 +142,7 @@ export interface AssistantMcpToolTurnRuntimeDependencies<
     tools: readonly TResolved[],
     request: AssistantMcpToolRequest,
     manifests: readonly AssistantTaggedToolManifestLike[],
+    settings?: TSettings,
   ): TResolved | undefined
   getSettings(): TSettings
   resolveLimits(settings: TSettings): AssistantMcpToolLimits
@@ -204,12 +207,23 @@ export function createAssistantMcpToolTurnRuntime<
   dependencies: AssistantMcpToolTurnRuntimeDependencies<TProvider, TSettings, TUsage, TResolved>,
 ) {
   async function execute(
-    input: AssistantMcpToolTurnInput<TProvider, TResolved>,
+    input: AssistantMcpToolTurnInput<TProvider, TResolved, TSettings>,
   ): Promise<{ text: string; usage?: TUsage } | null> {
+    input = {
+      ...input,
+      provider: snapshotPlainData(input.provider),
+      conversation: snapshotPlainData(input.conversation),
+      messages: snapshotPlainData(input.messages),
+      tools: snapshotPlainData(input.tools),
+      manifests: snapshotPlainData(input.manifests),
+      settings: snapshotPlainData(input.settings ?? dependencies.getSettings()),
+    }
+    if (input.signal.aborted) return null
+    const settings = input.settings as TSettings
     const request = dependencies.parseRequest(input.firstOutput)
     if (!request) return null
 
-    const resolved = dependencies.findTool(input.tools, request, input.manifests ?? [])
+    const resolved = dependencies.findTool(input.tools, request, input.manifests ?? [], settings)
     if (!resolved) {
       dependencies.recordTrace(dependencies.completeTrace({
         id: dependencies.traceId('mcp-unmatched'),
@@ -258,9 +272,9 @@ export function createAssistantMcpToolTurnRuntime<
       },
     })
 
-    const settings = dependencies.getSettings()
     const limits = dependencies.resolveLimits(settings)
     const stepId = buildTaggedMcpTaskStepId(input, request, resolved)
+    if (input.signal.aborted) return null
     let observation: AssistantMcpToolObservation
     try {
       observation = (await dependencies.executeTask({
@@ -286,6 +300,7 @@ export function createAssistantMcpToolTurnRuntime<
         },
       })).observation
     } catch (error) {
+      if (input.signal.aborted || error instanceof Error && error.name === 'AbortError') return null
       dependencies.recordTrace(dependencies.completeTrace({
         id: dependencies.traceId('mcp-task-adapter-error'),
         type: 'tool',
@@ -389,11 +404,11 @@ export function createAssistantMcpToolTurnRuntime<
     }
 
     try {
-      const currentSettings = dependencies.getSettings()
+      if (input.signal.aborted) return null
       const parameters = dependencies.resolveGenerationParameters({
         provider: input.provider,
         conversation: input.conversation,
-        settings: currentSettings,
+        settings,
         model: input.conversation.model,
         temperatureCap: 0.4,
       })
@@ -425,13 +440,15 @@ export function createAssistantMcpToolTurnRuntime<
         signal: input.signal,
         conversationId: input.conversation.id,
         sessionId: input.conversation.id,
-        settings: currentSettings,
+        settings,
         remoteCompactEligible: false,
         onStreamEvent: input.onStreamEvent,
       })
+      if (input.signal.aborted) return null
       const revisionText = dependencies.sanitizeAnswer(revision.text)
       if (revisionText.trim()) return { text: revisionText, usage: revision.usage }
     } catch (error) {
+      if (input.signal.aborted || error instanceof Error && error.name === 'AbortError') return null
       dependencies.recordTrace(dependencies.completeTrace({
         id: dependencies.traceId('mcp-revise-error'),
         type: 'tool',

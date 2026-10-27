@@ -30,7 +30,7 @@ interface StreamingState {
   getStreamingTraceSnapshot: (convId: string, msgId: string) => StreamingTraceSnapshot | undefined
   commitStreamingText: (convId: string, msgId: string) => string
   commitStreamingTraces: (convId: string, msgId: string) => StreamingTraceSnapshot | undefined
-  flushStreamingMessage: (convId: string, msgId: string) => Promise<void>
+  flushStreamingMessage: (convId: string, msgId: string, isCurrent?: () => boolean) => Promise<void>
   clearStreaming: (convId: string, msgId: string) => void
   clearConversationStreaming: (convId: string) => void
   clearAllStreaming: () => void
@@ -150,7 +150,8 @@ export const useChatStreamingStore = create<StreamingState>((set, get) => ({
     return traces
   },
 
-  flushStreamingMessage: async (convId: string, msgId: string) => {
+  flushStreamingMessage: async (convId: string, msgId: string, isCurrent) => {
+    if (isCurrent && !isCurrent()) return
     const key = streamingKey(convId, msgId)
     const state = get()
     const timer = state.persistTimers.get(key)
@@ -171,6 +172,9 @@ export const useChatStreamingStore = create<StreamingState>((set, get) => ({
     await useChatStore.getState().flushStreamingMessage(convId, msgId)
 
     set((s) => {
+      // Persistence can yield to a new owner or later provider chunks.
+      if ((isCurrent && !isCurrent()) || s.streamingText.get(key) !== text
+        || s.streamingTraces.get(key) !== traces || s.persistTimers.has(key)) return s
       const updated = new Map(s.activeStreams)
       const streamingText = new Map(s.streamingText)
       const streamingTraces = new Map(s.streamingTraces)

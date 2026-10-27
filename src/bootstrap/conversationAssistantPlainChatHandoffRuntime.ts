@@ -78,6 +78,7 @@ export const conversationAssistantPlainChatHandoffRuntime =
               assistantMessageId: input.assistantMessageId,
               messages: conversation.messages,
               provider: input.provider,
+              settings: input.settings,
               model: input.conversation.model,
               signal: detachedWork.signal,
               recordTrace(trace) {
