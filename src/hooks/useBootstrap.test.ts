@@ -1,4 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react-native'
+import { ApplicationDataRecordPersistenceError } from '@/bootstrap/applicationDataRecordRuntime'
+import { SettingsPersistenceValidationError } from '@/modules/settings'
+import { ProviderMetadataPersistenceValidationError } from '@/modules/providers'
 // Reuse the repository's CommonJS test transform for dynamic imports. Jest 29's
 // Expo preset leaves import() untransformed, and VM modules conflict with its
 // Reanimated setup. The hook source itself is executed unchanged.
@@ -15,6 +18,8 @@ const mockLoadSettings = jest.fn().mockResolvedValue(undefined)
 const mockSetError = jest.fn()
 const mockRunRecovery = jest.fn()
 const mockTaskRecovery = jest.fn()
+const mockAutomaticCheck = jest.fn()
+const mockSettings = { language: 'en', autoUpdateCheckEnabled: false }
 
 jest.mock('@/store/chatStore', () => ({
   useChatStore: Object.assign((select: (state: unknown) => unknown) => select({ load: mockLoadChats }), {
@@ -23,7 +28,7 @@ jest.mock('@/store/chatStore', () => ({
 }))
 jest.mock('@/store/settingsStore', () => ({
   useSettingsStore: Object.assign((select: (state: unknown) => unknown) => select({ load: mockLoadSettings }), {
-    getState: () => ({ settings: { language: 'en', autoUpdateCheckEnabled: false } }),
+    getState: () => ({ settings: mockSettings }),
   }),
 }))
 jest.mock('./useAppTheme', () => ({ useAppTheme: () => ({ colors: { surface: '#000' } }) }))
@@ -44,7 +49,11 @@ jest.mock('@/bootstrap/taskRuntime', () => ({ recoverInterruptedTasks: (...args:
 jest.mock('@/bootstrap/workflowCheckpointRecovery', () => ({ recoverWorkflowCheckpoints: jest.fn().mockResolvedValue({ completion: 'completed', failedCount: 0 }) }))
 jest.mock('@/bootstrap/conversationWorkspaceWritebackRecoveryRuntime', () => ({ recoverConversationWorkspaceWritebackReceipts: jest.fn().mockResolvedValue({ status: 'completed', ambiguousReceiptCount: 0, failedReceiptCount: 0 }) }))
 jest.mock('@/services/apkInstallCache', () => ({ clearStagedApkDownloads: jest.fn() }))
-jest.mock('@/platform/native/androidApkUpdates', () => ({}))
+jest.mock('@/platform/native/androidApkUpdates', () => ({
+  checkLatestApkReleaseSilently: () => mockAutomaticCheck(),
+  shouldAutoCheckApkUpdate: () => true,
+  shouldRecordApkUpdateCheck: () => false,
+}))
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -58,6 +67,17 @@ beforeEach(() => {
   mockLoadSettings.mockReset().mockResolvedValue(undefined)
   mockRunRecovery.mockResolvedValue([])
   mockTaskRecovery.mockResolvedValue({ ok: true, value: [] })
+  mockAutomaticCheck.mockReset().mockResolvedValue({ status: 'unavailable', message: 'current' })
+  mockSettings.autoUpdateCheckEnabled = false
+})
+
+it('does not run automatic update effects from defaults after a tolerated optional settings hydration failure', async () => {
+  mockLoadSettings.mockRejectedValueOnce(new Error('optional language preference is unreadable'))
+  mockSettings.autoUpdateCheckEnabled = true
+  const { result } = await renderHook(() => useBootstrap())
+  await waitFor(() => expect(result.current.ready).toBe(true))
+  expect(mockAutomaticCheck).not.toHaveBeenCalled()
+  expect(result.current.availableApkUpdate).toBeNull()
 })
 
 it('does not admit new Chat work while old runs or tasks are still being recovered', async () => {
@@ -129,4 +149,49 @@ it('preserves the existing nonblocking settings-failure policy when Chat hydrati
   expect(result.current.errorCount).toBe(1)
   expect(mockRunRecovery).toHaveBeenCalledTimes(1)
   expect(mockTaskRecovery).toHaveBeenCalledTimes(1)
+})
+
+it.each([
+  ['settings read', new ApplicationDataRecordPersistenceError('load', 'SETTINGS')],
+  ['provider read', new ApplicationDataRecordPersistenceError('load', 'PROVIDERS')],
+  ['provider migration write', new ApplicationDataRecordPersistenceError('save', 'PROVIDERS')],
+  ['settings validation', new SettingsPersistenceValidationError()],
+  ['provider validation', new ProviderMetadataPersistenceValidationError()],
+])('keeps startup closed after required %s failure instead of admitting defaults', async (_case, error) => {
+  mockLoadSettings.mockRejectedValueOnce(error)
+  const hook = await renderHook(() => useBootstrap())
+  await waitFor(() => expect(hook.result.current.status).toBe('blocked'))
+  expect(hook.result.current.ready).toBe(false)
+  expect(hook.result.current.failure?.reference).toBe('BOOT-STARTUP')
+  expect(mockRunRecovery).not.toHaveBeenCalled()
+  expect(mockTaskRecovery).not.toHaveBeenCalled()
+  expect(mockLoadSettings).toHaveBeenCalledTimes(1)
+  await hook.unmount()
+})
+
+it('retries required settings hydration once and never opens recovery or admission before the saved configuration returns', async () => {
+  const settings = deferred<void>()
+  mockLoadSettings.mockRejectedValueOnce(new ApplicationDataRecordPersistenceError('load', 'SETTINGS'))
+    .mockReturnValueOnce(settings.promise)
+  const hook = await renderHook(() => useBootstrap())
+  await waitFor(() => expect(hook.result.current.status).toBe('blocked'))
+  await act(async () => { hook.result.current.retry(); hook.result.current.retry() })
+  await waitFor(() => expect(mockLoadSettings).toHaveBeenCalledTimes(2))
+  expect(hook.result.current.ready).toBe(false)
+  expect(mockRunRecovery).not.toHaveBeenCalled()
+  await act(async () => settings.resolve())
+  await waitFor(() => expect(hook.result.current.ready).toBe(true))
+  expect(mockRunRecovery).toHaveBeenCalledTimes(1)
+  expect(mockTaskRecovery).toHaveBeenCalledTimes(1)
+  expect(hook.result.current.failure).toBeNull()
+  await hook.unmount()
+})
+
+it('does not reclassify an unrelated search-record failure as a required execution-settings failure', async () => {
+  mockLoadSettings.mockRejectedValueOnce(new ApplicationDataRecordPersistenceError('load', 'SETTINGS_SEARCH'))
+  const hook = await renderHook(() => useBootstrap())
+  await waitFor(() => expect(hook.result.current.ready).toBe(true))
+  expect(hook.result.current.errorCount).toBe(1)
+  expect(mockRunRecovery).toHaveBeenCalledTimes(1)
+  await hook.unmount()
 })

@@ -6,12 +6,19 @@ import { THEME_MOTION_DURATIONS } from '@/theme/themeTokens'
 import { SystemSettingsPanelContent } from './SystemSettingsPanelContent'
 import { checkLatestApkRelease, downloadAndOpenApkInstaller, type ApkReleaseInfo, type ApkUpdateResult } from '@/platform/native/androidApkUpdates'
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
+import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import { IsleButton } from '@/components/ui/isle'
+import type { ApkUpdateIgnoreState, ThemeBackgroundMotion } from '@/types/settingsContracts'
+import { CANONICAL_THEME_IDS } from '@/types/settingsContracts'
+import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
 
 const mockExportData = jest.fn()
 const mockImportData = jest.fn()
 const mockTranslate = (key: string) => key
-const mockState = { providers: [], settings: { theme: 'dark', themeId: 'material', language: 'zh-CN' } }
+const mockState = { providers: [], settings: {
+  theme: 'dark', themeId: 'material', language: 'zh-CN', backgroundMotion: undefined as ThemeBackgroundMotion | undefined,
+  neverRemindUpdates: false, ignoredApkUpdate: undefined as ApkUpdateIgnoreState | undefined,
+} }
 let mockMotion = 'full'
 const mockDialog = { toast: jest.fn(), confirm: jest.fn(), notice: jest.fn(), banner: jest.fn(), dismissBanner: jest.fn() }
 const mockUpdateSettings = jest.fn()
@@ -25,15 +32,25 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-jest.mock('@/store/settingsStore', () => ({ useSettingsStore: (select: (state: unknown) => unknown) => select(mockState) }))
+jest.mock('@/store/settingsStore', () => ({
+  useSettingsStore: Object.assign((select: (state: unknown) => unknown) => select(mockState), {
+    getState: () => ({ ...mockState, updateSettings: mockUpdateSettings }),
+  }),
+}))
+jest.mock('@/presentation/features/settings/settingsStorePersistenceCommand', () => ({
+  ...jest.requireActual('@/presentation/features/settings/settingsStorePersistenceCommand'),
+  flushPersistedSettings: jest.fn().mockResolvedValue(undefined),
+}))
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => {
-  const colors = require('@/theme/colors').getColors('dark', 'material')
-  return { colors, design: colors.design, canonicalThemeId: 'material' }
+  const family = mockState.settings.themeId
+  const colors = require('@/theme/colors').getColors('dark', family)
+  const backgroundEnvironment = require('@/theme/backgroundEnvironment').resolveBackgroundEnvironment({ family, mode: 'dark', motion: mockState.settings.backgroundMotion })
+  return { colors, design: colors.design, canonicalThemeId: family, backgroundEnvironment, mode: 'dark', isDark: true }
 } }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockMotion }))
 jest.mock('@/hooks/useThemeSelection', () => ({ useThemeSelection: () => jest.fn() }))
 jest.mock('./usePreferenceUndo', () => ({ usePreferenceUndo: () => ({ updateSettings: mockUpdateSettings, canUndo: false, undo: jest.fn() }) }))
-jest.mock('./SettingsEditBoundary', () => ({ useSettingsDraft: () => jest.fn(), useSettingsLeave: () => async (action: () => void) => action() }))
+jest.mock('./SettingsEditBoundary', () => ({ ...jest.requireActual('./SettingsEditBoundary'), useSettingsDraft: () => jest.fn(), useSettingsLeave: () => async (action: () => void) => action() }))
 jest.mock('./SettingsPageShell', () => ({ SettingsPageShell: ({ children }: { children: React.ReactNode }) => children }))
 jest.mock('@/core', () => ({ userFacingErrorDetail: String }))
 jest.mock('@/i18n', () => ({ changeAppLanguage: jest.fn() }))
@@ -45,7 +62,7 @@ jest.mock('expo-application', () => ({ nativeApplicationVersion: '1.0.0', native
 jest.mock('expo-constants', () => ({ expoConfig: {} }))
 jest.mock('@/platform/native/androidApkUpdates', () => ({ checkLatestApkRelease: jest.fn(), downloadAndOpenApkInstaller: jest.fn() }))
 jest.mock('@/bootstrap/androidStatusNotification', () => ({ clearAndroidStatusNotification: jest.fn(), updateAndroidStatusNotification: jest.fn() }))
-jest.mock('animal-island-ui-rn', () => ({ RadioGroup: require('react-native').View }))
+jest.mock('animal-island-ui-rn', () => ({ ...jest.requireActual('animal-island-ui-rn'), RadioGroup: require('react-native').View }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke: {} }))
 jest.mock('@/components/ui/HighFrameSpinner', () => ({ HighFrameSpinner: () => null }))
 jest.mock('@/components/navigation/AnimatedNavigationTrigger', () => ({ AnimatedNavigationTrigger: () => null }))
@@ -57,7 +74,7 @@ jest.mock('@/components/ui/isle', () => {
   return {
     IslePressable: Pressable, IsleSearchField: TextInput, IsleField: TextInput,
     IsleChip: Text, IsleButton: jest.fn(({ label, ...props }: { label: string }) => React.createElement(Pressable, { accessibilityRole: 'button', ...props }, React.createElement(Text, null, label))),
-    IsleProgress: View, IsleDisclosure: View, IsleToggle: View,
+    IsleProgress: jest.requireActual('@/components/ui/isle/IsleKit').IsleProgress, IsleDisclosure: View, IsleToggle: View,
     ISLE_MIN_TOUCH_TARGET: 44, useIsleDialog: () => mockDialog,
   }
 })
@@ -69,10 +86,117 @@ jest.mock('moti', () => ({
 beforeEach(() => {
   jest.clearAllMocks()
   mockMotion = 'full'
+  mockState.settings.themeId = 'material'
+  mockState.settings.backgroundMotion = undefined
+  mockState.settings.neverRemindUpdates = false
+  mockState.settings.ignoredApkUpdate = undefined
   Constants.expoConfig!.extra = { distributionChannel: 'github' }
   mockDialog.confirm.mockResolvedValue(true)
   jest.mocked(checkLatestApkRelease).mockReset().mockResolvedValue({ status: 'available', message: 'available', release })
   jest.mocked(downloadAndOpenApkInstaller).mockReset().mockResolvedValue({ status: 'downloaded', message: 'opened' })
+  jest.mocked(flushPersistedSettings).mockReset().mockResolvedValue(undefined)
+})
+
+it('keeps manual checks usable with never-remind enabled and the target previously ignored', async () => {
+  mockState.settings.neverRemindUpdates = true
+  mockState.settings.ignoredApkUpdate = {
+    installedVersion: '1.0.0', installedBuildVersion: '1', targetVersion: release.version,
+  }
+  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
+  expect(mockDialog.confirm).toHaveBeenCalledWith(expect.objectContaining({
+    confirmLabel: 'updates.updateNow', cancelLabel: 'updates.ignoreVersion', renderBody: expect.any(Function),
+  }))
+  expect(downloadAndOpenApkInstaller).toHaveBeenCalledTimes(1)
+  expect(mockUpdateSettings).not.toHaveBeenCalledWith(expect.objectContaining({ neverRemindUpdates: false }))
+})
+
+it('persists the ignored target with the actual native installed baseline without starting an installer', async () => {
+  mockDialog.confirm.mockResolvedValueOnce(false)
+  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
+  expect(mockUpdateSettings).toHaveBeenCalledWith({ ignoredApkUpdate: {
+    installedVersion: '1.0.0', installedBuildVersion: '1', targetVersion: release.version,
+  } })
+  expect(flushPersistedSettings).toHaveBeenCalled()
+  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+})
+
+it('saves the independent never-remind switch', async () => {
+  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const toggle = screen.container.queryAll(node => node.props.title === 'settings.neverRemindUpdates')[0]
+  expect(toggle.props.active).toBe(false)
+  await fireEvent.press(toggle)
+  expect(mockUpdateSettings).toHaveBeenCalledWith({ neverRemindUpdates: true })
+  expect(flushPersistedSettings).toHaveBeenCalled()
+  expect(mockDialog.toast).toHaveBeenCalledWith({ title: 'updates.remindersDisabled', tone: 'amber' })
+})
+
+it('shows the persisted enabled switch and reports a failed reminder-setting save', async () => {
+  mockState.settings.neverRemindUpdates = true
+  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const enabledToggle = screen.container.queryAll(node => node.props.title === 'settings.neverRemindUpdates')[0]
+  expect(enabledToggle.props.active).toBe(true)
+  jest.mocked(flushPersistedSettings).mockRejectedValueOnce(new Error('storage unavailable'))
+  await fireEvent.press(enabledToggle)
+  expect(mockUpdateSettings).toHaveBeenCalledWith({ neverRemindUpdates: false })
+  expect(mockDialog.toast).toHaveBeenCalledWith({ title: 'settingsWorkspace.saveFailed', tone: 'danger' })
+})
+
+it.each(CANONICAL_THEME_IDS)('names actual %s APK progress, retires a percentage during verification and ignores cancelled callbacks', async family => {
+  mockState.settings.themeId = family
+  mockMotion = 'none'
+  const check = deferred<ApkUpdateResult>()
+  const install = deferred<ApkUpdateResult>()
+  jest.mocked(checkLatestApkRelease).mockReturnValueOnce(check.promise)
+  jest.mocked(downloadAndOpenApkInstaller).mockReturnValueOnce(install.promise)
+  const screen = await render(<IsleThemeProvider><SystemSettingsPanelContent panel="updates" /></IsleThemeProvider>)
+  try {
+    expect(screen.queryByRole('progressbar')).toBeNull()
+    await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
+    const currentValue = (name: string) => {
+      const bar = screen.getByRole('progressbar', { name })
+      return bar.props['aria-valuenow'] ?? bar.props.accessibilityValue?.now
+    }
+    expect(currentValue('settings.checkingUpdate')).toBeUndefined()
+    await act(async () => { check.resolve({ status: 'available', message: 'available', release }); await check.promise })
+    const options = jest.mocked(downloadAndOpenApkInstaller).mock.calls[0][1]!
+    await act(() => options.onProgress?.({ stage: 'downloading', release, percent: 25 }))
+    expect(currentValue('settings.downloadingApk')).toBe(25)
+    await act(() => options.onProgress?.({ stage: 'verifying', release }))
+    expect(currentValue('settings.verifyingApk')).toBeUndefined()
+    expect(screen.queryByRole('progressbar', { name: 'settings.downloadingApk' })).toBeNull()
+    expect(screen.queryByText('25%')).toBeNull()
+    await fireEvent.press(screen.getByRole('button', { name: 'updates.cancelDownload' }))
+    expect(options.signal?.aborted).toBe(true)
+    await act(() => options.onProgress?.({ stage: 'downloading', release, percent: 90 }))
+    expect(currentValue('settings.verifyingApk')).toBeUndefined()
+    expect(screen.queryByText('90%')).toBeNull()
+    await act(async () => { install.resolve({ status: 'cancelled', message: 'cancelled' }); await install.promise })
+    expect(screen.queryByRole('progressbar')).toBeNull()
+    expect(mockDialog.notice).not.toHaveBeenCalled()
+  } finally {
+    await screen.unmount()
+    await act(async () => {
+      check.resolve({ status: 'unsupported', message: 'fixture cleanup' })
+      install.resolve({ status: 'cancelled', message: 'fixture cleanup' })
+      await Promise.all([check.promise, install.promise])
+    })
+  }
+})
+
+it.each([
+  ['minimal', 'Static'], ['monet', 'Subtle'], ['material', 'Static'],
+  ['liquid-glass', 'Subtle'], ['animal-island-ui', 'Static'],
+])('shows the resolved %s motion default without writing over an explicit choice', async (family, expected) => {
+  mockState.settings.themeId = family
+  const screen = await render(<SystemSettingsPanelContent panel="appearance" />)
+  expect(screen.getByRole('radio', { name: `settings.backgroundMotion${expected}` })).toBeChecked()
+  expect(mockUpdateSettings).not.toHaveBeenCalled()
+  mockState.settings.backgroundMotion = 'immersive'
+  await screen.rerender(<SystemSettingsPanelContent key="explicit-choice" panel="appearance" />)
+  expect(screen.getByRole('radio', { name: 'settings.backgroundMotionImmersive' })).toBeChecked()
+  expect(mockUpdateSettings).not.toHaveBeenCalled()
 })
 
 it('opens Google Play only on a user click and reports opening errors', async () => {

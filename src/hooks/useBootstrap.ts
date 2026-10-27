@@ -9,6 +9,10 @@ import { initializeConversationSkills } from '@/bootstrap/conversationSkills'
 import { initializeConversationStorePersistence } from '@/bootstrap/conversationStorePersistence'
 import { initializeConversationComposerDraftPersistence } from '@/bootstrap/conversationComposerDrafts'
 import { initializeSettingsStorePersistence } from '@/bootstrap/settingsStorePersistence'
+import { ApplicationDataRecordPersistenceError } from '@/bootstrap/applicationDataRecordRuntime'
+import { SettingsPersistenceValidationError, reconcileApkUpdateIgnoreState } from '@/modules/settings'
+import type { ApkUpdateResult } from '@/platform/native/androidApkUpdates'
+import { ProviderMetadataPersistenceValidationError } from '@/modules/providers'
 import { cancelAllConversationAssistantDetachedWork } from '@/bootstrap/conversationAssistantDetachedWorkRegistry'
 import { initI18n } from '@/i18n'
 import { extractUserFacingErrorDetail } from '@/core'
@@ -33,7 +37,7 @@ export function useBootstrap() {
     ready: false,
     errorCount: 0,
     bootStartedAt: Date.now(),
-    updateNotice: null as string | null,
+    availableApkUpdate: null as ApkUpdateResult | null,
     failure: null as BootstrapFailure | null,
   }))
 
@@ -46,7 +50,7 @@ export function useBootstrap() {
       status: 'loading',
       ready: false,
       bootStartedAt: Date.now(),
-      updateNotice: null,
+      availableApkUpdate: null,
       failure: null,
     }))
     setAttempt((current) => current + 1)
@@ -61,7 +65,7 @@ export function useBootstrap() {
       if (!mounted || recoveryController.signal.aborted) return
       const detail = formatBootstrapFailureMessage(error)
       const message = st('bootstrap.failed', {
-        label: st('bootstrap.chatData'),
+        label: st(isRequiredSettingsHydrationFailure(error) ? 'bootstrap.settings' : 'bootstrap.chatData'),
         message: detail,
       })
       useChatStore.getState().setError(message)
@@ -152,6 +156,10 @@ export function useBootstrap() {
         // can succeed after a transient storage conflict, but it does not hydrate
         // this projection. Keep the existing startup Retry surface authoritative.
         if (results[0].status === 'rejected') throw results[0].reason
+        // Missing records may use defaults; unreadable configured records may not.
+        if (results[1].status === 'rejected' && isRequiredSettingsHydrationFailure(results[1].reason)) {
+          throw results[1].reason
+        }
 
         // Recovery-only runtime instances cannot distinguish a new live run
         // owned by another instance from an interrupted row. Keep Chat (and its
@@ -174,20 +182,29 @@ export function useBootstrap() {
           setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
         })
         void safeBootstrap(st('bootstrap.updateCheck'), async () => {
+          // A tolerated optional settings failure still must not prompt from unhydrated defaults.
+          if (results[1].status !== 'fulfilled') return
           const {
             checkLatestApkReleaseSilently,
             shouldAutoCheckApkUpdate,
             shouldRecordApkUpdateCheck,
+            getVersionSnapshot,
           } = await import('@/platform/native/androidApkUpdates')
+          if (!mounted || recoveryController.signal.aborted) return
           const settings = useSettingsStore.getState().settings
+          if (settings.ignoredApkUpdate
+            && !reconcileApkUpdateIgnoreState(settings.ignoredApkUpdate, getVersionSnapshot())) {
+            useSettingsStore.getState().updateSettings({ ignoredApkUpdate: undefined })
+          }
           if (!(settings.autoUpdateCheckEnabled ?? true)) return
           if (!shouldAutoCheckApkUpdate(settings.lastApkUpdateCheckAt)) return
           const result = await checkLatestApkReleaseSilently()
+          if (!mounted || recoveryController.signal.aborted) return
           if (shouldRecordApkUpdateCheck(result)) {
             useSettingsStore.getState().updateSettings({ lastApkUpdateCheckAt: Date.now() })
           }
           if (result.status === 'available' && result.release && mounted) {
-            setState((current) => ({ ...current, updateNotice: st('updates.available', { version: result.release?.version ?? '' }) }))
+            setState((current) => ({ ...current, availableApkUpdate: result }))
           }
         }).catch(() => {
           if (!mounted) return
@@ -210,6 +227,13 @@ export function useBootstrap() {
   }, [colors.surface])
 
   return { ...state, retry }
+}
+
+function isRequiredSettingsHydrationFailure(error: unknown): boolean {
+  return error instanceof SettingsPersistenceValidationError
+    || error instanceof ProviderMetadataPersistenceValidationError
+    || error instanceof ApplicationDataRecordPersistenceError
+      && (error.storageKey === 'SETTINGS' || error.storageKey === 'PROVIDERS')
 }
 
 function formatBootstrapFailureMessage(error: unknown): string {

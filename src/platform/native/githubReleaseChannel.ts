@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser'
+import { mergeAppReleaseNotes, type AppReleaseNotes } from '@/core/appVersion'
 
 export type GithubReleaseChannelFailureReason = 'network' | 'rate_limited' | 'manifest_invalid'
 
@@ -22,6 +23,11 @@ export interface GithubTaggedAndroidReleaseSnapshot {
   assets: GithubReleaseAssetSnapshot[]
 }
 
+export interface GithubReleaseNotesSnapshot {
+  entries: AppReleaseNotes[]
+  complete: boolean
+}
+
 export interface GithubReleaseChannelRequestOptions {
   fetchImplementation?: typeof fetch
   signal?: AbortSignal
@@ -38,6 +44,11 @@ const ATOM_RESPONSE_LIMIT_BYTES = 512 * 1024
 const APP_CONFIG_RESPONSE_LIMIT_BYTES = 128 * 1024
 const UPDATE_MANIFEST_RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024
 const RELEASE_ASSETS_RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024
+const RELEASE_NOTES_RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024
+const RELEASE_NOTES_PAGE_SIZE = 100
+const RELEASE_NOTES_MAX_PAGES = 10
+const RELEASE_NOTES_METADATA_CONCURRENCY = 4
+const RELEASE_NOTES_TOTAL_TIMEOUT_MS = 15_000
 
 const atomParser = new XMLParser({
   ignoreAttributes: false,
@@ -121,6 +132,75 @@ export async function fetchGithubTaggedAndroidReleaseSnapshot(
     manifest,
     assets,
   }
+}
+
+/** Notes are optional: API limits or missing history must never invalidate a verified APK. */
+export async function fetchGithubReleaseNotesSnapshot(
+  installedVersion: string,
+  target: GithubTagVersionSnapshot,
+  options: GithubReleaseChannelRequestOptions = {},
+): Promise<GithubReleaseNotesSnapshot> {
+  const entries: AppReleaseNotes[] = []
+  const seenTags = new Set<string>()
+  const controller = new AbortController()
+  const abortFromParent = () => controller.abort(options.signal?.reason)
+  if (options.signal?.aborted) return { entries, complete: false }
+  options.signal?.addEventListener('abort', abortFromParent, { once: true })
+  const timer = setTimeout(() => controller.abort(new Error('Release notes history timed out.')),
+    options.timeoutMs === undefined ? RELEASE_NOTES_TOTAL_TIMEOUT_MS : normalizeTimeout(options.timeoutMs))
+  const requestOptions = { ...options, signal: controller.signal }
+  let complete = true
+  try {
+    for (let page = 1; page <= RELEASE_NOTES_MAX_PAGES; page += 1) {
+      if (controller.signal.aborted) { complete = false; break }
+      const payload = await requestBoundedJson(
+        `https://api.github.com/repos${REPOSITORY_PATH}/releases?per_page=${RELEASE_NOTES_PAGE_SIZE}&page=${page}`,
+        RELEASE_NOTES_RESPONSE_LIMIT_BYTES,
+        requestOptions,
+      )
+      if (!Array.isArray(payload)) throw invalidChannelPayload('GitHub release history must be an array.')
+      if (payload.length > RELEASE_NOTES_PAGE_SIZE) throw invalidChannelPayload('GitHub release history page is oversized.')
+      const releases = payload.flatMap((record) => {
+        if (!isRecord(record) || record.draft === true || record.prerelease === true) return []
+        const tagName = readOptionalText(record.tag_name)
+        const notes = readOptionalText(record.body)
+        if (!tagName || !parseStableTagVersion(tagName) || !notes || seenTags.has(tagName)) return []
+        seenTags.add(tagName)
+        return [{ tagName, notes }]
+      })
+      let nextIndex = 0
+      await Promise.all(Array.from({ length: Math.min(RELEASE_NOTES_METADATA_CONCURRENCY, releases.length) }, async () => {
+        while (nextIndex < releases.length && !controller.signal.aborted) {
+          const release = releases[nextIndex++]
+          try {
+            // Legacy tags may differ from the app's versionName; label notes using tagged app metadata.
+            const version = release.tagName === target.tagName ? target : parseTaggedAppVersion(
+              await requestBoundedJson(
+                `${RAW_GITHUB_ORIGIN}${REPOSITORY_PATH}/${release.tagName}/app.json`,
+                APP_CONFIG_RESPONSE_LIMIT_BYTES,
+                requestOptions,
+              ),
+            )
+            entries.push(...mergeAppReleaseNotes(installedVersion, target.versionName, [
+              { version: version.versionName, versionCode: version.versionCode, notes: release.notes },
+            ]))
+          } catch {
+            complete = false
+          }
+        }
+      }))
+      if (controller.signal.aborted) { complete = false; break }
+      // GitHub release order is chronological, not semantic. Do not stop at an older-looking tag.
+      if (payload.length < RELEASE_NOTES_PAGE_SIZE) break
+      if (page === RELEASE_NOTES_MAX_PAGES) complete = false
+    }
+  } catch {
+    complete = false
+  } finally {
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', abortFromParent)
+  }
+  return { entries: mergeAppReleaseNotes(installedVersion, target.versionName, entries), complete }
 }
 
 interface StableTagEntry {
@@ -281,13 +361,18 @@ async function requestBoundedText(
   maxBytes: number,
   options: GithubReleaseChannelRequestOptions,
 ): Promise<string> {
+  if (options.signal?.aborted) throw new GithubReleaseChannelError('network', 'GitHub release channel request was cancelled.')
   const fetchImplementation = options.fetchImplementation ?? fetch
   const timeoutMs = normalizeTimeout(options.timeoutMs)
   const controller = new AbortController()
   let timedOut = false
-  const abortFromParent = () => controller.abort(options.signal?.reason)
-  if (options.signal?.aborted) abortFromParent()
-  else options.signal?.addEventListener('abort', abortFromParent, { once: true })
+  let rejectAborted!: (error: Error) => void
+  const aborted = new Promise<never>((_, reject) => { rejectAborted = reject })
+  const abortFromParent = () => {
+    controller.abort(options.signal?.reason)
+    rejectAborted(new Error('GitHub release channel request was cancelled.'))
+  }
+  options.signal?.addEventListener('abort', abortFromParent, { once: true })
 
   let timer: ReturnType<typeof setTimeout> | null = null
   const timeout = new Promise<never>((_, reject) => {
@@ -308,6 +393,7 @@ async function requestBoundedText(
         signal: controller.signal,
       }),
       timeout,
+      aborted,
     ])
     if (!response.ok) {
       const reason: GithubReleaseChannelFailureReason = response.status === 403 || response.status === 429
@@ -319,7 +405,7 @@ async function requestBoundedText(
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
       throw invalidChannelPayload(`GitHub release channel response exceeds ${maxBytes} bytes.`)
     }
-    const text = await response.text()
+    const text = await Promise.race([response.text(), timeout, aborted])
     if (new TextEncoder().encode(text).byteLength > maxBytes) {
       throw invalidChannelPayload(`GitHub release channel response exceeds ${maxBytes} bytes.`)
     }

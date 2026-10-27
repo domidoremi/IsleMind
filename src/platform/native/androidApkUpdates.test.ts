@@ -3,7 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
 import { appendRuntimeLog, readStoredRuntimeLogOptions } from './runtimeLog'
 import { discardDownloadedApk, markDownloadedApkForCleanup } from '@/services/apkInstallCache'
-import { fetchLatestGithubTagVersionSnapshot } from './githubReleaseChannel'
+import { fetchGithubReleaseNotesSnapshot, fetchGithubTaggedAndroidReleaseSnapshot, fetchLatestGithubTagVersionSnapshot } from './githubReleaseChannel'
 import {
   APK_AUTO_CHECK_INTERVAL_MS,
   checkLatestApkRelease,
@@ -21,6 +21,7 @@ import {
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }))
 jest.mock('expo-constants', () => ({ expoConfig: { extra: { distributionChannel: 'github' } } }))
 jest.mock('expo-application', () => ({ nativeApplicationVersion: '1.1.2', nativeBuildVersion: '127' }))
+jest.mock('expo-device', () => ({ supportedCpuArchitectures: ['arm64-v8a'] }))
 jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/', createDownloadResumable: jest.fn(),
   downloadAsync: jest.fn(), getContentUriAsync: jest.fn(), getInfoAsync: jest.fn(),
@@ -35,6 +36,7 @@ jest.mock('@/services/apkInstallCache', () => ({ discardDownloadedApk: jest.fn()
 jest.mock('./githubReleaseChannel', () => ({
   fetchLatestGithubTagVersionSnapshot: jest.fn(),
   fetchGithubTaggedAndroidReleaseSnapshot: jest.fn(),
+  fetchGithubReleaseNotesSnapshot: jest.fn(),
   GithubReleaseChannelError: class extends Error {},
 }))
 
@@ -51,6 +53,19 @@ const currentTag = {
   versionName: '1.1.2', versionCode: 127, tagName: 'v1.1.2', name: 'IsleMind 1.1.2',
   htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2', publishedAt: null,
 }
+const newerTag = { ...currentTag, tagName: 'v1.1.3', versionName: '1.1.3', versionCode: 128 }
+const verifiedTaggedRelease = {
+  tag: newerTag,
+  manifest: {
+    schemaVersion: 1, platform: 'android', versionName: '1.1.3', versionCode: 128,
+    publishedAt: null, releaseUrl: release.htmlUrl,
+    assets: [{
+      abi: 'arm64-v8a', variant: 'no-model', name: release.apkName, url: release.apkUrl,
+      sha256: release.sha256, sizeBytes: release.sizeBytes,
+    }],
+  },
+  assets: [{ name: release.apkName, url: release.apkUrl }],
+}
 const mockDownload = jest.fn<Promise<FileSystem.FileSystemDownloadResult | undefined>, []>()
 const mockCancel = jest.fn<Promise<void>, []>()
 let nativeProgress: FileSystem.FileSystemNetworkTaskProgressCallback<FileSystem.DownloadProgressData>
@@ -66,6 +81,7 @@ beforeEach(() => {
   jest.resetAllMocks()
   extra.distributionChannel = 'google-play'
   jest.mocked(fetchLatestGithubTagVersionSnapshot).mockResolvedValue(currentTag)
+  jest.mocked(fetchGithubReleaseNotesSnapshot).mockResolvedValue({ entries: [], complete: true })
   mockDownload.mockResolvedValue(downloaded)
   mockCancel.mockResolvedValue(undefined)
   jest.mocked(FileSystem.createDownloadResumable).mockImplementation((_url, _uri, _options, progress) => {
@@ -86,6 +102,45 @@ it('does not schedule GitHub checks on Play even with a migrated auto-check pref
 
 describe('direct APK update lifecycle', () => {
   beforeEach(() => { extra.distributionChannel = 'github' })
+
+  it('attaches version-range notes only after the tagged APK passes availability validation', async () => {
+    jest.mocked(fetchLatestGithubTagVersionSnapshot).mockResolvedValueOnce(newerTag)
+    jest.mocked(fetchGithubTaggedAndroidReleaseSnapshot).mockResolvedValueOnce(verifiedTaggedRelease)
+    const entries = [{ version: '1.1.3', notes: '- new features' }]
+    jest.mocked(fetchGithubReleaseNotesSnapshot).mockResolvedValueOnce({ entries, complete: true })
+    expect(await checkLatestApkRelease()).toMatchObject({
+      status: 'available', currentVersion: { appVersion: '1.1.2', buildVersion: '127' },
+      release: { version: '1.1.3', releaseNotes: entries, releaseNotesComplete: true },
+    })
+    expect(fetchGithubReleaseNotesSnapshot).toHaveBeenCalledWith('1.1.2', newerTag)
+  })
+
+  it('does not fetch notes for a non-installable qualification release', async () => {
+    jest.mocked(fetchLatestGithubTagVersionSnapshot).mockResolvedValueOnce(newerTag)
+    jest.mocked(fetchGithubTaggedAndroidReleaseSnapshot).mockResolvedValueOnce({
+      tag: newerTag, manifest: null, assets: [],
+    })
+    expect((await checkLatestApkRelease()).status).toBe('unavailable')
+    expect(fetchGithubReleaseNotesSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('keeps a verified update available when optional release history fails', async () => {
+    jest.mocked(fetchLatestGithubTagVersionSnapshot).mockResolvedValueOnce(newerTag)
+    jest.mocked(fetchGithubTaggedAndroidReleaseSnapshot).mockResolvedValueOnce(verifiedTaggedRelease)
+    jest.mocked(fetchGithubReleaseNotesSnapshot).mockRejectedValueOnce(new Error('history rate limited'))
+    expect(await checkLatestApkRelease()).toMatchObject({
+      status: 'available', release: { releaseNotes: [], releaseNotesComplete: false },
+    })
+  })
+
+  it('does not let release notes bypass a tagged APK identity mismatch', async () => {
+    jest.mocked(fetchLatestGithubTagVersionSnapshot).mockResolvedValueOnce(newerTag)
+    jest.mocked(fetchGithubTaggedAndroidReleaseSnapshot).mockResolvedValueOnce({
+      ...verifiedTaggedRelease, manifest: { ...verifiedTaggedRelease.manifest, versionCode: 127 },
+    })
+    expect(await checkLatestApkRelease()).toMatchObject({ status: 'error', reason: 'manifest_invalid' })
+    expect(fetchGithubReleaseNotesSnapshot).not.toHaveBeenCalled()
+  })
 
   it('coalesces concurrent startup/manual checks and retries after a failed check', async () => {
     const request = deferred<typeof currentTag>()

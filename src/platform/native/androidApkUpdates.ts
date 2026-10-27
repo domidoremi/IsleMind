@@ -5,10 +5,12 @@ import * as Application from 'expo-application'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
 import { st } from '@/i18n/service'
+import { compareAppVersions, parseAppVersion, type AppReleaseNotes } from '@/core/appVersion'
 import { createExpoLocalModelFileIntegrityPort } from '@/platform/localModels'
 import {
   fetchGithubTaggedAndroidReleaseSnapshot,
   fetchLatestGithubTagVersionSnapshot,
+  fetchGithubReleaseNotesSnapshot,
   GithubReleaseChannelError,
   type GithubTagVersionSnapshot,
   type GithubTaggedAndroidReleaseSnapshot,
@@ -42,6 +44,8 @@ export interface ApkReleaseInfo {
   sizeBytes?: number
   abi?: string
   variant?: ApkAssetVariant
+  releaseNotes?: AppReleaseNotes[]
+  releaseNotesComplete?: boolean
 }
 
 export interface ApkUpdateResult {
@@ -50,6 +54,7 @@ export interface ApkUpdateResult {
   release?: ApkReleaseInfo
   localUri?: string
   reason?: ApkUpdateReason
+  currentVersion?: VersionSnapshot
 }
 
 export interface ApkManifestAsset {
@@ -173,17 +178,21 @@ async function performApkUpdateCheck(): Promise<ApkUpdateResult> {
       return result
     }
 
-    const release = await fetchLatestRelease(tag)
+    let release = await fetchLatestRelease(tag)
     if (!release) {
       const result = { status: 'unavailable', message: st('updates.noInstallableApk') } satisfies ApkUpdateResult
       await logAppUpdateEvent('check', result)
       return result
     }
 
+    const history = await fetchGithubReleaseNotesSnapshot(snapshot.appVersion, tag)
+      .catch(() => ({ entries: [] as AppReleaseNotes[], complete: false }))
+    release = { ...release, releaseNotes: history.entries, releaseNotesComplete: history.complete }
     const result = {
       status: 'available',
       message: st('updates.available', { version: release.version, build: release.versionCode ?? '' }),
       release,
+      currentVersion: snapshot,
     } satisfies ApkUpdateResult
     await logAppUpdateEvent('check', result)
     return result
@@ -614,20 +623,11 @@ export function compareReleaseToSnapshotForTest(release: ApkReleaseInfo, snapsho
 }
 
 function normalizeVersion(version: string): string {
-  const cleaned = version.trim().replace(/^v/i, '')
-  const match = cleaned.match(/\d+(?:\.\d+){0,2}/)
-  return match?.[0] ?? '0.0.0'
+  return parseAppVersion(version)?.version ?? '0.0.0'
 }
 
 function compareVersions(a: string, b: string): number {
-  const left = a.split('.').map((part) => Number.parseInt(part, 10) || 0)
-  const right = b.split('.').map((part) => Number.parseInt(part, 10) || 0)
-  const length = Math.max(left.length, right.length)
-  for (let index = 0; index < length; index += 1) {
-    const diff = (left[index] ?? 0) - (right[index] ?? 0)
-    if (diff !== 0) return diff
-  }
-  return 0
+  return compareAppVersions(a, b)
 }
 
 function asRecord(payload: unknown): Record<string, unknown> {

@@ -45,6 +45,8 @@ import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/platform/na
 import type { ApkInstallProgress, ApkInstallProgressStage, ApkReleaseInfo } from '@/platform/native/androidApkUpdates'
 import { isGooglePlayDistribution, openGooglePlayListing } from '@/platform/native/appDistribution'
 import { useIsleDialog } from '@/components/ui/isle'
+import { useApkUpdatePrompt } from '@/components/updates/useApkUpdatePrompt'
+import { beginManualApkUpdateCheck } from '@/presentation/features/settings/apkUpdateInteraction'
 
 
 import { type SettingsControlSearchDocument } from '@/presentation/features/settings/settingsControlSearch'
@@ -323,11 +325,12 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   const fieldSession = useSettingsFieldSession()
   const target = useSettingsTarget()
   const shellNavigation = false
-  const { colors, canonicalThemeId } = useAppTheme()
+  const { colors, canonicalThemeId, backgroundEnvironment } = useAppTheme()
   const sectionMotion = useThemeMotion('section', { readable: true, direction: 'forward' })
   const motion = sectionMotion.intensity
   const { t } = useTranslation()
   const dialog = useIsleDialog()
+  const promptApkUpdate = useApkUpdatePrompt()
   const { width, fontScale } = useWindowDimensions()
   const narrowLayout = width / fontScale < 430
   const actionCompact = width / fontScale < 360
@@ -365,7 +368,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   const [observabilityKeyLoaded, setObservabilityKeyLoaded] = useState(false)
   const observabilityKeyBaseline = useRef('')
   const observabilitySaveLock = useRef(false)
-  useSettingsDraft(observabilityKeyLoaded && observabilitySinkApiKeyDraft !== observabilityKeyBaseline.current, savingObservabilitySinkApiKey, () => setObservabilitySinkApiKeyDraft(observabilityKeyBaseline.current))
+  useSettingsDraft(observabilityKeyLoaded && observabilitySinkApiKeyDraft !== observabilityKeyBaseline.current, savingObservabilitySinkApiKey, () => setObservabilitySinkApiKeyDraft(observabilityKeyBaseline.current), observabilitySinkApiKeyDraft)
   const [runtimeLogPath, setRuntimeLogPath] = useState<string | null>(null)
   const [systemStatusNotificationStatus, setSystemStatusNotificationStatus] = useState<AndroidStatusNotificationPermissionStatus | null>(null)
   const controlView = 'system'
@@ -757,6 +760,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
     if (apkOperationRef.current) return
     const controller = new AbortController()
     apkOperationRef.current = controller
+    const finishManualCheck = beginManualApkUpdateCheck()
     const isCurrent = () => apkMountedRef.current && apkOperationRef.current === controller
     setCancellingApk(false)
     setApkUpdateStage('checking')
@@ -789,7 +793,9 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
       }
       setActiveApkRelease(result.release)
       dismissApkUpdateFeedback()
-      const confirmed = await confirmApkInstall(result.release)
+      const confirmed = await promptApkUpdate(result.release, result.currentVersion ?? getSettingsVersionSnapshot(), {
+        signal: controller.signal,
+      })
       if (!isCurrent()) return
       if (!confirmed) {
         dismissApkUpdateFeedback()
@@ -827,6 +833,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
         dialog.notice({ title: t('settings.apkUpdateFailed'), message: userFacingErrorDetail(error), tone: 'danger' })
       }
     } finally {
+      finishManualCheck()
       if (isCurrent()) {
         apkOperationRef.current = null
         setCancellingApk(false)
@@ -837,29 +844,21 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
     }
   }
 
-  function confirmApkInstall(release: ApkReleaseInfo) {
-    const variantLabel = release.variant ? t(`settings.apkVariant.${release.variant}`) : null
-    return dialog.confirm({
-      title: t('settings.installVersion', { version: release.version }),
-      message: t('settings.installConfirm'),
-      confirmLabel: t('settings.downloadAndInstall'),
-      cancelLabel: t('settings.later'),
-      tone: 'amber',
-      chips: [
-        { label: release.apkName, tone: 'mint' },
-        release.versionCode ? { label: t('settings.apkBuildCode', { code: release.versionCode }) } : null,
-        release.abi ? { label: t('settings.apkArchitecture', { abi: release.abi }) } : null,
-        variantLabel ? { label: variantLabel } : null,
-        release.sizeBytes ? { label: t('settings.apkSize', { size: formatSettingsApkSizeBytes(release.sizeBytes, t('updates.unknown')) }) } : null,
-        { label: release.tagName || release.name },
-      ].filter((chip): chip is { label: string; tone?: 'mint' } => Boolean(chip)),
-    })
-  }
-
   function toggleAutoCheck() {
     const next = !(settings.autoUpdateCheckEnabled ?? true)
     updateSettings({ autoUpdateCheckEnabled: next })
     dialog.toast({ title: next ? t('settings.autoCheckOn') : t('settings.autoCheckOff'), tone: next ? 'mint' : 'amber' })
+  }
+
+  async function toggleNeverRemindUpdates() {
+    const next = settings.neverRemindUpdates !== true
+    updateSettings({ neverRemindUpdates: next })
+    try {
+      await flushPersistedSettings()
+      dialog.toast({ title: t(next ? 'updates.remindersDisabled' : 'updates.remindersEnabled'), tone: next ? 'amber' : 'mint' })
+    } catch {
+      dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
+    }
   }
 
   async function toggleSystemStatusNotifications() {
@@ -1221,8 +1220,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{t('settings.backgroundMotion')}</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {BACKGROUND_MOTION_OPTIONS.map((item) => (
-                <IslePressable key={item.id} haptic accessibilityRole="radio" accessibilityState={{ checked: (settings.backgroundMotion ?? 'subtle') === item.id }} aria-checked={(settings.backgroundMotion ?? 'subtle') === item.id} onPress={() => updateSettings({ backgroundMotion: item.id })} style={settingsChipPressableStyle}>
-                  <IsleChip active={(settings.backgroundMotion ?? 'subtle') === item.id}>{t(item.labelKey)}</IsleChip>
+                <IslePressable key={item.id} haptic accessibilityRole="radio" accessibilityState={{ checked: backgroundEnvironment.motion === item.id }} aria-checked={backgroundEnvironment.motion === item.id} onPress={() => updateSettings({ backgroundMotion: item.id })} style={settingsChipPressableStyle}>
+                  <IsleChip active={backgroundEnvironment.motion === item.id}>{t(item.labelKey)}</IsleChip>
                 </IslePressable>
               ))}
             </View>
@@ -1811,6 +1810,13 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 />
               </View>
             </View>
+            <IsleToggle
+              icon={<AppIcon name="stop" color={colors.text} size={18} />}
+              title={t('settings.neverRemindUpdates')}
+              description={t('settings.neverRemindUpdatesDescription')}
+              active={settings.neverRemindUpdates === true}
+              onPress={() => void toggleNeverRemindUpdates()}
+            />
             {updateProgressDetail ? (
               <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.liquidGlass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.liquidGlass) }}>
                 <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{updateActionLabel}</Text>
@@ -1820,6 +1826,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                   showInfo={!updateProgressIndeterminate}
                   infoPosition="right"
                   indeterminate={updateProgressIndeterminate}
+                  accessibilityLabel={updateActionLabel}
                   style={{ marginTop: 8 }}
                 />
                 <Text style={{ marginTop: 4, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{updateProgressDetail}</Text>

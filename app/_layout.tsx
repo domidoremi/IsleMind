@@ -27,6 +27,7 @@ import { IsleDialogProvider } from '@/components/ui/isle'
 import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
 import { initI18n } from '@/i18n'
 import { GlobalGenerationStatusLayer } from '@/components/ui/GlobalGenerationStatusLayer'
+import { GlobalApkUpdatePrompt } from '@/components/updates/GlobalApkUpdatePrompt'
 import { GlobalSystemStatusNotificationLayer } from '@/components/ui/GlobalSystemStatusNotificationLayer'
 import {
   resolveAndroidNetworkRecovery,
@@ -80,7 +81,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <IsleThemeProvider>
-      <IsleDialogProvider updateNotice={boot.ready ? boot.updateNotice ?? qaUpdateMessage : null}>
+      <IsleDialogProvider updateNotice={boot.ready ? qaUpdateMessage : null}>
         {appReady ? (
           <Stack
             screenOptions={{
@@ -102,6 +103,7 @@ export default function RootLayout() {
         )}
         {boot.ready ? <GlobalSystemStatusNotificationLayer /> : null}
         {boot.ready ? <GlobalGenerationStatusLayer /> : null}
+        {appReady ? <GlobalApkUpdatePrompt update={boot.availableApkUpdate} /> : null}
         {boot.ready ? <AndroidNetworkRecoverySurface recovery={networkRecovery} /> : null}
       </IsleDialogProvider>
       </IsleThemeProvider>
