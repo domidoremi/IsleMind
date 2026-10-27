@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react'
 import type { TFunction } from 'i18next'
 
 import { stopConversationMessage } from '@/presentation/features/conversations/conversationControlCommand'
@@ -47,6 +47,14 @@ export function useChatActiveWorkspaceActions({
   t,
   updateConversation,
 }: ChatActiveWorkspaceActionOptions): ChatActiveWorkspaceActions {
+  const lifetime = useMemo(() => ({ controller: new AbortController() }), [activeConversation.id])
+  useEffect(() => {
+    const controller = new AbortController()
+    lifetime.controller.abort()
+    lifetime.controller = controller
+    return () => controller.abort()
+  }, [lifetime])
+
   const safeStopMessage = useCallback(async (conversationId: string) => {
     if (isConversationLocked(conversationId)) return false
     try {
@@ -82,8 +90,9 @@ export function useChatActiveWorkspaceActions({
   }, [dialog, onApplyStarter, t])
 
   const confirmActionFromMessage = useCallback((item: Message) => {
-    confirmActionForMessage({ conversationId: activeConversation.id, dialog, message: item, t })
-  }, [activeConversation.id, dialog, t])
+    if (lifetime.controller.signal.aborted) return
+    confirmActionForMessage({ conversationId: activeConversation.id, dialog, message: item, t, signal: lifetime.controller.signal })
+  }, [activeConversation.id, dialog, lifetime, t])
 
   return {
     confirmActionFromMessage,

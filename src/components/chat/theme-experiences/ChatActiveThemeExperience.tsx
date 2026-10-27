@@ -61,7 +61,7 @@ function MonetActiveExperience({ chrome, status, messageList, controls, composer
 function MaterialActiveExperience({ colors, chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
     <View testID="chat-active-experience-material" style={styles.root}>
-      <View style={styles.materialTopAppBar}>{chrome}</View>
+      {chrome}
       <View style={styles.materialStatusBand}>{status}</View>
       <View style={styles.materialCanvas}>
         <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.materialWorkspaceRail, { backgroundColor: colors.ui.actionBar.itemBorder }]} />
@@ -111,7 +111,6 @@ const styles = {
   monetMessageColumnCompact: {} as const,
   monetStatusDrift: {} as const,
   monetComposerDock: {} as const,
-  materialTopAppBar: { zIndex: 2, paddingBottom: 2 } as const,
   materialStatusBand: { paddingHorizontal: 4 } as const,
   materialCanvas: { flex: 1, position: 'relative', overflow: 'hidden' } as const,
   materialWorkspaceRail: { display: 'none' } as const,

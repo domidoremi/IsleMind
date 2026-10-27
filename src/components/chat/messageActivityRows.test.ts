@@ -14,6 +14,20 @@ const tool = (id: string, startedAt: number, status: ProcessTrace['status'] = 'r
 })
 beforeAll(async () => { await i18n.init({ lng: 'zh-CN', interpolation: { escapeValue: false }, resources: { 'zh-CN': { translation: zhCN } } }) })
 
+it('keeps a paused lifecycle visible without calling unsettled work running or successful', () => {
+  const lifecycle = transitionResponseLifecycle(createResponseLifecycle(100, 'working'), 'paused', 200, {
+    summary: 'The request cannot be admitted safely.',
+  })
+  const rows = collectMessageActivityRows({ ...message, responseLifecycle: lifecycle }, [
+    { ...tool('unsettled', 120), content: 'Partial receipt; no durable outcome.' },
+  ])
+  const pause = rows.find(row => row.kind === 'paused')
+  expect(pause).toMatchObject({ state: 'paused', details: [{ kind: 'summary', text: 'The request cannot be admitted safely.' }] })
+  expect(messageActivityLabel(pause!, i18n.t)).toBe(i18n.t('agentTasks.status.paused'))
+  expect(rows.find(row => row.id === 'trace:unsettled')?.state).toBe('incomplete')
+  expect(rows.some(row => row.state === 'running')).toBe(false)
+})
+
 it.each(['error', 'cancelled', 'done'] as const)('does not invent success from partial output and an end timestamp (%s)', status => {
   const trace = { ...tool('partial', 100), completedAt: 150, content: 'partial output' }
   expect(normalizeTraceStatuses([trace], status)[0].status).not.toBe('done')

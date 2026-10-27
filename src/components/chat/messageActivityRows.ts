@@ -1,11 +1,11 @@
 import type { ProcessTrace } from '@/core'
 import { sanitizeTraceDisplayText as safeActivityText } from '@/core'
-import { safeResponseLifecycleSummary } from '@/modules/conversations'
+import { isMessageResponseActive, safeResponseLifecycleSummary } from '@/modules/conversations'
 import type { Message, MessageResponseLifecycleEntry, ResponseLifecycleStage } from '@/types/chatContracts'
 import type { TFunction } from 'i18next'
 import { formatProcessTraceForDisplay, isAgentIntentTrace, isAgentPlanTrace, isAgentWorkflowEnvelopeTrace } from './tracePresentation'
 
-export type MessageActivityState = ProcessTrace['status'] | 'waiting' | 'incomplete'
+export type MessageActivityState = ProcessTrace['status'] | 'waiting' | 'incomplete' | 'paused'
 export type MessageActivityKind = ResponseLifecycleStage | 'command' | 'edit' | 'search' | 'retrieval' | 'tool' | 'tool_request'
 export interface MessageActivityDetail {
   kind: 'summary' | 'input' | 'output'
@@ -25,6 +25,7 @@ export interface MessageActivityRow {
 /** Project recorded events, not a fabricated checklist. A trace keeps its identity
  * when its result arrives, so expanding one activity never opens another one. */
 export function collectMessageActivityRows(message: Message, traces: ProcessTrace[]): MessageActivityRow[] {
+  const paused = message.responseLifecycle?.stage === 'paused'
   // Workflow bookkeeping uses the historical "reasoning" trace type too. It
   // is not model thinking and must not produce several meaningless "Completed"
   // rows (or leak its internal step/status text into a thinking disclosure).
@@ -33,7 +34,7 @@ export function collectMessageActivityRows(message: Message, traces: ProcessTrac
     isAgentWorkflowEnvelopeTrace(trace) || isNonExecutionTrace(trace) || (trace.type === 'reasoning' && trace.id.endsWith('-start') &&
       Boolean(trace.metadata?.toolName || trace.metadata?.toolId))).map(trace => trace.id))
   const visibleTraces = currentTraces.filter(trace => !trace.metadata?.hiddenSignature && trace.type !== 'system' && !internalTraceIds.has(trace.id))
-  const traceRows = new Map(visibleTraces.map(trace => [trace.id, activityForTrace(trace, message.status)]))
+  const traceRows = new Map(visibleTraces.map(trace => [trace.id, activityForTrace(trace, message.status, paused)]))
   const history = message.responseLifecycle?.history ?? []
   const rows: MessageActivityRow[] = []
   const linked = new Set<string>()
@@ -59,15 +60,17 @@ export function collectMessageActivityRows(message: Message, traces: ProcessTrac
       }
       continue
     }
-    const summary = entry.stage === 'thinking' ? safeActivitySummary(entry.summary) : undefined
+    const summary = entry.stage === 'thinking' || entry.stage === 'paused' ? safeActivitySummary(entry.summary) : undefined
     rows.push({
       id: `lifecycle:${entry.stage}:${entry.startedAt}:${entry.traceId ?? ''}`,
       kind: entry.stage,
-      state: next?.stage === 'error' || next?.stage === 'cancelled'
-        ? next.stage
-        : entry.completedAt !== undefined
-          ? 'done'
-          : unsettledState(message.status),
+      state: entry.stage === 'paused'
+        ? entry.completedAt !== undefined ? 'done' : 'paused'
+        : next?.stage === 'error' || next?.stage === 'cancelled'
+          ? next.stage
+          : entry.completedAt !== undefined
+            ? 'done'
+            : unsettledState(message.status, paused),
       startedAt: entry.startedAt,
       completedAt: entry.completedAt,
       details: summary ? [{ kind: 'summary', text: summary }] : [],
@@ -79,7 +82,10 @@ export function collectMessageActivityRows(message: Message, traces: ProcessTrac
   // Sort by start, never completion: a slow parallel command must not jump down
   // the list (or exchange disclosure state with a faster command) on completion.
   rows.sort((a, b) => (a.startedAt ?? message.startedAt ?? message.timestamp) - (b.startedAt ?? message.startedAt ?? message.timestamp))
-  if (!rows.length && (message.status === 'sending' || message.status === 'streaming')) {
+  if (paused && !rows.some(row => row.kind === 'paused')) {
+    rows.push({ id: 'pause', kind: 'paused', state: 'paused', details: [] })
+  }
+  if (!rows.length && isMessageResponseActive(message)) {
     rows.push({ id: 'request', kind: message.status === 'sending' ? 'preparing' : 'waiting', state: 'running', details: [] })
   }
   if ((message.status === 'error' || message.status === 'cancelled') && !rows.some(row => row.state === message.status)) {
@@ -131,12 +137,12 @@ function matchesLifecycleActivity(trace: ProcessTrace, entry: MessageResponseLif
     (next ? trace.startedAt < next.startedAt : entry.completedAt === undefined || trace.startedAt <= entry.completedAt)
 }
 
-function unsettledState(status: Message['status']): MessageActivityState {
+function unsettledState(status: Message['status'], paused = false): MessageActivityState {
   if (status === 'error' || status === 'cancelled') return status
-  return status === 'done' ? 'incomplete' : 'running'
+  return status === 'done' || paused ? 'incomplete' : 'running'
 }
 
-function activityForTrace(trace: ProcessTrace, messageStatus: Message['status']): MessageActivityRow {
+function activityForTrace(trace: ProcessTrace, messageStatus: Message['status'], paused: boolean): MessageActivityRow {
   const metadata = trace.metadata ?? {}
   const permissionPending = metadata.errorCode === 'permission_required' || metadata.code === 'permission_required' ||
     metadata.decision === 'confirm' || metadata.decision === 'ask'
@@ -144,7 +150,8 @@ function activityForTrace(trace: ProcessTrace, messageStatus: Message['status'])
     messageStatus === 'cancelled' && permissionPending
   const state: MessageActivityState = cancelled ? 'cancelled' : permissionPending ? 'waiting'
     : trace.status === 'running' || trace.status === 'pending'
-      ? messageStatus === 'streaming' || messageStatus === 'sending' ? trace.status : unsettledState(messageStatus)
+      ? paused ? unsettledState(messageStatus, true)
+        : messageStatus === 'streaming' || messageStatus === 'sending' ? trace.status : unsettledState(messageStatus)
       : trace.status
   const toolName = safeActivityText(metadata.toolName ?? metadata.toolId, 120)
   const kind = activityKind(trace, toolName)
@@ -186,6 +193,7 @@ function safeActivitySummary(value: unknown): string | undefined {
 }
 
 export function messageActivityLabel(row: MessageActivityRow, t: TFunction): string {
+  if (row.kind === 'paused') return t('agentTasks.status.paused')
   const active = row.state === 'running'
   const phase = active ? 'active' : row.state === 'done' ? 'done' : 'idle'
   const label = t(`messageBubble.activity.${row.kind}.${phase}`, { subject: row.subject ?? '' }).trim()

@@ -1,3 +1,5 @@
+import { isMessageResponseActive } from '@/modules/conversations'
+
 export interface GlobalGenerationStatus {
   conversationId: string
   conversationTitle: string
@@ -5,13 +7,12 @@ export interface GlobalGenerationStatus {
 }
 
 export function resolveGlobalGenerationStatus(
-  conversations: ReadonlyArray<{ id: string; title?: string; messages: ReadonlyArray<{ id: string; role: string; status?: string }> }>,
+  conversations: ReadonlyArray<{ id: string; title?: string; messages: ReadonlyArray<{ id: string; role: string; status?: string; responseLifecycle?: { stage?: string } }> }>,
   activeStreams: ReadonlyMap<string, boolean>,
 ): GlobalGenerationStatus | null {
   for (const conversation of conversations) {
     const message = conversation.messages.find((item) =>
-      item.role === 'assistant' &&
-      (item.status === 'streaming' || item.status === 'sending') &&
+      isMessageResponseActive(item) &&
       activeStreams.get(`${conversation.id}:${item.id}`) === true,
     )
     if (!message) continue

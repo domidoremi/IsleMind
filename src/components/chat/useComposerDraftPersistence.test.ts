@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react-native'
 import { useState } from 'react'
+import { Platform } from 'react-native'
 
 import type { ConversationComposerDraftPersistence } from '@/modules/conversations'
 import type { Attachment } from '@/types/chatContracts'
@@ -85,7 +86,7 @@ describe('useComposerDraftPersistence', () => {
 
     expect(result.current.content).toBe('Recovered text')
     expect(save).not.toHaveBeenCalled()
-    unmount()
+    await unmount()
   })
 
   it('does not overwrite text entered while hydration is pending', async () => {
@@ -98,7 +99,7 @@ describe('useComposerDraftPersistence', () => {
     await act(async () => pending.resolve({ key: 'conversation-1', content: 'Stale text', updatedAt: 1 }))
 
     expect(result.current.content).toBe('Newer text')
-    unmount()
+    await unmount()
   })
 
   it('debounces writes and clears only after the delay', async () => {
@@ -107,7 +108,7 @@ describe('useComposerDraftPersistence', () => {
 
     await act(async () => result.current.setDraft('First'))
     await act(async () => result.current.setDraft('Latest'))
-    act(() => jest.advanceTimersByTime(COMPOSER_DRAFT_PERSIST_DEBOUNCE_MS - 1))
+    await act(async () => jest.advanceTimersByTime(COMPOSER_DRAFT_PERSIST_DEBOUNCE_MS - 1))
     expect(save).not.toHaveBeenCalled()
 
     await act(async () => jest.advanceTimersByTime(1))
@@ -116,7 +117,40 @@ describe('useComposerDraftPersistence', () => {
 
     await act(async () => result.current.draft.clear())
     expect(remove).toHaveBeenCalledWith('conversation-1')
-    unmount()
+    await unmount()
+  })
+
+  it('protects browser reload until the latest draft is persisted, including a failed save', async () => {
+    const originalPlatform = Platform.OS
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+    const browser = new EventTarget()
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: browser })
+    Platform.OS = 'web'
+    const { result, unmount } = await renderHook(() => useHarness('conversation-1'))
+    const unload = () => {
+      const event = new Event('beforeunload', { cancelable: true })
+      browser.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    try {
+      await act(async () => undefined)
+      expect(unload()).toBe(false)
+      await act(async () => result.current.setDraft('Latest unsaved text'))
+      expect(unload()).toBe(true)
+      await act(async () => jest.advanceTimersByTime(COMPOSER_DRAFT_PERSIST_DEBOUNCE_MS))
+      expect(unload()).toBe(false)
+      save.mockRejectedValueOnce(new Error('storage unavailable'))
+      await act(async () => result.current.setDraft('Not saved'))
+      await act(async () => jest.advanceTimersByTime(COMPOSER_DRAFT_PERSIST_DEBOUNCE_MS))
+      expect(unload()).toBe(true)
+      await unmount()
+      expect(unload()).toBe(false)
+    } finally {
+      await unmount()
+      Platform.OS = originalPlatform
+      if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow)
+      else Reflect.deleteProperty(globalThis, 'window')
+    }
   })
 
 })

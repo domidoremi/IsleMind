@@ -26,17 +26,18 @@ export function MessageActivityTimeline({ rows, notice, maxHeight, motion, activ
   const { t } = useTranslation()
   // Show real preparation/tool steps until the answer takes the screen. A
   // user's choice after that transition survives subsequent streaming updates.
-  const autoExpanded = active && !replyStarted
+  const paused = rows.some(row => row.state === 'paused')
+  const autoExpanded = active && !replyStarted && !paused
   const [disclosure, setDisclosure] = useState<{ phase: boolean; expanded: boolean }>()
   const expanded = disclosure?.phase === autoExpanded ? disclosure.expanded : autoExpanded
-  const current = [...rows].reverse().find(row => row.state === 'running')
+  const current = paused ? undefined : [...rows].reverse().find(row => row.state === 'running')
   const hasDetails = rows.length > 1 || rows.some(row => row.details.length > 0)
-  const attention = rows.filter(row => row.state === 'error' || row.state === 'waiting' || row.state === 'incomplete')
+  const attention = rows.filter(row => row.state === 'error' || row.state === 'waiting' || row.state === 'incomplete' || row.state === 'paused')
   const cancelled = rows.some(row => row.state === 'cancelled')
   const failed = rows.filter(row => row.state === 'error').length
   const done = rows.filter(row => row.state === 'done').length
   const unfinished = rows.some(row => ['pending', 'incomplete', 'skipped'].includes(row.state))
-  const label = current ? messageActivityLabel(current, t)
+  const label = paused ? t('agentTasks.status.paused') : current ? messageActivityLabel(current, t)
     : failed ? t('messageBubble.activity.failed', { count: failed })
       : rows.some(row => row.state === 'waiting') ? t('messageBubble.activity.state.waiting')
         : cancelled ? t('messageBubble.activity.state.cancelled')
@@ -49,11 +50,11 @@ export function MessageActivityTimeline({ rows, notice, maxHeight, motion, activ
     <View testID="message-activity-timeline" onLayout={() => onLayoutChangeRequest?.()} style={{ width: '100%', minWidth: 0, marginBottom: 8, gap: 2 }}>
       {hasDetails ? <IslePressable testID="message-activity-toggle" haptic accessibilityRole="button"
         accessibilityLabel={t('messageBubble.process', { summary: label })} accessibilityHint={t(expanded ? 'messageBubble.activity.collapseHistory' : 'messageBubble.activity.expandHistory')}
-        accessibilityState={{ expanded, busy: active || Boolean(current) }}
+        accessibilityState={{ expanded, busy: !paused && (active || Boolean(current)) }}
         onPress={() => { setDisclosure({ phase: autoExpanded, expanded: !expanded }); onLayoutChangeRequest?.({ force: !expanded }) }}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: ISLE_MIN_TOUCH_TARGET }}>
         <AnimatedProcessStatusText label={label} active={Boolean(current)} tone={colors.textSecondary}
-          icon={current ? 'loader' : attention.length ? 'warning' : cancelled ? 'stop' : 'history'} motion={motion} grammar={grammar}
+          icon={current ? 'loader' : paused ? 'stop' : attention.length ? 'warning' : cancelled ? 'stop' : 'history'} motion={motion} grammar={grammar}
           statusMotionPhase={current?.kind === 'thinking' ? 'thinking' : 'active-stage'} stageStartedAt={current?.startedAt} />
         <AppIcon name={expanded ? 'collapse' : 'back-next'} color={colors.textTertiary} size={14} />
       </IslePressable> : null}
@@ -87,7 +88,7 @@ function MessageActivityItem({ row, maxHeight, motion, onLayoutChangeRequest }: 
   const label = messageActivityLabel(row, t)
   const tone = row.state === 'error' ? colors.error : active ? colors.textSecondary : colors.textTertiary
   const icon: AppIconName = row.state === 'error' ? 'warning'
-    : row.state === 'cancelled' || row.state === 'skipped' || row.state === 'incomplete' ? 'stop'
+    : row.state === 'cancelled' || row.state === 'skipped' || row.state === 'incomplete' || row.state === 'paused' ? 'stop'
       : row.state === 'waiting' ? 'shield'
         : row.kind === 'thinking' ? 'reasoning'
           : row.kind === 'command' ? 'command'

@@ -1,5 +1,5 @@
 import { fireEvent, render } from '@testing-library/react-native'
-import { StyleSheet, View } from 'react-native'
+import { Platform, StyleSheet, View } from 'react-native'
 
 import {
   ComposerOverlay,
@@ -137,6 +137,26 @@ const inputProps = {
 }
 
 describe('FloatingComposerSurfaces', () => {
+  it('only mounts editing actions that are visible in the current size', async () => {
+    const screen = await render(<MessageInput {...inputProps} />)
+    const input = screen.getByTestId('message-input')
+    expect(screen.queryByLabelText('Expand editor')).toBeNull()
+    expect(screen.queryByLabelText('Collapse editor')).toBeNull()
+    expect(screen.queryByLabelText('Undo')).toBeNull()
+    expect(screen.queryByText('120 characters')).toBeNull()
+
+    await screen.rerender(<MessageInput {...inputProps} sizeMode="review" reviewExpandVisible />)
+    expect(screen.getByLabelText('Expand editor')).toBeTruthy()
+    expect(screen.queryByLabelText('Collapse editor')).toBeNull()
+
+    await screen.rerender(<MessageInput {...inputProps} sizeMode="large" />)
+    expect(screen.queryByLabelText('Expand editor')).toBeNull()
+    expect(screen.getByLabelText('Collapse editor')).toBeTruthy()
+    expect(screen.getByLabelText('Undo')).toBeTruthy()
+    expect(screen.getByText('120 characters')).toBeTruthy()
+    expect(screen.getByTestId('message-input')).toBe(input)
+  })
+
   it('keeps the same native TextInput mounted while its geometry changes', async () => {
     const screen = await render(<MessageInput {...inputProps} />)
     const input = screen.getByTestId('message-input')
@@ -242,6 +262,51 @@ describe('FloatingComposerSurfaces', () => {
       .toBe(false)
     fireEvent.press(stopScreen.getByTestId('send-button'))
     expect(onStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps editor focus until a Web mouse press activates Send, without intercepting native presses', async () => {
+    const originalPlatform = Platform.OS
+    const onSend = jest.fn()
+    const preventDefault = jest.fn()
+    const button = (
+      <SendButton
+        visible
+        canSend
+        sending={false}
+        streaming={false}
+        hasSendableDraft
+        activityState="typing"
+        motion="none"
+        onSend={onSend}
+        colors={colors}
+        accessibilityLabel="Send message"
+        accessibilityHint="Send the current draft"
+      />
+    )
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' })
+    try {
+      const screen = await render(button)
+      await fireEvent(screen.getByTestId('send-button'), 'mouseDown', { button: 0, preventDefault })
+      expect(preventDefault).toHaveBeenCalledTimes(1)
+      expect(onSend).not.toHaveBeenCalled()
+      await fireEvent.press(screen.getByTestId('send-button'))
+      expect(onSend).toHaveBeenCalledTimes(1)
+
+      preventDefault.mockClear()
+      await fireEvent(screen.getByTestId('send-button'), 'mouseDown', { button: 2, preventDefault })
+      expect(preventDefault).not.toHaveBeenCalled()
+      await screen.unmount()
+
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' })
+      const native = await render(button)
+      await fireEvent(native.getByTestId('send-button'), 'mouseDown', { button: 0, preventDefault })
+      expect(preventDefault).not.toHaveBeenCalled()
+      await fireEvent.press(native.getByTestId('send-button'))
+      expect(onSend).toHaveBeenCalledTimes(2)
+      await native.unmount()
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform })
+    }
   })
 
   it('keeps Disabled, Send, and Sending semantics on one button', async () => {

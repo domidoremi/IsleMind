@@ -34,9 +34,10 @@ import { useMotionPreference } from '@/hooks/useMotionPreference'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage, getWorkflowRecoveryActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
 import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
+import { getPausedConversationResponseAction } from '@/presentation/features/conversations/pausedConversationResponseAction'
 import { clampTraceText, redactSensitiveText, relocalizeUserFacingError } from '@/core'
 import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
-import { safeResponseLifecycleTraceSummary } from '@/modules/conversations'
+import { isMessageResponseActive, safeResponseLifecycleTraceSummary } from '@/modules/conversations'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
 import { createProcessTraceSignature } from './messageTraceSignature'
@@ -82,6 +83,7 @@ export interface MessageBubbleProps {
   onRepairAgentEvidence?: (message: Message) => void
   onSaveWorkflowSkill?: (message: Message) => void
   onRetry?: (message: Message) => void
+  onResumePaused?: (message: Message) => Promise<void>
   onRegenerate?: () => void
   onSpeak?: (message: Message) => void
   onDelete?: (message: Message) => void
@@ -119,6 +121,7 @@ function MessageBubbleComponent({
   onRepairAgentEvidence,
   onSaveWorkflowSkill,
   onRetry,
+  onResumePaused,
   onRegenerate,
   onSpeak,
   onDelete,
@@ -141,7 +144,7 @@ function MessageBubbleComponent({
   const assistantDisplayName = resolveChatAssistantDisplayName(configuredAssistantDisplayName)
   const [localActionsOpen, setLocalActionsOpen] = useState(false)
   const isUser = message.role === 'user'
-  const isStreamingContent = !isUser && (message.status === 'streaming' || message.status === 'sending')
+  const isStreamingContent = !isUser && isMessageResponseActive(message)
   const liveStreamingTraceSnapshot = useChatStreamingStore((state) =>
     isStreamingContent ? state.streamingTraces.get(`${conversationId}:${message.id}`) : undefined
   )
@@ -250,6 +253,7 @@ function MessageBubbleComponent({
     onCopy || onSpeak || (isLastAssistant && onRegenerate),
   )
   const showInlineRetry = !isUser && (message.status === 'error' || message.status === 'cancelled') && !multiSelectActive && Boolean(onRetry)
+  const showInlineResume = !multiSelectActive && !!onResumePaused && !!getPausedConversationResponseAction(message)
   useEffect(() => {
     setLocalActionsOpen(false)
     if (activeActionMessageId === message.id) onActionMessageChange?.(null)
@@ -451,6 +455,9 @@ function MessageBubbleComponent({
         {showInlineRetry ? (
           <MessageInlineRetry motion={motion} onPress={() => onRetry?.(message)} />
         ) : null}
+        {showInlineResume && onResumePaused ? (
+          <MessageInlineResume motion={motion} onPress={() => onResumePaused(message)} />
+        ) : null}
         </View>
       </View>
     </View>
@@ -565,6 +572,65 @@ function formatMessageTimestamp(timestamp: number, locale?: string): string {
     const date = new Date(timestamp)
     return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
   }
+}
+
+function MessageInlineResume({ motion, onPress }: { motion: MotionIntensity; onPress: () => Promise<void> }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const [pending, setPending] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const locked = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+  async function resume() {
+    if (locked.current) return
+    locked.current = true
+    setPending(true)
+    setFailed(false)
+    try {
+      await onPress()
+    } catch {
+      if (mounted.current) setFailed(true)
+    } finally {
+      locked.current = false
+      if (mounted.current) setPending(false)
+    }
+  }
+  const label = t(pending ? 'messageBubble.resumePending' : 'messageBubble.resumePaused')
+  return (
+    <MotiView
+      from={motion === 'full' ? { opacity: 0, translateY: -3 } : undefined}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ type: 'timing', duration: motion === 'full' ? 176 : 1 }}
+      style={{ marginLeft: 32, marginTop: 4, alignSelf: 'flex-start', flexShrink: 1 }}
+    >
+      <IslePressable
+        haptic
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ disabled: pending, busy: pending }}
+        disabled={pending}
+        onPress={() => void resume()}
+        style={{
+          minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 13, paddingVertical: 8,
+          borderRadius: colors.ui.radius.controlMiddle, flexDirection: 'row', alignItems: 'center', gap: 7,
+          backgroundColor: colors.ui.actionBar.itemBackground,
+          borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.actionBar.itemBorder,
+        }}
+      >
+        <AppIcon name="retry" color={colors.textSecondary} size={14} strokeWidth={appIconStroke.strong} />
+        <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', flexShrink: 1 }}>
+          {label}
+        </Text>
+      </IslePressable>
+      {failed ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, lineHeight: 18 }}>
+        {t('messageBubble.resumeFailed')}
+      </Text> : null}
+    </MotiView>
+  )
 }
 
 function PendingActionQuickAction({ onPress }: { onPress: () => void }) {
@@ -732,7 +798,7 @@ function MessageBody({
           </MessageBodyReveal>
         ) : !isUser && !isStreamingContent && message.status !== 'cancelled' ? (
           <Text style={{ color: isUser ? userMessage.userForeground : colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
-            {t('messageBubble.emptyResponse')}
+            {t(message.responseLifecycle?.stage === 'paused' ? 'messageBubble.pausedResponse' : 'messageBubble.emptyResponse')}
           </Text>
         ) : isUser ? (
           <TypingDots motion={motion} />
@@ -1510,6 +1576,7 @@ const areMessagesEqual = (
   if (Boolean(prevProps.onBranch) !== Boolean(nextProps.onBranch)) return false
   if (Boolean(prevProps.onCreateDocument) !== Boolean(nextProps.onCreateDocument)) return false
   if (Boolean(prevProps.onReport) !== Boolean(nextProps.onReport)) return false
+  if (prevProps.onResumePaused !== nextProps.onResumePaused) return false
 
   return true
 }

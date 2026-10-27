@@ -14,7 +14,7 @@ import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { sendConversationMessage as sendMessage } from '@/presentation/features/conversations/conversationMessageCommand'
-import { getConversationMetrics } from '@/modules/conversations'
+import { getConversationMetrics, isMessageResponseActive } from '@/modules/conversations'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { Attachment, Conversation, Message } from '@/types/chatContracts'
 import { getConversationReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
@@ -149,7 +149,7 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
     t,
   })
   const metrics = useMemo(() => getConversationMetrics(runtimeConversation), [runtimeConversation])
-  const streamingMessage = runtimeConversation?.messages.find((message) => message.status === 'streaming')
+  const streamingMessage = runtimeConversation?.messages.find((message) => message.status === 'streaming' && isMessageResponseActive(message))
   const isStreaming = !!streamingMessage
   const runtimeConversationId = runtimeConversation?.id
   const runtimeConversationTitle = runtimeConversation?.title

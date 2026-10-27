@@ -1,6 +1,13 @@
 import { resolveGlobalGenerationStatus } from '../globalGenerationStatusState'
 
 describe('resolveGlobalGenerationStatus', () => {
+  it('does not turn a retained paused response and stale stream key into live generation', () => {
+    expect(resolveGlobalGenerationStatus([{
+      id: 'conversation-1', title: 'Paused',
+      messages: [{ id: 'assistant-1', role: 'assistant', status: 'streaming', responseLifecycle: { stage: 'paused' } }],
+    }], new Map([['conversation-1:assistant-1', true]]))).toBeNull()
+  })
+
   it('selects a live assistant stream without relying on the active page', () => {
     const status = resolveGlobalGenerationStatus([
       {

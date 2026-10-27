@@ -74,3 +74,101 @@ it.each([true, false])('an unavailable diff can only be declined or dismissed (d
   if (decline) await waitFor(() => expect(dialog.toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'agentTasks.code.confirmation_declined' })))
   else expect(dialog.toast).not.toHaveBeenCalled()
 })
+
+function reviewRun(): AssistantRun {
+  return { id: 'run', pendingModelOperation: {
+    operationId: 'edit', requestedAt: Date.now(), continuationState: { call: { operationId: 'edit', arguments: {} } },
+  } } as unknown as AssistantRun
+}
+
+it('does not enter confirmation from an expired chat lifetime', () => {
+  const lifetime = new AbortController()
+  lifetime.abort()
+  jest.mocked(confirmConversationAction).mockResolvedValueOnce(false)
+  confirmActionForMessage({ conversationId: 'qa', dialog, message, t, signal: lifetime.signal })
+  expect(confirmConversationAction).not.toHaveBeenCalled()
+  expect(dialog.confirm).not.toHaveBeenCalled()
+})
+
+it.each(['success', 'rejection'] as const)('ignores a late workspace preview %s after leaving the chat', async outcome => {
+  const lifetime = new AbortController()
+  let finish!: (diff: string) => void
+  let fail!: (error: Error) => void
+  let reviewed: unknown
+  jest.mocked(loadWorkspaceEditReview).mockReturnValueOnce(new Promise((resolve, reject) => { finish = resolve; fail = reject }))
+  jest.mocked(confirmConversationAction).mockImplementationOnce(async (_conversation, _message, review) => {
+    reviewed = await review!(reviewRun())
+    return reviewed === true
+  })
+  confirmActionForMessage({ conversationId: 'qa', dialog, message: { ...message, id: 'late-preview-' + outcome }, t, signal: lifetime.signal })
+  const pending = jest.mocked(confirmConversationAction).mock.results[0].value
+  const diffSignal = jest.mocked(loadWorkspaceEditReview).mock.calls[0][1]
+  lifetime.abort()
+  if (outcome === 'success') finish('Exact diff')
+  else fail(new Error('Preview unavailable'))
+  await pending
+  await Promise.resolve()
+  expect(diffSignal.aborted).toBe(true)
+  expect(reviewed).toBe(false)
+  expect(dialog.confirm).not.toHaveBeenCalled()
+  expect(dialog.toast).not.toHaveBeenCalled()
+})
+
+it.each(['approval', 'unavailable decline'] as const)('ignores a late %s dialog result after leaving the chat', async kind => {
+  const lifetime = new AbortController()
+  let finish!: (confirmed: boolean) => void
+  let reviewed: unknown
+  if (kind === 'approval') jest.mocked(loadWorkspaceEditReview).mockResolvedValueOnce('Exact diff')
+  else jest.mocked(loadWorkspaceEditReview).mockRejectedValueOnce(new Error('Preview unavailable'))
+  dialog.confirm.mockReturnValueOnce(new Promise<boolean>(resolve => { finish = resolve }))
+  jest.mocked(confirmConversationAction).mockImplementationOnce(async (_conversation, _message, review) => {
+    reviewed = await review!(reviewRun())
+    return true
+  })
+  confirmActionForMessage({ conversationId: 'qa', dialog, message: { ...message, id: 'late-dialog-' + kind }, t, signal: lifetime.signal })
+  await Promise.resolve()
+  await Promise.resolve()
+  const pending = jest.mocked(confirmConversationAction).mock.results[0].value
+  const signal = dialog.confirm.mock.calls[0][0].signal as AbortSignal | undefined
+  lifetime.abort()
+  finish(true)
+  await pending
+  await Promise.resolve()
+  expect(signal?.aborted).toBe(true)
+  expect(reviewed).toBe(false)
+  expect(dialog.toast).not.toHaveBeenCalled()
+})
+
+it('keeps an explicit refusal distinct from aborting the enclosing chat lifetime', async () => {
+  const lifetime = new AbortController()
+  let reviewed: unknown
+  jest.mocked(loadWorkspaceEditReview).mockResolvedValueOnce('Exact diff')
+  dialog.confirm.mockImplementationOnce(async options => {
+    options.renderBody().props.onPress()
+    expect(options.signal.aborted).toBe(true)
+    return false
+  })
+  jest.mocked(confirmConversationAction).mockImplementationOnce(async (_conversation, _message, review) => {
+    reviewed = await review!(reviewRun())
+    return reviewed === 'decline'
+  })
+  confirmActionForMessage({ conversationId: 'qa', dialog, message: { ...message, id: 'explicit-decline' }, t, signal: lifetime.signal })
+  await jest.mocked(confirmConversationAction).mock.results[0].value
+  expect(lifetime.signal.aborted).toBe(false)
+  expect(reviewed).toBe('decline')
+  await waitFor(() => expect(dialog.toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'agentTasks.code.confirmation_declined' })))
+})
+
+it.each(['completion', 'rejection'] as const)('does not emit a late resume %s toast after leaving the chat', async outcome => {
+  const lifetime = new AbortController()
+  let finish!: (confirmed: boolean) => void
+  let fail!: (error: Error) => void
+  jest.mocked(confirmConversationAction).mockReturnValueOnce(new Promise<boolean>((resolve, reject) => { finish = resolve; fail = reject }))
+  confirmActionForMessage({ conversationId: 'qa', dialog, message: { ...message, id: 'late-resume-' + outcome }, t, signal: lifetime.signal })
+  lifetime.abort()
+  if (outcome === 'completion') finish(true)
+  else fail(new Error('Late failure'))
+  await jest.mocked(confirmConversationAction).mock.results[0].value.catch(() => undefined)
+  await Promise.resolve()
+  expect(dialog.toast).not.toHaveBeenCalled()
+})

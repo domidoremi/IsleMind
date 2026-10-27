@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { Platform } from 'react-native'
 
 import {
   loadConversationComposerDraft,
@@ -52,6 +53,19 @@ export function useComposerDraftPersistence({
   attachmentsRef.current = attachments
   sendingRef.current = sending
   skipHydrationRef.current = skipHydration
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return
+    // Unload cannot await the debounce or an async storage write. Ask rather
+    // than silently restoring the previous draft after an immediate reload.
+    const prevent = (event: BeforeUnloadEvent) => {
+      if (!activeKeyRef.current || !dirtyRef.current) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', prevent)
+    return () => window.removeEventListener('beforeunload', prevent)
+  }, [])
 
   const clearPersistTimer = useCallback(() => {
     if (!persistTimerRef.current) return

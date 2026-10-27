@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import Animated, {
   Easing,
   interpolateColor,
@@ -515,7 +515,7 @@ export function MessageInput({
         focusStyle,
       ]}
     >
-      <AnimatedView
+      {sizeMode === 'large' ? <AnimatedView
         pointerEvents={sizeMode === 'large' ? 'auto' : 'none'}
         style={[styles.longDraftHeader, headerStyle]}
       >
@@ -525,7 +525,7 @@ export function MessageInput({
         >
           {tools.labels.characterCount}
         </Text>
-      </AnimatedView>
+      </AnimatedView> : null}
       <TextInput
         {...inputProps}
         ref={inputRef}
@@ -565,7 +565,7 @@ export function MessageInput({
           },
         ]}
       />
-      <AnimatedView
+      {sizeMode === 'review' && reviewExpandVisible ? <AnimatedView
         pointerEvents={
           sizeMode === 'review' && reviewExpandVisible ? 'auto' : 'none'
         }
@@ -591,8 +591,8 @@ export function MessageInput({
             {tools.labels.expand}
           </Text>
         </IslePressable>
-      </AnimatedView>
-      <AnimatedView
+      </AnimatedView> : null}
+      {sizeMode === 'large' ? <AnimatedView
         testID="composer-long-draft-toolbar"
         pointerEvents={sizeMode === 'large' ? 'auto' : 'none'}
         style={[
@@ -641,7 +641,7 @@ export function MessageInput({
             />
           ),
         })}
-      </AnimatedView>
+      </AnimatedView> : null}
     </AnimatedView>
   )
 }
@@ -734,6 +734,13 @@ export function SendButton({
   const enabled = !disabled && (stopMode || canSend)
   return (
     <AnimatedView
+      {...(Platform.OS === 'web' && enabled ? {
+        // Keep the editor focused until click: blur collapses the composer and
+        // moves Send away from the pointer before mouseup. Keyboard focus stays native.
+        onMouseDown: (event: MouseEvent) => {
+          if (event.button === 0) event.preventDefault()
+        },
+      } : {})}
       style={[
         styles.independentSurface,
         {

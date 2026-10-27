@@ -1,5 +1,6 @@
 import { StyleSheet } from 'react-native'
 import { fireEvent, render, within } from '@testing-library/react-native'
+import { MotiView } from 'moti'
 import { createInstance, type TFunction } from 'i18next'
 import en from '@/i18n/resources/en.json'
 import ja from '@/i18n/resources/ja.json'
@@ -14,7 +15,7 @@ jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (...args: Parame
 jest.mock('@/hooks/useAppTheme', () => ({
   useAppTheme: () => ({ colors: jest.requireActual('@/theme/colors').getColors('light', mockTheme), canonicalThemeId: mockTheme }),
 }))
-jest.mock('moti', () => ({ MotiView: () => null }))
+jest.mock('moti', () => ({ MotiView: jest.fn(() => null) }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke: {} }))
 
 const rows: MessageActivityRow[] = [
@@ -25,6 +26,59 @@ const rows: MessageActivityRow[] = [
 const props = { rows, maxHeight: 220, motion: 'none' as const }
 beforeAll(async () => { await i18n.init({ lng: 'zh-CN', resources: { en: { translation: en }, ja: { translation: ja }, 'zh-CN': { translation: zhCN } } }) })
 beforeEach(() => { mockT = i18n.getFixedT('zh-CN'); mockTheme = 'minimal' })
+
+it('keeps durable pause attention visible and static even with an obsolete active flag', async () => {
+  mockTheme = 'monet'
+  const shimmer = jest.mocked(MotiView)
+  shimmer.mockClear()
+  const interval = jest.spyOn(globalThis, 'setInterval')
+  const paused: MessageActivityRow[] = [
+    { id: 'prepare', kind: 'preparing', state: 'done', details: [] },
+    { id: 'pause', kind: 'paused', state: 'paused', details: [{ kind: 'summary', text: 'Capacity admission is paused.' }] },
+  ]
+  let view: Awaited<ReturnType<typeof render>> | undefined
+  try {
+    view = await render(<MessageActivityTimeline {...props} rows={paused} active replyStarted motion="full" />)
+    expect(view.getByTestId('message-activity-row-pause')).toBeTruthy()
+    expect(view.getAllByText(mockT('agentTasks.status.paused')).length).toBeGreaterThan(0)
+    expect(view.getByTestId('message-activity-toggle').props.accessibilityState.busy).toBe(false)
+    expect(shimmer).not.toHaveBeenCalled()
+    expect(interval).not.toHaveBeenCalled()
+  } finally {
+    await view?.unmount()
+    interval.mockRestore()
+  }
+})
+
+it.each(['reduced', 'none'] as const)('stops status shimmer and dot cycling with %s motion', async motion => {
+  mockTheme = 'monet'
+  jest.useFakeTimers()
+  const interval = jest.spyOn(globalThis, 'setInterval')
+  const clear = jest.spyOn(globalThis, 'clearInterval')
+  const shimmer = jest.mocked(MotiView)
+  shimmer.mockClear()
+  let view: Awaited<ReturnType<typeof render>> | undefined
+  try {
+    view = await render(<MessageActivityTimeline {...props} motion="full" />)
+    expect(shimmer).toHaveBeenCalled()
+    expect(shimmer.mock.calls[0][0].transition).toEqual(expect.objectContaining({ loop: true }))
+    expect(interval).toHaveBeenCalledWith(expect.any(Function), 520)
+    const cycleTimer = interval.mock.results[0].value
+    interval.mockClear()
+    shimmer.mockClear()
+
+    await view.rerender(<MessageActivityTimeline {...props} motion={motion} />)
+    expect(shimmer).not.toHaveBeenCalled()
+    expect(clear).toHaveBeenCalledWith(cycleTimer)
+    expect(interval).not.toHaveBeenCalled()
+    expect(view.getByText('正在使用 exec_command 运行命令...')).toBeTruthy()
+  } finally {
+    await view?.unmount()
+    interval.mockRestore()
+    clear.mockRestore()
+    jest.useRealTimers()
+  }
+})
 
 it('shows actual work before the answer, then collapses once the reply starts', async () => {
   const view = await render(<MessageActivityTimeline {...props} active replyStarted={false} />)

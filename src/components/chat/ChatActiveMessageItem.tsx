@@ -9,6 +9,7 @@ import type { MotionIntensity } from '@/theme/themeMotion'
 import {
   regenerateLastConversationAssistant,
   retryConversationMessage,
+  resumePausedConversationMessage,
 } from '@/presentation/features/conversations/conversationControlCommand'
 import { branchConversationFromMessage } from '@/presentation/features/conversations/conversationMessageActionCommand'
 import { speakText } from '@/services/speech'
@@ -184,6 +185,25 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
             dedupeKey: 'chat-regenerate-failed',
           })
         })}
+        onResumePaused={async item => {
+          try {
+            if (!await resumePausedConversationMessage(conversationId, item)) {
+              dialog.toast({
+                title: t('agentTasks.status.paused'),
+                message: t('messageBubble.resumeUnavailable'),
+                tone: 'warning',
+                dedupeKey: 'chat-resume-paused-unavailable',
+              })
+            }
+          } catch {
+            dialog.toast({
+              title: t('agentTasks.status.paused'),
+              message: t('messageBubble.resumeFailed'),
+              tone: 'danger',
+              dedupeKey: 'chat-resume-paused-failed',
+            })
+          }
+        }}
         onSpeak={(item) => void speakText(item.responseText ?? item.content, provider)}
         onQuote={quoteMessage}
         onBranch={isDraftConversation ? undefined : (item) => void confirmBranch(item).catch(() => {

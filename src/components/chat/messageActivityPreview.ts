@@ -7,6 +7,7 @@ import { collectMessageTraces, getActiveTraceStageLabel, getActiveTraceTitle } f
 const SYSTEM_STATUS_NOTIFICATION_PREVIEW_LIMIT = 96
 
 export function getMessageActivityLabel(message: Message, t: TFunction, assistantDisplayName?: string): string {
+  if (message.responseLifecycle?.stage === 'paused') return t('agentTasks.status.paused')
   const traces = collectMessageTraces(message)
   const active = message.status === 'streaming' || message.status === 'sending'
   if (assistantDisplayName && active && traces.length === 0) {
@@ -35,6 +36,7 @@ export function getAssistantThinkingLabel(assistantDisplayName: string, t: TFunc
 }
 
 function messageActivityStatusLabel(message: Message, t: TFunction): string {
+  if (message.responseLifecycle?.stage === 'paused') return t('agentTasks.status.paused')
   switch (message.status) {
     case 'sending':
       return t('chat.statusPreparing')

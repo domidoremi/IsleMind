@@ -175,30 +175,39 @@ export function confirmActionForMessage({
   dialog,
   message,
   t,
+  signal,
 }: {
   conversationId: string
   dialog: ChatMessageActionDialog
   message: Message
   t: TFunction
+  signal?: AbortSignal
 }) {
   const key = conversationId + ':' + message.id
-  if (reviewingActions.has(key)) return
+  if (signal?.aborted || reviewingActions.has(key)) return
   reviewingActions.add(key)
   let decision: boolean | 'decline' | undefined
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) abort()
   void confirmConversationAction(conversationId, message.id, async run => {
+    if (signal?.aborted) { decision = false; return false }
     const preview = agentConfirmationPreview(run)
     const pending = run.pendingModelOperation
     if (!preview || !pending || agentConfirmationExpiry(run, Date.now())?.expired) return false
-    const controller = new AbortController()
     let diff: string | undefined
     try { diff = await loadWorkspaceEditReview(pending, controller.signal) } catch {
+      if (signal?.aborted) { decision = false; return false }
       // An unavailable diff blocks approval, not the user's ability to refuse.
       const decline = await dialog.confirm({ title: t('agentTasks.confirmation'),
         message: [t('chat.workspacePreviewUnavailable'), preview.operation].join('\n\n'),
-        confirmLabel: t('agentTasks.decline'), cancelLabel: t('common.cancel'), tone: 'danger' })
+        confirmLabel: t('agentTasks.decline'), cancelLabel: t('common.cancel'), tone: 'danger', signal: controller.signal })
+      if (signal?.aborted) { decision = false; return false }
       decision = decline ? 'decline' : false
       return decision
     }
+    if (signal?.aborted || agentConfirmationExpiry(run, Date.now())?.expired) { decision = false; return false }
     let declined = false
     const approved = await dialog.confirm({
       title: t('agentTasks.confirmation'),
@@ -209,22 +218,30 @@ export function confirmActionForMessage({
       renderBody: () => createElement(IsleButton, { label: t('agentTasks.decline'),
         onPress: () => { declined = true; controller.abort() } }),
     })
+    // The explicit decline button aborts only its dialog, not the chat lifetime.
+    if (signal?.aborted) { decision = false; return false }
     decision = declined ? 'decline' : approved
     return decision
-  })
+  }, signal)
     .then((confirmed) => {
-      if (decision === false) return
+      if (signal?.aborted || decision === false) return
       dialog.toast({
         title: confirmed ? t(decision === 'decline' ? 'agentTasks.code.confirmation_declined' : 'messageBubble.confirmAgentActionQueued') : t('messageBubble.confirmAgentActionUnavailable'),
         tone: confirmed ? 'mint' : 'amber',
       })
     })
-    .catch((error) => dialog.toast({
-      title: t('messageBubble.confirmAgentActionFailed'),
-      message: userFacingErrorDetail(error) || t('messageBubble.confirmAgentActionFailedMessage'),
-      tone: 'danger',
-    }))
-    .finally(() => reviewingActions.delete(key))
+    .catch((error) => {
+      if (!signal?.aborted) dialog.toast({
+        title: t('messageBubble.confirmAgentActionFailed'),
+        message: userFacingErrorDetail(error) || t('messageBubble.confirmAgentActionFailedMessage'),
+        tone: 'danger',
+      })
+    })
+    .finally(() => {
+      signal?.removeEventListener('abort', abort)
+      controller.abort()
+      reviewingActions.delete(key)
+    })
 }
 
 export function saveWorkflowSkillFromMessage({

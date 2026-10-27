@@ -59,8 +59,8 @@ function MonetSetupExperience({ chrome, status, content, controls, composer }: C
 function MaterialSetupExperience({ colors, chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
   return (
     <View testID="chat-setup-experience-material" style={styles.root}>
+      {chrome}
       <View style={[styles.materialTopAppBar, { backgroundColor: colors.ui.semantic.surface.muted }]}>
-        {chrome}
         <View style={styles.materialStatusBand}>{status}</View>
       </View>
       <View style={styles.materialSetupCanvas}>
