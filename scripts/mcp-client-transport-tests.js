@@ -10,6 +10,7 @@ const originalResolve = Module._resolveFilename
 const originalLoad = Module._load
 const originalFetch = global.fetch
 const savedValues = []
+let persistedMcpServers = []
 const UNSAFE_SESSION_MARKER = 'sk-mcp-session-header-must-not-leak'
 
 registerTypeScriptSupport()
@@ -64,8 +65,11 @@ function registerTypeScriptSupport() {
     }
     if (request === '@/bootstrap/applicationDataRecords') {
       return {
-        readApplicationDataRecord: async () => [],
-        writeApplicationDataRecord: async (key, value) => savedValues.push({ key, value }),
+        readApplicationDataRecord: async () => persistedMcpServers,
+        writeApplicationDataRecord: async (key, value) => {
+          savedValues.push({ key, value })
+          if (key === 'MCP_SERVERS') persistedMcpServers = value
+        },
       }
     }
     if (request === '@/bootstrap/webSearchProviderRuntime') {
@@ -440,7 +444,8 @@ async function run() {
 
   try {
     const catalogDiscoveryController = new AbortController()
-    const refreshed = await refreshMcpManifest(streamableServer('catalog'), { signal: catalogDiscoveryController.signal })
+    persistedMcpServers = [streamableServer('catalog')]
+    const refreshed = await refreshMcpManifest(persistedMcpServers[0], { signal: catalogDiscoveryController.signal })
     assert.equal(refreshed.status, 'connected', 'Streamable HTTP manifest refresh succeeds after latest discovery')
     assert.equal(refreshed.version, '2026.7.28', 'manifest refresh retains the discovered server version')
     assert.equal(refreshed.tools.length, 2, 'manifest refresh fetches tool definitions after protocol negotiation')

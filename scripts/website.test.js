@@ -4,6 +4,7 @@ const YAML = require('yaml')
 const vm = require('node:vm')
 const { parse } = require('@babel/parser')
 const { transformTypeScriptModule } = require('./node-ts-support')
+const { assertReleaseVersionRelationship } = require('./release-version-contract')
 
 const root = path.resolve(__dirname, '..')
 const read = name => fs.readFileSync(path.join(root, name), 'utf8')
@@ -29,25 +30,27 @@ test('settings display keeps installed build identity and uses Expo versionCode 
   expect(snapshot().buildVersion).toBe(String(json('app.json').expo.android.versionCode))
 })
 
-test('source, update metadata, website and localized READMEs agree on the qualification version', () => {
+test('source identity stays separate from the APK candidate shown by metadata, website and READMEs', () => {
   const pkg = json('package.json')
   const app = json('app.json').expo
   const update = json('updates/android.json')
   const site = json('website/site-meta.json')
-  expect(app.version).toBe(pkg.version)
-  expect(update.versionName).toBe(pkg.version)
-  expect(site.version).toBe(pkg.version)
-  expect(json('website/package.json').version).toBe(pkg.version)
-  expect(update.versionCode).toBe(app.android.versionCode)
-  expect(site.versionCode).toBe(app.android.versionCode)
+  assertReleaseVersionRelationship(pkg, { expo: app }, update)
+  expect(site.version).toBe(update.versionName)
+  expect(json('website/package.json').version).toBe(site.version)
+  expect(site.versionCode).toBe(update.versionCode)
   expect(update.status).toBe('prerelease-qualification')
   expect(site.status).toBe(update.status)
   expect(update.assets).toEqual([])
   expect(update.publishedAt).toBeNull()
   expect(site.releaseDate).toBeNull()
+  expect(update.releaseUrl).toBe(`https://github.com/domidoremi/IsleMind/releases/tag/v${update.versionName}`)
   for (const name of ['README.md', 'README.zh.md', 'README.ja.md']) {
+    expect(read(name)).toContain(`| \`${update.versionName}\` |`)
+    expect(read(name)).toContain(`| \`${update.versionCode}\` |`)
     expect(read(name)).toContain(`\`${pkg.version}\``)
     expect(read(name)).toContain(`\`${app.android.versionCode}\``)
+    expect(read(name)).toContain(update.releaseUrl)
     expect(read(name)).not.toMatch(/releases\/download\//)
   }
 })
@@ -68,12 +71,14 @@ test('Pages uploads the static root through an explicit deployment, without APK 
 test('static assets resolve below the project-site base path and no unavailable binary is advertised', () => {
   const html = read('website/index.html')
   const script = read('website/main.js')
-  const pkg = json('package.json')
+  const site = json('website/site-meta.json')
   for (const match of `${html}\n${script}`.matchAll(/["'](\.\/[^"'<>\s]+)["']/g)) {
     expect(fs.existsSync(path.resolve(root, 'website', match[1]))).toBe(true)
   }
   expect(html).toContain('https://domidoremi.github.io/IsleMind/')
-  expect(html).toContain(`data-release-version>v${pkg.version}`)
+  expect(html).toContain(`data-release-version>v${site.version}`)
+  expect(html).toContain(`data-release-version-code>${site.versionCode}`)
+  expect(html).toContain(`releases/tag/v${site.version}`)
   expect(html).toContain('预览版 · 下载请查看 Release')
   expect(html).not.toMatch(/SOURCE QUALIFICATION|资格验证中|NOT READY/)
   expect(html).not.toMatch(/LATEST BUILD|>AVAILABLE<|下载 Android 版|releases\/download\//)

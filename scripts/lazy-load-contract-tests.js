@@ -16,7 +16,7 @@ const chatRouteSource = fs.readFileSync(
   'utf8',
 )
 const settingsScreenSource = fs.readFileSync(
-  path.join(root, 'src', 'components', 'main', 'SettingsScreenContent.tsx'),
+  path.join(root, 'src', 'components', 'settings', 'SystemSettingsPanelContent.tsx'),
   'utf8',
 )
 const runtimeDiagnosticsDetailsSource = fs.readFileSync(
@@ -37,6 +37,14 @@ const androidStatusNotificationBootstrapSource = fs.readFileSync(
 )
 const globalSystemStatusNotificationSource = fs.readFileSync(
   path.join(root, 'src', 'components', 'ui', 'GlobalSystemStatusNotificationLayer.tsx'),
+  'utf8',
+)
+const globalApkUpdatePromptSource = fs.readFileSync(
+  path.join(root, 'src', 'components', 'updates', 'GlobalApkUpdatePrompt.tsx'),
+  'utf8',
+)
+const apkUpdatePromptSource = fs.readFileSync(
+  path.join(root, 'src', 'components', 'updates', 'useApkUpdatePrompt.tsx'),
   'utf8',
 )
 const lazyFactory = lazyLoadSource.match(
@@ -152,6 +160,16 @@ assert.doesNotMatch(
   settingsScreenSource,
   /^import (?!type\b).*from ['"](?:expo-(?:clipboard|sharing)|@\/(?:bootstrap\/pluginManifest|platform\/native\/(?:androidApkUpdates|runtimeLog)|bootstrap\/androidStatusNotification|store\/chatStore))['"]\s*$/gm,
   'Settings does not statically evaluate low-frequency native and diagnostics modules',
+)
+assert.match(
+  globalApkUpdatePromptSource,
+  /await import\('@\/platform\/native\/androidApkUpdates'\)/,
+  'automatic update installation keeps the native implementation behind explicit confirmation',
+)
+assert.doesNotMatch(
+  `${globalApkUpdatePromptSource}\n${apkUpdatePromptSource}`,
+  /^import (?!type\b).*from ['"]@\/platform\/native\/androidApkUpdates['"]\s*$/gm,
+  'update reminder presentation does not eagerly evaluate native APK installation',
 )
 assert.doesNotMatch(
   `${androidStatusNotificationSource}\n${androidStatusNotificationBootstrapSource}`,

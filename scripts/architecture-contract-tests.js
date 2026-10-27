@@ -595,10 +595,10 @@ async function testSettingsStorePersistence(settingsModule, providerModule, comm
   const bootstrapHookSource = fs.readFileSync(path.join(repositoryRoot, 'src/hooks/useBootstrap.ts'), 'utf8')
   assert.equal(settingsStoreSource.includes("@/services/storage"), false, 'settings store cannot restore the legacy storage facade')
   assert.ok(settingsStoreSource.includes('settingsStorePersistenceCommand'), 'settings store consumes the fail-closed presentation command')
-  assert.ok(bootstrapSource.includes("loadApplicationDataRecord<unknown>('SETTINGS')"), 'bootstrap preserves null-on-read-failure settings compatibility')
-  assert.ok(bootstrapSource.includes("loadApplicationDataRecord<unknown>('PROVIDERS')"), 'bootstrap preserves null-on-read-failure provider metadata compatibility')
-  assert.ok(bootstrapSource.includes("saveApplicationDataRecord('SETTINGS'"), 'bootstrap preserves no-throw settings writes')
-  assert.ok(bootstrapSource.includes("saveApplicationDataRecord('PROVIDERS'"), 'bootstrap preserves no-throw provider metadata writes')
+  assert.ok(bootstrapSource.includes("readApplicationDataRecord<unknown>('SETTINGS')"), 'bootstrap distinguishes missing settings from a failed read')
+  assert.ok(bootstrapSource.includes("readApplicationDataRecord<unknown>('PROVIDERS')"), 'bootstrap distinguishes missing providers from a failed read')
+  assert.ok(bootstrapSource.includes("writeApplicationDataRecord('SETTINGS'"), 'bootstrap propagates settings write failure to Save and Retry')
+  assert.ok(bootstrapSource.includes("writeApplicationDataRecord('PROVIDERS'"), 'bootstrap propagates provider metadata write failure to Save and Retry')
   assert.match(
     bootstrapHookSource,
     /initializeConversationStorePersistence\(\)[\s\S]*?initializeSettingsStorePersistence\(\)[\s\S]*?safeBootstrap\(st\('bootstrap\.settings'\), loadSettings\)/,
@@ -6020,8 +6020,8 @@ async function testConversationMemoryExtractionRuntime(runtimeModule) {
   )
   assert.match(
     bootstrapSource,
-    /memoryEnabled: useSettingsStore\.getState\(\)\.settings\.memoryEnabled === true/,
-    'bootstrap preserves the outer memory-admission settings read',
+    /settings: snapshotPlainData\(input\.settings \?\? useSettingsStore\.getState\(\)\.settings\)[\s\S]*const memoryEnabled = settings\.memoryEnabled === true[\s\S]*settings,[\s\S]*memoryEnabled,/,
+    'bootstrap captures one supplied-or-live settings snapshot before memory lifecycle admission',
   )
   assert.match(
     bootstrapSource,

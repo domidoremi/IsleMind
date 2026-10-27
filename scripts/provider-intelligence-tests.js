@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const Module = require('node:module')
 const path = require('node:path')
 const { transformTypeScriptModule } = require('./node-ts-support')
+const { assertReleaseVersionRelationship } = require('./release-version-contract')
 
 const root = path.resolve(__dirname, '..')
 const LEGACY_PORTABLE_IMPORT_RECOVERY_ENVELOPE_STORAGE_KEY =
@@ -609,7 +610,9 @@ Module._load = function loadWithMocks(request, parent, isMain) {
               })
           }
           if (/FROM memories/i.test(sql)) {
-            return [...contextMemoryRows]
+            return /WHERE status IN/i.test(sql)
+              ? contextMemoryRows.filter((row) => args.includes(row.status))
+              : [...contextMemoryRows]
           }
           if (/FROM knowledge_documents/i.test(sql)) {
             return [...contextKnowledgeDocuments]
@@ -2931,22 +2934,13 @@ function assertReleaseVersionsAligned() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   const appJson = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
   const androidUpdateManifest = JSON.parse(fs.readFileSync(path.join(root, 'updates/android.json'), 'utf8'))
-  assert.equal(appJson.expo.version, packageJson.version, 'app.json version follows package.json')
-  assert.ok(
-    androidUpdateManifest.versionCode <= appJson.expo.android.versionCode,
-    'the last installable Android APK manifest never points beyond the current app build',
-  )
-  if (androidUpdateManifest.versionCode === appJson.expo.android.versionCode) {
-    assert.equal(androidUpdateManifest.versionName, packageJson.version, 'a current-build APK manifest follows package.json version')
-  }
+  assertReleaseVersionRelationship(packageJson, appJson, androidUpdateManifest)
   assert.equal(
     androidUpdateManifest.releaseUrl,
     `https://github.com/domidoremi/IsleMind/releases/tag/v${androidUpdateManifest.versionName}`,
     'Android APK update manifest points at its own installable release tag',
   )
   if (androidUpdateManifest.status === 'prerelease-qualification') {
-    assert.equal(androidUpdateManifest.versionName, packageJson.version, 'qualification metadata follows the source version')
-    assert.equal(androidUpdateManifest.versionCode, appJson.expo.android.versionCode, 'qualification metadata follows the source build')
     assert.equal(androidUpdateManifest.publishedAt, null, 'an unqualified APK has no publication timestamp')
     assert.deepEqual(androidUpdateManifest.assets, [], 'qualification metadata must not advertise production APKs')
   } else {
@@ -6197,6 +6191,11 @@ async function assertMcpRuntimeLogging() {
     createdAt: 1,
     updatedAt: 1,
   }
+  const unsupportedRuntimeMcpServer = {
+    ...invalidRuntimeMcpServer,
+    url: 'https://mcp-runtime.example.test/mcp',
+    transport: 'websocket',
+  }
   const originalFetchForInvalidMcp = global.fetch
   try {
     global.fetch = async () => {
@@ -6205,8 +6204,13 @@ async function assertMcpRuntimeLogging() {
     const invalidMcpCallResult = await callMcpTool(invalidRuntimeMcpServer, 'read_remote_fixture', {})
     assert.equal(invalidMcpCallResult.observation.ok, false, 'MCP runtime rejects invalid non-web server URLs before execution')
     assert.equal(invalidMcpCallResult.observation.status, 'skipped', 'invalid MCP runtime URLs fail closed before tool execution')
-    const invalidMcpRefreshResult = await refreshMcpManifest(invalidRuntimeMcpServer)
-    assert.equal(invalidMcpRefreshResult.status, 'error', 'manifest refresh rejects invalid non-web MCP server URLs before fetch')
+    await assert.rejects(
+      () => refreshMcpManifest(invalidRuntimeMcpServer),
+      (error) => error.name === 'McpCatalogConflictError' && error.serverId === invalidRuntimeMcpServer.id,
+      'an invalid server cannot bypass canonical MCP catalog admission',
+    )
+    const unsupportedMcpRefreshResult = await refreshMcpManifest(unsupportedRuntimeMcpServer)
+    assert.equal(unsupportedMcpRefreshResult.status, 'error', 'unsupported manifest transports fail closed before fetch')
   } finally {
     global.fetch = originalFetchForInvalidMcp
   }
@@ -6219,7 +6223,7 @@ async function assertMcpRuntimeLogging() {
   assert.ok(toolCallEntry, 'MCP tool failures append runtime log entries')
   assert.equal(toolCallEntry.status, 'skipped', 'MCP tool runtime log records skipped boundary failures')
   assert.equal(toolCallEntry.serverId, 'mcp-runtime-invalid', 'MCP tool runtime log records the server id')
-  const refreshEntry = entries.find((entry) => entry.event === 'mcp.operation' && entry.phase === 'manifest_refresh' && entry.detail === 'non_http_server_url')
+  const refreshEntry = entries.find((entry) => entry.event === 'mcp.operation' && entry.phase === 'manifest_refresh' && entry.detail === 'unsupported_transport')
   assert.ok(refreshEntry, 'MCP manifest refresh failures append runtime log entries')
   assert.equal(refreshEntry.status, 'skipped', 'MCP manifest runtime log records skipped boundary failures')
 
@@ -6232,7 +6236,11 @@ async function assertMcpRuntimeLogging() {
       throw new Error('invalid MCP URLs must not reach fetch')
     }
     await callMcpTool(invalidRuntimeMcpServer, 'read_remote_fixture', {})
-    await refreshMcpManifest(invalidRuntimeMcpServer)
+    await assert.rejects(
+      () => refreshMcpManifest(invalidRuntimeMcpServer),
+      (error) => error.name === 'McpCatalogConflictError' && error.serverId === invalidRuntimeMcpServer.id,
+    )
+    await refreshMcpManifest(unsupportedRuntimeMcpServer)
   } finally {
     global.fetch = originalFetchForDisabledMcp
   }
@@ -11008,6 +11016,7 @@ async function assertContextStorePersistenceBehavior() {
   await importMemoriesForReview([{
     id: 'remote-context-duplicate',
     content: 'Context persistence retrieval ranking evidence.',
+    conversationId: 'context-store-conversation',
     status: 'pending',
     sourceKind: 'imported',
     sourceDetail: 'mem0:user_id=context-store',
@@ -11022,6 +11031,35 @@ async function assertContextStorePersistenceBehavior() {
   assert.equal(merged[0].conversationId, 'context-store-conversation', 'target memory import retains conversation attribution')
   assert.equal(merged[0].confidence, 0.91, 'target memory import keeps the strongest confidence')
   assert.equal(merged[0].sourceDetail.includes('mem0:user_id=context-store'), true, 'target memory import merges provenance details')
+
+  await importMemoriesForReview([{
+    id: 'untrusted-active-memory',
+    content: 'Imported review status cannot grant retrieval permission.',
+    status: 'active',
+    sourceKind: 'imported',
+    confidence: 0.99,
+    lastConfirmedAt: 9000,
+    lastHitAt: 9000,
+    createdAt: 3000,
+    updatedAt: 4000,
+  }])
+  const pendingImport = (await exportContextSnapshot()).memories.find(memory => memory.id === 'untrusted-active-memory')
+  assert.equal(pendingImport?.status, 'pending', 'external active metadata cannot bypass local memory review')
+  assert.equal(pendingImport?.lastConfirmedAt, undefined, 'import cannot claim local confirmation')
+  assert.equal(pendingImport?.lastHitAt, undefined, 'import cannot claim a local retrieval hit')
+  assert.equal((await searchMemories('Imported review status', 5, ['active'])).some(hit => hit.id === 'untrusted-active-memory'), false, 'unreviewed imports stay outside active retrieval')
+
+  const disabledImportBaseline = await addMemory('The locally disabled import remains disabled.', undefined, 'disabled')
+  await importMemoriesForReview([{
+    id: 'remote-disabled-duplicate',
+    content: 'The locally disabled import remains disabled.',
+    status: 'active',
+    sourceKind: 'imported',
+    createdAt: 3000,
+    updatedAt: 4000,
+  }])
+  const disabledAfterImport = (await exportContextSnapshot()).memories.find(memory => memory.id === disabledImportBaseline.id)
+  assert.equal(disabledAfterImport?.status, 'disabled', 'review import preserves an existing local disable choice')
 
   const snapshot = await exportContextSnapshot()
   assert.equal(snapshot.documents[0]?.contentHash, 'snapshot-content-hash', 'target snapshot persistence preserves document content hashes')
@@ -14533,7 +14571,7 @@ async function assertProviderConversationAdmissionRuntimeBehavior() {
   const replyStartSource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts'), 'utf8')
   assert.match(
     bootstrapSource,
-    /createProviderConversationAdmissionRuntime<ReturnType<typeof getModelConfig>>\(\{[\s\S]*?providerHasModel: providerHasPolicyModel,[\s\S]*?async hydrateProviderKey\(providerId, signal\)[\s\S]*?if \(signal\.aborted\) return null[\s\S]*?hydrateProviderKey\(providerId\)[\s\S]*?signal\.aborted \? null : provider[\s\S]*?getProviderConfigIssue,[\s\S]*?resolveProviderModelAlias,[\s\S]*?getModelConfig,[\s\S]*?resolveGenerationRequest: resolveConversationGenerationParameterRequest,/,
+    /createProviderConversationAdmissionRuntime<ReturnType<typeof getModelConfig>>\(\{[\s\S]*?providerHasModel: providerHasPolicyModel,[\s\S]*?async hydrateProviderKey\(providerId, signal, configuration\)[\s\S]*?if \(signal\.aborted\) return null[\s\S]*?hydrateProviderKey\(providerId, \{[\s\S]*?\.\.\.configuration, signal,[\s\S]*?signal\.aborted \? null : provider[\s\S]*?getProviderConfigIssue,[\s\S]*?resolveProviderModelAlias,[\s\S]*?getModelConfig,[\s\S]*?resolveGenerationRequest: resolveConversationGenerationParameterRequest,/,
     'bootstrap composes provider admission and bounds credential hydration with the caller signal',
   )
   assert.match(
@@ -14543,7 +14581,7 @@ async function assertProviderConversationAdmissionRuntimeBehavior() {
   )
   assert.match(
     replyStartSource,
-    /const settingsState = dependencies\.getProviderSettingsState\(\)[\s\S]*?await dependencies\.providerAdmissionRuntime\.admit\(\{\s*conversationId: input\.conversationId,\s*assistantMessageId: assistantMessage\.id,\s*conversation,\s*providers: settingsState\.providers,\s*settings: settingsState\.settings,\s*signal: requestController\.signal,[\s\S]*?if \(admission\.kind !== 'ready'\)/,
+    /const settingsState = snapshotPlainData\(dependencies\.getProviderSettingsState\(\)\)[\s\S]*?await dependencies\.providerAdmissionRuntime\.admit\(\{\s*conversationId: input\.conversationId,\s*assistantMessageId: assistantMessage\.id,\s*conversation,\s*providers: settingsState\.providers,\s*settings: settingsState\.settings,\s*signal: requestController\.signal,[\s\S]*?if \(admission\.kind !== 'ready'\)/,
     'Assistant Runtime captures one settings snapshot and delegates exact identities to provider admission',
   )
   assert.doesNotMatch(replyStartSource, /\b(?:buildSetupGuide|createProviderCompatibilityTrace|conversationProviderAdmissionRuntime)\b/, 'reply-start sequencing does not own terminal admission mapping or compatibility traces')
@@ -14553,14 +14591,15 @@ async function assertProviderConversationAdmissionRuntimeBehavior() {
     /function (?:resolveRuntimeGenerationParameterConversation|finishWithRuntimeResolutionError)\b|from ['"]@\/services\/chatRuntimeResolution['"]/,
     'private and service provider-admission compatibility helpers cannot return',
   )
-  assert.match(moduleSource, /if \(input\.signal\.aborted\) return \{ kind: 'cancelled' \}[\s\S]*?await dependencies\.hydrateProviderKey\(resolvedProvider\.id, input\.signal\)[\s\S]*?\n\s*\}\s*\n\s*if \(input\.signal\.aborted\) return \{ kind: 'cancelled' \}/, 'provider admission checks cancellation before and after hydration')
-  assert.match(moduleSource, /catch \{[\s\S]*?if \(input\.signal\.aborted\) return \{ kind: 'cancelled' \}[\s\S]*?kind: 'failed',[\s\S]*?reason: 'provider_hydration_failed',[\s\S]*?code: 'unknown',[\s\S]*?providerId: resolvedProvider\.id,/, 'provider admission converts hydration exceptions into typed outcomes without leaking raw errors')
+  assert.match(moduleSource, /if \(input\.signal\.aborted\) return \{ kind: 'cancelled' \}[\s\S]*?await dependencies\.hydrateProviderKey\(resolvedProvider\.id, input\.signal, \{[\s\S]*?settings: input\.settings, providers: input\.providers,[\s\S]*?\}\)\)[\s\S]*?\n\s*\}\s*\n\s*if \(input\.signal\.aborted\) return \{ kind: 'cancelled' \}/, 'provider admission checks cancellation and forwards the captured configuration before and after hydration')
+  assert.match(moduleSource, /catch \(error\) \{[\s\S]*?if \(input\.signal\.aborted\) return \{ kind: 'cancelled' \}[\s\S]*?if \(error instanceof Error && error\.name === 'AbortError'\) return \{ kind: 'cancelled' \}[\s\S]*?kind: 'failed',[\s\S]*?reason: 'provider_hydration_failed',[\s\S]*?code: 'unknown',[\s\S]*?providerId: resolvedProvider\.id,/, 'provider admission converts hydration exceptions into typed outcomes without leaking raw errors')
 
   const effects = []
   let modelValid = true
   let hydratedProvider
   let configIssue = null
   let hydrationSignal
+  let hydrationConfiguration
   let hydrationPromise
   let hydrationError
   let generationRequest
@@ -14571,9 +14610,10 @@ async function assertProviderConversationAdmissionRuntimeBehavior() {
       effects.push(['model', provider, model, settings])
       return modelValid
     },
-    async hydrateProviderKey(providerId, signal) {
+    async hydrateProviderKey(providerId, signal, configuration) {
       effects.push(['hydrate', providerId, signal])
       hydrationSignal = signal
+      hydrationConfiguration = configuration
       if (hydrationError) throw hydrationError
       if (hydrationPromise) return await hydrationPromise
       return hydratedProvider
@@ -14650,6 +14690,8 @@ async function assertProviderConversationAdmissionRuntimeBehavior() {
   assert.equal(ready.modelConfig, modelConfig)
   assert.deepEqual(effects.map(([kind]) => kind), ['model', 'hydrate', 'config', 'alias', 'model-config', 'generation'])
   assert.equal(hydrationSignal, admissionController.signal, 'admission passes the exact caller signal through credential hydration')
+  assert.equal(hydrationConfiguration.settings, settings, 'hydration receives admitted settings without a store reread')
+  assert.deepEqual(hydrationConfiguration.providers, [provider], 'hydration receives the captured provider catalog')
   assert.equal(generationInput.settings, settings, 'generation shaping uses the captured settings snapshot')
   assert.equal(generationInput.provider, provider, 'generation shaping uses the hydrated provider identity')
   assert.equal(generationInput.model, 'upstream-model')
@@ -14805,6 +14847,28 @@ async function assertProviderConversationAdmissionRuntimeBehavior() {
   }, 'changed generation values shallow-copy only normalized fields')
   assert.equal(normalized.conversation.messages, conversation.messages, 'generation normalization preserves nested conversation identity')
   assert.equal(provider.models.length, 1, 'provider admission does not mutate frozen provider inputs')
+
+  const blockedAdmission = createProviderConversationAdmissionRuntime({
+    resolveExecution: async () => ({ kind: 'blocked', reason: 'provider_cooldown' }),
+  })
+  const cooldown = await blockedAdmission.admitConversation({
+    conversation, providers: [provider], settings, signal: admissionController.signal,
+  })
+  assert.deepEqual(cooldown, {
+    kind: 'rejected',
+    reason: 'provider_cooldown',
+    code: 'provider_cooldown',
+    providerId: provider.id,
+    messageKey: 'messageBubble.errorDescription.provider_cooldown',
+    fallback: 'Recent failures triggered a cooldown. Wait a moment and retry; your preferred model has not changed.',
+  }, 'cooldown admission preserves a localized operational error instead of invalidating the model')
+  for (const language of ['zh-CN', 'en', 'ja']) {
+    const bundle = JSON.parse(fs.readFileSync(path.join(root, 'src/i18n/resources', `${language}.json`), 'utf8'))
+    const translate = key => key.split('.').reduce((value, part) => value?.[part], bundle) ?? key
+    const localized = relocalizeUserFacingError(cooldown.fallback, cooldown.code, translate)
+    assert.equal(localized, `${bundle.messageBubble.error.provider_cooldown}\n${bundle.messageBubble.errorDescription.provider_cooldown}`)
+    assert.equal(userFacingErrorCodeKey(cooldown.code), 'messageBubble.error.provider_cooldown')
+  }
 
   await assertProviderConversationAdmissionChatProjection()
   await assertMcpConversationContextChatProjection()
@@ -15328,14 +15392,16 @@ async function assertAssistantConversationContextAcquisitionRuntimeBehavior() {
   const createHarness = (overrides = {}) => {
     const state = { events: [], inputs: {}, traces: [], failures: [], cancelChecks: 0 }
     const runtime = createAssistantConversationContextAcquisitionRuntime({
-      async listFallbackProviders() {
+      async listFallbackProviders(options) {
         state.events.push('providers')
+        state.inputs.providerOptions = options
         if (overrides.providerFailure) throw new Error('provider listing failed')
         if (overrides.abortAfterProviders) overrides.abortAfterProviders()
         return fallbackProviders
       },
-      getKnowledgeSettings() {
+      getKnowledgeSettings(inputSettings) {
         state.events.push('knowledge-settings')
+        assert.equal(inputSettings, settings, 'Knowledge selection uses admitted settings')
         return knowledgeSettings
       },
       async resolveKnowledgeContext(input) {
@@ -15386,13 +15452,15 @@ async function assertAssistantConversationContextAcquisitionRuntimeBehavior() {
   assert.equal(successOutcome.webSources, webSources, 'context acquisition preserves external-web source identity')
   assert.equal(successOutcome.mcpContext, mcpContext, 'context acquisition preserves MCP context identity')
   assert.deepEqual(success.state.events, [
-    'providers', 'knowledge-settings', 'knowledge', 'cancel:1',
-    'search-mode', 'web-empty', 'mcp', 'cancel:2',
+    'cancel:1', 'knowledge-settings', 'providers', 'cancel:2', 'knowledge', 'cancel:3',
+    'search-mode', 'web-empty', 'mcp', 'cancel:4',
     'trace:mcp-trace-1', 'trace:mcp-trace-2',
   ], 'context acquisition preserves provider, Knowledge, search-mode, MCP, and trace order without a hidden web request')
   assert.equal(success.state.inputs.knowledge.conversation, runtimeConversation, 'Knowledge receives the exact admitted conversation')
   assert.equal(success.state.inputs.knowledge.userMessage, lastUserMessage, 'Knowledge receives the exact latest user message')
-  assert.equal(success.state.inputs.knowledge.settings, knowledgeSettings, 'Knowledge receives a fresh settings snapshot')
+  assert.equal(success.state.inputs.knowledge.settings, knowledgeSettings, 'Knowledge receives settings selected before provider awaits')
+  assert.equal(success.state.inputs.knowledge.provider, provider, 'Knowledge receives the admitted provider')
+  assert.deepEqual(success.state.inputs.providerOptions, { settings, signal }, 'fallback selection uses the same admitted settings and signal')
   assert.equal(success.state.inputs.searchSettings, settings, 'search-mode admission receives the captured request settings')
   assert.equal(success.state.inputs.mcp.conversation, runtimeConversation, 'MCP receives the exact admitted conversation')
   assert.ok([
@@ -15409,7 +15477,7 @@ async function assertAssistantConversationContextAcquisitionRuntimeBehavior() {
 
   for (const testCase of [
     { overrides: { knowledgeOutcome: { kind: 'cancelled' } }, expected: { kind: 'cancelled', stage: 'knowledge' }, forbidden: 'web-empty' },
-    { overrides: { cancelAt: 1 }, expected: { kind: 'cancelled', stage: 'after_knowledge' }, forbidden: 'mcp' },
+    { overrides: { cancelAt: 3 }, expected: { kind: 'cancelled', stage: 'after_knowledge' }, forbidden: 'mcp' },
     { overrides: { mcpOutcome: { kind: 'cancelled' } }, expected: { kind: 'cancelled', stage: 'mcp' }, forbidden: 'failure' },
   ]) {
     const harness = createHarness(testCase.overrides)
@@ -15430,21 +15498,21 @@ async function assertAssistantConversationContextAcquisitionRuntimeBehavior() {
   const postProviderAbort = new AbortController()
   const afterProvider = createHarness({ abortAfterProviders() { postProviderAbort.abort() } })
   const afterProviderOutcome = await afterProvider.runtime.acquire({ ...baseInput, signal: postProviderAbort.signal })
-  assert.equal(afterProvider.state.events.includes('knowledge'), true, 'context acquisition intentionally adds no cancellation gate after provider listing')
-  assert.deepEqual(afterProviderOutcome, { kind: 'cancelled', stage: 'after_knowledge' })
+  assert.equal(afterProvider.state.events.includes('knowledge'), false, 'cancelled provider listing cannot admit another Knowledge operation')
+  assert.deepEqual(afterProviderOutcome, { kind: 'cancelled', stage: 'providers' })
 
   let postMcpCancelled = false
-  const afterMcp = createHarness({ cancelAfterMcp() { postMcpCancelled = true }, cancelAt: 2 })
+  const afterMcp = createHarness({ cancelAfterMcp() { postMcpCancelled = true }, cancelAt: 4 })
   const afterMcpOutcome = await afterMcp.runtime.acquire(baseInput)
   assert.equal(postMcpCancelled, true)
   assert.deepEqual(afterMcpOutcome, { kind: 'cancelled', stage: 'mcp' }, 'post-MCP cancellation prevents late context traces and dispatch')
-  assert.equal(afterMcp.state.cancelChecks, 2, 'context acquisition checks cancellation after MCP before projecting traces')
+  assert.equal(afterMcp.state.cancelChecks, 4, 'context acquisition checks entry, provider settlement, Knowledge and MCP before projecting traces')
   assert.equal(afterMcp.state.traces.length, 0, 'post-MCP cancellation suppresses late MCP trace projection')
 
   const runtimeSource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/application/assistantConversationContextAcquisitionRuntime.ts'), 'utf8')
   const bootstrapSource = fs.readFileSync(path.join(root, 'src/bootstrap/conversationAssistantContextAcquisitionRuntime.ts'), 'utf8')
   const replyStartSource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts'), 'utf8')
-  assert.match(runtimeSource, /listFallbackProviders\(\)[^]*?resolveKnowledgeContext\(\{[^]*?createEmptyWebSources\(\)[^]*?resolveMcpContext\(\{/)
+  assert.match(runtimeSource, /listFallbackProviders\(\{[^]*?resolveKnowledgeContext\(\{[^]*?createEmptyWebSources\(\)[^]*?resolveMcpContext\(\{/)
   assert.doesNotMatch(runtimeSource, /resolveWebContext|input\.lastUserMessage\?\.content/)
   assert.doesNotMatch(runtimeSource, /resolveTavernContext|productMode === 'companion'/)
   assert.match(bootstrapSource, /conversationKnowledgeContextRuntime[^]*?createEmptyWebSources\(\)[^]*?resolveConversationMcpContext/)
@@ -16967,7 +17035,6 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     'persist_admission',
     'latest_conversation',
     'attachments',
-    'runtime_settings',
     'workspace_source',
     'workspace_admission',
     'context_acquisition',
@@ -16978,7 +17045,7 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     'durable_dispatch',
     'stream_lifecycle',
   ], 'reply-start resolves one workspace source before context and provider work')
-  assert.equal(success.state.sessionInput, input, 'reply-start runtime forwards the exact caller input to session initialization')
+  assert.deepEqual(success.state.sessionInput, input, 'reply-start runtime detaches caller identity before session initialization')
   assert.equal(Object.hasOwn(success.state.sessionInput, 'productMode'), false, 'ordinary reply startup carries only conversation identity')
   assert.deepEqual(success.state.admissionInput, {
     conversationId: sessionConversation.id,
@@ -17196,7 +17263,7 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
     assistantMessageId: assistantMessage.id,
     runtimeConversation,
     provider,
-    settings: runtimeSettings,
+    settings: admissionSettings,
     hasAttachments: true,
     requestController: controller,
   })
@@ -17221,10 +17288,12 @@ async function assertAssistantConversationReplyStartRuntimeBehavior() {
       'the full-save barrier persists the preference, never the ephemeral fallback view')
     assert.equal(runtimeConversation.model, 'reply-start-model', 'fallback cannot mutate a frozen preference')
     assert.equal(temporaryFallback.state.dispatchInput.runtimeConversation.model, 'temporary-model')
-    assert.equal(temporaryFallback.state.dispatchInput.executionConstraint, fallbackConstraint)
+    assert.deepEqual(temporaryFallback.state.dispatchInput.executionConstraint, fallbackConstraint)
+    assert.notEqual(temporaryFallback.state.dispatchInput.executionConstraint, fallbackConstraint,
+      'a shallow-frozen fallback constraint with mutable nested identity is detached')
     if (plain) {
       assert.equal(temporaryFallback.state.handoffInput.runtimeConversation.model, 'temporary-model')
-      assert.equal(temporaryFallback.state.handoffInput.executionConstraint, fallbackConstraint)
+      assert.deepEqual(temporaryFallback.state.handoffInput.executionConstraint, fallbackConstraint)
     }
     assert.ok(temporaryFallback.state.events.indexOf('persist_admission') < temporaryFallback.state.events.indexOf('durable_dispatch'),
       'fallback preserves the first-reply full-save barrier')
@@ -18257,7 +18326,7 @@ async function assertAssistantConversationProviderDispatchRuntimeBehavior() {
     ['compact fallback', request.remoteCompactFallback, remoteCompactFallback],
     ['tool declarations', request.providerToolDeclarations, providerToolDeclarations],
   ]) {
-    assert.notEqual(snapshot, source, `prepared ${label} is detached from mutable caller state`)
+    assert.equal(snapshot, source, `prepared ${label} may reuse deeply frozen data without exposing mutable caller state`)
     assert.deepEqual(snapshot, source, `prepared ${label} preserves exact provider-neutral data`)
     assert.equal(Object.isFrozen(snapshot), true, `prepared ${label} is frozen`)
   }
@@ -18517,7 +18586,12 @@ async function assertAssistantConversationStreamLifecycleRuntimeBehavior() {
     'contextWindowState',
     'contextFragments',
   ]) {
-    assert.equal(finalizationInput[key], input[key], `stream lifecycle preserves exact ${key} identity`)
+    if (key === 'context' || key === 'providerTools') {
+      assert.deepEqual(finalizationInput[key], input[key], 'stream lifecycle detaches a shallow-frozen context')
+      assert.notEqual(finalizationInput[key], input[key], `${key} with mutable entries is not reused`)
+    } else {
+      assert.equal(finalizationInput[key], input[key], `stream lifecycle preserves deeply immutable ${key} identity`)
+    }
   }
   assert.equal(finalizationInput.result, completionResult, 'stream lifecycle preserves exact provider completion result identity')
   assert.equal(finalizationInput.requestController, requestController, 'stream lifecycle preserves the callback lifecycle controller identity')
@@ -19609,9 +19683,9 @@ async function assertAssistantConversationFinalizationRuntimeBehavior() {
   const outcome = await completion
   assert.equal(outcome.kind, 'completed', 'assistant finalization returns a typed completed outcome')
   assert.deepEqual(state.events, [
-    'caller-flush', 'streaming-flush', 'active-read', 'active-clear', 'message-read', 'verify',
+    'settings-read', 'caller-flush', 'streaming-flush', 'active-read', 'active-clear', 'message-read', 'verify',
     'mcp-revision', 'merge-usage',
-    'supplemental', 'streaming-flush', 'conversation-read:1', 'terminal-plan', 'settings-read',
+    'supplemental', 'streaming-flush', 'conversation-read:1', 'terminal-plan',
     'compact-completed', 'commit', 'workspace-start', 'workspace-end', 'workspace-projection', 'health:true', 'evaluation',
     'trace:model-final', 'trace-state-read', 'trace:native-final', 'settle-traces',
     'conversation-read:2', 'memory',
@@ -19630,12 +19704,16 @@ async function assertAssistantConversationFinalizationRuntimeBehavior() {
   assert.equal(state.compactInput.remoteClassification, input.remoteCompactClassification, 'remote compact completion preserves exact classification evidence')
   assert.equal(state.compactInput.outputTokens, 9, 'remote compact completion uses final cumulative output tokens')
   assert.equal(state.compactInput.messageCount, 1, 'remote compact counts only latest non-error non-assistant messages')
-  assert.equal(state.compactInput.settings, settings, 'remote compact receives exact current settings')
+  assert.equal(state.compactInput.settings, settings, 'remote compact receives the entry settings snapshot')
+  assert.equal(state.mcpRevisionInput.settings, settings, 'tagged revision receives the same entry settings snapshot')
+  assert.equal(state.supplementalInput.settings, settings, 'supplemental retrieval receives the same entry settings snapshot')
+  assert.equal(state.memoryInput.settings, settings, 'detached memory extraction receives the same entry settings snapshot')
   assert.equal(state.workspaceWritebackInput.handoff, workspaceWritebackHandoff, 'generic workspace writeback receives the exact durable handoff')
   assert.equal(state.workspaceWritebackInput.finalOutput, 'MCP revised answer', 'generic workspace writeback receives exact final output')
   assert.equal(state.workspaceWritebackInput.signal, signalController.signal, 'generic workspace writeback receives exact cancellation signal')
   assert.equal(state.evaluationInput.supplementalSources, supplementalSources, 'RAG evaluation receives exact supplemental sources')
-  assert.equal(state.memoryInput.messages, latestConversation.messages, 'memory extraction receives committed conversation messages')
+  assert.deepEqual(state.memoryInput.messages, latestConversation.messages, 'memory extraction receives detached committed conversation messages')
+  assert.notEqual(state.memoryInput.messages, latestConversation.messages, 'shallow-frozen committed histories cannot leak nested mutation into extraction')
   assert.equal(state.memoryInput.provider, provider, 'memory extraction receives exact provider')
   assert.equal(state.memoryInput.model, 'upstream-model', 'memory extraction preserves upstream model identity')
   assert.notEqual(state.memoryInput.signal, signalController.signal, 'memory extraction receives a lifecycle detached from the request stream')
@@ -20867,7 +20945,7 @@ async function assertWebSearchSettingsPolicyBehavior() {
   assert.match(contextSelfTestSource, /input\.settings\.memoryEnabled !== true[\s\S]*disabledSkip/, 'disabled memory extraction is reported as skipped instead of failed')
   assert.match(contextSelfTestSource, /!memoryContextEnabled && !knowledgeContextEnabled[\s\S]*chatContextSkip/, 'disabled chat context sources are reported as skipped instead of failed')
   assert.match(contextSelfTestSource, /existingDocumentIds[\s\S]*existingMemoryIds[\s\S]*finally[\s\S]*cleanupContextSelfTestArtifacts/, 'context self-test snapshots existing records and always enters scoped cleanup')
-  assert.match(contextSelfTestSource, /deleteKnowledgeDocumentRecords\(documentId\)[\s\S]*deleteMemory\(memoryId/, 'context self-test removes only its selected document indexes and memory records')
+  assert.match(contextSelfTestSource, /deleteKnowledgeDocumentRecords\(document\.id, \{ signal: cleanupSignal, expectedDocument: document \}\)[\s\S]*deleteMemory\(memory\.id, \{ signal: cleanupSignal, expectedMemory: memory \}\)/, 'context self-test removes only its selected unchanged document indexes and memory records')
   assert.match(contextSelfTestSource, /filterSelfTestHits[\s\S]*content\.includes\(canary\)[\s\S]*content\.includes\(autoMemoryCanary\)/, 'context self-test counts only the current canary instead of accepting stale test records')
   const contextDiagnosticsSource = fs.readFileSync(path.join(root, 'src/components/settings/ContextDiagnosticsSection.tsx'), 'utf8')
   assert.match(contextDiagnosticsSource, /useState\(step\.status !== 'ok'\)/, 'self-test warnings show their skip reason immediately instead of a failure-details prompt')
@@ -23834,7 +23912,7 @@ async function run() {
   assert.equal(redactedLog.headerText, 'Authorization: Basic [redacted]; proxy-authorization: bearer [redacted]', 'runtime log redacts header-like authorization strings')
   assert.deepEqual(redactedLog.body.keys, ['input', 'model'], 'runtime log stores payload keys instead of full body')
   const presignedLog = redactRuntimeLogValue({
-    downloadUrl: 'https://example.com/download.apk?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260618%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260618T010203Z&X-Amz-Expires=300&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEOz%2F%2F%2F%2F%2F%2F8BEAAaCXVzLWVhc3QtMSJGMEQCIFakeToken&X-Amz-Signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    downloadUrl: `https://example.com/download.apk?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=${['AKIA', '0'.repeat(16)].join('')}%2F20260618%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260618T010203Z&X-Amz-Expires=300&X-Amz-Security-Token=synthetic-presigned-session-token&X-Amz-Signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`,
   })
   assert.equal(
     presignedLog.downloadUrl,
@@ -24154,8 +24232,8 @@ codex    ${FAKE_KEY_D} "
   assert.notEqual(addProviderFromFormStart, -1, 'provider settings keeps the single-provider onboarding function')
   assert.notEqual(publishImportProgressStart, -1, 'provider settings keeps the import flow after single-provider onboarding')
   const addProviderFromFormSource = providerSettingsContentSource.slice(addProviderFromFormStart, publishImportProgressStart)
-  assert.ok(addProviderFromFormSource.includes('await store.addProviders([provider], { selectDefaultIfEmpty: false })'), 'add provider persists without implicitly selecting a default model')
-  assert.ok(addProviderFromFormSource.includes('await store.updateProvider(provider.id, provider)'), 'retrying a saved provider updates its existing identity')
+  assert.match(addProviderFromFormSource, /await store\.addProviders\(\[provider\], \{(?=[^}]*\bselectDefaultIfEmpty:\s*false\b)(?=[^}]*\bsignal\b)[^}]*\}\)/, 'add provider persists without selecting a default model and retains the editor cancellation lifetime')
+  assert.match(addProviderFromFormSource, /await store\.updateProvider\(provider\.id,\s*provider,\s*\{(?=[^}]*\bexpectedProvider:\s*previous\b)(?=[^}]*\bsignal\b)[^}]*\}\)/, 'retrying a saved provider retains its reviewed identity and cancellation lifetime')
   assert.ok(addProviderFromFormSource.includes('await store.flushProviderPersistence()') && addProviderFromFormSource.includes('await flushPersistedSettings()'), 'add provider waits for durable provider and settings writes')
   assert.equal(addProviderFromFormSource.includes('probeProviderPreset('), false, 'saving provider configuration does not authorize a network probe')
   assert.equal(addProviderFromFormSource.includes('activateProviders('), false, 'saving provider configuration does not automatically activate or test a model')
@@ -24630,7 +24708,7 @@ https://gateway.example/messages`
   assert.equal(classifyMemoryCandidateForTest('用户偏好：使用中文回答'), 'none', 'stable user preferences are accepted as memory candidates')
   assert.equal(classifyMemoryCandidateForTest('用户 API Key 是 sk-secret-test'), 'sensitive', 'memory candidates reject API keys and secrets')
   assert.equal(classifyMemoryCandidateForTest('用户默认令牌是 tp-test-token-plan-fake-1234567890'), 'sensitive', 'memory candidates reject provider-token shaped values')
-  assert.equal(classifyMemoryCandidateForTest('用户凭证是 ghp_abcdefghijklmnopqrstuvwxyz123456'), 'sensitive', 'memory candidates reject GitHub-token shaped values')
+  assert.equal(classifyMemoryCandidateForTest(`用户凭证是 ${['ghp', '0'.repeat(32)].join('_')}`), 'sensitive', 'memory candidates reject GitHub-token shaped values')
   assert.equal(classifyMemoryCandidateForTest('用户标识：ProjectPhoenixPreferredLocaleZhCN'), 'none', 'stable non-secret identifiers are still accepted')
   assert.equal(classifyMemoryCandidateForTest('用户今天想临时用英文回答'), 'one_time', 'memory candidates reject one-time or temporary instructions')
   assert.equal(classifyMemoryCandidateForTest('用户可能喜欢深色模式'), 'uncertain', 'memory candidates reject uncertain inferred preferences')
@@ -24712,7 +24790,7 @@ https://gateway.example/messages`
       indexingDocuments: 1,
       failedJobs: 1,
       runningJobs: 1,
-      recoverableDocuments: 2,
+      recoverableDocuments: 3,
       lastError: 'Parser failed',
     },
     'knowledge recovery summary exposes failed documents, empty documents, job failures, and the latest actionable error'
@@ -29971,6 +30049,7 @@ https://gateway.example/messages`
   assert.equal(emptySupplemental.citations, ragInitialCitations, 'conversation RAG finalization preserves citation identity for empty FLARE retrieval')
 
   const midFlareAbortError = Object.assign(new Error('mid-FLARE cancellation'), { name: 'AbortError' })
+  const traceCountBeforeFlareAbort = ragFinalizationEvents.filter((event) => event[0] === 'trace').length
   supplementalRetrievalError = midFlareAbortError
   const midFlareAbortOutcome = await ragFinalizationRuntime.resolveSupplementalEvidence({
     conversationId: 'rag-abort-conversation',
@@ -29982,9 +30061,27 @@ https://gateway.example/messages`
     verification: ragVerification,
     signal: new AbortController().signal,
   })
-  assert.equal(midFlareAbortOutcome.status, 'failed', 'conversation RAG finalization preserves legacy non-fatal mid-FLARE AbortError behavior')
-  assert.equal(midFlareAbortOutcome.error, midFlareAbortError, 'conversation RAG finalization preserves exact mid-FLARE error identity')
-  assert.equal(ragFinalizationEvents.at(-1)[1].trace.content, midFlareAbortError.message, 'conversation RAG finalization prefers exact FLARE error copy')
+  assert.equal(midFlareAbortOutcome.status, 'skipped', 'conversation RAG finalization treats adapter AbortError as cancellation')
+  assert.equal(midFlareAbortOutcome.reason, 'request_aborted', 'conversation RAG finalization reports truthful cancellation instead of a retrieval failure')
+  assert.deepEqual(midFlareAbortOutcome.sources, [], 'cancelled FLARE cannot attach supplemental evidence')
+  assert.equal(midFlareAbortOutcome.citations, ragInitialCitations, 'cancelled FLARE preserves the admitted citations')
+  assert.equal(ragFinalizationEvents.filter((event) => event[0] === 'trace').length, traceCountBeforeFlareAbort, 'cancelled FLARE cannot project late failure traces')
+
+  const supplementalFailureError = new Error('FLARE retrieval fixture failed')
+  supplementalRetrievalError = supplementalFailureError
+  const supplementalFailureOutcome = await ragFinalizationRuntime.resolveSupplementalEvidence({
+    conversationId: 'rag-failure-conversation',
+    assistantMessageId: 'rag-failure-assistant',
+    conversation: ragConversation,
+    plan: ragFinalizationPlan,
+    contextSources: ragContextSources,
+    citations: ragInitialCitations,
+    verification: ragVerification,
+    signal: new AbortController().signal,
+  })
+  assert.equal(supplementalFailureOutcome.status, 'failed', 'ordinary FLARE failures remain distinguishable from cancellation')
+  assert.equal(supplementalFailureOutcome.error, supplementalFailureError, 'ordinary FLARE failure retains the exact error identity')
+  assert.equal(ragFinalizationEvents.at(-1)[1].trace.content, supplementalFailureError.message, 'ordinary FLARE failures retain their diagnostic trace')
   supplementalRetrievalError = undefined
 
   ragFinalizationRuntime.recordEvaluation({
@@ -30564,11 +30661,12 @@ https://gateway.example/messages`
     let pdfTransportCalls = 0
     global.fetch = async () => { pdfTransportCalls++; throw new Error('Unmetered PDF must not reach transport') }
     const pdfPickerFixture = nextDocumentPickerResult
-    await assert.rejects(
-      () => importKnowledgeFile(pdfImportProvider, 'gpt-4.1', { signal: new AbortController().signal }),
-      (error) => error.name === 'ProviderContextCapacityError' && error.code === 'media_estimate_unavailable',
-      'PDF extraction fails closed while its adapter has no reliable media accounting',
-    )
+    const refusedPdfImport = await importKnowledgeFile(pdfImportProvider, 'gpt-4.1', { signal: new AbortController().signal })
+    assert.deepEqual(refusedPdfImport, {
+      ok: false,
+      message: st('contextImport.pdfCapacityUnavailable'),
+      reason: 'pdf_capacity_unavailable',
+    }, 'unmetered PDF extraction fails closed with explicit local-import guidance rather than claiming success')
     assert.equal(pdfTransportCalls, 0, 'unmetered PDF extraction cannot send a provider request')
     assert.equal((await listKnowledgeDocuments()).length, documentsBeforePdfCancellation.length, 'capacity refusal cannot persist a PDF document')
     assert.ok(localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/cancellable-knowledge.pdf'), 'capacity refusal deletes the temporary PDF copy')
@@ -31253,9 +31351,11 @@ https://gateway.example/messages`
     assert.equal(invalidMcpCallResult.observation.status, 'skipped', 'invalid MCP runtime URLs fail closed before tool execution')
     assert.equal(invalidMcpCallResult.observation.errorCode, 'tool_unavailable', 'invalid MCP runtime URLs report tool_unavailable')
     assert.match(invalidMcpCallResult.observation.output, /HTTP\(S\)/, 'invalid MCP runtime URLs explain the HTTP(S) boundary')
-    const invalidMcpRefreshResult = await refreshMcpManifest(invalidRuntimeMcpServer)
-    assert.equal(invalidMcpRefreshResult.status, 'error', 'manifest refresh rejects invalid non-web MCP server URLs before fetch')
-    assert.match(invalidMcpRefreshResult.lastError ?? '', /HTTP\(S\)/, 'manifest refresh surfaces the MCP HTTP(S) boundary error')
+    await assert.rejects(
+      () => refreshMcpManifest(invalidRuntimeMcpServer),
+      (error) => error.name === 'McpCatalogConflictError' && error.serverId === invalidRuntimeMcpServer.id,
+      'manifest refresh refuses invalid catalog configuration before fetch without inventing a persisted error state',
+    )
   } finally {
     global.fetch = originalFetchForInvalidMcp
   }
@@ -34105,23 +34205,20 @@ async function assertLocalModelStateRepositoryBehavior() {
   const signal = new AbortController().signal
   const observedSignals = []
   let failNextWrite = false
+  let failNextRead = false
+  const initialRecord = { modelId: 'state-model', source: 'downloaded', bytes: 7 }
   let persisted = JSON.stringify({
     records: {
-      'state-model': {
-        modelId: 'state-model',
-        source: 'downloaded',
-        bytes: 7,
-      },
-      inconsistent: {
-        modelId: 'different-id',
-        source: 'downloaded',
-      },
+      'state-model': initialRecord,
+      inconsistent: { modelId: 'different-id', source: 'downloaded' },
     },
     failed: {},
   })
+  const invalidBytes = persisted
   const repository = createLocalModelStateRepository({
     async getItem(_key, operationSignal) {
       observedSignals.push(operationSignal)
+      if (failNextRead) throw new Error('injected local-model state read failure')
       return persisted
     },
     async setItem(_key, value, operationSignal) {
@@ -34131,15 +34228,22 @@ async function assertLocalModelStateRepositoryBehavior() {
     },
     async removeItem(_key, operationSignal) {
       observedSignals.push(operationSignal)
-      persisted = ''
+      persisted = null
     },
   })
 
-  const loaded = await repository.loadState({ signal })
+  await assert.rejects(
+    () => repository.loadState({ signal }),
+    (error) => error.name === 'LocalModelStateDataError',
+    'inconsistent persisted records are not a writable partial directory'
+  )
+  assert.equal(persisted, invalidBytes, 'invalid local-model state bytes are retained')
   assert.equal(observedSignals[0], signal, 'local-model state repository forwards the exact caller signal to storage')
-  assert.deepEqual(Object.keys(loaded.records), ['state-model'], 'local-model state repository drops inconsistent persisted records')
+  persisted = JSON.stringify({ records: { 'state-model': initialRecord }, failed: {} })
+  const loaded = await repository.loadState({ signal })
+  assert.deepEqual(Object.keys(loaded.records), ['state-model'], 'supported persisted records remain readable after explicit repair')
   loaded.records['state-model'].bytes = 999
-  assert.equal((await repository.loadState()).records['state-model'].bytes, 7, 'local-model state repository returns copies instead of its cached record')
+  assert.equal((await repository.loadState()).records['state-model'].bytes, 7, 'local-model state repository returns detached records')
 
   await repository.recordInstalledModel({
     modelId: 'state-model',
@@ -34149,14 +34253,22 @@ async function assertLocalModelStateRepositoryBehavior() {
   assert.equal(observedSignals.at(-1), signal, 'local-model state repository forwards the exact caller signal to writes')
   failNextWrite = true
   await assert.rejects(
-    () => repository.markModelFailure('state-model', 'should not enter cache'),
-    /injected local-model state write failure/,
-    'local-model state repository reports persistence failures'
+    () => repository.markModelFailure('state-model', 'must not be committed'),
+    (error) => error.name === 'LocalModelStatePersistenceError' && error.operation === 'save',
+    'local-model state repository reports bounded persistence failures'
   )
   failNextWrite = false
   const afterFailedWrite = await repository.loadState()
-  assert.equal(afterFailedWrite.records['state-model'].bytes, 8, 'failed local-model state writes preserve the last committed cache')
-  assert.equal(afterFailedWrite.failed['state-model'], undefined, 'failed local-model state writes do not leak uncommitted failure state')
+  assert.equal(afterFailedWrite.records['state-model'].bytes, 8, 'failed writes retain the actual last committed record')
+  assert.equal(afterFailedWrite.failed['state-model'], undefined, 'failed writes do not leak uncommitted failure markers')
+
+  failNextRead = true
+  await assert.rejects(
+    () => repository.loadState(),
+    (error) => error.name === 'LocalModelStatePersistenceError' && error.operation === 'load',
+    'a later failed read is not served from a successful save cache'
+  )
+  failNextRead = false
 
   const abortReason = new Error('cancel local-model state read')
   const controller = new AbortController()

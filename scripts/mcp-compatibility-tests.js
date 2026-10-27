@@ -405,9 +405,11 @@ function createAssistantMcpTurnHarness(overrides = {}) {
     synthesisRequests: [],
     generationRequests: [],
     revisionMessageRequests: [],
+    limitRequests: [],
     settingsReads: 0,
   }
   const initialSettings = { id: 'initial', runtimeLogEnabled: true }
+  const expectedInitialSettings = Object.freeze({ ...initialSettings })
   const synthesisSettings = { id: 'synthesis', runtimeLogEnabled: false }
   const limits = {
     maxToolCallsPerStep: 3,
@@ -455,7 +457,9 @@ function createAssistantMcpTurnHarness(overrides = {}) {
       return state.settingsReads === 1 ? initialSettings : synthesisSettings
     },
     resolveLimits(settings) {
-      assert.equal(settings, initialSettings, 'task limits resolve from the execution settings snapshot')
+      assert.deepEqual(settings, expectedInitialSettings, 'task limits resolve from the admitted settings content')
+      assert.notEqual(settings, initialSettings, 'mutable caller settings are detached before task admission')
+      state.limitRequests.push(settings)
       return limits
     },
     buildRuntimeLogOptions(settings) {
@@ -528,6 +532,7 @@ function createAssistantMcpTurnHarness(overrides = {}) {
     resolved,
     observation,
     initialSettings,
+    expectedInitialSettings,
     synthesisSettings,
     runtime: createAssistantMcpToolTurnRuntime(dependencies),
     input: {
@@ -551,12 +556,20 @@ function createAssistantMcpTurnHarness(overrides = {}) {
 
 async function runAssistantMcpToolTurnRuntimeTests() {
   for (const firstOutput of ['ordinary answer', 'malformed tagged request']) {
-    const harness = createAssistantMcpTurnHarness()
-    const result = await harness.runtime.execute({ ...harness.input, firstOutput })
-    assert.equal(result, null, `${firstOutput} does not start a tagged MCP turn`)
-    assert.equal(harness.state.tasks.length, 0, `${firstOutput} does not execute a task`)
-    assert.equal(harness.state.traces.length, 0, `${firstOutput} does not emit a trace`)
-    assert.equal(harness.state.settingsReads, 0, `${firstOutput} does not read runtime settings`)
+    for (const suppliedSettings of [false, true]) {
+      const harness = createAssistantMcpTurnHarness()
+      const result = await harness.runtime.execute({
+        ...harness.input, firstOutput,
+        ...(suppliedSettings ? { settings: harness.initialSettings } : {}),
+      })
+      assert.equal(result, null, `${firstOutput} does not start a tagged MCP turn`)
+      assert.equal(harness.state.tasks.length, 0, `${firstOutput} does not execute a task`)
+      assert.equal(harness.state.traces.length, 0, `${firstOutput} does not emit a trace`)
+      assert.equal(harness.state.synthesisRequests.length, 0, `${firstOutput} does not synthesize`)
+      assert.equal(harness.state.generationRequests.length, 0, `${firstOutput} does not shape generation`)
+      assert.equal(harness.state.settingsReads, suppliedSettings ? 0 : 1,
+        `${firstOutput} captures one entry fallback only when admission settings are absent`)
+    }
   }
 
   const unmatched = createAssistantMcpTurnHarness({ findTool: () => undefined })
@@ -612,7 +625,10 @@ async function runAssistantMcpToolTurnRuntimeTests() {
   assert.equal(success.state.synthesisRequests.length, 1, 'a visible tool result triggers one synthesis request')
   const synthesis = success.state.synthesisRequests[0]
   assert.equal(synthesis.signal, success.input.signal, 'synthesis receives the exact caller AbortSignal')
-  assert.equal(synthesis.settings, success.synthesisSettings, 'synthesis re-reads the injected settings')
+  assert.deepEqual(synthesis.settings, success.expectedInitialSettings, 'synthesis retains the admitted settings content')
+  assert.notEqual(synthesis.settings, success.initialSettings, 'synthesis cannot borrow mutable caller settings')
+  assert.equal(synthesis.settings, success.state.limitRequests[0], 'task limits and synthesis share one admission snapshot')
+  assert.equal(success.state.settingsReads, 1, 'synthesis never re-reads live settings after the tool await')
   assert.equal(synthesis.temperature, 0.4, 'synthesis defensively enforces the shared temperature cap')
   assert.equal(synthesis.topP, 0.8, 'synthesis preserves shared top-p shaping')
   assert.equal(synthesis.maxTokens, 321, 'synthesis preserves shared token shaping')
@@ -624,10 +640,17 @@ async function runAssistantMcpToolTurnRuntimeTests() {
   assert.equal(synthesis.conversationId, 'conversation-session', 'synthesis uses the durable conversation identity')
   assert.equal(synthesis.sessionId, 'conversation-session', 'synthesis keeps session identity aligned with the conversation')
   assert.equal(synthesis.remoteCompactEligible, false, 'tagged MCP synthesis cannot expand into remote compaction')
-  assert.equal(success.state.generationRequests[0].settings, success.synthesisSettings, 'generation shaping uses the refreshed settings')
+  assert.equal(success.state.generationRequests[0].settings, synthesis.settings, 'generation shaping uses the same admitted settings')
   assert.equal(success.state.generationRequests[0].temperatureCap, 0.4, 'generation shaping receives the shared cap')
-  assert.equal(success.state.generationRequests[0].conversation, success.input.conversation, 'generation shaping retains the exact conversation metadata object')
-  assert.equal(success.state.revisionMessageRequests[0].conversation, success.input.conversation, 'revision-message projection retains the exact conversation metadata object')
+  const admittedConversation = success.state.generationRequests[0].conversation
+  assert.deepEqual(admittedConversation, success.input.conversation, 'generation shaping retains admitted conversation content')
+  assert.notEqual(admittedConversation, success.input.conversation, 'generation shaping cannot borrow mutable caller conversation metadata')
+  assert.equal(success.state.revisionMessageRequests[0].conversation, admittedConversation, 'revision projection shares the admitted conversation')
+  assert.deepEqual(synthesis.provider, success.input.provider, 'synthesis retains admitted provider content')
+  assert.notEqual(synthesis.provider, success.input.provider, 'synthesis cannot borrow the mutable caller provider')
+  assert.equal(synthesis.provider, success.state.generationRequests[0].provider, 'generation and synthesis share the admitted provider')
+  assert.deepEqual(success.state.revisionMessageRequests[0].messages, success.input.messages, 'revision projection retains admitted messages')
+  assert.notEqual(success.state.revisionMessageRequests[0].messages, success.input.messages, 'revision messages are detached from the caller')
 
   const pendingAction = {
     id: 'agent-pending-confirmation',
@@ -723,11 +746,14 @@ async function runAssistantMcpToolTurnRuntimeTests() {
     findTool(tools, request, manifests) {
       assert.equal(tools.length, 0, 'built-in tagged fallback does not require an MCP-resolved tool')
       assert.equal(request.toolName, 'requested-tool', 'built-in tagged fallback receives the parsed request')
-      assert.equal(manifests[0], builtinManifest, 'built-in tagged fallback receives the admitted manifest identity')
+      const admittedManifest = manifests[0]
+      assert.deepEqual(admittedManifest, builtinManifest, 'built-in tagged fallback receives the admitted manifest content')
+      assert.notEqual(admittedManifest, builtinManifest, 'built-in tagged fallback cannot borrow the mutable caller manifest')
+      assert.notEqual(admittedManifest.inputSchema, builtinManifest.inputSchema, 'the admitted manifest schema is detached')
       return {
         server: { id: 'islemind-builtins', name: 'IsleMind', enabled: true, status: 'connected' },
-        tool: { name: 'search_web', description: builtinManifest.description, permission: 'read-only', inputSchema: builtinManifest.inputSchema, enabled: true },
-        manifest: builtinManifest,
+        tool: { name: 'search_web', description: admittedManifest.description, permission: 'read-only', inputSchema: admittedManifest.inputSchema, enabled: true },
+        manifest: admittedManifest,
       }
     },
   })
@@ -899,8 +925,10 @@ async function runAssistantMcpToolTurnRuntimeTests() {
       { text: 'synthesized answer', usage: { inputTokens: 7, outputTokens: 9, totalTokens: 16 } },
       `${metadataValue ?? 'absent'} metadata keeps the tagged MCP post-observation synthesis behavior`,
     )
-    assert.equal(parity.state.generationRequests[0].conversation, conversation, 'untrusted conversation metadata remains available only to generation shaping')
-    assert.equal(parity.state.revisionMessageRequests[0].conversation, conversation, 'untrusted conversation metadata remains available only to revision projection')
+    assert.deepEqual(parity.state.generationRequests[0].conversation, conversation, 'untrusted metadata content remains available to generation shaping')
+    assert.notEqual(parity.state.generationRequests[0].conversation, conversation, 'generation shaping receives detached untrusted metadata')
+    assert.equal(parity.state.revisionMessageRequests[0].conversation, parity.state.generationRequests[0].conversation,
+      'revision projection shares the admitted metadata rather than the caller object')
     assert.equal(conversation.untrustedMetadata, metadataValue, 'untrusted conversation metadata is not mutated by task admission')
   }
   assert.equal(metadataTasks.every((item) => !Object.hasOwn(item.options, 'mode')), true, 'tagged MCP task options stay mode-free for arbitrary conversation metadata')

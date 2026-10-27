@@ -51,9 +51,19 @@ for (const field of ['tools', 'resources', 'prompts', 'approvedToolNames']) {
   assert.match(installPresetSource, new RegExp(`${field}:\\s*\\[\\]`), `preset installation starts with no ${field}`)
 }
 assert.doesNotMatch(installPresetSource, /refreshMcpManifest\s*\(/, 'preset installation never probes a remote server')
+for (const [locale, phrases] of [
+  ['en', ['only saves configuration', 'Connect explicitly', 'approve tools separately']],
+  ['zh-CN', ['仅保存配置', '请显式连接', '单独授权工具']],
+  ['ja', ['設定の保存のみ', '接続とツールの承認', '別々に実行']],
+]) {
+  const copy = JSON.parse(fs.readFileSync(path.join(root, `src/i18n/resources/${locale}.json`), 'utf8'))
+  for (const phrase of phrases) {
+    assert.ok(copy.mcp.presetsSubtitle.includes(phrase), `${locale} preset copy separates local installation, connection and tool approval`)
+  }
+}
 const refreshServerSource = settingsSource.match(/async function refreshServer\b[\s\S]*?(?=\n  async function toggleServer\b)/)?.[0]
 assert.ok(refreshServerSource, 'connection has a separate explicit action')
-assert.match(refreshServerSource, /await refreshMcpManifest\(server\)/, 'the connection action discovers the selected server manifest')
+assert.match(refreshServerSource, /await refreshMcpManifest\(server,\s*\{\s*signal\s*\}\)/, 'explicit discovery carries the settings lifetime to the selected server')
 assert.match(
   installPresetSource,
   /transport:\s*preset\.transport/,

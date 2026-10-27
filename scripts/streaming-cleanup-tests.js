@@ -202,6 +202,11 @@ function run() {
   const streamingStoreSource = fs.readFileSync(path.join(root, 'src/store/chatStreamingStore.ts'), 'utf8')
   assert.ok(streamingStoreSource.includes('areStreamingTraceMetadataEquivalent'), 'streaming trace equality avoids JSON stringify on every trace update')
   assert.equal(streamingStoreSource.includes('JSON.stringify(current.metadata'), false, 'streaming trace equality does not stringify metadata during hot-path updates')
+  assert.match(
+    streamingStoreSource,
+    /flushStreamingMessage: async \(convId: string, msgId: string, isCurrent\) => \{\s*if \(isCurrent && !isCurrent\(\)\) return[\s\S]*?const text = state\.streamingText\.get\(key\)[\s\S]*?const traces = state\.streamingTraces\.get\(key\)[\s\S]*?await useChatStore\.getState\(\)\.flushStreamingMessage\(convId, msgId\)[\s\S]*?set\(\(s\) => \{[\s\S]*?if \(\(isCurrent && !isCurrent\(\)\) \|\| s\.streamingText\.get\(key\) !== text[\s\S]*?s\.streamingTraces\.get\(key\) !== traces \|\| s\.persistTimers\.has\(key\)\) return s/,
+    'durable streaming flush validates ownership at entry and inside final cleanup, preserving later text, traces, and persist timers',
+  )
 
   const chatRunnerPath = path.join(root, 'src/services/chatRunner.ts')
   const assistantReplyStartRuntimeSource = fs.readFileSync(
@@ -235,8 +240,18 @@ function run() {
   )
   assert.match(
     conversationReplyStartSource,
-    /const conversationMessageRuntime: ConversationMessageRuntime = \{\s*dispatchAfterUserProjection: conversationReplyDispatchController\.dispatch,\s*startAfterHistoryProjection: startUserRequestedAssistantReply,\s*startConfirmedWorkflowReply: startUserRequestedChatWorkflowReply,[\s\S]*?cancelResponseRun: cancelConversationResponseRun,[\s\S]*?async resumePendingModelOperation\(conversationId, assistantMessageId, runId, approved, identity\)[\s\S]*?resumeConversationModelOperation\(\{[\s\S]*?runId,[\s\S]*?approved,\s*\.\.\.identity,[\s\S]*?projection: createPlainChatProjection\([\s\S]*?listConversationToolManifests,\s*resolveConversationTool,\s*saveApprovedWorkflowSkillSuggestion,\s*\}[\s\S]*?bindConversationMessageRuntime\(conversationMessageRuntime\)/,
-    'bootstrap alone installs dispatch, reply-start, workflow, durable cancellation, identity-bound resume, catalog, and workflow-skill runtime',
+    /const conversationMessageRuntime: ConversationMessageRuntime = \{\s*dispatchAfterUserProjection: conversationReplyDispatchController\.dispatch,\s*startAfterHistoryProjection: startUserRequestedAssistantReply,\s*startConfirmedWorkflowReply: startUserRequestedChatWorkflowReply,[\s\S]*?cancelResponseRun: cancelConversationResponseRun,[\s\S]*?async resumePendingModelOperation\(conversationId, assistantMessageId, runId, approved, identity, signal\)[\s\S]*?resumeConversationModelOperation\(\{[\s\S]*?runId,[\s\S]*?approved,\s*\.\.\.reviewedIdentity,[\s\S]*?cancellationSignal: signal[\s\S]*?projection: async event => \{[\s\S]*?event\.run\.id !== runId[\s\S]*?event\.run\.conversationId !== conversationId[\s\S]*?event\.run\.responseMessageId !== assistantMessageId \|\| !ownsProjection\(\)[\s\S]*?if \(!projection\) \{[\s\S]*?recoverChatProjection\(event\.run, ownsProjection\)[\s\S]*?createPlainChatProjection\(\{ conversation, assistantMessageId, provider \}, \(\) => undefined, ownsProjection\)[\s\S]*?listConversationToolManifests,\s*resolveConversationTool,\s*saveApprovedWorkflowSkillSuggestion,\s*\}[\s\S]*?bindConversationMessageRuntime\(conversationMessageRuntime\)/,
+    'bootstrap alone installs dispatch, reply-start, workflow, cancellation, lifetime-bound durable-owner lazy resume, catalog, and workflow-skill runtime',
+  )
+  assert.match(
+    conversationReplyStartSource,
+    /const reviewedIdentity = \{ continuationToken: identity\.continuationToken, continuationDigest: identity\.continuationDigest \}[\s\S]*?const run = await getLatestConversationResponseRun\(conversationId, assistantMessageId\)[\s\S]*?run\.pendingModelOperation\?\.continuationToken !== reviewedIdentity\.continuationToken[\s\S]*?run\.pendingModelOperation\?\.continuationDigest !== reviewedIdentity\.continuationDigest[\s\S]*?const providerId = run\.providerId[\s\S]*?const model = run\.model[\s\S]*?await settingsState\.hydrateProviderKey\(providerId\)[\s\S]*?if \(signal\?\.aborted \|\| getActiveStream\(conversationId\)[\s\S]*?sameResumeSnapshot\(conversation, latestConversation\)[\s\S]*?sameResumeSnapshot\(settings, latestSettings\.settings\)[\s\S]*?assertProviderConfiguration\([\s\S]*?const executionConversation = \{ \.\.\.conversation, providerId, model \}/,
+    'resume captures reviewed identity before awaits and revalidates local hydration against durable route, current configuration, and lifetime',
+  )
+  assert.match(
+    conversationReplyStartSource,
+    /if \(projected && ownsProjection\(\)\) \{[\s\S]*?await useChatStreamingStore\.getState\(\)\.flushStreamingMessage\(conversationId, assistantMessageId, ownsProjection\)\s*\}\s*\} finally \{\s*restoringModelOperations\.delete\(conversationId\)/,
+    'resume releases its single-flight state after guarded store-owned cleanup without a second destructive clear',
   )
   assert.equal(fs.existsSync(chatRunnerPath), false, 'the fully migrated Chat facade cannot be restored')
 

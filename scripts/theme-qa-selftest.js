@@ -56,6 +56,8 @@ const mainPagerShell = read('src/components/main/MainPagerShell.tsx')
 const themeMotion = read('src/theme/themeMotion.ts')
 const motionFrame = read('src/components/ui/isle/ThemeMotion.tsx')
 const settingsScreen = read('src/components/main/SettingsScreenContent.tsx')
+const settingsNavigation = read('src/components/settings/SettingsNavigationContent.tsx')
+const settingsAppearanceScreen = read('src/components/settings/SystemSettingsPanelContent.tsx')
 const chatAiConfiguration = read('src/components/chat/ChatAiConfigurationSheet.tsx')
 const chatEmptyState = read('src/components/chat/ChatEmptyState.tsx')
 const chatActiveExperience = read('src/components/chat/theme-experiences/ChatActiveThemeExperience.tsx')
@@ -66,6 +68,7 @@ const themeExpressionSurface = read('src/components/ui/isle/ThemeExpressionSurfa
 const historyPresentation = read('src/components/main/history/HistoryPresentation.tsx')
 const isleBackground = read('src/components/ui/isle/Background.tsx')
 const messageBubble = read('src/components/chat/MessageBubble.tsx')
+const messageTimeline = read('src/components/chat/MessageActivityTimeline.tsx')
 const messageContent = read('src/components/chat/MessageContent.tsx')
 const apiKeyPanel = read('src/components/settings/ApiKeyPanel.tsx')
 const contextPanel = read('src/components/settings/ContextPanel.tsx')
@@ -123,8 +126,8 @@ check(
     && /material-shared-axis/.test(themeMotion)
     && /glass-refraction/.test(themeMotion)
     && /experienceBackground = colors\.ui\.experience\.background/.test(isleBackground)
-    && /function ThemeFamilyPreview/.test(settingsScreen)
-    && /getColors\(mode, themeId/.test(settingsScreen)
+    && /function ThemeFamilyPreview/.test(settingsAppearanceScreen)
+    && /getColors\(mode, themeId/.test(settingsAppearanceScreen)
     && /ChatActiveThemeExperience/.test(chatActiveExperience)
     && /ChatSetupThemeExperience/.test(chatSetupExperience)
     && /ChatEmptyStateExperience/.test(chatEmptyState + chatEmptyExperience)
@@ -249,12 +252,14 @@ check(
   'inactive or explicitly semantic icons should not be recolored by Monet role defaults',
 )
 check(
-  'AppIcon forwards caller fill for selected and stop states',
+  'default model selection stays visible and AppIcon forwards stop fill',
   /fill,\s*\n\s*style,/.test(appIcon)
     && /fill=\{fill \?\? 'none'\}/.test(appIcon)
-    && /name="star"[\s\S]*fill=\{isDefault \? colors\.ui\.control\.primaryForeground : 'transparent'\}/.test(apiKeyPanel)
+    && /const selected = isDefault && provider\.enabled && settings\.lastPreferredModel\?\.providerId === provider\.id && settings\.lastPreferredModel\.model === model/.test(apiKeyPanel)
+    && /accessibilityState=\{\{ selected, disabled: isBusy \}\}/.test(apiKeyPanel)
+    && /name=\{selected \? 'check' : 'back-next'\}/.test(apiKeyPanel)
     && /name="stop"[\s\S]*fill=\{colors\.ui\.tone\.danger\.foreground\}/.test(floatingComposerSurfaces),
-  'selected stars and stop controls should render filled icons instead of silently dropping fill props',
+  'the live model list must expose its selected default; stop controls must retain caller fill at the glyph boundary',
 )
 check(
   'uncustomized demo controls are fork exports, not local replicas',
@@ -331,10 +336,12 @@ check(
 check(
   'ambient loading indicators stop looping outside full motion',
   (messageBubble.match(/loop: motion === 'full'/g) ?? []).length >= 4
-    && messageBubble.includes("const shimmer = active && motion === 'full' && grammar !== 'precision'")
-    && messageBubble.includes('loop: shimmer')
-    && messageBubble.includes("'.'.repeat(motion === 'full' ? dotCount : 3)")
-    && messageBubble.includes("scrollToEnd({ animated: running && motion === 'full' })")
+    && messageTimeline.includes("const shimmer = active && motion === 'full' && grammar !== 'precision'")
+    && messageTimeline.includes('loop: shimmer')
+    && messageTimeline.includes("'.'.repeat(motion === 'full' ? dotCount : 3)")
+    && /if \(!dotsEnabled \|\| motion !== 'full'\)[\s\S]*?return[\s\S]*?setInterval/.test(messageTimeline)
+    && (!/scrollToEnd\(/.test(messageBubble + messageTimeline)
+      || (messageBubble + messageTimeline).includes("scrollToEnd({ animated: running && motion === 'full' })"))
     && !messageBubble.includes('function ProcessSpinner')
     && !sourceRoute.includes('MotiView')
     && !sourceRoute.includes('useMotionPreference'),
@@ -369,7 +376,9 @@ check(
      && /chat-setup-experience-liquid-glass/.test(chatSetupExperience)
      && [/function MinimalSetupExperience[\s\S]*?\{chrome\}/, /function MonetSetupExperience[\s\S]*?\{chrome\}/, /function MaterialSetupExperience[\s\S]*?\{chrome\}/, /function LiquidGlassSetupExperience[\s\S]*?\{chrome\}/].every((pattern) => pattern.test(chatSetupExperience))
     && /HistoryHeaderFrame/.test(conversationsScreen)
-    && /<SettingsOverviewExperience/.test(settingsScreen)
+    && /return <SettingsNavigationContent/.test(settingsScreen)
+    && ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'].every((family) => settingsNavigation.includes(`canonicalThemeId === '${family}'`))
+    && /<SettingsListSurface/.test(settingsNavigation)
     && !/MainPagerExperience|ThemeNavigationDrawer|AppTopBar|shellNavigation/.test(mainPagerShell)
     && !/stopOpacity/.test(mainPagerShell),
   'page headers and family-owned backgrounds should replace the retired drawer and masthead shell',
@@ -411,7 +420,7 @@ check(
 )
 check(
   'settings foldouts use canonical semantic surfaces in Monet mode',
-  /function resolveSettingsFoldoutSurface[\s\S]*?return colors\.ui\.monet \? colors\.ui\.semantic\.surface\.base : isLiquidGlass \? colors\.ui\.semantic\.chrome\.background/.test(settingsScreen) && /backgroundColor: colors\.ui\.monet \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground/.test(settingsScreen),
+  /function resolveSettingsFoldoutSurface[\s\S]*?return colors\.ui\.monet \? colors\.ui\.semantic\.surface\.base : isLiquidGlass \? colors\.ui\.semantic\.chrome\.background/.test(settingsAppearanceScreen) && /backgroundColor: colors\.ui\.monet \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.liquidGlass \? colors\.ui\.actionBar\.itemBackground/.test(settingsAppearanceScreen),
   'settings foldout bodies, cards, and theme selectors should not fall back to decorative card fills',
 )
 check(

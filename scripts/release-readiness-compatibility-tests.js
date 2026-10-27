@@ -3,6 +3,8 @@ const fs = require('node:fs')
 const Module = require('node:module')
 const path = require('node:path')
 const vm = require('node:vm')
+const { parse } = require('@babel/parser')
+const { assertReleaseVersionRelationship } = require('./release-version-contract')
 
 const root = path.resolve(__dirname, '..')
 
@@ -1061,48 +1063,24 @@ function assertReleaseVersionMonotonicity() {
   assert.throws(() => assertCandidateVersionRelationship(candidate, app, { ...published, versionCode: 200 }))
   assert.throws(() => assertCandidateVersionRelationship(candidate, app, { ...published, versionName: '2.0.0' }))
   assert.throws(() => assertCandidateVersionRelationship(candidate, app, { ...published, versionName: '3.0.0' }))
+  assert.throws(() => assertCandidateVersionRelationship(candidate, app, { ...published, versionName: '2.0.0', versionCode: 200 }))
   const qualification = { versionName: '2.0.0', versionCode: 200, status: 'prerelease-qualification', assets: [], publishedAt: null }
   assertCandidateVersionRelationship(candidate, app, qualification)
+  assertCandidateVersionRelationship(candidate, app, { ...qualification, versionName: '1.0.0', versionCode: 100 })
   for (const invalid of [
     { ...qualification, versionName: '1.0.0' },
     { ...qualification, versionCode: 199 },
+    { ...qualification, versionName: '3.0.0', versionCode: 201 },
     { ...qualification, assets: [{ name: 'unexpected.apk' }] },
     { ...qualification, publishedAt: '2026-09-19T00:00:00Z' },
   ]) assert.throws(() => assertCandidateVersionRelationship(candidate, app, invalid))
 }
 
 function assertCandidateVersionRelationship(packageJson, appJson, updateManifest) {
-  const packageVersion = String(packageJson.version ?? '')
-  const expoVersion = String(appJson?.expo?.version ?? '')
-  const androidVersionCode = Number(appJson?.expo?.android?.versionCode)
-  const publishedVersion = String(updateManifest.versionName ?? '')
-  const publishedVersionCode = Number(updateManifest.versionCode)
-
-  assert.equal(packageVersion, expoVersion, 'package and Expo versions remain synchronized')
-  assert.ok(Number.isSafeInteger(androidVersionCode) && androidVersionCode > 0, 'candidate versionCode must be a positive integer')
-  assert.ok(Number.isSafeInteger(publishedVersionCode) && publishedVersionCode > 0, 'manifest versionCode must be a positive integer')
-  if (updateManifest.status === 'prerelease-qualification') {
-    // An asset-free qualification manifest describes this source candidate,
-    // not a previously published binary against which monotonicity is measured.
-    assert.equal(packageVersion, publishedVersion, 'qualification version must match the source candidate')
-    assert.equal(androidVersionCode, publishedVersionCode, 'qualification versionCode must match the source candidate')
-    assert.deepEqual(updateManifest.assets, [], 'qualification cannot advertise installable APKs')
-    assert.equal(updateManifest.publishedAt, null, 'qualification cannot claim a publication date')
-    return
+  const relationship = assertReleaseVersionRelationship(packageJson, appJson, updateManifest)
+  if (updateManifest.status !== 'prerelease-qualification') {
+    assert.equal(relationship.isCurrentBuild, false, 'a new release candidate must advance beyond the published Android build')
   }
-  assert.ok(compareSemanticVersions(packageVersion, publishedVersion) > 0, 'candidate app version is newer than the published Android manifest')
-  assert.ok(Number.isSafeInteger(androidVersionCode) && androidVersionCode > publishedVersionCode, 'candidate Android versionCode is newer than the published manifest')
-}
-
-function compareSemanticVersions(left, right) {
-  const leftParts = String(left).replace(/^v/i, '').split('.').map((part) => Number.parseInt(part, 10) || 0)
-  const rightParts = String(right).replace(/^v/i, '').split('.').map((part) => Number.parseInt(part, 10) || 0)
-  const length = Math.max(leftParts.length, rightParts.length)
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0)
-    if (difference !== 0) return difference
-  }
-  return 0
 }
 
 function assertSourceIntegration() {
@@ -1855,7 +1833,10 @@ function assertSourceIntegration() {
   assert.ok(retainedFatalEvidence.includes(longFatalEvidenceFixture.at(-1)), 'fatal evidence retention preserves the tombstone tail')
 
   const rootLayoutSource = fs.readFileSync(path.join(root, 'app/_layout.tsx'), 'utf8')
-  const bootFallbackSource = rootLayoutSource.match(/function BootFallback\([\s\S]*?\n}\n\ntype WebThemeRoot/)?.[0] ?? ''
+  const bootFallbackDeclaration = parse(rootLayoutSource, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
+    .program.body.find((node) => node.type === 'FunctionDeclaration' && node.id?.name === 'BootFallback')
+  assert.ok(bootFallbackDeclaration, 'the cold-start fallback has an explicit component declaration')
+  const bootFallbackSource = rootLayoutSource.slice(bootFallbackDeclaration.start, bootFallbackDeclaration.end)
   const useBootstrapSource = fs.readFileSync(path.join(root, 'src/hooks/useBootstrap.ts'), 'utf8')
   assert.match(bootFallbackSource, /<SafeAreaView\b/, 'cold-start fallback owns a static native safe-area surface')
   assert.match(bootFallbackSource, /<ActivityIndicator\b/, 'cold-start fallback uses the native activity indicator')
@@ -1891,7 +1872,8 @@ function assertSourceIntegration() {
   assert.match(mainPagerSource, /if \(!mountedPages\.has\(item\.id\) && item\.id !== page\) return null[\s\S]*?<PagerPage[\s\S]*?key=\{item\.id\}[\s\S]*?active=\{active\}[\s\S]*?direction=\{direction\}[\s\S]*?\{item\.node\}[\s\S]*?<\/PagerPage>/, 'the pager retains visited page state without paying every page render cost up front')
   assert.doesNotMatch(mainPagerSource, /ANDROID_HOME_CHILD_DIAGNOSTIC_DELAY_MS|homeBoundaryDiagnostic|pagerHomeBoundary|\[islemind:pager-home-boundary\]/, 'resolved pager crash-bisect delays and markers remain deleted')
   const switchToSource = mainPagerSource.match(/function switchTo\(next: MainPagerPage\) \{[\s\S]*?\n  \}/)?.[0] ?? ''
-  assert.match(switchToSource, /setMountedPages\([\s\S]*setPreviousPage\(page\)[\s\S]*setTransitionDirection\([\s\S]*if \(next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*router\.replace\(MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*setPage\(next\)/, 'pager navigation records semantic direction, preserves visited page state, and normalizes compatibility aliases on return to Chat')
+  assert.match(switchToSource, /blurActivePagerFocus\(\)[\s\S]*if \(next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE\.home\) \{\s*(?:\/\/[^\n]*\n\s*)*router\.replace\(MAIN_PAGER_PATH_BY_PAGE\.home\)\s*return\s*\}\s*setMountedPages\(/, 'returning from a compatibility alias replaces the route before mounting a disposable composer')
+  assert.match(switchToSource, /setMountedPages\([\s\S]*setPreviousPage\(page\)[\s\S]*setTransitionDirection\([\s\S]*setPage\(next\)/, 'root-shell navigation records semantic direction while retaining visited page state')
   assert.doesNotMatch(switchToSource, /router\.(?:push|dismissTo)/, 'ordinary top-level switches do not allocate duplicate native route screens')
   assert.doesNotMatch(mainPagerSource, /transitionRequest|readinessToken|handlePagerPageReady|requestPagerPageChild|withTiming|withSpring|GestureDetector|Animated\.View/, 'pager navigation avoids feature-owned animation primitives')
   assert.match(
@@ -1903,7 +1885,8 @@ function assertSourceIntegration() {
   assert.ok(['common.backToChat', '<HistoryHeaderFrame', 'search={historySearch}', 'newConversationLabel'].every((marker) => conversationsScreenSource.includes(marker)), 'History owns Back to Chat, title/search, and new-chat actions')
   const settingsNavigationSource = fs.readFileSync(path.join(root, 'src/components/settings/SettingsNavigationContent.tsx'), 'utf8')
   assert.match(settingsScreenSource, /<SettingsNavigationContent shellNavigation=\{shellNavigation\} onHome=\{onHome\}/, 'the retained Settings page delegates shell and return intent to its navigation owner')
-  assert.ok(['common.backToChat', "t('settings.title')", '<SettingsSearch />', '<IsleSearchField value={query} onChangeText={setQuery}', "onNavigate={onHome ?? (() => router.replace('/'))}"].every((marker) => settingsNavigationSource.includes(marker)), 'Settings navigation owns Back to Chat, title, and editable search')
+  assert.ok(['common.backToChat', "t('settings.title')", '<SettingsSearch>', '<IsleSearchField value={query} onChangeText={setQuery}', "onNavigate={onHome ?? (() => router.replace('/'))}"].every((marker) => settingsNavigationSource.includes(marker)), 'Settings navigation owns Back to Chat, title, and editable search around retained destination content')
+  assert.match(settingsNavigationSource, /const \{ query, setQuery, failure, retry \} = useSettingsSearch\(\)/, 'settings search keeps its independent persistence, failure, and retry boundary')
   assert.ok(['<ChatAiConfigurationSheet', '<ChatPersistentHeader'].every((marker) => floatingChromeSource.includes(marker)) && ['chat.newConversation', 'settings.title', 'onModelPress'].every((marker) => persistentHeaderSource.includes(marker)) && /conversation\.title/.test(floatingChromeSource), 'Chat owns persistent history, AI configuration, new-chat, and Settings actions')
   assert.ok(
     ['useState(false)', 'collapseLocked', 'restoreChrome'].every((marker) => floatingChromeStateSource.includes(marker)) &&

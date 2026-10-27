@@ -46,6 +46,7 @@ async function main() {
   await testFinalMessageClipboardAction(messageActionModule)
   await testConversationActionConfirmation(actionConfirmationModule)
   await testWorkflowSkillSaveAction(workflowSaveModule)
+  testProductionSourceFileSelection()
   testProductionMessageRuntimeBoundary()
   testStopFlushesBeforeTerminalProjectionAndKeepsConversationScope(controlModule)
   await testRecoveredConfirmationCancellation(controlModule)
@@ -993,12 +994,13 @@ async function testConversationActionConfirmation(actionConfirmationModule) {
       'get:2',
       'resolve',
       'stop:conversation-confirm',
-      'remove:conversation-confirm:assistant-confirm',
       'get:3',
+      'remove:conversation-confirm:assistant-confirm',
+      'get:4',
       'limits',
       'start',
     ],
-    'confirmation preserves re-read, stop, exact removal, next-conversation read, and restart order',
+    'confirmation revalidates after stop before exact removal, checks remaining history, and awaits restart',
   )
   assert.equal(successFixture.resolvedActions.length, 1, 'the current action is validated once against the resolved manifest snapshot')
   assert.deepEqual(successFixture.manifestCalls, [[]], 'successful confirmation discovers one mode-free catalog snapshot')
@@ -2692,8 +2694,10 @@ function testProductionMessageRuntimeBoundary() {
   assert.match(adapterSource, /async function startUserRequestedAssistantReply\(conversationId: string\): Promise<void> \{\s*assistantExecutionHost\.prepareUserResume\(\)\s*await startConversationAssistantReplyAfterHistoryProjection\(conversationId\)\s*\}/, 'foreground resource readmission precedes the unchanged target reply starter')
   assert.match(adapterSource, /const startUserRequestedChatWorkflowReply: typeof startConversationChatWorkflowReply = async \(\.\.\.args\) => \{\s*assistantExecutionHost\.prepareUserResume\(\)\s*await startConversationChatWorkflowReply\(\.\.\.args\)\s*\}/, 'explicit structured workflow starts recheck resources without changing workflow arguments')
   assert.ok(adapterSource.includes('startConfirmedWorkflowReply: startUserRequestedChatWorkflowReply'), 'bootstrap composes confirmed workflow startup into the installed runtime')
-  assert.ok(adapterSource.includes('async resumePendingModelOperation(conversationId, assistantMessageId, runId, approved, identity)'), 'bootstrap composes identity-bound same-run model-operation resume into the installed runtime')
-  assert.match(adapterSource, /resumeConversationModelOperation\(\{[^}]*approved,\s*\.\.\.identity,/, 'bootstrap forwards the reviewed continuation identity to runtime admission')
+  assert.ok(adapterSource.includes('async resumePendingModelOperation(conversationId, assistantMessageId, runId, approved, identity, signal)'), 'bootstrap composes identity- and lifetime-bound same-run model-operation resume into the installed runtime')
+  assert.match(adapterSource, /const reviewedIdentity = \{ continuationToken: identity\.continuationToken, continuationDigest: identity\.continuationDigest \}/, 'bootstrap captures primitive reviewed identity before credential hydration')
+  assert.match(adapterSource, /resumeConversationModelOperation\(\{[^}]*approved,\s*\.\.\.reviewedIdentity,/, 'bootstrap forwards the captured continuation identity to runtime admission')
+  assert.ok(adapterSource.includes('...(signal ? { cancellationSignal: signal } : {})'), 'bootstrap retains the chat lifetime through canonical resume admission')
   assert.ok(adapterSource.includes('listConversationToolManifests,'), 'bootstrap composes the neutral tool catalog into the installed runtime')
   assert.ok(
     adapterSource.includes('saveApprovedWorkflowSkillSuggestion,'),
@@ -2723,7 +2727,7 @@ function testProductionMessageRuntimeBoundary() {
     ...listSourceFiles(path.join(root, 'src')),
     ...listSourceFiles(path.join(root, 'app')),
   ]
-    .filter((file) => /\.(?:ts|tsx)$/.test(file))
+    .filter(isProductionTypeScriptSource)
     .filter((file) => !file.endsWith(path.join('conversations', 'conversationMessageRuntimeBinding.ts')))
     .flatMap((file) => {
       const matches = fs.readFileSync(file, 'utf8').match(/bindConversationMessageRuntime\s*\(/g) ?? []
@@ -2760,6 +2764,35 @@ function testProductionMessageRuntimeBoundary() {
   assert.ok(structuredGateIndex >= 0 && replyIndex > structuredGateIndex && workflowIndex > replyIndex, 'presentation dispatch sends typed text to Assistant Runtime before the explicit structured Chat workflow lane')
   assert.equal(replyDispatchControllerSource.includes('decideAgentReply'), false, 'presentation dispatch has no local Agent intent authority')
   assert.equal(fs.existsSync(chatRunnerPath), false, 'the deleted Chat facade stays absent after target bootstrap composition')
+}
+
+function isProductionTypeScriptSource(file) {
+  const normalized = file.replaceAll('\\', '/')
+  return /\.tsx?$/.test(normalized)
+    && !/(?:^|\/)__tests__\//.test(normalized)
+    && !/(?:^|[/.])(?:test|spec)\.tsx?$/.test(normalized)
+    && !/\.d\.ts$/.test(normalized)
+}
+
+function testProductionSourceFileSelection() {
+  for (const file of [
+    'src/bootstrap/conversationReplyStart.ts',
+    'src/presentation/features/conversations/anotherRuntime.ts',
+    'app/index.tsx',
+    'src/components/specification.tsx',
+  ]) assert.equal(isProductionTypeScriptSource(file), true, `${file} remains inside the production gate`)
+  for (const file of [
+    'src/presentation/features/conversations/conversationPausedResponseBinding.test.ts',
+    'src/components/example.spec.tsx',
+    'src/components/test.ts',
+    'src/components/spec.tsx',
+    'src/components/__tests__/runtime.tsx',
+    'src/components/__tests__/nested/runtime.ts',
+    'src\\components\\__tests__\\runtime.tsx',
+    'src\\components\\runtime.test.tsx',
+    'src/types/runtime.d.ts',
+    'src/components/runtime.js',
+  ]) assert.equal(isProductionTypeScriptSource(file), false, `${file} is not an executable production TypeScript source`)
 }
 
 function listSourceFiles(directory) {
