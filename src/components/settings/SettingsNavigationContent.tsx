@@ -4,7 +4,7 @@ import { Keyboard, ScrollView, StyleSheet, View, useWindowDimensions } from 'rea
 import { Text } from '@/components/ui/AppText'
 import { router, type Href } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { IslePressable, IsleSearchField } from '@/components/ui/isle'
+import { IsleButton, IslePressable, IsleSearchField } from '@/components/ui/isle'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { AppIcon, type AppIconName } from '@/components/ui/AppIcon'
@@ -12,6 +12,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { buildSettingsIndex, searchSettingsIndex, SETTINGS_DESTINATIONS, type SettingsCategory, type SettingsDestination } from '@/presentation/features/settings/settingsRegistry'
 import { SettingsNavigationRow } from './SettingsNavigationRow'
+import { useSettingsSearch } from './useSettingsSearch'
 
 const icons: Record<SettingsCategory, AppIconName> = { models: 'bot', knowledge: 'network', tools: 'command', personalization: 'sun', privacy: 'shield', maintenance: 'settings-sliders' }
 const entryIcons: Record<string, AppIconName> = { 'model-availability': 'model', generation: 'preferences-sliders', appearance: 'sun', interaction: 'toggle-on', identity: 'bot', mcp: 'mcp-network', skills: 'skills-sparkles', agents: 'reasoning', workflow: 'workflow', knowledge: 'knowledge', memory: 'memory-brain', context: 'search', usage: 'chart', data: 'layers', governance: 'shield', notifications: 'device', help: 'source', diagnostics: 'health', updates: 'download', danger: 'delete' }
@@ -20,17 +21,21 @@ export function openSettingsDestination(entry: SettingsDestination) {
   Keyboard.dismiss()
   router.push({ pathname: entry.route, params: { ...(entry.section ? { section: entry.section, locate: String(++locationSequence) } : {}), returnTo: 'settings' } } as Href)
 }
-/** Query state is deliberately outside the settings/store subscriber. */
+/** Search persistence is isolated from execution settings/store subscribers. */
 const SettingsSearch = memo(function SettingsSearch({ children }: { children: ReactNode }) {
   const { t, i18n } = useTranslation()
   const { colors } = useAppTheme()
-  const [query, setQuery] = useState('')
-  const [settled, setSettled] = useState('')
+  const { query, setQuery, failure, retry } = useSettingsSearch()
+  const [settled, setSettled] = useState(query)
   useEffect(() => { const timer = setTimeout(() => setSettled(query), 120); return () => clearTimeout(timer) }, [query])
   const index = useMemo(() => buildSettingsIndex(key => t(key)), [t, i18n.language])
   const results = useMemo(() => searchSettingsIndex(index, settled), [index, settled])
   return <View style={{ gap: 24 }}>
     <IsleSearchField value={query} onChangeText={setQuery} placeholder={t('settings.search')} accessibilityLabel={t('settings.search')} clearAccessibilityLabel={t('common.clearSearch')} onClear={() => { setQuery(''); setSettled('') }} />
+    {failure ? <View style={{ gap: 8 }}>
+      <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground }}>{t(failure === 'load' ? 'settingsSubsystem.loadFailed' : 'settingsWorkspace.saveFailed')}</Text>
+      <IsleButton compact label={t('common.retry')} onPress={retry} />
+    </View> : null}
     {settled.trim() ? <SettingsListSurface testID="settings-search-results">
       {!results.length ? <Text accessibilityLiveRegion="polite" style={{ padding: 18, fontSize: 14, color: colors.textSecondary }}>{t('settings.controlSearchEmpty')}</Text> : results.map((entry, index) => <SettingsNavigationRow key={entry.id} id={`settings-result-${entry.id}`} title={entry.title} status={t(`settingsWorkspace.categories.${entry.category}`)} icon={entryIcons[entry.id] ?? icons[entry.category]} last={index === results.length - 1} onPress={() => openSettingsDestination(entry)} />)}
     </SettingsListSurface> : children}

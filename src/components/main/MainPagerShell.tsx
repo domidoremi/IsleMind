@@ -140,13 +140,15 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
   function switchTo(next: MainPagerPage) {
     if (next === page) return
     blurActivePagerFocus()
-    setMountedPages((current) => current.has(next) ? current : new Set(current).add(next))
-    setPreviousPage(page)
-    setTransitionDirection(resolveMainPagerDirection(page, next))
     if (next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE.home) {
+      // The root route owns the new composer. Do not mount a disposable copy
+      // in the outgoing shell while the route replacement is still queued.
       router.replace(MAIN_PAGER_PATH_BY_PAGE.home)
       return
     }
+    setMountedPages((current) => current.has(next) ? current : new Set(current).add(next))
+    setPreviousPage(page)
+    setTransitionDirection(resolveMainPagerDirection(page, next))
     setPage(next)
   }
 }

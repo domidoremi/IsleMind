@@ -25,6 +25,7 @@ import {
   createMcpClientAdapter,
   MCP_CATALOG_DEFAULT_TTL_MS,
   type ExternalToolDescriptor,
+  type McpCatalogMutationOptions,
   type McpCatalogOperationOptions,
   isAllowedMcpServerUrl,
   normalizeMcpServerUrl,
@@ -133,9 +134,9 @@ export const mcpCatalog = createMcpCatalogPolicy<McpServerConfig>({
 export const listMcpServers = (options?: McpCatalogOperationOptions) => mcpCatalog.listServers(options)
 export const saveMcpServers = (servers: McpServerConfig[], options?: McpCatalogOperationOptions) =>
   mcpCatalog.saveServers(servers, options)
-export const upsertMcpServer = (server: McpServerConfig, options?: McpCatalogOperationOptions) =>
+export const upsertMcpServer = (server: McpServerConfig, options?: McpCatalogMutationOptions) =>
   mcpCatalog.upsertServer(server, options)
-export const removeMcpServer = (serverId: string, options?: McpCatalogOperationOptions) =>
+export const removeMcpServer = (serverId: string, options?: McpCatalogMutationOptions) =>
   mcpCatalog.removeServer(serverId, options)
 export const refreshMcpManifest = (server: McpServerConfig, options?: McpCatalogOperationOptions) =>
   mcpCatalog.refreshManifest(server, options)

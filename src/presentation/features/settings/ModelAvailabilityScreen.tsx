@@ -38,11 +38,24 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
   const [filter, setFilter] = useState<ProviderModelHistoryFilter>(initialProviderId ? { providerId: initialProviderId } : {})
   const [revision, setRevision] = useState(0)
   const [operation, setOperation] = useState<'refresh' | 'model' | 'provider'>()
-  const [operationResult, setOperationResult] = useState<'recorded' | 'failed'>()
-  const operationController = useRef<AbortController | undefined>(undefined)
+  const [operationResult, setOperationResult] = useState<{ scope: object; outcome: 'recorded' | 'failed' | 'cancelled' }>()
+  const [cancelling, setCancelling] = useState(false)
+  const operationController = useRef<{ controller: AbortController; scope: object } | undefined>(undefined)
+  const mounted = useRef(true)
   const provider = providers.find((item) => item.id === providerId)
   const source = useMemo<ProviderCredentialSource | undefined>(() => credential === 'primary' ? { kind: 'primary' }
     : credential === 'none' ? { kind: 'none' } : credential.startsWith('group:') ? { kind: 'group', groupId: credential.slice(6) } : undefined, [credential])
+  const operationKey = JSON.stringify([providerId, credential, model.trim(), offline, provider && [
+    provider.enabled, provider.type, provider.presetId, provider.baseUrl, provider.wireProtocol,
+    provider.credentialMode, provider.tokenPlanRegion, provider.clientCompatibilityProfile,
+    provider.credentialGroups?.map(group => [group.id, group.enabled, group.source]),
+    getProviderTestModel(provider, settings),
+  ]])
+  const operationScope = useRef({ key: operationKey, availability })
+  if (operationScope.current.key !== operationKey || operationScope.current.availability !== availability) {
+    operationScope.current = { key: operationKey, availability }
+  }
+  const currentScope = operationScope.current
   const page = useModelAvailabilityPage(availability, pageSize, filter, revision)
   // Current summaries must be windowed too: putting them in ListHeaderComponent
   // eagerly mounts the entire page before the history list can become responsive.
@@ -51,7 +64,17 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
     { kind: 'history-heading' },
     ...(page.history?.items ?? []).map((row): AvailabilityListItem => ({ kind: 'history', row })),
   ], [page.current, page.history])
-  useEffect(() => () => operationController.current?.abort(), [])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; operationController.current?.controller.abort() }
+  }, [])
+  useEffect(() => {
+    const pending = operationController.current
+    if (pending && pending.scope !== currentScope) {
+      pending.controller.abort()
+      setCancelling(true)
+    }
+  }, [currentScope])
   const credentialOptions = useMemo(() => [
     { value: 'all', label: t('modelAvailability.allCredentials') },
     { value: 'primary', label: t('modelAvailability.primaryCredential') },
@@ -79,9 +102,12 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
   }, [providerId, source, model, range, evidenceSource])
 
   const runOperation = useCallback(async (kind: 'refresh' | 'model' | 'provider') => {
-    if (!provider || offline || operationController.current) return
+    const currentProvider = useSettingsStore.getState().providers.find(item => item.id === providerId)
+    if (!mounted.current || currentScope !== operationScope.current || !provider || !currentProvider?.enabled ||
+      offline || operationController.current) return
     const controller = new AbortController()
-    operationController.current = controller; setOperation(kind); setOperationResult(undefined)
+    const pending = { controller, scope: currentScope }
+    operationController.current = pending; setOperation(kind); setOperationResult(undefined); setCancelling(false)
     try {
       if (kind === 'refresh') await availability.refresh({ providerId: provider.id, credentialSource: source, signal: controller.signal })
       else {
@@ -89,13 +115,31 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
         if (!target) throw new Error('No selectable model')
         await availability.retest({ providerId: provider.id, model: target, credentialSource: source, signal: controller.signal })
       }
-      if (!controller.signal.aborted) setOperationResult('recorded')
-    } catch { if (!controller.signal.aborted) setOperationResult('failed') }
-    finally {
-      operationController.current = undefined
-      if (!controller.signal.aborted) { setOperation(undefined); setRevision((value) => value + 1) }
+      if (mounted.current && currentScope === operationScope.current) {
+        setOperationResult({ scope: currentScope, outcome: controller.signal.aborted ? 'cancelled' : 'recorded' })
+      }
+    } catch {
+      if (mounted.current && currentScope === operationScope.current) {
+        setOperationResult({ scope: currentScope, outcome: controller.signal.aborted ? 'cancelled' : 'failed' })
+      }
     }
-  }, [provider, offline, availability, source, model, getProviderTestModel, settings])
+    finally {
+      if (operationController.current === pending) {
+        operationController.current = undefined
+        if (mounted.current) { setOperation(undefined); setCancelling(false); setRevision((value) => value + 1) }
+      }
+    }
+  }, [provider, providerId, offline, availability, source, model, getProviderTestModel, settings, currentScope])
+
+  const displayedOperation = operationController.current
+  const cancelOperation = useCallback(() => {
+    const pending = displayedOperation
+    if (!mounted.current || !pending || operationController.current !== pending || pending.controller.signal.aborted) return
+    // Cancellation requests stop; the lock remains until the existing port settles.
+    pending.controller.abort()
+    setCancelling(true)
+  }, [displayedOperation])
+  const visibleResult = operationResult?.scope === currentScope ? operationResult.outcome : undefined
 
   // The controls do not depend on page data. Keep their element identity while
   // reads settle so native controls/animated styles are not reconciled again.
@@ -129,9 +173,11 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
           <IsleButton compact label={t('modelAvailability.refreshModels')} busy={operation === 'refresh'} disabled={offline || !provider.enabled || !!operation} onPress={() => { void runOperation('refresh') }} />
         </View>
       </View> : null}
-      {operationResult ? <Text accessibilityLiveRegion="polite" style={textStyle}>{t(`modelAvailability.operation.${operationResult}`)}</Text> : null}
+      {operation ? <IsleButton compact label={t(cancelling ? 'modelAvailability.cancellingCheck' : 'modelAvailability.cancelCheck')}
+        disabled={cancelling} onPress={cancelOperation} /> : null}
+      {visibleResult ? <Text accessibilityLiveRegion="polite" style={textStyle}>{t(`modelAvailability.operation.${visibleResult}`)}</Text> : null}
     </>, [t, textStyle, headingStyle, offline, providerId, providers, providerLabel, credential, credentialOptions,
-      model, range, evidenceSource, applyFilter, provider, operation, getProviderTestModel, settings, runOperation, operationResult, filtersOpen, operationsOpen])
+      model, range, evidenceSource, applyFilter, provider, operation, getProviderTestModel, settings, runOperation, visibleResult, filtersOpen, operationsOpen, cancelling, cancelOperation])
 
   return <FlatList
     testID="model-availability-history"

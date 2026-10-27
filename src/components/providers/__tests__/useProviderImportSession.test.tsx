@@ -11,6 +11,9 @@ let mockProviders: { id: string; name: string }[]
 jest.mock('@/bootstrap/providerRegistry', () => ({ parseProviderImportText: (...args: unknown[]) => mockParse(...args) }))
 jest.mock('@/store/settingsStore', () => ({ useSettingsStore: { getState: () => ({ settings: mockSettings, providers: mockProviders, addProviders: mockAdd, flushProviderPersistence: mockFlushProviders, updateSettings: mockUpdateSettings }) } }))
 jest.mock('@/presentation/features/settings/settingsStorePersistenceCommand', () => ({ flushPersistedSettings: () => mockFlushSettings() }))
+jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
+jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
+jest.mock('@/components/ui/isle', () => ({ useIsleDialog: jest.fn() }))
 const prepared = async () => undefined
 const progress = () => undefined
 
@@ -78,4 +81,40 @@ it('retains import identities after a pre-commit failure and destroys the attemp
   await act(async () => { result.current.reset() })
   await act(async () => { await result.current.save('new fixture', prepared, progress) })
   expect(mockParse).toHaveBeenCalledTimes(3)
+})
+
+it('does not start persistence from a late preparation result after its editor unmounts', async () => {
+  let prepare!: () => void
+  const preparation = new Promise<void>(resolve => { prepare = resolve })
+  const hook = await renderHook(useProviderImportSession)
+  let saving!: ReturnType<typeof hook.result.current.save>
+  await act(async () => { saving = hook.result.current.save('fixture', () => preparation, progress) })
+  await hook.unmount()
+  await act(async () => { prepare(); expect(await saving).toBeNull() })
+  expect(mockAdd).not.toHaveBeenCalled()
+  expect(mockFlushProviders).not.toHaveBeenCalled()
+  expect(mockFlushSettings).not.toHaveBeenCalled()
+})
+
+it('finishes durability for an already committed import but suppresses late UI success and progress', async () => {
+  let finish!: () => void
+  const pending = new Promise<void>(resolve => { finish = resolve })
+  mockFlushProviders.mockReturnValueOnce(pending)
+  const onProgress = jest.fn()
+  const hook = await renderHook(useProviderImportSession)
+  let saving!: ReturnType<typeof hook.result.current.save>
+  await act(async () => { saving = hook.result.current.save('fixture', prepared, onProgress) })
+  const options = mockAdd.mock.calls[0][1]
+  await hook.unmount()
+  await act(async () => {
+    options.onProgress({ completed: 1, total: 1 })
+    finish()
+    expect(await saving).toBeNull()
+  })
+  expect(options.signal).toBeInstanceOf(AbortSignal)
+  expect(options.signal.aborted).toBe(true)
+  expect(onProgress).not.toHaveBeenCalled()
+  expect(mockAdd).toHaveBeenCalledTimes(1)
+  expect(mockFlushSettings).toHaveBeenCalledTimes(1)
+  expect(mockSettings.defaultProvider).toBe('old')
 })

@@ -17,7 +17,7 @@ import {
   secureKeyValueStorage,
 } from '@/bootstrap/secureCredentialStorage'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, normalizeProviderSyncPolicy } from '@/bootstrap/providerRegistry'
-import { normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, sanitizeProviderUsageQueryConfiguration, type ProviderCredentialMutation } from '@/modules/providers'
+import { assertProviderConfiguration, ProviderConfigurationConflictError, snapshotProviderConfiguration, normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, sanitizeProviderUsageQueryConfiguration, type ProviderConfigurationMutationOptions, type ProviderCredentialMutation, type ProviderCredentialMutationOptions } from '@/modules/providers'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
 import { clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
 import { buildProviderModelConfigsForStorage, hasOversizedProviderModelStorage, pruneCredentialGroupModelsForStorage, pruneProviderModelsForStorage } from '@/utils/providerModelStorage'
@@ -26,7 +26,7 @@ import { st } from '@/i18n/service'
 import { getSystemLanguage, setServiceLanguage } from '@/i18n/service'
 import { clearLanguagePreferenceSource, loadLanguagePreferenceSource, resolveEffectiveLanguage, saveLanguagePreferenceSource } from '@/i18n/languagePreference'
 import { normalizeThemeId } from '@/theme/colors'
-import { normalizeSettingsBackgroundIntensity, normalizeSettingsBackgroundMotion, normalizeSettingsBackgroundVariation, normalizeSettingsIdentityPreferences, normalizeSettingsLastPreferredModel, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, sanitizeSettingsUrlFields } from '@/modules/settings'
+import { normalizeSettingsBackgroundIntensity, normalizeSettingsBackgroundMotion, normalizeSettingsBackgroundVariation, normalizeSettingsIdentityPreferences, normalizeSettingsLastPreferredModel, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, normalizeSettingsUpdateReminders, sanitizeSettingsUrlFields } from '@/modules/settings'
 import { removeProviderHealthRecordsByProviderId, clearProviderHealthSnapshot } from '@/bootstrap/providerHealthRepository'
 import { invalidateAllCompactStates, invalidateCompactStatesByProvider } from '@/bootstrap/providerCompactStateRepository'
 import { providerModelScopeConfigurationChanged } from '@/modules/providers'
@@ -51,10 +51,10 @@ interface SettingsState {
   flushProviderPersistence: () => Promise<void>
   compactProviderStorage: () => boolean
   reorderProviders: (providerIds: string[]) => void
-  removeProvider: (id: string) => Promise<void>
-  clearAllProviders: () => Promise<void>
+  removeProvider: (id: string, options?: ProviderConfigurationMutationOptions) => Promise<void>
+  clearAllProviders: (options?: ProviderConfigurationMutationOptions) => Promise<void>
   listInvalidProviders: () => Promise<AIProvider[]>
-  clearInvalidProviders: (ids?: string[]) => Promise<number>
+  clearInvalidProviders: (ids?: string[], options?: ProviderConfigurationMutationOptions) => Promise<number>
   setProviderApiKey: (id: string, apiKey: string) => Promise<void>
   getSecureApiKey: (id: string) => Promise<string | null>
   setProviderCredentialGroupKey: (providerId: string, groupId: string, apiKey: string) => Promise<void>
@@ -70,10 +70,27 @@ interface SettingsState {
   getCustomSearchApiKey: () => Promise<string | null>
   setObservabilitySinkApiKey: (apiKey: string) => Promise<void>
   getObservabilitySinkApiKey: () => Promise<string | null>
-  hydrateProviderKey: (id: string) => Promise<AIProvider | null>
-  getConfiguredProviders: () => Promise<AIProvider[]>
-  getPrimaryConfiguredProvider: () => Promise<AIProvider | null>
+  hydrateProviderKey: (id: string, options?: ProviderSelectionOptions) => Promise<AIProvider | null>
+  getConfiguredProviders: (options?: ProviderSelectionOptions) => Promise<AIProvider[]>
+  getPrimaryConfiguredProvider: (options?: ProviderSelectionOptions) => Promise<AIProvider | null>
   clearAll: () => Promise<void>
+}
+
+export interface ProviderSelectionOptions {
+  signal?: AbortSignal
+  settings?: Settings
+  providers?: readonly AIProvider[]
+}
+
+function captureProviderSelectionOptions(
+  state: Pick<SettingsState, 'settings' | 'providers'>,
+  options?: ProviderSelectionOptions,
+) {
+  return {
+    signal: options?.signal,
+    settings: snapshotProviderConfiguration(options?.settings ?? state.settings),
+    providers: snapshotProviderConfiguration(options?.providers ?? state.providers),
+  }
 }
 
 interface AddProvidersProgress {
@@ -83,13 +100,14 @@ interface AddProvidersProgress {
 }
 
 interface AddProvidersOptions {
+  signal?: AbortSignal
   selectDefaultIfEmpty?: boolean
   onProgress?: (progress: AddProvidersProgress) => void
   yieldEvery?: number
   persist?: 'immediate' | 'deferred'
 }
 
-interface ProviderUpdateOptions {
+interface ProviderUpdateOptions extends ProviderConfigurationMutationOptions {
   persist?: 'immediate' | 'deferred'
 }
 
@@ -143,6 +161,7 @@ const defaultSettings: Settings = {
   ragLlmlinguaEnabled: true,
   searchProvider: 'off',
   autoUpdateCheckEnabled: true,
+  neverRemindUpdates: false,
   providerCatalogVersion: 1,
   skillsEnabled: true,
   mcpEnabled: true,
@@ -209,6 +228,7 @@ const OPTIONAL_SETTINGS_KEYS_WITHOUT_DEFAULT = [
   'googleSearchCx',
   'customSearchEndpoint',
   'lastApkUpdateCheckAt',
+  'ignoredApkUpdate',
 ] as const satisfies readonly (keyof Settings)[]
 const LEGACY_DEFAULT_PROVIDER_IDS = [
   'openai',
@@ -234,6 +254,29 @@ let providerPersistenceTimer: ReturnType<typeof setTimeout> | null = null
 let providerPersistenceQueue = Promise.resolve()
 let latestProviderPersistence = Promise.resolve()
 let latestProviderPersistenceFailed = false
+let providerMutationTail: Promise<unknown> = Promise.resolve()
+
+function enqueueProviderMutation<T>(mutate: () => Promise<T>): Promise<T> {
+  const operation = providerMutationTail.then(mutate)
+  providerMutationTail = operation.catch(() => undefined)
+  return operation
+}
+
+function captureProviderMutationOptions(options?: ProviderConfigurationMutationOptions): ProviderConfigurationMutationOptions {
+  return {
+    signal: options?.signal,
+    expectedProvider: options?.expectedProvider == null ? options?.expectedProvider : snapshotProviderConfiguration(options.expectedProvider),
+    expectedProviders: options?.expectedProviders?.map(snapshotProviderConfiguration),
+  }
+}
+
+function checkProviderMutation(providers: readonly AIProvider[], id: string, options: ProviderConfigurationMutationOptions): void {
+  throwIfProviderOperationAborted(options.signal)
+  assertProviderConfiguration(providers.find(provider => provider.id === id), options.expectedProvider)
+  for (const expected of options.expectedProviders ?? []) {
+    assertProviderConfiguration(providers.find(provider => provider.id === expected.id), expected)
+  }
+}
 
 const TAVILY_KEY = 'islemind.key.tavily'
 const GOOGLE_SEARCH_KEY = 'islemind.key.google-search'
@@ -302,15 +345,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   providers: [],
 
   load: async () => {
-    const [settings, providers, languageSource, observabilitySinkApiKey] = await Promise.all([
+    const requiredHydration = Promise.all([
       loadPersistedSettings(),
       loadPersistedProviderMetadata(),
+    ])
+    const optionalHydration = Promise.all([
       loadLanguagePreferenceSource(),
       secureKeyValueStorage.getItem(OBSERVABILITY_SINK_API_KEY),
     ])
+    // Observe optional rejection now, but required records decide admission first.
+    void optionalHydration.catch(() => undefined)
+    const [settings, providers] = await requiredHydration
+    const [languageSource, observabilitySinkApiKey] = await optionalHydration
     const storedSettings = stripLegacySettingsFields(settings ? { ...defaultSettings, ...settings } : defaultSettings)
     const urlSettings = sanitizeSettingsUrlFields(storedSettings)
-    const rawSettings = normalizeSettingsIdentityPreferences(urlSettings)
+    const identitySettings = normalizeSettingsIdentityPreferences(urlSettings)
+    const rawSettings = normalizeSettingsUpdateReminders(identitySettings)
     const effectiveLanguage = resolveEffectiveLanguage(rawSettings.language, languageSource, getSystemLanguage())
     // Read consent from saved values, not merged defaults. Legacy mode-only
     // selections must not be replaced by a new installation's provider.
@@ -322,11 +372,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ),
       searchProvider: settings?.searchProvider ?? (settings?.webSearchMode ? undefined : 'islemind'),
     })
-    const resetCatalog = (rawSettings.providerCatalogVersion ?? PROVIDER_CATALOG_VERSION) < PROVIDER_CATALOG_VERSION
+    const providerCatalogMigrated = (rawSettings.providerCatalogVersion ?? PROVIDER_CATALOG_VERSION) < PROVIDER_CATALOG_VERSION
     const savedProviders = providers ? [...providers] : []
-    if (resetCatalog) {
-      await clearProviderCatalogSecrets(savedProviders)
-    }
     const normalizedThemeId = normalizeThemeId(rawSettings.themeId)
     const normalizedThemeMode = normalizeSettingsThemeMode(rawSettings.theme) ?? defaultSettings.theme
     const normalizedThemeAccent = normalizeSettingsThemeAccent(rawSettings.themeAccent)
@@ -348,13 +395,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       backgroundIntensity: normalizedBackgroundIntensity,
       backgroundPreset: normalizedBackgroundPreset,
       providerCatalogVersion: PROVIDER_CATALOG_VERSION,
-      defaultProvider: resetCatalog ? null : rawSettings.defaultProvider,
+      defaultProvider: rawSettings.defaultProvider,
       observabilitySinkApiKeyConfigured,
       searchProvider: resolvedSearchProvider,
       webSearchMode: legacySearchModeForProvider(resolvedSearchProvider),
       webSearchEnabled: resolvedSearchProvider !== 'off',
     })
-    const mergedProviders = resetCatalog ? [] : mergeProviders(savedProviders)
+    // Catalog changes normalize saved metadata; they cannot revoke credentials,
+    // erase user configurations or replace an explicit model/provider selection.
+    const mergedProviders = mergeProviders(savedProviders)
     const providerIdentityMetadataMigrated = savedProviders.some((provider, index) => {
       const normalized = mergedProviders[index]
       return provider.presetId !== normalized?.presetId
@@ -377,14 +426,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       || rawSettings.backgroundIntensity !== normalizedBackgroundIntensity
       || rawSettings.backgroundPreset !== normalizedBackgroundPreset
     const settingsUrlMigrated = urlSettings !== storedSettings
-    const settingsIdentityMigrated = rawSettings !== urlSettings
+    const settingsIdentityMigrated = identitySettings !== urlSettings
+    const settingsUpdateRemindersMigrated = rawSettings !== identitySettings
     const observabilitySecretStateMigrated = rawSettings.observabilitySinkApiKeyConfigured !== observabilitySinkApiKeyConfigured
-    if (resetCatalog || themeModeMigrated || themeIdMigrated || themeAccentMigrated || backgroundEnvironmentMigrated || settingsUrlMigrated || settingsIdentityMigrated || observabilitySecretStateMigrated) {
-      persistSettingsSnapshot({ ...mergedSettings, defaultProvider: resetCatalog ? null : defaultProvider })
+    if (providerCatalogMigrated || themeModeMigrated || themeIdMigrated || themeAccentMigrated || backgroundEnvironmentMigrated || settingsUrlMigrated || settingsIdentityMigrated || settingsUpdateRemindersMigrated || observabilitySecretStateMigrated) {
+      persistSettingsSnapshot({ ...mergedSettings, defaultProvider })
     }
-    if (resetCatalog) {
-      persistProvidersSnapshot([])
-    } else if (providerIdentityMetadataMigrated || savedProviders.some(hasOversizedProviderModelStorage)) {
+    if (providerIdentityMetadataMigrated || savedProviders.some(hasOversizedProviderModelStorage)) {
       persistProvidersSnapshot(mergedProviders, 'deferred')
     }
   },
@@ -406,7 +454,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const hasBackgroundMotionUpdate = Object.prototype.hasOwnProperty.call(updates, 'backgroundMotion')
       const hasBackgroundIntensityUpdate = Object.prototype.hasOwnProperty.call(updates, 'backgroundIntensity')
       const hasBackgroundPresetUpdate = Object.prototype.hasOwnProperty.call(updates, 'backgroundPreset')
-      const draft = normalizeSettingsIdentityPreferences({
+      const draft = normalizeSettingsUpdateReminders(normalizeSettingsIdentityPreferences({
         ...state.settings,
         ...updates,
         ...(hasThemeModeUpdate ? { theme: normalizeSettingsThemeMode(updates.theme) ?? normalizeSettingsThemeMode(state.settings.theme) ?? defaultSettings.theme } : {}),
@@ -416,7 +464,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ...(hasBackgroundMotionUpdate ? { backgroundMotion: normalizeSettingsBackgroundMotion(updates.backgroundMotion) ?? state.settings.backgroundMotion } : {}),
         ...(hasBackgroundIntensityUpdate ? { backgroundIntensity: normalizeSettingsBackgroundIntensity(updates.backgroundIntensity) ?? state.settings.backgroundIntensity } : {}),
         ...(hasBackgroundPresetUpdate ? { backgroundPreset: typeof updates.backgroundPreset === 'number' && Number.isFinite(updates.backgroundPreset) ? Math.max(0, Math.min(3, Math.round(updates.backgroundPreset))) : state.settings.backgroundPreset } : {}),
-      })
+      }))
       const resolved = updates.searchProvider ?? (
         updates.webSearchMode || updates.webSearchEnabled !== undefined
           ? resolveSearchProvider(draft)
@@ -461,6 +509,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   addProvider: async (provider: AIProvider) => {
+    provider = snapshotProviderConfiguration(provider)
+    return enqueueProviderMutation(async () => {
     await withProviderModelAvailabilityChanges([provider.id], async () => {
     await providerCredentialStorage.applyMutations(providerCredentialMutationsForAdd(provider))
     set((state) => {
@@ -472,23 +522,38 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       return { providers: updated }
     })
     })
+    })
   },
 
   updateProvider: async (id: string, updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => {
+    updates = snapshotProviderConfiguration(updates)
+    const captured = captureProviderMutationOptions(options)
+    const persist = options?.persist
+    return enqueueProviderMutation(async () => {
+    checkProviderMutation(get().providers, id, captured)
     const previous = get().providers.find((provider) => provider.id === id)
     await withProviderModelAvailabilityChanges(providerModelScopeConfigurationChanged(previous, updates) ? [id] : [], async () => {
-    await providerCredentialStorage.applyMutations(providerCredentialMutationsForUpdate(id, updates, previous))
+    const beforeMutation = () => checkProviderMutation(get().providers, id, captured)
+    beforeMutation()
+    await providerCredentialStorage.applyMutations(providerCredentialMutationsForUpdate(id, updates, previous), { signal: captured.signal, beforeMutation })
     set((state) => {
       const updated = state.providers.map((p) =>
         p.id === id ? normalizeProvider({ ...p, ...updates, apiKey: '' } as AIProvider) : p
       )
-      persistProvidersSnapshot(updated, options?.persist)
+      persistProvidersSnapshot(updated, persist)
       return { providers: updated }
+    })
     })
     })
   },
 
   updateProviderPatches: async (patches: ProviderPatch[], options?: ProviderUpdateOptions) => {
+    patches = snapshotProviderConfiguration(patches)
+    const captured = captureProviderMutationOptions(options)
+    const signal = captured.signal
+    const persist = options?.persist
+    return enqueueProviderMutation(async () => {
+    throwIfProviderOperationAborted(signal)
     const mergedPatches = new Map<string, Partial<AIProvider>>()
     for (const patch of patches) {
       if (!patch.id) continue
@@ -496,6 +561,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
     if (!mergedPatches.size) return
 
+    const beforeMutation = () => {
+      for (const id of mergedPatches.keys()) checkProviderMutation(get().providers, id, captured)
+    }
+    beforeMutation()
     const currentProviders = get().providers
     const credentialMutations: ProviderCredentialMutation[] = []
     for (const [id, updates] of mergedPatches) {
@@ -508,29 +577,36 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const changedScopes = [...mergedPatches].filter(([id, updates]) =>
       providerModelScopeConfigurationChanged(currentProviders.find((provider) => provider.id === id), updates)).map(([id]) => id)
     await withProviderModelAvailabilityChanges(changedScopes, async () => {
-    await providerCredentialStorage.applyMutations(credentialMutations)
+    await providerCredentialStorage.applyMutations(credentialMutations, { signal, beforeMutation })
 
     set((state) => {
       const updated = state.providers.map((provider) => {
         const updates = mergedPatches.get(provider.id)
         return updates ? normalizeProvider({ ...provider, ...updates, apiKey: '' } as AIProvider) : provider
       })
-      persistProvidersSnapshot(updated, options?.persist)
+      persistProvidersSnapshot(updated, persist)
       return { providers: updated }
+    })
     })
     })
   },
 
   addProviders: async (providers: AIProvider[], options?: AddProvidersOptions) => {
+    providers = snapshotProviderConfiguration(providers)
+    options = { ...options }
+    const signal = options?.signal
+    throwIfProviderOperationAborted(signal)
     if (!providers.length) return
+    return enqueueProviderMutation(async () => {
+    throwIfProviderOperationAborted(signal)
     await withProviderModelAvailabilityChanges(providers.map((provider) => provider.id), async () => {
+    throwIfProviderOperationAborted(signal)
     const total = providers.length
     const yieldEvery = normalizeYieldEvery(options?.yieldEvery)
     options?.onProgress?.({ completed: 0, total })
     await yieldToUi()
-    await providerCredentialStorage.applyMutations(
-      providers.flatMap(providerCredentialMutationsForAdd),
-    )
+    throwIfProviderOperationAborted(signal)
+    await providerCredentialStorage.applyMutations(providers.flatMap(providerCredentialMutationsForAdd), { signal })
     for (let index = 0; index < providers.length; index += 1) {
       const provider = providers[index]
       const completed = index + 1
@@ -552,27 +628,39 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       return { providers: updated, settings }
     })
     })
+    })
   },
 
   updateProviders: async (ids: string[], updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => {
+    updates = snapshotProviderConfiguration(updates)
+    const captured = captureProviderMutationOptions(options)
+    const signal = captured.signal
+    const persist = options?.persist
     const uniqueIds = Array.from(new Set(ids))
     if (!uniqueIds.length) return
     if (updates.apiKey || updates.credentialGroups) {
       await get().updateProviderPatches(
         uniqueIds.map((id) => ({ id, updates })),
-        options,
+        { ...captured, persist },
       )
       return
     }
+    return enqueueProviderMutation(async () => {
+    const beforeMutation = () => {
+      for (const id of uniqueIds) checkProviderMutation(get().providers, id, captured)
+    }
+    beforeMutation()
     const targetIds = new Set(uniqueIds)
     const changedScopes = get().providers.filter((provider) => targetIds.has(provider.id) && providerModelScopeConfigurationChanged(provider, updates)).map((provider) => provider.id)
     await withProviderModelAvailabilityChanges(changedScopes, async () => {
+    beforeMutation()
     set((state) => {
       const updated = state.providers.map((provider) =>
         targetIds.has(provider.id) ? normalizeProvider({ ...provider, ...updates, apiKey: '' } as AIProvider) : provider
       )
-      persistProvidersSnapshot(updated, options?.persist)
+      persistProvidersSnapshot(updated, persist)
       return { providers: updated }
+    })
     })
     })
   },
@@ -604,15 +692,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     })
   },
 
-  removeProvider: async (id: string) => {
+  removeProvider: async (id: string, options?: ProviderConfigurationMutationOptions) => {
+    const captured = captureProviderMutationOptions(options)
+    return enqueueProviderMutation(async () => {
+    checkProviderMutation(get().providers, id, captured)
     await withProviderModelAvailabilityChanges([id], async () => {
     const provider = get().providers.find((item) => item.id === id)
-    if (provider) await clearProviderArtifacts(provider, 'provider_removed')
+    const beforeMutation = () => checkProviderMutation(get().providers, id, captured)
+    beforeMutation()
+    if (provider) await clearProviderArtifacts(provider, 'provider_removed', { signal: captured.signal, beforeMutation })
     set((state) => {
       const updated = state.providers.filter((p) => p.id !== id)
-      const defaultProvider = updated.some((item) => item.id === state.settings.defaultProvider)
-        ? state.settings.defaultProvider
-        : updated[0]?.id ?? null
+      const defaultProvider = state.settings.defaultProvider === id
+        ? updated[0]?.id ?? null : state.settings.defaultProvider
       const settings = sanitizeSettingsUrlFields(defaultProvider === state.settings.defaultProvider
         ? state.settings
         : { ...state.settings, defaultProvider })
@@ -624,49 +716,74 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
     })
     }, true)
+    })
   },
 
-  clearAllProviders: async () => {
+  clearAllProviders: async (options?: ProviderConfigurationMutationOptions) => {
+    const captured = captureProviderMutationOptions(options)
+    return enqueueProviderMutation(async () => {
+    const beforeMutation = () => {
+      throwIfProviderOperationAborted(captured.signal)
+      if (captured.expectedProviders) {
+        if (get().providers.length !== captured.expectedProviders.length) throw new ProviderConfigurationConflictError()
+        checkProviderMutation(get().providers, '', captured)
+      }
+    }
+    beforeMutation()
     const allProviders = get().providers
     await withProviderModelAvailabilityChanges(allProviders.map((provider) => provider.id), async () => {
     await providerCredentialStorage.applyMutations(
       allProviders.flatMap(providerCredentialDeletionMutations),
+      { signal: captured.signal, beforeMutation },
     )
     await clearProviderRuntimeState()
     set((state) => {
-      const settings = sanitizeSettingsUrlFields({ ...state.settings, defaultProvider: null })
-      persistProvidersSnapshot([])
+      const ids = new Set(allProviders.map(provider => provider.id))
+      const providers = state.providers.filter(provider => !ids.has(provider.id))
+      const settings = sanitizeSettingsUrlFields({ ...state.settings, defaultProvider: state.settings.defaultProvider && ids.has(state.settings.defaultProvider) ? null : state.settings.defaultProvider })
+      persistProvidersSnapshot(providers)
       persistSettingsSnapshot(settings)
       return {
-        providers: [],
+        providers,
         settings,
       }
     })
     }, true)
+    })
   },
 
   listInvalidProviders: async () => {
     return collectInvalidProviders(get().providers, (provider) => get().hydrateProviderKey(provider.id))
   },
 
-  clearInvalidProviders: async (ids?: string[]) => {
+  clearInvalidProviders: async (ids?: string[], options?: ProviderConfigurationMutationOptions) => {
+    ids = ids ? [...ids] : undefined
+    const captured = captureProviderMutationOptions(options)
+    return enqueueProviderMutation(async () => {
+    checkProviderMutation(get().providers, '', captured)
     if (ids && !ids.length) return 0
     const targetIds = ids ? new Set(ids) : null
     const candidates = targetIds
       ? get().providers.filter((provider) => targetIds.has(provider.id))
       : get().providers
     const invalidProviders = await collectInvalidProviders(candidates, (provider) => get().hydrateProviderKey(provider.id))
+    checkProviderMutation(get().providers, '', captured)
     if (!invalidProviders.length) return 0
 
     const invalidIds = new Set(invalidProviders.map((provider) => provider.id))
-    for (const provider of invalidProviders) {
-      await clearProviderArtifacts(provider, 'invalid_provider_cleared')
+    const beforeMutation = () => {
+      checkProviderMutation(get().providers, '', captured)
+      for (const provider of invalidProviders) {
+        assertProviderConfiguration(get().providers.find(item => item.id === provider.id), provider)
+      }
     }
+    await providerCredentialStorage.applyMutations(invalidProviders.flatMap(providerCredentialDeletionMutations), { signal: captured.signal, beforeMutation })
+    // One secure batch has started; complete its metadata closure, not a partial cancellation.
+    for (const provider of invalidProviders) await clearProviderRuntimeArtifacts(provider.id, 'invalid_provider_cleared')
     set((state) => {
       const updated = state.providers.filter((provider) => !invalidIds.has(provider.id))
-      const defaultProvider = updated.some((item) => item.id === state.settings.defaultProvider)
-        ? state.settings.defaultProvider
-        : updated[0]?.id ?? null
+      const defaultProvider = state.settings.defaultProvider && invalidIds.has(state.settings.defaultProvider)
+        ? updated[0]?.id ?? null : state.settings.defaultProvider
       const settings = sanitizeSettingsUrlFields(defaultProvider === state.settings.defaultProvider
         ? state.settings
         : { ...state.settings, defaultProvider })
@@ -675,14 +792,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       return { providers: updated, settings }
     })
     return invalidProviders.length
+    })
   },
 
   setProviderApiKey: async (id: string, apiKey: string) => {
+    return enqueueProviderMutation(async () => {
     if (apiKey) {
       await providerCredentialStorage.setProviderCredential(id, apiKey)
     } else {
       await providerCredentialStorage.deleteProviderCredential(id)
     }
+    })
   },
 
   getSecureApiKey: async (id: string) => {
@@ -690,11 +810,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setProviderCredentialGroupKey: async (providerId: string, groupId: string, apiKey: string) => {
+    return enqueueProviderMutation(async () => {
     if (apiKey) {
       await providerCredentialStorage.setCredentialGroupCredential(providerId, groupId, apiKey)
     } else {
       await providerCredentialStorage.deleteCredentialGroupCredential(providerId, groupId)
     }
+    })
   },
 
   getProviderCredentialGroupKey: async (providerId: string, groupId: string) => {
@@ -748,14 +870,23 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
   getObservabilitySinkApiKey: async () => secureKeyValueStorage.getItem(OBSERVABILITY_SINK_API_KEY),
 
-  hydrateProviderKey: async (id: string) => {
-    const provider = get().providers.find((item) => item.id === id)
+  hydrateProviderKey: async (id: string, options?: ProviderSelectionOptions) => {
+    const signal = options?.signal
+    const provider = snapshotProviderConfiguration((options?.providers ?? get().providers).find((item) => item.id === id))
+    throwIfProviderOperationAborted(signal)
     if (!provider) return null
-    const apiKey = await providerCredentialStorage.getProviderCredential(id)
-    const credentialGroups = await Promise.all((provider.credentialGroups ?? []).map(async (group) => ({
-      ...group,
-      apiKey: await providerCredentialStorage.getCredentialGroupCredential(id, group.id) ?? group.apiKey ?? '',
-    })))
+    const beforeRead = () => {
+      throwIfProviderOperationAborted(signal)
+      assertProviderConfiguration(get().providers.find(item => item.id === id), provider)
+    }
+    beforeRead()
+    const { credential: apiKey, credentialGroups: secureGroups } = await providerCredentialStorage.getProviderCredentials(
+      id, (provider.credentialGroups ?? []).map(group => group.id), { signal, beforeRead },
+    )
+    beforeRead()
+    const credentialGroups = (provider.credentialGroups ?? []).map((group, index) => ({
+      ...group, apiKey: secureGroups[index].credential ?? group.apiKey ?? '',
+    }))
     const primaryGroup = credentialGroups.find((group) => group.enabled && group.apiKey?.trim())
     return normalizeProviderCredentialGroups({
       ...provider, apiKey: apiKey?.trim() ? apiKey : primaryGroup?.apiKey ?? '', credentialGroups,
@@ -764,22 +895,43 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     })
   },
 
-  getConfiguredProviders: async () => {
-    const hydrated = await Promise.all(get().providers.map((provider) => get().hydrateProviderKey(provider.id)))
+  getConfiguredProviders: async (options?: ProviderSelectionOptions) => {
+    const captured = captureProviderSelectionOptions(get(), options)
+    throwIfProviderOperationAborted(captured.signal)
+    // Wait for every admitted secure read before releasing this selection.
+    const settlements = await Promise.allSettled(captured.providers.map((provider) => get().hydrateProviderKey(provider.id, {
+      signal: captured.signal, providers: [provider],
+    })))
+    throwIfProviderOperationAborted(captured.signal)
+    const currentProviders = new Map(get().providers.map(provider => [provider.id, provider]))
+    const hydrated = settlements.map((result, index) => {
+      if (result.status === 'rejected') throw result.reason
+      const expected = captured.providers[index]
+      assertProviderConfiguration(currentProviders.get(expected.id), expected)
+      return result.value
+    })
     return hydrated.filter((provider): provider is AIProvider => {
       if (!provider || !isProviderConversationReady(provider)) return false
       const hasCredential = provider.apiKey.trim() || provider.credentialGroups?.some((group) => group.enabled && group.apiKey?.trim())
       if (!hasCredential) return false
-      if (!providerHasPolicyAllowedModel(provider, get().settings)) return false
-      if (!getPolicyPreferredProviderModel(provider, get().settings)) return false
+      if (!providerHasPolicyAllowedModel(provider, captured.settings)) return false
+      if (!getPolicyPreferredProviderModel(provider, captured.settings)) return false
       return !getProviderConfigIssue(provider, provider.apiKey)
     })
   },
 
-  getPrimaryConfiguredProvider: async () => {
-    const configured = await get().getConfiguredProviders()
-    const defaultProvider = get().settings.defaultProvider
-    return configured.find((provider) => provider.id === defaultProvider) ?? configured[0] ?? null
+  getPrimaryConfiguredProvider: async (options?: ProviderSelectionOptions) => {
+    const captured = captureProviderSelectionOptions(get(), options)
+    throwIfProviderOperationAborted(captured.signal)
+    const configured = await get().getConfiguredProviders(captured)
+    throwIfProviderOperationAborted(captured.signal)
+    const defaultProvider = captured.settings.defaultProvider
+    const selected = configured.find((provider) => provider.id === defaultProvider) ?? configured[0] ?? null
+    if (selected) assertProviderConfiguration(
+      get().providers.find(provider => provider.id === selected.id),
+      captured.providers.find(provider => provider.id === selected.id),
+    )
+    return selected
   },
 
   clearAll: async () => {
@@ -980,6 +1132,12 @@ async function yieldToUi(): Promise<void> {
   })
 }
 
+function throwIfProviderOperationAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  if (signal.reason !== undefined) throw signal.reason
+  throw Object.assign(new Error('Provider operation cancelled'), { name: 'AbortError' })
+}
+
 async function collectInvalidProviders(
   providers: AIProvider[],
   hydrateProvider: (provider: AIProvider) => Promise<AIProvider | null>
@@ -993,26 +1151,18 @@ async function collectInvalidProviders(
     .map(({ stored }) => stored)
 }
 
-async function clearProviderCatalogSecrets(providers: AIProvider[]): Promise<void> {
-  const ids = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
-  await providerCredentialStorage.applyMutations([
-    ...Array.from(ids).map((providerId) => ({ providerId, credential: null })),
-    ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => ({
-      providerId: provider.id,
-      groupId: group.id,
-      credential: null,
-    }))),
-  ])
+async function clearProviderArtifacts(provider: AIProvider, reason: string, options?: ProviderCredentialMutationOptions): Promise<void> {
+  await providerCredentialStorage.applyMutations(providerCredentialDeletionMutations(provider), options)
+  await clearProviderRuntimeArtifacts(provider.id, reason)
 }
 
-async function clearProviderArtifacts(provider: AIProvider, reason: string): Promise<void> {
-  await providerCredentialStorage.applyMutations(providerCredentialDeletionMutations(provider))
+async function clearProviderRuntimeArtifacts(providerId: string, reason: string): Promise<void> {
   await Promise.all([
-    removeProviderHealthRecordsByProviderId(provider.id),
-    invalidateCompactStatesByProvider(provider.id, reason),
+    removeProviderHealthRecordsByProviderId(providerId),
+    invalidateCompactStatesByProvider(providerId, reason),
   ])
   const { providerModelAvailabilityRuntime } = await import('@/bootstrap/providerModelAvailabilityRuntime')
-  await providerModelAvailabilityRuntime.withProviderMutation(provider.id, async () => undefined, true)
+  await providerModelAvailabilityRuntime.withProviderMutation(providerId, async () => undefined, true)
 }
 
 async function clearProviderRuntimeState(): Promise<void> {

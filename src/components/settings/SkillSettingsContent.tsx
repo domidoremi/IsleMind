@@ -1,8 +1,8 @@
 import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useRef } from 'react'
-import { Keyboard } from 'react-native'
-import { useSettingsDraft } from './SettingsEditBoundary'
+import { Keyboard, Platform } from 'react-native'
+import { useSettingsDraft, useSettingsLifetime } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import { useSettingsStore } from '@/store/settingsStore'
 import { SettingsReferenceField } from './SettingsReferenceField'
@@ -34,6 +34,7 @@ import { createBaseSkill, deleteSkill, exportSkill, importSkill, listSkills, ups
 import { androidWorkflowCatalog } from '@/bootstrap/androidWorkflowCatalog'
 import { clampProviderPlatformOutputTokens, clampProviderPlatformTemperature } from '@/modules/providers'
 import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/platform/native/boundedImportFile'
+import { downloadBrowserJsonFile } from '@/platform/native/expoPortableDataTransfer'
 import { listStaticConversationToolManifests } from '@/bootstrap/conversationToolCatalog'
 import { clampTraceText, redactSensitiveText } from '@/core'
 import {
@@ -145,18 +146,21 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   const [operationError, setOperationError] = useState<string>()
   const saveLock = useRef(false)
   const pendingId = useRef<string | undefined>(undefined)
-  const editingVersion = useRef<number | undefined>(undefined)
+  const editingSnapshot = useRef<SkillDefinition | undefined>(undefined)
+  const lifetime = useSettingsLifetime()
+  const refreshVersion = useRef(0)
   const enabled = useSettingsStore(state => state.settings.skillsEnabled ?? true)
   const providers = useSettingsStore(state => state.providers)
   const [references, setReferences] = useState<Awaited<ReturnType<typeof loadCapabilityReferenceCatalog>>>()
   const [referenceFailed, setReferenceFailed] = useState(false)
+  const [referenceLoading, setReferenceLoading] = useState(false)
   const [referenceRefresh, setReferenceRefresh] = useState(0)
   const updateSettings = useSettingsStore(state => state.updateSettings)
   const formSnapshot = JSON.stringify([name, description, systemPrompt, tags, layer, priority, providerId, model, temperature, maxTokens, enabledTools, knowledgeSources, firstUserMessage, expectedReplyFormat, variablesJson, stackPolicy])
   const emptySnapshot = useRef(formSnapshot)
   const baseline = useRef(formSnapshot)
   const dirty = baseline.current !== formSnapshot
-  const requestDiscard = useSettingsDraft(dirty, saving, resetForm)
+  const requestDiscard = useSettingsDraft(dirty, saving, resetForm, JSON.stringify([editingSkillId, formOpen, formSnapshot]))
   const sortedSkills = useMemo(() => [...skills].sort((a, b) => b.updatedAt - a.updatedAt), [skills])
   const workflowSkills = useMemo(() => sortedSkills.filter(isWorkflowSkill), [sortedSkills])
   const regularSkills = useMemo(() => sortedSkills.filter((skill) => !isWorkflowSkill(skill)), [sortedSkills])
@@ -216,8 +220,9 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
     if (!formOpen || !advancedOpen) return
     let cancelled = false
     setReferenceFailed(false)
-    void loadCapabilityReferenceCatalog().then(value => { if (!cancelled) setReferences(value) })
-      .catch(() => { if (!cancelled) setReferenceFailed(true) })
+    setReferenceLoading(true)
+    void loadCapabilityReferenceCatalog().then(value => { if (!cancelled) { setReferences(value); setReferenceLoading(false) } })
+      .catch(() => { if (!cancelled) { setReferenceFailed(true); setReferenceLoading(false) } })
     return () => { cancelled = true }
   }, [formOpen, advancedOpen, referenceRefresh])
 
@@ -226,16 +231,20 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }, [reviewRequiredWorkflowCount, safePluginManifestFocus, safeWorkflowFocus])
 
   async function refresh() {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted) return
+    const version = ++refreshVersion.current
     try {
     const [nextSkills, nextToolchainCatalog] = await Promise.all([
       listSkills(),
       buildPersistedToolchainCatalogSnapshot(),
     ])
+    if (signal?.aborted || version !== refreshVersion.current) return
     setSkills(nextSkills)
     setToolchainCatalog(nextToolchainCatalog)
     setLoaded(true)
     setLoadFailed(false)
-    } catch { setLoadFailed(true) }
+    } catch { if (!signal?.aborted && version === refreshVersion.current) setLoadFailed(true) }
   }
 
   async function registerSkillInToolchain(skill: SkillDefinition) {
@@ -265,17 +274,17 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }
 
   async function runOperation(work: () => Promise<void>, failure = 'settingsWorkspace.saveFailed') {
-    if (saveLock.current) return
+    if (saveLock.current || lifetime.current?.signal.aborted) return
     saveLock.current = true
     setSaving(true)
     setOperationError(undefined)
     try { await work() }
-    catch { setOperationError(failure) }
-    finally { saveLock.current = false; setSaving(false) }
+    catch (error) { if (!lifetime.current?.signal.aborted) setOperationError(error instanceof Error && error.name === 'ConversationSkillConflictError' ? 'settingsWorkspace.conflict' : failure) }
+    finally { saveLock.current = false; if (!lifetime.current?.signal.aborted) setSaving(false) }
   }
 
   async function saveSkill() {
-    if (saveLock.current) return
+    if (saveLock.current || lifetime.current?.signal.aborted) return
     saveLock.current = true
     setSaving(true)
     setOperationError(undefined)
@@ -286,11 +295,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       dialog.toast({ title: t('skills.promptRequired'), tone: 'amber' })
       return
     }
-    const editing = editingSkillId ? skills.find((skill) => skill.id === editingSkillId) : undefined
-    if (editingSkillId) {
-      const latest = (await listSkills()).find(skill => skill.id === editingSkillId)
-      if (!latest || latest.updatedAt !== editingVersion.current) { dialog.toast({ title: t('settingsWorkspace.conflict'), tone: 'amber' }); return }
-    }
+    const editing = editingSnapshot.current
     const parsedVariables = parseVariablesJson(variablesJson)
     if (parsedVariables === null) {
       dialog.toast({ title: t('skills.variablesInvalid'), tone: 'amber' })
@@ -320,22 +325,28 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       stackPolicy,
     })
     pendingId.current = draftSkill.id
-    const skill = await upsertSkill(buildWorkflowSkillReviewRequiredEdit(editing, draftSkill))
+    const skill = await upsertSkill(buildWorkflowSkillReviewRequiredEdit(editing, draftSkill), {
+      expectedSkill: editing ?? null, signal: lifetime.current?.signal,
+    })
+    if (lifetime.current?.signal.aborted) return
     resetForm()
     setFormOpen(false)
     setSkills(current => [...current.filter(item => item.id !== skill.id), skill])
     dialog.toast({ title: editing ? t('skills.updated') : t('skills.created'), message: skill.name, tone: 'mint' })
-    } catch { setOperationError('settingsWorkspace.saveFailed') }
-    finally { saveLock.current = false; setSaving(false) }
+    await refresh()
+    } catch (error) { if (!lifetime.current?.signal.aborted) setOperationError(error instanceof Error && error.name === 'ConversationSkillConflictError' ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed') }
+    finally { saveLock.current = false; if (!lifetime.current?.signal.aborted) setSaving(false) }
   }
 
   async function importFromClipboard() {
     const raw = await Clipboard.getStringAsync()
+    if (lifetime.current?.signal.aborted) return
     await importRaw(raw)
   }
 
   async function importFromFile() {
     let importUri: string | undefined
+    let readComplete = false
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/json', 'text/json', 'text/plain', 'text/markdown', '*/*'],
@@ -344,6 +355,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       if (result.canceled || !result.assets[0]) return
       const asset = result.assets[0]
       importUri = asset.uri
+      if (lifetime.current?.signal.aborted) return
       const supported = /\.isleskill$/i.test(asset.name) || /\.(json|txt|md)$/i.test(asset.name) || ['application/json', 'text/json', 'text/plain', 'text/markdown'].includes(asset.mimeType ?? '')
       if (!supported) {
         dialog.toast({ title: t('skills.unsupportedFile'), message: 'SKILL.md / .isleskill / .json / .txt', tone: 'amber' })
@@ -354,8 +366,12 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         file: asset.file,
         limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
       })
+      if (lifetime.current?.signal.aborted) return
+      readComplete = true
       await importRaw(raw)
     } catch (error) {
+      if (lifetime.current?.signal.aborted) return
+      if (readComplete) throw error
       dialog.toast({
         title: isFileTooLargeError(error) ? t('error.fileTooLarge') : t('skills.importFailed'),
         message: isFileTooLargeError(error) ? t('chat.fileTooLarge20') : t('skills.importJsonFailed'),
@@ -367,13 +383,26 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }
 
   async function importRaw(raw: string) {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted) return
     const result = importSkill(raw)
     if (!result.ok || !result.skill) {
       dialog.notice({ title: t('skills.importFailed'), message: result.message, tone: 'danger' })
       return
     }
-    await upsertSkill(result.skill)
+    const imported = result.skill
+    const existing = (await listSkills()).find(skill => skill.id === imported.id)
+    if (signal?.aborted) return
+    const expected = existing ? JSON.parse(JSON.stringify(existing)) as SkillDefinition : null
+    if (existing && !await dialog.confirm({
+      title: t('skills.replaceImportTitle'), message: t('skills.replaceImportMessage', { name: existing.name }),
+      confirmLabel: t('skills.replaceImport'), cancelLabel: t('common.cancel'), tone: 'danger', signal,
+    })) return
+    if (signal?.aborted) return
+    await upsertSkill(imported, { expectedSkill: expected, signal })
+    if (signal?.aborted) return
     await refresh()
+    if (signal?.aborted) return
     const workflowReviewRequired = isWorkflowSkillReviewRequired(result.skill)
     const pluginReviewSummary = workflowReviewRequired ? buildPluginManifestImportReviewSummary(result.skill, t) : ''
     dialog.toast({
@@ -386,41 +415,62 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }
 
   async function exportSkillFile(skill: SkillDefinition) {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted) return
     const raw = exportSkill(skill)
-    await Clipboard.setStringAsync(raw)
-    const safeName = skill.name.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || skill.id
-    const uri = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}${safeName}.isleskill`
-    await FileSystem.writeAsStringAsync(uri, raw, { encoding: FileSystem.EncodingType.UTF8 })
-    try {
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, {
-          mimeType: 'application/json',
-          dialogTitle: `${skill.name}.isleskill`,
-          UTI: 'public.json',
-        })
+    const safeName = (skill.name.replace(/[^\w.-]+/g, '-').replace(/^[.-]+|[.-]+$/g, '').slice(0, 80) || 'skill')
+    if (Platform.OS === 'web') {
+      downloadBrowserJsonFile(raw, `${safeName}.isleskill`)
+    } else {
+      await Clipboard.setStringAsync(raw)
+      if (signal?.aborted) return
+      const root = FileSystem.cacheDirectory ?? FileSystem.documentDirectory
+      if (!root) throw new Error('File storage is unavailable')
+      const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+      const uri = `${root}${safeName}-${suffix}.isleskill`
+      try {
+        await FileSystem.writeAsStringAsync(uri, raw, { encoding: FileSystem.EncodingType.UTF8 })
+        if (signal?.aborted) return
+        const sharingAvailable = await Sharing.isAvailableAsync()
+        if (signal?.aborted) return
+        if (sharingAvailable) {
+          await Sharing.shareAsync(uri, {
+            mimeType: 'application/json',
+            dialogTitle: `${skill.name}.isleskill`,
+            UTI: 'public.json',
+          })
+        }
+      } finally {
+        await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)
       }
-    } finally {
-      await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)
     }
-    dialog.toast({ title: t('skills.exported'), message: `${skill.name}.isleskill`, tone: 'mint' })
+    if (signal?.aborted) return
+    dialog.toast({ title: t(Platform.OS === 'web' ? 'skills.exportDownloadPrepared' : 'skills.exported'), message: `${skill.name}.isleskill`, tone: 'mint' })
   }
 
   async function removeSkill(skill: SkillDefinition) {
+    const signal = lifetime.current?.signal
+    const expected = JSON.parse(JSON.stringify(skill)) as SkillDefinition
     const confirmed = await dialog.confirm({
       title: t('skills.deleteTitle'),
       message: skill.name,
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       tone: 'danger',
+      signal,
     })
-    if (!confirmed) return
-    await deleteSkill(skill.id)
+    if (!confirmed || signal?.aborted) return
+    await deleteSkill(skill.id, { expectedSkill: expected, signal })
+    if (signal?.aborted) return
     if (editingSkillId === skill.id) resetForm()
     await refresh()
+    if (signal?.aborted) return
     dialog.toast({ title: t('skills.deleted'), message: skill.name, tone: 'mint' })
   }
 
   async function updateWorkflowSkillState(skill: SkillDefinition) {
+    const signal = lifetime.current?.signal
+    const expected = JSON.parse(JSON.stringify(skill)) as SkillDefinition
     const currentState = getWorkflowSkillState(skill)
     const nextState = currentState === 'enabled' ? 'disabled' : 'enabled'
     const reviewRequired = nextState === 'enabled' && isWorkflowSkillReviewRequired(skill)
@@ -430,11 +480,13 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       confirmLabel: t(reviewRequired ? 'skills.reviewAndEnableWorkflow' : nextState === 'enabled' ? 'skills.enableWorkflow' : 'skills.disableWorkflow'),
       cancelLabel: t('common.cancel'),
       tone: nextState === 'enabled' ? 'mint' : 'amber',
+      signal,
     })
-    if (!confirmed) return
+    if (!confirmed || signal?.aborted) return
     const result = await saveApprovedWorkflowSkillState({
-      skill,
+      skill: expected,
       state: nextState,
+      signal,
       manifests: listStaticConversationToolManifests(),
       approval: {
         approved: true,
@@ -443,15 +495,18 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         visibleSummary: `${reviewRequired ? 'reviewed-and-enabled' : nextState}:${skill.name}`,
       },
     })
+    if (signal?.aborted) return
     if (!result.ok) {
       dialog.toast({ title: t('skills.agentWorkflowStateBlocked'), message: result.reason, tone: 'amber' })
       return
     }
     await refresh()
+    if (signal?.aborted) return
     dialog.toast({ title: t(nextState === 'enabled' ? 'skills.agentWorkflowEnabled' : 'skills.agentWorkflowDisabled'), message: skill.name, tone: 'mint' })
   }
 
   async function installWorkflowTemplate(workflowId: string) {
+    const signal = lifetime.current?.signal
     const workflow = androidWorkflowCatalog.list().find((item) => item.id === workflowId)
     if (!workflow) {
       dialog.toast({ title: t('skills.workflowTemplateUnavailable'), tone: 'amber' })
@@ -480,10 +535,12 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       confirmLabel: t('skills.installWorkflowTemplate'),
       cancelLabel: t('common.cancel'),
       tone: 'mint',
+      signal,
     })
-    if (!confirmed) return
+    if (!confirmed || signal?.aborted) return
     const result = await saveApprovedWorkflowSkillSuggestion({
       suggestion,
+      signal,
       approval: {
         approved: true,
         approvedBy: 'settings-template',
@@ -491,11 +548,13 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         visibleSummary: preview.approvalSummary,
       },
     })
+    if (signal?.aborted) return
     if (!result.ok) {
       dialog.toast({ title: t('skills.workflowTemplateUnavailable'), message: result.reason, tone: 'amber' })
       return
     }
     await refresh()
+    if (signal?.aborted) return
     dialog.toast({
       title: t(result.status === 'already_saved' ? 'skills.workflowTemplateAlreadyInstalled' : 'skills.workflowTemplateInstalled'),
       message: workflow.name,
@@ -504,7 +563,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   }
 
   function editSkill(skill: SkillDefinition) {
-    editingVersion.current = skill.updatedAt
+    editingSnapshot.current = JSON.parse(JSON.stringify(skill)) as SkillDefinition
     baseline.current = JSON.stringify([skill.name, skill.description ?? '', skill.systemPrompt, skill.tags.join(', '), skill.layer, String(skill.priority ?? ''), skill.providerId ?? '', skill.model ?? '', typeof skill.temperature === 'number' ? String(skill.temperature) : '', typeof skill.maxTokens === 'number' ? String(skill.maxTokens) : '', (skill.enabledTools ?? []).join('\n'), (skill.knowledgeSources ?? []).join('\n'), skill.firstUserMessage ?? '', skill.expectedReplyFormat ?? '', skill.variables?.length ? JSON.stringify(skill.variables, null, 2) : '', skill.stackPolicy ?? 'append'])
     setFormOpen(true)
     setEditingSkillId(skill.id)
@@ -529,7 +588,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   function resetForm() {
     baseline.current = emptySnapshot.current
     pendingId.current = undefined
-    editingVersion.current = undefined
+    editingSnapshot.current = undefined
     setAdvancedOpen(false)
     setEditingSkillId(null)
     setFormOpen(false)
@@ -633,9 +692,9 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
               <IsleButton key={item} label={t(`skills.stackPolicy.${item}`)} disabled={saving} compact tone={stackPolicy === item ? 'mint' : 'soft'} onPress={() => setStackPolicy(item)} />
             ))}
           </View>
-          {referenceFailed ? <><Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.loadFailed')}</Text><IsleButton label={t('common.retry')} onPress={() => setReferenceRefresh(value => value + 1)} /></> : !references ? <Text style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
-          <SettingsReferenceField label={t('skills.enabledTools')} value={enabledTools} onChange={setEnabledTools} disabled={saving} catalogReady={Boolean(references) && !referenceFailed} options={references?.tools ?? []} />
-          <SettingsReferenceField label={t('skills.knowledgeSources')} value={knowledgeSources} onChange={setKnowledgeSources} disabled={saving} catalogReady={Boolean(references) && !referenceFailed} options={references?.knowledge ?? []} />
+          {referenceFailed ? <><Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.loadFailed')}</Text><IsleButton label={t('common.retry')} onPress={() => setReferenceRefresh(value => value + 1)} /></> : referenceLoading || !references ? <Text style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
+          <SettingsReferenceField label={t('skills.enabledTools')} value={enabledTools} onChange={setEnabledTools} disabled={saving} catalogReady={Boolean(references) && !referenceFailed && !referenceLoading} options={references?.tools ?? []} />
+          <SettingsReferenceField label={t('skills.knowledgeSources')} value={knowledgeSources} onChange={setKnowledgeSources} disabled={saving} catalogReady={Boolean(references) && !referenceFailed && !referenceLoading} options={references?.knowledge ?? []} />
           <IsleField
             label={t('skills.firstUserMessage')}
             inputProps={{ editable: !saving, value: firstUserMessage, onChangeText: setFirstUserMessage, placeholder: t('skills.firstUserMessagePlaceholder'), multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
@@ -670,7 +729,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                   <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, alignItems: actionCompact ? 'stretch' : 'center' }}>
                     {!registeredToolchainSkillIds.has(createPortableSkillToolchainManifest(skill).id) ? <IsleButton label={t('skills.registerToolchain')} disabled={saving} compact icon={<AppIcon name="workflow" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => registerSkillInToolchain(skill))} style={actionButtonStyle} /> : <IsleChip active tone="mint">{t('skills.toolchainRegistered')}</IsleChip>}
                     <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
-                    <IsleButton label={t('common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill))} style={actionButtonStyle} />
                     <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
                   </View>
                 }
@@ -811,7 +870,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                       style={actionButtonStyle}
                     />
                     <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
-                    <IsleButton label={t('common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill))} style={actionButtonStyle} />
                     <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
                   </View>
                 }

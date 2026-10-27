@@ -54,7 +54,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
     setEnabled(configuration.enabled)
     setEditorText(baselineText)
   }
-  useSettingsDraft(dirty, task !== 'idle', resetDraft)
+  useSettingsDraft(dirty, task !== 'idle', resetDraft, JSON.stringify([provider.id, enabled, editorText]))
 
   useEffect(() => {
     if (!dirtyRef.current && !saveLock.current) resetDraft()

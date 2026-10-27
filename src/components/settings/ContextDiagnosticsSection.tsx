@@ -14,8 +14,10 @@ import type { RagEvaluationRun } from '@/modules/knowledge'
 
 interface ContextDiagnosticsSectionProps {
   selfTesting: boolean
+  selfTestBlocked?: boolean
   selfTestResult: { ranAt: number; steps: ContextSelfTestStep[] } | null
   ragEvaluating: boolean
+  ragEvaluationBlocked?: boolean
   ragEvaluation: RagEvaluationRun | null
   ragLogs: RagEvaluationLog[]
   indexingJobs: RagIndexingJobStatus[]
@@ -27,8 +29,10 @@ interface ContextDiagnosticsSectionProps {
 
 export function ContextDiagnosticsSection({
   selfTesting,
+  selfTestBlocked = false,
   selfTestResult,
   ragEvaluating,
+  ragEvaluationBlocked = false,
   ragEvaluation,
   ragLogs,
   indexingJobs,
@@ -53,11 +57,11 @@ export function ContextDiagnosticsSection({
       <IslePressable
         haptic
         onPress={onRunSelfTest}
-        disabled={selfTesting}
+        disabled={selfTesting || selfTestBlocked}
         accessibilityLabel={t('contextPanel.runSelfTest')}
-        accessibilityState={selfTesting ? { busy: true } : undefined}
+        accessibilityState={{ busy: selfTesting, disabled: selfTesting || selfTestBlocked }}
         testID="context-self-test-button"
-        style={{ ...primaryActionStyle, marginTop: 10, opacity: selfTesting ? 0.65 : 1 }}
+        style={{ ...primaryActionStyle, marginTop: 10, opacity: selfTesting || selfTestBlocked ? 0.65 : 1 }}
       >
         <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>
           {selfTesting ? t('contextPanel.selfTesting') : t('contextPanel.runSelfTest')}
@@ -113,11 +117,11 @@ export function ContextDiagnosticsSection({
         <IslePressable
           haptic
           onPress={onRunRagEvaluation}
-          disabled={ragEvaluating}
+          disabled={ragEvaluating || ragEvaluationBlocked}
           accessibilityLabel={t('contextPanel.ragDebug.runEvaluation')}
-          accessibilityState={ragEvaluating ? { busy: true } : undefined}
+          accessibilityState={{ busy: ragEvaluating, disabled: ragEvaluating || ragEvaluationBlocked }}
           testID="context-rag-evaluation-button"
-          style={{ ...primaryActionStyle, marginTop: 8, opacity: ragEvaluating ? 0.65 : 1 }}
+          style={{ ...primaryActionStyle, marginTop: 8, opacity: ragEvaluating || ragEvaluationBlocked ? 0.65 : 1 }}
         >
           <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>
             {ragEvaluating ? t('contextPanel.ragDebug.evaluating') : t('contextPanel.ragDebug.runEvaluation')}

@@ -1,4 +1,4 @@
-import type { SettingsPersistencePort } from '@/modules/settings'
+import type { SettingsPersistencePort, SettingsSearchPersistence } from '@/modules/settings'
 import type { ProviderMetadataPersistencePort } from '@/modules/providers'
 import type { Settings } from '@/types/settingsContracts'
 import type { AIProvider } from '@/types/providerContracts'
@@ -11,6 +11,7 @@ export const SETTINGS_STORE_PERSISTENCE_ALREADY_BOUND_ERROR =
 export interface SettingsStorePersistence {
   readonly settings: SettingsPersistencePort
   readonly providers: ProviderMetadataPersistencePort
+  readonly search?: SettingsSearchPersistence
 }
 
 let persistence: SettingsStorePersistence | undefined
@@ -60,6 +61,32 @@ export function loadPersistedProviderMetadata(): Promise<readonly AIProvider[] |
 
 export function savePersistedProviderMetadata(providers: readonly AIProvider[]): Promise<void> {
   return requirePersistence().providers.save(providers)
+}
+
+export function getSettingsSearchSnapshot() {
+  return requireSettingsSearch().getSnapshot()
+}
+
+export function subscribeSettingsSearch(listener: () => void): () => void {
+  return requireSettingsSearch().subscribe(listener)
+}
+
+export function loadSettingsSearch(): Promise<void> {
+  return requireSettingsSearch().load()
+}
+
+export function setSettingsSearchQuery(query: string): Promise<void> {
+  return requireSettingsSearch().setQuery(query)
+}
+
+export function retrySettingsSearch(): Promise<void> {
+  return requireSettingsSearch().retry()
+}
+
+function requireSettingsSearch(): SettingsSearchPersistence {
+  const search = requirePersistence().search
+  if (!search) throw new Error('settings_search_persistence_uninitialized')
+  return search
 }
 
 function requirePersistence(): SettingsStorePersistence {

@@ -1,5 +1,5 @@
 import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
-import { SettingsEditBoundary, useSettingsDraft, useSettingsLeave } from '@/components/settings/SettingsEditBoundary'
+import { SettingsEditBoundary, useSettingsDraft, useSettingsLeave, useSettingsLifetime } from '@/components/settings/SettingsEditBoundary'
 import { SettingsHelpButton } from '@/components/settings/SettingsHelp'
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AppState, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type KeyboardEvent, type LayoutChangeEvent } from 'react-native'
@@ -32,7 +32,7 @@ import { composeUserFacingError, extractUserFacingErrorDetail } from '@/core'
 import type { ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
 import { applyProviderPreset, countDetectedProviderImports, formatProviderNameList, getProviderPreset, looksLikeProviderImportConnectionText, parseCredentialGroups, parseProviderImportDraft, parseProviderImportText, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
-import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProviderWireProtocolFromBaseUrl, shouldSyncWireProtocolFromBaseUrl, type ProviderSettingsGroup, type ProviderSortMode } from '@/modules/providers'
+import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, PROVIDER_WIRE_PROTOCOL_OPTIONS, ProviderConfigurationConflictError, snapshotProviderConfiguration, inferProviderWireProtocolFromBaseUrl, shouldSyncWireProtocolFromBaseUrl, type ProviderSettingsGroup, type ProviderSortMode } from '@/modules/providers'
 import { resolveProviderConfigDraft } from '@/bootstrap/providerPolicies'
 import { activationItemProgress } from '@/services/providerActivationJob'
 import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/platform/native/boundedImportFile'
@@ -179,6 +179,11 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const runtimeDiagnosticsRunRef = useRef(0)
   const importSession = useProviderImportSession()
+  const lifetime = useSettingsLifetime()
+  const dangerousOperationLock = useRef(false)
+  const importLock = useRef(false)
+  const [dangerousOperationPending, setDangerousOperationPending] = useState(false)
+  useSettingsDraft(false, dangerousOperationPending || importProgress !== null, () => undefined)
   const providerModelAccessSettings = useMemo(() => ({
     providerAllowlist: settings.providerAllowlist,
     providerBlocklist: settings.providerBlocklist,
@@ -335,12 +340,19 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
   }
   const { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
   async function addProviderFromForm(provider: AIProvider) {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || dangerousOperationLock.current) return
     // Saving configuration is not authorization to probe or test a paid model.
     const store = useSettingsStore.getState()
-    if (store.providers.some(item => item.id === provider.id)) await store.updateProvider(provider.id, provider)
-    else await store.addProviders([provider], { selectDefaultIfEmpty: false })
+    const previous = store.providers.find(item => item.id === provider.id)
+    if (previous) {
+      await store.updateProvider(provider.id, provider, { expectedProvider: previous, signal })
+      // Retry current settings if an earlier save failed after provider commit.
+      store.updateSettings({})
+    } else await store.addProviders([provider], { selectDefaultIfEmpty: false, signal })
     await store.flushProviderPersistence()
     await flushPersistedSettings()
+    if (signal?.aborted) return
     setAddOpen(false)
     setExpandedProviderId(provider.id)
     setProviderView('models')
@@ -349,6 +361,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
   }
 
   async function publishImportProgress(progress: ProviderImportProgress, options: { waitForNotification?: boolean; owner?: string } = {}) {
+    if (lifetime.current?.signal.aborted) return
     setImportProgress(progress)
     const notification = publishProviderImportStatusNotification(
       progress,
@@ -360,19 +373,23 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
   }
 
   async function importProvidersFromText(input: string, skipExisting = true): Promise<boolean> {
-    if (importProgress) return false
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || importLock.current || dangerousOperationLock.current) return false
+    importLock.current = true
     const notificationOwner = createProviderNotificationOwner('import')
+    try {
     await publishImportProgress({ stage: 'parsing', completed: 0, total: 0 }, { waitForNotification: true, owner: notificationOwner })
+    if (signal?.aborted) return false
     Keyboard.dismiss()
     await yieldToNextPaint()
-    try {
+    if (signal?.aborted) return false
       const result = await importSession.save(input, async total => {
         await publishImportProgress({ stage: 'saving', completed: 0, total }, { waitForNotification: true, owner: notificationOwner })
         await yieldToNextPaint()
       }, ({ completed, total, currentProviderName }) => {
         void publishImportProgress({ stage: 'saving', completed, total, currentProviderName }, { owner: notificationOwner })
       }, skipExisting)
-      if (!result) return false
+      if (!result || signal?.aborted) return false
       if (!result.providers.length) {
         setImportProgress(null)
         void clearAndroidStatusNotification({ owner: notificationOwner })
@@ -382,6 +399,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
 
       void publishImportProgress({ stage: 'finishing', completed: result.providers.length, total: result.providers.length }, { owner: notificationOwner })
       await yieldToNextPaint()
+      if (signal?.aborted) return false
 
       setImportProgress(null)
       setImportOpen(false)
@@ -401,6 +419,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       else dialog.toast(savedNotice)
       return true
     } catch (error) {
+      if (signal?.aborted) return false
       const failureMessage = providerImportFailureMessage(error, t)
       setImportProgress(null)
       void clearAndroidStatusNotification({ owner: notificationOwner })
@@ -410,44 +429,65 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
         tone: 'danger',
       })
       return false
+    } finally {
+      importLock.current = false
+      if (!signal?.aborted) setImportProgress(null)
+      void clearAndroidStatusNotification({ owner: notificationOwner })
     }
   }
 
   async function enableEffectiveSelection() {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || dangerousOperationLock.current || importLock.current) return
     const ids = batchMode ? Array.from(selectedIds) : providers.map((provider) => provider.id)
     if (!ids.length) {
       dialog.toast({ title: t('providerSettings.enableNone'), tone: 'amber' })
       return
     }
     // Enabling is a local preference, not consent to test credentials or models.
-    for (const id of ids) await useSettingsStore.getState().updateProvider(id, { enabled: true })
+    for (const id of ids) {
+      if (signal?.aborted) break
+      const store = useSettingsStore.getState()
+      const expectedProvider = store.providers.find(provider => provider.id === id)
+      if (expectedProvider) await store.updateProvider(id, { enabled: true }, { expectedProvider, signal })
+    }
     await useSettingsStore.getState().flushProviderPersistence()
+    if (signal?.aborted) return
     dialog.toast({ title: t('providerSettings.configurationSaved'), tone: 'mint' })
   }
 
   async function confirmClearAllProviders() {
+    const expectedProviders = snapshotProviderConfiguration(providers)
+    await runDangerousProviderOperation(async signal => {
     const confirmed = await dialog.confirm({
       title: t('providerSettings.clearAllTitle'),
-      message: t('providerSettings.clearAllMessage', { count: providers.length }),
+      message: t('providerSettings.clearAllMessage', { count: expectedProviders.length }),
       confirmLabel: t('providerSettings.clearAllConfirm'),
       cancelLabel: t('common.cancel'),
       tone: 'danger',
-    })
-    if (!confirmed) return
-    await clearAllProviders()
+      signal,
+    }).catch(() => false)
+    if (!confirmed || signal.aborted) return
+    await clearAllProviders({ expectedProviders, signal })
+    await useSettingsStore.getState().flushProviderPersistence()
+    await flushPersistedSettings()
+    if (signal.aborted) return
     setBatchMode(false)
     setSelectedIds(new Set())
     setExpandedProviderId(null)
     setModelFilter('')
     dialog.toast({ title: t('providerSettings.clearAllDone'), tone: 'mint' })
+    })
   }
 
   async function confirmClearInvalidProviders() {
+    await runDangerousProviderOperation(async signal => {
     if (!providers.length) {
       dialog.toast({ title: t('providerSettings.clearInvalidNone'), tone: 'amber' })
       return
     }
-    const invalidProviders = await listInvalidProviders()
+    const invalidProviders = snapshotProviderConfiguration(await listInvalidProviders())
+    if (signal.aborted) return
     if (!invalidProviders.length) {
       dialog.toast({ title: t('providerSettings.clearInvalidNone'), tone: 'amber' })
       return
@@ -462,9 +502,13 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       confirmLabel: t('providerSettings.clearInvalidConfirm'),
       cancelLabel: t('common.cancel'),
       tone: 'amber',
-    })
-    if (!confirmed) return
-    const count = await clearInvalidProviders(invalidProviders.map((provider) => provider.id))
+      signal,
+    }).catch(() => false)
+    if (!confirmed || signal.aborted) return
+    const count = await clearInvalidProviders(invalidProviders.map((provider) => provider.id), { expectedProviders: invalidProviders, signal })
+    await useSettingsStore.getState().flushProviderPersistence()
+    await flushPersistedSettings()
+    if (signal.aborted) return
     if (!count) {
       dialog.toast({ title: t('providerSettings.clearInvalidNone'), tone: 'amber' })
       return
@@ -474,10 +518,12 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     setExpandedProviderId(null)
     setModelFilter('')
     dialog.toast({ title: t('providerSettings.clearInvalidDone'), message: t('providerSettings.clearInvalidDoneMessage', { count }), tone: 'mint' })
+    })
   }
 
   async function confirmRemoveSupplierGroup(group: ProviderSettingsGroup) {
-    if (deletingSupplierId) return
+    group = { ...group, providers: snapshotProviderConfiguration(group.providers) }
+    await runDangerousProviderOperation(async signal => {
     const count = group.providers.length
     const groupLabel = group.id.startsWith('preset:')
       ? getProviderPreset(group.id.slice('preset:'.length) as ProviderPresetId).name
@@ -491,8 +537,9 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       cancelLabel: t('common.cancel'),
       tone: 'danger',
       chips: [{ label: t('providerSettings.deleteSupplierConfigCount', { count }), tone: 'danger' }],
-    })
-    if (!confirmed) return
+      signal,
+    }).catch(() => false)
+    if (!confirmed || signal.aborted) return
 
     const ids = new Set(group.providers.map((provider) => provider.id))
     setDeletingSupplierId(group.id)
@@ -502,11 +549,18 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     void publishProviderDeleteNotification(0, count, t, useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true, notificationOwner)
 
     let removed = 0
+    let pendingDurability = false
     try {
       for (const provider of group.providers) {
-        await removeProvider(provider.id)
+        if (signal.aborted) return
+        await removeProvider(provider.id, { expectedProvider: provider, signal })
+        pendingDurability = true
+        await useSettingsStore.getState().flushProviderPersistence()
+        await flushPersistedSettings()
+        pendingDurability = false
         invalidateProviderUsage(provider.id)
         removed += 1
+        if (signal.aborted) return
         void publishProviderDeleteNotification(removed, count, t, useSettingsStore.getState().settings.systemStatusNotificationsEnabled === true, notificationOwner)
       }
       dialog.toast({
@@ -516,11 +570,14 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
         dedupeKey: 'provider-delete-supplier',
       })
       void clearAndroidStatusNotification({ owner: notificationOwner })
-    } catch {
+    } catch (error) {
+      if (signal.aborted) return
       const partial = removed > 0
-      const message = partial
+      const message = pendingDurability
+        ? t('settingsWorkspace.saveFailed')
+        : partial
         ? t('providerSettings.deleteSupplierPartialMessage', { completed: removed, total: count })
-        : t('providerSettings.deleteSupplierFailedMessage')
+        : t(error instanceof ProviderConfigurationConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed')
       dialog.notice({
         title: partial ? t('providerSettings.deleteSupplierPartial') : t('providerSettings.deleteSupplierFailed'),
         message,
@@ -528,7 +585,24 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       })
       void clearAndroidStatusNotification({ owner: notificationOwner })
     } finally {
-      setDeletingSupplierId(null)
+      void clearAndroidStatusNotification({ owner: notificationOwner })
+      if (!signal.aborted) setDeletingSupplierId(null)
+    }
+    })
+  }
+
+  async function runDangerousProviderOperation(operation: (signal: AbortSignal) => Promise<void>) {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || dangerousOperationLock.current || importLock.current || activationBusy) return
+    dangerousOperationLock.current = true
+    setDangerousOperationPending(true)
+    try {
+      await operation(signal)
+    } catch (error) {
+      if (!signal.aborted) dialog.notice({ title: t(error instanceof ProviderConfigurationConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'), tone: 'danger' })
+    } finally {
+      dangerousOperationLock.current = false
+      if (!signal.aborted) setDangerousOperationPending(false)
     }
   }
 
@@ -612,14 +686,14 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
           <IsleButton compact label={t('providerSettings.enableSelected', { count: selectedIds.size })}
             disabled={!selectedIds.size || activationBusy} onPress={() => void enableEffectiveSelection()} />
           <IsleButton compact tone="danger" label={t('providerSettings.deleteSelected')}
-            disabled={!selectedIds.size || Boolean(deletingSupplierId)} onPress={() => {
+            disabled={!selectedIds.size || dangerousOperationPending || Boolean(deletingSupplierId)} onPress={() => {
               const group = { id: 'selection', label: t('providerSettings.selectionMode'), providers: providers.filter(provider => selectedIds.has(provider.id)) }
               void confirmRemoveSupplierGroup(group)
             }} />
         </> : null}
         <IsleButton compact label={t('modelAvailability.details')} onPress={() => router.push('/settings/model-availability')} />
-        <IsleButton compact tone="amber" label={t('providerSettings.clearInvalid')} onPress={() => void confirmClearInvalidProviders()} />
-        <IsleButton compact tone="danger" label={t('providerSettings.clearAll')} onPress={() => void confirmClearAllProviders()} />
+        <IsleButton compact tone="amber" label={t('providerSettings.clearInvalid')} disabled={dangerousOperationPending || importProgress !== null || activationBusy} onPress={() => void confirmClearInvalidProviders()} />
+        <IsleButton compact tone="danger" label={t('providerSettings.clearAll')} disabled={dangerousOperationPending || importProgress !== null || activationBusy} onPress={() => void confirmClearAllProviders()} />
       </View>
     </View> : null}
   </View>
@@ -1362,7 +1436,8 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
         </View>
         {showProviderItems ? <ActivationProviderProgressList items={providerItems} /> : null}
         {done && job.issueGroups?.length ? <ActivationIssueGroupList groups={job.issueGroups} /> : null}
-        <IsleProgress percent={progress * 100} size="middle" showInfo={false} fillColor={job.failed ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground} />
+        <IsleProgress percent={progress * 100} size="middle" showInfo={false} accessibilityLabel={title}
+          fillColor={job.failed ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground} />
         <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>
           {t('providerSettings.activationProgressMessage', { completed: job.completed, total: job.total, synced: job.synced, tested: job.tested, failed: job.failed })}
         </Text>
@@ -1399,15 +1474,18 @@ function ActivationProviderProgressList({ items }: { items: ActivationJobItemSta
         const progress = activationItemProgress(item.progress)
         const warning = item.status === 'failed' || item.failed
         const ready = item.status === 'done' && item.tested
+        const statusLabel = activationItemStatusLabel(item, t)
         return (
           <View key={item.providerId} style={{ gap: 5 }}>
             <View style={{ minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{item.providerName}</Text>
               <Text style={{ color: warning ? colors.ui.tone.warning.foreground : ready ? colors.ui.control.link : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
-                {activationItemStatusLabel(item, t)}
+                {statusLabel}
               </Text>
             </View>
-            <IsleProgress percent={progress * 100} size="small" showInfo={false} durationMs={1} fillColor={warning ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground} />
+            <IsleProgress percent={progress * 100} size="small" showInfo={false} durationMs={1}
+              accessibilityLabel={`${item.providerName} · ${statusLabel}`}
+              fillColor={warning ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground} />
             {item.stage ? (
               <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{item.stage}</Text>
             ) : null}
@@ -1441,6 +1519,7 @@ function ProviderImportProgressCard({ progress }: { progress: ProviderImportProg
   const { subtleBorderWidth, chromeSurface, chromeBorder } = resolveProviderChrome(colors)
   const determinate = progress.total > 0
   const progressValue = determinate ? Math.min(1, Math.max(0, progress.completed / progress.total)) : 0
+  const title = t(`providerSettings.importProgress.${progress.stage}`)
   const detail = progress.stage === 'saving'
     ? t('providerSettings.importProgressSavingDetail', { completed: progress.completed, total: progress.total })
     : t('providerSettings.importProgressIndeterminate')
@@ -1452,14 +1531,15 @@ function ProviderImportProgressCard({ progress }: { progress: ProviderImportProg
           <HighFrameSpinner color={colors.ui.icon.accentForeground} size={16} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
-              {t(`providerSettings.importProgress.${progress.stage}`)}
+              {title}
             </Text>
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '800' }}>
               {detail}
             </Text>
           </View>
         </View>
-        <IsleProgress percent={progressValue * 100} size="small" showInfo={false} indeterminate={!determinate} />
+        <IsleProgress percent={progressValue * 100} size="small" showInfo={false} indeterminate={!determinate}
+          accessibilityLabel={[title, progress.currentProviderName].filter(Boolean).join(' · ')} />
         {progress.currentProviderName ? (
           <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
             {t('providerSettings.importProgressCurrent', { name: progress.currentProviderName })}
@@ -1605,7 +1685,7 @@ export function ProviderFormModal({
     setWireProtocol(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   }
 
-  const requestDiscard = useSettingsDraft(visible && Boolean(name || baseUrl || keysText || modelsText || presetId !== DEFAULT_PROVIDER_PRESET_ID), saving, resetDraft)
+  const requestDiscard = useSettingsDraft(visible && Boolean(name || baseUrl || keysText || modelsText || presetId !== DEFAULT_PROVIDER_PRESET_ID || wireProtocol !== DEFAULT_PROVIDER_WIRE_PROTOCOL), saving, resetDraft, JSON.stringify([visible, name, baseUrl, keysText, modelsText, presetId, wireProtocol]))
   function closeWithoutSubmit() { void requestDiscard(onClose) }
 
   const keyboardRequestClose = useKeyboardAwareModalRequestClose(closeWithoutSubmit)
@@ -2052,7 +2132,7 @@ export function ProviderImportModal({
     setContentHeight(0)
     setClipboardState('idle')
   }
-  const requestDiscard = useSettingsDraft(visible && Boolean(input), importBusy, () => { resetDraft(); onClose() })
+  const requestDiscard = useSettingsDraft(visible && Boolean(input), importBusy, () => { resetDraft(); onClose() }, JSON.stringify([visible, input, skipExisting]))
   const closeWithoutSubmit = () => {
     if (!submitLock.current) void requestDiscard(() => undefined)
   }

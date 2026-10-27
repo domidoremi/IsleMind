@@ -2,6 +2,7 @@ import type { ApplicationRecordStoragePort } from '@/platform/storage'
 
 export const APPLICATION_DATA_STORAGE_KEYS = Object.freeze({
   SETTINGS: '@islemind/settings',
+  SETTINGS_SEARCH: '@islemind/settings-search',
   PROVIDERS: '@islemind/providers',
   ACTIVE_CONVERSATION: '@islemind/active-conversation',
   COMPOSER_DRAFTS: '@islemind/composer-drafts',

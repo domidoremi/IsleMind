@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Platform, View } from 'react-native'
+import { View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useNavigation } from 'expo-router'
 import { usePreventRemove } from 'expo-router/react-navigation'
@@ -14,6 +14,7 @@ import { agentDefinitionFromForm, agentDefinitionToForm, type AgentDefinitionFor
 import { resolveProviderDisplayName } from './providerPresentation'
 import type { AIProvider } from '@/types/providerContracts'
 import { SettingsReferenceField, type SettingsReferenceOption } from '@/components/settings/SettingsReferenceField'
+import { useSettingsBrowserLeave } from '@/components/settings/SettingsEditBoundary'
 import { getProviderPreferredModel, getProviderSelectableModels } from '@/utils/providerModels'
 
 const PAGE_SIZE = 20
@@ -43,10 +44,15 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
   const [referenceState, setReferenceState] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [referenceRefresh, setReferenceRefresh] = useState(0)
   const locked = useRef(false)
+  const confirming = useRef(false)
+  const draftSnapshot = JSON.stringify([form, expectedRevision, dirty])
+  const draftRevision = useRef({ snapshot: draftSnapshot, dirty })
+  if (draftRevision.current.snapshot !== draftSnapshot) draftRevision.current = { snapshot: draftSnapshot, dirty }
   const lifetime = useRef<AbortController | undefined>(undefined)
   useEffect(() => {
-    lifetime.current = new AbortController()
-    return () => lifetime.current?.abort()
+    const controller = new AbortController()
+    lifetime.current = controller
+    return () => controller.abort()
   }, [])
   useEffect(() => {
     let cancelled = false
@@ -69,14 +75,23 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
   const headingStyle = { color: colors.text, fontSize: 16, fontWeight: '700' as const }
   const rowsStyle = { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: 8 }
   async function operation(work: () => Promise<void>, failure: string) {
-    if (locked.current) return
+    if (locked.current || confirming.current || lifetime.current?.signal.aborted) return
     locked.current = true; setBusy(true); setFeedback(undefined)
     try { await work() }
     catch (error) { if (!lifetime.current?.signal.aborted) setFeedback(error instanceof AgentDefinitionConflictError ? 'conflict' : failure) }
     finally { locked.current = false; if (!lifetime.current?.signal.aborted) setBusy(false) }
   }
   async function canReplaceDraft() {
-    return !dirty || dialog.confirm({ title: t('agents.discardTitle'), message: t('agents.discardMessage'), signal: lifetime.current?.signal })
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || confirming.current) return false
+    const reviewed = draftRevision.current
+    if (!reviewed.dirty) return true
+    confirming.current = true
+    try {
+      const approved = await dialog.confirm({ title: t('agents.discardTitle'), message: t('agents.discardMessage'), signal })
+      return approved && reviewed === draftRevision.current && !signal?.aborted
+    } catch { return false }
+    finally { confirming.current = false }
   }
   usePreventRemove(dirty || busy, ({ data }) => {
     if (locked.current) return
@@ -84,12 +99,13 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
       if (confirmed && !locked.current && !lifetime.current?.signal.aborted) navigation.dispatch(data.action)
     })
   })
-  useEffect(() => {
-    if (Platform.OS !== 'web' || (!dirty && !busy)) return
-    const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
-    window.addEventListener('beforeunload', prevent)
-    return () => window.removeEventListener('beforeunload', prevent)
-  }, [dirty, busy])
+  useSettingsBrowserLeave(dirty || busy, async (action) => {
+    if (locked.current) return
+    if (await canReplaceDraft() && !locked.current && !lifetime.current?.signal.aborted) {
+      setDirty(false)
+      action()
+    }
+  })
   function openDraft(definition: AgentDefinition, revision?: number) {
     if (lifetime.current?.signal.aborted) return
     setAdvancedOpen(false)
@@ -174,7 +190,7 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
         <IsleButton label={t('common.save')} tone="primary" busy={busy} disabled={busy || !dirty} onPress={() => { void operation(async () => {
           let definition: AgentDefinition
           try { definition = agentDefinitionFromForm(form) } catch { setAdvancedOpen(true); setFeedback('invalid'); return }
-          const saved = await management.save(definition, expectedRevision)
+          const saved = await management.save(definition, expectedRevision, lifetime.current?.signal)
           if (!lifetime.current?.signal.aborted) { openDraft(saved, saved.revision); setFeedback('saved'); setRefresh((value) => value + 1) }
         }, 'saveFailed') }} />
         <IsleButton label={t('common.cancel')} disabled={busy} onPress={() => { void operation(async () => {
@@ -197,13 +213,15 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
           openDraft(saved, saved.revision)
         }, 'readFailed') }} />
         <IsleButton compact label={t('agents.export')} disabled={busy} onPress={() => { void operation(async () => {
-          if (!await dialog.confirm({ title: t('agents.export'), message: t('agents.exportWarning'), signal: lifetime.current?.signal })) return
-          await management.exportSaved(item.id)
+          const signal = lifetime.current?.signal
+          if (!await dialog.confirm({ title: t('agents.export'), message: t('agents.exportWarning'), signal }) || signal?.aborted) return
+          await management.exportSaved(item.id, signal)
           if (!lifetime.current?.signal.aborted) setFeedback('exported')
         }, 'exportFailed') }} />
         <IsleButton compact tone="danger" label={t('common.delete')} disabled={busy} onPress={() => { void operation(async () => {
-          if (!await dialog.confirm({ title: t('agents.deleteTitle'), message: t('agents.deleteMessage', { name: item.name }), tone: 'danger', signal: lifetime.current?.signal })) return
-          await management.remove(item.id, item.revision)
+          const signal = lifetime.current?.signal
+          if (!await dialog.confirm({ title: t('agents.deleteTitle'), message: t('agents.deleteMessage', { name: item.name }), tone: 'danger', signal }) || signal?.aborted) return
+          await management.remove(item.id, item.revision, signal)
           if (!lifetime.current?.signal.aborted) {
             if (form?.source.id === item.id) { setForm(undefined); setDirty(false) }
             setFeedback('deleted'); setRefresh((value) => value + 1)

@@ -4,10 +4,18 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { SettingsNavigationContent } from './SettingsNavigationContent'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { useWindowDimensions } from 'react-native'
+import { createSettingsSearchPersistence, SETTINGS_SEARCH_SCHEMA } from '@/modules/settings'
+import {
+  bindSettingsStorePersistence,
+  releaseSettingsStorePersistence,
+  type SettingsStorePersistence,
+} from '@/presentation/features/settings/settingsStorePersistenceCommand'
 
 const mockTranslate = (key: string) => key
 let mockState: any
 let mockTheme: CanonicalThemeId = 'minimal'
+let searchPersistence: SettingsStorePersistence
+let savedQuery: unknown
 jest.mock('@/store/settingsStore', () => ({ useSettingsStore: jest.fn(select => select(mockState)) }))
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: mockTranslate, i18n: { language: 'en' } }) }))
@@ -16,10 +24,33 @@ jest.mock('@/components/ui/isle/GlassSurface', () => ({ GlassSurface: require('r
 jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({ __esModule: true, default: jest.fn(() => ({ width: 390, height: 844, fontScale: 1, scale: 1 })) }))
 jest.mock('@/components/navigation/AnimatedNavigationTrigger', () => ({ AnimatedNavigationTrigger: () => null }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
-jest.mock('@/components/ui/isle', () => ({ IslePressable: require('react-native').Pressable, IsleSearchField: require('react-native').TextInput }))
+jest.mock('@/components/ui/isle', () => ({
+  IslePressable: require('react-native').Pressable,
+  IsleSearchField: require('react-native').TextInput,
+  IsleButton: ({ label, onPress }: any) => {
+    const React = require('react')
+    const { Pressable, Text } = require('react-native')
+    return React.createElement(Pressable, { accessibilityRole: 'button', onPress }, React.createElement(Text, null, label))
+  },
+}))
 
-beforeEach(() => { mockTheme = 'minimal'; mockState = { providers: [], settings: { language: 'en' } } })
-afterEach(() => { jest.restoreAllMocks(); jest.useRealTimers(); jest.clearAllMocks() })
+beforeEach(() => {
+  mockTheme = 'minimal'
+  mockState = { providers: [], settings: { language: 'en' } }
+  savedQuery = null
+  searchPersistence = {
+    settings: { load: async () => null, save: jest.fn() },
+    providers: { load: async () => [], save: jest.fn() },
+    search: createSettingsSearchPersistence({ read: async () => savedQuery, write: async record => { savedQuery = record } }),
+  }
+  bindSettingsStorePersistence(searchPersistence)
+})
+afterEach(() => {
+  releaseSettingsStorePersistence(searchPersistence)
+  jest.restoreAllMocks()
+  jest.useRealTimers()
+  jest.clearAllMocks()
+})
 it('opens actual settings directly instead of category detours', async () => {
   const screen = await render(<SettingsNavigationContent />)
   for (const id of ['providers', 'appearance', 'preferences', 'governance', 'mcp', 'data']) expect(screen.getByTestId(`settings-entry-${id}`)).toBeTruthy()
@@ -112,4 +143,45 @@ it('reflows Material shortcuts into one column at large font scale', async () =>
   const screen = await render(<SettingsNavigationContent />)
   expect(screen.getByTestId('settings-group-everyday')).toHaveStyle({ flexDirection: 'column' })
   expect(screen.getByTestId('settings-entry-appearance')).toHaveStyle({ flexDirection: 'row', width: undefined })
+})
+
+it('retains exact search across remount, legacy category navigation and a fresh persistence instance', async () => {
+  jest.useFakeTimers()
+  const screen = await render(<SettingsNavigationContent />)
+  await fireEvent.changeText(screen.getByLabelText('settings.search'), 'temperature')
+  await act(() => jest.advanceTimersByTime(120))
+  await fireEvent.press(screen.getByTestId('settings-result-temperature'))
+  await screen.unmount()
+  const category = await render(<SettingsNavigationContent category="privacy" />)
+  expect(category.getByLabelText('settings.search').props.value).toBe('temperature')
+  expect(category.getByTestId('settings-result-temperature')).toBeTruthy()
+  await category.unmount()
+  releaseSettingsStorePersistence(searchPersistence)
+  searchPersistence = { ...searchPersistence, search: createSettingsSearchPersistence({
+    read: async () => savedQuery,
+    write: async record => { savedQuery = record },
+  }) }
+  bindSettingsStorePersistence(searchPersistence)
+  const restored = await render(<SettingsNavigationContent />)
+  await act(() => jest.advanceTimersByTime(120))
+  expect(restored.getByLabelText('settings.search').props.value).toBe('temperature')
+  expect(savedQuery).toEqual({ schema: SETTINGS_SEARCH_SCHEMA, query: 'temperature' })
+  expect(searchPersistence.settings.save).not.toHaveBeenCalled()
+  expect(searchPersistence.providers.save).not.toHaveBeenCalled()
+})
+
+it('shows persistence failure with retry while retaining the query and existing selections', async () => {
+  releaseSettingsStorePersistence(searchPersistence)
+  const write = jest.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue(undefined)
+  searchPersistence = { ...searchPersistence, search: createSettingsSearchPersistence({ read: async () => null, write }) }
+  bindSettingsStorePersistence(searchPersistence)
+  const screen = await render(<SettingsNavigationContent />)
+  await fireEvent.changeText(screen.getByLabelText('settings.search'), 'skills')
+  expect(screen.getByRole('alert')).toHaveTextContent('settingsWorkspace.saveFailed')
+  expect(screen.getByLabelText('settings.search').props.value).toBe('skills')
+  await fireEvent.press(screen.getByRole('button', { name: 'common.retry' }))
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(write).toHaveBeenLastCalledWith({ schema: SETTINGS_SEARCH_SCHEMA, query: 'skills' })
+  expect(searchPersistence.settings.save).not.toHaveBeenCalled()
+  expect(searchPersistence.providers.save).not.toHaveBeenCalled()
 })

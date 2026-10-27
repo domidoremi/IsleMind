@@ -12,12 +12,12 @@ import type { MemorySortMode, MemoryStatusFocus } from '@/services/contextAssetF
 import type { MemoryItem, MemorySourceKind } from '@/types/contextContracts'
 import { filterPendingMemoriesForReview, type MemoryReviewQueueFocus, type MemoryReviewSummary } from '@/utils/memoryReview'
 
-interface MemoryReviewSectionProps {
-  memories: MemoryItem[]
-  pendingMemories: MemoryItem[]
-  filteredMemories: MemoryItem[]
-  filteredPendingMemories: MemoryItem[]
-  visibleMemories: MemoryItem[]
+interface MemoryReviewSectionProps<Memory extends MemoryItem> {
+  memories: Memory[]
+  pendingMemories: Memory[]
+  filteredMemories: Memory[]
+  filteredPendingMemories: Memory[]
+  visibleMemories: Memory[]
   memoryStatusCounts: { pending: number; active: number; disabled: number }
   memoryReviewSummary: MemoryReviewSummary
   memoryStatusFocus: MemoryStatusFocus
@@ -43,10 +43,10 @@ interface MemoryReviewSectionProps {
   onSetMemoryFilter: (value: string) => void
   onResetMemoryFilters: () => void
   onSetShowAllMemories: (value: boolean | ((current: boolean) => boolean)) => void
-  onConfirmPendingMemories: (targetMemories?: MemoryItem[], filtered?: boolean) => void
-  onRejectPendingMemories: (targetMemories?: MemoryItem[]) => void
-  onToggleMemory: (memory: MemoryItem) => Promise<void>
-  onDeleteMemory: (memory: MemoryItem) => Promise<void>
+  onConfirmPendingMemories: (targetMemories?: Memory[], filtered?: boolean) => void
+  onRejectPendingMemories: (targetMemories?: Memory[]) => void
+  onToggleMemory: (memory: Memory) => Promise<void>
+  onDeleteMemory: (memory: Memory) => Promise<void>
   renderDebugStat: (label: string, value: string) => ReactNode
   renderItemRow: (input: {
     key: string
@@ -62,7 +62,7 @@ interface MemoryReviewSectionProps {
 
 const memoryReviewSourceFocuses: MemorySourceKind[] = ['imported', 'model', 'deterministic', 'manual', 'legacy']
 
-export function MemoryReviewSection({
+export function MemoryReviewSection<Memory extends MemoryItem>({
   memories,
   pendingMemories,
   filteredMemories,
@@ -99,7 +99,7 @@ export function MemoryReviewSection({
   onDeleteMemory,
   renderDebugStat,
   renderItemRow,
-}: MemoryReviewSectionProps) {
+}: MemoryReviewSectionProps<Memory>) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const { t } = useTranslation()

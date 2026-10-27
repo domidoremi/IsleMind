@@ -61,7 +61,7 @@ it('renders saved definitions and management-only disclosure; explicit Save uses
   await fireEvent.changeText(view.getByLabelText('agents.fields.name'), 'Updated')
   expect(management.save).not.toHaveBeenCalled()
   await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
-  await waitFor(() => expect(management.save).toHaveBeenCalledWith(expect.objectContaining({ name: 'Updated' }), 1))
+  await waitFor(() => expect(management.save).toHaveBeenCalledWith(expect.objectContaining({ name: 'Updated' }), 1, expect.anything()))
   await view.unmount()
 })
 
@@ -113,7 +113,7 @@ it('requires confirmation for local export and deletion, and does not act after 
   expect(management.remove).not.toHaveBeenCalled()
   mockConfirm.mockResolvedValue(true)
   await fireEvent.press(view.getByRole('button', { name: 'common.delete' }))
-  await waitFor(() => expect(management.remove).toHaveBeenCalledWith('agent', 1))
+  await waitFor(() => expect(management.remove).toHaveBeenCalledWith('agent', 1, expect.anything()))
   await view.unmount()
 })
 
@@ -161,6 +161,110 @@ it('loads references on demand, retries local read failure and saves selected ID
   await fireEvent.press(selectors[1])
   await fireEvent.press(view.getByLabelText('Project notes'))
   await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
-  await waitFor(() => expect(management.save).toHaveBeenCalledWith(expect.objectContaining({ knowledgeIds: ['doc-1'], allowedToolIds: [] }), undefined))
+  await waitFor(() => expect(management.save).toHaveBeenCalledWith(expect.objectContaining({ knowledgeIds: ['doc-1'], allowedToolIds: [] }), undefined, expect.anything()))
+  await view.unmount()
+})
+
+it('blocks cached Agent reference choices while catalog reload is pending or failed and restores them only after retry', async () => {
+  const { management } = fixture()
+  const catalog = { tools: [], knowledge: [{ value: 'doc', label: 'Previously loaded notes' }], skills: [], agents: [] }
+  let reject!: (error: Error) => void
+  const pending = new Promise((_resolve, no) => { reject = no })
+  const loadReferences = jest.fn().mockResolvedValueOnce(catalog).mockReturnValueOnce(pending).mockResolvedValueOnce(catalog)
+  const view = await render(<AgentDefinitionsScreen management={management} loadReferences={loadReferences} />)
+  await fireEvent.press(view.getByRole('button', { name: 'agents.create' }))
+  const advanced = () => view.getByRole('button', { name: 'settingsWorkspace.advanced' })
+  await fireEvent.press(advanced())
+  await waitFor(() => expect(loadReferences).toHaveBeenCalledTimes(1))
+  const chooseNotes = () => view.getAllByRole('button', { name: 'settingsReferences.choose' })[1]
+  expect(chooseNotes()).toBeEnabled()
+  await fireEvent.press(advanced())
+  await fireEvent.press(advanced())
+  expect(loadReferences).toHaveBeenCalledTimes(2)
+  expect(chooseNotes()).toBeDisabled()
+  expect(view.getByText('common.loading')).toBeTruthy()
+  await act(async () => { reject(new Error('read unavailable')); await pending.catch(() => undefined) })
+  expect(view.getByText('settingsSubsystem.loadFailed')).toBeTruthy()
+  expect(chooseNotes()).toBeDisabled()
+  expect(management.save).not.toHaveBeenCalled()
+  await fireEvent.press(view.getByRole('button', { name: 'common.retry' }))
+  expect(chooseNotes()).toBeEnabled()
+  await fireEvent.press(chooseNotes())
+  await fireEvent.press(view.getByLabelText('Previously loaded notes'))
+  await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
+  expect(management.save).toHaveBeenCalledWith(expect.objectContaining({ knowledgeIds: ['doc'], allowedToolIds: [] }), undefined, expect.anything())
+  await view.unmount()
+})
+
+it('does not queue duplicate route discard prompts for the same dirty editor', async () => {
+  const { management } = fixture()
+  let resolve!: (approved: boolean) => void
+  mockConfirm.mockImplementationOnce(() => new Promise<boolean>(settle => { resolve = settle }))
+  const view = await render(<AgentDefinitionsScreen management={management} />)
+  await fireEvent.press(view.getByRole('button', { name: 'agents.editNamed:Research' }))
+  await fireEvent.changeText(view.getByLabelText('agents.fields.name'), 'Unsaved')
+  const [, remove] = mockPreventRemove.mock.calls.at(-1)!
+  const action = { type: 'GO_BACK' }
+  await act(async () => { remove({ data: { action } }); remove({ data: { action } }) })
+  expect(mockConfirm).toHaveBeenCalledTimes(1)
+  await act(async () => { resolve(false); await Promise.resolve() })
+  expect(mockDispatch).not.toHaveBeenCalled()
+  expect(view.getByLabelText('agents.fields.name').props.value).toBe('Unsaved')
+  await view.unmount()
+})
+
+it.each([
+  ['agents.export', 'exportSaved'],
+  ['common.delete', 'remove'],
+] as const)('does not start %s after a pending confirmation loses its screen lifetime', async (label, method) => {
+  const { management } = fixture()
+  let resolve!: (approved: boolean) => void
+  mockConfirm.mockImplementationOnce(() => new Promise<boolean>(settle => { resolve = settle }))
+  const view = await render(<AgentDefinitionsScreen management={management} />)
+  await waitFor(() => expect(view.getByText('Research')).toBeTruthy())
+  await fireEvent.press(view.getByRole('button', { name: label }))
+  const options = mockConfirm.mock.calls[0][0]
+  await view.unmount()
+  expect(options.signal.aborted).toBe(true)
+  await act(async () => { resolve(true); await Promise.resolve() })
+  expect(management[method]).not.toHaveBeenCalled()
+})
+
+it('keeps a dirty Agent draft when the route prompt fails and allows a fresh prompt', async () => {
+  const { management } = fixture()
+  const view = await render(<AgentDefinitionsScreen management={management} />)
+  await fireEvent.press(view.getByRole('button', { name: 'agents.editNamed:Research' }))
+  await fireEvent.changeText(view.getByLabelText('agents.fields.name'), 'Unsaved')
+  const [, remove] = mockPreventRemove.mock.calls.at(-1)!
+  const action = { type: 'GO_BACK' }
+  mockConfirm.mockRejectedValueOnce(new Error('prompt unavailable'))
+  await act(async () => { remove({ data: { action } }); await Promise.resolve() })
+  expect(mockDispatch).not.toHaveBeenCalled()
+  expect(view.getByLabelText('agents.fields.name').props.value).toBe('Unsaved')
+  mockConfirm.mockResolvedValueOnce(true)
+  await act(async () => { remove({ data: { action } }); await Promise.resolve() })
+  expect(mockDispatch).toHaveBeenCalledWith(action)
+  await view.unmount()
+})
+
+it('rejects route consent after the Agent draft changes and returns to the same text', async () => {
+  const { management } = fixture()
+  let resolve!: (approved: boolean) => void
+  mockConfirm.mockImplementationOnce(() => new Promise<boolean>(settle => { resolve = settle }))
+  const view = await render(<AgentDefinitionsScreen management={management} />)
+  await fireEvent.press(view.getByRole('button', { name: 'agents.editNamed:Research' }))
+  await fireEvent.changeText(view.getByLabelText('agents.fields.name'), 'Reviewed')
+  const [, remove] = mockPreventRemove.mock.calls.at(-1)!
+  const action = { type: 'GO_BACK' }
+  await act(async () => { remove({ data: { action } }) })
+  await fireEvent.changeText(view.getByLabelText('agents.fields.name'), 'Changed')
+  await fireEvent.changeText(view.getByLabelText('agents.fields.name'), 'Reviewed')
+  await act(async () => { resolve(true); await Promise.resolve() })
+  expect(mockDispatch).not.toHaveBeenCalled()
+  expect(view.getByLabelText('agents.fields.name').props.value).toBe('Reviewed')
+  mockConfirm.mockResolvedValueOnce(true)
+  const [, freshRemove] = mockPreventRemove.mock.calls.at(-1)!
+  await act(async () => { freshRemove({ data: { action } }); await Promise.resolve() })
+  expect(mockDispatch).toHaveBeenCalledWith(action)
   await view.unmount()
 })

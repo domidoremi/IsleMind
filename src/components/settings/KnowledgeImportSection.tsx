@@ -10,6 +10,10 @@ import { useMotionPreference } from '@/hooks/useMotionPreference'
 
 interface KnowledgeImportSectionProps {
   importing: boolean
+  blocked?: boolean
+  cancelling?: boolean
+  cancelled?: boolean
+  onCancel?: () => void
   plainTitle: string
   plainText: string
   onPlainTitleChange: (value: string) => void
@@ -20,6 +24,10 @@ interface KnowledgeImportSectionProps {
 
 export function KnowledgeImportSection({
   importing,
+  blocked = false,
+  cancelling = false,
+  cancelled = false,
+  onCancel,
   plainTitle,
   plainText,
   onPlainTitleChange,
@@ -31,6 +39,7 @@ export function KnowledgeImportSection({
   const motion = useMotionPreference()
   const { t } = useTranslation()
   const [pasteOpen, setPasteOpen] = useState(false)
+  const importDisabled = importing || blocked
   const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const foldoutPanelStyle = {
     borderRadius: Math.min(colors.ui.radius.card, 8),
@@ -46,9 +55,9 @@ export function KnowledgeImportSection({
         haptic
         accessibilityRole="button"
         accessibilityLabel={t('contextPanel.importKnowledgeFile')}
-        accessibilityState={{ disabled: importing }}
+        accessibilityState={{ disabled: importDisabled, busy: importing }}
         onPress={onImportFile}
-        disabled={importing}
+        disabled={importDisabled}
         style={{
           marginTop: 10,
           minHeight: 48,
@@ -60,7 +69,7 @@ export function KnowledgeImportSection({
           justifyContent: 'center',
           flexDirection: 'row',
           gap: 8,
-          opacity: importing ? 0.65 : 1,
+          opacity: importDisabled ? 0.65 : 1,
         }}
       >
         <AppIcon name="upload" color={colors.ui.control.primaryForeground} size={18} />
@@ -68,6 +77,22 @@ export function KnowledgeImportSection({
           {importing ? t('contextPanel.importing') : t('contextPanel.importKnowledgeFile')}
         </Text>
       </IslePressable>
+
+      {importing && onCancel ? <IslePressable
+        accessibilityRole="button"
+        accessibilityLabel={t(cancelling ? 'contextPanel.cancellingKnowledgeImport' : 'contextPanel.cancelKnowledgeImport')}
+        accessibilityState={{ disabled: cancelling, busy: cancelling }}
+        disabled={cancelling}
+        onPress={onCancel}
+        style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center', marginTop: 10 }}
+      >
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>
+          {t(cancelling ? 'contextPanel.cancellingKnowledgeImport' : 'contextPanel.cancelKnowledgeImport')}
+        </Text>
+      </IslePressable> : null}
+      {cancelled ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 10 }}>
+        {t('contextPanel.knowledgeImportCancelled')}
+      </Text> : null}
 
       <IslePressable
         haptic
@@ -124,9 +149,9 @@ export function KnowledgeImportSection({
             haptic
             accessibilityRole="button"
             accessibilityLabel={t('contextPanel.importPastedText')}
-            accessibilityState={{ disabled: importing || !plainText.trim() }}
+            accessibilityState={{ disabled: importDisabled || !plainText.trim(), busy: importing }}
             onPress={onImportPlainText}
-            disabled={importing || !plainText.trim()}
+            disabled={importDisabled || !plainText.trim()}
             style={{
               minHeight: 44,
               alignItems: 'center',
@@ -138,7 +163,7 @@ export function KnowledgeImportSection({
               borderColor: colors.ui.control.primaryBorder,
               borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
               marginTop: 10,
-              opacity: importing || !plainText.trim() ? 0.45 : 1,
+              opacity: importDisabled || !plainText.trim() ? 0.45 : 1,
             }}
           >
             <AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />

@@ -33,6 +33,24 @@ export interface ExpoPortableDataTransferPort {
   selectJsonFile(options?: { signal?: AbortSignal }): Promise<ExpoPortableDataTransferSelectionResult>
 }
 
+export function downloadBrowserJsonFile(json: string, filename: string): string {
+  const uri = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+  let link: HTMLAnchorElement | undefined
+  try {
+    link = document.createElement('a')
+    link.href = uri
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    return uri
+  } finally {
+    try { link?.remove() } finally {
+      // Download dispatch is synchronous; the browser consumes the URL later.
+      setTimeout(() => URL.revokeObjectURL(uri), 30_000)
+    }
+  }
+}
+
 export function createExpoPortableDataTransferPort(
   options: ExpoPortableDataTransferOptions,
 ): ExpoPortableDataTransferPort {
@@ -40,16 +58,7 @@ export function createExpoPortableDataTransferPort(
     async exportJsonFile(json: string) {
       const filename = createPortableExportFilename(options.now?.() ?? new Date())
       if (Platform.OS === 'web') {
-        const uri = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
-        const link = document.createElement('a')
-        link.href = uri
-        link.download = filename
-        document.body.appendChild(link)
-        try { link.click() } finally {
-          link.remove()
-          setTimeout(() => URL.revokeObjectURL(uri), 30_000)
-        }
-        return { uri }
+        return { uri: downloadBrowserJsonFile(json, filename) }
       }
       const rootDirectory = FileSystem.documentDirectory ?? FileSystem.cacheDirectory
       if (!rootDirectory) throw new Error('File storage is unavailable.')

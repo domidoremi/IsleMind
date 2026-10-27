@@ -16,7 +16,15 @@ describe('ApiKeyPanel provider workspace contract', () => {
     expect(sourceBetween('const CAPABILITY_KEYS:', 'function panelCardStyle(')).toContain("'nativeTools'")
     expect(source).toContain("t('apiKeyPanel.nativeToolsDeclarationHint')")
     const toggleSource = sourceBetween('async function toggleCapability(', 'function applyPresetDraft(')
-    expect(toggleSource).toContain('await updateProvider(provider.id, { capabilities: next })')
+    expect(toggleSource).toContain('await applyLocalProviderChange({ capabilities: next }')
+    const localMutationSource = sourceBetween('async function applyLocalProviderChange(', 'async function savePendingTokens()')
+    expect(localMutationSource).toContain('await updateProvider(provider.id, updates, { expectedProvider, signal })')
+    expect(localMutationSource).toContain('saveLock.current = true')
+    expect(localMutationSource.indexOf('await useSettingsStore.getState().flushProviderPersistence()'))
+      .toBeGreaterThan(localMutationSource.indexOf('await updateProvider('))
+    expect(localMutationSource.indexOf('if (!signal?.aborted && success) dialog.toast(success)'))
+      .toBeGreaterThan(localMutationSource.indexOf('await useSettingsStore.getState().flushProviderPersistence()'))
+    expect(localMutationSource).not.toMatch(/syncAndTestProvider|probeProviderPreset|allowedToolIds|agentWorkflowAllow/)
     expect(toggleSource).not.toMatch(/syncAndTestProvider|probeProviderPreset|allowedToolIds|agentWorkflowAllow/)
     for (const language of ['en', 'ja', 'zh-CN']) {
       const messages = JSON.parse(readFileSync(join(__dirname, '../../../i18n/resources', `${language}.json`), 'utf8')).apiKeyPanel

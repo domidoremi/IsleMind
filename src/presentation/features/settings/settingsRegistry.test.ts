@@ -40,6 +40,7 @@ it.each([zh, en, ja])('preserves searches for existing control labels after navi
     ['settings.runtimeLogFile', 'diagnostics'],
     ['settings.proxyBaseUrl', 'governance.proxyBaseUrl', 'governance.proxyBaseUrl'],
     ['settings.checkApk', 'updates'],
+    ['settings.neverRemindUpdates', 'updates'],
     ['settings.systemStatusNotifications', 'notifications'],
   ]) {
     const match = searchSettingsIndex(index, translate(key)).find(entry => entry.id === id)
@@ -48,6 +49,13 @@ it.each([zh, en, ja])('preserves searches for existing control labels after navi
   for (const id of ['skill-templates', 'mcp-add', 'appearance-accent']) {
     expect(SETTINGS_DESTINATIONS.find(entry => entry.id === id)?.fieldOnly).toBe(true)
   }
+})
+
+it.each([['en', en], ['zh-CN', zh], ['ja', ja]] as const)('finds the legacy appearance label after navigation consolidation in %s', (_language, resource) => {
+  const translate = translation(resource)
+  expect(searchSettingsIndex(buildSettingsIndex(translate), translate('settings.appearance'))).toContainEqual(
+    expect.objectContaining({ id: 'appearance', route: '/settings/system/appearance' }),
+  )
 })
 
 it.each(['agentWorkflowMaxSteps', '工具调用上限', '出力文字数'])('locates a folded workflow field for %s', query => {

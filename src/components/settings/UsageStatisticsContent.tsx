@@ -385,7 +385,7 @@ export function UsageStatisticsContent({
   const pricingSaveLock = useRef(false)
   const pricingSaving = pricingSubmitting || (!!pricingDraft && (savingPricingOverrideId === pricingDraft.id || (!pricingDraft.id && savingPricingOverrideId === 'new')))
   function discardPricingDraft() { if (!pricingSaveLock.current) { setPricingDraft(null); setPricingError(undefined) } }
-  const requestClosePricing = useSettingsDraft(Boolean(pricingDraft && JSON.stringify(pricingFormValue(pricingDraft)) !== JSON.stringify(pricingDraft.original)), pricingSaving, discardPricingDraft)
+  const requestClosePricing = useSettingsDraft(Boolean(pricingDraft && JSON.stringify(pricingFormValue(pricingDraft)) !== JSON.stringify(pricingDraft.original)), pricingSaving, discardPricingDraft, JSON.stringify(pricingDraft && [pricingDraft.id, pricingFormValue(pricingDraft)]))
   const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const borderColor = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const mutedSurface = colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted

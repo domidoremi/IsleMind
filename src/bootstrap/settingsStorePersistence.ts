@@ -6,19 +6,22 @@ import {
   type SettingsStorePersistence,
 } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import {
-  loadApplicationDataRecord,
-  saveApplicationDataRecord,
+  readApplicationDataRecord,
+  writeApplicationDataRecord,
 } from './applicationDataRecords'
+import { settingsSearchPersistence } from './settingsSearchPersistence'
 
 export const settingsStorePersistence: SettingsStorePersistence = Object.freeze({
+  // Explicit Save/Retry needs the storage failure, not legacy no-throw behavior.
   settings: createSettingsPersistence({
-    read: () => loadApplicationDataRecord<unknown>('SETTINGS'),
-    write: (settings) => saveApplicationDataRecord('SETTINGS', settings),
+    read: () => readApplicationDataRecord<unknown>('SETTINGS'),
+    write: (settings) => writeApplicationDataRecord('SETTINGS', settings),
   }),
   providers: createProviderMetadataPersistence({
-    read: () => loadApplicationDataRecord<unknown>('PROVIDERS'),
-    write: (providers) => saveApplicationDataRecord('PROVIDERS', providers),
+    read: () => readApplicationDataRecord<unknown>('PROVIDERS'),
+    write: (providers) => writeApplicationDataRecord('PROVIDERS', providers),
   }),
+  search: settingsSearchPersistence,
 })
 
 let initialized = false

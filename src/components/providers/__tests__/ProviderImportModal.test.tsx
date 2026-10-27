@@ -1,7 +1,10 @@
 import { act, fireEvent, render } from '@testing-library/react-native'
 import { Dimensions, StyleSheet } from 'react-native'
 import { ProviderFormModal, ProviderImportModal } from '../ProviderSettingsContent'
+import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
+import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsContracts'
 
+let mockTheme: CanonicalThemeId = 'minimal'
 const mockConfirm = jest.fn()
 const mockNotice = jest.fn()
 const mockToast = jest.fn()
@@ -13,7 +16,7 @@ jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal'), canonicalThemeId: 'minimal' }) }))
+jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', mockTheme), canonicalThemeId: mockTheme, mode: 'light', isDark: false }) }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
 jest.mock('expo-clipboard', () => ({ hasStringAsync: async () => true, getStringAsync: () => mockClipboard() }))
 jest.mock('expo-document-picker', () => ({ getDocumentAsync: () => mockPicker() }))
@@ -27,7 +30,7 @@ jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 jest.mock('@/components/ui/isle', () => {
   const { Pressable, Text, TextInput, View } = require('react-native')
   const Button = ({ label, ...props }: any) => <Pressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></Pressable>
-  return { IsleButton: Button, IsleIconButton: Button, IslePressable: Pressable, IsleOverlayPressable: Pressable, IsleProgress: View,
+  return { IsleButton: Button, IsleIconButton: Button, IslePressable: Pressable, IsleOverlayPressable: Pressable, IsleProgress: jest.requireActual('@/components/ui/isle/IsleKit').IsleProgress,
     IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
     useIsleDialog: () => ({ confirm: mockConfirm, notice: mockNotice, toast: mockToast }) }
 })
@@ -36,7 +39,55 @@ function deferred<T>() {
   const promise = new Promise<T>(settle => { resolve = settle })
   return { promise, resolve }
 }
-beforeEach(() => { jest.clearAllMocks(); mockConfirm.mockResolvedValue(true) })
+beforeEach(() => { jest.clearAllMocks(); mockTheme = 'minimal'; mockConfirm.mockResolvedValue(true) })
+
+it.each(CANONICAL_THEME_IDS)('names actual %s import progress and replaces unknown/stale values through each stage', async family => {
+  mockTheme = family
+  const close = jest.fn()
+  const submit = jest.fn()
+  type Progress = NonNullable<Parameters<typeof ProviderImportModal>[0]['importProgress']>
+  const tree = (progress: Progress) => <IsleThemeProvider>
+    <ProviderImportModal visible importProgress={progress} onClose={close} onSubmit={submit} />
+  </IsleThemeProvider>
+  const screen = await render(tree({ stage: 'parsing', completed: 0, total: 0 }))
+  const currentValue = () => {
+    const bar = screen.getByRole('progressbar')
+    return bar.props['aria-valuenow'] ?? bar.props.accessibilityValue?.now
+  }
+  expect(screen.getByRole('progressbar', { name: 'providerSettings.importProgress.parsing' })).toBeTruthy()
+  expect(currentValue()).toBeUndefined()
+  await screen.rerender(tree({ stage: 'saving', completed: 1, total: 4, currentProviderName: 'Reviewed fixture' }))
+  expect(screen.getByRole('progressbar', { name: 'providerSettings.importProgress.saving \u00b7 Reviewed fixture' })).toBeTruthy()
+  expect(currentValue()).toBe(25)
+  expect(screen.queryByRole('progressbar', { name: 'providerSettings.importProgress.parsing' })).toBeNull()
+  await screen.rerender(tree({ stage: 'finishing', completed: 4, total: 4 }))
+  expect(screen.getByRole('progressbar', { name: 'providerSettings.importProgress.finishing' })).toBeTruthy()
+  expect(currentValue()).toBe(100)
+  expect(submit).not.toHaveBeenCalled()
+  expect(close).not.toHaveBeenCalled()
+  await screen.unmount()
+})
+
+it.each(['form', 'import'])('keeps a changed provider %s draft after stale cancel approval', async kind => {
+  const pending = deferred<boolean>()
+  mockConfirm.mockReturnValueOnce(pending.promise)
+  const close = jest.fn()
+  const submit = jest.fn()
+  const screen = await render(kind === 'form'
+    ? <ProviderFormModal visible onClose={close} onSubmit={submit} />
+    : <ProviderImportModal visible importProgress={null} onClose={close} onSubmit={submit} />)
+  const label = kind === 'form' ? 'providerSettings.baseUrl' : 'providerSettings.importContent'
+  await fireEvent.changeText(screen.getByLabelText(label), 'https://reviewed.invalid/v1')
+  await fireEvent.press(screen.getByRole('button', { name: 'common.cancel' }))
+  await fireEvent.changeText(screen.getByLabelText(label), 'https://changed.invalid/v1')
+  await act(async () => { pending.resolve(true); await pending.promise })
+  expect(close).not.toHaveBeenCalled()
+  expect(submit).not.toHaveBeenCalled()
+  expect(screen.getByLabelText(label).props.value).toBe('https://changed.invalid/v1')
+  mockConfirm.mockResolvedValueOnce(true)
+  await fireEvent.press(screen.getByRole('button', { name: 'common.cancel' }))
+  expect(close).toHaveBeenCalledTimes(1)
+})
 
 it.each(['synthetic-local-only', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlLW9ubHkifQ.signature'])('saves a manually entered opaque token without guessing its vendor format', async apiKey => {
   const submit = jest.fn().mockResolvedValue(undefined)

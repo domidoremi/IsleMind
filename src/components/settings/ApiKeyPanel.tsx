@@ -1,4 +1,4 @@
-import { useSettingsDraft } from './SettingsEditBoundary'
+import { useSettingsDraft, useSettingsLifetime } from './SettingsEditBoundary'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Keyboard, Platform, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
 import { Text, TextInput } from '@/components/ui/AppText'
@@ -12,7 +12,7 @@ import { composeUserFacingError, isUserFacingErrorCode, userFacingErrorCodeKey }
 import type { ModelAlias, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
 import { getModelName } from '@/types/modelCatalog'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, looksLikeProviderImportConnectionText, maskSecret, parseCredentialGroups, parseProviderImportDraft, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
-import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, getCompatibleProviderClientCompatibilityModes, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, normalizeProviderClientCompatibilityMode, shouldSyncWireProtocolFromBaseUrl, type ProviderClientCompatibilityMode } from '@/modules/providers'
+import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, ProviderConfigurationConflictError, getCompatibleProviderClientCompatibilityModes, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, normalizeProviderClientCompatibilityMode, shouldSyncWireProtocolFromBaseUrl, snapshotProviderConfiguration, type ProviderClientCompatibilityMode } from '@/modules/providers'
 import { resolveProviderConfigDraft } from '@/bootstrap/providerPolicies'
 import { syncAndTestProvider } from '@/bootstrap/providerActivationRuntime'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -253,6 +253,7 @@ export function ApiKeyPanel({
   const dirtyRef = useRef(dirty)
   dirtyRef.current = dirty
   const saveLock = useRef(false)
+  const lifetime = useSettingsLifetime()
   function resetEditor(next = provider) {
     baseline.current = JSON.stringify({ name: next.name, baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialText: '' })
     serverBaseline.current = providerEditVersion(next)
@@ -266,7 +267,7 @@ export function ApiKeyPanel({
     setDraftGroups(next.credentialGroups ?? [])
     setCredentialText('')
   }
-  const requestEditorDiscard = useSettingsDraft(expanded && dirty, task !== 'idle', () => resetEditor())
+  const requestEditorDiscard = useSettingsDraft(expanded && dirty, task !== 'idle', () => resetEditor(), JSON.stringify([provider.id, expanded, draftSnapshot]))
   const detectedPreset = getProviderPreset(detection.presetId)
   const detectedPresetLabel = detection.presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProvider') : detectedPreset.name
   useEffect(() => {
@@ -325,7 +326,8 @@ export function ApiKeyPanel({
   }, [expanded, workspaceView, hydrateProviderKey, provider.id, provider.credentialGroups, credentialReadRequest])
 
   async function save(showNotice = true): Promise<boolean> {
-    if (saveLock.current) return false
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || saveLock.current) return false
     const latest = useSettingsStore.getState().providers.find(item => item.id === provider.id)
     if (!latest || serverBaseline.current !== providerEditVersion(latest)) {
       dialog.toast({ title: t('settingsWorkspace.conflict'), tone: 'amber' })
@@ -369,10 +371,11 @@ export function ApiKeyPanel({
       lastTestMessage: undefined,
       lastTestCode: undefined,
       lastModelTestCapabilityChecks: undefined,
-    })
+    }, { expectedProvider: latest, signal })
     // Retrying a failed durable write must not be mistaken for an external edit.
     serverBaseline.current = providerEditVersion(useSettingsStore.getState().providers.find(item => item.id === provider.id) ?? applied)
     await useSettingsStore.getState().flushProviderPersistence()
+    if (signal?.aborted) return false
     resetEditor(useSettingsStore.getState().providers.find(item => item.id === provider.id) ?? applied)
     setModelEditing(false)
     if (showNotice) {
@@ -380,15 +383,32 @@ export function ApiKeyPanel({
       dialog.toast({ title: t('apiKeyPanel.providerSaved', { name: resolveProviderDisplayName(applied, t('providerSettings.customProvider')) }), message, tone: 'mint' })
     }
     return true
-    } catch {
-      dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
+    } catch (error) {
+      if (!signal?.aborted) dialog.toast({ title: t(error instanceof ProviderConfigurationConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'), tone: 'danger' })
       return false
-    } finally { saveLock.current = false; setTask('idle') }
+    } finally { saveLock.current = false; if (!signal?.aborted) setTask('idle') }
   }
 
   async function selectClientCompatibilityMode(mode: ProviderClientCompatibilityMode) {
     if (mode === selectedClientCompatibilityMode) return
-    await updateProvider(provider.id, { clientCompatibilityProfile: mode })
+    await applyLocalProviderChange({ clientCompatibilityProfile: mode })
+  }
+
+  async function applyLocalProviderChange(updates: Partial<AIProvider>, success?: { title: string; message?: string; tone: 'mint' }, expectedProvider = provider): Promise<void> {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || saveLock.current || isBusy || isActivationRunning) return
+    saveLock.current = true
+    setTask('saving')
+    try {
+      await updateProvider(provider.id, updates, { expectedProvider, signal })
+      await useSettingsStore.getState().flushProviderPersistence()
+      if (!signal?.aborted && success) dialog.toast(success)
+    } catch (error) {
+      if (!signal?.aborted) dialog.toast({ title: t(error instanceof ProviderConfigurationConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'), tone: 'danger' })
+    } finally {
+      saveLock.current = false
+      if (!signal?.aborted) setTask('idle')
+    }
   }
 
   async function savePendingTokens() {
@@ -432,7 +452,9 @@ export function ApiKeyPanel({
   }
 
   async function readProviderClipboard() {
-    if (isBusy) return
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || isBusy || saveLock.current) return
+    saveLock.current = true
     setTask('clipboard')
     dialog.toast({
       title: t('providerSettings.clipboardPermissionRequest'),
@@ -442,11 +464,13 @@ export function ApiKeyPanel({
     })
     try {
       const hasText = await Clipboard.hasStringAsync()
+      if (signal?.aborted) return
       if (!hasText) {
         dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
         return
       }
       const text = await Clipboard.getStringAsync()
+      if (signal?.aborted) return
       if (!text.trim()) {
         dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
         return
@@ -455,13 +479,14 @@ export function ApiKeyPanel({
         dialog.toast({ title: t('providerSettings.clipboardRead'), message: t('providerSettings.clipboardNoConfig'), tone: 'amber' })
       }
     } catch (error) {
-      dialog.toast({
+      if (!signal?.aborted) dialog.toast({
         title: t('providerSettings.clipboardReadFailed'),
         message: clipboardReadFailureMessage(error, t),
         tone: 'amber',
       })
     } finally {
-      setTask('idle')
+      saveLock.current = false
+      if (!signal?.aborted) setTask('idle')
     }
   }
 
@@ -490,18 +515,37 @@ export function ApiKeyPanel({
   }
 
   async function probeDetection() {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || isBusy || saveLock.current || isActivationRunning) return
+    saveLock.current = true
     setTask('probing')
     dialog.toast({ title: t('apiKeyPanel.interfaceProbeStarted'), message: providerDisplayName, tone: 'mint' })
-    const result = await probeProviderPreset({ baseUrl, name: provider.name, apiKey: await getProbeApiKey() })
-    setPresetId(result.presetId)
-    applyPresetDraft(result.presetId, result.wireProtocol ?? inferProviderWireProtocolFromBaseUrl(baseUrl))
-    setTask('idle')
-    const presetLabel = result.presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProvider') : getProviderPreset(result.presetId).name
-    dialog.toast({ title: t('apiKeyPanel.interfaceProbeDone'), message: `${providerDisplayName} · ${presetLabel}`, tone: 'mint' })
+    try {
+      const apiKey = await getProbeApiKey()
+      if (signal?.aborted) return
+      const result = await probeProviderPreset({ baseUrl, name: provider.name, apiKey }, { signal })
+      if (signal?.aborted) return
+      if (!result.ok) {
+        dialog.notice({ title: t('apiKeyPanel.interfaceProbeDone'), message: result.reason, tone: 'amber' })
+        return
+      }
+      setPresetId(result.presetId)
+      applyPresetDraft(result.presetId, result.wireProtocol ?? inferProviderWireProtocolFromBaseUrl(baseUrl))
+      const presetLabel = result.presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProvider') : getProviderPreset(result.presetId).name
+      dialog.toast({ title: t('apiKeyPanel.interfaceProbeDone'), message: `${providerDisplayName} · ${presetLabel}`, tone: 'mint' })
+    } catch (error) {
+      if (!signal?.aborted && !isProviderOperationAbort(error)) {
+        dialog.notice({ title: t('apiKeyPanel.interfaceProbeDone'), message: t('settingsSubsystem.loadFailed'), tone: 'danger' })
+      }
+    } finally {
+      saveLock.current = false
+      if (!signal?.aborted) setTask('idle')
+    }
   }
 
   async function syncAndTest() {
-    if (syncAndTestAbortController.current) return
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || isBusy || saveLock.current || syncAndTestAbortController.current) return
     const abortController = new AbortController()
     syncAndTestAbortController.current = abortController
     setModelFetchFailed(false)
@@ -543,33 +587,47 @@ export function ApiKeyPanel({
   }
 
   async function toggleProviderEnabled() {
-    if (isBusy || isActivationRunning) return
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || isBusy || saveLock.current || isActivationRunning) return
     const enabled = !provider.enabled
     if (!enabled) {
-      await updateProvider(provider.id, { enabled })
-      dialog.toast({ title: t('apiKeyPanel.providerDisabled', { name: providerDisplayName }), tone: 'mint' })
+      await applyLocalProviderChange({ enabled }, { title: t('apiKeyPanel.providerDisabled', { name: providerDisplayName }), tone: 'mint' })
       return
     }
     if (!await save(false)) return
-    await updateProvider(provider.id, { enabled: true })
-    await useSettingsStore.getState().flushProviderPersistence()
-    dialog.toast({ title: t('providerSettings.configurationSaved'), tone: 'mint' })
+    if (signal?.aborted) return
+    const savedProvider = useSettingsStore.getState().providers.find(item => item.id === provider.id)
+    if (!savedProvider || serverBaseline.current !== providerEditVersion(savedProvider)) {
+      dialog.toast({ title: t('settingsWorkspace.conflict'), tone: 'danger' })
+      return
+    }
+    await applyLocalProviderChange({ enabled: true }, { title: t('providerSettings.configurationSaved'), tone: 'mint' }, savedProvider)
   }
 
   async function useModel(model: string) {
-    if (isBusy || saveLock.current) return
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || isBusy || saveLock.current) return
     if (dirty && !await save(false)) return
+    if (signal?.aborted) return
     setTask('saving')
     saveLock.current = true
     setSelectionIssue(null)
     try {
       const store = useSettingsStore.getState()
+      const preference = JSON.stringify([store.settings.defaultProvider, store.settings.lastPreferredModel])
+      const checkPreference = () => {
+        if (JSON.stringify([useSettingsStore.getState().settings.defaultProvider, useSettingsStore.getState().settings.lastPreferredModel]) !== preference) {
+          throw new ProviderConfigurationConflictError()
+        }
+      }
       const current = store.providers.find(item => item.id === provider.id)
       if (!current || !getPolicyAllowedProviderModels(current, store.settings).includes(model)) {
         setSelectionIssue(t('chat.modelNotInProvider', { model, provider: providerDisplayName }))
         return
       }
       const keyed = await store.hydrateProviderKey(provider.id)
+      if (signal?.aborted) return
+      checkPreference()
       const credential = keyed?.apiKey.trim() || keyed?.credentialGroups?.find(group => group.enabled && group.apiKey?.trim())?.apiKey
       const issue = keyed && getProviderConfigIssue(keyed, credential)
       if (!credential || issue) {
@@ -579,17 +637,31 @@ export function ApiKeyPanel({
       }
       // Choosing a model only changes local preferences. It never probes a
       // credential, dispatches work or rewrites an existing conversation.
-      await store.updateProvider(provider.id, { enabled: true })
+      await store.updateProvider(provider.id, { enabled: true }, { expectedProvider: current, signal })
       await store.flushProviderPersistence()
+      if (signal?.aborted) return
+      checkPreference()
       await store.rememberPreferredModel(provider.id, model)
+      if (signal?.aborted) return
+      const selectedPreference = useSettingsStore.getState().settings
+      if (selectedPreference.defaultProvider !== store.settings.defaultProvider
+        || selectedPreference.lastPreferredModel?.providerId !== provider.id
+        || selectedPreference.lastPreferredModel?.model !== model) throw new ProviderConfigurationConflictError()
       store.updateSettings({ defaultProvider: provider.id })
       await flushPersistedSettings()
+      if (signal?.aborted) return
+      const finalPreference = useSettingsStore.getState().settings
+      if (finalPreference.defaultProvider !== provider.id || finalPreference.lastPreferredModel?.providerId !== provider.id
+        || finalPreference.lastPreferredModel?.model !== model) throw new ProviderConfigurationConflictError()
       dialog.toast({ title: t('providerSettings.modelSelected'), message: model, tone: 'mint' })
       onUse?.()
-    } catch {
-      setSelectionIssue(t('settingsWorkspace.saveFailed'))
-      dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
-    } finally { saveLock.current = false; setTask('idle') }
+    } catch (error) {
+      if (!signal?.aborted) {
+        const key = error instanceof ProviderConfigurationConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'
+        setSelectionIssue(t(key))
+        dialog.toast({ title: t(key), tone: 'danger' })
+      }
+    } finally { saveLock.current = false; if (!signal?.aborted) setTask('idle') }
   }
 
   function setDefaultProvider() {
@@ -598,16 +670,32 @@ export function ApiKeyPanel({
   }
 
   async function confirmRemoveProvider() {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || saveLock.current || isBusy || isActivationRunning) return
+    const expectedProvider = snapshotProviderConfiguration(provider)
+    saveLock.current = true
+    setTask('saving')
+    try {
     const confirmed = await dialog.confirm({
       title: t('apiKeyPanel.deleteProviderTitle'),
       message: t('apiKeyPanel.deleteProviderMessage', { name: providerDisplayName }),
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       tone: 'danger',
-    })
-    if (!confirmed) return
-    await removeProvider(provider.id)
+      signal,
+    }).catch(() => false)
+    if (!confirmed || signal?.aborted) return
+    await removeProvider(provider.id, { expectedProvider, signal })
+    await useSettingsStore.getState().flushProviderPersistence()
+    await flushPersistedSettings()
+    if (signal?.aborted) return
     dialog.toast({ title: t('apiKeyPanel.providerDeleted'), message: providerDisplayName, tone: 'mint' })
+    } catch (error) {
+      if (!signal?.aborted) dialog.toast({ title: t(error instanceof ProviderConfigurationConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'), tone: 'danger' })
+    } finally {
+      saveLock.current = false
+      if (!signal?.aborted) setTask('idle')
+    }
   }
 
   function cancelModelEditing() {
@@ -653,8 +741,7 @@ export function ApiKeyPanel({
     if ((key === 'responsesWebSocket' || key === 'remoteCompact') && next[key] === true) {
       next.responsesApi = true
     }
-    await updateProvider(provider.id, { capabilities: next })
-    dialog.toast({ title: t('apiKeyPanel.capabilityUpdated'), message: t(`apiKeyPanel.capability.${key}`), tone: 'mint' })
+    await applyLocalProviderChange({ capabilities: next }, { title: t('apiKeyPanel.capabilityUpdated'), message: t(`apiKeyPanel.capability.${key}`), tone: 'mint' })
   }
 
   function applyPresetDraft(nextPresetId: ProviderPresetId, nextWireProtocol: ProviderWireProtocol) {
@@ -1043,7 +1130,7 @@ export function ApiKeyPanel({
           </View> : null}
 
           {workspaceView === 'advanced' ? <ProviderUsageQueryEditor key={provider.id} provider={provider} /> : null}
-          {dirty ? <View style={{ gap: 8 }}><Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('settingsWorkspace.unsaved')}</Text><IsleButton label={t('settingsWorkspace.reset')} disabled={isBusy} onPress={() => void dialog.confirm({ title: t('settingsWorkspace.discardTitle'), message: t('settingsWorkspace.discardMessage'), confirmLabel: t('settingsWorkspace.discard'), cancelLabel: t('settingsWorkspace.keepEditing'), tone: 'danger' }).then(ok => { if (ok) resetEditor() })} /></View> : null}
+          {dirty ? <View style={{ gap: 8 }}><Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('settingsWorkspace.unsaved')}</Text><IsleButton label={t('settingsWorkspace.reset')} disabled={isBusy} onPress={() => void requestEditorDiscard(() => undefined)} /></View> : null}
           {workspaceView === 'connection' ? (
             <ActionButton label={t('settingsSubsystem.saveChoose')} busy={task === 'saving'} disabled={isBusy} onPress={() => void save().then(saved => { if (saved) setWorkspaceView('models') })} />
           ) : null}

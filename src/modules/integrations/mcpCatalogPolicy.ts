@@ -63,6 +63,24 @@ export interface McpCatalogOperationOptions {
   signal?: AbortSignal
 }
 
+export interface McpCatalogMutationOptions extends McpCatalogOperationOptions {
+  expectedServer?: McpCatalogServer | null
+}
+
+export class McpCatalogConflictError extends Error {
+  constructor(readonly serverId: string) {
+    super('mcp_catalog_conflict')
+    this.name = 'McpCatalogConflictError'
+  }
+}
+
+export class McpCatalogRecordDataError extends Error {
+  constructor() {
+    super('Invalid persisted MCP server record')
+    this.name = 'McpCatalogRecordDataError'
+  }
+}
+
 export interface McpCatalogOperationLog<TServer extends McpCatalogServer> {
   phase: 'manifest_refresh'
   server: Pick<TServer, 'id' | 'name' | 'transport' | 'status' | 'url'>
@@ -92,8 +110,8 @@ export interface McpCatalogPolicyDependencies<TServer extends McpCatalogServer> 
 export interface McpCatalogPolicy<TServer extends McpCatalogServer> {
   listServers(options?: McpCatalogOperationOptions): Promise<TServer[]>
   saveServers(servers: readonly TServer[], options?: McpCatalogOperationOptions): Promise<void>
-  upsertServer(server: TServer, options?: McpCatalogOperationOptions): Promise<TServer>
-  removeServer(serverId: string, options?: McpCatalogOperationOptions): Promise<boolean>
+  upsertServer(server: TServer, options?: McpCatalogMutationOptions): Promise<TServer>
+  removeServer(serverId: string, options?: McpCatalogMutationOptions): Promise<boolean>
   refreshManifest(server: TServer, options?: McpCatalogOperationOptions): Promise<TServer>
   needsManifestRefresh(server: TServer): boolean
 }
@@ -102,6 +120,13 @@ export interface McpCatalogPolicy<TServer extends McpCatalogServer> {
 export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
   dependencies: McpCatalogPolicyDependencies<TServer>,
 ): McpCatalogPolicy<TServer> {
+  let mutationTail: Promise<unknown> = Promise.resolve()
+  const mutate = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = mutationTail.then(operation)
+    mutationTail = result.catch(() => undefined)
+    return result
+  }
+
   const normalizeServer = (value: unknown): TServer | null => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
     const item = value as Partial<McpCatalogServer>
@@ -118,7 +143,7 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
         : []
     )))
 
-    return {
+    return JSON.parse(JSON.stringify({
       id: item.id,
       name: item.name,
       url,
@@ -146,7 +171,7 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
       lastError: typeof item.lastError === 'string' ? item.lastError : undefined,
       createdAt: typeof item.createdAt === 'number' && Number.isFinite(item.createdAt) ? item.createdAt : timestamp,
       updatedAt: typeof item.updatedAt === 'number' && Number.isFinite(item.updatedAt) ? item.updatedAt : timestamp,
-    } as TServer
+    })) as TServer
   }
 
   const requireServer = (value: TServer): TServer => {
@@ -162,14 +187,16 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
     throwIfAborted(options.signal)
     const saved = await dependencies.loadServers(options)
     throwIfAborted(options.signal)
-    const persisted = Array.isArray(saved) ? saved : []
+    // An unsupported record must not become an empty, writable catalog.
+    if (saved !== null && !Array.isArray(saved)) throw new McpCatalogRecordDataError()
+    const persisted = saved ?? []
     return [
       dependencies.builtinServer(),
       ...persisted.map(normalizeServer).filter(isServer),
     ]
   }
 
-  const saveServers = async (
+  const persistServers = async (
     servers: readonly TServer[],
     options: McpCatalogOperationOptions = {},
   ): Promise<void> => {
@@ -184,43 +211,89 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
     throwIfAborted(options.signal)
   }
 
+  const saveServers = async (
+    servers: readonly TServer[],
+    options: McpCatalogOperationOptions = {},
+  ): Promise<void> => {
+    const signal = options.signal
+    throwIfAborted(signal)
+    const snapshot = servers.map(normalizeServer).filter(isServer)
+    return mutate(() => persistServers(snapshot, { signal }))
+  }
+
+  const assertExpected = (servers: readonly TServer[], id: string, expected: McpCatalogServer | null) => {
+    const current = servers.find(item => item.id === id)
+    const version = (value: McpCatalogServer) => {
+      const normalized = normalizeServer(value)
+      // Clock-only changes do not replace configuration or approval state.
+      return normalized ? JSON.stringify({ ...normalized, createdAt: undefined, updatedAt: undefined }) : null
+    }
+    if (expected === null ? current !== undefined
+      : !current || expected.id !== id || version(current) !== version(expected)) {
+      throw new McpCatalogConflictError(id)
+    }
+  }
+
+  const captureExpectedServer = (value: Readonly<McpCatalogServer> | null | undefined) => {
+    if (value == null) return value
+    const snapshot = normalizeServer(value)
+    if (!snapshot) throw new McpCatalogConflictError(value.id)
+    return snapshot
+  }
+
   const upsertServer = async (
     server: TServer,
-    options: McpCatalogOperationOptions = {},
+    options: McpCatalogMutationOptions = {},
   ): Promise<TServer> => {
-    throwIfAborted(options.signal)
+    const signal = options.signal
+    throwIfAborted(signal)
+    // Capture portable values and consent before waiting on another mutation.
     const normalized = requireServer(server)
-    const servers = await listServers(options)
-    await saveServers([
-      normalized,
-      ...servers.filter((item) => item.id !== normalized.id && item.id !== dependencies.builtinServerId),
-    ], options)
-    return normalized
+    const expectedServer = captureExpectedServer(options.expectedServer)
+    return mutate(async () => {
+      throwIfAborted(signal)
+      const servers = await listServers({ signal })
+      if (expectedServer !== undefined) assertExpected(servers, normalized.id, expectedServer)
+      await persistServers([
+        normalized,
+        ...servers.filter((item) => item.id !== normalized.id && item.id !== dependencies.builtinServerId),
+      ], { signal })
+      return normalized
+    })
   }
 
   const removeServer = async (
     serverId: string,
-    options: McpCatalogOperationOptions = {},
+    options: McpCatalogMutationOptions = {},
   ): Promise<boolean> => {
-    throwIfAborted(options.signal)
-    if (serverId === dependencies.builtinServerId) return false
-    if (typeof serverId !== 'string' || !serverId || serverId.trim() !== serverId) {
-      throw new Error('Invalid MCP server id')
-    }
-    const servers = (await listServers(options))
-      .filter((server) => server.id !== dependencies.builtinServerId)
-    const next = servers.filter((server) => server.id !== serverId)
-    if (next.length === servers.length) return false
-    await saveServers(next, options)
-    return true
+    const signal = options.signal
+    const expectedServer = captureExpectedServer(options.expectedServer)
+    return mutate(async () => {
+      throwIfAborted(signal)
+      if (serverId === dependencies.builtinServerId) return false
+      if (typeof serverId !== 'string' || !serverId || serverId.trim() !== serverId) {
+        throw new Error('Invalid MCP server id')
+      }
+      const servers = (await listServers({ signal }))
+        .filter((server) => server.id !== dependencies.builtinServerId)
+      if (expectedServer !== undefined) assertExpected(servers, serverId, expectedServer)
+      const next = servers.filter((server) => server.id !== serverId)
+      if (next.length === servers.length) return false
+      await persistServers(next, { signal })
+      return true
+    })
   }
 
   const refreshManifest = async (
     server: TServer,
     options: McpCatalogOperationOptions = {},
   ): Promise<TServer> => {
+    options = { signal: options.signal }
     throwIfAborted(options.signal)
     if (server.id === dependencies.builtinServerId) return dependencies.builtinServer()
+    const captured = normalizeServer(server)
+    if (!captured) throw new McpCatalogConflictError(server.id)
+    server = captured
     if (!server.enabled) return patchServer(server, { status: 'disconnected' })
     if (!dependencies.isAllowedServerUrl(server)) {
       const next = patchServer(server, {
@@ -237,7 +310,6 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
         error: new Error(next.lastError),
       })
       throwIfAborted(options.signal)
-      await saveServers((await listServers(options)).filter((item) => item.id !== server.id), options)
       return next
     }
     if (server.transport !== 'sse' && server.transport !== 'streamable-http') {
@@ -257,42 +329,23 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
       return next
     }
 
+    const baseline = normalizeServer(server)
+    if (!baseline) throw new McpCatalogConflictError(server.id)
+    assertExpected(await listServers(options), server.id, baseline)
+    let discovery: McpCatalogDiscovery
     try {
-      const discovery = await dependencies.discover(server, options)
+      discovery = await dependencies.discover(server, options)
       throwIfAborted(options.signal)
-      const enabledToolNames = new Set(server.tools.filter((tool) => tool.enabled).map((tool) => tool.name))
-      const next = patchServer(server, {
-        version: discovery.version,
-        status: 'connected',
-        lastError: undefined,
-        manifestCachedAt: dependencies.now(),
-        manifestExpiresAt: discovery.ttlMs === undefined ? undefined
-          : dependencies.now() + Math.max(0, Math.min(discovery.ttlMs, server.manifestTtlMs || MCP_CATALOG_DEFAULT_TTL_MS)),
-        tools: [...normalizeMcpTools(discovery.tools, { serverId: server.id, enabledToolNames }).items],
-        resources: normalizeResources(discovery.resources, server.id),
-        prompts: normalizePrompts(discovery.prompts, server.id),
-        updatedAt: dependencies.now(),
-      })
-      await upsertServer(next, options)
-      await dependencies.logOperation({
-        phase: 'manifest_refresh',
-        server: next,
-        status: 'done',
-        method: 'tools/list,resources/list,prompts/list,initialize',
-        resultCount: discovery.tools.length + discovery.resources.length + discovery.prompts.length,
-      })
-      throwIfAborted(options.signal)
-      return next
     } catch (error) {
       throwIfAborted(options.signal)
       if (isAbortError(error)) throw error
-      dependencies.invalidateSession(server)
       const next = patchServer(server, {
         status: 'error',
         lastError: error instanceof Error ? error.message : 'MCP manifest refresh failed',
         updatedAt: dependencies.now(),
       })
-      await upsertServer(next, options)
+      await upsertServer(next, { ...options, expectedServer: baseline })
+      dependencies.invalidateSession(server)
       await dependencies.logOperation({
         phase: 'manifest_refresh',
         server: next,
@@ -304,6 +357,31 @@ export function createMcpCatalogPolicy<TServer extends McpCatalogServer>(
       throwIfAborted(options.signal)
       return next
     }
+    const enabledToolNames = new Set(server.tools.filter((tool) => tool.enabled).map((tool) => tool.name))
+    const next = patchServer(server, {
+      version: discovery.version,
+      status: 'connected',
+      lastError: undefined,
+      manifestCachedAt: dependencies.now(),
+      manifestExpiresAt: discovery.ttlMs === undefined ? undefined
+        : dependencies.now() + Math.max(0, Math.min(discovery.ttlMs, server.manifestTtlMs || MCP_CATALOG_DEFAULT_TTL_MS)),
+      tools: [...normalizeMcpTools(discovery.tools, { serverId: server.id, enabledToolNames }).items],
+      resources: normalizeResources(discovery.resources, server.id),
+      prompts: normalizePrompts(discovery.prompts, server.id),
+      updatedAt: dependencies.now(),
+    })
+    // Persistence/conflict failures are not connection failures and cannot
+    // rewrite a newer configuration, approval or deletion with stale results.
+    await upsertServer(next, { ...options, expectedServer: baseline })
+    await dependencies.logOperation({
+      phase: 'manifest_refresh',
+      server: next,
+      status: 'done',
+      method: 'tools/list,resources/list,prompts/list,initialize',
+      resultCount: discovery.tools.length + discovery.resources.length + discovery.prompts.length,
+    })
+    throwIfAborted(options.signal)
+    return next
   }
 
   return {

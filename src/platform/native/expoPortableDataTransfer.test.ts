@@ -58,3 +58,38 @@ it('exports through a browser download and releases its temporary blob URL', asy
     }
   }
 })
+
+it.each(['element', 'append', 'click', 'remove'] as const)('releases the owned browser blob when %s fails without using native files', async stage => {
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const createDescriptor = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
+  const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
+  const failure = new Error(`owned-${stage}-failure`)
+  const link = { href: '', download: '', click: jest.fn(), remove: jest.fn() }
+  const appendChild = jest.fn()
+  const createElement = jest.fn(() => link)
+  const createObjectURL = jest.fn(() => 'blob:owned-failed-export')
+  const revokeObjectURL = jest.fn()
+  if (stage === 'element') createElement.mockImplementation(() => { throw failure })
+  if (stage === 'append') appendChild.mockImplementation(() => { throw failure })
+  if (stage === 'click') link.click.mockImplementation(() => { throw failure })
+  if (stage === 'remove') link.remove.mockImplementation(() => { throw failure })
+  jest.useFakeTimers()
+  try {
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement, body: { appendChild } } })
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    await expect(port.exportJsonFile('{"version":1}')).rejects.toBe(failure)
+    jest.advanceTimersByTime(30_000)
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:owned-failed-export')
+    if (stage !== 'element') expect(link.remove).toHaveBeenCalledTimes(1)
+    expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled()
+    expect(FileSystem.deleteAsync).not.toHaveBeenCalled()
+  } finally {
+    jest.useRealTimers()
+    for (const [target, key, descriptor] of [[globalThis, 'document', documentDescriptor], [URL, 'createObjectURL', createDescriptor], [URL, 'revokeObjectURL', revokeDescriptor]] as const) {
+      if (descriptor) Object.defineProperty(target, key, descriptor)
+      else Reflect.deleteProperty(target, key)
+    }
+  }
+})

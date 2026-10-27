@@ -12,6 +12,14 @@ const mockSync = jest.fn()
 const mockProbe = jest.fn()
 const mockActivate = jest.fn()
 const mockFlushSettings = jest.fn()
+const mockConfirm = jest.fn()
+const mockRemove = jest.fn()
+const mockClipboardHasText = jest.fn()
+const mockClipboardText = jest.fn()
+jest.mock('expo-clipboard', () => ({
+  hasStringAsync: () => mockClipboardHasText(),
+  getStringAsync: () => mockClipboardText(),
+}))
 jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { name?: string; count?: number }) => key === 'apiKeyPanel.providerSaved' ? `${key}:${values?.name}` : key === 'settingsSubsystem.modelCount' ? `${key}:${values?.count}` : key }) }))
@@ -26,7 +34,7 @@ jest.mock('@/components/ui/AppIcon', () => ({
 jest.mock('@/components/settings/SettingsHelp', () => ({ SettingsHelpButton: () => null }))
 jest.mock('@/components/ui/isle', () => ({
   ...jest.requireActual('@/components/ui/isle'),
-  useIsleDialog: () => ({ toast: mockToast, notice: mockToast, confirm: jest.fn() }),
+  useIsleDialog: () => ({ toast: mockToast, notice: mockToast, confirm: mockConfirm }),
 }))
 jest.mock('@/bootstrap/providerRegistry', () => ({
   ...jest.requireActual('@/bootstrap/providerRegistry'),
@@ -45,6 +53,7 @@ const mockHydrate = jest.fn()
 const mockUpdate = jest.fn()
 const onUse = jest.fn()
 let order: string[]
+let allowedProbes = 0
 const fixture = (): AIProvider => ({
   id: 'fixture', name: 'Fixture connection', type: getProviderPreset(DEFAULT_PROVIDER_PRESET_ID).type,
   apiKey: '', baseUrl: 'https://example.test/v1', enabled: false,
@@ -59,7 +68,11 @@ function Panel({ initialView = 'models' as 'models' | 'connection' }) {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockConfirm.mockReset().mockResolvedValue(false)
+  mockRemove.mockReset().mockResolvedValue(undefined)
+  mockProbe.mockReset().mockResolvedValue({ presetId: DEFAULT_PROVIDER_PRESET_ID, confidence: 'low', reason: 'local fixture', ok: false })
   order = []
+  allowedProbes = 0
   mockUpdate.mockImplementation(async (id: string, patch: Partial<AIProvider>) => {
     order.push('provider')
     useSettingsStore.setState(state => ({ providers: state.providers.map(item => item.id === id ? { ...item, ...patch } : item) }))
@@ -78,6 +91,7 @@ beforeEach(() => {
     ...initialState, providers: [fixture()],
     settings: { ...initialState.settings, defaultProvider: null, lastPreferredModel: undefined },
     updateProvider: mockUpdate, hydrateProviderKey: mockHydrate,
+    removeProvider: mockRemove,
     flushProviderPersistence: mockFlushProviders, rememberPreferredModel: mockRemember,
     updateSettings: patch => {
       order.push('settings')
@@ -87,7 +101,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   expect(mockSync).not.toHaveBeenCalled()
-  expect(mockProbe).not.toHaveBeenCalled()
+  expect(mockProbe).toHaveBeenCalledTimes(allowedProbes)
   expect(mockActivate).not.toHaveBeenCalled()
   useSettingsStore.setState(initialState, true)
 })
@@ -287,4 +301,229 @@ it('does not label a remembered model as default when its provider is not the de
   await act(async () => useSettingsStore.setState(state => ({ settings: { ...state.settings, defaultProvider: 'fixture' } })))
   expect(screen.getByTestId('provider-use-model-fixture-model').props.accessibilityState.selected).toBe(true)
   expect(screen.getByText('settings.default')).toBeTruthy()
+})
+
+it('does not delete from a late approval after the provider editor unmounts', async () => {
+  let approve!: (value: boolean) => void
+  mockConfirm.mockReturnValueOnce(new Promise<boolean>(resolve => { approve = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
+  await fireEvent.press(screen.getByRole('button', { name: 'common.delete' }))
+  const options = mockConfirm.mock.calls.at(-1)![0]
+  await screen.unmount()
+  await act(() => approve(true))
+  expect(mockRemove).not.toHaveBeenCalled()
+  expect(options.signal).toBeInstanceOf(AbortSignal)
+  expect(options.signal.aborted).toBe(true)
+})
+
+it('binds provider saves and confirmed removal to the shown snapshot and screen signal', async () => {
+  const expected = useSettingsStore.getState().providers[0]
+  const screen = await render(<Panel initialView="connection" />)
+  await fireEvent.changeText(screen.getByDisplayValue('Fixture connection'), 'Bound draft')
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsSubsystem.saveChoose' }))
+  expect(mockUpdate.mock.calls[0][2]).toEqual({ expectedProvider: expected, signal: expect.any(AbortSignal) })
+  await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
+  const shown = useSettingsStore.getState().providers[0]
+  mockConfirm.mockResolvedValueOnce(true)
+  await fireEvent.press(screen.getByRole('button', { name: 'common.delete' }))
+  expect(mockRemove).toHaveBeenCalledWith('fixture', { expectedProvider: shown, signal: expect.any(AbortSignal) })
+})
+
+it('detaches the reviewed delete target before awaiting confirmation', async () => {
+  let approve!: (value: boolean) => void
+  mockConfirm.mockReturnValueOnce(new Promise<boolean>(resolve => { approve = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
+  await fireEvent.press(screen.getByRole('button', { name: 'common.delete' }))
+  useSettingsStore.getState().providers[0].name = 'mutated after prompt'
+  await act(() => approve(true))
+  expect(mockRemove).toHaveBeenCalledWith('fixture', {
+    expectedProvider: expect.objectContaining({ name: 'Fixture connection' }),
+    signal: expect.any(AbortSignal),
+  })
+})
+
+it('does not enable or select a model from a late credential read after unmount', async () => {
+  let hydrate!: (provider: AIProvider) => void
+  mockHydrate.mockReturnValueOnce(new Promise<AIProvider>(resolve => { hydrate = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByTestId('provider-use-model-fixture-model'))
+  await screen.unmount()
+  await act(() => hydrate({ ...fixture(), apiKey: 'local-only' }))
+  expect(mockUpdate).not.toHaveBeenCalled()
+  expect(mockRemember).not.toHaveBeenCalled()
+  expect(useSettingsStore.getState().settings.defaultProvider).toBeNull()
+  expect(onUse).not.toHaveBeenCalled()
+})
+
+it('retains a newer default selection made while the old model choice waits for provider durability', async () => {
+  let durable!: () => void
+  mockFlushProviders.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByTestId('provider-use-model-fixture-model'))
+  await act(() => useSettingsStore.setState(state => ({ settings: { ...state.settings, defaultProvider: 'concurrent-choice' } })))
+  await act(() => durable())
+  expect(useSettingsStore.getState().settings.defaultProvider).toBe('concurrent-choice')
+  expect(mockRemember).not.toHaveBeenCalled()
+  expect(onUse).not.toHaveBeenCalled()
+})
+
+it('does not overwrite a newer model preference made while the remembered model becomes durable', async () => {
+  let durable!: () => void
+  mockRemember.mockImplementationOnce(async (providerId: string, model: string) => {
+    useSettingsStore.setState(state => ({ settings: { ...state.settings, lastPreferredModel: { schema: 'islemind.global-model-preference.v1', providerId, model } } }))
+    await new Promise<void>(resolve => { durable = resolve })
+  })
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByTestId('provider-use-model-fixture-model'))
+  await act(() => useSettingsStore.setState(state => ({ settings: { ...state.settings, lastPreferredModel: { schema: 'islemind.global-model-preference.v1', providerId: 'newer-provider', model: 'newer-model' } } })))
+  await act(() => durable())
+  expect(useSettingsStore.getState().settings.defaultProvider).toBeNull()
+  expect(useSettingsStore.getState().settings.lastPreferredModel).toMatchObject({ providerId: 'newer-provider', model: 'newer-model' })
+  expect(onUse).not.toHaveBeenCalled()
+})
+
+it.each(['default', 'model'])('does not acknowledge old selection after a newer %s choice during final settings persistence', async changed => {
+  let durable!: () => void
+  mockFlushSettings.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByTestId('provider-use-model-fixture-model'))
+  expect(useSettingsStore.getState().settings.defaultProvider).toBe('fixture')
+  await act(() => useSettingsStore.setState(state => ({ settings: {
+    ...state.settings,
+    ...(changed === 'default' ? { defaultProvider: 'newer-provider' } : {
+      lastPreferredModel: { schema: 'islemind.global-model-preference.v1' as const, providerId: 'newer-provider', model: 'newer-model' },
+    }),
+  } })))
+  await act(() => durable())
+  expect(onUse).not.toHaveBeenCalled()
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'providerSettings.modelSelected' }))
+  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.conflict' }))
+})
+
+it('uses the existing lifetime-bound discard guard for Reset and serializes it with Reload', async () => {
+  let approve!: (value: boolean) => void
+  mockConfirm.mockReturnValueOnce(new Promise<boolean>(resolve => { approve = resolve }))
+  const screen = await render(<Panel initialView="connection" />)
+  await fireEvent.changeText(screen.getByDisplayValue('Fixture connection'), 'Unsaved reset draft')
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.reset' }))
+  const options = mockConfirm.mock.calls.at(-1)![0]
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.reload' }))
+  expect(mockConfirm).toHaveBeenCalledTimes(1)
+  await screen.unmount()
+  await act(() => approve(true))
+  expect(options.signal).toBeInstanceOf(AbortSignal)
+  expect(options.signal.aborted).toBe(true)
+  expect(mockUpdate).not.toHaveBeenCalled()
+})
+
+it('does not acknowledge a disabled connection before its provider metadata is durable', async () => {
+  useSettingsStore.setState({ providers: [{ ...fixture(), enabled: true }] })
+  let durable!: () => void
+  mockFlushProviders.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
+  const screen = await render(<Panel initialView="connection" />)
+  const shown = useSettingsStore.getState().providers[0]
+  await fireEvent.press(screen.getByRole('switch', { name: /settingsUx.useConnection/ }))
+  expect(mockUpdate).toHaveBeenCalledWith('fixture', { enabled: false }, { expectedProvider: shown, signal: expect.any(AbortSignal) })
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.providerDisabled' }))
+  await act(() => durable())
+  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.providerDisabled' }))
+  expect(mockProbe).not.toHaveBeenCalled()
+})
+
+it('does not enable a connection after the saved form waits across unmount', async () => {
+  let durable!: () => void
+  mockFlushProviders.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
+  const screen = await render(<Panel initialView="connection" />)
+  await fireEvent.press(screen.getByRole('switch', { name: /settingsUx.useConnection/ }))
+  await screen.unmount()
+  await act(() => durable())
+  expect(mockUpdate.mock.calls.some(([, patch]) => patch.enabled === true)).toBe(false)
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'providerSettings.configurationSaved' }))
+})
+
+it('enables the saved connection using its post-save snapshot rather than stale render props', async () => {
+  const screen = await render(<Panel initialView="connection" />)
+  await fireEvent.changeText(screen.getByDisplayValue('Fixture connection'), 'Saved enabled connection')
+  await fireEvent.press(screen.getByRole('switch', { name: /settingsUx.useConnection/ }))
+  const call = mockUpdate.mock.calls.find(([, patch]) => patch.enabled === true)
+  expect(call).toBeDefined()
+  expect(call![2]).toMatchObject({
+    expectedProvider: { name: 'Saved enabled connection', lastTestStatus: 'idle', enabled: false },
+    signal: expect.any(AbortSignal),
+  })
+  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'providerSettings.configurationSaved' }))
+  expect(mockProbe).not.toHaveBeenCalled()
+})
+
+it('does not read or apply clipboard contents after a late availability result on an unmounted editor', async () => {
+  let available!: (value: boolean) => void
+  mockClipboardHasText.mockReturnValueOnce(new Promise<boolean>(resolve => { available = resolve }))
+  const screen = await render(<Panel initialView="connection" />)
+  await fireEvent.press(screen.getByRole('button', { name: 'settings.pasteClipboard' }))
+  await screen.unmount()
+  await act(() => available(true))
+  expect(mockClipboardText).not.toHaveBeenCalled()
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'providerSettings.clipboardRead' }))
+})
+
+it('does not start interface probing from a credential read completed after unmount', async () => {
+  let hydrate!: (value: AIProvider) => void
+  mockHydrate.mockReturnValueOnce(new Promise<AIProvider>(resolve => { hydrate = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
+  await fireEvent.press(screen.getByRole('button', { name: 'apiKeyPanel.detectInterface' }))
+  await screen.unmount()
+  await act(() => hydrate({ ...fixture(), apiKey: 'local-probe-placeholder' }))
+  expect(mockProbe).not.toHaveBeenCalled()
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.interfaceProbeDone' }))
+})
+
+it('passes the editor signal to explicit probing and discards a late result', async () => {
+  allowedProbes = 1
+  let complete!: (value: ReturnType<typeof getProviderPreset> & { presetId: typeof DEFAULT_PROVIDER_PRESET_ID; confidence: 'low'; reason: string; ok: boolean }) => void
+  mockProbe.mockReturnValueOnce(new Promise(resolve => { complete = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
+  await fireEvent.press(screen.getByRole('button', { name: 'apiKeyPanel.detectInterface' }))
+  expect(mockProbe).toHaveBeenCalledTimes(1)
+  const signal = mockProbe.mock.calls[0][1]?.signal
+  await screen.unmount()
+  await act(() => complete({ ...getProviderPreset(DEFAULT_PROVIDER_PRESET_ID), presetId: DEFAULT_PROVIDER_PRESET_ID, confidence: 'low', reason: 'local fixture', ok: true }))
+  expect(signal).toBeInstanceOf(AbortSignal)
+  expect(signal.aborted).toBe(true)
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.interfaceProbeDone' }))
+})
+
+it('binds immediate compatibility changes to the shown configuration and waits for persistence', async () => {
+  let durable!: () => void
+  mockFlushProviders.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
+  const shown = useSettingsStore.getState().providers[0]
+  await fireEvent.press(screen.getByRole('button', { name: 'providerSettings.clientCompatibility.islemind' }))
+  expect(mockUpdate.mock.calls[0]?.[2]).toEqual({ expectedProvider: shown, signal: expect.any(AbortSignal) })
+  expect(mockFlushProviders).toHaveBeenCalledTimes(1)
+  await screen.unmount()
+  await act(() => durable())
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'providerSettings.configurationSaved' }))
+  expect(mockProbe).not.toHaveBeenCalled()
+})
+
+it('keeps capability declarations local and does not acknowledge them before provider durability', async () => {
+  let durable!: () => void
+  mockFlushProviders.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
+  const screen = await render(<Panel />)
+  await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
+  await fireEvent.press(screen.getByRole('button', { name: /apiKeyPanel.capabilityMatrix\./ }))
+  const shown = useSettingsStore.getState().providers[0]
+  await fireEvent.press(screen.getByRole('checkbox', { name: 'apiKeyPanel.capability.nativeTools' }))
+  expect(mockUpdate).toHaveBeenCalledWith('fixture', { capabilities: expect.objectContaining({ nativeTools: true }) }, {
+    expectedProvider: shown, signal: expect.any(AbortSignal),
+  })
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.capabilityUpdated' }))
+  await act(() => durable())
+  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.capabilityUpdated', message: 'apiKeyPanel.capability.nativeTools' }))
+  expect(mockProbe).not.toHaveBeenCalled()
 })

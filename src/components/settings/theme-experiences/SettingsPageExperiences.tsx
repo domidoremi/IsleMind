@@ -163,7 +163,8 @@ const styles = StyleSheet.create({
   monetBrushShort: { flex: 0.42, borderRadius: 2 },
   monetContent: { position: 'relative', width: '96%', marginTop: 10, marginLeft: 6, paddingLeft: 16, paddingRight: 3, minWidth: 0, gap: 11 },
   monetContentSpine: { position: 'absolute', top: 10, bottom: 14, left: 2, width: 3, borderRadius: 2, opacity: 0.58 },
-  monetContentWash: { position: 'absolute', top: 26, right: -14, width: 132, height: 42, borderTopLeftRadius: 34, borderBottomLeftRadius: 12, opacity: 0.12, transform: [{ rotate: '4deg' }] },
+  // Reserve inline space for rotation without clipping the settings content.
+  monetContentWash: { position: 'absolute', top: 26, right: 4, width: 132, height: 42, borderTopLeftRadius: 34, borderBottomLeftRadius: 12, opacity: 0.12, transform: [{ rotate: '4deg' }] },
   materialHeader: { position: 'relative', paddingHorizontal: 6, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 12 },
   materialLeadingSlot: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   materialHeaderIndicator: { position: 'absolute', right: 18, bottom: 0, left: 66, height: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, opacity: 0.78 },

@@ -42,6 +42,38 @@ it.each(['reduced', 'none'])('respects %s motion in memory, knowledge and diagno
 })
 
 const memory = { id: 'qa', content: 'Local test memory', status: 'pending', sourceKind: 'imported' } as MemoryItem
+
+it('blocks evaluation during asset ownership and explicitly resets native busy', async () => {
+  const onRunRagEvaluation = jest.fn()
+  const diagnostics = { selfTesting: false, selfTestResult: null, ragEvaluation: null, ragLogs: [], indexingJobs: [],
+    onRunSelfTest: jest.fn(), onRunRagEvaluation, primaryActionStyle: {}, assetCardSurface: () => ({}) }
+  const screen = await render(<ContextDiagnosticsSection {...diagnostics} ragEvaluating ragEvaluationBlocked />)
+  expect(screen.getByLabelText('contextPanel.ragDebug.runEvaluation').props.accessibilityState.busy).toBe(true)
+  await screen.rerender(<ContextDiagnosticsSection {...diagnostics} ragEvaluating={false} ragEvaluationBlocked />)
+  expect(screen.getByLabelText('contextPanel.ragDebug.runEvaluation').props.accessibilityState.busy).toBe(false)
+  await fireEvent.press(screen.getByLabelText('contextPanel.ragDebug.runEvaluation'))
+  expect(onRunRagEvaluation).not.toHaveBeenCalled()
+  await screen.rerender(<ContextDiagnosticsSection {...diagnostics} ragEvaluating={false} ragEvaluationBlocked={false} />)
+  await fireEvent.press(screen.getByLabelText('contextPanel.ragDebug.runEvaluation'))
+  expect(onRunRagEvaluation).toHaveBeenCalledTimes(1)
+})
+
+it('disables self-test admission while another asset operation owns the panel and clears native busy explicitly', async () => {
+  const onRunSelfTest = jest.fn()
+  const diagnostics = { selfTestResult: null, ragEvaluating: false, ragEvaluation: null, ragLogs: [], indexingJobs: [],
+    onRunSelfTest, onRunRagEvaluation: jest.fn(), primaryActionStyle: {}, assetCardSurface: () => ({}) }
+  const screen = await render(<ContextDiagnosticsSection {...diagnostics} selfTesting selfTestBlocked />)
+  expect(screen.getByLabelText('contextPanel.runSelfTest').props.accessibilityState.busy).toBe(true)
+  await screen.rerender(<ContextDiagnosticsSection {...diagnostics} selfTesting={false} selfTestBlocked />)
+  expect(screen.getByLabelText('contextPanel.runSelfTest').props.accessibilityState.busy).toBe(false)
+  expect(screen.getByLabelText('contextPanel.runSelfTest')).toBeDisabled()
+  await fireEvent.press(screen.getByLabelText('contextPanel.runSelfTest'))
+  expect(onRunSelfTest).not.toHaveBeenCalled()
+  await screen.rerender(<ContextDiagnosticsSection {...diagnostics} selfTesting={false} selfTestBlocked={false} />)
+  await fireEvent.press(screen.getByLabelText('contextPanel.runSelfTest'))
+  expect(onRunSelfTest).toHaveBeenCalledTimes(1)
+})
+
 const props: ComponentProps<typeof MemoryReviewSection> = {
   memories: [memory], pendingMemories: [memory], filteredMemories: [memory], filteredPendingMemories: [memory], visibleMemories: [memory],
   memoryStatusCounts: { pending: 1, active: 0, disabled: 0 }, memoryReviewSummary: buildMemoryReviewSummary([memory]),
@@ -71,6 +103,36 @@ it('explicitly clears native busy state when a memory review is cancelled or fin
     expect(screen.getByLabelText(label).props.accessibilityState?.busy).toBe(false)
     expect(screen.getByLabelText(label)).not.toBeDisabled()
   }
+})
+
+it('keeps import cancellation outside the folded draft and explicitly resets native import busy state', async () => {
+  const onCancel = jest.fn()
+  const importProps = { plainTitle: '', plainText: 'Retained text', onPlainTitleChange: jest.fn(),
+    onPlainTextChange: jest.fn(), onImportFile: jest.fn(), onImportPlainText: jest.fn(), onCancel }
+  const screen = await render(<KnowledgeImportSection {...importProps} importing />)
+  expect(screen.queryByLabelText('contextPanel.body')).toBeNull()
+  expect(screen.getByLabelText('contextPanel.importKnowledgeFile').props.accessibilityState.busy).toBe(true)
+  await fireEvent.press(screen.getByLabelText('contextPanel.cancelKnowledgeImport'))
+  expect(onCancel).toHaveBeenCalledTimes(1)
+  await screen.rerender(<KnowledgeImportSection {...importProps} importing cancelling />)
+  expect(screen.getByLabelText('contextPanel.cancellingKnowledgeImport')).toBeDisabled()
+  await fireEvent.press(screen.getByLabelText('contextPanel.cancellingKnowledgeImport'))
+  expect(onCancel).toHaveBeenCalledTimes(1)
+  await fireEvent.press(screen.getByLabelText(/contextPanel.pasteTextKnowledge/))
+  expect(screen.getByLabelText('contextPanel.importPastedText').props.accessibilityState.busy).toBe(true)
+  await screen.rerender(<KnowledgeImportSection {...importProps} importing={false} blocked cancelled />)
+  for (const label of ['contextPanel.importKnowledgeFile', 'contextPanel.importPastedText']) {
+    expect(screen.getByLabelText(label).props.accessibilityState.busy).toBe(false)
+    expect(screen.getByLabelText(label)).toBeDisabled()
+  }
+  expect(screen.getByText('contextPanel.knowledgeImportCancelled').props.accessibilityLiveRegion).toBe('polite')
+  expect(screen.queryByLabelText('contextPanel.cancelKnowledgeImport')).toBeNull()
+  await screen.rerender(<KnowledgeImportSection {...importProps} importing={false} />)
+  for (const label of ['contextPanel.importKnowledgeFile', 'contextPanel.importPastedText']) {
+    expect(screen.getByLabelText(label).props.accessibilityState.busy).toBe(false)
+    expect(screen.getByLabelText(label)).not.toBeDisabled()
+  }
+  await screen.unmount()
 })
 
 it.each([

@@ -5,7 +5,9 @@ const mockFlush = jest.fn()
 const mockToast = jest.fn()
 jest.mock('@/store/settingsStore', () => ({ useSettingsStore: { getState: () => ({ settings: mockSettings }) } }))
 jest.mock('@/presentation/features/settings/settingsStorePersistenceCommand', () => ({ flushPersistedSettings: () => mockFlush() }))
-jest.mock('./SettingsEditBoundary', () => ({ useSettingsDraft: jest.fn() }))
+jest.mock('./SettingsEditBoundary', () => ({ ...jest.requireActual('./SettingsEditBoundary'), useSettingsDraft: jest.fn() }))
+jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
+jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal') }) }))
 jest.mock('@/components/ui/isle', () => {
   const { View, Pressable, Text, TextInput } = require('react-native')
@@ -43,6 +45,51 @@ it('preserves failed writes for retry, and resets explicitly without committing'
   await act(() => hook.result.current.discard('proxyBaseUrl'))
   expect(commit).toHaveBeenCalledTimes(2)
   expect(hook.result.current.entries.proxyBaseUrl).toBeUndefined()
+})
+
+it.each(['resolve', 'reject'])('suppresses late save feedback after unmount when persistence will %s', async outcome => {
+  let resolve!: () => void
+  let reject!: (error: Error) => void
+  mockFlush.mockImplementationOnce(() => new Promise<void>((yes, no) => { resolve = yes; reject = no }))
+  const hook = await renderHook(useSettingsFieldSession)
+  await act(() => hook.result.current.edit('proxyBaseUrl', 'draft', ''))
+  const commit = jest.fn(value => { mockSettings.proxyBaseUrl = value })
+  let saving!: Promise<void>
+  await act(() => { saving = hook.result.current.save('proxyBaseUrl', commit, value => value) })
+  await hook.unmount()
+  await act(async () => { if (outcome === 'resolve') resolve(); else reject(new Error('late failure')); await saving })
+  expect(commit).toHaveBeenCalledTimes(1)
+  expect(mockToast).not.toHaveBeenCalled()
+})
+
+it('retains the draft as a conflict when the saved field changes while persistence is pending', async () => {
+  let resolve!: () => void
+  mockFlush.mockImplementationOnce(() => new Promise<void>(yes => { resolve = yes }))
+  const hook = await renderHook(useSettingsFieldSession)
+  await act(() => hook.result.current.edit('proxyBaseUrl', 'draft', ''))
+  const commit = jest.fn(value => { mockSettings.proxyBaseUrl = value })
+  let saving!: Promise<void>
+  await act(() => { saving = hook.result.current.save('proxyBaseUrl', commit, value => value) })
+  mockSettings.proxyBaseUrl = 'external update'
+  await act(async () => { resolve(); await saving })
+  expect(hook.result.current.entries.proxyBaseUrl?.draft).toBe('draft')
+  expect(hook.result.current.entries.proxyBaseUrl?.error).toBe('conflict')
+  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.conflict' }))
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.saved' }))
+  await act(() => hook.result.current.save('proxyBaseUrl', commit, value => value))
+  expect(commit).toHaveBeenCalledTimes(1)
+  expect(mockSettings.proxyBaseUrl).toBe('external update')
+})
+
+it('never commits through a captured save callback after its editor unmounts', async () => {
+  const hook = await renderHook(useSettingsFieldSession)
+  await act(() => hook.result.current.edit('proxyBaseUrl', 'draft', ''))
+  const save = hook.result.current.save
+  await hook.unmount()
+  const commit = jest.fn()
+  await act(() => save('proxyBaseUrl', commit, value => value))
+  expect(commit).not.toHaveBeenCalled()
+  expect(mockFlush).not.toHaveBeenCalled()
 })
 
 it('selects saved references without committing until Save and preserves legacy rules through a failed write', async () => {

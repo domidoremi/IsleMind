@@ -97,7 +97,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         ? null
         : createProviderActivationPatchBuffer({
             flushPatches: (patches) => updateProviderPatches(patches, { persist: 'deferred' }),
-            hydrateProviderKey,
+            hydrateProviderKey: (providerId, signal) => hydrateProviderKey(providerId, { signal }),
             flushLimit: ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT,
             flushMs: ACTIVATION_PROVIDER_PATCH_FLUSH_MS,
             signal: abortController.signal,

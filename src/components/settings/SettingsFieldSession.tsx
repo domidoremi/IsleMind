@@ -7,7 +7,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import type { Settings } from '@/types/settingsContracts'
 import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import type { CommittedSettingsFieldProps } from './CommittedSettingsField'
-import { useSettingsDraft } from './SettingsEditBoundary'
+import { useSettingsDraft, useSettingsLifetime } from './SettingsEditBoundary'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { SettingsReferenceField, type SettingsReferenceOption } from './SettingsReferenceField'
 
@@ -17,19 +17,26 @@ export function useSettingsFieldSession() {
   const [entries, setEntries] = useState<Partial<Record<keyof Settings, Entry>>>({})
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
+  const lifetime = useSettingsLifetime()
+  const latestEntries = useRef(entries)
+  latestEntries.current = entries
   const { t } = useTranslation()
   const dialog = useIsleDialog()
-  useSettingsDraft(Object.keys(entries).length > 0, busy, () => setEntries({}))
-  function discard(key: keyof Settings) { setEntries(current => { const next = { ...current }; delete next[key]; return next }) }
+  useSettingsDraft(Object.keys(entries).length > 0, busy, () => setEntries({}), JSON.stringify(entries))
+  function discard(key: keyof Settings) {
+    if (lock.current || lifetime.current?.signal.aborted) return
+    setEntries(current => { const next = { ...current }; delete next[key]; return next })
+  }
   function edit(key: keyof Settings, draft: string, saved: string) {
-    if (lock.current) return
+    if (lock.current || lifetime.current?.signal.aborted) return
     if (draft === saved) { discard(key); return }
     const baseline = JSON.stringify(useSettingsStore.getState().settings[key])
     setEntries(current => ({ ...current, [key]: { draft, baseline: current[key] ? current[key].baseline : baseline } }))
   }
   async function save(key: keyof Settings, commit: (value: string) => void, normalize: (value: string) => string) {
-    const entry = entries[key]
-    if (!entry || lock.current) return
+    const signal = lifetime.current?.signal
+    const entry = latestEntries.current[key]
+    if (!entry || lock.current || signal?.aborted) return
     if (entry.baseline !== JSON.stringify(useSettingsStore.getState().settings[key])) {
       setEntries(current => ({ ...current, [key]: { ...entry, error: 'conflict' } }))
       dialog.toast({ title: t('settingsWorkspace.conflict'), tone: 'amber' }); return
@@ -42,13 +49,19 @@ export function useSettingsFieldSession() {
       const baseline = JSON.stringify(useSettingsStore.getState().settings[key])
       setEntries(current => ({ ...current, [key]: { ...entry, baseline, error: undefined } }))
       await flushPersistedSettings()
-      discard(key)
+      if (signal?.aborted) return
+      if (baseline !== JSON.stringify(useSettingsStore.getState().settings[key])) {
+        setEntries(current => current[key] ? { ...current, [key]: { ...current[key], error: 'conflict' } } : current)
+        dialog.toast({ title: t('settingsWorkspace.conflict'), tone: 'amber' }); return
+      }
+      setEntries(current => { const next = { ...current }; delete next[key]; return next })
       dialog.toast({ title: t('settingsWorkspace.saved'), tone: 'mint' })
     } catch {
+      if (signal?.aborted) return
       setEntries(current => current[key] ? { ...current, [key]: { ...current[key], error: 'saveFailed' } } : current)
       dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
     }
-    finally { lock.current = false; setBusy(false) }
+    finally { lock.current = false; if (!signal?.aborted) setBusy(false) }
   }
   return { entries, busy, edit, save, discard }
 }

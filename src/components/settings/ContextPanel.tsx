@@ -1,6 +1,6 @@
 import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { SettingsSection, useSettingsTarget } from './SettingsSection'
-import { useSettingsDraft } from './SettingsEditBoundary'
+import { useSettingsDraft, useSettingsLifetime } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import { SavedSettingsField, useSettingsFieldSession } from './SettingsFieldSession'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -13,6 +13,7 @@ import { describeUserFacingError, extractUserFacingErrorDetail, userFacingErrorD
 import type { KnowledgeDocument, LocalRagModelCapability, MemoryItem, RagEvaluationLog, RagIndexingJobStatus } from '@/types/contextContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
+import { snapshotProviderConfiguration } from '@/modules/providers'
 import { importKnowledgeFile, importKnowledgePlainText } from '@/bootstrap/knowledgeDocumentImportRuntime'
 import {
   clearKnowledgeRecords,
@@ -24,14 +25,22 @@ import {
   downloadLocalEmbeddingModel,
   formatModelBytes,
   listLocalEmbeddingModelViews,
+  reviewLocalEmbeddingModelStateRecovery,
   type LocalEmbeddingDownloadProgress,
   type LocalEmbeddingModelView,
 } from '@/bootstrap/localModelRuntime'
 import { clearRagQueryCaches, listRagEmbeddingJobs, loadRagDebugSnapshot, loadRagEmbeddingJobSummary, rebuildRagKnowledgeEmbeddings, runRagGoldEvaluation } from '@/bootstrap/knowledgeRagEvaluation'
 import {
+  KnowledgeRepositoryConflictError,
+  LocalModelStateDataError,
+  LocalModelStateRecoveryConflictError,
   isDownloadableLocalModel,
+  knowledgeMemoryReviewMutationOptions,
+  snapshotKnowledgeMemory,
   localCapabilityEnabled,
   splitLocalModelViews,
+  type KnowledgeDocumentRecord,
+  type KnowledgeMemoryRecord,
   type RagEvaluationRun,
 } from '@/modules/knowledge'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -71,6 +80,29 @@ interface SelfTestResult {
   steps: ContextSelfTestStep[]
 }
 
+type KnowledgeIndexOperation = { controller: AbortController; phase: 'running' | 'readback' }
+type LocalModelOperationKind = 'download' | 'enable' | 'delete'
+type LocalModelSettingsRevision = { settings: Settings; key: string }
+type LocalModelOperation = {
+  controller: AbortController
+  kind: LocalModelOperationKind | 'save' | 'state-reset'
+  modelId: string
+  phase: 'review' | 'running' | 'persistence' | 'readback'
+  savedSettings?: LocalModelSettingsRevision
+}
+
+function localModelSelectionKey(settings: Settings): string {
+  return JSON.stringify({
+    embeddingMode: settings.embeddingMode,
+    localEmbeddingModelId: settings.localEmbeddingModelId,
+    localEmbeddingModelSource: settings.localEmbeddingModelSource,
+  })
+}
+
+function localModelConsentKey(settings: Settings): string {
+  return JSON.stringify([localModelSelectionKey(settings), settings.localModelDownloadMirrorBaseUrl])
+}
+
 const contextChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
 const localModelActionStyle = {
   minHeight: 44,
@@ -92,19 +124,21 @@ const itemRowActionStyle = {
 const memoryPreviewLimit = 6
 const knowledgePreviewLimit = 6
 
-async function listMemories(statuses: MemoryItem['status'][]): Promise<MemoryItem[]> {
-  return (await knowledgeRepository.listMemories({ statuses })).map(({ schema: _schema, ...memory }) => memory)
+type ContextMemoryRecord = KnowledgeMemoryRecord & { status: MemoryItem['status'] }
+
+async function listMemories(statuses: MemoryItem['status'][]): Promise<ContextMemoryRecord[]> {
+  return [...await knowledgeRepository.listMemories({ statuses })]
 }
 
-async function listKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
-  return (await knowledgeRepository.listDocuments()).map(({ schema: _schema, ...document }) => document)
+async function listKnowledgeDocuments(): Promise<KnowledgeDocumentRecord[]> {
+  return [...await knowledgeRepository.listDocuments()]
 }
 
-const updateMemoryStatus = (id: string, status: MemoryItem['status']) => knowledgeRepository.updateMemoryStatus(id, status)
-const deleteMemory = (id: string) => knowledgeRepository.deleteMemory(id)
-const clearMemories = () => knowledgeRepository.clearMemories()
-const deleteKnowledgeDocument = (id: string) => deleteKnowledgeDocumentRecords(id)
-const clearKnowledge = () => clearKnowledgeRecords()
+const updateMemoryStatus = (memory: KnowledgeMemoryRecord, status: MemoryItem['status'], catalog: readonly KnowledgeMemoryRecord[], signal: AbortSignal) => knowledgeRepository.updateMemoryStatus(memory.id, status, { ...knowledgeMemoryReviewMutationOptions(memory, catalog), signal })
+const deleteMemory = (memory: KnowledgeMemoryRecord, signal: AbortSignal) => knowledgeRepository.deleteMemory(memory.id, { expectedMemory: snapshotKnowledgeMemory(memory), signal })
+const clearMemories = (memories: readonly KnowledgeMemoryRecord[], signal: AbortSignal) => knowledgeRepository.clearMemories({ expectedMemories: memories.map(snapshotKnowledgeMemory), signal })
+const deleteKnowledgeDocument = (document: KnowledgeDocumentRecord, signal: AbortSignal) => deleteKnowledgeDocumentRecords(document.id, { expectedDocument: { ...document }, signal })
+const clearKnowledge = (documents: readonly KnowledgeDocumentRecord[], signal: AbortSignal) => clearKnowledgeRecords({ expectedDocuments: documents.map(document => ({ ...document })), signal })
 
 function primaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
@@ -177,10 +211,10 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
+  const lifetime = useSettingsLifetime()
   const motion = useMotionPreference()
   const { width, fontScale } = useWindowDimensions()
   const compact = width / fontScale < 390
-  void providers
   const settings = useSettingsStore((state) => state.settings)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const getTavilyApiKey = useSettingsStore((state) => state.getTavilyApiKey)
@@ -215,30 +249,83 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     setTavilyKey(tavily); setGoogleSearchKey(google); setBingSearchKey(bing); setCustomSearchKey(custom)
     setGoogleSearchCxDraft(cx); setCustomSearchEndpointDraft(endpoint)
   }
-  const requestSearchDiscard = useSettingsDraft(keysDirty, keysSaving, discardSearchDraft)
+  const requestSearchDiscard = useSettingsDraft(keysDirty, keysSaving, discardSearchDraft, JSON.stringify(keysDraft))
   const savedResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [memories, setMemories] = useState<MemoryItem[]>([])
-  const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
+  const [memories, setMemories] = useState<ContextMemoryRecord[]>([])
+  const [documents, setDocuments] = useState<KnowledgeDocumentRecord[]>([])
   const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'failed'>('loading')
   const catalogRead = useRef(0)
   useEffect(() => () => { catalogRead.current += 1 }, [])
   const [assetBusy, setAssetBusy] = useState(false)
-  const [assetError, setAssetError] = useState(false)
+  const [assetError, setAssetError] = useState<'failed' | 'conflict' | 'readback' | null>(null)
   const assetLock = useRef(false)
-  useSettingsDraft(false, assetBusy, () => undefined)
+  const assetReadbackRequiredRef = useRef(true)
+  const [assetReadbackRequired, setAssetReadbackRequired] = useState(true)
+  const modelReadbackRequiredRef = useRef(false)
+  const [modelReadbackRequired, setModelReadbackRequired] = useState(false)
+  const modelSelectionSaveRequiredRef = useRef(false)
+  const [modelSelectionSaveRequired, setModelSelectionSaveRequired] = useState(false)
+  useSettingsDraft(false, assetBusy || modelSelectionSaveRequired, () => undefined)
   const [embeddingJobs, setEmbeddingJobs] = useState<{ running: number; error: number } | null>(null)
   const [indexingJobs, setIndexingJobs] = useState<RagIndexingJobStatus[]>([])
   const [ragLogs, setRagLogs] = useState<RagEvaluationLog[]>([])
   const [ragEvaluating, setRagEvaluating] = useState(false)
   const [ragEvaluation, setRagEvaluation] = useState<RagEvaluationRun | null>(null)
+  const [clearingRagCache, setClearingRagCache] = useState(false)
+  const diagnosticOperationRef = useRef<(KnowledgeIndexOperation & { kind: 'evaluation' | 'cache' }) | null>(null)
+  const diagnosticReadbackRequiredRef = useRef(false)
+  const [diagnosticReadbackRequired, setDiagnosticReadbackRequired] = useState(false)
+  const [ragEvaluationCanCancel, setRagEvaluationCanCancel] = useState(false)
+  const [cancellingRagEvaluation, setCancellingRagEvaluation] = useState(false)
+  const [ragEvaluationCancelled, setRagEvaluationCancelled] = useState(false)
   const [localModels, setLocalModels] = useState<LocalEmbeddingModelView[]>([])
+  const [modelCatalogState, setModelCatalogState] = useState<'loading' | 'ready' | 'failed'>('loading')
+  const [modelStateInvalid, setModelStateInvalid] = useState(false)
+  const modelStateInvalidRef = useRef(false)
+  const localModelRevisionsRef = useRef(new Map<string, { key: string }>())
+  const localModelCatalogReadyRef = useRef(false)
+  const modelSelectionRevisionRef = useRef({ key: localModelSelectionKey(settings) })
+  const modelConsentRevisionRef = useRef({ key: localModelConsentKey(settings) })
+  const modelSettingsRevisionRef = useRef<LocalModelSettingsRevision>({ settings, key: JSON.stringify(settings) })
+  function observeLocalModelSettings(current: Settings) {
+    const selectionKey = localModelSelectionKey(current)
+    const consentKey = localModelConsentKey(current)
+    if (modelSelectionRevisionRef.current.key !== selectionKey) modelSelectionRevisionRef.current = { key: selectionKey }
+    if (modelConsentRevisionRef.current.key !== consentKey) modelConsentRevisionRef.current = { key: consentKey }
+    const key = JSON.stringify(current)
+    if (modelSettingsRevisionRef.current.settings !== current || modelSettingsRevisionRef.current.key !== key) {
+      modelSettingsRevisionRef.current = { settings: current, key }
+    }
+  }
+  observeLocalModelSettings(settings)
+  useEffect(() => useSettingsStore.subscribe(state => observeLocalModelSettings(state.settings)), [])
+  const modelOperationRef = useRef<LocalModelOperation | null>(null)
   const [modelBusyId, setModelBusyId] = useState<string | null>(null)
+  const [modelDownloadCanCancel, setModelDownloadCanCancel] = useState(false)
+  const [cancellingModelDownload, setCancellingModelDownload] = useState(false)
+  const [modelDownloadCancelled, setModelDownloadCancelled] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<LocalEmbeddingDownloadProgress | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
+  const [rebuildReadbackRequired, setRebuildReadbackRequired] = useState(false)
+  const rebuildReadbackRequiredRef = useRef(false)
+  const rebuildOperationRef = useRef<KnowledgeIndexOperation | null>(null)
+  const [rebuildCanCancel, setRebuildCanCancel] = useState(false)
+  const [cancellingRebuild, setCancellingRebuild] = useState(false)
+  const [rebuildCancelled, setRebuildCancelled] = useState(false)
   const [importing, setImporting] = useState(false)
-  const importControllerRef = useRef<AbortController | null>(null)
+  const importOperationRef = useRef<KnowledgeIndexOperation | null>(null)
+  const [cancellingImport, setCancellingImport] = useState(false)
+  const [importCancelled, setImportCancelled] = useState(false)
+  const [importReadbackRequired, setImportReadbackRequired] = useState(false)
+  const importReadbackRequiredRef = useRef(false)
+  const [importCanCancel, setImportCanCancel] = useState(false)
   const [selfTesting, setSelfTesting] = useState(false)
-  const selfTestControllerRef = useRef<AbortController | null>(null)
+  const selfTestOperationRef = useRef<KnowledgeIndexOperation | null>(null)
+  const [selfTestCanCancel, setSelfTestCanCancel] = useState(false)
+  const [cancellingSelfTest, setCancellingSelfTest] = useState(false)
+  const [selfTestCancelled, setSelfTestCancelled] = useState(false)
+  const [selfTestReadbackRequired, setSelfTestReadbackRequired] = useState(false)
+  const selfTestReadbackRequiredRef = useRef(false)
   const [confirmingMemories, setConfirmingMemories] = useState(false)
   const [showAllMemories, setShowAllMemories] = useState(false)
   const [showAllKnowledge, setShowAllKnowledge] = useState(false)
@@ -252,6 +339,11 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const [selfTestResult, setSelfTestResult] = useState<SelfTestResult | null>(null)
   const [plainTitle, setPlainTitle] = useState('')
   const [plainText, setPlainText] = useState('')
+  const plainDraft = useRef({ title: plainTitle, text: plainText })
+  if (plainDraft.current.title !== plainTitle || plainDraft.current.text !== plainText) {
+    plainDraft.current = { title: plainTitle, text: plainText }
+  }
+  const reviewedPlainDraft = plainDraft.current
   const [activeContextSection, setActiveContextSection] = useState<'search' | 'rag' | 'credentials' | null>(null)
   const target = useSettingsTarget()
   const [ragTechniquesOpen, setRagTechniquesOpen] = useState(false)
@@ -265,7 +357,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const showContext = section === 'all' || section === 'context'
   const showMemory = section === 'all' || section === 'memory'
   const showKnowledge = section === 'all' || section === 'knowledge'
-  useSettingsDraft(showKnowledge && Boolean(plainTitle || plainText), false, () => { setPlainTitle(''); setPlainText('') })
+  useSettingsDraft(showKnowledge && Boolean(plainTitle || plainText), importing, () => { setPlainTitle(''); setPlainText('') }, JSON.stringify([showKnowledge, plainTitle, plainText]))
   const shouldPromoteKnowledgeImport = showKnowledge && section === 'knowledge' && focus === 'import'
   const pendingMemories = useMemo(() => memories.filter((memory) => memory.status === 'pending'), [memories])
   const memoryReviewSummary = useMemo(() => buildMemoryReviewSummary(memories), [memories])
@@ -285,10 +377,14 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   }), [documents, knowledgeFilter, knowledgeSortMode, knowledgeStatusFocus])
 
   useEffect(() => () => {
-    importControllerRef.current?.abort()
-    importControllerRef.current = null
-    selfTestControllerRef.current?.abort()
-    selfTestControllerRef.current = null
+    importOperationRef.current?.controller.abort()
+    importOperationRef.current = null
+    rebuildOperationRef.current?.controller.abort()
+    rebuildOperationRef.current = null
+    selfTestOperationRef.current?.controller.abort()
+    selfTestOperationRef.current = null
+    diagnosticOperationRef.current?.controller.abort()
+    diagnosticOperationRef.current = null
     if (savedResetTimerRef.current) clearTimeout(savedResetTimerRef.current)
     savedResetTimerRef.current = null
   }, [])
@@ -388,43 +484,131 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     ...(isLiquidGlass ? glassShadowStyle(colors) : {}),
   } as const
 
-  async function refresh() {
+  async function refresh(options?: { clearModelReadback?: boolean; requireModel?: boolean }): Promise<'ready' | 'failed' | 'retired'> {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted) return 'retired'
     const request = ++catalogRead.current
+    localModelCatalogReadyRef.current = false
+    modelStateInvalidRef.current = false
+    setModelStateInvalid(false)
+    setModelCatalogState('loading')
+    setLocalModels([])
     setCatalogState('loading')
-    try {
-      const [memoryItems, documentItems, jobs, debug, models] = await Promise.all([
-        listMemories(['pending', 'active', 'disabled']),
-        listKnowledgeDocuments(),
-        loadRagEmbeddingJobSummary(50),
-        loadRagDebugSnapshot(),
-        listLocalEmbeddingModelViews(useSettingsStore.getState().settings),
-      ])
-      if (request !== catalogRead.current) return
-      setMemories(memoryItems)
-      setDocuments(documentItems)
-      setEmbeddingJobs({
-        running: jobs.running,
-        error: jobs.error,
-      })
-      setIndexingJobs(debug.indexingJobs)
-      setRagLogs(debug.evaluations)
-      setLocalModels(models)
-      setCatalogState('ready')
-      } catch { if (request === catalogRead.current) setCatalogState('failed') }
+
+    const readModels = async (): Promise<'ready' | 'failed' | 'retired'> => {
+      try {
+        const models = await listLocalEmbeddingModelViews(snapshotProviderConfiguration(useSettingsStore.getState().settings), signal)
+        if (signal.aborted || request !== catalogRead.current) return 'retired'
+        const modelSnapshots = snapshotProviderConfiguration(models)
+        const modelRevisions = new Map<string, { key: string }>()
+        for (const view of modelSnapshots) {
+          const key = JSON.stringify(view)
+          const previous = localModelRevisionsRef.current.get(view.model.id)
+          modelRevisions.set(view.model.id, previous?.key === key ? previous : { key })
+        }
+        localModelRevisionsRef.current = modelRevisions
+        localModelCatalogReadyRef.current = true
+        setLocalModels(modelSnapshots)
+        setModelCatalogState('ready')
+        if (options?.clearModelReadback && !modelOperationRef.current) {
+          modelReadbackRequiredRef.current = false
+          setModelReadbackRequired(false)
+          setAssetError(error => error === 'readback' && !assetReadbackRequiredRef.current ? null : error)
+        }
+        return 'ready'
+      } catch (error) {
+        if (signal.aborted || request !== catalogRead.current) return 'retired'
+        modelStateInvalidRef.current = error instanceof LocalModelStateDataError
+        setModelStateInvalid(modelStateInvalidRef.current)
+        setModelCatalogState('failed')
+        return 'failed'
+      }
+    }
+
+    const readAssets = async (): Promise<'ready' | 'failed' | 'retired'> => {
+      try {
+        const [memoryItems, documentItems, jobs, debug] = await Promise.all([
+          listMemories(['pending', 'active', 'disabled']),
+          listKnowledgeDocuments(),
+          loadRagEmbeddingJobSummary(50),
+          loadRagDebugSnapshot(),
+        ])
+        if (signal.aborted || request !== catalogRead.current) return 'retired'
+        setMemories(memoryItems.map(snapshotKnowledgeMemory))
+        setDocuments(documentItems.map(document => ({ ...document })))
+        setEmbeddingJobs({ running: jobs.running, error: jobs.error })
+        setIndexingJobs(debug.indexingJobs)
+        setRagLogs(debug.evaluations)
+        setCatalogState('ready')
+        assetReadbackRequiredRef.current = false
+        setAssetReadbackRequired(false)
+        setAssetError(error => error === 'readback' && !modelReadbackRequiredRef.current ? null : error)
+        if (!importOperationRef.current) {
+          importReadbackRequiredRef.current = false
+          setImportReadbackRequired(false)
+        }
+        if (!rebuildOperationRef.current) {
+          rebuildReadbackRequiredRef.current = false
+          setRebuildReadbackRequired(false)
+        }
+        if (!selfTestOperationRef.current) {
+          selfTestReadbackRequiredRef.current = false
+          setSelfTestReadbackRequired(false)
+        }
+        if (!diagnosticOperationRef.current) {
+          diagnosticReadbackRequiredRef.current = false
+          setDiagnosticReadbackRequired(false)
+        }
+        return 'ready'
+      } catch {
+        if (signal.aborted || request !== catalogRead.current) return 'retired'
+        assetReadbackRequiredRef.current = true
+        setAssetReadbackRequired(true)
+        setCatalogState('failed')
+        return 'failed'
+      }
+    }
+
+    // Model metadata must not hide independent, successful knowledge/memory reads.
+    const modelRead = readModels()
+    const assetsResult = await readAssets()
+    if (options?.requireModel || options?.clearModelReadback) {
+      const modelsResult = await modelRead
+      if (assetsResult === 'retired' || modelsResult === 'retired') return 'retired'
+      return assetsResult === 'ready' && modelsResult === 'ready' ? 'ready' : 'failed'
+    }
+    return assetsResult
   }
 
-  async function mutateAssets(operation: () => Promise<void>) {
-    if (assetLock.current) return
+  async function refreshAfterAssetWrite(signal: AbortSignal, requireModel = false): Promise<boolean> {
+    if (signal.aborted) return false
+    // Only a current catalog read clears debt; another mutation must not serve as retry.
+    assetReadbackRequiredRef.current = true
+    setAssetReadbackRequired(true)
+    const result = await refresh({ requireModel })
+    if (signal.aborted) return false
+    // A committed write with failed readback is not a failed write to repeat.
+    if (result === 'failed') setAssetError('readback')
+    return result === 'ready'
+  }
+
+  async function mutateAssets(operation: (signal: AbortSignal) => Promise<void>, modelStateRecovery = false) {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || assetLock.current || assetReadbackRequiredRef.current || selfTestReadbackRequiredRef.current ||
+      importReadbackRequiredRef.current || rebuildReadbackRequiredRef.current || diagnosticReadbackRequiredRef.current ||
+      (modelReadbackRequiredRef.current && !modelStateRecovery) || modelSelectionSaveRequiredRef.current ||
+      (modelStateRecovery && (!modelStateInvalidRef.current || localModelCatalogReadyRef.current))) return
     assetLock.current = true
     setAssetBusy(true)
-    setAssetError(false)
-    try { await operation() }
-    catch {
-      setAssetError(true)
+    setAssetError(null)
+    try { await operation(signal) }
+    catch (error) {
+      if (signal.aborted) return
+      setAssetError(error instanceof KnowledgeRepositoryConflictError ? 'conflict' : 'failed')
       // A batch can be partly persisted. Read it back rather than implying
       // that every requested change either succeeded or was rolled back.
       await refresh()
-    } finally { assetLock.current = false; setAssetBusy(false) }
+    } finally { assetLock.current = false; if (!signal.aborted) setAssetBusy(false) }
   }
 
   function resetMemoryAssetView() {
@@ -449,51 +633,62 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     setShowAllKnowledge(true)
   }
 
-  async function confirmPendingMemories(targetMemories: MemoryItem[] = pendingMemories, filtered = false) {
-    if (!targetMemories.length || confirmingMemories) return
+  async function confirmPendingMemories(signal: AbortSignal, targetMemories: ContextMemoryRecord[] = pendingMemories, filtered = false) {
+    if (signal.aborted || !targetMemories.length || confirmingMemories) return
+    const targets = targetMemories.map(memory => ({
+      id: memory.id,
+      options: { ...knowledgeMemoryReviewMutationOptions(memory, memories), signal },
+    }))
     const confirmed = await dialog.confirm({
       title: t(filtered ? 'contextPanel.confirmFilteredPendingMemoriesTitle' : 'contextPanel.confirmPendingMemoriesTitle', { count: targetMemories.length }),
       message: t('contextPanel.confirmPendingMemoriesMessage'),
       confirmLabel: t(filtered ? 'contextPanel.confirmFilteredPendingMemories' : 'contextPanel.confirmPendingMemories', { count: targetMemories.length }),
       cancelLabel: t('common.cancel'),
       tone: 'mint',
+      signal,
     })
-    if (!confirmed) return
+    if (signal.aborted || !confirmed) return
     setConfirmingMemories(true)
     try {
-      const results = await Promise.allSettled(targetMemories.map((memory) => updateMemoryStatus(memory.id, 'active')))
-      if (results.some(result => result.status === 'rejected')) throw new Error('memory_batch_partial_failure')
-      await refresh()
+      const results = await Promise.allSettled(targets.map(target => knowledgeRepository.updateMemoryStatus(target.id, 'active', target.options)))
+      const failed = results.find(result => result.status === 'rejected')
+      if (signal.aborted) return
+      if (failed?.status === 'rejected') throw failed.reason
+      if (!await refreshAfterAssetWrite(signal)) return
       dialog.toast({
         title: t('contextPanel.pendingMemoriesConfirmed', { count: targetMemories.length }),
         tone: 'mint',
       })
     } finally {
-      setConfirmingMemories(false)
+      if (!signal.aborted) setConfirmingMemories(false)
     }
   }
 
-  async function rejectPendingMemories(targetMemories: MemoryItem[] = filteredPendingMemories) {
-    if (!targetMemories.length || confirmingMemories) return
+  async function rejectPendingMemories(signal: AbortSignal, targetMemories: ContextMemoryRecord[] = filteredPendingMemories) {
+    if (signal.aborted || !targetMemories.length || confirmingMemories) return
+    const targets = targetMemories.map(snapshotKnowledgeMemory)
     const confirmed = await dialog.confirm({
       title: t('contextPanel.rejectFilteredPendingMemoriesTitle', { count: targetMemories.length }),
       message: t('contextPanel.rejectFilteredPendingMemoriesMessage'),
       confirmLabel: t('contextPanel.rejectFilteredPendingMemories', { count: targetMemories.length }),
       cancelLabel: t('common.cancel'),
       tone: 'danger',
+      signal,
     })
-    if (!confirmed) return
+    if (signal.aborted || !confirmed) return
     setConfirmingMemories(true)
     try {
-      const results = await Promise.allSettled(targetMemories.map((memory) => deleteMemory(memory.id)))
-      if (results.some(result => result.status === 'rejected')) throw new Error('memory_batch_partial_failure')
-      await refresh()
+      const results = await Promise.allSettled(targets.map(memory => deleteMemory(memory, signal)))
+      const failed = results.find(result => result.status === 'rejected')
+      if (signal.aborted) return
+      if (failed?.status === 'rejected') throw failed.reason
+      if (!await refreshAfterAssetWrite(signal)) return
       dialog.toast({
         title: t('contextPanel.pendingMemoriesRejected', { count: targetMemories.length }),
         tone: 'amber',
       })
     } finally {
-      setConfirmingMemories(false)
+      if (!signal.aborted) setConfirmingMemories(false)
     }
   }
 
@@ -616,168 +811,547 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     }
   }
 
-  async function importFile() {
-    if (importControllerRef.current) return
+  async function runKnowledgeImport(kind: 'file' | 'text') {
+    const lifetimeSignal = lifetime.current?.signal
+    if (!lifetimeSignal || lifetimeSignal.aborted || importOperationRef.current || importReadbackRequiredRef.current || rebuildReadbackRequiredRef.current || selfTestReadbackRequiredRef.current ||
+      (kind === 'text' && (reviewedPlainDraft !== plainDraft.current || !plainText.trim()))) return
+    const reviewedSettings = snapshotProviderConfiguration(settings)
+    const reviewedProviders = snapshotProviderConfiguration(providers)
     const controller = new AbortController()
-    importControllerRef.current = controller
+    const operation: KnowledgeIndexOperation = { controller, phase: 'running' }
+    importOperationRef.current = operation
     setImporting(true)
+    setImportCanCancel(true)
+    setCancellingImport(false)
+    setImportCancelled(false)
     try {
-      const provider = await getPrimaryConfiguredProvider()
+      const provider = await getPrimaryConfiguredProvider({ settings: reviewedSettings, providers: reviewedProviders, signal: controller.signal })
       if (controller.signal.aborted) return
-      const model = provider ? getPolicyPreferredProviderModel(provider, settings) : undefined
-      const result = await importKnowledgeFile(provider ?? undefined, model, { signal: controller.signal })
-      dialog.toast({ title: result.ok ? t('contextPanel.knowledgeUpdated') : t('settings.importSkipped'), message: result.message, tone: result.ok ? 'mint' : 'amber' })
-      await refresh()
+      const result = kind === 'file'
+        ? await importKnowledgeFile(provider ?? undefined, provider ? getPolicyPreferredProviderModel(provider, reviewedSettings) : undefined, { signal: controller.signal, settings: reviewedSettings })
+        : await importKnowledgePlainText(plainTitle, plainText, provider ?? undefined, { signal: controller.signal, settings: reviewedSettings })
+      if (controller.signal.aborted) return
+      operation.phase = 'readback'
+      setImportCanCancel(false)
+      if (kind === 'text' && result.ok && reviewedPlainDraft === plainDraft.current) {
+        setPlainTitle(''); setPlainText('')
+      }
+      if (result.ok) {
+        if (!await refreshAfterAssetWrite(controller.signal)) return
+        dialog.toast({ title: t('contextPanel.knowledgeUpdated'), message: result.message, tone: 'mint' })
+      } else {
+        const feedback = { title: t('settings.importSkipped'), message: result.message, tone: 'amber' as const }
+        if (result.reason === 'pdf_capacity_unavailable') dialog.notice(feedback)
+        else dialog.toast(feedback)
+        await refresh()
+      }
     } catch (error) {
-      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return
+      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        controller.abort()
+        return
+      }
       throw error
     } finally {
-      if (importControllerRef.current === controller) {
-        importControllerRef.current = null
-        if (!controller.signal.aborted) setImporting(false)
+      if (importOperationRef.current === operation) {
+        if (controller.signal.aborted && !lifetimeSignal.aborted) {
+          operation.phase = 'readback'
+          setImportCanCancel(false)
+          // The adapter has settled; cancelled imports may still have durable records.
+          const readback = await refresh()
+          if (!lifetimeSignal.aborted) {
+            importReadbackRequiredRef.current = readback !== 'ready'
+            setImportReadbackRequired(readback !== 'ready')
+            setImportCancelled(true)
+          }
+        }
+        if (importOperationRef.current === operation) importOperationRef.current = null
+        if (!lifetimeSignal.aborted) {
+          setImporting(false)
+          setImportCanCancel(false)
+          setCancellingImport(false)
+        }
       }
     }
   }
 
-  async function importPlainText() {
-    if (importControllerRef.current) return
-    const controller = new AbortController()
-    importControllerRef.current = controller
-    setImporting(true)
-    try {
-      const provider = await getPrimaryConfiguredProvider()
-      if (controller.signal.aborted) return
-      const result = await importKnowledgePlainText(plainTitle, plainText, provider ?? undefined, { signal: controller.signal })
-      dialog.toast({ title: result.ok ? t('contextPanel.knowledgeUpdated') : t('settings.importSkipped'), message: result.message, tone: result.ok ? 'mint' : 'amber' })
-      if (result.ok) { setPlainTitle(''); setPlainText('') }
-      await refresh()
-    } catch (error) {
-      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return
-      throw error
-    } finally {
-      if (importControllerRef.current === controller) {
-        importControllerRef.current = null
-        if (!controller.signal.aborted) setImporting(false)
-      }
-    }
+  const displayedImport = importOperationRef.current
+  function cancelKnowledgeImport() {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || !displayedImport || importOperationRef.current !== displayedImport ||
+      displayedImport.phase !== 'running' || displayedImport.controller.signal.aborted) return
+    importReadbackRequiredRef.current = true
+    setImportReadbackRequired(true)
+    setCancellingImport(true)
+    displayedImport.controller.abort()
   }
 
   async function runContextSelfTest() {
-    if (selfTesting) return
-    const controller = new AbortController()
-    selfTestControllerRef.current = controller
-    setSelfTesting(true)
-    try {
-      const result = await runContextSelfTestScenario({
-        settings,
-        primaryProvider: await getPrimaryConfiguredProvider(),
-        getTavilyApiKey,
-        t,
-        signal: controller.signal,
-        onStep: (step: ContextSelfTestStep) => setSelfTestResult((current) => ({
-          ranAt: current?.ranAt ?? Date.now(),
-          steps: [...(current?.steps ?? []), step],
-        })),
-      })
-      dialog.notice({
-        title: result.fail ? t('contextPanel.selfTest.doneWithIssues') : t('contextPanel.selfTest.done'),
-        message: t('contextPanel.selfTest.summary', { ok: result.ok, warn: result.warn, fail: result.fail }),
-        tone: result.fail ? 'danger' : result.warn ? 'amber' : 'mint',
-      })
-      await refresh()
-    } catch (error) {
-      if (controller.signal.aborted) return
-      setSelfTestResult((current) => ({
-        ranAt: current?.ranAt ?? Date.now(),
-        steps: [
-          ...(current?.steps ?? []),
-          {
-        name: t('contextPanel.selfTest.exception'),
-        status: 'fail',
-        detail: describeUserFacingError(error, t, { headlineKey: 'contextPanel.selfTest.failed' }),
+    if (selfTestReadbackRequiredRef.current || rebuildReadbackRequiredRef.current || importReadbackRequiredRef.current) return
+    const reviewedSettings = snapshotProviderConfiguration(settings)
+    const reviewedProviders = snapshotProviderConfiguration(providers)
+    await mutateAssets(async signal => {
+      const controller = new AbortController()
+      const operation: KnowledgeIndexOperation = { controller, phase: 'running' }
+      const abort = () => controller.abort()
+      signal.addEventListener('abort', abort, { once: true })
+      selfTestOperationRef.current = operation
+      setSelfTesting(true)
+      setSelfTestCanCancel(true)
+      setCancellingSelfTest(false)
+      setSelfTestCancelled(false)
+      setSelfTestResult({ ranAt: Date.now(), steps: [] })
+      try {
+        const primaryProvider = await getPrimaryConfiguredProvider({ settings: reviewedSettings, providers: reviewedProviders, signal: controller.signal })
+        if (signal.aborted || controller.signal.aborted) return
+        const result = await runContextSelfTestScenario({
+          settings: reviewedSettings, primaryProvider, getTavilyApiKey, t, signal: controller.signal,
+          onStep: (step: ContextSelfTestStep) => {
+            if (controller.signal.aborted || selfTestOperationRef.current !== operation || operation.phase !== 'running') return
+            setSelfTestResult(current => ({ ranAt: current?.ranAt ?? Date.now(), steps: [...(current?.steps ?? []), { ...step }] }))
           },
-        ],
-      }))
-      dialog.notice({
-        title: t('contextPanel.selfTest.doneWithIssues'),
-        message: describeUserFacingError(error, t, { headlineKey: 'contextPanel.selfTest.failed' }),
-        tone: 'danger',
-      })
-    } finally {
-      if (selfTestControllerRef.current === controller) {
-        selfTestControllerRef.current = null
-        if (!controller.signal.aborted) setSelfTesting(false)
+        })
+        if (controller.signal.aborted) return
+        operation.phase = 'readback'
+        setSelfTestCanCancel(false)
+        if (!await refreshAfterAssetWrite(controller.signal)) {
+          if (!signal.aborted) {
+            selfTestReadbackRequiredRef.current = true
+            setSelfTestReadbackRequired(true)
+          }
+          return
+        }
+        dialog.notice({
+          title: result.fail ? t('contextPanel.selfTest.doneWithIssues') : t('contextPanel.selfTest.done'),
+          message: t('contextPanel.selfTest.summary', { ok: result.ok, warn: result.warn, fail: result.fail }),
+          tone: result.fail ? 'danger' : result.warn ? 'amber' : 'mint',
+        })
+      } catch (error) {
+        if (signal.aborted) return
+        const expectedCancellation = controller.signal.aborted && error instanceof Error && error.name === 'AbortError'
+        if (!expectedCancellation) {
+          setAssetError(error instanceof KnowledgeRepositoryConflictError ? 'conflict' : 'failed')
+          setSelfTestResult(current => ({
+            ranAt: current?.ranAt ?? Date.now(), steps: [...(current?.steps ?? []), {
+              name: t('contextPanel.selfTest.exception'), status: 'fail',
+              detail: describeUserFacingError(error, t, { headlineKey: 'contextPanel.selfTest.failed' }),
+            }],
+          }))
+        }
+        if (!controller.signal.aborted) {
+          operation.phase = 'readback'
+          setSelfTestCanCancel(false)
+          const readback = await refresh()
+          if (!signal.aborted) {
+            selfTestReadbackRequiredRef.current = readback !== 'ready'
+            setSelfTestReadbackRequired(readback !== 'ready')
+          }
+        }
+      } finally {
+        if (selfTestOperationRef.current === operation) {
+          if (controller.signal.aborted && !signal.aborted) {
+            operation.phase = 'readback'
+            setSelfTestCanCancel(false)
+            const readback = await refresh()
+            if (!signal.aborted) {
+              selfTestReadbackRequiredRef.current = readback !== 'ready'
+              setSelfTestReadbackRequired(readback !== 'ready')
+              setSelfTestCancelled(true)
+            }
+          }
+          if (selfTestOperationRef.current === operation) selfTestOperationRef.current = null
+          if (!signal.aborted) {
+            setSelfTesting(false); setSelfTestCanCancel(false); setCancellingSelfTest(false)
+          }
+        }
+        signal.removeEventListener('abort', abort)
       }
-    }
+    })
+  }
+
+  const displayedSelfTest = selfTestOperationRef.current
+  function cancelContextSelfTest() {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || !displayedSelfTest || selfTestOperationRef.current !== displayedSelfTest ||
+      displayedSelfTest.phase !== 'running' || displayedSelfTest.controller.signal.aborted) return
+    selfTestReadbackRequiredRef.current = true
+    setSelfTestReadbackRequired(true)
+    setCancellingSelfTest(true)
+    displayedSelfTest.controller.abort()
   }
 
   async function runRagEvaluation() {
-    if (ragEvaluating) return
-    setRagEvaluating(true)
-    try {
-      const result = await runRagGoldEvaluation(useSettingsStore.getState().settings, { title: 'RAG evaluation', systemPrompt: '' })
-      setRagEvaluation(result)
-      dialog.notice({
-        title: t('contextPanel.ragDebug.evaluationDone'),
-        message: t('contextPanel.ragDebug.evaluationSummary', {
-          confidence: Math.round(result.averageConfidence * 100),
-          citation: Math.round(result.averageCitationCoverage * 100),
-          precision: Math.round(result.averageContextPrecision * 100),
-        }),
-        tone: 'mint',
-      })
-      await refresh()
-    } catch (error) {
-      dialog.notice({ title: t('contextPanel.ragDebug.evaluationFailed'), message: userFacingErrorDetail(error) || t('contextPanel.localModel.unknownError'), tone: 'danger' })
-    } finally {
-      setRagEvaluating(false)
-    }
+    await runRagDiagnostic('evaluation')
   }
 
-  async function enableLocalModel(view: LocalEmbeddingModelView) {
-    if (view.source === 'none') return
-    updateSettings({
-      embeddingMode: settings.embeddingMode === 'provider' ? 'hybrid' : settings.embeddingMode,
-      localEmbeddingModelId: view.model.id,
-      localEmbeddingModelSource: view.source,
+  async function runRagDiagnostic(kind: 'evaluation' | 'cache') {
+    const reviewedSettings = snapshotProviderConfiguration(settings)
+    await mutateAssets(async signal => {
+      const controller = new AbortController()
+      const operation: KnowledgeIndexOperation & { kind: typeof kind } = { controller, phase: 'running', kind }
+      const abort = () => controller.abort()
+      signal.addEventListener('abort', abort, { once: true })
+      diagnosticOperationRef.current = operation
+      let acknowledged = false
+      let result: RagEvaluationRun | null = null
+      if (kind === 'evaluation') {
+        setRagEvaluating(true); setRagEvaluation(null); setRagEvaluationCanCancel(true)
+        setCancellingRagEvaluation(false); setRagEvaluationCancelled(false)
+      } else setClearingRagCache(true)
+      try {
+        if (controller.signal.aborted) return
+        if (kind === 'evaluation') {
+          result = await runRagGoldEvaluation(reviewedSettings, { title: 'RAG evaluation', systemPrompt: '' }, { signal: controller.signal })
+        } else await clearRagQueryCaches({ signal: controller.signal })
+        acknowledged = true
+      } catch (error) {
+        const expectedCancellation = controller.signal.aborted && error instanceof Error && error.name === 'AbortError'
+        if (!signal.aborted && !expectedCancellation) {
+          setAssetError(error instanceof KnowledgeRepositoryConflictError ? 'conflict' : 'failed')
+        }
+      } finally {
+        if (diagnosticOperationRef.current === operation) {
+          if (!signal.aborted) {
+            operation.phase = 'readback'
+            setRagEvaluationCanCancel(false)
+            // Settlement can include a committed log/cache write even on failure or cancellation.
+            const readback = await refresh()
+            if (!signal.aborted) {
+              diagnosticReadbackRequiredRef.current = readback !== 'ready'
+              setDiagnosticReadbackRequired(readback !== 'ready')
+              if (acknowledged && !controller.signal.aborted) {
+                if (readback === 'failed') setAssetError('readback')
+                if (readback === 'ready') {
+                  if (result) {
+                    setRagEvaluation(result)
+                    dialog.notice({
+                      title: t('contextPanel.ragDebug.evaluationDone'),
+                      message: t('contextPanel.ragDebug.evaluationSummary', {
+                        confidence: Math.round(result.averageConfidence * 100),
+                        citation: Math.round(result.averageCitationCoverage * 100),
+                        precision: Math.round(result.averageContextPrecision * 100),
+                      }), tone: 'mint',
+                    })
+                  } else dialog.notice({ title: t('contextPanel.cacheCleared'), message: t('contextPanel.cacheClearedMessage'), tone: 'mint' })
+                }
+              }
+              if (kind === 'evaluation') {
+                setRagEvaluationCancelled(controller.signal.aborted)
+                setRagEvaluating(false); setCancellingRagEvaluation(false)
+              } else setClearingRagCache(false)
+            }
+          }
+          if (diagnosticOperationRef.current === operation) diagnosticOperationRef.current = null
+        }
+        signal.removeEventListener('abort', abort)
+      }
     })
-    dialog.toast({ title: t('contextPanel.localModel.enabled'), message: view.model.name, tone: 'mint' })
-    await refresh()
   }
 
-  async function downloadModel(view: LocalEmbeddingModelView) {
-    if (!view.model.files.length || view.model.sizeBytes <= 0) {
-      showLocalModelDetails(view)
-      return
-    }
-    const confirmed = await dialog.confirm({
-      title: t('contextPanel.localModel.downloadConfirmTitle'),
-      message: t('contextPanel.localModel.downloadConfirmMessage', { name: view.model.name, size: formatModelBytes(view.model.sizeBytes) }),
-      confirmLabel: t('contextPanel.localModel.download'),
-      cancelLabel: t('common.cancel'),
-      tone: 'amber',
-    })
-    if (!confirmed) return
-    setModelBusyId(view.model.id)
+  const displayedDiagnostic = diagnosticOperationRef.current
+  function cancelRagEvaluation() {
+    if (!displayedDiagnostic || displayedDiagnostic.kind !== 'evaluation' ||
+      diagnosticOperationRef.current !== displayedDiagnostic || displayedDiagnostic.phase !== 'running') return
+    diagnosticReadbackRequiredRef.current = true
+    setDiagnosticReadbackRequired(true)
+    setCancellingRagEvaluation(true)
+    displayedDiagnostic.controller.abort()
+  }
+
+  async function flushLocalModelSelection(operation: LocalModelOperation, signal: AbortSignal): Promise<boolean> {
+    operation.phase = 'persistence'
+    setModelDownloadCanCancel(false)
     setDownloadProgress(null)
-    try {
-      await downloadLocalEmbeddingModel(view.model.id, {
-        mirrorBaseUrl: settings.localModelDownloadMirrorBaseUrl,
-        onProgress: (progress) => setDownloadProgress(progress),
-      })
-      updateSettings({
-        embeddingMode: settings.embeddingMode === 'provider' ? 'hybrid' : settings.embeddingMode,
-        localEmbeddingModelId: view.model.id,
-        localEmbeddingModelSource: 'downloaded',
-      })
-      dialog.notice({ title: t('contextPanel.localModel.downloaded'), message: view.model.name, tone: 'mint' })
-    } catch (error) {
-      dialog.notice({ title: t('contextPanel.localModel.downloadFailed'), message: t('contextPanel.localModel.downloadFailedDetail', { error: extractUserFacingErrorDetail(error) || t('contextPanel.localModel.unknownError') }), tone: 'danger' })
-    } finally {
-      setModelBusyId(null)
-      setDownloadProgress(null)
-      await refresh()
+    while (!signal.aborted && modelOperationRef.current === operation) {
+      observeLocalModelSettings(useSettingsStore.getState().settings)
+      const revision = modelSettingsRevisionRef.current
+      try { await flushPersistedSettings() }
+      catch {
+        if (!signal.aborted) {
+          modelSelectionSaveRequiredRef.current = true
+          setModelSelectionSaveRequired(true)
+        }
+        return false
+      }
+      if (signal.aborted || modelOperationRef.current !== operation) return false
+      observeLocalModelSettings(useSettingsStore.getState().settings)
+      if (revision !== modelSettingsRevisionRef.current) continue
+      operation.savedSettings = revision
+      modelSelectionSaveRequiredRef.current = false
+      setModelSelectionSaveRequired(false)
+      return true
     }
+    return false
+  }
+
+  async function readLocalModelState(operation: LocalModelOperation, signal: AbortSignal, savedSelection = false): Promise<boolean> {
+    if (signal.aborted || modelOperationRef.current !== operation) return false
+    setModelDownloadCanCancel(false)
+    setDownloadProgress(null)
+    modelReadbackRequiredRef.current = true
+    setModelReadbackRequired(true)
+    while (!signal.aborted && modelOperationRef.current === operation) {
+      operation.phase = 'readback'
+      observeLocalModelSettings(useSettingsStore.getState().settings)
+      const selection = modelConsentRevisionRef.current
+      const ready = await refreshAfterAssetWrite(signal, true)
+      if (signal.aborted || modelOperationRef.current !== operation) return false
+      observeLocalModelSettings(useSettingsStore.getState().settings)
+      if (ready && savedSelection) {
+        // A read of the earlier preference cannot acknowledge a later save.
+        if (operation.savedSettings !== modelSettingsRevisionRef.current && !await flushLocalModelSelection(operation, signal)) return false
+      }
+      if (ready && selection !== modelConsentRevisionRef.current) continue
+      modelReadbackRequiredRef.current = !ready
+      setModelReadbackRequired(!ready)
+      if (ready) setAssetError(error => error === 'readback' ? null : error)
+      return ready
+    }
+    return false
+  }
+
+  function requireLocalModelConsent(view: LocalEmbeddingModelView, target: { key: string } | undefined, consent: { key: string }) {
+    observeLocalModelSettings(useSettingsStore.getState().settings)
+    const currentTarget = localModelRevisionsRef.current.get(view.model.id)
+    if (!localModelCatalogReadyRef.current || !target || currentTarget !== target ||
+      target.key !== JSON.stringify(view) || modelConsentRevisionRef.current !== consent) {
+      throw new KnowledgeRepositoryConflictError()
+    }
+  }
+
+  function requireModelStateRecoveryConsent(consent: { key: string }) {
+    observeLocalModelSettings(useSettingsStore.getState().settings)
+    if (!modelStateInvalidRef.current || localModelCatalogReadyRef.current ||
+      modelConsentRevisionRef.current !== consent) throw new LocalModelStateRecoveryConflictError()
+  }
+
+  async function reviewModelStateReset() {
+    await mutateAssets(async signal => {
+      observeLocalModelSettings(useSettingsStore.getState().settings)
+      const consent = modelConsentRevisionRef.current
+      const controller = new AbortController()
+      const operation: LocalModelOperation = { controller, kind: 'state-reset', modelId: '', phase: 'review' }
+      const abort = () => controller.abort(signal.reason)
+      const retired = () => signal.aborted || controller.signal.aborted || modelOperationRef.current !== operation
+      signal.addEventListener('abort', abort, { once: true })
+      modelOperationRef.current = operation
+      try {
+        const review = await reviewLocalEmbeddingModelStateRecovery(controller.signal)
+        if (retired()) return
+        if (!review) {
+          await readLocalModelState(operation, signal)
+          return
+        }
+        requireModelStateRecoveryConsent(consent)
+        const confirmed = await dialog.confirm({
+          title: t('contextPanel.localModel.stateResetTitle'),
+          message: t('contextPanel.localModel.stateResetMessage'),
+          confirmLabel: t('contextPanel.localModel.resetState'),
+          cancelLabel: t('common.cancel'),
+          tone: 'danger',
+          signal: controller.signal,
+        })
+        if (retired() || !confirmed) return
+        requireModelStateRecoveryConsent(consent)
+        operation.phase = 'running'
+        await review.reset({
+          signal: controller.signal,
+          isCurrent: () => {
+            if (retired()) return false
+            requireModelStateRecoveryConsent(consent)
+            return true
+          },
+        })
+        if (retired() || !await readLocalModelState(operation, signal)) return
+        if (!retired()) dialog.toast({ title: t('contextPanel.localModel.stateResetDone'), tone: 'mint' })
+      } catch (error) {
+        if (retired()) return
+        const failure = error instanceof LocalModelStateRecoveryConflictError || error instanceof KnowledgeRepositoryConflictError
+          ? 'conflict' : 'failed'
+        // A rejected acknowledgement can still have removed the index.
+        await readLocalModelState(operation, signal)
+        if (retired()) return
+        setAssetError(failure)
+        if (failure === 'failed') dialog.notice({
+          title: t('contextPanel.localModel.stateResetFailed'),
+          message: t('contextPanel.localModel.stateResetFailedDetail'),
+          tone: 'danger',
+        })
+      } finally {
+        if (modelOperationRef.current === operation) modelOperationRef.current = null
+        signal.removeEventListener('abort', abort)
+      }
+    }, true)
+  }
+
+  async function runLocalModelOperation(kind: LocalModelOperationKind, view: LocalEmbeddingModelView) {
+    await mutateAssets(async signal => {
+      const reviewedView = snapshotProviderConfiguration(view)
+      const reviewedSettings = snapshotProviderConfiguration(useSettingsStore.getState().settings)
+      observeLocalModelSettings(useSettingsStore.getState().settings)
+      const target = localModelRevisionsRef.current.get(reviewedView.model.id)
+      const consent = modelConsentRevisionRef.current
+      const selection = modelSelectionRevisionRef.current
+      requireLocalModelConsent(reviewedView, target, consent)
+      if (kind === 'enable' && reviewedView.source === 'none') return
+      if (kind === 'download' && (!reviewedView.model.files.length || reviewedView.model.sizeBytes <= 0)) {
+        showLocalModelDetails(reviewedView)
+        return
+      }
+      if (kind === 'delete' && !reviewedView.downloaded) return
+      const controller = new AbortController()
+      const operation: LocalModelOperation = { controller, kind, modelId: reviewedView.model.id, phase: 'review' }
+      const abort = () => controller.abort()
+      signal.addEventListener('abort', abort, { once: true })
+      modelOperationRef.current = operation
+      setModelBusyId(operation.modelId)
+      setDownloadProgress(null)
+      setModelDownloadCanCancel(false)
+      setCancellingModelDownload(false)
+      setModelDownloadCancelled(false)
+      let effectStarted = false
+      try {
+        if (kind !== 'enable') {
+          const confirmed = await dialog.confirm({
+            title: t(kind === 'download' ? 'contextPanel.localModel.downloadConfirmTitle' : 'contextPanel.localModel.deleteConfirmTitle'),
+            message: t(kind === 'download' ? 'contextPanel.localModel.downloadConfirmMessage' : 'contextPanel.localModel.deleteConfirmMessage',
+              { name: reviewedView.model.name, size: formatModelBytes(reviewedView.model.sizeBytes) }),
+            confirmLabel: t(kind === 'download' ? 'contextPanel.localModel.download' : 'common.delete'),
+            cancelLabel: t('common.cancel'),
+            tone: kind === 'download' ? 'amber' : 'danger',
+            signal: controller.signal,
+          })
+          if (signal.aborted || controller.signal.aborted || modelOperationRef.current !== operation || !confirmed) return
+          requireLocalModelConsent(reviewedView, target, consent)
+        }
+        operation.phase = 'running'
+        if (kind === 'download') {
+          effectStarted = true
+          setModelDownloadCanCancel(true)
+          await downloadLocalEmbeddingModel(operation.modelId, {
+            signal: controller.signal,
+            mirrorBaseUrl: reviewedSettings.localModelDownloadMirrorBaseUrl,
+            onProgress: progress => {
+              if (signal.aborted || controller.signal.aborted || modelOperationRef.current !== operation ||
+                operation.phase !== 'running' || progress.modelId !== operation.modelId) return
+              setDownloadProgress(snapshotProviderConfiguration(progress))
+            },
+          })
+        } else if (kind === 'delete') {
+          effectStarted = true
+          await deleteDownloadedLocalEmbeddingModel(operation.modelId, controller.signal)
+        }
+        if (signal.aborted || controller.signal.aborted || modelOperationRef.current !== operation) return
+        operation.phase = 'persistence'
+        setModelDownloadCanCancel(false)
+        setDownloadProgress(null)
+        const current = useSettingsStore.getState().settings
+        observeLocalModelSettings(current)
+        let saved = false
+        try {
+          // A newer explicit selection wins; retry never restores this reviewed choice.
+          if (modelSelectionRevisionRef.current === selection) {
+            if (kind === 'delete') {
+              if (current.localEmbeddingModelId === operation.modelId && current.localEmbeddingModelSource === 'downloaded') {
+                updateSettings({ localEmbeddingModelId: undefined, localEmbeddingModelSource: 'none' })
+              }
+            } else {
+              updateSettings({
+                embeddingMode: current.embeddingMode === 'provider' ? 'hybrid' : current.embeddingMode,
+                localEmbeddingModelId: operation.modelId,
+                localEmbeddingModelSource: kind === 'download' ? 'downloaded' : reviewedView.source,
+              })
+            }
+          }
+          saved = await flushLocalModelSelection(operation, signal)
+        } catch {
+          if (signal.aborted) return
+          modelSelectionSaveRequiredRef.current = true
+          setModelSelectionSaveRequired(true)
+        }
+        if (signal.aborted || !await readLocalModelState(operation, signal, saved) || !saved) return
+        const acknowledged = useSettingsStore.getState().settings
+        if (kind === 'enable' && (acknowledged.localEmbeddingModelId !== operation.modelId ||
+          acknowledged.localEmbeddingModelSource !== reviewedView.source)) return
+        const success = { title: t(`contextPanel.localModel.${kind === 'download' ? 'downloaded' : kind === 'enable' ? 'enabled' : 'deleted'}`), message: reviewedView.model.name, tone: 'mint' as const }
+        if (kind === 'download') dialog.notice(success)
+        else dialog.toast(success)
+      } catch (error) {
+        if (signal.aborted) return
+        if (error instanceof Error && error.name === 'AbortError') {
+          controller.abort()
+          return
+        }
+        setAssetError(error instanceof KnowledgeRepositoryConflictError ? 'conflict' : 'failed')
+        if (effectStarted) {
+          await readLocalModelState(operation, signal)
+          if (signal.aborted) return
+          if (kind === 'download') {
+            dialog.notice({ title: t('contextPanel.localModel.downloadFailed'), message: t('contextPanel.localModel.downloadFailedDetail', { error: extractUserFacingErrorDetail(error) || t('contextPanel.localModel.unknownError') }), tone: 'danger' })
+          }
+        }
+      } finally {
+        if (modelOperationRef.current === operation) {
+          if (controller.signal.aborted && !signal.aborted && effectStarted && operation.phase === 'running') {
+            // Cancellation waits for the adapter, then reads possible durable effects.
+            await readLocalModelState(operation, signal)
+          }
+          if (controller.signal.aborted && !signal.aborted && effectStarted && kind === 'download') setModelDownloadCancelled(true)
+          if (modelOperationRef.current === operation) modelOperationRef.current = null
+          if (!signal.aborted) {
+            setModelBusyId(null)
+            setModelDownloadCanCancel(false)
+            setCancellingModelDownload(false)
+            setDownloadProgress(null)
+          }
+        }
+        signal.removeEventListener('abort', abort)
+      }
+    })
+  }
+
+  const displayedModelOperation = modelOperationRef.current
+  function cancelLocalModelDownload() {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || !displayedModelOperation || modelOperationRef.current !== displayedModelOperation ||
+      displayedModelOperation.kind !== 'download' || displayedModelOperation.phase !== 'running' ||
+      displayedModelOperation.controller.signal.aborted) return
+    modelReadbackRequiredRef.current = true
+    setModelReadbackRequired(true)
+    setCancellingModelDownload(true)
+    setDownloadProgress(null)
+    displayedModelOperation.controller.abort()
+  }
+
+  async function retryLocalModelSelectionSave() {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || assetLock.current || !modelSelectionSaveRequiredRef.current) return
+    assetLock.current = true
+    setAssetBusy(true)
+    const operation: LocalModelOperation = { controller: new AbortController(), kind: 'save', modelId: '', phase: 'persistence' }
+    modelOperationRef.current = operation
+    try {
+      updateSettings(snapshotProviderConfiguration(useSettingsStore.getState().settings))
+      const saved = await flushLocalModelSelection(operation, signal)
+      if (!signal.aborted) await readLocalModelState(operation, signal, saved)
+    } catch {
+      if (!signal.aborted) {
+        modelSelectionSaveRequiredRef.current = true
+        setModelSelectionSaveRequired(true)
+        await readLocalModelState(operation, signal)
+      }
+    } finally {
+      if (modelOperationRef.current === operation) modelOperationRef.current = null
+      assetLock.current = false
+      if (!signal.aborted) setAssetBusy(false)
+    }
+  }
+
+  function enableLocalModel(view: LocalEmbeddingModelView) {
+    return runLocalModelOperation('enable', view)
+  }
+
+  function downloadModel(view: LocalEmbeddingModelView) {
+    return runLocalModelOperation('download', view)
   }
 
   function showLocalModelDetails(view: LocalEmbeddingModelView) {
@@ -792,51 +1366,107 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     })
   }
 
-  async function deleteModel(view: LocalEmbeddingModelView) {
-    const confirmed = await dialog.confirm({
-      title: t('contextPanel.localModel.deleteConfirmTitle'),
-      message: t('contextPanel.localModel.deleteConfirmMessage', { name: view.model.name }),
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('common.cancel'),
-      tone: 'danger',
-    })
-    if (!confirmed) return
-    setModelBusyId(view.model.id)
-    try {
-      await deleteDownloadedLocalEmbeddingModel(view.model.id)
-      if (settings.localEmbeddingModelId === view.model.id && settings.localEmbeddingModelSource === 'downloaded') {
-        updateSettings({ localEmbeddingModelId: undefined, localEmbeddingModelSource: 'none' })
-      }
-      dialog.toast({ title: t('contextPanel.localModel.deleted'), message: view.model.name, tone: 'mint' })
-    } finally {
-      setModelBusyId(null)
-      await refresh()
-    }
+  function deleteModel(view: LocalEmbeddingModelView) {
+    return runLocalModelOperation('delete', view)
   }
 
   async function rebuildIndex() {
-    setRebuilding(true)
-    try {
-      const provider = await getPrimaryConfiguredProvider()
-      const count = await rebuildRagKnowledgeEmbeddings({ provider: provider ?? undefined, embeddingMode: settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource })
-      dialog.notice({ title: t('contextPanel.localModel.rebuildDone'), message: t('contextPanel.localModel.rebuildDoneMessage', { count }), tone: 'mint' })
-      await refresh()
-    } catch (error) {
-      dialog.notice({ title: t('contextPanel.localModel.rebuildFailed'), message: userFacingErrorDetail(error) || t('contextPanel.localModel.unknownError'), tone: 'danger' })
-    } finally {
-      setRebuilding(false)
+    if (rebuildReadbackRequiredRef.current || importReadbackRequiredRef.current || selfTestReadbackRequiredRef.current) return
+    const expectedDocuments = documents.map(document => ({ ...document }))
+    const reviewedSettings = snapshotProviderConfiguration(settings)
+    const reviewedProviders = snapshotProviderConfiguration(providers)
+    const indexing = {
+      embeddingMode: reviewedSettings.embeddingMode ?? 'hybrid',
+      localEmbeddingModelId: reviewedSettings.localEmbeddingModelId, localEmbeddingModelSource: reviewedSettings.localEmbeddingModelSource,
     }
+    await mutateAssets(async signal => {
+      const controller = new AbortController()
+      const operation: KnowledgeIndexOperation = { controller, phase: 'running' }
+      const abort = () => controller.abort()
+      signal.addEventListener('abort', abort, { once: true })
+      rebuildOperationRef.current = operation
+      setRebuilding(true)
+      setRebuildCanCancel(true)
+      setCancellingRebuild(false)
+      setRebuildCancelled(false)
+      try {
+        const provider = await getPrimaryConfiguredProvider({ settings: reviewedSettings, providers: reviewedProviders, signal: controller.signal })
+        if (signal.aborted || controller.signal.aborted) return
+        const count = await rebuildRagKnowledgeEmbeddings({
+          ...indexing, provider: provider ?? undefined,
+        }, { signal: controller.signal, expectedDocuments })
+        if (controller.signal.aborted) return
+        operation.phase = 'readback'
+        setRebuildCanCancel(false)
+        if (!await refreshAfterAssetWrite(controller.signal)) {
+          if (!signal.aborted) {
+            rebuildReadbackRequiredRef.current = true
+            setRebuildReadbackRequired(true)
+          }
+          return
+        }
+        dialog.notice({ title: t('contextPanel.localModel.rebuildDone'), message: t('contextPanel.localModel.rebuildDoneMessage', { count }), tone: 'mint' })
+      } catch (error) {
+        if (!controller.signal.aborted) throw error
+        if (signal.aborted) return
+        if (!(error instanceof Error && [
+          'AbortError', 'KnowledgeRepositoryCancelledError', 'KnowledgeHybridIndexCancelledError',
+          'KnowledgeColbertIndexCancelledError', 'KnowledgeAgenticIndexCancelledError',
+        ].includes(error.name))) {
+          // Keep failed repair visible; the owned cancellation readback runs exactly once.
+          setAssetError(error instanceof KnowledgeRepositoryConflictError ? 'conflict' : 'failed')
+        }
+      } finally {
+        if (rebuildOperationRef.current === operation) {
+          if (controller.signal.aborted && !signal.aborted) {
+            operation.phase = 'readback'
+            setRebuildCanCancel(false)
+            // Index/status writes may already be durable; cancellation is not rollback.
+            const readback = await refresh()
+            if (!signal.aborted) {
+              rebuildReadbackRequiredRef.current = readback !== 'ready'
+              setRebuildReadbackRequired(readback !== 'ready')
+              setRebuildCancelled(true)
+            }
+          }
+          if (rebuildOperationRef.current === operation) rebuildOperationRef.current = null
+          if (!signal.aborted) {
+            setRebuilding(false)
+            setRebuildCanCancel(false)
+            setCancellingRebuild(false)
+          }
+        }
+        signal.removeEventListener('abort', abort)
+      }
+    })
   }
 
+  const displayedRebuild = rebuildOperationRef.current
+  function cancelKnowledgeRebuild() {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || !displayedRebuild || rebuildOperationRef.current !== displayedRebuild ||
+      displayedRebuild.phase !== 'running' || displayedRebuild.controller.signal.aborted) return
+    rebuildReadbackRequiredRef.current = true
+    setRebuildReadbackRequired(true)
+    setCancellingRebuild(true)
+    displayedRebuild.controller.abort()
+  }
+
+  const modelStateRecoveryBlocked = assetBusy || assetReadbackRequired || importReadbackRequired || rebuildReadbackRequired || selfTestReadbackRequired || diagnosticReadbackRequired || modelSelectionSaveRequired
+  const assetsBlocked = modelStateRecoveryBlocked || modelReadbackRequired
   const knowledgeImportControls = showKnowledge ? (
     <KnowledgeImportSection
       importing={importing}
+      blocked={assetsBlocked}
+      cancelling={cancellingImport}
+      cancelled={importCancelled}
+      onCancel={importCanCancel ? cancelKnowledgeImport : undefined}
       plainTitle={plainTitle}
       plainText={plainText}
       onPlainTitleChange={setPlainTitle}
       onPlainTextChange={setPlainText}
-      onImportFile={() => void importFile()}
-      onImportPlainText={() => void importPlainText()}
+      onImportFile={() => { if (!importReadbackRequiredRef.current && !rebuildReadbackRequiredRef.current && !selfTestReadbackRequiredRef.current) void mutateAssets(() => runKnowledgeImport('file')) }}
+      onImportPlainText={() => { if (!importReadbackRequiredRef.current && !rebuildReadbackRequiredRef.current && !selfTestReadbackRequiredRef.current && reviewedPlainDraft === plainDraft.current) void mutateAssets(() => runKnowledgeImport('text')) }}
     />
   ) : null
 
@@ -890,11 +1520,34 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   return (
     <View style={{ paddingBottom: showKnowledge ? 12 : 0 }}>
       {assetBusy ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
-      {assetError ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.operationFailed')}</Text> : null}
+      {modelBusyId && modelDownloadCanCancel ? <IsleButton label={t(cancellingModelDownload ? 'contextPanel.localModel.cancellingDownload' : 'contextPanel.localModel.cancelDownload')} onPress={cancelLocalModelDownload} disabled={cancellingModelDownload} /> : null}
+      {modelDownloadCancelled ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('contextPanel.localModel.downloadCancelled')}</Text> : null}
+      {modelSelectionSaveRequired ? <View style={{ gap: 8 }}>
+        <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t('contextPanel.localModel.selectionSaveFailed')}</Text>
+        <IsleButton label={t('contextPanel.localModel.retrySelectionSave')} onPress={() => void retryLocalModelSelectionSave()} disabled={assetBusy} />
+      </View> : null}
+      {ragEvaluating && ragEvaluationCanCancel ? <IsleButton label={t(cancellingRagEvaluation ? 'contextPanel.cancellingRagEvaluation' : 'contextPanel.cancelRagEvaluation')} onPress={cancelRagEvaluation} disabled={cancellingRagEvaluation} /> : null}
+      {ragEvaluationCancelled ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('contextPanel.ragEvaluationCancelled')}</Text> : null}
+      {selfTesting && selfTestCanCancel ? <IsleButton label={t(cancellingSelfTest ? 'contextPanel.cancellingSelfTest' : 'contextPanel.cancelSelfTest')} onPress={cancelContextSelfTest} disabled={cancellingSelfTest} /> : null}
+      {selfTestCancelled ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('contextPanel.selfTestCancelled')}</Text> : null}
+      {rebuilding && rebuildCanCancel ? <IsleButton label={t(cancellingRebuild ? 'contextPanel.cancellingKnowledgeRebuild' : 'contextPanel.cancelKnowledgeRebuild')} onPress={cancelKnowledgeRebuild} disabled={cancellingRebuild} /> : null}
+      {rebuildCancelled ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('contextPanel.knowledgeRebuildCancelled')}</Text> : null}
+      {assetError ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t(assetError === 'conflict' ? 'settingsWorkspace.conflict' : assetError === 'readback' ? 'settingsSubsystem.operationReadbackFailed' : 'settingsSubsystem.operationFailed')}</Text> : null}
+      {(assetReadbackRequired || rebuildReadbackRequired || selfTestReadbackRequired || diagnosticReadbackRequired || modelReadbackRequired) && catalogState !== 'failed' && modelCatalogState !== 'failed' ? <IsleButton label={t('common.retry')} onPress={() => void refresh({ clearModelReadback: true })} disabled={assetBusy} /> : null}
       {catalogState !== 'ready' ? <View style={{ gap: 8, paddingVertical: 8 }}>
         <Text accessibilityRole={catalogState === 'failed' ? 'alert' : undefined} accessibilityLiveRegion="polite" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t(catalogState === 'failed' ? 'settingsSubsystem.loadFailed' : 'common.loading')}</Text>
-        {catalogState === 'failed' ? <IsleButton label={t('common.retry')} onPress={() => void refresh()} /> : null}
+        {catalogState === 'failed' ? <IsleButton label={t('common.retry')} onPress={() => void refresh({ clearModelReadback: true })} disabled={assetBusy} /> : null}
       </View> : null}
+      {modelCatalogState !== 'ready' ? <View style={{ gap: 8, paddingVertical: 8 }}>
+        <Text accessibilityRole={modelCatalogState === 'failed' ? 'alert' : undefined} accessibilityLiveRegion="polite" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t(modelCatalogState === 'failed' ? 'contextPanel.localModel.loadFailed' : 'common.loading')}</Text>
+        {modelCatalogState === 'failed' ? <IsleButton label={t('common.retry')} onPress={() => void refresh({ clearModelReadback: true })} disabled={assetBusy} /> : null}
+        {modelStateInvalid ? <>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('contextPanel.localModel.stateInvalid')}</Text>
+          <IsleButton tone="danger" label={t('contextPanel.localModel.reviewStateReset')} onPress={() => void reviewModelStateReset()} disabled={modelStateRecoveryBlocked} />
+        </> : null}
+      </View> : null}
+      {catalogState === 'ready' && importReadbackRequired && !importing
+        ? <IsleButton label={t('common.retry')} onPress={() => void refresh()} /> : null}
       {!activeContextSection ? <Lead section={section} summary={summary} toggles={toggles} compact={compact} /> : null}
       {showContext && !activeContextSection && Platform.OS === 'web' ? (
         <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, marginTop: 10 }}>
@@ -1064,6 +1717,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                       <LocalModelRow
                         view={view}
                         busy={modelBusyId === view.model.id}
+                        blocked={assetsBlocked || modelCatalogState !== 'ready'}
                         progress={downloadProgress?.modelId === view.model.id ? downloadProgress : undefined}
                         onDownload={() => void downloadModel(view)}
                         onDetails={() => showLocalModelDetails(view)}
@@ -1073,9 +1727,9 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                     </MotiView>
                   ))}
                 </View>
-              ) : (
+              ) : modelCatalogState === 'ready' ? (
                 <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{t('contextPanel.localModel.noDownloadableModels')}</Text>
-              )}
+              ) : null}
               {plannedLocalCapabilities.length ? (
                 <View style={{ gap: 8 }}>
                   <Text style={{ color: colors.textTertiary, fontSize: 14, fontWeight: '700' }}>{t('contextPanel.localModel.capabilityStatus')}</Text>
@@ -1094,9 +1748,10 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             <IslePressable
               haptic
               accessibilityLabel={rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.localModel.rebuildIndex')}
+              accessibilityState={{ busy: rebuilding }}
               onPress={() => void rebuildIndex()}
-              disabled={rebuilding}
-              style={{ marginTop: 10, minHeight: 44, ...secondaryActionSurface(colors), alignItems: 'center', justifyContent: 'center', opacity: rebuilding ? 0.65 : 1 }}
+              disabled={assetsBlocked}
+              style={{ marginTop: 10, minHeight: 44, ...secondaryActionSurface(colors), alignItems: 'center', justifyContent: 'center', opacity: assetsBlocked ? 0.65 : 1 }}
             >
               <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.localModel.rebuildIndex')}</Text>
             </IslePressable>
@@ -1105,18 +1760,19 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         <IslePressable
           haptic
           accessibilityLabel={t('contextPanel.clearRagCache')}
-          onPress={async () => {
-            await clearRagQueryCaches()
-            dialog.notice({ title: t('contextPanel.cacheCleared'), message: t('contextPanel.cacheClearedMessage'), tone: 'mint' })
-          }}
-          style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginTop: 10 }}
+          accessibilityState={{ busy: clearingRagCache, disabled: assetsBlocked }}
+          disabled={assetsBlocked}
+          onPress={() => void runRagDiagnostic('cache')}
+          style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginTop: 10, opacity: assetsBlocked ? 0.65 : 1 }}
         >
           <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.clearRagCache')}</Text>
         </IslePressable>
         <ContextDiagnosticsSection
           selfTesting={selfTesting}
+          selfTestBlocked={assetsBlocked}
           selfTestResult={selfTestResult}
           ragEvaluating={ragEvaluating}
+          ragEvaluationBlocked={assetsBlocked}
           ragEvaluation={ragEvaluation}
           ragLogs={ragLogs}
           indexingJobs={indexingJobs}
@@ -1135,10 +1791,11 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         empty={t('contextPanel.noMemories')}
         emptyDetail={t('contextPanel.noMemoriesDetail')}
         emptyVisible={!memories.length}
-        onClear={() => mutateAssets(async () => {
-          await clearMemories()
+        onClear={() => mutateAssets(async signal => {
+          await clearMemories(memories, signal)
+          if (signal.aborted) return
           resetMemoryAssetView()
-          await refresh()
+          await refreshAfterAssetWrite(signal)
         })}
       >
         <MemoryReviewSection
@@ -1156,7 +1813,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           hasMemoryFilters={hasMemoryFilters}
           canConfirmFilteredMemories={canConfirmFilteredMemories}
           canRejectFilteredMemories={canRejectFilteredMemories}
-          confirmingMemories={confirmingMemories || assetBusy}
+          confirmingMemories={confirmingMemories || assetsBlocked}
           memoryPreviewLimit={memoryPreviewLimit}
           showAllMemories={showAllMemories}
           contextChipPressableStyle={contextChipPressableStyle}
@@ -1172,15 +1829,17 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           onSetMemoryFilter={setMemoryFilter}
           onResetMemoryFilters={resetMemoryAssetView}
           onSetShowAllMemories={setShowAllMemories}
-          onConfirmPendingMemories={(targetMemories, filtered) => void mutateAssets(() => confirmPendingMemories(targetMemories, filtered))}
-          onRejectPendingMemories={(targetMemories) => void mutateAssets(() => rejectPendingMemories(targetMemories))}
-          onToggleMemory={(memory) => mutateAssets(async () => {
-            await updateMemoryStatus(memory.id, memory.status === 'active' ? 'disabled' : 'active')
-            await refresh()
+          onConfirmPendingMemories={(targetMemories, filtered) => void mutateAssets(signal => confirmPendingMemories(signal, targetMemories, filtered))}
+          onRejectPendingMemories={(targetMemories) => void mutateAssets(signal => rejectPendingMemories(signal, targetMemories))}
+          onToggleMemory={(memory) => mutateAssets(async signal => {
+            await updateMemoryStatus(memory, memory.status === 'active' ? 'disabled' : 'active', memories, signal)
+            if (signal.aborted) return
+            await refreshAfterAssetWrite(signal)
           })}
-          onDeleteMemory={(memory) => mutateAssets(async () => {
-            await deleteMemory(memory.id)
-            await refresh()
+          onDeleteMemory={(memory) => mutateAssets(async signal => {
+            await deleteMemory(memory, signal)
+            if (signal.aborted) return
+            await refreshAfterAssetWrite(signal)
           })}
           renderDebugStat={(label, value) => <DebugStat label={label} value={value} />}
           renderItemRow={({ key, title, description, meta, deleteName, trailing, onToggle, onDelete }) => (
@@ -1203,10 +1862,11 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         empty={t('contextPanel.noKnowledgeFiles')}
         emptyDetail={t('contextPanel.noKnowledgeFilesDetail')}
         emptyVisible={!documents.length}
-        onClear={() => mutateAssets(async () => {
-          await clearKnowledge()
+        onClear={() => mutateAssets(async signal => {
+          await clearKnowledge(documents, signal)
+          if (signal.aborted) return
           resetKnowledgeAssetView()
-          await refresh()
+          await refreshAfterAssetWrite(signal)
         })}
       >
         {documents.length ? (
@@ -1260,6 +1920,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                         jobs: knowledgeRecoverySummary.failedJobs,
                       })}
                     </Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 6 }}>{t('contextPanel.knowledgeRecoverySourceHint')}</Text>
                     {knowledgeRecoverySummary.lastError ? (
                       <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, marginTop: 6 }}>
                         {t('contextPanel.knowledgeRecoveryLastError', { error: knowledgeRecoverySummary.lastError })}
@@ -1276,7 +1937,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
                           <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryShowEmpty')}</Text>
                         </IslePressable>
                       ) : null}
-                      <IslePressable haptic accessibilityLabel={rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')} accessibilityState={rebuilding ? { busy: true } : undefined} onPress={() => void rebuildIndex()} disabled={rebuilding} style={{ ...itemRowActionStyle, ...primaryActionSurface(colors), opacity: rebuilding ? 0.65 : 1 }}>
+                      <IslePressable haptic accessibilityLabel={rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')} accessibilityState={{ busy: rebuilding }} onPress={() => void rebuildIndex()} disabled={assetsBlocked} style={{ ...itemRowActionStyle, ...primaryActionSurface(colors), opacity: assetsBlocked ? 0.65 : 1 }}>
                         <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')}</Text>
                       </IslePressable>
                     </View>
@@ -1348,9 +2009,10 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             description={t('contextPanel.chunkDescription', { count: document.chunkCount, kb: Math.round(document.size / 1024) })}
             meta={formatKnowledgeMeta(document, t)}
             deleteName={document.title}
-            onDelete={() => mutateAssets(async () => {
-              await deleteKnowledgeDocument(document.id)
-              await refresh()
+            onDelete={() => mutateAssets(async signal => {
+              await deleteKnowledgeDocument(document, signal)
+              if (signal.aborted) return
+              await refreshAfterAssetWrite(signal)
             })}
           />
         ))}
@@ -1460,6 +2122,7 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
 function ContextList({ title, empty, emptyDetail, emptyVisible = false, children, onClear }: { title: string; empty: string; emptyDetail?: string; emptyVisible?: boolean; children: React.ReactNode; onClear: () => Promise<void> }) {
   const { colors, canonicalThemeId } = useAppTheme()
   const dialog = useIsleDialog()
+  const lifetime = useSettingsLifetime()
   const { t } = useTranslation()
   const isMinimal = canonicalThemeId === 'minimal'
   const isMaterial = canonicalThemeId === 'material'
@@ -1467,23 +2130,36 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
   const subtleBorderWidth = isMinimal ? StyleSheet.hairlineWidth : 1
   const borderColor = isLiquidGlass ? colors.ui.actionBar.itemBorder : canonicalThemeId === 'monet' ? colors.material.stroke : colors.ui.semantic.chrome.border
   const emptySurface = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  function confirmClear() {
-    void dialog.confirm({
-      title: t('contextPanel.clearTitle', { title }),
-      message: t('contextPanel.clearConfirm'),
-      tone: 'danger',
-      confirmLabel: t('contextPanel.clear'),
-      cancelLabel: t('common.cancel'),
-    }).then((confirmed: boolean) => {
-      if (confirmed) void onClear()
-    })
+  const confirmationLock = useRef(false)
+  const [confirming, setConfirming] = useState(false)
+  async function confirmClear() {
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || confirmationLock.current) return
+    confirmationLock.current = true
+    setConfirming(true)
+    try {
+      const confirmed = await dialog.confirm({
+        title: t('contextPanel.clearTitle', { title }),
+        message: t('contextPanel.clearConfirm'),
+        tone: 'danger',
+        confirmLabel: t('contextPanel.clear'),
+        cancelLabel: t('common.cancel'),
+        signal,
+      })
+      if (!signal.aborted && confirmed) await onClear()
+    } catch {
+      if (!signal.aborted) dialog.toast({ title: t('settingsSubsystem.operationFailed'), tone: 'amber' })
+    } finally {
+      confirmationLock.current = false
+      if (!signal.aborted) setConfirming(false)
+    }
   }
   if (isMinimal) {
     return (
       <View style={{ marginTop: 16 }}>
         <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
           <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
-          <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center', opacity: emptyVisible ? 0.45 : 1 }}>
+          <IslePressable onPress={() => void confirmClear()} disabled={emptyVisible || confirming} accessibilityState={{ busy: confirming }} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center', opacity: emptyVisible ? 0.45 : 1 }}>
             <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.clear')}</Text>
           </IslePressable>
         </View>
@@ -1501,7 +2177,7 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
       <View style={{ marginTop: 16, gap: 8 }}>
         <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
           <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
-          <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center', opacity: emptyVisible ? 0.45 : 1 }}>
+          <IslePressable onPress={() => void confirmClear()} disabled={emptyVisible || confirming} accessibilityState={{ busy: confirming }} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center', opacity: emptyVisible ? 0.45 : 1 }}>
             <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('contextPanel.clear')}</Text>
           </IslePressable>
         </View>
@@ -1519,7 +2195,7 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
       <View style={{ marginTop: 12, gap: 8 }}>
         <View style={{ minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2 }}>
           <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{title}</Text>
-          <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, opacity: emptyVisible ? 0.45 : 1 }}>
+          <IslePressable onPress={() => void confirmClear()} disabled={emptyVisible || confirming} accessibilityState={{ busy: confirming }} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, opacity: emptyVisible ? 0.45 : 1 }}>
             <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
           </IslePressable>
         </View>
@@ -1539,8 +2215,9 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
           <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
         </View>
         <IslePressable
-          onPress={confirmClear}
-          disabled={emptyVisible}
+          onPress={() => void confirmClear()}
+          disabled={emptyVisible || confirming}
+          accessibilityState={{ busy: confirming }}
           accessibilityLabel={t('contextPanel.clearTitle', { title })}
           style={{ width: 44, height: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, opacity: emptyVisible ? 0.45 : 1 }}
         >
@@ -1561,9 +2238,10 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
   )
 }
 
-function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, onDelete }: {
+function LocalModelRow({ view, busy, blocked, progress, onDownload, onDetails, onEnable, onDelete }: {
   view: LocalEmbeddingModelView
   busy: boolean
+  blocked: boolean
   progress?: LocalEmbeddingDownloadProgress
   onDownload: () => void
   onDetails: () => void
@@ -1596,13 +2274,14 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
             ? t('contextPanel.localModel.statusNotDownloaded')
             : t('contextPanel.localModel.statusPlaceholder')
   const progressPercent = progress?.percent ?? 0
+  const progressStage = progress ? t(`contextPanel.localModel.downloadStages.${progress.stage}`) : ''
   const progressText = progress
     ? t('contextPanel.localModel.progressText', {
         percent: progress.percent,
         file: progress.filePath,
         index: progress.fileIndex,
         count: progress.fileCount,
-        stage: t(`contextPanel.localModel.downloadStages.${progress.stage}`),
+        stage: progressStage,
       })
     : ''
   return (
@@ -1626,7 +2305,8 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
       </Text>
       {progress ? (
         <View style={{ marginTop: 10, gap: 6 }}>
-          <IsleProgress percent={progressPercent} size="small" showInfo={false} fillColor={colors.ui.control.primaryBackground} />
+          <IsleProgress percent={progressPercent} size="small" showInfo={false}
+            accessibilityLabel={`${view.model.name} · ${progressStage}`} fillColor={colors.ui.control.primaryBackground} />
           <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
             {progressText}
           </Text>
@@ -1639,7 +2319,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
       ) : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         {!view.downloaded && !view.bundled && downloadable ? (
-          <IslePressable haptic disabled={busy} accessibilityLabel={t('contextPanel.localModel.download')} accessibilityState={busy ? { busy: true } : undefined} onPress={onDownload} style={{ ...localModelActionStyle, ...primaryActionSurface(colors), flexDirection: 'row', gap: 6, opacity: busy ? 0.65 : 1 }}>
+          <IslePressable haptic disabled={blocked} accessibilityLabel={t('contextPanel.localModel.download')} accessibilityState={busy ? { busy: true } : undefined} onPress={onDownload} style={{ ...localModelActionStyle, ...primaryActionSurface(colors), flexDirection: 'row', gap: 6, opacity: blocked ? 0.65 : 1 }}>
             <AppIcon name="download" color={colors.ui.control.primaryForeground} size={13} />
             <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{busy && progress ? `${progress.percent}%` : busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
           </IslePressable>
@@ -1650,12 +2330,12 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
           </IslePressable>
         ) : null}
         {canEnable && !view.active ? (
-          <IslePressable haptic disabled={busy} accessibilityLabel={t('contextPanel.localModel.enable')} accessibilityState={busy ? { busy: true } : undefined} onPress={onEnable} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
+          <IslePressable haptic disabled={blocked} accessibilityLabel={t('contextPanel.localModel.enable')} accessibilityState={busy ? { busy: true } : undefined} onPress={onEnable} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: blocked ? 0.65 : 1 }}>
             <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.localModel.enable')}</Text>
           </IslePressable>
         ) : null}
         {view.downloaded ? (
-          <IslePressable haptic disabled={busy} accessibilityLabel={t('common.delete')} accessibilityState={busy ? { busy: true } : undefined} onPress={onDelete} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
+          <IslePressable haptic disabled={blocked} accessibilityLabel={t('common.delete')} accessibilityState={busy ? { busy: true } : undefined} onPress={onDelete} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: blocked ? 0.65 : 1 }}>
             <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text>
           </IslePressable>
         ) : null}
@@ -1729,16 +2409,31 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
+  const lifetime = useSettingsLifetime()
+  const deletionLock = useRef(false)
+  const [deleting, setDeleting] = useState(false)
 
   async function confirmDelete() {
-    const confirmed = await dialog.confirm({
-      title: t('contextPanel.deleteItemTitle'),
-      message: t('contextPanel.deleteItemConfirm', { title: deleteName || title }),
-      tone: 'danger',
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('common.cancel'),
-    })
-    if (confirmed) await onDelete()
+    const signal = lifetime.current?.signal
+    if (!signal || signal.aborted || deletionLock.current) return
+    deletionLock.current = true
+    setDeleting(true)
+    try {
+      const confirmed = await dialog.confirm({
+        title: t('contextPanel.deleteItemTitle'),
+        message: t('contextPanel.deleteItemConfirm', { title: deleteName || title }),
+        tone: 'danger',
+        confirmLabel: t('common.delete'),
+        cancelLabel: t('common.cancel'),
+        signal,
+      })
+      if (!signal.aborted && confirmed) await onDelete()
+    } catch {
+      if (!signal.aborted) dialog.toast({ title: t('settingsSubsystem.operationFailed'), tone: 'amber' })
+    } finally {
+      deletionLock.current = false
+      if (!signal.aborted) setDeleting(false)
+    }
   }
 
   if (canonicalThemeId === 'minimal') {
@@ -1749,7 +2444,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
         {meta ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>{meta}</Text> : null}
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
           {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{trailing}</Text></IslePressable> : null}
-          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text></IslePressable>
+          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} disabled={deleting} accessibilityState={{ busy: deleting }} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text></IslePressable>
         </View>
       </View>
     )
@@ -1762,7 +2457,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
         {meta ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 4 }}>{`  ${meta}`}</Text> : null}
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 7, flexWrap: 'wrap' }}>
           {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{`toggle(${trailing})`}</Text></IslePressable> : null}
-          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>delete()</Text></IslePressable>
+          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} disabled={deleting} accessibilityState={{ busy: deleting }} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>delete()</Text></IslePressable>
         </View>
       </View>
     )
@@ -1779,7 +2474,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
               <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{trailing}</Text>
             </IslePressable>
           ) : null}
-          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, borderRadius: colors.ui.radius.controlMiddle }}>
+          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} disabled={deleting} accessibilityState={{ busy: deleting }} style={{ ...itemRowActionStyle, backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, borderRadius: colors.ui.radius.controlMiddle }}>
             <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text>
           </IslePressable>
         </View>
@@ -1797,7 +2492,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
             <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '800' }}>{trailing}</Text>
           </IslePressable>
         ) : null}
-        <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
+        <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} disabled={deleting} accessibilityState={{ busy: deleting }} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
           <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, fontWeight: '800' }}>{t('common.delete')}</Text>
         </IslePressable>
       </View>

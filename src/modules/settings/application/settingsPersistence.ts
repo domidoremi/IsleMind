@@ -1,4 +1,5 @@
 import type { Settings } from '@/types/settingsContracts'
+import { normalizeSettingsLastPreferredModel } from '../identity'
 
 export class SettingsPersistenceValidationError extends Error {
   constructor() {
@@ -25,6 +26,12 @@ export function createSettingsPersistence(
       const record = await records.read()
       if (record === null) return null
       if (!isPlainRecord(record)) throw new SettingsPersistenceValidationError()
+      try {
+        // Unsupported saved identity versions must not become optional startup errors.
+        normalizeSettingsLastPreferredModel(record.lastPreferredModel)
+      } catch {
+        throw new SettingsPersistenceValidationError()
+      }
       return record as Partial<Settings>
     },
     save(settings: Settings) {

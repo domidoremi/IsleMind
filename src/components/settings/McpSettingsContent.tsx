@@ -3,7 +3,7 @@ import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useRef } from 'react'
 import { SettingsSection, useSettingsTarget } from './SettingsSection'
-import { useSettingsDraft } from './SettingsEditBoundary'
+import { useSettingsDraft, useSettingsLifetime } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { StyleSheet, View, useWindowDimensions } from 'react-native'
@@ -14,9 +14,10 @@ import { AppIcon } from '@/components/ui/AppIcon'
 import { userFacingErrorDetail } from '@/core'
 import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IsleField, IsleListItem, IslePressable, IsleToggle, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { listMcpServers, refreshMcpManifest, saveMcpServers, upsertMcpServer } from '@/bootstrap/mcpCatalog'
+import { listMcpServers, refreshMcpManifest, removeMcpServer, upsertMcpServer } from '@/bootstrap/mcpCatalog'
 import {
   listMcpRemotePresets,
+  McpCatalogConflictError,
   normalizeMcpServerUrl,
   type McpRemotePreset,
 } from '@/modules/integrations'
@@ -58,6 +59,8 @@ export function McpSettingsContent() {
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null)
   const operationLock = useRef(false)
   const saveLock = useRef(false)
+  const lifetime = useSettingsLifetime()
+  const readGeneration = useRef(0)
   const draftServerId = useRef<string | null>(null)
   const target = useSettingsTarget()
   const [url, setUrl] = useState('')
@@ -71,7 +74,7 @@ export function McpSettingsContent() {
   const [installingPresetId, setInstallingPresetId] = useState<string | null>(null)
   const discardDraft = () => { draftServerId.current = null; setEditingServer(null); setName(''); setUrl(''); setAddOpen(false); setActiveTask(null) }
   useSettingsDraft(false, installingPresetId !== null || pendingServerId !== null, () => undefined)
-  const requestCloseDraft = useSettingsDraft(editingServer ? name !== editingServer.name || url !== editingServer.url : Boolean(name || url), saving, discardDraft)
+  const requestCloseDraft = useSettingsDraft(editingServer ? name !== editingServer.name || url !== editingServer.url : Boolean(name || url), saving, discardDraft, JSON.stringify([editingServer?.id, addOpen, name, url]))
   useEffect(() => { if (target === 'mcp-add') { setManagementOpen(true); setAddOpen(true); setActiveTask('mcp-add') } }, [target])
   const remotePresets = useMemo(() => listMcpRemotePresets(), [])
   const userServers = useMemo(() => servers.filter((server) => server.id !== 'islemind-builtins'), [servers])
@@ -94,22 +97,63 @@ export function McpSettingsContent() {
   }, [])
 
   async function refresh() {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted) return false
+    const generation = ++readGeneration.current
     try {
-      const nextServers = await listMcpServers()
+      const nextServers = await listMcpServers({ signal })
+      if (signal?.aborted || generation !== readGeneration.current) return false
       setServers(nextServers)
       setLoaded(true)
       setLoadFailed(false)
-    } catch { setLoadFailed(true) }
+      return true
+    } catch {
+      if (!signal?.aborted && generation === readGeneration.current) setLoadFailed(true)
+      return false
+    }
+  }
+
+  async function reloadConfiguration() {
+    const editingId = editingServer?.id
+    if (operationLock.current || saveLock.current) return
+    await requestCloseDraft(() => {
+      const signal = lifetime.current?.signal
+      if (signal?.aborted || operationLock.current || saveLock.current) return
+      operationLock.current = true
+      const generation = ++readGeneration.current
+      setPendingServerId(editingId ?? selectedServerId ?? 'mcp-reload')
+      void (async () => {
+        try {
+          const current = await listMcpServers({ signal })
+          if (signal?.aborted || generation !== readGeneration.current) return
+          setServers(current)
+          setLoaded(true)
+          setLoadFailed(false)
+          setOperationError(undefined)
+          const saved = current.find(item => item.id === editingId)
+          if (saved) {
+            setEditingServer(saved)
+            draftServerId.current = saved.id
+            setName(saved.name)
+            setUrl(saved.url)
+            setActiveTask('mcp-add')
+          }
+        } catch { if (!signal?.aborted) setLoadFailed(true) }
+        finally { operationLock.current = false; if (!signal?.aborted) setPendingServerId(null) }
+      })()
+    })
   }
 
   async function addServer() {
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || saveLock.current || operationLock.current) return
     const endpoint = normalizeMcpServerUrl({ id: '', url })
     if (!endpoint) {
       dialog.toast({ title: t('mcp.urlRequired'), tone: 'amber' })
       return
     }
-    if (saveLock.current) return
     saveLock.current = true
+    readGeneration.current += 1
     setSaving(true)
     setOperationError(undefined)
     try {
@@ -132,20 +176,27 @@ export function McpSettingsContent() {
       url: endpoint,
       ...(endpointChanged ? { status: 'disconnected' as const, tools: [], resources: [], prompts: [], approvedToolNames: [], manifestCachedAt: undefined, manifestExpiresAt: undefined, lastError: undefined } : {}),
       updatedAt: now,
-    })
+    }, { expectedServer: editingServer ?? null, signal })
+    if (signal?.aborted) return
     discardDraft()
     setSelectedServerId(server.id)
     setServers(current => [...current.filter(item => item.id !== server.id), server])
+    await refresh()
+    if (signal?.aborted) return
     dialog.toast({ title: t(editingServer ? 'settingsWorkspace.saved' : 'mcp.added'), message: endpointChanged ? t('settingsSubsystem.configurationChanged') : server.name, tone: 'mint' })
-    } catch {
-      setOperationError('settingsWorkspace.saveFailed')
-      dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
-    } finally { saveLock.current = false; setSaving(false) }
+    } catch (error) {
+      if (signal?.aborted) return
+      const key = error instanceof McpCatalogConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'
+      setOperationError(key)
+      dialog.toast({ title: t(key), tone: 'danger' })
+    } finally { saveLock.current = false; if (!signal?.aborted) setSaving(false) }
   }
 
   async function installPreset(preset: McpRemotePreset) {
-    if (operationLock.current || installedPresetIds.has(preset.id)) return
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || operationLock.current || saveLock.current || installedPresetIds.has(preset.id)) return
     operationLock.current = true
+    readGeneration.current += 1
     setInstallingPresetId(preset.id)
     setOperationError(undefined)
     try {
@@ -164,32 +215,40 @@ export function McpSettingsContent() {
         approvedToolNames: [],
         createdAt: now,
         updatedAt: now,
-      })
+      }, { expectedServer: null, signal })
+      if (signal?.aborted) return
       // Installing records configuration only. Connection is a separate explicit action.
       setServers(current => [...current.filter(item => item.id !== server.id), server])
       await refresh()
+      if (signal?.aborted) return
       setActiveTask(null)
       setSelectedServerId(server.id)
       dialog.toast({ title: t('mcp.presetInstalled'), message: t('settingsSubsystem.savedNotVerified'), tone: 'mint' })
-    } catch {
-      setOperationError('settingsWorkspace.saveFailed')
-      dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' })
+    } catch (error) {
+      if (signal?.aborted) return
+      const key = error instanceof McpCatalogConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'
+      setOperationError(key)
+      dialog.toast({ title: t(key), tone: 'danger' })
     } finally {
       operationLock.current = false
-      setInstallingPresetId(null)
+      if (!signal?.aborted) setInstallingPresetId(null)
     }
   }
 
   async function refreshServer(server: McpServerConfig) {
-    if (operationLock.current) return
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || operationLock.current || saveLock.current) return
     operationLock.current = true
+    readGeneration.current += 1
     setPendingServerId(server.id)
     setOperationError(undefined)
     try {
     dialog.toast({ title: t('mcp.refreshing'), message: server.name, tone: 'mint' })
-    const next = await refreshMcpManifest(server)
+    const next = await refreshMcpManifest(server, { signal })
+    if (signal?.aborted) return
     setServers(current => current.map(item => item.id === next.id ? next : item))
     await refresh()
+    if (signal?.aborted) return
     dialog.notice({
       title: next.status === 'connected' ? t('mcp.connected') : t('mcp.refreshFailed'),
       message: next.status === 'connected'
@@ -197,28 +256,44 @@ export function McpSettingsContent() {
         : userFacingErrorDetail(next.lastError) || t('error.unknownError'),
       tone: next.status === 'connected' ? 'mint' : 'danger',
     })
-    } catch { setOperationError('mcp.refreshFailed'); dialog.toast({ title: t('mcp.refreshFailed'), tone: 'danger' }) }
-    finally { operationLock.current = false; setPendingServerId(null) }
+    } catch (error) {
+      if (signal?.aborted) return
+      const key = error instanceof McpCatalogConflictError ? 'settingsWorkspace.conflict' : 'mcp.refreshFailed'
+      setOperationError(key)
+      dialog.toast({ title: t(key), tone: 'danger' })
+    }
+    finally { operationLock.current = false; if (!signal?.aborted) setPendingServerId(null) }
   }
 
   async function toggleServer(server: McpServerConfig) {
-    if (operationLock.current) return
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || operationLock.current || saveLock.current) return
     operationLock.current = true
+    readGeneration.current += 1
     setPendingServerId(server.id)
     setOperationError(undefined)
     try {
-      await upsertMcpServer({ ...server, enabled: !server.enabled, updatedAt: Date.now() })
+      await upsertMcpServer({ ...server, enabled: !server.enabled, updatedAt: Date.now() }, { expectedServer: server, signal })
+      if (signal?.aborted) return
       await refresh()
+      if (signal?.aborted) return
       dialog.toast({ title: server.enabled ? t('mcp.disabled') : t('mcp.enabled'), message: server.name, tone: server.enabled ? 'amber' : 'mint' })
-    } catch { setOperationError('settingsWorkspace.saveFailed'); dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) } finally {
+    } catch (error) {
+      if (signal?.aborted) return
+      const key = error instanceof McpCatalogConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'
+      setOperationError(key)
+      dialog.toast({ title: t(key), tone: 'danger' })
+    } finally {
       operationLock.current = false
-      setPendingServerId(null)
+      if (!signal?.aborted) setPendingServerId(null)
     }
   }
 
   async function toggleTool(server: McpServerConfig, tool: McpToolManifest) {
-    if (operationLock.current) return
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || operationLock.current || saveLock.current) return
     operationLock.current = true
+    readGeneration.current += 1
     setPendingServerId(server.id)
     setOperationError(undefined)
     try {
@@ -228,36 +303,53 @@ export function McpSettingsContent() {
     const approvedToolNames = new Set(server.approvedToolNames)
     if (enabled) approvedToolNames.add(tool.name)
     else approvedToolNames.delete(tool.name)
-    await upsertMcpServer({ ...server, tools, approvedToolNames: [...approvedToolNames], updatedAt: Date.now() })
+    await upsertMcpServer({ ...server, tools, approvedToolNames: [...approvedToolNames], updatedAt: Date.now() }, { expectedServer: server, signal })
+    if (signal?.aborted) return
     await refresh()
-    } catch { setOperationError('settingsWorkspace.saveFailed'); dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
-    finally { operationLock.current = false; setPendingServerId(null) }
+    } catch (error) {
+      if (signal?.aborted) return
+      const key = error instanceof McpCatalogConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'
+      setOperationError(key)
+      dialog.toast({ title: t(key), tone: 'danger' })
+    }
+    finally { operationLock.current = false; if (!signal?.aborted) setPendingServerId(null) }
   }
 
   async function deleteServer(server: McpServerConfig) {
-    const confirmed = await dialog.confirm({
+    const signal = lifetime.current?.signal
+    if (signal?.aborted || operationLock.current || saveLock.current) return
+    operationLock.current = true
+    setPendingServerId(server.id)
+    try {
+      const confirmed = await dialog.confirm({
       title: t('mcp.deleteTitle'),
       message: server.name,
       confirmLabel: t('common.delete'),
       cancelLabel: t('common.cancel'),
       tone: 'danger',
-    })
-    if (!confirmed || operationLock.current) return
-    operationLock.current = true
-    setPendingServerId(server.id)
-    setOperationError(undefined)
-    try {
-      const current = await listMcpServers()
-      await saveMcpServers(current.filter(item => item.id !== server.id && item.id !== 'islemind-builtins'))
+      signal,
+      }).catch(() => false)
+      if (!confirmed || signal?.aborted || saveLock.current) return
+      readGeneration.current += 1
+      setOperationError(undefined)
+      await removeMcpServer(server.id, { expectedServer: server, signal })
+      if (signal?.aborted) return
       await refresh()
+      if (signal?.aborted) return
       setSelectedServerId(null)
       dialog.toast({ title: t('mcp.deleted'), message: server.name, tone: 'mint' })
-    } catch { setOperationError('settingsWorkspace.saveFailed'); dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) }
-    finally { operationLock.current = false; setPendingServerId(null) }
+    } catch (error) {
+      if (signal?.aborted) return
+      const key = error instanceof McpCatalogConflictError ? 'settingsWorkspace.conflict' : 'settingsWorkspace.saveFailed'
+      setOperationError(key)
+      dialog.toast({ title: t(key), tone: 'danger' })
+    }
+    finally { operationLock.current = false; if (!signal?.aborted) setPendingServerId(null) }
   }
 
   return <View style={{ gap: 12 }}>
     {operationError ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground }}>{t(operationError)}</Text> : null}
+    {operationError === 'settingsWorkspace.conflict' ? <IsleButton label={t('settingsWorkspace.reload')} disabled={saving || pendingServerId !== null} onPress={() => void reloadConfiguration()} /> : null}
     {loadFailed ? <View style={{ gap: 8 }}><Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground }}>{t('settingsSubsystem.loadFailed')}</Text><IsleButton label={t('common.retry')} disabled={saving || pendingServerId !== null || installingPresetId !== null} onPress={() => void refresh()} /></View> : null}
     {!enabled ? <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.paused')}</Text> : null}
     {!activeTask && !selectedServer ? <IsleToggle title={t('settings.mcp')} active={enabled} onPress={() => updateSettings({ mcpEnabled: !enabled })} /> : null}
@@ -277,14 +369,14 @@ export function McpSettingsContent() {
     </> : null}
     {selectedServer ? <>
       <IsleButton label={t('settingsUx.allOptions')} onPress={() => void requestCloseDraft(() => setSelectedServerId(null))} />
-      <IsleButton label={t('settingsSubsystem.configuration')} disabled={pendingServerId !== null} onPress={() => { setEditingServer(selectedServer); draftServerId.current = selectedServer.id; setName(selectedServer.name); setUrl(selectedServer.url); setSelectedServerId(null); setActiveTask('mcp-add') }} />
+      <IsleButton label={t('settingsSubsystem.configuration')} disabled={saving || pendingServerId !== null || installingPresetId !== null} onPress={() => { setEditingServer(selectedServer); draftServerId.current = selectedServer.id; setName(selectedServer.name); setUrl(selectedServer.url); setSelectedServerId(null); setActiveTask('mcp-add') }} />
       <McpServerDetails key={selectedServer.id} busy={pendingServerId !== null} server={selectedServer} onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
     </> : <SettingsTaskWorkspace value={activeTask} onTaskChange={id => { if (id !== 'mcp-add' && editingServer) discardDraft(); setActiveTask(id ?? null) }} tasks={[
       { id: 'mcp-add', title: t(editingServer ? 'settingsSubsystem.configuration' : 'mcp.addServer'), description: t('settingsUx.mcpAddHint'), icon: 'add', content: <SettingsSection id="mcp-add"><View style={{ gap: 10 }}>
           <View style={{ gap: 10 }}>
             <IsleField label={t('mcp.name')} inputProps={{ editable: !saving, value: name, onChangeText: setName, placeholder: 'Local tools' }} />
             <IsleField label={t('mcp.url')} inputProps={{ editable: !saving, value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', keyboardType: 'url', autoCapitalize: 'none', autoCorrect: false }} />
-            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={saving} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
+            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={saving || pendingServerId !== null || installingPresetId !== null} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
             <IsleButton label={t('settingsWorkspace.cancel')} disabled={saving} onPress={() => void requestCloseDraft(() => undefined)} />
           </View>
         </View></SettingsSection> },
@@ -303,7 +395,7 @@ export function McpSettingsContent() {
                             <IsleButton
                               label={t(installed ? 'mcp.presetInstalledState' : installing ? 'mcp.presetInstalling' : 'mcp.installPreset')}
                               compact
-                              disabled={installed || installingPresetId !== null}
+                              disabled={installed || saving || pendingServerId !== null || installingPresetId !== null}
                               icon={<AppIcon name={installed ? 'check' : 'add'} color={colors.textSecondary} size={14} />}
                               onPress={() => void installPreset(preset)}
                               style={actionCompact ? { alignSelf: 'stretch' } : undefined}
