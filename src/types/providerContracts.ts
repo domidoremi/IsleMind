@@ -74,6 +74,7 @@ export type ProviderClientCompatibilityMode = 'auto' | ProviderClientSimulationP
 export type ChatErrorCode =
   | 'missing_key'
   | 'disabled_provider'
+  | 'provider_cooldown'
   | 'credential_mismatch'
   | 'bad_auth'
   | 'access_denied'

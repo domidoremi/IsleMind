@@ -77,6 +77,13 @@ export interface SettingsLastPreferredModel {
   model: string
 }
 
+export interface ApkUpdateIgnoreState {
+  installedVersion: string
+  installedBuildVersion: string
+  targetVersion: string
+  targetVersionCode?: number
+}
+
 export interface Settings {
   theme: ThemeMode
   themeId?: ThemeId
@@ -121,6 +128,8 @@ export interface Settings {
   customSearchEndpoint?: string
   autoUpdateCheckEnabled?: boolean
   lastApkUpdateCheckAt?: number
+  neverRemindUpdates?: boolean
+  ignoredApkUpdate?: ApkUpdateIgnoreState
   providerCatalogVersion?: number
   skillsEnabled?: boolean
   mcpEnabled?: boolean

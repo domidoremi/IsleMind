@@ -33,6 +33,7 @@ const USER_FACING_ERROR_CODES = [
   'upstream_error',
   'bad_base_url',
   'model_unavailable',
+  'provider_cooldown',
   'models_endpoint_unavailable',
   'empty_models',
   'network_error',

@@ -35,6 +35,13 @@ export interface SkillDefinition {
   updatedAt: number
 }
 
+export interface ConversationSkillMutationOptions {
+  /** Undefined keeps legacy upsert semantics; null requires an unused ID. */
+  expectedSkill?: Readonly<SkillDefinition> | null
+  /** Checked before the first canonical write; committed writes are not rolled back. */
+  signal?: AbortSignal
+}
+
 export interface SkillSnapshot {
   skillIds: string[]
   names: string[]

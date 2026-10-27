@@ -37,6 +37,7 @@ export type ResponseLifecycleStage =
   | 'tool_calling'
   | 'tool_result'
   | 'generating'
+  | 'paused'
   | 'completed'
   | 'error'
   | 'cancelled'
