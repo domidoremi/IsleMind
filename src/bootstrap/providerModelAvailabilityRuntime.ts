@@ -1,6 +1,7 @@
 import { createProviderModelAvailabilityRuntime, createSqliteModelAvailabilityRepository,
   type ProviderModelAvailabilityPort, type ProviderExecutionIdentity, type ProviderRuntimeChatRequest } from '@/modules/providers'
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
+import { createProviderDispatchReadFence } from './providerDispatchReadFence'
 
 // Stage 9 M2007J3SC calibration: 8-row writes preserve queue headroom versus
 // 16/25/50/100-row batches; virtualized 50-row pages bound UI/JS work. The weekly
@@ -20,6 +21,13 @@ const repository = createSqliteModelAvailabilityRepository(createExpoSqliteDatab
 })
 
 let operations: Pick<ProviderModelAvailabilityPort, 'refresh' | 'retest'> | undefined
+const evidenceFence = createProviderDispatchReadFence(profile.maxHistoryRecords, 'Provider model evidence changed during dispatch admission')
+
+/** Read fencing only; evidence revisions do not invalidate or replace durable scope epochs. */
+export function captureProviderModelDispatchEvidence(scopeId: string, model: string): () => void {
+  return evidenceFence.capture(JSON.stringify([scopeId, model]))
+}
+
 /** Bootstrap installs the existing operation delegates without a storage -> runtime/store cycle. */
 export function bindProviderModelAvailabilityOperations(value: Pick<ProviderModelAvailabilityPort, 'refresh' | 'retest'>): void {
   operations = value
@@ -27,9 +35,14 @@ export function bindProviderModelAvailabilityOperations(value: Pick<ProviderMode
 
 export const providerModelAvailabilityRuntime = createProviderModelAvailabilityRuntime({
   repository: { ...repository, async commit(...args) {
-    const result = await repository.commit(...args)
-    await repository.cleanup({ before: Math.max(0, Date.now() - profile.historyAgeMs), maxRecords: profile.maxHistoryRecords, batchSize: profile.cleanupBatchSize })
-    return result
+    const [operation, rows] = args
+    const keys = [...new Set(rows.filter(row => row.modelId && row.evidence.kind !== 'operational')
+      .map(row => JSON.stringify([operation.scopeId, row.modelId])))]
+    return evidenceFence.observe(keys, async () => {
+      const result = await repository.commit(...args)
+      await repository.cleanup({ before: Math.max(0, Date.now() - profile.historyAgeMs), maxRecords: profile.maxHistoryRecords, batchSize: profile.cleanupBatchSize })
+      return result
+    })
   } },
   now: Date.now, writeBatchSize: profile.writeBatchSize, queryPageSize: profile.pageSize,
   async refresh(input) {

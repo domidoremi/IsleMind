@@ -17,6 +17,7 @@ export type ProviderFailoverTrigger =
   | 'rate_limited'
   | 'server_error'
   | 'model_unavailable'
+  | 'provider_cooldown'
   | 'overloaded'
   | 'credential_unhealthy'
   | 'payload_error'
@@ -134,7 +135,8 @@ export interface ProviderFailureClassificationInput {
 }
 
 export interface ProviderFailureClassification {
-  trigger: ProviderFailoverTrigger
+  /** A cooldown blocks admission; it is not a new request failure. */
+  trigger: Exclude<ProviderFailoverTrigger, 'provider_cooldown'>
   retryable: boolean
   source: 'explicit' | 'status' | 'error_code' | 'message' | 'stream' | 'unknown'
   evidence: {
@@ -150,6 +152,7 @@ const ALLOWED_TRIGGERS = new Set<ProviderFailoverTrigger>([
   'rate_limited',
   'server_error',
   'model_unavailable',
+  'provider_cooldown',
   'overloaded',
   'empty_response',
 ])
@@ -309,7 +312,7 @@ function costIncreaseAllowed(input: ProviderFailoverInput, candidate: ProviderFa
   return COST_TIER_RANK[candidate.costTier] <= COST_TIER_RANK[input.original.costTier]
 }
 
-function classifyStatus(status?: number): ProviderFailoverTrigger | undefined {
+function classifyStatus(status?: number): ProviderFailureClassification['trigger'] | undefined {
   if (!status) return undefined
   if (status === 408) return 'timeout'
   if (status === 401 || status === 403) return 'credential_unhealthy'
@@ -325,7 +328,7 @@ function classifyErrorText(
   errorName?: string,
   errorCode?: string,
   errorMessage?: string,
-): { trigger: ProviderFailoverTrigger; source: 'error_code' | 'message' } | undefined {
+): { trigger: ProviderFailureClassification['trigger']; source: 'error_code' | 'message' } | undefined {
   const code = (errorCode ?? '').toLowerCase()
   const message = `${errorName ?? ''} ${errorMessage ?? ''}`.toLowerCase()
   // Relay and gateway responses can return a model-not-found payload with a

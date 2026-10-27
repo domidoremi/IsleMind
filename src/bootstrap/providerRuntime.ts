@@ -26,6 +26,7 @@ import type {
   ChatRequest as CanonicalChatRequest,
   StreamEvent,
 } from '@/core'
+import { snapshotPlainData } from '@/core'
 import {
   createProviderCredentialSynchronization,
   createProviderEmbeddingAdapter,
@@ -38,6 +39,8 @@ import {
   createProviderStreamRuntime,
   ProviderHttpError,
   ProviderStreamEventBuffer,
+  snapshotProviderRuntimeRequest,
+  throwIfProviderRetryAborted,
   type ProviderAdapter,
   type ProviderEmbeddingAdapter,
   type ProviderEmbeddingOptions,
@@ -53,6 +56,7 @@ import {
 } from '@/modules/providers'
 import type { AIModel, AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
 import { parseToolArguments } from '@/modules/integrations'
 import { recordProviderUsageAttempt } from '@/bootstrap/usageStatisticsRuntime'
 import {
@@ -329,23 +333,43 @@ export async function streamProviderChat(
   onCitations?: ProviderRuntimeCitationCallback,
   onTrace?: ProviderRuntimeTraceCallback,
 ): Promise<ProviderRuntimeStreamHandle> {
+  const cancelled = (): ProviderRuntimeStreamHandle => ({ controller: new AbortController(), done: Promise.resolve() })
+  if (request.signal?.aborted) return cancelled()
+  request = snapshotProviderRuntimeRequest(request)
   // The request fence is set by Chat admission; generic non-Chat consumers keep
   // their existing contract and do not accidentally acquire another route loop.
-  if (!request.executionConstraint) return (await resolveProviderStreamRuntime()).start(request, {
-    onChunk, onDone, onError,
-    ...(onCitations ? { onCitations } : {}),
-    ...(onTrace ? { onTrace } : {}),
-  })
+  if (!request.executionConstraint) {
+    const runtime = await resolveProviderStreamRuntime()
+    if (request.signal?.aborted) return cancelled()
+    return runtime.start(request, { onChunk, onDone, onError,
+      ...(onCitations ? { onCitations } : {}), ...(onTrace ? { onTrace } : {}) })
+  }
+  const signal = request.signal ?? new AbortController().signal
+  const constraint = request.executionConstraint
+  request = { ...request, signal }
   const [{ providerChatResolutionRuntime, chatFallbackConfirmation }, { providerModelAvailabilityRuntime },
     { requiredFallbackCapabilities, providerFailureAvailabilityEvidence }] = await Promise.all([import('./providerChatResolutionRuntime'), import('./providerModelAvailabilityRuntime'), import('@/modules/providers')])
-  const signal = request.signal ?? new AbortController().signal
-  const selection = await providerChatResolutionRuntime.revalidate(request.executionConstraint, {
-    preferred: { providerId: request.provider.id, model: request.requestedModel ?? request.model }, signal,
-    settings: request.settings, requiredCapabilities: requiredFallbackCapabilities(request),
-    targetCredentialGroupId: request.targetCredentialGroupId,
-  })
+  if (signal.aborted) return cancelled()
+  let selection: Awaited<ReturnType<typeof providerChatResolutionRuntime.revalidate>>
+  try {
+    const admitted = await providerChatResolutionRuntime.revalidate(constraint, {
+      preferred: { providerId: request.provider.id, model: request.requestedModel ?? request.model }, signal,
+      settings: request.settings, requiredCapabilities: requiredFallbackCapabilities(request),
+      targetCredentialGroupId: request.targetCredentialGroupId,
+      providers: constraint.providerCatalog,
+      readCurrentAccessSettings: request.readCurrentAccessSettings,
+      isSelectionPolicyCurrent: request.isSelectionPolicyCurrent,
+    })
+    // The returned read check is a live port, not operation data to clone.
+    selection = admitted ? { provider: snapshotPlainData(admitted.provider), model: admitted.model,
+      constraint: snapshotPlainData(admitted.constraint),
+      ...(admitted.checkCurrentAdmission ? { checkCurrentAdmission: admitted.checkCurrentAdmission } : {}) } : undefined
+  } catch (error) {
+    if (signal.aborted) return cancelled()
+    throw error
+  }
+  if (signal.aborted) return cancelled()
   if (!selection) {
-    if (signal.aborted) return { controller: new AbortController(), done: Promise.resolve() }
     throw new Error('The admitted model route changed before dispatch. Retry to re-evaluate your preference.')
   }
   let active: { operation: ProviderModelOperation; model: string; completed: boolean; evidence?: ProviderModelAvailabilityEvidence } | undefined
@@ -361,21 +385,28 @@ export async function streamProviderChat(
     failoverPolicy: { mode: 'ask-before-cross-provider', ...request.failoverPolicy },
     confirmFallback: request.confirmFallback ?? chatFallbackConfirmation(request),
     // An admission fallback already consumed the one route-fallback attempt.
-    ...(request.executionConstraint.fallbackUsed ? { allowFallback: false, settings: { ...request.settings, upstreamMaxRetries: 0 } } : {}),
+    ...(constraint.fallbackUsed ? { allowFallback: false, settings: { ...request.settings, upstreamMaxRetries: 0 } } : {}),
     onExecutionFailure(code) {
       if (active) active.evidence = providerFailureAvailabilityEvidence(code)
       request.onExecutionFailure?.(code)
     },
     async onExecutionTarget(target) {
+      throwIfProviderRetryAborted(signal)
       await settle()
+      throwIfProviderRetryAborted(signal)
       const operation = await providerModelAvailabilityRuntime.beginExecution(target, target.attemptId)
-      if (target.scope && (target.scope.scopeId !== operation.scopeId || target.scope.epoch !== operation.epoch)) throw new Error('Provider scope changed before dispatch')
       active = { operation, model: target.model, completed: false }
-      await request.onExecutionTarget?.({ ...target, scope: { scopeId: operation.scopeId, epoch: operation.epoch } })
+      throwIfProviderRetryAborted(signal)
+      if (target.scope && (target.scope.scopeId !== operation.scopeId || target.scope.epoch !== operation.epoch)) throw new Error('Provider scope changed before dispatch')
+      await request.onExecutionTarget?.(snapshotPlainData({ ...target, scope: { scopeId: operation.scopeId, epoch: operation.epoch } }))
+      throwIfProviderRetryAborted(signal)
     },
   }
   try {
-    const handle = await (await resolveProviderStreamRuntime()).start(observedRequest, {
+    const runtime = await resolveProviderStreamRuntime()
+    if (signal.aborted) return cancelled()
+    selection.checkCurrentAdmission?.()
+    const handle = await runtime.start(observedRequest, {
       onChunk,
       onDone(result) { if (active) active.completed = Boolean(result.text?.trim() || result.providerToolCalls?.length); onDone(result) },
       onError(error) {
@@ -1205,7 +1236,9 @@ function buildModelOperationDeclarations(
   request: CanonicalChatRequest,
 ): readonly unknown[] {
   if (!request.toolDefinitions?.length || provider.capabilities?.nativeTools !== true) return []
-  const model = getModelConfig(request.model, provider.type, provider.modelConfigs)
+  // Bound canonical requests already carry their observed upstream identity.
+  const modelId = request.providerStateBinding ? request.model : resolveProviderModelAlias(provider, request.model)
+  const model = getModelConfig(modelId, provider.type, provider.modelConfigs)
   if (model.supportsTools === false) return []
   const target = resolveProviderNativeToolDeclarationTarget(provider.type, {
     preferredEndpoint: model.preferredEndpoint === 'responses' ? 'responses' : 'chat',

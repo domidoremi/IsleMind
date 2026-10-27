@@ -658,7 +658,18 @@ async function updateProvider(
   operation: ProviderActivationOperationOptions,
 ): Promise<void> {
   throwIfProviderActivationAborted(operation.signal)
-  await ports.updateProvider(providerId, updates, operation)
+  // Activation publishes model and health metadata, never hydrated runtime credentials.
+  const metadata = { ...updates }
+  delete metadata.apiKey
+  delete metadata.apiKeySource
+  if (metadata.credentialGroups) {
+    metadata.credentialGroups = metadata.credentialGroups.map(group => {
+      const durableGroup = { ...group }
+      delete durableGroup.apiKey
+      return durableGroup
+    })
+  }
+  await ports.updateProvider(providerId, metadata, operation)
   throwIfProviderActivationAborted(operation.signal)
 }
 

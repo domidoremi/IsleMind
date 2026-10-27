@@ -1,3 +1,4 @@
+import { snapshotPlainData } from '@/core'
 import {
   createModelOperationCatalogSnapshot,
   formatTaggedModelOperationPrompt,
@@ -32,13 +33,14 @@ export type ConversationModelOperationCatalogResult =
 export async function createConversationModelOperationCatalog(
   settings: Settings,
 ): Promise<ConversationModelOperationCatalogResult> {
-  const discovered = await listConversationToolManifests({
+  settings = snapshotPlainData(settings)
+  const discovered = snapshotPlainData(await listConversationToolManifests({
     includeMcp: true,
     includeBuiltins: true,
     includeAppActions: false,
     includeInternalTools: true,
     includeAndroidTools: true,
-  })
+  }))
   const admitted = discovered.filter((manifest) =>
     filterProviderNativeChatToolManifests([manifest], settings).length === 1)
   const descriptors = admitted.map(toModelOperationDescriptor).filter(isDescriptor)
@@ -54,13 +56,8 @@ export async function createConversationModelOperationCatalog(
       message: tagged.message,
     })
   }
-  const manifests = Object.freeze(admitted
-    .filter((manifest) => created.snapshot.operations.some((operation) => operation.id === manifest.id))
-    .map((manifest) => Object.freeze({
-      ...manifest,
-      ...(manifest.inputSchema ? { inputSchema: structuredClone(manifest.inputSchema) } : {}),
-      ...(manifest.metadata ? { metadata: structuredClone(manifest.metadata) } : {}),
-    })))
+  const manifests = snapshotPlainData(admitted
+    .filter((manifest) => created.snapshot.operations.some((operation) => operation.id === manifest.id)))
   return Object.freeze({
     ok: true,
     catalog: Object.freeze({

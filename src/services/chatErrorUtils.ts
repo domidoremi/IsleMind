@@ -65,6 +65,8 @@ export function toUserFacingError(message: string, code: ChatErrorCode = classif
       return composeUserFacingError(st('chatRunner.userError.credentialMismatch'), message)
     case 'model_unavailable':
       return st('chatRunner.userError.modelUnavailable')
+    case 'provider_cooldown':
+      return st('messageBubble.errorDescription.provider_cooldown')
     case 'network_error':
       if (hasProviderHttpStatusDetail(message)) {
         return composeUserFacingError(st('chatRunner.userError.network'), message)

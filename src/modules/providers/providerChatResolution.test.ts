@@ -10,6 +10,7 @@ describe('preferred Chat route resolution', () => {
     let epoch = 'epoch-1'
     let offline = false
     const unavailable = new Set<string>()
+    const coolingDown = new Set<string>()
     const runtime = createProviderChatResolutionRuntime({
       readProviders: async () => providers,
       isOnline: async () => !offline,
@@ -19,9 +20,9 @@ describe('preferred Chat route resolution', () => {
       accessAllowed: (_provider, model, settings) => !settings?.modelBlocklist?.includes(model),
       resolveIdentity: (provider, model, credentialSource) => ({ providerId: provider.id, model, credentialSource, protocolAdapterId: 'openai-chat', endpointVariant: 'native' }),
       getAvailability: async (identity) => ({ scope: { scopeId: `${identity.providerId}:primary`, epoch }, availability: unavailable.has(`${identity.providerId}:${identity.model}`) ? 'unavailable' : 'unknown' }),
-      healthAllows: async () => true,
+      healthAllows: async (identity) => !coolingDown.has(`${identity.providerId}:${identity.model}`),
     })
-    return { runtime, providers, unavailable, setEpoch: (value: string) => { epoch = value }, setOffline: () => { offline = true } }
+    return { runtime, providers, unavailable, coolingDown, setEpoch: (value: string) => { epoch = value }, setOffline: () => { offline = true } }
   }
   const preferred = { providerId: 'a', model: 'one' }
   const request = () => ({ preferred, signal: new AbortController().signal, requiredCapabilities: ['text'] })
@@ -38,6 +39,38 @@ describe('preferred Chat route resolution', () => {
     const recovered = await f.runtime.resolvePreferred(request())
     expect(recovered.kind === 'ready' && recovered.selection.model).toBe('one')
     expect(preferred).toEqual({ providerId: 'a', model: 'one' })
+  })
+
+  it('distinguishes cooldown from model availability and restores the preferred route after recovery', async () => {
+    const f = fixture()
+    const before = JSON.stringify(f.providers)
+    f.coolingDown.add('a:one')
+    for (let retry = 0; retry < 2; retry++) {
+      expect(await f.runtime.resolvePreferred({ ...request(), allowFallback: false }))
+        .toEqual({ kind: 'blocked', reason: 'provider_cooldown' })
+    }
+    expect(f.unavailable.size).toBe(0)
+    expect(JSON.stringify(f.providers)).toBe(before)
+    f.coolingDown.clear()
+    const recovered = await f.runtime.resolvePreferred(request())
+    expect(recovered.kind === 'ready' && recovered.selection.model).toBe('one')
+    expect(recovered.kind === 'ready' && recovered.selection.constraint.fallbackUsed).toBe(false)
+    expect(preferred).toEqual({ providerId: 'a', model: 'one' })
+  })
+
+  it('keeps cooldown fallback bounded by the existing same-provider and consent policy', async () => {
+    const f = fixture()
+    f.coolingDown.add('a:one')
+    const same = await f.runtime.resolveFallback({ ...request(), original: preferred, trigger: 'provider_cooldown' })
+    expect(same.decision.trigger).toBe('provider_cooldown')
+    expect(same.selection?.model).toBe('two')
+    expect(same.selection?.provider.id).toBe('a')
+    f.coolingDown.add('a:two')
+    const confirmFallback = jest.fn(async () => false)
+    expect(await f.runtime.resolvePreferred({ ...request(), confirmFallback }))
+      .toEqual({ kind: 'blocked', reason: 'confirmation_declined' })
+    expect(confirmFallback).toHaveBeenCalledTimes(1)
+    expect((await f.runtime.resolvePreferred({ ...request(), allowFallback: false })).kind).toBe('blocked')
   })
 
   it('asks before leaving a disabled or deleted provider, and declining never dispatches', async () => {

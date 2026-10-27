@@ -3,8 +3,8 @@ import type { AIProvider, ChatErrorCode, ProviderOperationCode, ProviderType } f
 import { st } from '@/i18n/service'
 import type { MessageUsage } from '@/types/chatContracts'
 import type { MessageCitation } from '@/types/contextContracts'
-import type { ProcessTrace } from '@/core'
-import { classifyProviderHealthCheckError, fallbackProvidersForRequest, parseProviderRetryAfterMs, providerForRuntimeFallback, requiredFallbackCapabilities, retryAfterMsFromFailure, routeForRuntimeFallback, updateCredentialGroupHealth, type ProviderFallbackCandidateBuilder } from '@/modules/providers'
+import { snapshotPlainData, type ProcessTrace } from '@/core'
+import { classifyProviderHealthCheckError, fallbackProvidersForRequest, parseProviderRetryAfterMs, providerForRuntimeFallback, requiredFallbackCapabilities, retryAfterMsFromFailure, routeForRuntimeFallback, snapshotProviderRuntimeRequest, updateCredentialGroupHealth, type ProviderFallbackCandidateBuilder } from '@/modules/providers'
 import type { ProviderFailureClassification } from '@/modules/providers'
 import type {
   ProviderRuntimeChatRequest,
@@ -64,10 +64,20 @@ import { executionResources } from './executionResources'
 // Three input representations plus an output reservation share the application
 // text ceiling (therefore also bounding every root's concurrent attempts).
 const attemptTextReservations = new WeakMap<ProviderExecutionTarget, () => void>()
+const attemptDispatchChecks = new WeakMap<ProviderExecutionTarget, () => void>()
 function releaseAttemptText(target: ProviderExecutionTarget | undefined) {
   if (!target) return
   attemptTextReservations.get(target)?.()
   attemptTextReservations.delete(target)
+  attemptDispatchChecks.delete(target)
+}
+function assertAttemptDispatchCurrent(target: ProviderExecutionTarget, signal: AbortSignal): void {
+  throwIfProviderRetryAborted(signal)
+  try { attemptDispatchChecks.get(target)?.() }
+  catch (error) {
+    if (signal.aborted) throwProviderRuntimeCancellation(signal, error)
+    throw new ProviderExecutionTargetObserverError(error)
+  }
 }
 import { clampMaxTokens } from '@/bootstrap/providerRequestPolicies'
 import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/modules/providers'
@@ -84,6 +94,7 @@ import { recordProviderUsageAttempt } from '@/bootstrap/usageStatisticsRuntime'
 import { ProviderExecutionTargetObserverError, providerExecutionIdentityKey, reportProviderExecutionTarget, resolveProviderEndpointVariant } from '@/modules/providers'
 import { resolveProviderProtocolAdapter } from '@/bootstrap/providerRequestBinding'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { resolveProviderModelAliasAccess } from './providerModelAccess'
 import { checkFinalProviderRequestCapacity } from './providerRuntimePipeline'
 import { isProviderContextOverflow, prepareFinalProviderRequestCapacity, providerCapacityCompressionAllowed } from './providerContextCapacity'
 import { ProviderContextCapacityError } from '@/modules/providers'
@@ -225,6 +236,16 @@ interface RuntimeSessionAffinityFailureInput {
 }
 
 export function executeProviderRuntimeChat(input: ProviderRuntimeChatExecutionInput): Promise<void> {
+  const snapshots = new WeakMap<object, unknown>()
+  input = { ...input, pipeline: { ...input.pipeline,
+    runtimeReq: snapshotProviderRuntimeRequest(input.pipeline.runtimeReq, snapshots),
+    effectiveReq: snapshotProviderRuntimeRequest(input.pipeline.effectiveReq, snapshots),
+    preparedHttpRequest: snapshotPlainData(input.pipeline.preparedHttpRequest, snapshots),
+    rawBody: snapshotPlainData(input.pipeline.rawBody, snapshots),
+    headers: snapshotPlainData(input.pipeline.headers, snapshots),
+    proxyPolicy: snapshotPlainData(input.pipeline.proxyPolicy, snapshots),
+    transportSelection: snapshotPlainData(input.pipeline.transportSelection, snapshots),
+  } }
   const { pipeline } = input
   if (pipeline.transportSelection.transport === 'responses_websocket') {
     return executeResponsesWebSocketChat(input)
@@ -271,6 +292,7 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput,
     let firstTokenAt: number | undefined
     let usageRecorded = false
     let targetReported = false
+    let wireStarted = false
     let executionTarget: ProviderExecutionTarget | undefined
     let usageWrite: Promise<void> = Promise.resolve()
     let completedResult: Parameters<ProviderRuntimeDoneCallback>[0] | undefined
@@ -311,6 +333,8 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput,
       wireBody = prepareFinalProviderRequestCapacity({ req: runtimeReq, body: { type: 'response.create', ...socketBody }, signal, onTrace: input.onTrace }).body
       executionTarget = await reportRuntimeExecutionTarget(runtimeReq, signal, credentialGroupId, wireBody)
       targetReported = true
+      assertAttemptDispatchCurrent(executionTarget, signal)
+      wireStarted = true
       await input.responsesWebSocketTransport.run({
         req: runtimeReq,
         url: input.transport.toWebSocketUrl(proxyPolicy.effectiveUrl),
@@ -369,6 +393,11 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput,
       if (reportedError) input.onError(reportedError)
       else if (completedResult) input.onDone(completedResult)
     } catch (error) {
+      if (executionTarget && !wireStarted) {
+        await settleHarnessProviderUsage(runtimeReq, executionTarget, undefined, 0, true, false)
+        throw error
+      }
+      if (error instanceof ProviderExecutionTargetObserverError) throw error
       if (signal.aborted) {
         recordWebSocketUsage('cancelled', undefined, 'cancelled')
         await usageWrite
@@ -512,6 +541,7 @@ async function acquireWebSocketLease(input: ProviderRuntimeChatExecutionInput): 
 }
 
 export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<void> {
+  input = { ...input, req: snapshotProviderRuntimeRequest(input.req), headers: snapshotPlainData(input.headers) }
   const startedAt = Date.now()
   let streamStarted = false
   let response: Response
@@ -519,6 +549,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   try {
     response = await fetchChatStreamWithRetry(input)
   } catch (error) {
+    if (error instanceof ProviderExecutionTargetObserverError) throw error
     if (input.controller.signal.aborted) {
       throwProviderRuntimeCancellation(input.controller.signal, error)
     }
@@ -916,6 +947,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     throwIfProviderRuntimeAborted(input.controller.signal)
     await readStream()
   } catch (error) {
+    if (error instanceof ProviderExecutionTargetObserverError) throw error
     if (input.controller.signal.aborted) {
       await recordSuccessfulProviderUsageAttempt(response, input, providerUsage, 'cancelled', 'cancelled')
       throwProviderRuntimeCancellation(input.controller.signal, error)
@@ -1084,6 +1116,7 @@ function resolveStreamProviderCitationSource(provider: AIProvider, providerType:
 }
 
 export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryInput): Promise<Response> {
+  input = { ...input, req: snapshotProviderRuntimeRequest(input.req), headers: snapshotPlainData(input.headers) }
   throwIfProviderRetryAborted(input.controller.signal)
   const timeoutMs = resolveProviderRequestTimeoutMs(input.req, CHAT_REQUEST_TIMEOUT_MS)
   const maxRetries = resolveProviderMaxRetries(input.req)
@@ -1120,8 +1153,11 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
     headers = prepared.headers
     // An attribution/durability failure is not a provider failure and cannot be retried.
     const target = await reportRuntimeExecutionTarget(input.req, input.controller.signal, input.credentialGroupId, body)
+    let wireStarted = false
     try {
+      assertAttemptDispatchCurrent(target, input.controller.signal)
       throwIfProviderRetryAborted(input.controller.signal)
+      wireStarted = true
       const response = await input.transport.requestStream(url, {
         method: 'POST',
         headers,
@@ -1316,6 +1352,10 @@ export async function fetchChatStreamWithRetry(input: FetchChatStreamWithRetryIn
       retryCount += 1
       await delayProviderRetry(providerRetryDelayForResponse(response, retryCount - 1), input.controller.signal)
     } catch (error) {
+      if (!wireStarted) {
+        await settleHarnessProviderUsage(input.req, target, undefined, 0, true)
+        throw error
+      }
       if (error instanceof ProviderExecutionTargetObserverError || error instanceof ProviderContextCapacityError) throw error
       if (isProviderRetryCancellation(input.controller.signal)) {
         if (!attemptObserved) {
@@ -1517,6 +1557,7 @@ const OPENAI_COMPATIBLE_PARAMETER_ERROR_FIELDS = [
 
 export function rectifyOpenAICompatibleRequestBody(input: OpenAICompatibleRequestRectificationInput): OpenAICompatibleRequestRectificationResult | undefined {
   if (input.req.provider.type !== 'openai-compatible' || input.req.provider.wireProtocol === 'anthropic-compatible') return undefined
+  if (input.req.settings?.requestRectificationEnabled === false) return undefined
   if (input.status !== 400 && input.status !== 422) return undefined
   if (!isOpenAICompatibleParameterError(input.errorText)) return undefined
 
@@ -1610,13 +1651,28 @@ function openAICompatibleRemovalKeys(field: string): string[] {
 }
 
 function isOpenAICompatibleParameterError(errorText: string): boolean {
-  const text = errorText.toLowerCase()
+  const text = openAICompatibleParameterErrorText(errorText)
   if (/api[_ -]?key|authentication|authorization|permission|quota|billing|rate[_ -]?limit|model\s+(?:not\s+found|not\s+available|does\s+not\s+exist|invalid)/.test(text)) return false
-  return /unsupported|not\s+support(?:ed)?|unknown\s+(?:parameter|param|field)|unrecognized\s+(?:parameter|param|field)|invalid[_ -]?request|invalid\s+(?:request|parameter|param|field|schema)|bad\s+(?:request|schema)|schema|parameter|param|field|tool|response[_ -]?format|reasoning|thinking/.test(text)
+  return /unsupported|not\s+support(?:ed)?|unknown\s+(?:parameter|param|field)|unrecognized\s+(?:parameter|param|field)|invalid\s+(?:parameter|param|field|schema)|bad\s+schema|schema|parameter|param|field|tool|response[_ -]?format|reasoning|thinking/.test(text)
+}
+
+function openAICompatibleParameterErrorText(errorText: string): string {
+  let text = errorText.trim()
+  if (text.startsWith('<')) return ''
+  try {
+    const payload: unknown = JSON.parse(text)
+    if (!isOpenAICompatibleRecord(payload)) return ''
+    const error = isOpenAICompatibleRecord(payload.error) ? payload.error : payload
+    // Echoed request fields are not evidence that the upstream rejected them.
+    text = [error.message, error.code, error.type, error.param, typeof payload.error === 'string' ? payload.error : '']
+      .filter((value): value is string => typeof value === 'string').join(' ')
+  } catch {}
+  // A generic HTTP error category cannot justify dropping accepted controls.
+  return text.toLowerCase().replace(/\binvalid[_ -]?request(?:[_ -]?error)?\b/g, '')
 }
 
 function inferOpenAICompatibleFailedFields(errorText: string, bodyKeys: string[], removedFields: string[]): string[] {
-  const text = errorText.toLowerCase()
+  const text = openAICompatibleParameterErrorText(errorText)
   const candidates = [...bodyKeys, ...OPENAI_COMPATIBLE_PARAMETER_ERROR_FIELDS]
   const matched: string[] = []
   for (const field of candidates) {
@@ -1729,38 +1785,55 @@ export function rectifyXiaomiMimoWebSearchRequestBody(input: {
 }
 
 export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput): Promise<RuntimeFallbackPlan> {
+  input = { ...input, req: snapshotProviderRuntimeRequest(input.req),
+    classification: snapshotPlainData(input.classification), confirmedRoute: snapshotPlainData(input.confirmedRoute) }
+  const signal = input.req.signal ?? new AbortController().signal
+  throwIfProviderRetryAborted(signal)
   const nowMs = Date.now()
   const original = routeForRuntimeFallback(input.req, input.credentialGroupId)
-  const classification = input.classification ?? await recordProviderRuntimeFailure({
-    req: input.req,
-    credentialGroupId: input.credentialGroupId,
-    status: input.status,
-    error: input.error,
-    responseText: input.responseText,
-    emptyResponse: input.emptyResponse,
-    streamStarted: input.streamStarted,
-    retryAfterMs: retryAfterMsFromFailure(input.status),
-    nowMs,
-  })
+  let classification: ProviderFailureClassification
+  try {
+    classification = input.classification ?? snapshotPlainData(await recordProviderRuntimeFailure({
+      req: input.req,
+      credentialGroupId: input.credentialGroupId,
+      status: input.status,
+      error: input.error,
+      responseText: input.responseText,
+      emptyResponse: input.emptyResponse,
+      streamStarted: input.streamStarted,
+      retryAfterMs: retryAfterMsFromFailure(input.status),
+      nowMs,
+    }))
+  } catch (error) {
+    throwIfProviderRetryAborted(signal)
+    throw error
+  }
+  throwIfProviderRetryAborted(signal)
   if (input.req.executionConstraint) {
     const { providerChatResolutionRuntime, chatFallbackConfirmation } = await import('./providerChatResolutionRuntime')
+    throwIfProviderRetryAborted(signal)
     const result = await providerChatResolutionRuntime.resolveFallback({
       preferred: { providerId: input.req.provider.id, model: input.req.requestedModel ?? input.req.model },
       original: { ...original, ...input.req.executionConstraint.identity }, trigger: classification.trigger,
-      requiredCapabilities: requiredFallbackCapabilities(input.req), signal: input.req.signal ?? new AbortController().signal,
+      requiredCapabilities: requiredFallbackCapabilities(input.req), signal,
       settings: input.req.settings, policy: input.req.failoverPolicy, allowFallback: input.req.allowFallback,
+      providers: input.req.executionConstraint.providerCatalog,
+      readCurrentAccessSettings: input.req.readCurrentAccessSettings,
+      isSelectionPolicyCurrent: input.req.isSelectionPolicyCurrent,
       targetCredentialGroupId: input.req.targetCredentialGroupId, streamStarted: input.streamStarted,
       fallbackUsed: input.req.executionConstraint.fallbackUsed,
       continuationBound: providerRequestHasRouteBoundContinuation(input.req),
       requiredProtocolAdapterId: input.req.providerToolDeclarations?.length ? resolveProviderProtocolAdapter(input.req).id : undefined,
       confirmFallback: input.req.confirmFallback ?? chatFallbackConfirmation(input.req),
     })
+    throwIfProviderRetryAborted(signal)
     return { classification, candidates: result.candidates,
       decision: result.selection ? result.decision : { ...result.decision, eligible: false, selected: undefined },
       ...(result.selection ? { selection: result.selection } : {}),
     }
   }
-  const snapshot = await loadProviderHealthSnapshot({ nowMs })
+  const snapshot = snapshotPlainData(await loadProviderHealthSnapshot({ nowMs }))
+  throwIfProviderRetryAborted(signal)
   const healthRecords = indexProviderHealthRecords(snapshot.records)
   const requiredCapabilities = requiredFallbackCapabilities(input.req)
   const candidates = input.buildFallbackCandidates({
@@ -1786,7 +1859,8 @@ export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput
   const policy = {
       ...(input.req.conversationId || input.req.usageContext?.source === 'chat' ? { mode: 'ask-before-cross-provider' as const } : {}),
       ...input.req.failoverPolicy,
-      ...(input.req.allowFallback === false || providerRequestHasRouteBoundContinuation(input.req) ? { mode: 'off' as const } : {}),
+      ...(input.req.allowFallback === false || providerRequestHasRouteBoundContinuation(input.req)
+        || !runtimeSelectionPolicyCurrent(input.req) ? { mode: 'off' as const } : {}),
       allowAfterStreamStart: false,
       maxCandidates: 8,
       maxFailovers: 1,
@@ -1800,6 +1874,7 @@ export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput
   }) : undefined
   const routed = sameProviderRoute?.decision.eligible ? sameProviderRoute
     : resolveLocalProviderRoute({ ...routingInput, policy, confirmedRoute: input.confirmedRoute })
+  throwIfProviderRetryAborted(signal)
   if (input.confirmedRoute && routed.decision.selected
     && providerFailoverRouteIdentityKey(routed.decision.selected) !== providerFailoverRouteIdentityKey(input.confirmedRoute)) {
     return { classification, candidates, decision: { ...routed.decision, eligible: false, selected: undefined, reason: 'blocked' } }
@@ -1808,6 +1883,7 @@ export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput
 }
 
 async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise<boolean> {
+  input = { ...input, req: snapshotProviderRuntimeRequest(input.req) }
   throwIfProviderRetryAborted(input.controller.signal)
   if (input.status && input.status >= 400) {
     input.req.onExecutionFailure?.(classifyHttpStatus(input.status, input.responseText, input.req.model, input.req.provider))
@@ -1892,7 +1968,10 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   while (true) {
   selectedAttemptStartedAt = Date.now()
   selectedTarget = await reportRuntimeExecutionTarget(selectedReq, input.controller.signal, selectedRoute.credentialGroupId, selectedPreparedRequest.body)
+  let selectedWireStarted = false
   try {
+    assertAttemptDispatchCurrent(selectedTarget, input.controller.signal)
+    selectedWireStarted = true
     selectedResponse = await input.transport.request(
       selectedPreparedRequest.url,
       {
@@ -1905,6 +1984,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     )
   } catch (error) {
     await settleHarnessProviderUsage(selectedReq, selectedTarget, undefined, 0, true)
+    if (!selectedWireStarted) throw error
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
@@ -2120,12 +2200,17 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
 }
 
 async function reportRuntimeExecutionTarget(req: ProviderRuntimeChatRequest, signal: AbortSignal, credentialGroupId: string | undefined, body: Record<string, unknown> | string): Promise<ProviderExecutionTarget> {
+  req = snapshotProviderRuntimeRequest(req)
   const capacity = checkFinalProviderRequestCapacity({ provider: req.provider, model: req.model, body })
   const releaseText = executionResources.reserveText(capacity.managedTextBytes * 3 + capacity.reservedOutputTokens * 8)
   const group = req.provider.credentialGroups?.find((item) => item.id === credentialGroupId)
   const credentialSource = req.provider.apiKeySource ?? (group?.apiKey?.trim()
     ? group.source ?? { kind: 'group' as const, groupId: group.id }
     : req.provider.apiKey?.trim() ? { kind: 'primary' as const } : { kind: 'none' as const })
+  let checkConfiguration: (() => void) | undefined
+  let checkAdmission: (() => void) | undefined
+  let checkObservedAdmission: (() => void) | undefined
+  let observedTarget: ProviderExecutionTarget | undefined
   try {
   const target = await reportProviderExecutionTarget({
     providerId: req.provider.id,
@@ -2134,30 +2219,99 @@ async function reportRuntimeExecutionTarget(req: ProviderRuntimeChatRequest, sig
     protocolAdapterId: resolveProviderProtocolAdapter(req).id,
     endpointVariant: resolveProviderEndpointVariant(req.provider),
   }, signal, async (target) => {
+    assertRuntimeSelectionCurrent(req)
+    throwIfProviderRetryAborted(signal)
     target.tokenEstimate = { inputTokens: capacity.estimatedInputTokens, outputTokens: capacity.reservedOutputTokens,
       rawInputTokens: capacity.rawInputTokens, calibrationKey: capacity.calibrationKey, managedTextBytes: capacity.managedTextBytes }
+    let revalidateAdmission: (() => Promise<void>) | undefined
     if (req.executionConstraint) {
       const [{ providerModelAvailabilityRuntime }, { providerChatResolutionRuntime }] = await Promise.all([
         import('./providerModelAvailabilityRuntime'), import('./providerChatResolutionRuntime'),
       ])
-      const admitted = await providerChatResolutionRuntime.revalidate(req.executionConstraint, {
-        preferred: { providerId: req.provider.id, model: req.requestedModel ?? req.model }, signal,
-        settings: req.settings, requiredCapabilities: requiredFallbackCapabilities(req), targetCredentialGroupId: req.targetCredentialGroupId,
-      })
-      if (!admitted || providerExecutionIdentityKey(target) !== providerExecutionIdentityKey(admitted.constraint.identity)) {
-        throw new Error('Provider admission changed before dispatch')
-      }
-      const current = await providerModelAvailabilityRuntime.getAvailability(target)
+      throwIfProviderRetryAborted(signal)
+      checkConfiguration = providerModelAvailabilityRuntime.captureConfiguration()
+      checkConfiguration()
+      throwIfProviderRetryAborted(signal)
+      const current = snapshotPlainData(await providerModelAvailabilityRuntime.getAvailability(target))
+      throwIfProviderRetryAborted(signal)
       const expected = req.executionConstraint.scope
       if (current.scope.scopeId !== expected.scopeId || current.scope.epoch !== expected.epoch
         || current.availability === 'unavailable' || current.availability === 'retired') throw new Error('Provider scope changed before dispatch')
+      const constraint = req.executionConstraint
+      revalidateAdmission = async () => {
+        const admitted = await providerChatResolutionRuntime.revalidate(constraint, {
+          preferred: { providerId: req.provider.id, model: req.requestedModel ?? req.model }, signal,
+          settings: req.settings, requiredCapabilities: requiredFallbackCapabilities(req), targetCredentialGroupId: req.targetCredentialGroupId,
+          providers: constraint.providerCatalog,
+          readCurrentAccessSettings: req.readCurrentAccessSettings,
+          isSelectionPolicyCurrent: req.isSelectionPolicyCurrent,
+        })
+        throwIfProviderRetryAborted(signal)
+        if (!admitted || providerExecutionIdentityKey(target) !== providerExecutionIdentityKey(admitted.constraint.identity)
+          || admitted.constraint.scope.scopeId !== expected.scopeId || admitted.constraint.scope.epoch !== expected.epoch
+          || req.provider.apiKey !== admitted.provider.apiKey) {
+          throw new Error('Provider admission changed before dispatch')
+        }
+        checkAdmission = admitted.checkCurrentAdmission
+        checkAdmission?.()
+      }
+      await revalidateAdmission()
       target.scope = current.scope
     }
-    await req.onExecutionTarget?.(target)
+    checkAdmission?.()
+    checkConfiguration?.()
+    assertRuntimeSelectionCurrent(req)
+    throwIfProviderRetryAborted(signal)
+    // The observer may own a durable reservation, but cannot transfer its attempt identity.
+    Object.freeze(target.credentialSource)
+    if (target.scope) Object.freeze(target.scope)
+    Object.freeze(target.tokenEstimate)
+    Object.freeze(target)
+    checkObservedAdmission = checkAdmission
+    if (req.onExecutionTarget) {
+      observedTarget = target
+      await req.onExecutionTarget(target)
+    }
+    await revalidateAdmission?.()
+    checkObservedAdmission?.()
+    checkAdmission?.()
+    checkConfiguration?.()
+    assertRuntimeSelectionCurrent(req)
+    throwIfProviderRetryAborted(signal)
   })
+  const checkBeforeWire = () => {
+    checkObservedAdmission?.()
+    checkAdmission?.()
+    checkConfiguration?.()
+    assertRuntimeSelectionCurrent(req)
+    throwIfProviderRetryAborted(signal)
+  }
+  checkBeforeWire()
   attemptTextReservations.set(target, releaseText)
+  attemptDispatchChecks.set(target, checkBeforeWire)
   return target
-  } catch (error) { releaseText(); throw error }
+  } catch (error) {
+    try {
+      // Await the same owner's non-free terminal receipt even after cancellation.
+      // Unknown/non-Harness ownership is a no-op in the budget store.
+      if (observedTarget) await settleHarnessProviderUsage(req, observedTarget, undefined, 0, true, false)
+    } finally { releaseText() }
+    throw error
+  }
+}
+
+function runtimeSelectionPolicyCurrent(req: ProviderRuntimeChatRequest): boolean {
+  try { return req.isSelectionPolicyCurrent?.() ?? true } catch { return false }
+}
+
+function assertRuntimeSelectionCurrent(req: ProviderRuntimeChatRequest): void {
+  if (!runtimeSelectionPolicyCurrent(req)) throw new Error('Provider selection policy changed before dispatch')
+  const model = req.requestedModel ?? req.model
+  const currentSettings = req.readCurrentAccessSettings?.()
+  if (!resolveProviderModelAliasAccess({ provider: req.provider, model, settings: req.settings }).allowed
+    || !resolveProviderModelAliasAccess({ provider: req.provider, model, settings: currentSettings }).allowed) {
+    throw new Error('Provider access changed before dispatch')
+  }
 }
 
 function throwIfProviderRuntimeAborted(signal: AbortSignal): void {

@@ -16,6 +16,7 @@ import type { ProviderStructuredOutputRequest } from './providerStructuredOutput
 import type { ProviderToolCall } from './providerToolCalls'
 import type { ProviderChatExecutionConstraint } from './providerChatResolution'
 import type { ProviderLocalCompressionPrivacySettings } from './providerContextManagementPolicy'
+import type { ProviderModelAccessSettings } from './providerModelAccessPolicy'
 
 export interface ProviderRuntimeChatMessage {
   role: 'user' | 'assistant' | 'tool'
@@ -119,6 +120,7 @@ export interface ProviderRuntimeChatRequest {
   requestedModel?: string
   /** Explicit group pins are strict; session affinity remains a separate soft preference. */
   targetCredentialGroupId?: string
+  /** Hydrated runtime candidates, never expected metadata for secure-store reads. */
   fallbackProviders?: AIProvider[]
   /** Explicit single-target operations may prohibit provider/model/credential fallback candidates. */
   allowFallback?: boolean
@@ -130,8 +132,18 @@ export interface ProviderRuntimeChatRequest {
   onExecutionFailure?: (code: ProviderOperationCode) => void
   /** Ephemeral pre-dispatch admission fence; never copied into Conversation or messages. */
   executionConstraint?: ProviderChatExecutionConstraint
+  /** Live revocation ports survive data snapshots; neither can grant new authority. */
+  readCurrentAccessSettings?: () => ProviderModelAccessSettings | undefined
+  isSelectionPolicyCurrent?: () => boolean
   providerToolDeclarations?: readonly unknown[]
   structuredOutput?: ProviderStructuredOutputRequest
+}
+
+/** Ephemeral actual-producing-route data plus a live, revocation-only admission port. */
+export interface ProviderContinuationAdmission {
+  readonly provider: AIProvider
+  readonly model: string
+  admit(request: ProviderRuntimeChatRequest): Promise<ProviderRuntimeChatRequest>
 }
 
 export type ProviderRuntimeCompletionResult = ProviderResponseParsingResult

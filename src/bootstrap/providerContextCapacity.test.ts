@@ -450,7 +450,13 @@ test.each(['admitted', 'budget-denied', 'malformed'] as const)(
       }))
     } else {
       expect(f.onDone).not.toHaveBeenCalled()
-      expect(assistantRunBudgetStore.settle).not.toHaveBeenCalled()
+      if (scenario === 'budget-denied') {
+        // Probe the same owner after observer entry; an absent reservation is a store no-op.
+        expect(assistantRunBudgetStore.settle).toHaveBeenCalledTimes(1)
+        expect(assistantRunBudgetStore.settle).toHaveBeenCalledWith({
+          attemptId: admission.mock.calls[0][0].attemptId, sequence: 0, settled: true, complete: false, usage: undefined,
+        })
+      } else expect(assistantRunBudgetStore.settle).not.toHaveBeenCalled()
       expect(packing.summarizeContextPackingHistory).not.toHaveBeenCalled()
     }
   },

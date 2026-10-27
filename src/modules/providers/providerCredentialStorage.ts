@@ -41,20 +41,39 @@ export interface ProviderCredentialReplacementInput {
   readonly replacement: readonly ProviderCredentialReplacement[]
 }
 
+export interface ProviderCredentialReadOptions {
+  readonly signal?: AbortSignal
+  readonly beforeRead?: () => void
+}
+
+export interface ProviderCredentialSnapshot {
+  readonly credential: string | null
+  readonly credentialGroups: readonly {
+    readonly groupId: string
+    readonly credential: string | null
+  }[]
+}
+
 export interface ProviderCredentialMutation {
   readonly providerId: string
   readonly groupId?: string
   readonly credential: string | null
 }
 
+export interface ProviderCredentialMutationOptions {
+  signal?: AbortSignal
+  beforeMutation?: () => void
+}
+
 export interface ProviderCredentialStorage {
   getProviderCredential(providerId: string): Promise<string | null>
+  getProviderCredentials(providerId: string, credentialGroupIds: readonly string[], options?: ProviderCredentialReadOptions): Promise<ProviderCredentialSnapshot>
   setProviderCredential(providerId: string, credential: string): Promise<void>
   deleteProviderCredential(providerId: string): Promise<void>
   getCredentialGroupCredential(providerId: string, groupId: string): Promise<string | null>
   setCredentialGroupCredential(providerId: string, groupId: string, credential: string): Promise<void>
   deleteCredentialGroupCredential(providerId: string, groupId: string): Promise<void>
-  applyMutations(mutations: readonly ProviderCredentialMutation[]): Promise<void>
+  applyMutations(mutations: readonly ProviderCredentialMutation[], options?: ProviderCredentialMutationOptions): Promise<void>
   replaceCredentials(input: ProviderCredentialReplacementInput): Promise<void>
 }
 
@@ -112,12 +131,23 @@ export function createProviderCredentialStorage(
     }
   }
 
-  async function applyTarget(target: ReadonlyMap<string, string | null>, providerIds: readonly string[]): Promise<void> {
+  async function applyTarget(target: ReadonlyMap<string, string | null>, providerIds: readonly string[], options: ProviderCredentialMutationOptions = {}): Promise<void> {
+    const check = () => {
+      if (options.signal?.aborted) {
+        if (options.signal.reason !== undefined) throw options.signal.reason
+        throw Object.assign(new Error('Provider credential operation cancelled'), { name: 'AbortError' })
+      }
+      options.beforeMutation?.()
+    }
+    check()
     const keys = [...target.keys()].sort()
     const before = new Map<string, string | null>()
     for (const key of keys) before.set(key, await readKey(key, 'replacement'))
 
-    const mutate = async () => { try {
+    const mutate = async () => {
+      // Once a secure write starts, finish the existing verified/rollback path.
+      check()
+      try {
       for (const key of keys) {
         const value = target.get(key) ?? null
         if (value === null) await deleteKey(key, 'replacement')
@@ -158,6 +188,36 @@ export function createProviderCredentialStorage(
       const key = providerCredentialStorageKey(providerId)
       return enqueue(() => readKey(key, 'provider'))
     },
+    async getProviderCredentials(providerId: string, credentialGroupIds: readonly string[], options?: ProviderCredentialReadOptions) {
+      const key = providerCredentialStorageKey(providerId)
+      if (!Array.isArray(credentialGroupIds)) {
+        throw new ProviderCredentialStorageError('invalid_identity', 'credential_group')
+      }
+      const groups = Array.from(credentialGroupIds, groupId => ({
+        groupId, key: providerCredentialGroupStorageKey(providerId, groupId),
+      }))
+      const captured = { signal: options?.signal, beforeRead: options?.beforeRead }
+      const check = () => {
+        if (captured.signal?.aborted) {
+          if (captured.signal.reason !== undefined) throw captured.signal.reason
+          throw Object.assign(new Error('Provider credential operation cancelled'), { name: 'AbortError' })
+        }
+        captured.beforeRead?.()
+      }
+      // Independently queued mutations cannot interleave a provider's primary/group reads.
+      return enqueue(async () => {
+        check()
+        const credential = await readKey(key, 'provider')
+        check()
+        const credentialGroups = []
+        for (const group of groups) {
+          const value = await readKey(group.key, 'credential_group')
+          check()
+          credentialGroups.push(Object.freeze({ groupId: group.groupId, credential: value }))
+        }
+        return Object.freeze({ credential, credentialGroups: Object.freeze(credentialGroups) })
+      })
+    },
     setProviderCredential(providerId: string, credential: string) {
       const key = providerCredentialStorageKey(providerId)
       return enqueue(() => mutateOne(providerId, key, credential, 'provider'))
@@ -178,11 +238,16 @@ export function createProviderCredentialStorage(
       const key = providerCredentialGroupStorageKey(providerId, groupId)
       return enqueue(() => mutateOne(providerId, key, null, 'credential_group'))
     },
-    applyMutations(mutations: readonly ProviderCredentialMutation[]) {
-      return enqueue(() => applyTarget(buildMutationTarget(mutations), mutations.map((item) => item.providerId)))
+    async applyMutations(mutations: readonly ProviderCredentialMutation[], options?: ProviderCredentialMutationOptions) {
+      const target = buildMutationTarget(mutations)
+      const providerIds = mutations.map((item) => item.providerId)
+      const captured = { signal: options?.signal, beforeMutation: options?.beforeMutation }
+      return enqueue(() => applyTarget(target, providerIds, captured))
     },
-    replaceCredentials(input: ProviderCredentialReplacementInput) {
-      return enqueue(() => applyTarget(buildReplacementTarget(input), [...input.current, ...input.replacement].map((item) => item.providerId)))
+    async replaceCredentials(input: ProviderCredentialReplacementInput) {
+      const target = buildReplacementTarget(input)
+      const providerIds = [...input.current, ...input.replacement].map((item) => item.providerId)
+      return enqueue(() => applyTarget(target, providerIds))
     },
   })
 }

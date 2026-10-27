@@ -78,6 +78,7 @@ export function createProviderRegistryPolicy(dependencies: ProviderRegistryPolic
     }
   }
   async function probe(input: ProviderDetectionInput, options: ProviderProbeOptions): Promise<ProviderProbeResult> {
+    throwIfRegistryProbeAborted(options.signal)
     const heuristic = detect(input); const baseUrl = input.baseUrl?.trim(); const apiKey = input.apiKey?.trim()
     if (!baseUrl || !apiKey) return { ...heuristic, ok: false, reason: dependencies.messages.probeSkippedMissing(heuristic.reason) }
     const issue = dependencies.configurationIssue(baseUrl, apiKey)
@@ -103,7 +104,9 @@ export function createProviderRegistryPolicy(dependencies: ProviderRegistryPolic
       { presetId: 'google' as ProviderPresetId, endpoint: `${normalizeProbeBaseUrl(baseUrl)}/models`, headers: getProviderRequestHeaders({ ...probeProvider, type: 'google' as const, presetId: 'google' as const, detectedPresetId: 'google' as const }) },
     ]
     for (const candidate of candidates) {
+      throwIfRegistryProbeAborted(options.signal)
       const result = await probeModelsEndpoint(options.fetch, candidate.endpoint, candidate.headers, options.timeoutMs ?? 6000, options.signal)
+      throwIfRegistryProbeAborted(options.signal)
       if (!result.ok) continue
       const matched = mapProbePreset(candidate.presetId, baseUrl, heuristic, dependencies.presets, getPreset)
       return { presetId: matched, wireProtocol: matched === 'custom-endpoint' ? candidate.wireProtocol : undefined, confidence: candidate.wireProtocol === 'openai-compatible' && heuristic.confidence !== 'low' ? heuristic.confidence : 'medium', reason: dependencies.messages.probeSuccess(getPreset(matched).name), ok: true, endpoint: redactProbeEndpoint(candidate.endpoint), status: result.status }
@@ -113,16 +116,25 @@ export function createProviderRegistryPolicy(dependencies: ProviderRegistryPolic
   return { getPreset, detect, apply, probe }
 }
 
+function throwIfRegistryProbeAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  if (signal.reason !== undefined) throw signal.reason
+  throw Object.assign(new Error('Provider interface probe cancelled'), { name: 'AbortError' })
+}
+
 async function probeModelsEndpoint(fetcher: typeof fetch, endpoint: string, headers: Record<string, string>, timeoutMs: number, signal?: AbortSignal): Promise<{ ok: boolean; status?: number }> {
-  const controller = new AbortController(); const forwardAbort = () => controller.abort()
-  if (signal?.aborted) controller.abort(); signal?.addEventListener('abort', forwardAbort, { once: true })
+  throwIfRegistryProbeAborted(signal)
+  const controller = new AbortController(); const forwardAbort = () => controller.abort(signal?.reason)
+  signal?.addEventListener('abort', forwardAbort, { once: true })
   const timeout = setExecutionTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetcher(endpoint, { method: 'GET', headers, signal: controller.signal })
+    throwIfRegistryProbeAborted(signal)
     if (!response.ok) return { ok: false, status: response.status }
     const data = await response.json().catch(() => null)
+    throwIfRegistryProbeAborted(signal)
     return { ok: Array.isArray((data as { data?: unknown[] } | null)?.data) || Array.isArray((data as { models?: unknown[] } | null)?.models), status: response.status }
-  } catch { return { ok: false } }
+  } catch { throwIfRegistryProbeAborted(signal); return { ok: false } }
   finally { clearExecutionTimeout(timeout); signal?.removeEventListener('abort', forwardAbort) }
 }
 function getHost(value: string): string { try { return new URL(value).host } catch { return value.replace(/^https?:\/\//i, '').split('/')[0] ?? '' } }

@@ -1,3 +1,4 @@
+import { snapshotPlainData } from '@/core'
 import type { BoundConversation, Conversation } from '@/types/chatContracts'
 import type { AIProvider, ChatErrorCode } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
@@ -23,7 +24,10 @@ export interface ProviderConversationAdmissionDependencies<ModelConfig> {
     | { kind: 'cancelled' }
   >
   providerHasModel(provider: AIProvider, model: string, settings: Settings): boolean
-  hydrateProviderKey(providerId: string, signal: AbortSignal): Promise<AIProvider | null>
+  hydrateProviderKey(providerId: string, signal: AbortSignal, configuration?: {
+    readonly settings: Settings
+    readonly providers: readonly AIProvider[]
+  }): Promise<AIProvider | null>
   getProviderConfigIssue(
     provider: AIProvider,
     apiKey: string,
@@ -61,6 +65,7 @@ export interface ProviderConversationAdmissionSetupRequired {
 export type ProviderConversationAdmissionRejectionReason =
   | 'disabled_provider'
   | 'model_unavailable'
+  | 'provider_cooldown'
   | 'missing_key'
   | 'invalid_configuration'
   | 'offline'
@@ -107,25 +112,40 @@ export function createProviderConversationAdmissionRuntime<ModelConfig>(
   async function admitConversation(
     input: ProviderConversationAdmissionInput,
   ): Promise<ProviderConversationAdmissionOutcome<ModelConfig>> {
+    input = {
+      ...input,
+      conversation: snapshotPlainData(input.conversation),
+      settings: snapshotPlainData(input.settings),
+      providers: snapshotPlainData(input.providers),
+    }
     if (input.signal.aborted) return { kind: 'cancelled' }
     if (!input.conversation.providerId?.trim() || !input.conversation.model?.trim()) return { kind: 'setup_required' }
-    // Both fields were checked above; narrowing must not clone unchanged preferences.
+    // Both fields were checked above; narrowing retains the captured preference.
     const preferredConversation = input.conversation as BoundConversation
     if (dependencies.resolveExecution) {
-      const outcome = await dependencies.resolveExecution(input)
+      let outcome: Awaited<ReturnType<NonNullable<ProviderConversationAdmissionDependencies<ModelConfig>['resolveExecution']>>>
+      try {
+        outcome = await dependencies.resolveExecution(input)
+      } catch (error) {
+        if (input.signal.aborted || error instanceof Error && error.name === 'AbortError') return { kind: 'cancelled' }
+        throw error
+      }
       if (input.signal.aborted || outcome.kind === 'cancelled') return { kind: 'cancelled' }
       if (outcome.kind === 'blocked') {
         const reason = outcome.reason
         const fallback = reason === 'offline' ? 'Offline. Your preferred model has not changed.'
+          : reason === 'provider_cooldown' ? 'Recent failures triggered a cooldown. Wait a moment and retry; your preferred model has not changed.'
           : reason === 'policy_blocked' ? 'The request is blocked by provider or capability policy.'
           : reason === 'confirmation_declined' ? 'Cross-provider fallback was not approved. Your preference has not changed.'
           : reason === 'candidate_changed' ? 'The fallback candidate changed. Retry to evaluate the request again.'
           : reason === 'invalid_configuration' ? 'Provider configuration needs attention.' : undefined
         return { kind: 'rejected', reason, code: reason === 'offline' ? 'network_error'
-          : reason === 'disabled_provider' || reason === 'missing_key' || reason === 'model_unavailable' ? reason : 'unknown',
+          : reason === 'disabled_provider' || reason === 'missing_key' || reason === 'model_unavailable' || reason === 'provider_cooldown' ? reason : 'unknown',
           providerId: preferredConversation.providerId,
+          ...(reason === 'provider_cooldown' ? { messageKey: 'messageBubble.errorDescription.provider_cooldown' } : {}),
           ...(fallback ? { fallback } : {}) }
       }
+      outcome = snapshotPlainData(outcome)
       return ready(outcome.selection.provider, preferredConversation, input.settings,
         outcome.selection.model, outcome.selection.constraint)
     }
@@ -165,9 +185,12 @@ export function createProviderConversationAdmissionRuntime<ModelConfig>(
 
     let provider: AIProvider | null
     try {
-      provider = await dependencies.hydrateProviderKey(resolvedProvider.id, input.signal)
-    } catch {
+      provider = snapshotPlainData(await dependencies.hydrateProviderKey(resolvedProvider.id, input.signal, {
+        settings: input.settings, providers: input.providers,
+      }))
+    } catch (error) {
       if (input.signal.aborted) return { kind: 'cancelled' }
+      if (error instanceof Error && error.name === 'AbortError') return { kind: 'cancelled' }
       return {
         kind: 'failed',
         reason: 'provider_hydration_failed',
