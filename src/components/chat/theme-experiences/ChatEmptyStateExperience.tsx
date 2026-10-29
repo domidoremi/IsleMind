@@ -89,7 +89,7 @@ const styles = {
   monetBrushShort: { height: 3, flex: 0.42, borderRadius: 2 } as const,
   monetBrushMid: { height: 2, flex: 0.72, borderRadius: 2 } as const,
   materialRoot: { width: '100%', maxWidth: 760, alignSelf: 'center' as const, gap: 12, padding: 16, borderRadius: 18, borderWidth: 0 } as const,
-  materialActionRow: { alignItems: 'flex-start' as const } as const,
+  materialActionRow: { alignItems: 'center' as const } as const,
   glassRoot: { width: '100%', maxWidth: 780, alignSelf: 'center' as const, gap: 12 } as const,
   glassActionBar: { minHeight: 54, alignSelf: 'center' as const, alignItems: 'center' as const, justifyContent: 'center' as const, padding: 6 } as const,
 }

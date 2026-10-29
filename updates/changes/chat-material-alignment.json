@@ -1,0 +1,22 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "chat-material-alignment",
+  "createdAtMs": 1793268310750,
+  "audience": "user",
+  "priority": "routine",
+  "delivery": "ota-compatible",
+  "category": "improvements",
+  "platforms": [
+    "android",
+    "web"
+  ],
+  "files": [
+    "src/components/chat/theme-experiences/ChatEmptyStateExperience.tsx",
+    "src/components/chat/theme-experiences/ChatSetupThemeExperience.tsx"
+  ],
+  "texts": {
+    "zh-CN": "调整 Material 主题聊天空状态的按钮居中和初始配置页面的左右留白。",
+    "en": "Center the Material theme's empty-chat actions and balance spacing on the initial setup page.",
+    "ja": "Material テーマの空チャット画面でボタンを中央に配置し、初期設定画面の左右の余白を調整しました。"
+  }
+}
