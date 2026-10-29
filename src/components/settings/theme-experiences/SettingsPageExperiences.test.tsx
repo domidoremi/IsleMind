@@ -1,5 +1,5 @@
 import { fireEvent, render } from '@testing-library/react-native'
-import { Pressable, StyleSheet, View, type ViewStyle } from 'react-native'
+import { Pressable as MockPressable, StyleSheet, View, type ViewStyle } from 'react-native'
 
 import { MonetSettingsPageExperience } from './SettingsPageExperiences'
 
@@ -36,7 +36,7 @@ it.each(scenarios)(
         compact={compact}
         leading={<View />}
       >
-        <Pressable testID="interactive-content" onPress={onEdit} />
+        <MockPressable testID="interactive-content" onPress={onEdit} />
       </MonetSettingsPageExperience>,
     )
     const surface = screen.getByTestId('settings-detail-surface-monet')

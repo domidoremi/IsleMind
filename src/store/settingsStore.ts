@@ -161,6 +161,10 @@ const defaultSettings: Settings = {
   ragLlmlinguaEnabled: true,
   searchProvider: 'off',
   autoUpdateCheckEnabled: true,
+  apkUpdateCheckIntervalMinutes: 1440,
+  apkUpdateChannel: 'stable',
+  autoApkDownloadEnabled: false,
+  apkUpdateBannerEnabled: true,
   neverRemindUpdates: false,
   providerCatalogVersion: 1,
   skillsEnabled: true,
@@ -228,6 +232,7 @@ const OPTIONAL_SETTINGS_KEYS_WITHOUT_DEFAULT = [
   'googleSearchCx',
   'customSearchEndpoint',
   'lastApkUpdateCheckAt',
+  'lastApkUpdateCheckChannel',
   'ignoredApkUpdate',
 ] as const satisfies readonly (keyof Settings)[]
 const LEGACY_DEFAULT_PROVIDER_IDS = [

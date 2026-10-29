@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { AccessibilityInfo, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { AccessibilityInfo, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { AnimatePresence, MotiView } from 'moti'
 import { Modal as NativeModal } from 'animal-island-ui-rn'
@@ -53,6 +54,8 @@ interface ConfirmOptions {
   title: string
   /** Cancels this pending confirmation only; used by request-scoped consent. */
   signal?: AbortSignal
+  /** Synchronous consent receipt; runs before the confirmation promise settles. */
+  onConfirm?: () => void
   message?: string
   confirmLabel?: string
   cancelLabel?: string
@@ -67,6 +70,7 @@ interface NoticeOptions {
   message?: string
   tone?: DialogTone
   actionLabel?: string
+  renderBody?: () => ReactNode
 }
 
 export interface ToastOptions extends AppFeedbackOptions {}
@@ -92,6 +96,8 @@ interface IsleDialogApi {
   toast: (options: ToastOptions) => void
   banner: (options: BannerOptions) => string
   dismissBanner: (id: string) => void
+  hasPendingDialogs: () => boolean
+  subscribeDialogs: (listener: () => void) => () => void
 }
 
 const IsleDialogContext = createContext<IsleDialogApi | null>(null)
@@ -115,6 +121,8 @@ const fallbackDialogApi: IsleDialogApi = {
     return ''
   },
   dismissBanner: () => warnMissingProvider('dismissBanner'),
+  hasPendingDialogs: () => true,
+  subscribeDialogs: () => () => undefined,
 }
 
 function dialogBorderWidth(colors: ReturnType<typeof useAppTheme>['colors']) {
@@ -135,9 +143,8 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const dialogMaxWidth = Math.min(460, Math.max(240, width - modalPaddingHorizontal * 2))
   const dialogMaxHeight = Math.max(240, height - modalPaddingTop - modalPaddingBottom)
   const routeDialog = canonicalThemeId === 'monet'
-  const toastMaxWidth = Math.min(design.component.toast.maxWidth, Math.max(240, width - 32))
+  const toastMaxWidth = Math.min(design.component.toast.maxWidth, Math.max(0, width - 32))
   const dialogExpression = resolveThemeComponentExpression(canonicalThemeId, 'dialog')
-  const toastExpression = resolveThemeComponentExpression(canonicalThemeId, 'toast')
   const dialogEnter = dialogExpression.motion === 'precision'
     ? { opacity: 0, translateY: 4, scale: 1 }
     : dialogExpression.motion === 'organic'
@@ -145,42 +152,31 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
       : dialogExpression.motion === 'material'
         ? { opacity: 0, translateY: 14, scale: 0.96 }
         : { opacity: 0, translateY: 18, scale: 0.94 }
-  const toastTravel = toastExpression.motion === 'precision' ? 4 : toastExpression.motion === 'organic' ? 14 : toastExpression.motion === 'material' ? 8 : 12
-  const toastScale = toastExpression.motion === 'precision' ? 1 : toastExpression.motion === 'organic' ? 0.98 : toastExpression.motion === 'material' ? 0.96 : 0.92
   const [dialogQueue, setDialogQueue] = useState<DialogState[]>([])
   const [toastQueue, setToastQueue] = useState(EMPTY_APP_TOAST_QUEUE)
   const [banners, setBanners] = useState<BannerState[]>([])
   const toastTopOffset = 18 + insets.top
-  const toastBottomOffset = 18 + insets.bottom + (banners.length ? Math.min(banners.length, 2) * 104 : 0)
   const idRef = useRef(0)
   const lastUpdateNotice = useRef<string | null>(null)
   const dialogQueueRef = useRef(dialogQueue)
+  const dialogListenersRef = useRef(new Set<() => void>())
   const dialogSettlementsRef = useRef(createAppConfirmSettlementRegistry())
   const dialog = dialogQueue[0] ?? null
-  const toastPosition = toastQueue.active?.position ?? 'top'
-  // A preview stack has one anchor. Keep queued notifications for the other
-  // anchor in order, but do not render a bottom toast at the top (or vice
-  // versa) while it is still pending.
-  const toastStack = toastQueue.active
-    ? [
-        toastQueue.active,
-        ...toastQueue.pending
-          .filter((item) => (item.position ?? 'top') === toastPosition)
-          .slice(0, 2),
-      ]
-    : []
+  const activeToast = toastQueue.active
 
-  useEffect(() => {
-    dialogQueueRef.current = dialogQueue
-  }, [dialogQueue])
+  const publishDialogs = useCallback((next: DialogState[]) => {
+    dialogQueueRef.current = next
+    setDialogQueue(next)
+    for (const listener of [...dialogListenersRef.current]) listener()
+  }, [])
 
   const closeDialog = useCallback((value: boolean) => {
     const [active, ...remaining] = dialogQueueRef.current
     if (!active) return
-    dialogQueueRef.current = remaining
-    setDialogQueue(remaining)
+    if (value && active.kind === 'confirm' && !active.signal?.aborted) active.onConfirm?.()
+    publishDialogs(remaining)
     dialogSettlementsRef.current.settle(active.id, value)
-  }, [])
+  }, [publishDialogs])
 
   const api = useMemo<IsleDialogApi>(() => ({
     confirm: (options) =>
@@ -189,8 +185,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
         const id = idRef.current++
         const abort = () => {
           const remaining = dialogQueueRef.current.filter((item) => item.id !== id)
-          dialogQueueRef.current = remaining
-          setDialogQueue(remaining)
+          publishDialogs(remaining)
           dialogSettlementsRef.current.settle(id, false)
         }
         dialogSettlementsRef.current.register(id, (value) => {
@@ -198,18 +193,16 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
           resolve(value && !options.signal?.aborted)
         })
         const next = [...dialogQueueRef.current, { ...options, id, kind: 'confirm' as const }]
-        dialogQueueRef.current = next
-        setDialogQueue(next)
+        publishDialogs(next)
         options.signal?.addEventListener('abort', abort, { once: true })
         if (options.signal?.aborted) abort()
       }),
     notice: (options) => {
       const next = [...dialogQueueRef.current, { ...options, id: idRef.current++, kind: 'notice' as const }]
-      dialogQueueRef.current = next
-      setDialogQueue(next)
+      publishDialogs(next)
     },
     toast: (options) => {
-      const next: AppFeedbackItem = { ...options, id: idRef.current++, occurrences: 1 }
+      const next: AppFeedbackItem = { ...options, position: 'top', bottomOffset: undefined, id: idRef.current++, occurrences: 1 }
       setToastQueue((current) => enqueueAppToast(current, next))
     },
     banner: (options) => {
@@ -227,7 +220,12 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
     dismissBanner: (id) => {
       setBanners((current) => current.filter((item) => item.id !== id))
     },
-  }), [])
+    hasPendingDialogs: () => dialogQueueRef.current.length > 0,
+    subscribeDialogs: (listener) => {
+      dialogListenersRef.current.add(listener)
+      return () => { dialogListenersRef.current.delete(listener) }
+    },
+  }), [publishDialogs])
 
   const dismissToast = useCallback((id?: number) => {
     setToastQueue((current) => {
@@ -263,6 +261,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
 
   useEffect(() => () => {
     dialogSettlementsRef.current.settleAll(false)
+    dialogListenersRef.current.clear()
   }, [])
 
   return (
@@ -338,59 +337,53 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
           api.dismissBanner(banner.id)
         }}
       />
-      <AnimatePresence>
-      {toastStack.length ? (
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            ...(toastPosition === 'top'
-              ? { top: toastStack[0]?.topOffset ?? toastTopOffset }
-              : { bottom: toastStack[0]?.bottomOffset ?? toastBottomOffset }),
-            zIndex: 999,
-            alignItems: 'center',
-            paddingHorizontal: 16,
-            gap: 8,
-          }}
-        >
-          {toastStack.map((item, index) => (
+      <View
+        testID="app-toast-viewport"
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          top: Math.max(toastTopOffset, activeToast?.topOffset ?? 0),
+          left: 0,
+          right: 0,
+          zIndex: 999,
+          alignItems: 'center',
+          paddingHorizontal: 16,
+        }}
+      >
+        <AnimatePresence>
+          {activeToast ? (
             <MotiView
-              key={item.id}
-              from={index === 0 && motion === 'full'
-                ? { opacity: feedbackMotion.from.opacity, translateY: toastPosition === 'top' ? -toastTravel : toastTravel, scale: toastScale }
-                : { opacity: index === 0 ? feedbackMotion.from.opacity : 0.72, translateY: 0, scale: index === 0 || motion !== 'full' ? 1 : 0.98 }}
-              animate={{ opacity: index === 0 ? 1 : 0.72, translateY: 0, scale: index === 0 || motion !== 'full' ? 1 : 0.98 }}
-              transition={feedbackMotion.transition}
+              // Reuse one surface so queued feedback never overlaps or re-enters.
+              key="app-toast"
+              testID="app-toast-motion"
+              from={{ opacity: feedbackMotion.from.opacity }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ ...feedbackMotion.transition, duration: Math.min(feedbackMotion.transition.duration, 160) }}
               style={{ width: '100%', maxWidth: toastMaxWidth }}
             >
               <AppToastSurface
-                toast={item}
-                interactive={index === 0}
+                toast={activeToast}
                 onAction={() => {
-                  item.onAction?.()
-                  dismissToast(item.id)
+                  activeToast.onAction?.()
+                  dismissToast(activeToast.id)
                 }}
-                onDismiss={() => dismissToast(item.id)}
+                onDismiss={() => dismissToast(activeToast.id)}
               />
             </MotiView>
-          ))}
-        </View>
-      ) : null}
-      </AnimatePresence>
+          ) : null}
+        </AnimatePresence>
+      </View>
     </IsleDialogContext.Provider>
   )
 }
 
 function AppToastSurface({
   toast,
-  interactive = true,
   onAction,
   onDismiss,
 }: {
   toast: AppFeedbackItem
-  interactive?: boolean
   onAction: () => void
   onDismiss: () => void
 }) {
@@ -436,8 +429,7 @@ function AppToastSurface({
       {grammar === 'organic' ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, backgroundColor: colors.ui.control.focus, opacity: 0.26 }} /> : null}
       {grammar === 'material' ? <View pointerEvents="none" style={{ ...StyleSheet.absoluteFill, backgroundColor: toneToken.foreground, opacity: 0.035 }} /> : null}
       <View
-        accessible={interactive}
-        pointerEvents={interactive ? 'auto' : 'none'}
+        accessible
         accessibilityRole="alert"
         accessibilityLiveRegion={isDangerTone(tone) ? 'assertive' : 'polite'}
         accessibilityLabel={[toast.title, toast.message, toast.occurrences > 1 ? String(toast.occurrences) : null].filter(Boolean).join('. ')}
@@ -713,16 +705,17 @@ function MonetDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose:
 function MaterialDialogSurface({ dialog, onClose }: { dialog: DialogState; onClose: (value: boolean) => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const material = colors.material.sheet
+  const surface = colors.ui.semantic.surface.muted
+  const actionStyle: ViewStyle = { ...DIALOG_ACTION_LAYOUT, flexBasis: 'auto', flexGrow: 0, borderRadius: 22 }
   return (
     <View
       testID="dialog-experience-material"
       accessibilityRole="alert"
-      style={{ maxHeight: '100%', overflow: 'hidden', borderRadius: 28, borderWidth: 1, borderColor: colors.material.stroke, backgroundColor: colors.ui.semantic.surface.muted }}
+      style={{ maxHeight: '100%', overflow: 'hidden', borderRadius: 28, backgroundColor: surface }}
     >
       <DialogScrollableContent contentStyle={{ paddingHorizontal: 24, paddingTop: 24, paddingBottom: 20 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-          <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 24, lineHeight: 31, fontWeight: '500' }}>{dialog.title}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Text accessibilityRole="header" style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 20, lineHeight: 28, fontWeight: '700' }}>{dialog.title}</Text>
           <DialogCloseButton onPress={() => onClose(false)} compact />
         </View>
         {dialog.message ? (
@@ -742,16 +735,24 @@ function MaterialDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
         ) : null}
         {dialog.renderBody ? <View style={{ marginTop: 16 }}>{dialog.renderBody()}</View> : null}
       </DialogScrollableContent>
-      <View testID="dialog-actions" style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', flexWrap: 'wrap', gap: 8, backgroundColor: material.chrome }}>
+      <View testID="dialog-actions" style={{ paddingHorizontal: 24, paddingBottom: 20, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8, backgroundColor: surface }}>
         {dialog.kind === 'confirm' ? (
-          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} multiline onPress={() => onClose(false)} style={{ ...DIALOG_ACTION_LAYOUT, flexGrow: 0.85, borderRadius: 22 }} />
+          <IsleButton
+            testID="dialog-cancel-action"
+            label={dialog.cancelLabel ?? t('common.cancel')}
+            multiline
+            onPress={() => onClose(false)}
+            style={{ ...actionStyle, backgroundColor: 'transparent', borderWidth: 0 }}
+            textStyle={{ color: colors.primary }}
+          />
         ) : null}
         <IsleButton
+          testID="dialog-confirm-action"
           label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
           multiline
           tone={dialogActionTone(dialog)}
           onPress={() => onClose(true)}
-          style={{ ...DIALOG_ACTION_LAYOUT, flexGrow: 1.15, borderRadius: 22 }}
+          style={actionStyle}
         />
       </View>
     </View>
@@ -820,13 +821,15 @@ function DialogCloseButton({ onPress, compact = false }: { onPress: () => void; 
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <IsleButton
-      label={t('dialog.close')}
-      icon={<AppIcon name="close" color={colors.textTertiary} size={compact ? 16 : 18} strokeWidth={appIconStroke.strong} />}
+    <IslePressable
+      testID="dialog-close-action"
+      accessibilityRole="button"
+      accessibilityLabel={t('dialog.close')}
       onPress={onPress}
-      style={{ width: 44, height: 44, minHeight: 44, borderRadius: colors.ui.family === 'material' ? 0 : Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 0 }}
-      textStyle={{ display: 'none' }}
-    />
+      style={{ width: 44, minHeight: 44, flexShrink: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: 'transparent' }}
+    >
+      <AppIcon name="close" color={colors.textTertiary} size={compact ? 18 : 20} strokeWidth={appIconStroke.strong} />
+    </IslePressable>
   )
 }
 

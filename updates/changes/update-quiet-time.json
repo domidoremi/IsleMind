@@ -1,0 +1,45 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "update-quiet-time",
+  "createdAtMs": 1793108127796,
+  "audience": "user",
+  "priority": "routine",
+  "delivery": "ota-compatible",
+  "category": "improvements",
+  "platforms": [
+    "android"
+  ],
+  "files": [
+    "app/_layout.tsx",
+    "src/bootstrap/assistantExecutionHost.ts",
+    "src/components/chat/ChatAiConfigurationSheet.tsx",
+    "src/components/chat/ChatWorkspaceReviewSheet.tsx",
+    "src/components/chat/CodeWorkspaceSheet.tsx",
+    "src/components/chat/Composer.tsx",
+    "src/components/chat/ContextCapacitySheet.tsx",
+    "src/components/chat/FloatingComposer.tsx",
+    "src/components/chat/FloatingComposerSurfaces.tsx",
+    "src/components/chat/MessageBubble.tsx",
+    "src/components/chat/StreamingIntentSheet.tsx",
+    "src/components/providers/ProviderSettingsContent.tsx",
+    "src/components/settings/SettingsEditBoundary.tsx",
+    "src/components/settings/SettingsHelp.tsx",
+    "src/components/settings/SystemSettingsPanelContent.tsx",
+    "src/components/settings/UsageStatisticsContent.tsx",
+    "src/components/ui/AppModal.tsx",
+    "src/components/ui/AppText.tsx",
+    "src/components/ui/isle/IsleKit.tsx",
+    "src/components/updates/GlobalApkUpdatePrompt.tsx",
+    "src/components/updates/useAppUpdateActivityBridge.ts",
+    "src/core/appUpdateIdle.ts",
+    "src/hooks/useAppUpdateBlocker.ts",
+    "src/presentation/app-shell/appUpdateActivity.ts",
+    "src/presentation/features/documents/DocumentEditorScreen.tsx",
+    "src/presentation/features/documents/DocumentRevisionPanel.tsx"
+  ],
+  "texts": {
+    "en": "Update reminders wait for quiet time instead of interrupting typing, generation, editing or open dialogs.",
+    "zh-CN": "更新提醒会避开输入、回复生成、编辑和弹层，等待闲时再由用户决定是否更新。",
+    "ja": "更新通知は入力、回答生成、編集やダイアログを妨げず、操作が落ち着いてから表示されます。"
+  }
+}

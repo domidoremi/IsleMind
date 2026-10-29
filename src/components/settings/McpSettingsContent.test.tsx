@@ -26,12 +26,12 @@ jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('./SettingsHelp', () => ({ SettingsHelpButton: () => null }))
 jest.mock('./SettingsSection', () => ({ ...jest.requireActual('./SettingsSection'), useSettingsTarget: () => mockTarget, SettingsSection: ({ children }: any) => children }))
 jest.mock('@/components/ui/isle', () => {
-  const { Pressable, Text, TextInput } = require('react-native')
-  return { ISLE_MIN_TOUCH_TARGET: 44, IslePressable: Pressable, IsleChip: Text,
-    IsleToggle: ({ title, active, onPress }: any) => <Pressable accessibilityRole="switch" accessibilityLabel={title} accessibilityState={{ checked: active }} onPress={onPress}><Text>{title}</Text></Pressable>, IsleListItem: ({ trailing }: any) => trailing ?? null,
+  const { Pressable: MockPressable, Text, TextInput } = require('react-native')
+  return { ISLE_MIN_TOUCH_TARGET: 44, IslePressable: MockPressable, IsleChip: Text,
+    IsleToggle: ({ title, active, onPress }: any) => <MockPressable accessibilityRole="switch" accessibilityLabel={title} accessibilityState={{ checked: active }} onPress={onPress}><Text>{title}</Text></MockPressable>, IsleListItem: ({ trailing }: any) => trailing ?? null,
     IsleButton: ({ label, ...props }: any) => {
       mockButtonPresses[label] = props.onPress
-      return <Pressable testID={`mcp-button-${label}`} {...props} accessibilityLabel={label}><Text>{label}</Text></Pressable>
+      return <MockPressable testID={`mcp-button-${label}`} {...props} accessibilityLabel={label}><Text>{label}</Text></MockPressable>
     },
     IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
     useIsleDialog: () => ({ toast: mockToast, confirm: mockConfirm, notice: mockNotice }),

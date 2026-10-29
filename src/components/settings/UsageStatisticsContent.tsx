@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Modal } from '@/components/ui/AppModal'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { FlashList } from '@shopify/flash-list'
 import { MotiView } from 'moti'

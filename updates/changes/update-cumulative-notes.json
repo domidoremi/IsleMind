@@ -1,0 +1,27 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "update-cumulative-notes",
+  "createdAtMs": 1793108127796,
+  "audience": "user",
+  "priority": "routine",
+  "delivery": "ota-compatible",
+  "category": "features",
+  "platforms": [
+    "android"
+  ],
+  "files": [
+    "src/components/updates/useApkUpdatePrompt.tsx",
+    "src/core/appVersion.ts",
+    "src/core/cumulativeReleaseNotes.ts",
+    "src/i18n/resources/en.json",
+    "src/i18n/resources/ja.json",
+    "src/i18n/resources/zh-CN.json",
+    "src/platform/native/androidApkUpdates.ts",
+    "src/platform/native/githubReleaseChannel.ts"
+  ],
+  "texts": {
+    "en": "Update dialogs group cumulative changes by category and retain each source version, with explicit warnings for incomplete history.",
+    "zh-CN": "更新弹窗会按分类累加更新内容，保留每条改动的来源版本，并明确提示不完整的历史。",
+    "ja": "更新内容を分類別にまとめ、各変更のバージョンを表示します。履歴が不完全な場合も明示します。"
+  }
+}

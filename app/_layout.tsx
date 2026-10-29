@@ -28,6 +28,7 @@ import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
 import { initI18n } from '@/i18n'
 import { GlobalGenerationStatusLayer } from '@/components/ui/GlobalGenerationStatusLayer'
 import { GlobalApkUpdatePrompt } from '@/components/updates/GlobalApkUpdatePrompt'
+import { useAppUpdateActivityBridge } from '@/components/updates/useAppUpdateActivityBridge'
 import { GlobalSystemStatusNotificationLayer } from '@/components/ui/GlobalSystemStatusNotificationLayer'
 import {
   resolveAndroidNetworkRecovery,
@@ -52,6 +53,7 @@ export default function RootLayout() {
     LXGWWenKai: require('../assets/fonts/LXGWWenKai.ttf'),
   })
   const appReady = boot.ready && (fontsLoaded || Boolean(fontError))
+  const updateActivityTouchHandlers = useAppUpdateActivityBridge({ ready: appReady, execution: assistantExecutionHost })
   useEffect(() => {
     if (!boot.ready || Platform.OS !== 'android') return
     assistantExecutionHost.start()
@@ -79,7 +81,7 @@ export default function RootLayout() {
   const networkRecovery = useAndroidNetworkRecoveryBridge()
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
+    <GestureHandlerRootView {...updateActivityTouchHandlers} style={{ flex: 1, backgroundColor: colors.surface }}>
       <IsleThemeProvider>
       <IsleDialogProvider updateNotice={boot.ready ? qaUpdateMessage : null}>
         {appReady ? (

@@ -10,7 +10,7 @@ import { initializeConversationStorePersistence } from '@/bootstrap/conversation
 import { initializeConversationComposerDraftPersistence } from '@/bootstrap/conversationComposerDrafts'
 import { initializeSettingsStorePersistence } from '@/bootstrap/settingsStorePersistence'
 import { ApplicationDataRecordPersistenceError } from '@/bootstrap/applicationDataRecordRuntime'
-import { SettingsPersistenceValidationError, reconcileApkUpdateIgnoreState } from '@/modules/settings'
+import { SettingsPersistenceValidationError } from '@/modules/settings'
 import type { ApkUpdateResult } from '@/platform/native/androidApkUpdates'
 import { ProviderMetadataPersistenceValidationError } from '@/modules/providers'
 import { cancelAllConversationAssistantDetachedWork } from '@/bootstrap/conversationAssistantDetachedWorkRegistry'
@@ -18,6 +18,7 @@ import { initI18n } from '@/i18n'
 import { extractUserFacingErrorDetail } from '@/core'
 import { st } from '@/i18n/service'
 import { useAppTheme } from './useAppTheme'
+import { useScheduledApkUpdateCheck } from '@/hooks/useScheduledApkUpdateCheck'
 
 type BootstrapStatus = 'loading' | 'ready' | 'blocked'
 
@@ -35,6 +36,7 @@ export function useBootstrap() {
   const [state, setState] = useState(() => ({
     status: 'loading' as BootstrapStatus,
     ready: false,
+    updateChecksReady: false,
     errorCount: 0,
     bootStartedAt: Date.now(),
     availableApkUpdate: null as ApkUpdateResult | null,
@@ -49,6 +51,7 @@ export function useBootstrap() {
       ...current,
       status: 'loading',
       ready: false,
+      updateChecksReady: false,
       bootStartedAt: Date.now(),
       availableApkUpdate: null,
       failure: null,
@@ -177,34 +180,8 @@ export function useBootstrap() {
         void safeBootstrap(st('bootstrap.stagedApkCleanup'), async () => {
           const { clearStagedApkDownloads } = await import('@/services/apkInstallCache')
           await clearStagedApkDownloads()
-        }).catch(() => {
-          if (!mounted) return
-          setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
-        })
-        void safeBootstrap(st('bootstrap.updateCheck'), async () => {
-          // A tolerated optional settings failure still must not prompt from unhydrated defaults.
-          if (results[1].status !== 'fulfilled') return
-          const {
-            checkLatestApkReleaseSilently,
-            shouldAutoCheckApkUpdate,
-            shouldRecordApkUpdateCheck,
-            getVersionSnapshot,
-          } = await import('@/platform/native/androidApkUpdates')
-          if (!mounted || recoveryController.signal.aborted) return
-          const settings = useSettingsStore.getState().settings
-          if (settings.ignoredApkUpdate
-            && !reconcileApkUpdateIgnoreState(settings.ignoredApkUpdate, getVersionSnapshot())) {
-            useSettingsStore.getState().updateSettings({ ignoredApkUpdate: undefined })
-          }
-          if (!(settings.autoUpdateCheckEnabled ?? true)) return
-          if (!shouldAutoCheckApkUpdate(settings.lastApkUpdateCheckAt)) return
-          const result = await checkLatestApkReleaseSilently()
-          if (!mounted || recoveryController.signal.aborted) return
-          if (shouldRecordApkUpdateCheck(result)) {
-            useSettingsStore.getState().updateSettings({ lastApkUpdateCheckAt: Date.now() })
-          }
-          if (result.status === 'available' && result.release && mounted) {
-            setState((current) => ({ ...current, availableApkUpdate: result }))
+          if (mounted && !recoveryController.signal.aborted && results[1].status === 'fulfilled') {
+            setState((current) => ({ ...current, updateChecksReady: true }))
           }
         }).catch(() => {
           if (!mounted) return
@@ -226,7 +203,8 @@ export function useBootstrap() {
     void SystemUI.setBackgroundColorAsync(colors.surface)
   }, [colors.surface])
 
-  return { ...state, retry }
+  const availableApkUpdate = useScheduledApkUpdateCheck(state.ready && state.updateChecksReady)
+  return { ...state, availableApkUpdate, retry }
 }
 
 function isRequiredSettingsHydrationFailure(error: unknown): boolean {

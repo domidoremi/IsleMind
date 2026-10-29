@@ -127,7 +127,12 @@ export interface Settings {
   googleSearchCx?: string
   customSearchEndpoint?: string
   autoUpdateCheckEnabled?: boolean
+  apkUpdateCheckIntervalMinutes?: 30 | 60 | 360 | 1440
+  apkUpdateChannel?: 'stable' | 'every-release'
+  autoApkDownloadEnabled?: boolean
+  apkUpdateBannerEnabled?: boolean
   lastApkUpdateCheckAt?: number
+  lastApkUpdateCheckChannel?: 'stable' | 'every-release'
   neverRemindUpdates?: boolean
   ignoredApkUpdate?: ApkUpdateIgnoreState
   providerCatalogVersion?: number

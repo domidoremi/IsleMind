@@ -1,0 +1,26 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "toast-top-feedback",
+  "createdAtMs": 1793268310750,
+  "audience": "user",
+  "priority": "routine",
+  "delivery": "ota-compatible",
+  "category": "improvements",
+  "platforms": [
+    "android",
+    "web"
+  ],
+  "files": [
+    "src/components/ui/isle/Dialog.tsx",
+    "src/components/ui/appFeedbackState.ts",
+    "src/components/chat/Composer.tsx",
+    "src/components/conversations/ConversationRow.tsx",
+    "src/components/main/ConversationsScreenContent.tsx",
+    "src/components/providers/useProviderActivationJob.ts"
+  ],
+  "texts": {
+    "zh-CN": "临时提示统一在顶部单条显示，只淡入淡出，不再从底部向上弹出。",
+    "en": "Show transient feedback one item at a time at the top, using fades instead of sliding up from the bottom.",
+    "ja": "一時的な通知を画面上部に一件ずつ表示し、下からせり上がる動きではなくフェードで切り替えます。"
+  }
+}

@@ -57,11 +57,11 @@ jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) =>
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('./SettingsHelp', () => ({ SettingsHelpButton: () => null }))
 jest.mock('@/components/ui/isle', () => {
-  const { View, Pressable, Text, TextInput } = require('react-native')
-  return { ISLE_MIN_TOUCH_TARGET: 44, IslePressable: Pressable, IsleChip: Text, IsleInput: TextInput,
-    IsleSelect: ({ options, onChange, disabled }: any) => <View>{options.map((option: any) => <Pressable key={option.value} accessibilityLabel={option.label} disabled={disabled} onPress={() => onChange(option.value)}><Text>{option.label}</Text></Pressable>)}</View>,
+  const { View, Pressable: MockPressable, Text, TextInput } = require('react-native')
+  return { ISLE_MIN_TOUCH_TARGET: 44, IslePressable: MockPressable, IsleChip: Text, IsleInput: TextInput,
+    IsleSelect: ({ options, onChange, disabled }: any) => <View>{options.map((option: any) => <MockPressable key={option.value} accessibilityLabel={option.label} disabled={disabled} onPress={() => onChange(option.value)}><Text>{option.label}</Text></MockPressable>)}</View>,
     IsleToggle: () => null, IsleListItem: ({ title, trailing }: any) => <View><Text>{title}</Text>{trailing}</View>,
-    IsleButton: ({ label, ...props }: any) => <Pressable accessibilityRole="button" {...props} accessibilityLabel={label}><Text>{label}</Text></Pressable>,
+    IsleButton: ({ label, ...props }: any) => <MockPressable accessibilityRole="button" {...props} accessibilityLabel={label}><Text>{label}</Text></MockPressable>,
     IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
     useIsleDialog: () => ({ toast: mockToast, notice: mockToast, confirm: mockConfirm }),
   }

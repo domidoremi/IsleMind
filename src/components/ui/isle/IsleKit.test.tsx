@@ -13,6 +13,7 @@ import { IsleThemeProvider } from './IsleThemeProvider'
 import { IsleSearchField } from './SearchField'
 import { IsleButton as AppButton, IsleChip as AppChip } from './Controls'
 import { IsleIconButton } from './Primitives'
+import { appUpdateActivity } from '@/presentation/app-shell/appUpdateActivity'
 
 let mockNativeSelectChange: (value: string) => void
 jest.mock('animal-island-ui-rn', () => {
@@ -41,6 +42,21 @@ function setTheme(id: CanonicalThemeId = 'animal-island-ui', mode: 'light' | 'da
 beforeEach(() => {
   setTheme()
   jest.mocked(useMotionPreference).mockReturnValue('none')
+})
+
+it('projects Animal Island native input focus without changing its callbacks or value', async () => {
+  const focus = jest.fn(), blur = jest.fn()
+  const screen = await render(<IsleThemeProvider>
+    <IsleInput testID="idle-focus" value="Kept draft" onFocus={focus} onBlur={blur} />
+  </IsleThemeProvider>)
+  const field = screen.getByTestId('idle-focus')
+  await fireEvent(field, 'focus', { nativeEvent: {} })
+  expect(appUpdateActivity.getSnapshot().blocked).toBe(true)
+  expect(focus).toHaveBeenCalledTimes(1)
+  expect(screen.getByTestId('idle-focus').props.value).toBe('Kept draft')
+  await fireEvent(screen.getByTestId('idle-focus'), 'blur', { nativeEvent: {} })
+  expect(appUpdateActivity.getSnapshot().blocked).toBe(false)
+  expect(blur).toHaveBeenCalledTimes(1)
 })
 
 it.each(['light', 'dark'] as const)('keeps the native search text shrinkable without dropping %s pending state or events', async mode => {

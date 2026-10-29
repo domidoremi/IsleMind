@@ -1,0 +1,27 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "update-idle-apk-consent",
+  "createdAtMs": 1793179117451,
+  "audience": "user",
+  "priority": "routine",
+  "delivery": "native",
+  "category": "improvements",
+  "platforms": [
+    "android"
+  ],
+  "files": [
+    "src/components/updates/apkUpdateDeliverySession.ts",
+    "src/components/updates/ApkUpdateDeliverySettings.tsx",
+    "src/components/updates/useAutomaticApkUpdateInstall.ts",
+    "src/components/updates/GlobalApkUpdatePrompt.tsx",
+    "src/components/updates/useApkUpdatePrompt.tsx",
+    "src/components/settings/SystemSettingsPanelContent.tsx",
+    "src/components/ui/isle/Dialog.tsx",
+    "src/presentation/features/settings/apkUpdateInteraction.ts"
+  ],
+  "texts": {
+    "en": "The approved APK waits for foreground idle time without interrupting Agent work. Review notes or cancel the pending update in Settings; cancellation and installer handoff never acknowledge installation.",
+    "zh-CN": "已批准的 APK 会等待前台空闲，不打断 Agent 工作。可在设置中查看说明或取消待处理更新；取消和安装器交接均不代表已安装。",
+    "ja": "承認済み APK は Agent の作業を中断せず、前面でアイドル状態になるまで待機します。設定で説明の閲覧やキャンセルが可能で、キャンセルや引き渡しはインストール完了を意味しません。"
+  }
+}

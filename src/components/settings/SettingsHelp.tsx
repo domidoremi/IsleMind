@@ -1,6 +1,7 @@
 import { APP_FONT_FAMILY } from '@/theme/font'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Keyboard, Linking, Modal, Platform, ScrollView, View, useWindowDimensions, type GestureResponderEvent } from 'react-native'
+import { Keyboard, Linking, Platform, ScrollView, View, useWindowDimensions, type GestureResponderEvent } from 'react-native'
+import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import Markdown, { type RenderFunction } from 'react-native-markdown-display'
 import { SvgXml } from 'react-native-svg'

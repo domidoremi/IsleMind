@@ -7,6 +7,11 @@ on:
         description: Existing release tag to build, for example v1.1.2.
         required: true
         type: string
+      publish_release:
+        description: Upload to an existing GitHub Release only after independent candidate qualification and publication approval.
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -205,6 +210,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
+        if: ${{ inputs.publish_release == true }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

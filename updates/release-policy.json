@@ -1,0 +1,8 @@
+{
+  "schema": "islemind.release-policy.v1",
+  "routineMinimumIntervalMs": 86400000,
+  "routineMaximumAgeMs": 604800000,
+  "routineMinimumChanges": 5,
+  "maximumPendingChanges": 50,
+  "otaEnabled": false
+}

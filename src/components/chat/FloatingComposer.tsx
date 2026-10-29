@@ -1,6 +1,7 @@
 import { getConversationReasoningEffortOptions as getReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
+import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
+import { Modal } from '@/components/ui/AppModal'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets, type EdgeInsets } from 'react-native-safe-area-context'

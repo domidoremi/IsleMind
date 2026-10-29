@@ -3,12 +3,15 @@ import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
 import { appendRuntimeLog, readStoredRuntimeLogOptions } from './runtimeLog'
 import { discardDownloadedApk, markDownloadedApkForCleanup } from '@/services/apkInstallCache'
-import { fetchGithubReleaseNotesSnapshot, fetchGithubTaggedAndroidReleaseSnapshot, fetchLatestGithubTagVersionSnapshot } from './githubReleaseChannel'
+import { fetchGithubApkTagVersionCandidates, fetchGithubReleaseNotesSnapshot, fetchGithubTaggedAndroidReleaseSnapshot, fetchLatestGithubTagVersionSnapshot } from './githubReleaseChannel'
 import {
   APK_AUTO_CHECK_INTERVAL_MS,
   checkLatestApkRelease,
   checkLatestApkReleaseSilently,
   downloadAndOpenApkInstaller,
+  prepareApkRelease,
+  openPreparedApkInstaller,
+  discardPreparedApk,
   getVersionSnapshot,
   shouldAutoCheckApkUpdate,
   shouldRecordApkUpdateCheck,
@@ -37,6 +40,7 @@ jest.mock('./githubReleaseChannel', () => ({
   fetchLatestGithubTagVersionSnapshot: jest.fn(),
   fetchGithubTaggedAndroidReleaseSnapshot: jest.fn(),
   fetchGithubReleaseNotesSnapshot: jest.fn(),
+  fetchGithubApkTagVersionCandidates: jest.fn(),
   GithubReleaseChannelError: class extends Error {},
 }))
 
@@ -45,7 +49,7 @@ const mockSha256File = jest.fn<Promise<string>, [string, AbortSignal?]>()
 const release: ApkReleaseInfo = {
   version: '1.1.3', versionCode: 128, tagName: 'v1.1.3', name: 'IsleMind 1.1.3',
   htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.1.3',
-  apkUrl: 'https://example.test/update.apk', apkName: 'update.apk', publishedAt: null,
+  apkUrl: 'https://github.com/domidoremi/IsleMind/releases/download/v1.1.3/update.apk', apkName: 'update.apk', publishedAt: null,
   sha256: 'a'.repeat(64), sizeBytes: 100,
 }
 const downloaded = { uri: 'file:///cache/update.apk', status: 200, headers: {}, mimeType: 'application/vnd.android.package-archive' }
@@ -82,9 +86,11 @@ beforeEach(() => {
   extra.distributionChannel = 'google-play'
   jest.mocked(fetchLatestGithubTagVersionSnapshot).mockResolvedValue(currentTag)
   jest.mocked(fetchGithubReleaseNotesSnapshot).mockResolvedValue({ entries: [], complete: true })
+  jest.mocked(fetchGithubApkTagVersionCandidates).mockImplementation(async () => [await fetchLatestGithubTagVersionSnapshot()])
   mockDownload.mockResolvedValue(downloaded)
   mockCancel.mockResolvedValue(undefined)
   jest.mocked(FileSystem.createDownloadResumable).mockImplementation((_url, _uri, _options, progress) => {
+    downloaded.uri = _uri
     nativeProgress = progress!
     return { downloadAsync: mockDownload, cancelAsync: mockCancel } as unknown as FileSystem.DownloadResumable
   })
@@ -103,6 +109,77 @@ it('does not schedule GitHub checks on Play even with a migrated auto-check pref
 describe('direct APK update lifecycle', () => {
   beforeEach(() => { extra.distributionChannel = 'github' })
 
+  it('prepares an immutable official APK without opening an installer or advancing installed metadata', async () => {
+    const result = await prepareApkRelease(release)
+    expect(result.status).toBe('prepared')
+    expect(Object.isFrozen(result.prepared)).toBe(true)
+    expect(Object.isFrozen(result.prepared?.release)).toBe(true)
+    expect(IntentLauncher.startActivityAsync).not.toHaveBeenCalled()
+    expect(getVersionSnapshot().buildVersion).toBe('127')
+    await discardPreparedApk(result.prepared!)
+  })
+
+  it('requires a live handoff guard and rejects forged or revoked preparation capabilities', async () => {
+    const result = await prepareApkRelease(release)
+    const prepared = result.prepared!
+    expect((await openPreparedApkInstaller({ ...prepared }, { canOpenInstaller: () => true })).reason).toBe('manifest_invalid')
+    expect((await openPreparedApkInstaller(prepared)).status).toBe('prepared')
+    expect(IntentLauncher.startActivityAsync).not.toHaveBeenCalled()
+    await discardPreparedApk(prepared)
+    expect((await openPreparedApkInstaller(prepared, { canOpenInstaller: () => true })).reason).toBe('manifest_invalid')
+  })
+
+  it('rechecks bytes after preparation and cannot reuse a tampered file', async () => {
+    const prepared = (await prepareApkRelease(release)).prepared!
+    mockSha256File.mockResolvedValueOnce('b'.repeat(64))
+    expect(await openPreparedApkInstaller(prepared, { canOpenInstaller: () => true }))
+      .toMatchObject({ status: 'error', reason: 'checksum_mismatch' })
+    expect(IntentLauncher.startActivityAsync).not.toHaveBeenCalled()
+    expect((await openPreparedApkInstaller(prepared, { canOpenInstaller: () => true })).reason).toBe('manifest_invalid')
+  })
+
+  it('retains a verified preparation if final content-URI admission detects new activity', async () => {
+    const prepared = (await prepareApkRelease(release)).prepared!
+    let safe = true
+    const content = deferred<string>()
+    jest.mocked(FileSystem.getContentUriAsync).mockReturnValueOnce(content.promise)
+    const opening = openPreparedApkInstaller(prepared, { canOpenInstaller: () => safe })
+    await Promise.resolve(); await Promise.resolve()
+    safe = false
+    content.resolve('content://cache/update.apk')
+    expect((await opening).status).toBe('prepared')
+    expect(IntentLauncher.startActivityAsync).not.toHaveBeenCalled()
+    safe = true
+    expect((await openPreparedApkInstaller(prepared, { canOpenInstaller: () => safe })).status).toBe('downloaded')
+  })
+
+  it.each(['activity', 'cancellation', 'revocation'] as const)('rechecks %s after the opening-progress callback', async (change) => {
+    const prepared = (await prepareApkRelease(release)).prepared!
+    const controller = new AbortController()
+    let safe = true
+    let cleanup: Promise<void> | undefined
+    const result = await openPreparedApkInstaller(prepared, {
+      signal: controller.signal, canOpenInstaller: () => safe,
+      onProgress: (progress) => {
+        if (progress.stage !== 'opening-installer') return
+        if (change === 'activity') safe = false
+        if (change === 'cancellation') controller.abort()
+        if (change === 'revocation') cleanup = discardPreparedApk(prepared)
+      },
+    })
+    await cleanup
+    expect(result.status).toBe(change === 'activity' ? 'prepared' : 'cancelled')
+    expect(IntentLauncher.startActivityAsync).not.toHaveBeenCalled()
+    expect(getVersionSnapshot().buildVersion).toBe('127')
+    await discardPreparedApk(prepared)
+  })
+
+  it('never starts preparation from an unapproved mirror origin', async () => {
+    expect(await prepareApkRelease({ ...release, apkUrl: 'https://mirror.test/update.apk' }))
+      .toMatchObject({ status: 'error', reason: 'manifest_invalid' })
+    expect(FileSystem.createDownloadResumable).not.toHaveBeenCalled()
+  })
+
   it('attaches version-range notes only after the tagged APK passes availability validation', async () => {
     jest.mocked(fetchLatestGithubTagVersionSnapshot).mockResolvedValueOnce(newerTag)
     jest.mocked(fetchGithubTaggedAndroidReleaseSnapshot).mockResolvedValueOnce(verifiedTaggedRelease)
@@ -112,7 +189,7 @@ describe('direct APK update lifecycle', () => {
       status: 'available', currentVersion: { appVersion: '1.1.2', buildVersion: '127' },
       release: { version: '1.1.3', releaseNotes: entries, releaseNotesComplete: true },
     })
-    expect(fetchGithubReleaseNotesSnapshot).toHaveBeenCalledWith('1.1.2', newerTag)
+    expect(fetchGithubReleaseNotesSnapshot).toHaveBeenCalledWith({ version: '1.1.2', versionCode: 127 }, newerTag, { channel: 'stable' })
   })
 
   it('does not fetch notes for a non-installable qualification release', async () => {
@@ -122,6 +199,22 @@ describe('direct APK update lifecycle', () => {
     })
     expect((await checkLatestApkRelease()).status).toBe('unavailable')
     expect(fetchGithubReleaseNotesSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('does not let a newer source-only tag hide a qualified older APK or advertise future source changes', async () => {
+    const sourceTag = { ...newerTag, versionName: '1.1.4', versionCode: 129, tagName: 'v1.1.4' }
+    jest.mocked(fetchLatestGithubTagVersionSnapshot).mockResolvedValueOnce(sourceTag)
+    jest.mocked(fetchGithubTaggedAndroidReleaseSnapshot).mockResolvedValueOnce({
+      tag: sourceTag, manifest: null, assets: [],
+    }).mockResolvedValueOnce(verifiedTaggedRelease)
+    jest.mocked(fetchGithubApkTagVersionCandidates).mockResolvedValueOnce([sourceTag, newerTag, currentTag])
+    const entries = [{ version: '1.1.3', notes: '- Delivered' }]
+    jest.mocked(fetchGithubReleaseNotesSnapshot).mockResolvedValueOnce({ entries, complete: true })
+    expect(await checkLatestApkRelease()).toMatchObject({
+      status: 'available', release: { version: '1.1.3', versionCode: 128, releaseNotes: entries },
+    })
+    expect(fetchGithubReleaseNotesSnapshot).toHaveBeenCalledWith({ version: '1.1.2', versionCode: 127 }, newerTag, { channel: 'stable' })
+    expect(fetchGithubTaggedAndroidReleaseSnapshot).toHaveBeenLastCalledWith(newerTag, expect.objectContaining({ signal: expect.anything() }))
   })
 
   it('keeps a verified update available when optional release history fails', async () => {
@@ -140,6 +233,7 @@ describe('direct APK update lifecycle', () => {
     })
     expect(await checkLatestApkRelease()).toMatchObject({ status: 'error', reason: 'manifest_invalid' })
     expect(fetchGithubReleaseNotesSnapshot).not.toHaveBeenCalled()
+    expect(fetchGithubApkTagVersionCandidates).toHaveBeenCalledTimes(1)
   })
 
   it('coalesces concurrent startup/manual checks and retries after a failed check', async () => {
@@ -296,7 +390,7 @@ describe('direct APK update lifecycle', () => {
     now += 500
     emit(50)
     expect(onProgress).toHaveBeenCalledTimes(count)
-    expect(onProgress.mock.calls.map(([p]) => p.stage)).toEqual(['downloading', 'downloading', 'downloading', 'downloading', 'verifying', 'opening-installer'])
+    expect(onProgress.mock.calls.map(([p]) => p.stage)).toEqual(['downloading', 'downloading', 'downloading', 'downloading', 'verifying', 'verifying', 'opening-installer'])
   })
 
   it('ignores download progress after abort', async () => {

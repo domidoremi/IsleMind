@@ -7,6 +7,7 @@ import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIco
 import type { Attachment, CommandReference } from '@/types/chatContracts'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable, useIsleDialog } from '@/components/ui/isle'
@@ -248,6 +249,8 @@ export function Composer({
     trigger.query.length === 0 ||
     trigger.type === 'command'
   )
+  useAppUpdateBlocker(hasSendableDraft || focused || sending || streaming || recording || voiceBusy
+    || workspaceOpen || attachmentsOpen || utilitiesOpen || showCommandPanel, 'composer')
   const activityState: ComposerActivityState =
     sending || (streaming && !hasSendableDraft)
       ? 'sending'
@@ -449,7 +452,6 @@ export function Composer({
       dialog.toast({
         title: t('common.copied'),
         tone: 'mint',
-        position: 'bottom',
         durationMs: 1600,
         dedupeKey: 'composer-draft-copied',
       })
@@ -457,7 +459,6 @@ export function Composer({
       dialog.toast({
         title: t('common.copyFailed'),
         tone: 'danger',
-        position: 'bottom',
         durationMs: 2200,
         dedupeKey: 'composer-draft-copy-failed',
       })

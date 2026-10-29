@@ -1012,7 +1012,6 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
       title: t('conversation.interactionPaused'),
       message: t('conversation.interactionPausedMessage'),
       tone: 'amber',
-      position: 'bottom',
       durationMs: 1600,
     })
   }, [dialog, t])
@@ -1030,7 +1029,6 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
       title: t('conversation.noSearchResults'),
       message: t('conversation.noSearchSubmitFeedback', { query: feedbackQuery }),
       tone: 'amber',
-      position: 'bottom',
       durationMs: 2600,
     })
   }, [dialog, filteredConversations, openConversation, t])

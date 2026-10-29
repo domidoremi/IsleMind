@@ -31,9 +31,18 @@ export function normalizeApkUpdateIgnoreState(value: unknown): ApkUpdateIgnoreSt
 export function normalizeSettingsUpdateReminders(settings: Settings): Settings {
   const ignored = normalizeApkUpdateIgnoreState(settings.ignoredApkUpdate)
   const neverRemind = settings.neverRemindUpdates === true
+  const interval = [30, 60, 360, 1440].includes(settings.apkUpdateCheckIntervalMinutes ?? 0)
+    ? settings.apkUpdateCheckIntervalMinutes! : 1440
+  const channel = settings.apkUpdateChannel === 'every-release' ? 'every-release' : 'stable'
+  const automaticDownload = settings.autoApkDownloadEnabled === true
+  const banner = settings.apkUpdateBannerEnabled !== false
   if (neverRemind === settings.neverRemindUpdates
+    && interval === settings.apkUpdateCheckIntervalMinutes && channel === settings.apkUpdateChannel
+    && automaticDownload === settings.autoApkDownloadEnabled && banner === settings.apkUpdateBannerEnabled
     && JSON.stringify(ignored) === JSON.stringify(settings.ignoredApkUpdate)) return settings
-  return { ...settings, neverRemindUpdates: neverRemind, ignoredApkUpdate: ignored }
+  return { ...settings, neverRemindUpdates: neverRemind, ignoredApkUpdate: ignored,
+    apkUpdateCheckIntervalMinutes: interval, apkUpdateChannel: channel,
+    autoApkDownloadEnabled: automaticDownload, apkUpdateBannerEnabled: banner }
 }
 
 export function createApkUpdateIgnoreState(

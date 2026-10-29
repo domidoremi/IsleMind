@@ -7,6 +7,7 @@ import type { EdgeInsets } from 'react-native-safe-area-context'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IslePressable, IsleSheet } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import type { Attachment } from '@/types/chatContracts'
 
 import { previewPendingText } from './messageActivityPreview'
@@ -27,6 +28,7 @@ export function StreamingIntentSheet({
   onChoose: (intent: StreamingInputIntent) => void
 }) {
   const { colors, isLiquidGlass } = useAppTheme()
+  useAppUpdateBlocker(true, 'streaming-intent')
   const { t } = useTranslation()
   const { width } = useWindowDimensions()
   const preview = previewPendingText(draft.content, draft.attachments, t)

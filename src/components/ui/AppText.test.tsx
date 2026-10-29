@@ -1,8 +1,9 @@
 import { createRef } from 'react'
-import { render } from '@testing-library/react-native'
+import { fireEvent, render } from '@testing-library/react-native'
 import { Platform, StyleSheet, TextInput as NativeInput } from 'react-native'
 import { AppFontContext, Text, TextInput } from './AppText'
 import { fontFamilyForTheme } from '@/theme/font'
+import { appUpdateActivity } from '@/presentation/app-shell/appUpdateActivity'
 
 it('uses the bundled font for labels and editable text while preserving explicit code fonts and input refs', async () => {
   const ref = createRef<NativeInput>()
@@ -91,4 +92,20 @@ it('updates web typography without replacing the input, draft or imperative ref'
     expect(ref.current).toBe(input)
     expect(screen.getByTestId('web-input').props.value).toBe('Unchanged two-line\ndraft')
   })
+})
+
+it('projects input focus as a scoped update blocker while preserving focus callbacks and unmount cleanup', async () => {
+  const onFocus = jest.fn()
+  const onBlur = jest.fn()
+  const screen = await render(<TextInput testID="focused-input" onFocus={onFocus} onBlur={onBlur} />)
+  expect(appUpdateActivity.getSnapshot().blocked).toBe(false)
+  await fireEvent(screen.getByTestId('focused-input'), 'focus', { nativeEvent: {} })
+  expect(appUpdateActivity.getSnapshot().blocked).toBe(true)
+  expect(onFocus).toHaveBeenCalledTimes(1)
+  await fireEvent(screen.getByTestId('focused-input'), 'blur', { nativeEvent: {} })
+  expect(appUpdateActivity.getSnapshot().blocked).toBe(false)
+  expect(onBlur).toHaveBeenCalledTimes(1)
+  await fireEvent(screen.getByTestId('focused-input'), 'focus', { nativeEvent: {} })
+  await screen.unmount()
+  expect(appUpdateActivity.getSnapshot().blocked).toBe(false)
 })

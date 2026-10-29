@@ -10,11 +10,11 @@ jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal') }) }))
 jest.mock('@/components/ui/isle', () => {
-  const { View, Pressable, Text, TextInput } = require('react-native')
-  return { useIsleDialog: () => ({ toast: mockToast }), IslePressable: Pressable, IsleInput: TextInput,
+  const { View, Pressable: MockPressable, Text, TextInput } = require('react-native')
+  return { useIsleDialog: () => ({ toast: mockToast }), IslePressable: MockPressable, IsleInput: TextInput,
     IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
-    IsleButton: ({ label, ...props }: any) => <Pressable accessibilityRole="button" {...props}><Text>{label}</Text></Pressable>,
-    IsleSelect: ({ options, onChange, disabled }: any) => <View>{options.map((option: any) => <Pressable key={option.value} accessibilityLabel={option.label} disabled={disabled} onPress={() => onChange(option.value)}><Text>{option.label}</Text></Pressable>)}</View>,
+    IsleButton: ({ label, ...props }: any) => <MockPressable accessibilityRole="button" {...props}><Text>{label}</Text></MockPressable>,
+    IsleSelect: ({ options, onChange, disabled }: any) => <View>{options.map((option: any) => <MockPressable key={option.value} accessibilityLabel={option.label} disabled={disabled} onPress={() => onChange(option.value)}><Text>{option.label}</Text></MockPressable>)}</View>,
   }
 })
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))

@@ -4,6 +4,7 @@ import { useNavigation } from 'expo-router'
 import { usePreventRemove } from 'expo-router/react-navigation'
 import { useTranslation } from 'react-i18next'
 import { useIsleDialog } from '@/components/ui/isle'
+import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 
 type Editor = { dirty: boolean; busy: boolean; revision: () => object; discard: () => void }
 const EditorContext = createContext<{ register: (id: string, editor: Editor) => () => void; leave: (action: () => void) => Promise<void> } | null>(null)
@@ -20,6 +21,7 @@ export function useSettingsLifetime() {
 
 /** Browser history can reset the Expo root without calling a screen's removal guard. */
 export function useSettingsBrowserLeave(blocked: boolean, leave: (action: () => void) => Promise<void>) {
+  useAppUpdateBlocker(blocked, 'settings-edit')
   const latest = useRef(leave)
   latest.current = leave
   useEffect(() => {
@@ -87,6 +89,7 @@ export function SettingsEditBoundary({ children }: { children: ReactNode }) {
 
 /** Supply a stable content/identity snapshot, not a newly allocated object on every render. */
 export function useSettingsDraft(dirty: boolean, busy: boolean, discard: () => void, snapshot?: unknown) {
+  useAppUpdateBlocker(dirty || busy, 'settings-draft')
   const context = useContext(EditorContext)
   const id = useId()
   const latest = useRef(discard)

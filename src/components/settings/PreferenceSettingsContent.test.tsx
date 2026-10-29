@@ -20,11 +20,11 @@ jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: (_: boolean
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 jest.mock('@/components/ui/isle', () => {
-  const { Pressable, Text, TextInput, View } = require('react-native')
+  const { Pressable: MockPressable, Text, TextInput, View } = require('react-native')
   return {
-    IslePressable: Pressable, IsleToggle: View,
+    IslePressable: MockPressable, IsleToggle: View,
     IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
-    IsleButton: ({ label, ...props }: any) => <Pressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></Pressable>,
+    IsleButton: ({ label, ...props }: any) => <MockPressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></MockPressable>,
     useIsleDialog: () => ({ toast: mockToast, confirm: mockConfirm }),
   }
 })

@@ -14,9 +14,9 @@ jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 jest.mock('@shopify/flash-list', () => ({ FlashList: () => null }))
 jest.mock('./SettingsHelp', () => ({ SettingsHelpButton: () => null }))
 jest.mock('@/components/ui/isle', () => {
-  const { Pressable, Text, View } = require('react-native')
-  return { ISLE_MIN_TOUCH_TARGET: 44, IslePressable: Pressable, IsleChip: Text, IsleToggle: View,
-    IsleButton: ({ label, onPress, ...props }: any) => <Pressable accessibilityRole="button" accessibilityLabel={label} {...props} onPress={() => { onPress?.() }}><Text>{label}</Text></Pressable>,
+  const { Pressable: MockPressable, Text, View } = require('react-native')
+  return { ISLE_MIN_TOUCH_TARGET: 44, IslePressable: MockPressable, IsleChip: Text, IsleToggle: View,
+    IsleButton: ({ label, onPress, ...props }: any) => <MockPressable accessibilityRole="button" accessibilityLabel={label} {...props} onPress={() => { onPress?.() }}><Text>{label}</Text></MockPressable>,
     useIsleDialog: () => ({ confirm: mockConfirm }),
   }
 })

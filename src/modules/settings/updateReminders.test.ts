@@ -59,10 +59,24 @@ it.each([null, [], {}, { ...ignored, targetVersion: 'garbage' }, { ...ignored, t
 })
 
 it('normalizes persisted reminder fields without changing unrelated settings', () => {
-  const settings = { language: 'ja', neverRemindUpdates: true, ignoredApkUpdate: ignored } as Settings
+  const settings = { language: 'ja', neverRemindUpdates: true, ignoredApkUpdate: ignored,
+    apkUpdateCheckIntervalMinutes: 1440, apkUpdateChannel: 'stable',
+    autoApkDownloadEnabled: false, apkUpdateBannerEnabled: true } as Settings
   expect(normalizeSettingsUpdateReminders(settings)).toBe(settings)
   expect(normalizeSettingsUpdateReminders({ ...settings, neverRemindUpdates: 'false',
     ignoredApkUpdate: { version: '1.1.3' } } as unknown as Settings)).toEqual({
     language: 'ja', neverRemindUpdates: false, ignoredApkUpdate: undefined,
+    apkUpdateCheckIntervalMinutes: 1440, apkUpdateChannel: 'stable',
+    autoApkDownloadEnabled: false, apkUpdateBannerEnabled: true,
+  })
+})
+
+it('fails closed on malformed download settings and restores a supported channel and interval', () => {
+  expect(normalizeSettingsUpdateReminders({
+    apkUpdateChannel: 'untrusted', apkUpdateCheckIntervalMinutes: 1,
+    autoApkDownloadEnabled: 'true', apkUpdateBannerEnabled: false,
+  } as unknown as Settings)).toMatchObject({
+    apkUpdateChannel: 'stable', apkUpdateCheckIntervalMinutes: 1440,
+    autoApkDownloadEnabled: false, apkUpdateBannerEnabled: false,
   })
 })

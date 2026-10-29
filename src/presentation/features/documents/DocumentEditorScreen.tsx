@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next'
 import Markdown from 'react-native-markdown-display'
 import { IsleButton, IsleInput, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import { DOCUMENT_BODY_LIMIT, DOCUMENT_TITLE_LIMIT, DocumentConflictError, documentDraftFromMessage, parseDocumentReviewContext, type DocumentDraft, type DocumentRepository, type DocumentRevisionPort, type DocumentRevisionSource, type SavedDocument } from '@/modules/documents'
 import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 import { useChatStore } from '@/store/chatStore'
@@ -37,6 +38,7 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
   const [showOrigin, setShowOrigin] = useState(false)
   const [showReview, setShowReview] = useState(false)
   const dirty = !!draft && (!saved || draft.title !== saved.title || draft.body !== saved.body || draft.reviewContext !== saved.reviewContext)
+  useAppUpdateBlocker(loading || dirty || busy || showReview, 'document-edit')
 
   useEffect(() => {
     if (id && savedRef.current?.id === id) return

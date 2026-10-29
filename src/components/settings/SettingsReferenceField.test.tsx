@@ -5,15 +5,15 @@ let mockRemovePress: () => void
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal') }) }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 jest.mock('@/components/ui/isle', () => {
-  const { View, Pressable, Text, TextInput } = require('react-native')
-  return { IslePressable: Pressable, IsleInput: TextInput,
+  const { View, Pressable: MockPressable, Text, TextInput } = require('react-native')
+  return { IslePressable: MockPressable, IsleInput: TextInput,
     IsleButton: ({ label, ...props }: any) => {
       mockRemovePress = props.onPress
-      return <Pressable accessibilityRole="button" {...props}><Text>{label}</Text></Pressable>
+      return <MockPressable accessibilityRole="button" {...props}><Text>{label}</Text></MockPressable>
     },
     IsleSelect: ({ options, onChange, disabled }: any) => {
       mockSelectChange = onChange
-      return <View>{options.map((option: any) => <Pressable key={option.value} accessibilityLabel={option.label} disabled={disabled} onPress={() => onChange(option.value)}><Text>{option.label}</Text></Pressable>)}</View>
+      return <View>{options.map((option: any) => <MockPressable key={option.value} accessibilityLabel={option.label} disabled={disabled} onPress={() => onChange(option.value)}><Text>{option.label}</Text></MockPressable>)}</View>
     },
   }
 })

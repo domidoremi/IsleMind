@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MotiView } from 'moti'

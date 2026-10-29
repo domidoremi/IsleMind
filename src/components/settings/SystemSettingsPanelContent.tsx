@@ -46,6 +46,8 @@ import type { ApkInstallProgress, ApkInstallProgressStage, ApkReleaseInfo } from
 import { isGooglePlayDistribution, openGooglePlayListing } from '@/platform/native/appDistribution'
 import { useIsleDialog } from '@/components/ui/isle'
 import { useApkUpdatePrompt } from '@/components/updates/useApkUpdatePrompt'
+import { ApkUpdateDeliverySettings } from '@/components/updates/ApkUpdateDeliverySettings'
+import { apkUpdateDeliverySession } from '@/components/updates/apkUpdateDeliverySession'
 import { beginManualApkUpdateCheck } from '@/presentation/features/settings/apkUpdateInteraction'
 
 
@@ -761,6 +763,11 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
     const controller = new AbortController()
     apkOperationRef.current = controller
     const finishManualCheck = beginManualApkUpdateCheck()
+    const checkedChannel = useSettingsStore.getState().settings.apkUpdateChannel ?? 'stable'
+    let approvalCaptured = false
+    const unsubscribeChannel = useSettingsStore.subscribe((state) => {
+      if (!approvalCaptured && (state.settings.apkUpdateChannel ?? 'stable') !== checkedChannel) controller.abort()
+    })
     const isCurrent = () => apkMountedRef.current && apkOperationRef.current === controller
     setCancellingApk(false)
     setApkUpdateStage('checking')
@@ -768,12 +775,12 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
     setApkInstallProgress(null)
     try {
       publishApkUpdateProgress('checking')
-      const { checkLatestApkRelease, downloadAndOpenApkInstaller } = await import('@/platform/native/androidApkUpdates')
+      const { checkLatestApkRelease } = await import('@/platform/native/androidApkUpdates')
       if (!isCurrent()) return
-      const result = await checkLatestApkRelease()
-      if (!isCurrent()) return
+      const result = await checkLatestApkRelease({ channel: checkedChannel })
+      if (!isCurrent() || controller.signal.aborted) return
       if (result.status === 'available' || result.status === 'unavailable') {
-        updateSettings({ lastApkUpdateCheckAt: Date.now() })
+        updateSettings({ lastApkUpdateCheckAt: Date.now(), lastApkUpdateCheckChannel: checkedChannel })
       }
       if (result.status !== 'available' || !result.release) {
         const message = result.status === 'error'
@@ -793,46 +800,29 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
       }
       setActiveApkRelease(result.release)
       dismissApkUpdateFeedback()
-      const confirmed = await promptApkUpdate(result.release, result.currentVersion ?? getSettingsVersionSnapshot(), {
+      const approved = await promptApkUpdate(result.release, result.currentVersion ?? getSettingsVersionSnapshot(), {
         signal: controller.signal,
+        onApproved: () => { approvalCaptured = true },
       })
-      if (!isCurrent()) return
-      if (!confirmed) {
-        dismissApkUpdateFeedback()
+      // Captured approval outlives this screen; unapproved requests do not.
+      if (!isCurrent() && !approvalCaptured) return
+      if (!approved) {
+        if (isCurrent()) dismissApkUpdateFeedback()
         return
       }
-      const installResult = await downloadAndOpenApkInstaller(result.release, {
-        signal: controller.signal,
-        onProgress: (progress) => {
-          if (!isCurrent() || controller.signal.aborted) return
-          setActiveApkRelease(progress.release)
-          setApkUpdateStage(progress.stage)
-          setApkInstallProgress(progress)
-          publishApkUpdateProgress(progress.stage, progress.release, progress)
-        },
-      })
-      if (!isCurrent()) return
-      if (installResult.status === 'cancelled') {
-        dismissApkUpdateFeedback()
-        dialog.toast({ title: t('updates.cancelled'), tone: 'amber' })
-        return
-      }
-      const terminalTitle = installResult.status === 'downloaded' ? t('settings.installerOpened')
-        : installResult.status === 'busy' ? t('updates.installInProgress') : t('settings.apkUpdateFailed')
-      const terminalTone = installResult.status === 'downloaded' ? 'mint' : installResult.status === 'busy' ? 'amber' : 'danger'
-      dialog.notice({ title: terminalTitle, message: installResult.message, tone: terminalTone })
-      publishApkUpdateTerminalFeedback({
-        title: terminalTitle,
-        message: installResult.message,
-        tone: terminalTone,
-        installFlow: true,
-      })
+      finishManualCheck()
+      if (isCurrent()) dismissApkUpdateFeedback()
+      // Confirmed delivery belongs to the mounted root across route changes.
+      void apkUpdateDeliverySession.install(approved).then((accepted) => {
+        if (!accepted && apkMountedRef.current) dialog.notice({ title: t('updates.installInProgress'), message: t('updates.cancelBeforeReplacing'), tone: 'amber' })
+      }).catch(() => { if (apkMountedRef.current) dialog.notice({ title: t('settings.apkUpdateFailed'), tone: 'danger' }) })
     } catch (error) {
       if (isCurrent()) {
         dismissApkUpdateFeedback()
         dialog.notice({ title: t('settings.apkUpdateFailed'), message: userFacingErrorDetail(error), tone: 'danger' })
       }
     } finally {
+      unsubscribeChannel()
       finishManualCheck()
       if (isCurrent()) {
         apkOperationRef.current = null
@@ -1810,6 +1800,30 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 />
               </View>
             </View>
+            <SettingsSection id="apk-update-interval">
+              <Text accessibilityRole="header" style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>{t('updates.checkInterval')}</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {([30, 60, 360, 1440] as const).map((minutes) => (
+                  <IsleButton key={minutes} label={t(`updates.interval${minutes}`)}
+                    tone={(settings.apkUpdateCheckIntervalMinutes ?? 1440) === minutes ? 'primary' : 'soft'}
+                    onPress={() => updateSettings({ apkUpdateCheckIntervalMinutes: minutes })} />
+                ))}
+              </View>
+            </SettingsSection>
+            <SettingsSection id="apk-update-channel">
+              <Text accessibilityRole="header" style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>{t('updates.channel')}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('updates.channelDescription')}</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {(['stable', 'every-release'] as const).map((channel) => (
+                  <IsleButton key={channel} label={t(`updates.channel${channel === 'stable' ? 'Stable' : 'EveryRelease'}`)}
+                    tone={(settings.apkUpdateChannel ?? 'stable') === channel ? 'primary' : 'soft'}
+                    onPress={() => updateSettings({ apkUpdateChannel: channel })} />
+                ))}
+              </View>
+            </SettingsSection>
+            <SettingsSection id="apk-update-delivery">
+              <ApkUpdateDeliverySettings />
+            </SettingsSection>
             <IsleToggle
               icon={<AppIcon name="stop" color={colors.text} size={18} />}
               title={t('settings.neverRemindUpdates')}

@@ -1,0 +1,26 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "update-catalog-planning",
+  "createdAtMs": 1793108127796,
+  "audience": "internal",
+  "priority": "routine",
+  "delivery": "none",
+  "category": "other",
+  "platforms": [],
+  "files": [
+    ".github/workflows/architecture-gates.yml",
+    "package.json",
+    "scripts/load-update-delivery-contracts.js",
+    "scripts/release-plan-contract.js",
+    "scripts/release-plan.js",
+    "scripts/update-catalog-crypto.js",
+    "scripts/verify-update-catalog.js",
+    "src/core/signedUpdateCatalog.ts",
+    "src/core/updateCatalog.ts",
+    "src/modules/settings/index.ts",
+    "src/modules/settings/updateCatalogEntry.ts",
+    "src/modules/settings/updateCatalogSelection.ts",
+    "updates/release-policy.json"
+  ],
+  "texts": {}
+}

@@ -54,6 +54,10 @@ function registerTypeScriptSupport() {
   require.extensions['.tsx'] = hook
 }
 
+function assertPagerNavigationIntentSourceContract(switchToSource) {
+  assert.match(switchToSource, /if \(next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*router\.replace\(MAIN_PAGER_PATH_BY_PAGE\.home\)\s*return\s*\}[\s\S]*setMountedPages\([\s\S]*setPreviousPage\(page\)[\s\S]*setTransitionDirection\([\s\S]*setPage\(next\)/, 'compatibility-alias returns hand off to the root before mounting a disposable composer; root navigation retains the local pager')
+}
+
 function assertPagerTransitionSourceContract() {
   const source = fs.readFileSync(path.join(root, 'src/components/main/MainPagerShell.tsx'), 'utf8')
   const switchToSource = source.match(/function switchTo\(next: MainPagerPage\) \{[\s\S]*?\n  \}/)?.[0] ?? ''
@@ -62,7 +66,7 @@ function assertPagerTransitionSourceContract() {
   assert.match(source, /const resolvedInitialPage = routePage \?\? initialPage[\s\S]*const \[page, setPage\] = useState<MainPagerPage>\(resolvedInitialPage\)/, 'top-level aliases seed one durable pager instance instead of becoming a second live navigation authority')
   assert.match(source, /useState<ReadonlySet<MainPagerPage>>[\s\S]*new Set\(\[resolvedInitialPage\]\)/, 'pager mounts only the route-resolved first page')
   assert.match(source, /if \(!mountedPages\.has\(item\.id\) && item\.id !== page\) return null[\s\S]*?<PagerPage[\s\S]*?active=\{active\}[\s\S]*?direction=\{direction\}[\s\S]*?\{item\.node\}[\s\S]*?<\/PagerPage>/, 'visited pages stay mounted while unvisited heavy trees remain deferred')
-  assert.match(switchToSource, /setMountedPages\([\s\S]*setPreviousPage\(page\)[\s\S]*setTransitionDirection\([\s\S]*if \(next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*router\.replace\(MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*setPage\(next\)/, 'top-level intent switches the retained pager locally and normalizes only compatibility-alias returns')
+  assertPagerNavigationIntentSourceContract(switchToSource)
   assert.doesNotMatch(switchToSource, /router\.(?:push|dismissTo)/, 'ordinary top-level navigation does not create or destroy duplicate native stack screens')
   assert.doesNotMatch(source, /transitionRequest|readinessToken|handlePagerPageReady|requestPagerPageChild|withTiming|withSpring|GestureDetector|Animated\.View/, 'pager avoids readiness handshakes and feature-owned animation primitives')
   assert.match(source, /<IsleMotionFrame[\s\S]*role="page"[\s\S]*direction=\{direction\}[\s\S]*importantForAccessibility=\{active \? 'auto' : 'no-hide-descendants'\}[\s\S]*pointerEvents=\{active \? 'auto' : 'none'\}/, 'semantic page motion preserves touch and accessibility isolation')
@@ -372,7 +376,7 @@ function assertSourceIntegration() {
   assert.match(isleKitSource, /export function IsleSelect\([\s\S]*style=\{\{ minHeight: ISLE_MIN_TOUCH_TARGET/, 'shared select options expose a physical 44dp target')
 
   const switchToSource = mainPagerSource.match(/function switchTo\(next: MainPagerPage\) \{[\s\S]*?\n  \}/)?.[0] ?? ''
-  assert.match(switchToSource, /setMountedPages\([\s\S]*setPreviousPage\(page\)[\s\S]*setTransitionDirection\([\s\S]*if \(next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*router\.replace\(MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*setPage\(next\)/, 'navigation intent preserves one native screen, visited-page state, and safe alias-to-Chat normalization')
+  assertPagerNavigationIntentSourceContract(switchToSource)
   assert.doesNotMatch(switchToSource, /router\.(?:push|dismissTo)/, 'ordinary pager switches do not churn native route screens')
   assert.match(mainPagerSource, /if \(!mountedPages\.has\(item\.id\) && item\.id !== page\) return null[\s\S]*?<PagerPage[\s\S]*?key=\{item\.id\}[\s\S]*?active=\{active\}[\s\S]*?direction=\{direction\}[\s\S]*?\{item\.node\}[\s\S]*?<\/PagerPage>/, 'visited page trees retain state while unvisited pages stay out of the initial render')
   assert.doesNotMatch(mainPagerSource, /transitionRequest|readinessToken|handlePagerPageReady|requestPagerPageChild|withTiming|withSpring|GestureDetector|Animated\.View/, 'pager uses the semantic motion wrapper instead of feature-owned animation primitives')
@@ -483,7 +487,8 @@ function assertSourceIntegration() {
   assert.ok(messageBubbleSource.includes('<MessageActivityTimeline') && messageActivityTimelineSource.includes('messageActivityLabel(current, t)'), 'message status is delegated to the shared real-activity timeline')
   assert.equal(messageBubbleSource.includes('<ProcessAnchor'), false, 'reply process status does not render the retired circular anchor')
   assert.equal(messageBubbleSource.includes('function ProcessSpinner'), false, 'reply process status does not retain the circular spinner implementation')
-  assert.match(messageActivityTimelineSource, /const current = \[\.\.\.rows\]\.reverse\(\)\.find\(row => row\.state === 'running'\)/, 'the latest actual running activity takes priority over the terminal summary')
+  assert.match(messageActivityTimelineSource, /const paused = rows\.some\(row => row\.state === 'paused'\)[\s\S]*const current = paused \? undefined : \[\.\.\.rows\]\.reverse\(\)\.find\(row => row\.state === 'running'\)/, 'paused activity suppresses stale running rows; otherwise the latest actual running activity takes priority over the terminal summary')
+  assert.match(messageActivityTimelineSource, /const label = paused \? t\('agentTasks\.status\.paused'\) : current \? messageActivityLabel\(current, t\)/, 'the explicit paused lifecycle takes priority over a stale running label')
   assert.doesNotMatch(emptyStateSource, /from=\{\{|<MotiView/, 'empty states render immediately without automatic mount animation')
   assert.doesNotMatch(globalGenerationStatusSource, /from=|<AnimatePresence|<MotiView/, 'global generation status renders immediately without entrance or exit animation')
   assert.doesNotMatch(providerSettingsSource, /from=\{\{ opacity: 0, translateY: (?:6|8|32) \}\}/, 'provider progress cards and modal shells do not restore automatic mount animation')

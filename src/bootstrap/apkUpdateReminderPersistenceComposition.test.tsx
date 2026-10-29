@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as SecureStore from 'expo-secure-store'
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native'
 import { Text } from 'react-native'
+import { Platform } from 'react-native'
 import { useSettingsStore } from '@/store/settingsStore'
 import { IsleDialogProvider } from '@/components/ui/isle'
 import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
@@ -10,7 +11,7 @@ import { createApkUpdateIgnoreState } from '@/modules/settings'
 import type { Settings } from '@/types/settingsContracts'
 import { CANONICAL_THEME_IDS } from '@/types/settingsContracts'
 import type { ApkReleaseInfo, ApkUpdateResult, VersionSnapshot } from '@/platform/native/androidApkUpdates'
-import { downloadAndOpenApkInstaller } from '@/platform/native/androidApkUpdates'
+import { prepareApkRelease, openPreparedApkInstaller } from '@/platform/native/androidApkUpdates'
 import {
   bindSettingsStorePersistence,
   flushPersistedSettings,
@@ -18,6 +19,7 @@ import {
 } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import { APPLICATION_DATA_STORAGE_KEYS } from './applicationDataRecords'
 import { settingsStorePersistence } from './settingsStorePersistence'
+import { appUpdateActivity } from '@/presentation/app-shell/appUpdateActivity'
 
 const filename = require('node:path').join(__dirname, '../hooks/useBootstrap.ts')
 const { transformTypeScriptModule } = require('../../scripts/node-ts-support')
@@ -41,11 +43,19 @@ jest.mock('@/store/chatStore', () => ({
   }),
 }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+jest.mock('expo-router', () => ({ router: { push: jest.fn() } }))
 jest.mock('@/i18n', () => ({ initI18n: jest.fn() }))
 jest.mock('@/i18n/service', () => ({
   ...jest.requireActual('@/i18n/service'), st: (key: string) => key,
 }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
+// Persistence composition uses a short deadline; production idle timing is tested separately.
+jest.mock('@/core/appUpdateIdle', () => ({
+  ...jest.requireActual('@/core/appUpdateIdle'),
+  APP_UPDATE_QUIET_PERIOD_MS: 1,
+  scheduleIdleAppUpdate: (input: Parameters<typeof import('@/core/appUpdateIdle')['scheduleIdleAppUpdate']>[0]) =>
+    jest.requireActual('@/core/appUpdateIdle').scheduleIdleAppUpdate({ ...input, quietPeriodMs: 1 }),
+}))
 jest.mock('@/hooks/useTransparencyPreference', () => ({ useTransparencyPreference: () => false }))
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) }))
 jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
@@ -54,6 +64,10 @@ jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
 jest.mock('moti', () => ({ MotiView: require('react-native').View, AnimatePresence: require('react').Fragment }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke: {} }))
 jest.mock('expo-system-ui', () => ({ setBackgroundColorAsync: jest.fn() }))
+jest.mock('expo-network', () => ({
+  getNetworkStateAsync: jest.fn(async () => ({ isConnected: true, isInternetReachable: true, type: 'WIFI' })),
+  addNetworkStateListener: jest.fn(() => ({ remove: jest.fn() })),
+}))
 jest.mock('@/bootstrap/portableImportRecovery', () => ({ recoverInterruptedPortableImport: jest.fn().mockResolvedValue({ status: 'none' }) }))
 jest.mock('@/bootstrap/portableDataApplication', () => ({ initializePortableDataApplication: jest.fn() }))
 jest.mock('@/bootstrap/conversationReplyStart', () => ({ initializeConversationReplyStart: jest.fn() }))
@@ -79,7 +93,9 @@ jest.mock('@/platform/native/androidApkUpdates', () => ({
   shouldAutoCheckApkUpdate: () => mockAutoCheckDue,
   shouldRecordApkUpdateCheck: (result: ApkUpdateResult) => result.status === 'available' || result.status === 'unavailable',
   checkLatestApkReleaseSilently: () => mockCheck(),
-  downloadAndOpenApkInstaller: jest.fn(),
+  prepareApkRelease: jest.fn(),
+  openPreparedApkInstaller: jest.fn(),
+  discardPreparedApk: jest.fn(async () => undefined),
   formatApkSizeBytes: (value: number | undefined) => value === undefined ? 'unknown' : `${value} B`,
 }))
 jest.mock('@/bootstrap/androidStatusNotification', () => ({
@@ -92,6 +108,7 @@ jest.mock('@/platform/native/runtimeLog', () => ({
 }))
 
 const initial = useSettingsStore.getState()
+const originalPlatformOS = Platform.OS
 const records = new Map<string, string>()
 
 function deferred<T>() {
@@ -129,6 +146,8 @@ async function ready() {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  appUpdateActivity.setForeground(true)
+  Platform.OS = 'android'
   mockAutoCheckDue = true
   mockSnapshot = { appVersion: '1.1.2', buildVersion: '127', updateMode: 'apk', hotUpdateMode: 'disabled' }
   mockRelease = {
@@ -147,7 +166,10 @@ beforeEach(() => {
   mockCheck.mockReset().mockImplementation(async () => ({
     status: 'available', message: 'available', release: mockRelease, currentVersion: { ...mockSnapshot },
   }))
-  jest.mocked(downloadAndOpenApkInstaller).mockReset().mockResolvedValue({ status: 'downloaded', message: 'installer opened' })
+  jest.mocked(prepareApkRelease).mockReset().mockImplementation(async (target) => ({
+    status: 'prepared', message: 'prepared', prepared: { release: target, localUri: 'file:///cache/update.apk' },
+  }))
+  jest.mocked(openPreparedApkInstaller).mockReset().mockResolvedValue({ status: 'downloaded', message: 'installer opened' })
   useSettingsStore.setState(initial, true)
   records.clear()
   saveFixture()
@@ -161,6 +183,9 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  Platform.OS = originalPlatformOS
+  jest.restoreAllMocks()
+  appUpdateActivity.setForeground(false)
   await flushPersistedSettings().catch(() => undefined)
   await useSettingsStore.getState().flushProviderPersistence()
   releaseSettingsStorePersistence(settingsStorePersistence)
@@ -180,6 +205,35 @@ it('does not check or prompt before reminder preferences hydrate; persisted neve
   await waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(1))
   expect(useSettingsStore.getState().settings.neverRemindUpdates).toBe(true)
   expect(screen.queryByRole('button', { name: 'updates.updateNow' })).toBeNull()
+})
+
+it('round-trips delivery policy, channel and interval through persistence without treating preparation as installation', async () => {
+  saveFixture({ autoUpdateCheckEnabled: false, apkUpdateCheckIntervalMinutes: 30, apkUpdateChannel: 'every-release',
+    autoApkDownloadEnabled: true, apkUpdateBannerEnabled: false })
+  const screen = await ready()
+  expect(useSettingsStore.getState().settings).toMatchObject({
+    autoUpdateCheckEnabled: false, apkUpdateCheckIntervalMinutes: 30, apkUpdateChannel: 'every-release',
+    autoApkDownloadEnabled: true, apkUpdateBannerEnabled: false,
+  })
+  await act(() => useSettingsStore.getState().updateSettings({
+    apkUpdateCheckIntervalMinutes: 60, apkUpdateChannel: 'stable', autoApkDownloadEnabled: false, apkUpdateBannerEnabled: true,
+  }))
+  await flushPersistedSettings()
+  expect(persistedSettings()).toMatchObject({
+    autoUpdateCheckEnabled: false, apkUpdateCheckIntervalMinutes: 60, apkUpdateChannel: 'stable',
+    autoApkDownloadEnabled: false, apkUpdateBannerEnabled: true,
+  })
+  await screen.unmount()
+  useSettingsStore.setState(initial, true)
+  await ready()
+  expect(useSettingsStore.getState().settings).toMatchObject({
+    autoUpdateCheckEnabled: false, apkUpdateCheckIntervalMinutes: 60, apkUpdateChannel: 'stable',
+    autoApkDownloadEnabled: false, apkUpdateBannerEnabled: true,
+  })
+  expect(mockCheck).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
+  expect(openPreparedApkInstaller).not.toHaveBeenCalled()
+  expect(mockSnapshot).toMatchObject({ appVersion: '1.1.2', buildVersion: '127' })
 })
 
 it('persists never-remind independently and allows a known target after switching it off', async () => {
@@ -221,37 +275,42 @@ it.each(CANONICAL_THEME_IDS)('keeps %s update actions and merged notes accessibl
   expect(screen.getByText('- latest')).toBeTruthy()
 })
 
-it('shows ordered intermediate notes with exactly the ignore/update actions', async () => {
+it('shows categorized intermediate notes, source versions, and exactly the ignore/update actions', async () => {
   const screen = await ready()
   await waitFor(() => expect(screen.getByRole('button', { name: 'updates.ignoreVersion' })).toBeTruthy())
   expect(screen.getByRole('button', { name: 'updates.updateNow' })).toBeTruthy()
   expect(screen.queryByText('- installed')).toBeNull()
   expect(screen.queryByText('- future')).toBeNull()
-  expect(screen.getAllByRole('header').map(node => node.props.children).flat()).toEqual(
-    expect.arrayContaining(['updates.releaseNotes', '1.1.3', '1.1.4']),
-  )
+  expect(screen.getByText('v1.1.3')).toBeTruthy()
+  expect(within(screen.getByTestId('apk-update-release-notes')).getByText('v1.1.4')).toBeTruthy()
   expect(within(screen.getByTestId('apk-update-release-notes')).getAllByRole('header')
     .map(node => Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children)).toEqual([
-    'updates.releaseNotes', 'v1.1.3', 'v1.1.4',
+    'updates.releaseNotes', 'updates.categoryCount',
   ])
   expect(screen.getByText('- intermediate')).toBeTruthy()
   expect(screen.getByText('- latest')).toBeTruthy()
-  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
 })
 
 it('survives restart after ignore and prompts again for a higher target', async () => {
+  const clock = jest.spyOn(Date, 'now')
+  let time = Date.now()
   const first = await ready()
   await waitFor(() => expect(first.getByRole('button', { name: 'updates.ignoreVersion' })).toBeTruthy())
   await fireEvent.press(first.getByRole('button', { name: 'updates.ignoreVersion' }))
   await flushPersistedSettings()
   expect(persistedSettings().ignoredApkUpdate).toEqual(createApkUpdateIgnoreState(mockSnapshot, mockRelease))
-  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
   await first.unmount()
+  time += 2 * 86_400_000
+  clock.mockReturnValue(time)
   useSettingsStore.setState(initial, true)
   const restarted = await ready()
   await waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(2))
   expect(restarted.queryByRole('button', { name: 'updates.updateNow' })).toBeNull()
   await restarted.unmount()
+  time += 2 * 86_400_000
+  clock.mockReturnValue(time)
   useSettingsStore.setState(initial, true)
   mockRelease = { ...mockRelease, version: '1.1.5', versionCode: 130, tagName: 'v1.1.5' }
   const higher = await ready()
@@ -290,6 +349,7 @@ it.each(['disabled', 'throttled'] as const)('expires stale ignore even when auto
   saveFixture({
     ignoredApkUpdate: createApkUpdateIgnoreState(mockSnapshot, mockRelease),
     neverRemindUpdates: true, autoUpdateCheckEnabled: reason !== 'disabled',
+    lastApkUpdateCheckAt: reason === 'throttled' ? Date.now() : undefined,
   })
   mockAutoCheckDue = reason !== 'throttled'
   mockSnapshot = { ...mockSnapshot, appVersion: '1.1.4', buildVersion: '129' }
@@ -302,14 +362,15 @@ it.each(['disabled', 'throttled'] as const)('expires stale ignore even when auto
   expect(screen.queryByRole('button', { name: 'updates.updateNow' })).toBeNull()
 })
 
-it('starts the existing installer immediately but does not mistake handoff for upgrade success', async () => {
+it('prepares after consent and hands off at idle without mistaking handoff for upgrade success', async () => {
   const olderIgnore = createApkUpdateIgnoreState(mockSnapshot, { version: '1.1.3', versionCode: 128 })
   saveFixture({ ignoredApkUpdate: olderIgnore })
   const screen = await ready()
   await waitFor(() => expect(screen.getByRole('button', { name: 'updates.updateNow' })).toBeTruthy())
   await fireEvent.press(screen.getByRole('button', { name: 'updates.updateNow' }))
-  await waitFor(() => expect(downloadAndOpenApkInstaller).toHaveBeenCalledTimes(1))
-  expect(downloadAndOpenApkInstaller).toHaveBeenCalledWith(mockRelease, expect.objectContaining({
+  await waitFor(() => expect(prepareApkRelease).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(openPreparedApkInstaller).toHaveBeenCalledTimes(1))
+  expect(prepareApkRelease).toHaveBeenCalledWith(mockRelease, expect.objectContaining({
     signal: expect.anything(), onProgress: expect.any(Function),
   }))
   await waitFor(() => expect(screen.getAllByText('settings.installerOpened').length).toBeGreaterThan(0))
@@ -326,7 +387,7 @@ it('cancels a displayed reminder without recording an ignore when never-remind i
   })
   expect(screen.queryByRole('button', { name: 'updates.updateNow' })).toBeNull()
   expect(persistedSettings().ignoredApkUpdate).toBeUndefined()
-  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
 })
 
 it('does not record an ignore when the app unmounts with an open reminder', async () => {
@@ -335,17 +396,17 @@ it('does not record an ignore when the app unmounts with an open reminder', asyn
   await screen.unmount()
   await flushPersistedSettings()
   expect(persistedSettings().ignoredApkUpdate).toBeUndefined()
-  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
 })
 
 it('does not cancel an explicitly chosen update when global reminders are disabled, but offers download cancellation', async () => {
   const pending = deferred<ApkUpdateResult>()
-  jest.mocked(downloadAndOpenApkInstaller).mockReturnValueOnce(pending.promise)
+  jest.mocked(prepareApkRelease).mockReturnValueOnce(pending.promise)
   const screen = await ready()
   await waitFor(() => expect(screen.getByRole('button', { name: 'updates.updateNow' })).toBeTruthy())
   await fireEvent.press(screen.getByRole('button', { name: 'updates.updateNow' }))
-  await waitFor(() => expect(downloadAndOpenApkInstaller).toHaveBeenCalledTimes(1))
-  const options = jest.mocked(downloadAndOpenApkInstaller).mock.calls[0][1]!
+  await waitFor(() => expect(prepareApkRelease).toHaveBeenCalledTimes(1))
+  const options = jest.mocked(prepareApkRelease).mock.calls[0][1]!
   await act(async () => {
     useSettingsStore.getState().updateSettings({ neverRemindUpdates: true })
     await flushPersistedSettings()
@@ -365,4 +426,27 @@ it('warns about partial history without disabling either update action', async (
   expect(screen.getByRole('button', { name: 'updates.updateNow' })).toBeEnabled()
   expect(screen.getByRole('button', { name: 'updates.ignoreVersion' })).toBeEnabled()
   expect(screen.getByText('- intermediate')).toBeTruthy()
+})
+
+it('installs the displayed frozen target even when its discovery object changes during confirmation', async () => {
+  const original = { ...mockRelease, releaseNotes: mockRelease.releaseNotes?.map(entry => ({ ...entry })) }
+  const screen = await ready()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'updates.updateNow' })).toBeTruthy())
+  mockRelease.apkUrl = 'https://example.test/changed-after-confirmation.apk'
+  mockRelease.version = '1.1.5'
+  if (mockRelease.releaseNotes?.[0]) mockRelease.releaseNotes[0].notes = '- Changed after opening'
+  await fireEvent.press(screen.getByRole('button', { name: 'updates.updateNow' }))
+  await waitFor(() => expect(prepareApkRelease).toHaveBeenCalledTimes(1))
+  expect(jest.mocked(prepareApkRelease).mock.calls[0][0]).toEqual(original)
+})
+
+it('retains a synchronous consent receipt when reminder preferences change before the promise continuation', async () => {
+  const screen = await ready()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'updates.updateNow' })).toBeTruthy())
+  await act(async () => {
+    await fireEvent.press(screen.getByRole('button', { name: 'updates.updateNow' }))
+    useSettingsStore.getState().updateSettings({ neverRemindUpdates: true })
+  })
+  await waitFor(() => expect(prepareApkRelease).toHaveBeenCalledTimes(1))
+  expect(jest.mocked(prepareApkRelease).mock.calls[0][1]?.signal?.aborted).toBe(false)
 })

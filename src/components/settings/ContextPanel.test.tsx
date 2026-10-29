@@ -133,7 +133,7 @@ jest.mock('./theme-experiences/ContextSettingsExperiences', () => ({
   LiquidGlassContextSettingsLead: ({ toggles }: any) => toggles,
 }))
 jest.mock('@/components/ui/isle', () => {
-  const { Pressable, Text, TextInput, View } = require('react-native')
+  const { Pressable: MockPressable, Text, TextInput, View } = require('react-native')
   return {
     ISLE_MIN_TOUCH_TARGET: 44, IslePressable: (props: any) => {
       if (['contextPanel.localModel.download', 'contextPanel.localModel.enable', 'common.delete'].includes(props.accessibilityLabel)) {
@@ -142,13 +142,13 @@ jest.mock('@/components/ui/isle', () => {
       if (['contextPanel.importPastedText', 'contextPanel.cancelKnowledgeImport', 'contextPanel.knowledgeRecoveryRebuild', 'contextPanel.clearRagCache'].includes(props.accessibilityLabel)) {
         mockImportPresses[props.accessibilityLabel] = props.onPress
       }
-      return <Pressable {...props} />
+      return <MockPressable {...props} />
     }, IsleToggle: ({ title, description }: any) => <View><Text>{title}</Text>{description ? <Text>{description}</Text> : null}</View>, IsleChip: Text, IsleProgress: jest.requireActual('@/components/ui/isle/IsleKit').IsleProgress, ThemeExpressionRegion: View,
     IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
     IsleButton: ({ label, ...props }: any) => {
       if (['contextPanel.localModel.cancelDownload', 'contextPanel.localModel.retrySelectionSave', 'contextPanel.localModel.reviewStateReset'].includes(label)) mockModelPresses[label] = props.onPress
       if (['contextPanel.cancelKnowledgeRebuild', 'contextPanel.cancelSelfTest', 'contextPanel.cancelRagEvaluation'].includes(label)) mockImportPresses[label] = props.onPress
-      return <Pressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></Pressable>
+      return <MockPressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></MockPressable>
     },
     useIsleDialog: () => ({ toast: mockToast, confirm: mockConfirm, notice: mockNotice }),
   }

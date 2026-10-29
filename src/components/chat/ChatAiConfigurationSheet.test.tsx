@@ -10,13 +10,13 @@ jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 jest.mock('@/utils/lazyLoad', () => {
   const React = require('react')
-  const { Pressable, View } = require('react-native')
+  const { Pressable: MockPressable, View } = require('react-native')
   return {
     LazyLoadingFallback: () => null,
     createLazyComponent: () => (props: { onManageProviders?: () => void; onClose?: () => void }) => (
       <View>
-        {props.onManageProviders ? <Pressable accessibilityLabel="Providers" onPress={props.onManageProviders} /> : null}
-        <Pressable accessibilityLabel="Close" onPress={props.onClose} />
+        {props.onManageProviders ? <MockPressable accessibilityLabel="Providers" onPress={props.onManageProviders} /> : null}
+        <MockPressable accessibilityLabel="Close" onPress={props.onClose} />
       </View>
     ),
   }

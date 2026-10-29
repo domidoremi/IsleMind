@@ -1,6 +1,6 @@
 {
   "name": "islemind",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "packageManager": "bun@1.4.2",
   "workspaces": {
     "packages": ["../animal-island-ui"],
@@ -122,6 +122,7 @@
     "test:provider-live-smoke:plan": "node scripts/provider-compatibility-live-smoke-plan.js",
     "test:provider-live-smoke:plan:self": "node scripts/provider-compatibility-live-smoke-plan.js --self-test",
     "test:streaming-cleanup": "node scripts/streaming-cleanup-tests.js",
+    "test:update-delivery": "jest --runInBand --runTestsByPath src/core/updateCatalog.test.ts src/core/signedUpdateCatalog.test.ts src/modules/settings/updateCatalogSelection.test.ts scripts/release-plan-contract.test.js scripts/update-delivery-cli.test.js scripts/update-delivery-workflow.test.js src/core/cumulativeReleaseNotes.test.ts src/core/appUpdateIdle.test.ts src/core/appUpdateCheckScheduler.test.ts src/core/apkAutomaticDownloadPolicy.test.ts src/modules/settings/updateReminders.test.ts src/platform/native/githubReleaseChannel.test.ts src/platform/native/androidApkUpdates.test.ts src/hooks/useScheduledApkUpdateCheck.test.tsx src/bootstrap/apkUpdateReminderPersistenceComposition.test.tsx src/components/updates/ApkUpdateReleaseNotes.test.tsx src/components/updates/GlobalApkUpdatePrompt.test.tsx src/components/updates/ApkAutomaticDownloadConsent.test.tsx src/components/updates/ApkUpdateDeliverySettings.test.tsx src/components/updates/apkUpdateDeliveryCoordinator.test.ts src/components/updates/apkUpdateInstallCoordinator.test.ts src/components/updates/useAutomaticApkUpdateInstall.test.tsx src/components/updates/useAutomaticApkUpdateInstallIdle.test.tsx src/components/updates/useAutomaticApkUpdatePreparation.test.tsx src/components/updates/useAppUpdateActivityBridge.test.tsx src/components/settings/SystemSettingsPanelContent.test.tsx",
     "type-check": "node node_modules/typescript/bin/tsc --noEmit",
     "doctor": "node node_modules/expo-doctor/bin/expo-doctor.js",
     "test:architecture-dependencies": "node scripts/architecture-dependency-audit.js --include-type --gate",
@@ -143,6 +144,8 @@
     "test:work-artifact-smoke:self": "node scripts/collect-work-artifact-smoke.js --self-test",
     "test:qa-audit": "node scripts/qa-coverage-audit.js",
     "release:source-stability": "node scripts/check-release-source-stability.js",
+    "release:plan": "node scripts/release-plan.js",
+    "release:verify-catalog": "node scripts/verify-update-catalog.js",
     "release:write-source-snapshots": "node scripts/write-release-source-snapshots.js",
     "release:install-current-apk": "node scripts/install-current-release-apk.js",
     "apk:local": "node scripts/build-local-android-apk.js --variant no-model --debug",

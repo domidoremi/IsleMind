@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser'
-import { mergeAppReleaseNotes, type AppReleaseNotes } from '@/core/appVersion'
+import { compareAppVersions, type AppReleaseNotes } from '@/core/appVersion'
+import { selectReleaseNotesRange, type ReleaseNotesBoundary } from '@/core/cumulativeReleaseNotes'
 
 export type GithubReleaseChannelFailureReason = 'network' | 'rate_limited' | 'manifest_invalid'
 
@@ -29,6 +30,7 @@ export interface GithubReleaseNotesSnapshot {
 }
 
 export interface GithubReleaseChannelRequestOptions {
+  channel?: 'stable' | 'every-release'
   fetchImplementation?: typeof fetch
   signal?: AbortSignal
   timeoutMs?: number
@@ -73,7 +75,7 @@ const githubHtmlParser = new XMLParser({
 })
 
 export class GithubReleaseChannelError extends Error {
-  constructor(readonly reason: GithubReleaseChannelFailureReason, message: string) {
+  constructor(readonly reason: GithubReleaseChannelFailureReason, message: string, readonly retryAfterMs?: number) {
     super(message)
     this.name = 'GithubReleaseChannelError'
   }
@@ -111,7 +113,7 @@ export async function fetchGithubTaggedAndroidReleaseSnapshot(
   tag: GithubTagVersionSnapshot,
   options: GithubReleaseChannelRequestOptions = {},
 ): Promise<GithubTaggedAndroidReleaseSnapshot> {
-  assertStableTagName(tag.tagName)
+  if (!isEligibleReleaseTag(tag.tagName, options.channel)) throw invalidChannelPayload('Invalid release tag for this channel.')
   const manifestUrl = `${RAW_GITHUB_ORIGIN}${REPOSITORY_PATH}/${tag.tagName}/updates/android.json`
   const assetsUrl = `${GITHUB_ORIGIN}${REPOSITORY_PATH}/releases/expanded_assets/${tag.tagName}`
   const assetsHtml = await requestBoundedText(
@@ -134,14 +136,78 @@ export async function fetchGithubTaggedAndroidReleaseSnapshot(
   }
 }
 
+/** Source-only tags are not APK releases. Discovery still cannot bypass tagged manifest qualification. */
+export async function fetchGithubApkTagVersionCandidates(
+  options: GithubReleaseChannelRequestOptions = {},
+): Promise<GithubTagVersionSnapshot[]> {
+  if (options.signal?.aborted) throw new GithubReleaseChannelError('network', 'APK catalog request cancelled.')
+  const controller = new AbortController()
+  const abortFromParent = () => controller.abort(options.signal?.reason)
+  options.signal?.addEventListener('abort', abortFromParent, { once: true })
+  const timer = setTimeout(() => controller.abort(new Error('APK release catalog timed out.')),
+    options.timeoutMs === undefined ? RELEASE_NOTES_TOTAL_TIMEOUT_MS : normalizeTimeout(options.timeoutMs))
+  const requestOptions = { ...options, signal: controller.signal }
+  const records = new Map<string, { tagName: string; name: string; publishedAt: string | null }>()
+  const candidates: GithubTagVersionSnapshot[] = []
+  try {
+    for (let page = 1; page <= RELEASE_NOTES_MAX_PAGES; page += 1) {
+      const payload = await readGithubReleasePage(page, requestOptions)
+      for (const record of payload) {
+        if (!isRecord(record)) throw invalidChannelPayload('GitHub release records must be objects.')
+        if (record.draft !== false || typeof record.prerelease !== 'boolean'
+          || (record.prerelease && options.channel !== 'every-release')
+          || !Number.isFinite(Date.parse(readOptionalText(record.published_at) ?? ''))) continue
+        const tagName = readOptionalText(record.tag_name)
+        if (!tagName) throw invalidChannelPayload('GitHub release tags must be nonempty strings.')
+        if (!isEligibleReleaseTag(tagName, options.channel)) continue
+        if (!Array.isArray(record.assets)) throw invalidChannelPayload('GitHub release assets must be an array.')
+        if (record.assets.some((asset) => !isRecord(asset) || typeof asset.name !== 'string' || !asset.name.trim())) {
+          throw invalidChannelPayload('GitHub release assets must have valid names.')
+        }
+        const hasApk = record.assets.some((asset) => isRecord(asset)
+          && typeof asset.name === 'string' && /\.apk$/i.test(asset.name)
+          && (asset.state === undefined || asset.state === 'uploaded'))
+        if (!hasApk || records.has(tagName)) continue
+        records.set(tagName, { tagName, name: readOptionalText(record.name) ?? tagName,
+          publishedAt: readOptionalText(record.published_at) ?? null })
+      }
+      if (payload.length < RELEASE_NOTES_PAGE_SIZE) break
+      if (page === RELEASE_NOTES_MAX_PAGES) throw new GithubReleaseChannelError('network', 'APK release catalog exceeded the bounded history window.')
+    }
+    const releases = [...records.values()]
+    let nextIndex = 0
+    await Promise.all(Array.from({ length: Math.min(RELEASE_NOTES_METADATA_CONCURRENCY, releases.length) }, async () => {
+      while (nextIndex < releases.length) {
+        const record = releases[nextIndex++]
+        const version = parseTaggedAppVersion(await requestBoundedJson(
+          `${RAW_GITHUB_ORIGIN}${REPOSITORY_PATH}/${record.tagName}/app.json`,
+          APP_CONFIG_RESPONSE_LIMIT_BYTES,
+          requestOptions,
+        ))
+        candidates.push({ ...record, ...version, htmlUrl: `${GITHUB_ORIGIN}${REPOSITORY_PATH}/releases/tag/${record.tagName}` })
+      }
+    }))
+    return candidates.sort((a, b) => b.versionCode - a.versionCode
+      || compareAppVersions(b.versionName, a.versionName) || a.tagName.localeCompare(b.tagName))
+  } finally {
+    controller.abort()
+    clearTimeout(timer)
+    options.signal?.removeEventListener('abort', abortFromParent)
+  }
+}
+
 /** Notes are optional: API limits or missing history must never invalidate a verified APK. */
 export async function fetchGithubReleaseNotesSnapshot(
-  installedVersion: string,
+  installedVersion: string | ReleaseNotesBoundary,
   target: GithubTagVersionSnapshot,
   options: GithubReleaseChannelRequestOptions = {},
 ): Promise<GithubReleaseNotesSnapshot> {
   const entries: AppReleaseNotes[] = []
-  const seenTags = new Set<string>()
+  const seenSources = new Map<string, Set<string>>()
+  const metadata = new Map<string, Promise<ReturnType<typeof parseTaggedAppVersion>>>()
+  metadata.set(target.tagName, Promise.resolve(target))
+  const installed = typeof installedVersion === 'string' ? { version: installedVersion } : installedVersion
+  const targetBoundary = { version: target.versionName, versionCode: target.versionCode }
   const controller = new AbortController()
   const abortFromParent = () => controller.abort(options.signal?.reason)
   if (options.signal?.aborted) return { entries, complete: false }
@@ -153,20 +219,24 @@ export async function fetchGithubReleaseNotesSnapshot(
   try {
     for (let page = 1; page <= RELEASE_NOTES_MAX_PAGES; page += 1) {
       if (controller.signal.aborted) { complete = false; break }
-      const payload = await requestBoundedJson(
-        `https://api.github.com/repos${REPOSITORY_PATH}/releases?per_page=${RELEASE_NOTES_PAGE_SIZE}&page=${page}`,
-        RELEASE_NOTES_RESPONSE_LIMIT_BYTES,
-        requestOptions,
-      )
-      if (!Array.isArray(payload)) throw invalidChannelPayload('GitHub release history must be an array.')
-      if (payload.length > RELEASE_NOTES_PAGE_SIZE) throw invalidChannelPayload('GitHub release history page is oversized.')
+      const payload = await readGithubReleasePage(page, requestOptions)
       const releases = payload.flatMap((record) => {
-        if (!isRecord(record) || record.draft === true || record.prerelease === true) return []
+        if (!isRecord(record)) { complete = false; return [] }
+        if (record.draft === true || (record.prerelease === true && options.channel !== 'every-release')) return []
         const tagName = readOptionalText(record.tag_name)
-        const notes = readOptionalText(record.body)
-        if (!tagName || !parseStableTagVersion(tagName) || !notes || seenTags.has(tagName)) return []
-        seenTags.add(tagName)
-        return [{ tagName, notes }]
+        if (!tagName) { complete = false; return [] }
+        const notes = readOptionalText(record.body) ?? ''
+        if (record.body !== undefined && record.body !== null && typeof record.body !== 'string') complete = false
+        if (!isEligibleReleaseTag(tagName, options.channel)) return []
+        const sourceId = typeof record.id === 'number' && Number.isSafeInteger(record.id) && record.id > 0
+          ? `github:${REPOSITORY_PATH}:release:${record.id}` : `github:${REPOSITORY_PATH}:tag:${tagName}`
+        const snapshots = seenSources.get(sourceId) ?? new Set<string>()
+        const snapshotId = JSON.stringify([tagName, notes])
+        if (snapshots.has(snapshotId)) return []
+        if (snapshots.size) complete = false
+        snapshots.add(snapshotId)
+        seenSources.set(sourceId, snapshots)
+        return [{ tagName, notes, sourceId }]
       })
       let nextIndex = 0
       await Promise.all(Array.from({ length: Math.min(RELEASE_NOTES_METADATA_CONCURRENCY, releases.length) }, async () => {
@@ -174,15 +244,18 @@ export async function fetchGithubReleaseNotesSnapshot(
           const release = releases[nextIndex++]
           try {
             // Legacy tags may differ from the app's versionName; label notes using tagged app metadata.
-            const version = release.tagName === target.tagName ? target : parseTaggedAppVersion(
-              await requestBoundedJson(
+            let versionPromise = metadata.get(release.tagName)
+            if (!versionPromise) {
+              versionPromise = requestBoundedJson(
                 `${RAW_GITHUB_ORIGIN}${REPOSITORY_PATH}/${release.tagName}/app.json`,
                 APP_CONFIG_RESPONSE_LIMIT_BYTES,
                 requestOptions,
-              ),
-            )
-            entries.push(...mergeAppReleaseNotes(installedVersion, target.versionName, [
-              { version: version.versionName, versionCode: version.versionCode, notes: release.notes },
+              ).then(parseTaggedAppVersion)
+              metadata.set(release.tagName, versionPromise)
+            }
+            const version = await versionPromise
+            entries.push(...selectReleaseNotesRange(installed, targetBoundary, [
+              { sourceId: release.sourceId, version: version.versionName, versionCode: version.versionCode, notes: release.notes },
             ]))
           } catch {
             complete = false
@@ -200,7 +273,18 @@ export async function fetchGithubReleaseNotesSnapshot(
     clearTimeout(timer)
     options.signal?.removeEventListener('abort', abortFromParent)
   }
-  return { entries: mergeAppReleaseNotes(installedVersion, target.versionName, entries), complete }
+  return { entries: selectReleaseNotesRange(installed, targetBoundary, entries), complete }
+}
+
+async function readGithubReleasePage(page: number, options: GithubReleaseChannelRequestOptions): Promise<unknown[]> {
+  const payload = await requestBoundedJson(
+    `https://api.github.com/repos${REPOSITORY_PATH}/releases?per_page=${RELEASE_NOTES_PAGE_SIZE}&page=${page}`,
+    RELEASE_NOTES_RESPONSE_LIMIT_BYTES,
+    options,
+  )
+  if (!Array.isArray(payload)) throw invalidChannelPayload('GitHub release history must be an array.')
+  if (payload.length > RELEASE_NOTES_PAGE_SIZE) throw invalidChannelPayload('GitHub release history page is oversized.')
+  return payload
 }
 
 interface StableTagEntry {
@@ -399,7 +483,12 @@ async function requestBoundedText(
       const reason: GithubReleaseChannelFailureReason = response.status === 403 || response.status === 429
         ? 'rate_limited'
         : 'network'
-      throw new GithubReleaseChannelError(reason, `GitHub release channel returned HTTP ${response.status}.`)
+      const retry = response.headers?.get?.('retry-after')
+      const reset = Number(response.headers?.get?.('x-ratelimit-reset'))
+      const retryAfterMs = retry && /^\d+$/.test(retry) ? Number(retry) * 1000
+        : retry ? Date.parse(retry) - Date.now() : reset > 0 ? reset * 1000 - Date.now() : undefined
+      throw new GithubReleaseChannelError(reason, `GitHub release channel returned HTTP ${response.status}.`,
+        Number.isFinite(retryAfterMs) ? Math.max(0, Math.min(48 * 3_600_000, retryAfterMs!)) : undefined)
     }
     const declaredLength = Number.parseInt(response.headers?.get?.('content-length') ?? '', 10)
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
@@ -440,6 +529,11 @@ function assertStableTagName(tagName: string): void {
   if (!parseStableTagVersion(tagName)) {
     throw invalidChannelPayload('GitHub release tag must be a stable semantic version.')
   }
+}
+
+function isEligibleReleaseTag(tagName: string, channel?: 'stable' | 'every-release'): boolean {
+  return !!parseStableTagVersion(tagName) || (channel === 'every-release' && tagName.length <= 128
+    && /^v?\d+\.\d+\.\d+-[a-z0-9]+(?:[.-][a-z0-9]+)*$/i.test(tagName))
 }
 
 function isExpectedGithubUrl(url: URL): boolean {

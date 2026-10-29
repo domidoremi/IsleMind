@@ -6,6 +6,9 @@
 
 **Platform:** Expo SDK, React Native, Expo Router, strict TypeScript, and Bun.
 
+The [update-delivery boundary](#17-update-delivery) owns cumulative release notes,
+quiet-time consent, installed identity, and the staged OTA/publishing scope.
+
 **Product runtime:** Chat is the conversational and durable assistant execution entry. Documents is a supporting user-owned editor with explicitly requested, ephemeral model proposals, not another agent/task/effect mode. Obsolete product-mode metadata may be decoded only inside an owner-private migration reader and cannot select navigation, permission, or reply behavior. Agent workflows and Tavern workspaces are active domain capabilities inside Chat, not alternate product modes.
 
 ## 1. Objective
@@ -912,3 +915,413 @@ notification click races, OEM survival, Android 15 service deadlines, lock-scree
 power, startup p95, sustained Hermes memory or a real-model research/write workflow.
 Use isolated application data and an explicitly authorized provider/cost cap for those
 checks. Do not describe Phase 1–5 as qualified solely because static and unit checks pass.
+
+## 17. Update Delivery
+
+Status: Phase 1 prompting/consent, Phase 2 offline catalog/planning contracts and
+Phase 3 APK-path V1 checks/preparation/idle handoff are implemented and
+host-regression validated. The signed catalog is not connected to live
+discovery, downloads or activation. Host
+validation is not Android qualification or publication approval. Date: 2026-10-28.
+
+### Ownership
+
+- `src/core/appVersion.ts` owns version parsing and comparison. Existing shortened
+  versions and prerelease rules remain unchanged.
+- `src/core/cumulativeReleaseNotes.ts` owns the delivered range, release identity,
+  language selection, categories, counts, and source-preserving presentation data.
+- `src/core/appUpdateIdle.ts` owns the pure activity projection and quiet deadline.
+- `src/presentation/app-shell/appUpdateActivity.ts` is the app-root-owned singleton.
+  It carries ephemeral busy scopes, not tasks, permissions, or installed versions.
+- `src/components/updates/GlobalApkUpdatePrompt.tsx` offers eligible automatic
+  confirmations. `useApkUpdatePrompt.tsx` shares consent with manual checks.
+- `apkUpdateTarget.ts` freezes the artifact and notes before confirmation.
+  `apkUpdateDeliveryCoordinator.ts` owns one preparation and target-bound approval
+  at the mounted root. The older combined coordinator is not the live UI owner.
+- `apkUpdateDeliverySession.ts` projects that owner's ephemeral state and routes
+  UI commands; it is not another task or installation registry.
+- `useAutomaticApkUpdateInstall.ts` adapts preparation, idle handoff and notification
+  ports. Delayed feedback cannot overwrite a newer stage. Settings and automatic
+  confirmations share this owner across routes.
+- `src/core/apkAutomaticDownloadPolicy.ts` qualifies the explicit Wi-Fi policy.
+  `useAutomaticApkUpdatePreparation.ts` observes network/settings/foreground events
+  only for enabled available targets; it never supplies installation approval.
+- `src/modules/settings/updateReminders.ts` remains the durable reminder-policy
+  owner. Manual/automatic ownership remains in `apkUpdateInteraction.ts`.
+- `src/platform/native/githubReleaseChannel.ts` owns bounded GitHub transport.
+  `androidApkUpdates.ts` remains the APK effect boundary: preparation, an
+  authenticated in-memory capability, final integrity revalidation, disposal and
+  the guarded Android installer handoff.
+- `src/core/appUpdateCheckScheduler.ts` owns one foreground check deadline/request.
+  `useScheduledApkUpdateCheck.ts` binds hydration, cache-cleanup, network, channel
+  and successful-check persistence to that pure scheduler.
+- `src/core/updateCatalog.ts` owns the bounded V1 catalog and canonical encoding.
+  `signedUpdateCatalog.ts` owns pinned-trust verification and metadata evidence.
+- Settings' `loadUpdateCatalogTools` is the lazy public entry for verification,
+  compatible artifact selection, explicit change inclusion and checkpoint CAS.
+  Its private `updateCatalogSelection.ts` performs no installation effects.
+- `scripts/release-plan.js` binds read-only Git observations to
+  `release-plan-contract.js`. `updates/release-policy.json` owns batching defaults;
+  `updates/changes/*.json` are pending records, not historical release notes.
+- `scripts/verify-update-catalog.js` is a local-file verifier using Node's
+  Ed25519 primitive. There is no active application cryptographic adapter,
+  production trust file, checkpoint store or catalog endpoint.
+
+No generic event bus, second run registry, model-driven idle detector, or new
+installation engine is introduced.
+
+### Complete Cumulative Notes
+
+Select the range `(actually installed, selected artifact]`. Build codes
+distinguish equal-version rebuilds and add lower/upper artifact fences. Source
+version bounds still apply even when source-only releases keep a build code
+unchanged: do not advertise a future source version just because its code equals
+the selected APK's code, or drop an intermediate source-only change just because
+its code equals the installed code. Sort changes newest-first by source version
+and then build, with stable source tie-breaking.
+
+Count real distinct release records, not the difference between version numbers.
+Forty releases can contain fifty changes. The first and last labels belong to the
+actual fetched records; missing intermediate integers are not invented releases.
+
+GitHub release IDs identify records; legacy payloads use the tagged source or a
+canonical version/build fallback. Exact repeated transport snapshots are removed.
+Identical changes in different releases and repeated bullets in one release stay
+visible. Conflicting snapshots stay visible and make completeness false.
+
+Select the requested Chinese, English, or Japanese details block before parsing.
+Known headings map to features, improvements, fixes, and privacy. Nested list
+details and code remain attached to their top-level change. Unclassified text and
+publication notices remain in a separate category. Each change retains its source
+version and release identity.
+
+Empty notes still count as a fetched release and produce an incomplete-history
+warning. Missing target records, unknown completeness, metadata failures, response
+limits, timeouts, and conflicting records cannot be called complete. A missing
+translation uses a deterministic available-language fallback with an explicit
+notice. Do not clip source prose or substitute generated highlights. Long
+categories materialize in explicit fifty-change render batches with a remaining
+count and show-more action. Counts use the complete catalog, not rendered rows;
+all remaining changes stay accessible without nesting a virtual list in the
+dialog's ScrollView.
+
+Issue links remain explicit HTTP(S) actions; credential-bearing and script URLs
+are not executable links. No remote images or embedded HTML are fetched/executed.
+The shell does not eagerly load another Markdown renderer.
+
+Legacy line-derived change IDs are stable inside the frozen source snapshot,
+not permanent identities across edited GitHub bodies or translations. The V1
+structured catalog supplies durable change IDs; the legacy live reader is not
+silently migrated to it.
+
+### Quiet-Time Policy
+
+Automatic prompting requires known foreground state, no blockers, eligible
+hydrated preferences, no pending dialog, and a continuous five-second quiet
+period. A deadline rechecks the live state before claiming confirmation.
+
+Activity comes from root gestures/navigation, keyboard events, input focus,
+composer drafts/sending/voice, settings drafts and operations, document editing
+and revision proposals, native overlays, active streams, and actual invocation
+scopes. Ending a blocker starts fresh quiet time. Held/multi-touch gestures cannot
+expire into a prompt; cancellation/background transition releases their scopes.
+
+The execution host exposes only aggregate invocation activity. Persisted running
+status alone is not execution activity or CPU authority. Waiting and cleanup
+scopes keep their actual invocation lifetime; observers cannot change it.
+
+Android window blur is a blocker, not an AppState background transition: an
+app-owned modal must not immediately cancel itself. Real background transitions
+abort unapproved automatic confirmations without saving an ignore. Returning to
+the foreground permits a fresh quiet-time attempt.
+
+The browser bridge additionally observes visibility, window/input focus, keyboard,
+pointer, and wheel events. APK availability remains Android/distribution-gated.
+
+There is at most one idle deadline per pending offer and no polling loop. A
+refused manual/automatic claim waits for another activity event. Equivalent
+artifact objects or refreshed notes do not reset quiet time; the latest notes are
+frozen when the dialog opens, not substituted while it is being read.
+
+Five seconds of inactivity is a heuristic, not proof that the user is not reading.
+The policy cannot infer attention or every external/OEM overlay. Upstream controls
+that keep private modal state need a verified activity signal before future Web
+OTA prompting relies on them. Native notification-drawer, hardware-keyboard,
+accessibility, OEM window-focus, and lifecycle behavior still need device evidence.
+
+### Consent And Installation
+
+The shared prompt returns the frozen approved artifact, not a boolean granting
+permission to use a later `latest` value. The dialog records explicit consent
+synchronously before its promise settles. Reminder changes or newly discovered
+targets cannot revoke or replace that already-approved artifact.
+
+Manual checks abort unapproved queued/displayed automatic confirmations without
+recording an ignore. Explicit ignores and never-remind preferences remain
+persisted; manual checks remain available. Teardown or automatic interruption
+is not an explicit ignore.
+
+Preparation and installation approval are separate. Optional default-off download
+cannot open an installer. Enabling it explicitly accepts connected, reachable
+Wi-Fi while foreground and the configured app proxy is off. Wi-Fi is not proof
+of unmetered networking: Expo does not reliably expose metering, and the three
+language consent names hotspot, VPN and system-routing charges. Unknown
+connectivity/type/reachability/proxy state fails closed. Loss of this policy
+cancels only unapproved preparation; it does not revoke a user-approved target.
+
+The one root coordinator rejects conflicting targets and freezes version/build,
+asset URL/hash/size/source and notes. Consent received during automatic preparation
+promotes only the identical target. Confirmed manual delivery survives route
+changes, while an unapproved confirmation is aborted on route/channel replacement.
+Cancelling review is not an ignore; cancelling a pending update does not
+implicitly ignore its version or alter the installed baseline.
+
+Verified preparation releases its own busy scope before idle waiting. Handoff
+needs known foreground state, no activity blockers, five seconds of quiet and
+dialogs explicitly known absent. Read-only cumulative notes remain available
+while waiting and pause handoff as a dialog, without a consent or delivery command.
+Neither waiting nor preparation stops Agent work or restarts a gateway.
+
+Native preparation is pinned to an official HTTPS GitHub release, required
+SHA-256/size and a unique cache filename. A frozen capability authenticated through
+a private WeakMap cannot be recreated from a URI or cloned metadata. Bytes are
+reverified before handoff; cancellation, capability revocation and the live idle
+guard are rechecked after content-URI conversion and the opening-progress callback.
+Missing guards defer rather than install. Restart/cache loss requires a new
+preparation; no durable capability or installed receipt is inferred.
+
+Cancellation retains the active operation fence until native settlement and
+suppresses stale progress/busy results. Cancelling and final-validation state stay
+visible in Settings until the irreversible handoff begins. Notification requests
+carry an owner and revision; deferred progress cannot replace waiting or terminal
+feedback. Prepared/waiting feedback stops the earlier transfer foreground service.
+The optional banner does not suppress integrity-error notices, consent or the
+Settings pending state. Notification visibility is not background scheduling
+authority or proof of a reliable unattended transfer.
+
+The native boundary still validates distribution, tag/app/manifest identity,
+supported assets, file size, full SHA-256, cancellation, cache cleanup, and the
+single-installer lock. Notes and consent do not bypass these checks. Google Play
+builds cannot acquire external APK installation authority.
+
+Opening the system installer is handoff, not upgrade success. Neither it,
+download completion, ignore, backgrounding, nor reading notes advances the
+installed baseline.
+
+### Source Releases Versus Installable Releases
+
+Both channels query actual published GitHub release records, not a source-tag
+feed or the stable-only latest endpoint. Stable excludes preview publications;
+every-release includes qualified published previews. Draft/unpublished/source-only
+records cannot qualify. Tagged app metadata still decides which native APK is
+newer and compatible, rather than advertising every source change as installable.
+
+Discovery is not qualification: the selected candidate still needs its tagged
+manifest, matching release assets, ABI/variant selection, and integrity metadata.
+Malformed qualification does not silently fall back to an unverified package.
+
+The shared release API transport allows at most ten pages of one hundred records,
+four parallel metadata requests, bounded response bodies, and a fifteen-second
+catalog/history budget. Fallback discovery and qualification also share an
+additional fifteen-second deadline. Incomplete APK discovery fails closed;
+optional note-history failure does not invalidate an already-qualified APK.
+
+Source-only intermediate changes can be included when a later qualified artifact
+contains their source range. Changes after the selected artifact cannot appear
+as delivered. The current live reader assumes the repository's monotonic tagged
+build metadata; the offline V1 catalog instead records source inclusion explicitly.
+
+### Signed Catalog And Offline Verification
+
+The V1 catalog retains distinct release, change and artifact records. Artifacts
+name exact `includedReleaseIds` and `changeIds`, including releases with no
+changes. Applied release/change receipts determine what remains to display;
+version subtraction, missing integers and text similarity are not delivery
+evidence. Each change retains its source commit, category, platforms and
+localized text. Source records and artifact membership must cross-reference
+exactly; future, out-of-platform and native-only OTA changes are rejected.
+
+`islemind.update-catalog.v1`, `islemind.signed-update-catalog.v1` and
+`islemind.update-catalog-checkpoint.v1` are separate contracts. The restricted
+project canonical JSON format accepts only bounded plain data, valid Unicode and
+safe integers. It is not a claim to implement all of RFC 8785. Missing/unknown
+fields, duplicate IDs or JSON fields, ambiguous encodings, unsafe numbers,
+accessors, class instances and malformed references fail closed. The byte budget
+is 1 MiB, structural depth 24, and node budget 100,000; collections have additional
+bounds. File-based CLIs reject malformed UTF-8 rather than hash replacement text.
+
+Ed25519 signs `islemind.signed-update-catalog.v1\nKEY_ID\nCANONICAL_PAYLOAD`.
+Public keys are 32-byte lowercase hex and signatures are 64-byte lowercase hex.
+The catalog cannot supply its own trust: externally pinned key identity,
+repository, channel, key validity/revocation, catalog validity and minimum
+sequence are checked. Catalog lifetime is at most seven days. Verification has
+a five-second default deadline, a ten-second maximum and cancellation cleanup.
+Live adapters must provide the current-clock callback to recheck validity after
+asynchronous verification; artifact selection always requires a current `nowMs`.
+
+Checkpoints are monotonic within a repository/channel namespace. Lower sequence
+is replay; the same sequence with different payload SHA-256 is equivocation.
+The same sequence and digest may be accepted idempotently. Key/channel changes
+do not silently migrate checkpoint state. Verification returns frozen,
+private-identity-authenticated `VerifiedUpdateCatalog` evidence; decoding,
+copying or casting another object cannot manufacture it. Settings proposes a
+compare-and-set checkpoint write so a stale concurrent response cannot replace
+a newer accepted checkpoint. The external store owns persistence and cancellation
+semantics; this phase provides no production store.
+
+APK candidates use actual native build code, ABI preference and variant.
+OTA candidates require explicit opt-in, matching runtime fingerprint, native
+build bounds and a newer independent OTA sequence. Both require a pinned
+artifact origin and non-quarantined status. Stable catalogs reject prereleases.
+Google Play distribution obtains neither external APK nor OTA authority.
+Candidates and verified metadata are not file-integrity, consent, activation or
+installed-version receipts.
+
+The Node verifier reads explicitly named local catalog/trust/checkpoint files
+and emits a proposed checkpoint. It never downloads, writes the checkpoint,
+records an update as applied, or creates production keys. Its shared TypeScript
+loader executes only the fixed source-contract whitelist, never catalog data,
+and installs no process-wide compiler/alias hook.
+
+### Source-Bound Release Planning
+
+Plans choose `skip`, `accumulate`, `native-candidate`, `ota-candidate` or `blocked`.
+Every result has `executionAllowed: false` and `publicationApproved: false`;
+candidate build flags describe required qualification, not permission to execute.
+Documentation/tests and explicitly declared no-delivery internal changes may
+skip publication. Routine deliverable changes batch at five changes and at least
+24 hours since the last publication, with a seven-day or fifty-change cap.
+Important/security work can select an earlier candidate, never bypass trust,
+validation or user consent.
+
+The plan binds pending stable-ID records, exact changed paths, immutable source
+commit/tree, paired UI revision, native-input fingerprint and the independently
+owned publication state. Renames retain both old and new paths. Unknown runtime
+paths, missing records, undeclared native changes, edited published IDs, unknown
+publication state or an unqualified OTA runtime cannot authorize delivery.
+Offline user-guide source is runtime content, not a docs-only exemption.
+Standalone validation-script and version-only edits have bounded runtime
+projections. Unknown scripts and installation/packaging hooks remain native
+inputs; literal script dependencies are retained, and dynamic script selection
+retains all script definitions. Unknown manifest fields remain conservatively
+significant. An input fingerprint is not proof of a hermetic native build or an
+OTA-compatible binary; actual runtime/artifact qualification remains separate.
+
+The CLI accepts only full commit IDs and uses read-only Git argument arrays,
+bounded output/deadlines and `GIT_OPTIONAL_LOCKS=0`, clearing ambient Git directory
+and index overrides. Canonical router names (`[id]`, route groups and
+`+native-intent`) and versioned `@` patch names are valid, not shell expansions.
+Traversal, control/shell characters, symlink/submodule tree entries and workspace
+reads escaping the real root are rejected. Immutable planning rechecks source
+and paired-UI state before returning. Explicit `--worktree` captures raw-byte
+observations but is always a blocked preview; it never silently substitutes
+mutable files for an immutable plan. Before this work is committed, use that
+explicit preview rather than expecting new policy files to exist in HEAD.
+
+`architecture-gates.yml` runs the contracts and the read-only planner on PR/manual
+dispatch with `contents: read`, full source history and no persisted checkout
+credentials. It has no privileged PR trigger or new build/publish job. The
+separate APK workflow defaults to signed candidate artifacts; uploading them to
+an existing Release requires its explicit `publish_release` input. Light validation, source-push approval,
+artifact packaging and publication remain independent gates. No production
+publication state is inferred from version labels or created by the planner.
+
+### Runtime Delivery Workflow: Next Acceptance Scope
+
+The requested runtime flow is:
+
+`scheduled check -> channel-qualified discovery -> optional download -> verified preparation -> wait for quiescence -> approved activation -> startup acknowledgement`.
+
+At the end of Phase 2 these settings were not exposed and the live APK path used
+its existing 24-hour startup check and combined download/installer handoff.
+The following requirements govern Phase 3; its implementation status is
+recorded separately below rather than implying that all adapters are complete:
+
+| Concern | Required policy |
+| --- | --- |
+| Check frequency | Automatic checks can be disabled; select 30 minutes, 1 hour, 6 hours or 24 hours. Use one deadline, single-flight requests, bounded backoff and server retry timing. Resume missed work on foreground/network recovery; do not promise precise background mobile scheduling. |
+| Channel | Stable receives only stable eligible published artifacts. Every-release includes eligible stable and preview publications, never drafts, quarantined artifacts or every source commit. Keep independent trust/checkpoints per channel; the every-release reader must not depend solely on GitHub's stable-only `releases/latest` endpoint. |
+| Preparation | Automatic download is independent and off by default. Metered/unknown network or proxy conditions require an explicit policy or manual approval. Preserve the selected artifact identity, SHA-256, size, source and runtime requirements. |
+| Download source | Official GitHub is the default; mirrors are optional transports with pinned origin/redirect policy. A mirror cannot supply trust, rewrite the selected artifact, bypass checksum/signature verification or silently change source after approval. |
+| Activation | Downloading does not approve installation/restart. Manual confirmation is the default; waiting for idle and automatic activation require explicit opt-in. Preparation, pending activation, activation attempt and acknowledged applied state are separate. |
+| User controls | Show cumulative notes and prepared/pending state. The top-bar reminder is configurable independently of checking/download and never hides integrity failures. Cancel revokes pending activation without marking installed or implicitly ignoring a version. An immediate action stays bound to its captured artifact and cannot silently interrupt active Agent work. |
+
+UI quiet time is not gateway quiescence. Restart-capable targets must acquire an
+exclusive, revision-fenced admission/drain lease from the existing execution
+owner: active requests, tool/effect work and unsafe writes must drain, and no new
+request may enter between the empty check and activation. Unknown activity fails
+closed. Waiting does not cancel running work; lease acquisition/recheck failure
+reopens admission and reports the pending update rather than restarting anyway.
+No second run registry or restart engine is introduced in this phase.
+
+APK installation is a user-confirmed operating-system handoff, not a generic
+gateway restart. OTA/gateway/web adapters need their own compatible activation
+and recovery evidence. Keep distinct applied-native, applied-OTA and
+read-changelog receipts. Persist applied state only after the new compatible
+runtime starts and acknowledges its identity; preparation, restart intent and
+remote success are insufficient. Interrupted activation must retain the last
+known-good runtime, with bounded startup recovery and explicit rollback policy.
+
+Future agent iteration requires explicit objectives, budget, permitted
+repositories, stop conditions and review/PR policy, with no production secrets
+by default. A model may draft a plan; deterministic gates decide admissibility.
+Packaging caches, immutable artifact binding, protected publication environments,
+least-privilege credentials and separate source-push approval remain mandatory.
+Building less often does not mean skipping validation or promising native hot
+patches. `hotUpdateMode` remains disabled; no live endpoint, OTA runtime, hosted
+service, signing key, automatic commit/push or publication job is enabled here.
+
+### Evidence Boundary
+
+Phase 3 Milestone 1 adds configurable 30-minute/1-hour/6-hour/24-hour foreground
+checks and stable/every-eligible-release selection. Both channels discover
+published GitHub release records, exclude drafts and unqualified APKs, and
+validate previews against their tagged native metadata. No signed-catalog
+transport or checkpoint owner is enabled by this legacy GitHub reader.
+
+`useScheduledApkUpdateCheck` is admitted only after successful settings hydration
+and staged-file cleanup. Its scheduler owns one deadline and one active request,
+records successful checks under the selected channel, discards stale channel
+responses, and respects bounded exponential/server retry delays. Unknown
+connectivity and background state defer work; foreground/network events resume
+overdue checks. This is not exact background mobile scheduling.
+
+The defaults remain stable, 24 hours, manual installation and automatic download
+off. Milestone 1 passes 159 focused host tests. Milestone 2's shared runtime passes
+161 tests across ten focused suites, including exact production quiet timing,
+network-policy races, prepared review/read-only notes, cancellation while
+revalidating, conflicting approval, root lifetime and deferred notifications.
+Type checking and dependency/boundary/module/architecture/Settings gates pass.
+Final Phase 3 acceptance passes 25 focused suites / 406 tests, 336 full serial
+Jest suites / 4,163 tests and 94 real SQLite tests. A reproduced manual-consent
+race is covered: synchronous approval survives a panel change before the
+confirmation promise settles, without substituting later asset metadata.
+
+Three stable-ID Phase 3 change records cover check policy, verified preparation
+and idle consent. The read-only worktree release preview has no missing change
+coverage and remains blocked on mutable source and missing publication state:
+execution/publication authority stays false and no build is requested.
+On 2026-10-28 the mobile-layout source contracts were aligned with the existing
+alias-to-root handoff and paused-activity precedence without changing runtime
+behavior. Thirteen test fixtures now explicitly name native input doubles
+`MockPressable`; the production UI naming gate is unchanged. Two route-handoff
+lifecycle cases cover deferred Home mounting and root-composer retention.
+Both mobile-layout modes and UI naming pass, as do 13 affected suites / 382 tests,
+336 full serial Jest suites / 4,165 tests, 94 real SQLite tests, type checking and
+dependency/boundary/module/architecture gates. These are host-only results, not
+native navigation/layout or release-artifact qualification.
+
+The first implementation includes pure range/count/language tests, rendered
+forty-release/fifty-change UI tests, native-activity bridge tests, prompt/manual
+ownership tests, real reminder persistence composition, frozen-target tests,
+coordinator cancellation/teardown tests, and delayed-notification fault schedules.
+Phase 2 adds real Ed25519 known-vector checks, tampering/expiry/replay fault
+schedules, strict schema/UTF-8/budget checks, artifact compatibility and concurrent
+checkpoint acceptance, deterministic planning, disposable Git-tree/dirty-preview
+fixtures and read-only CI contract checks. These are host/offline evidence only.
+
+Host tests and architecture gates do not establish Android installation, actual
+window-focus ordering, scrolling performance on large histories, sustained Hermes
+memory, startup p95, OTA recovery, or release readiness of a new artifact.
+Keep those qualifications separate. Source/build versions and release metadata
+are unchanged by this work.

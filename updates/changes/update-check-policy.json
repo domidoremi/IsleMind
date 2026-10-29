@@ -1,0 +1,31 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "update-check-policy",
+  "createdAtMs": 1793179117451,
+  "audience": "user",
+  "priority": "routine",
+  "delivery": "ota-compatible",
+  "category": "improvements",
+  "platforms": [
+    "android"
+  ],
+  "files": [
+    "src/core/appUpdateCheckScheduler.ts",
+    "src/hooks/useScheduledApkUpdateCheck.ts",
+    "src/hooks/useBootstrap.ts",
+    "src/modules/settings/updateReminders.ts",
+    "src/store/settingsStore.ts",
+    "src/types/settingsContracts.ts",
+    "src/platform/native/githubReleaseChannel.ts",
+    "src/presentation/features/settings/settingsRegistry.ts",
+    "src/components/settings/SystemSettingsPanelContent.tsx",
+    "src/i18n/resources/en.json",
+    "src/i18n/resources/zh-CN.json",
+    "src/i18n/resources/ja.json"
+  ],
+  "texts": {
+    "en": "Choose foreground check intervals and stable or every eligible release. Unknown connectivity, unpublished records and unqualified APKs cannot trigger an update.",
+    "zh-CN": "可选择前台检查间隔及稳定版或每个合格发布。网络状态未知、未发布记录或未通过校验的 APK 不会触发更新。",
+    "ja": "前面での確認間隔と、安定版またはすべての適格なリリースを選択できます。接続が不明な場合、未公開の記録や未検証の APK は更新対象になりません。"
+  }
+}

@@ -1,6 +1,7 @@
 import {
   fetchGithubReleaseNotesSnapshot,
   fetchLatestGithubTagVersionSnapshot,
+  fetchGithubApkTagVersionCandidates,
   type GithubTagVersionSnapshot,
 } from './githubReleaseChannel'
 
@@ -11,8 +12,9 @@ const target: GithubTagVersionSnapshot = {
 const historyUrl = (page: number) => `https://api.github.com/repos/domidoremi/IsleMind/releases?per_page=100&page=${page}`
 const configUrl = (tag: string) => `https://raw.githubusercontent.com/domidoremi/IsleMind/${tag}/app.json`
 const config = (version: string, versionCode = 129) => ({ expo: { version, android: { versionCode } } })
+const sourceId = (tag: string) => `github:/domidoremi/IsleMind:tag:${tag}`
 const release = (tag_name: string, body: string | null, extra: Record<string, unknown> = {}) => ({
-  tag_name, body, draft: false, prerelease: false, ...extra,
+  tag_name, body, draft: false, prerelease: false, published_at: '2026-10-27T00:00:00Z', assets: [], ...extra,
 })
 
 function response(body: unknown, status = 200): Response {
@@ -34,7 +36,89 @@ function fixtureFetch(fixtures: Record<string, unknown>) {
 
 afterEach(() => jest.useRealTimers())
 
-it('labels history by immutable app metadata, merges the exact version range and skips missing notes', async () => {
+it('discovers actual APK releases independently of newer source-only tags and publication order', async () => {
+  const fetchImplementation = fixtureFetch({
+    [historyUrl(1)]: [
+      release('v2.0.0', '- source only'),
+      release('v1.10.0', '- uploaded', { assets: [{ name: 'app.apk', state: 'uploaded' }] }),
+      release('v0.0.9', '- older tag, newer app', { assets: [{ name: 'app.apk', state: 'uploaded' }] }),
+      release('v1.11.0', '- preview', { prerelease: true, assets: [{ name: 'app.apk' }] }),
+      release('v1.12.0', '- still uploading', { assets: [{ name: 'app.apk', state: 'starter' }] }),
+    ],
+    [configUrl('v1.10.0')]: config('1.10.0', 130),
+    [configUrl('v0.0.9')]: config('1.11.0', 131),
+  })
+  const candidates = await fetchGithubApkTagVersionCandidates({ fetchImplementation })
+  expect(candidates.map(candidate => [candidate.tagName, candidate.versionName, candidate.versionCode])).toEqual([
+    ['v0.0.9', '1.11.0', 131], ['v1.10.0', '1.10.0', 130],
+  ])
+  expect(fetchImplementation.mock.calls.map(([url]) => String(url))).not.toContain(configUrl('v2.0.0'))
+})
+
+it('every-release admits published previews but never drafts, unpublished or unsafe tag paths', async () => {
+  const fetchImplementation = fixtureFetch({
+    [historyUrl(1)]: [
+      release('v1.11.0-rc.1', '- Preview', { prerelease: true, published_at: '2026-10-28T00:00:00Z', assets: [{ name: 'app.apk' }] }),
+      release('v1.12.0-beta.1', '- Draft', { draft: true, prerelease: true, published_at: '2026-10-28T00:00:00Z', assets: [{ name: 'app.apk' }] }),
+      release('v1.13.0-rc.1', '- Unpublished', { prerelease: true, published_at: null, assets: [{ name: 'app.apk' }] }),
+      release('../v1.14.0', '- Unsafe', { published_at: '2026-10-28T00:00:00Z', assets: [{ name: 'app.apk' }] }),
+      release('v1.10.0', '- Stable', { published_at: '2026-10-28T00:00:00Z', assets: [{ name: 'app.apk' }] }),
+    ],
+    [configUrl('v1.11.0-rc.1')]: config('1.11.0', 131),
+    [configUrl('v1.10.0')]: config('1.10.0', 130),
+  })
+  const candidates = await fetchGithubApkTagVersionCandidates({ channel: 'every-release', fetchImplementation })
+  expect(candidates.map((candidate) => candidate.tagName)).toEqual(['v1.11.0-rc.1', 'v1.10.0'])
+})
+
+it('fails closed on an incomplete or malformed APK discovery catalog instead of claiming latest', async () => {
+  const fetchImplementation = fixtureFetch({ [historyUrl(1)]: [release('v1.10.0', 'notes', { assets: 'invalid' })] })
+  await expect(fetchGithubApkTagVersionCandidates({ fetchImplementation })).rejects.toThrow('assets must be an array')
+  const oversized = jest.fn(async () => response(Array.from({ length: 101 }, () => release('v1', null))))
+  await expect(fetchGithubApkTagVersionCandidates({ fetchImplementation: oversized })).rejects.toThrow('oversized')
+  await expect(fetchGithubApkTagVersionCandidates({
+    fetchImplementation: fixtureFetch({ [historyUrl(1)]: [null] }),
+  })).rejects.toThrow('records must be objects')
+})
+
+it('bounds APK catalog pages and cancellation even when a transport ignores AbortSignal', async () => {
+  const pages = jest.fn(async () => response(Array.from({ length: 100 }, () => release('v1', null))))
+  await expect(fetchGithubApkTagVersionCandidates({ fetchImplementation: pages })).rejects.toThrow('bounded history window')
+  expect(pages).toHaveBeenCalledTimes(10)
+  const controller = new AbortController()
+  const pending = fetchGithubApkTagVersionCandidates({
+    fetchImplementation: jest.fn(() => new Promise<Response>(() => undefined)), signal: controller.signal,
+  })
+  controller.abort()
+  await expect(pending).rejects.toThrow()
+})
+
+it('retains conflicting note snapshots under stable release identities and reuses tagged metadata', async () => {
+  const fetchImplementation = fixtureFetch({
+    [historyUrl(1)]: [
+      release(target.tagName, '- latest', { id: 30 }),
+      release('v1.9.0', '- first', { id: 20 }),
+      release('v1.9.0', '- revised', { id: 20 }),
+      release('v1.9.0', '- first', { id: 20 }),
+    ],
+    [configUrl('v1.9.0')]: config('1.9.0', 129),
+  })
+  const result = await fetchGithubReleaseNotesSnapshot('1.8.0', target, { fetchImplementation })
+  expect(result.complete).toBe(false)
+  expect(result.entries.map(entry => entry.notes)).toEqual(['- first', '- revised', '- latest'])
+  expect(result.entries[0].sourceId).toBe('github:/domidoremi/IsleMind:release:20')
+  expect(fetchImplementation.mock.calls.filter(([url]) => String(url) === configUrl('v1.9.0'))).toHaveLength(1)
+})
+
+it('reports malformed historical records rather than silently claiming complete notes', async () => {
+  const result = await fetchGithubReleaseNotesSnapshot('1.8.0', target, {
+    fetchImplementation: fixtureFetch({ [historyUrl(1)]: [release(target.tagName, '- Target'), null, { body: '- No tag' }] }),
+  })
+  expect(result.complete).toBe(false)
+  expect(result.entries.map(entry => entry.notes)).toEqual(['- Target'])
+})
+
+it('labels history by immutable app metadata and retains empty release records in the exact range', async () => {
   const fetchImplementation = fixtureFetch({
     [historyUrl(1)]: [
       release(target.tagName, '- latest'),
@@ -52,15 +136,19 @@ it('labels history by immutable app metadata, merges the exact version range and
     [configUrl('v1.8.0')]: config('1.8.0', 128),
     [configUrl('v1.7.0')]: config('1.7.0', 127),
     [configUrl('v1.11.0')]: config('1.11.0', 131),
+    [configUrl('v1.9.1')]: config('1.9.1', 129),
+    [configUrl('v1.9.2')]: config('1.9.2', 129),
   })
   expect(await fetchGithubReleaseNotesSnapshot('1.8.0', target, { fetchImplementation })).toEqual({
     complete: true,
     entries: [
-      { version: '1.9.0', versionCode: 129, notes: '- intermediate' },
-      { version: '1.10.0', versionCode: 130, notes: '- latest' },
+      { sourceId: sourceId('v0.0.9'), version: '1.9.0', versionCode: 129, notes: '- intermediate' },
+      { sourceId: sourceId('v1.9.1'), version: '1.9.1', versionCode: 129, notes: '' },
+      { sourceId: sourceId('v1.9.2'), version: '1.9.2', versionCode: 129, notes: '' },
+      { sourceId: sourceId(target.tagName), version: '1.10.0', versionCode: 130, notes: '- latest' },
     ],
   })
-  expect(fetchImplementation.mock.calls.map(([url]) => String(url))).not.toContain(configUrl('v1.9.1'))
+  expect(fetchImplementation.mock.calls.map(([url]) => String(url))).toContain(configUrl('v1.9.1'))
   expect(fetchImplementation.mock.calls.map(([url]) => String(url))).not.toContain(configUrl(target.tagName))
 })
 
@@ -73,6 +161,7 @@ it('reads subsequent history pages even when an earlier page contains the instal
     [historyUrl(2)]: [release(target.tagName, 'c'), release('v1.9.0', 'b')],
     [configUrl('v1.8.0')]: config('1.8.0', 128),
     [configUrl('v1.9.0')]: config('1.9.0', 129),
+    [configUrl('v0.0.1')]: config('1.0.0', 1),
   })
   const result = await fetchGithubReleaseNotesSnapshot('1.8.0', target, { fetchImplementation })
   expect(result.complete).toBe(true)
@@ -86,7 +175,7 @@ it('recomputes the range after upgrading and deduplicates repeated tags', async 
     [configUrl('v1.9.0')]: config('1.9.0'),
   })
   expect((await fetchGithubReleaseNotesSnapshot('1.9.0', target, { fetchImplementation })).entries).toEqual([
-    { version: '1.10.0', versionCode: 130, notes: 'c' },
+    { sourceId: sourceId(target.tagName), version: '1.10.0', versionCode: 130, notes: 'c' },
   ])
   expect((await fetchGithubReleaseNotesSnapshot('1.10.0', target, { fetchImplementation })).entries).toEqual([])
 })
@@ -116,11 +205,12 @@ it.each(['not json', { unexpected: 'record' }])('rejects malformed history %j gr
 })
 
 it('bounds history page count and explicitly reports incomplete history', async () => {
-  const fetchImplementation = jest.fn(async () => response(Array.from({ length: 100 }, () => release('v1.0.0', null))))
+  const fetchImplementation = jest.fn(async (url) => String(url).includes('/app.json')
+    ? response(config('1.0.0', 1)) : response(Array.from({ length: 100 }, () => release('v1.0.0', null))))
   expect(await fetchGithubReleaseNotesSnapshot('1.8.0', target, { fetchImplementation })).toEqual({
     entries: [], complete: false,
   })
-  expect(fetchImplementation).toHaveBeenCalledTimes(10)
+  expect(fetchImplementation.mock.calls.filter(([url]) => String(url).includes('/releases?'))).toHaveLength(10)
 })
 
 it('does not parse or fetch metadata from a page exceeding the requested item bound', async () => {

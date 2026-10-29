@@ -29,14 +29,14 @@ jest.mock('@/utils/lazyLoad', () => ({
 }))
 jest.mock('./ConversationsScreenContent', () => ({
   ConversationsScreenContent: ({ onHome }: { onHome: () => void }) => {
-    const { Pressable, Text } = require('react-native')
-    return <Pressable testID="history-new-chat" onPress={onHome}><Text>New chat</Text></Pressable>
+    const { Pressable: MockPressable, Text } = require('react-native')
+    return <MockPressable testID="history-new-chat" onPress={onHome}><Text>New chat</Text></MockPressable>
   },
 }))
 jest.mock('./SettingsScreenContent', () => ({
   SettingsScreenContent: ({ onHome }: { onHome: () => void }) => {
-    const { Pressable, Text } = require('react-native')
-    return <Pressable testID="settings-home" onPress={onHome}><Text>Home</Text></Pressable>
+    const { Pressable: MockPressable, Text } = require('react-native')
+    return <MockPressable testID="settings-home" onPress={onHome}><Text>Home</Text></MockPressable>
   },
 }))
 jest.mock('./HomeScreenContent', () => ({
@@ -44,7 +44,7 @@ jest.mock('./HomeScreenContent', () => ({
     active: boolean; onHistory: () => void; onSettings: () => void
   }) => {
     const React = require('react')
-    const { Pressable, Text, View } = require('react-native')
+    const { Pressable: MockPressable, Text, View } = require('react-native')
     const [instance] = React.useState(() => ++mockHomeSequence)
     React.useEffect(() => {
       mockHomeEvents.push(`mount:${instance}`)
@@ -53,8 +53,8 @@ jest.mock('./HomeScreenContent', () => ({
     return (
       <View testID={`home-workspace-${instance}`}>
         <Text>{active ? 'Active composer' : 'Retained composer'}</Text>
-        <Pressable testID="home-history" onPress={onHistory}><Text>History</Text></Pressable>
-        <Pressable testID="home-settings" onPress={onSettings}><Text>Settings</Text></Pressable>
+        <MockPressable testID="home-history" onPress={onHistory}><Text>History</Text></MockPressable>
+        <MockPressable testID="home-settings" onPress={onSettings}><Text>Settings</Text></MockPressable>
       </View>
     )
   },
@@ -85,6 +85,28 @@ it.each([
   expect(mockHomeEvents).toEqual([])
   expect(view.queryByText('Retained composer')).toBeNull()
   expect(view.queryByText('Active composer')).toBeNull()
+})
+
+it.each([
+  ['/conversations', 'history', 'history-new-chat'],
+  ['/settings', 'settings', 'settings-home'],
+] as const)('mounts one composer only after the %s handoff reaches the root route', async (pathname, page, trigger) => {
+  mockRoute.pathname = pathname
+  const outgoing = await render(shell(page))
+
+  await fireEvent.press(outgoing.getByTestId(trigger))
+  expect(outgoing.getByTestId(trigger)).toBeTruthy()
+  expect(mockHomeEvents).toEqual([])
+  await outgoing.unmount()
+
+  mockRoute.pathname = '/'
+  const root = await render(shell('home'))
+  expect(root.getByText('Active composer')).toBeTruthy()
+  expect(mockHomeEvents).toEqual(['mount:1'])
+  expect(mockReplace.mock.calls).toEqual([['/']])
+
+  await root.rerender(shell('home'))
+  expect(mockHomeEvents).toEqual(['mount:1'])
 })
 
 it.each([

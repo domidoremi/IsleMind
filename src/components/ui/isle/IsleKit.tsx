@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Platform, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { Text, TextInput } from '@/components/ui/AppText'
+import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import { resolveWebTextMetricsStyle } from '@/components/ui/webTextMetrics'
 import { MotiView } from 'moti'
 import { Button as NativeButton, Input as NativeInput, Switch as NativeSwitch, Card as NativeCard, Select as NativeSelect, Progress as NativeProgress } from 'animal-island-ui-rn'
@@ -347,6 +348,7 @@ export function IsleInput({
   const focusMotion = useThemeMotion('accent')
   const { t } = useTranslation()
   const [focused, setFocused] = useState(false)
+  useAppUpdateBlocker(focused, 'isle-input-focus')
   const [multilineContentHeight, setMultilineContentHeight] = useState(0)
   const [uncontrolledValue, setUncontrolledValue] = useState(defaultValue ?? '')
   const controlled = value !== undefined
@@ -411,7 +413,9 @@ export function IsleInput({
           if (!controlled) setUncontrolledValue(nextValue)
           onChangeText?.(nextValue)
         }} onClear={onClear}
-        clearAriaLabel={clearAccessibilityLabel ?? t('common.clear')} disabled={disabled} onFocus={onFocus} onBlur={onBlur}
+        clearAriaLabel={clearAccessibilityLabel ?? t('common.clear')} disabled={disabled}
+        onFocus={(event) => { setFocused(true); onFocus?.(event) }}
+        onBlur={(event) => { setFocused(false); onBlur?.(event) }}
         multiline={multiline} aria-label={props.accessibilityLabel ?? label}
         inputProps={{ ...props, scrollEnabled: multiline ? scrollEnabled ?? true : scrollEnabled,
           onContentSizeChange: (event) => {
@@ -812,6 +816,7 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
   const accentMotion = useThemeMotion('accent')
   const motion = menuMotion.intensity
   const [open, setOpen] = useState(false)
+  useAppUpdateBlocker(open, 'select-menu')
   const selectionSnapshot = JSON.stringify([value, options.map(option => [option.value, option.label, !!option.disabled])])
   const selection = useRef({ snapshot: selectionSnapshot, disabled, onChange })
   if (selection.current.snapshot !== selectionSnapshot || selection.current.disabled !== disabled) {

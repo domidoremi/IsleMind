@@ -11,15 +11,17 @@ import {
   fetchGithubTaggedAndroidReleaseSnapshot,
   fetchLatestGithubTagVersionSnapshot,
   fetchGithubReleaseNotesSnapshot,
+  fetchGithubApkTagVersionCandidates,
   GithubReleaseChannelError,
   type GithubTagVersionSnapshot,
   type GithubTaggedAndroidReleaseSnapshot,
+  type GithubReleaseChannelRequestOptions,
 } from '@/platform/native/githubReleaseChannel'
 import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/platform/native/runtimeLog'
 import { discardDownloadedApk, markDownloadedApkForCleanup } from '@/services/apkInstallCache'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
 import { isGooglePlayDistribution } from './appDistribution'
-export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'cancelled' | 'busy' | 'error'
+export type ApkUpdateStatus = 'available' | 'unavailable' | 'prepared' | 'downloaded' | 'unsupported' | 'cancelled' | 'busy' | 'error'
 export type ApkUpdateReason = 'network' | 'rate_limited' | 'manifest_invalid' | 'checksum_mismatch' | 'installer_failed'
 export type ApkAssetVariant = 'no-model' | 'with-model-small' | 'universal'
 export type ApkInstallProgressStage = 'downloading' | 'verifying' | 'opening-installer'
@@ -44,7 +46,7 @@ export interface ApkReleaseInfo {
   sizeBytes?: number
   abi?: string
   variant?: ApkAssetVariant
-  releaseNotes?: AppReleaseNotes[]
+  releaseNotes?: readonly AppReleaseNotes[]
   releaseNotesComplete?: boolean
 }
 
@@ -55,6 +57,8 @@ export interface ApkUpdateResult {
   localUri?: string
   reason?: ApkUpdateReason
   currentVersion?: VersionSnapshot
+  retryAfterMs?: number
+  prepared?: PreparedApkUpdate
 }
 
 export interface ApkManifestAsset {
@@ -86,6 +90,12 @@ export interface ApkInstallProgress {
 export interface ApkInstallOptions {
   onProgress?: (progress: ApkInstallProgress) => void
   signal?: AbortSignal
+  canOpenInstaller?: () => boolean
+}
+
+export interface PreparedApkUpdate {
+  readonly release: ApkReleaseInfo
+  readonly localUri: string
 }
 
 const APK_MIME_TYPE = 'application/vnd.android.package-archive'
@@ -93,8 +103,10 @@ const ANDROID_GRANT_READ_URI_PERMISSION = 1
 const localModelFileIntegrityPort = createExpoLocalModelFileIntegrityPort()
 export const APK_AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 const APK_PROGRESS_INTERVAL_MS = 250
-let pendingUpdateCheck: Promise<ApkUpdateResult> | undefined
+const pendingUpdateChecks = new Map<string, Promise<ApkUpdateResult>>()
 let installInProgress = false
+let preparationSequence = 0
+const preparedUpdates = new WeakMap<PreparedApkUpdate, VersionSnapshot>()
 
 class ApkUpdateCancelledError extends Error {}
 
@@ -128,8 +140,8 @@ export function shouldRecordApkUpdateCheck(result: ApkUpdateResult): boolean {
   return result.status === 'available' || result.status === 'unavailable'
 }
 
-export async function checkLatestApkReleaseSilently(): Promise<ApkUpdateResult> {
-  const result = await checkLatestApkRelease()
+export async function checkLatestApkReleaseSilently(options: GithubReleaseChannelRequestOptions = {}): Promise<ApkUpdateResult> {
+  const result = await checkLatestApkRelease(options)
   if (result.status === 'available') return result
   return { ...result, release: undefined }
 }
@@ -143,7 +155,7 @@ export function formatUpdateCheckTime(value: number | undefined): string {
   }
 }
 
-export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
+export async function checkLatestApkRelease(options: GithubReleaseChannelRequestOptions = {}): Promise<ApkUpdateResult> {
   if (isGooglePlayDistribution()) {
     return { status: 'unsupported', message: st('updates.googlePlayManaged') }
   }
@@ -154,20 +166,25 @@ export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
   }
 
   // Startup and manual checks share only in-flight work, never a cached failure.
-  if (pendingUpdateCheck) return pendingUpdateCheck
-  const pending = performApkUpdateCheck()
-  pendingUpdateCheck = pending
+  const channel = options.channel === 'every-release' ? 'every-release' : 'stable'
+  const current = pendingUpdateChecks.get(channel)
+  if (current) return current
+  const pending = performApkUpdateCheck(channel)
+  pendingUpdateChecks.set(channel, pending)
   try {
     return await pending
   } finally {
-    if (pendingUpdateCheck === pending) pendingUpdateCheck = undefined
+    if (pendingUpdateChecks.get(channel) === pending) pendingUpdateChecks.delete(channel)
   }
 }
 
-async function performApkUpdateCheck(): Promise<ApkUpdateResult> {
+async function performApkUpdateCheck(channel: 'stable' | 'every-release'): Promise<ApkUpdateResult> {
   try {
     const snapshot = getVersionSnapshot()
-    const tag = await fetchLatestGithubTagVersionSnapshot()
+    const requestOptions = { channel }
+    const allReleases = await fetchGithubApkTagVersionCandidates(requestOptions)
+    const tag = allReleases[0]
+    if (!tag) return { status: 'unavailable', message: st('updates.noInstallableApk') }
     if (compareReleaseToSnapshot({ version: tag.versionName, versionCode: tag.versionCode }, snapshot) <= 0) {
       const currentVersion = normalizeVersion(snapshot.appVersion)
       const result = {
@@ -178,14 +195,30 @@ async function performApkUpdateCheck(): Promise<ApkUpdateResult> {
       return result
     }
 
-    let release = await fetchLatestRelease(tag)
+    let targetTag = tag
+    let release = await fetchLatestRelease(tag, requestOptions)
+    if (!release) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(new Error('APK fallback discovery timed out.')), 15_000)
+      try {
+        const candidates = allReleases
+        for (const candidate of candidates) {
+          if (candidate.tagName === tag.tagName || compareReleaseToSnapshot({
+            version: candidate.versionName, versionCode: candidate.versionCode,
+          }, snapshot) <= 0) continue
+          release = await fetchLatestRelease(candidate, { ...requestOptions, signal: controller.signal })
+          if (release) { targetTag = candidate; break }
+        }
+      } finally { clearTimeout(timer); controller.abort() }
+    }
     if (!release) {
       const result = { status: 'unavailable', message: st('updates.noInstallableApk') } satisfies ApkUpdateResult
       await logAppUpdateEvent('check', result)
       return result
     }
 
-    const history = await fetchGithubReleaseNotesSnapshot(snapshot.appVersion, tag)
+    const boundary = { version: snapshot.appVersion, versionCode: Number(snapshot.buildVersion) }
+    const history = await fetchGithubReleaseNotesSnapshot(boundary, targetTag, requestOptions)
       .catch(() => ({ entries: [] as AppReleaseNotes[], complete: false }))
     release = { ...release, releaseNotes: history.entries, releaseNotesComplete: history.complete }
     const result = {
@@ -201,6 +234,7 @@ async function performApkUpdateCheck(): Promise<ApkUpdateResult> {
     const result = {
       status: 'error',
       reason,
+      ...(error instanceof GithubReleaseChannelError ? { retryAfterMs: error.retryAfterMs } : {}),
       message: formatUpdateErrorMessage(reason, error),
     } satisfies ApkUpdateResult
     await logAppUpdateEvent('check', result, error)
@@ -209,6 +243,14 @@ async function performApkUpdateCheck(): Promise<ApkUpdateResult> {
 }
 
 export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, options: ApkInstallOptions = {}): Promise<ApkUpdateResult> {
+  const result = await prepareApkRelease(release, options)
+  return result.prepared ? openPreparedApkInstaller(result.prepared, {
+    ...options, canOpenInstaller: options.canOpenInstaller ?? (() => true),
+  }) : result
+}
+
+/** Preparation has no installer authority. Its in-memory capability cannot be reconstructed from a URI. */
+export async function prepareApkRelease(release: ApkReleaseInfo, options: ApkInstallOptions = {}): Promise<ApkUpdateResult> {
   if (isGooglePlayDistribution()) {
     return { status: 'unsupported', message: st('updates.googlePlayManaged') }
   }
@@ -223,13 +265,13 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, optio
   if (installInProgress) return { status: 'busy', message: st('updates.installInProgress'), release }
   installInProgress = true
   try {
-    return await installApkRelease({ ...release }, options)
+    return await prepareApkFile(Object.freeze({ ...release }), options)
   } finally {
     installInProgress = false
   }
 }
 
-async function installApkRelease(release: ApkReleaseInfo, options: ApkInstallOptions): Promise<ApkUpdateResult> {
+async function prepareApkFile(release: ApkReleaseInfo, options: ApkInstallOptions): Promise<ApkUpdateResult> {
   const cacheDirectory = FileSystem.cacheDirectory
   if (!cacheDirectory) {
     const result = { status: 'error', message: st('updates.cacheUnavailable'), release } satisfies ApkUpdateResult
@@ -238,19 +280,21 @@ async function installApkRelease(release: ApkReleaseInfo, options: ApkInstallOpt
   }
 
   let localUri: string | undefined
-  let installerPhase = false
-  let installerHandedOff = false
   try {
     assertInstallActive(options.signal)
     // Revalidate at the effect boundary, not only when parsing remote metadata.
-    release.sha256 = readRequiredSha256({ sha256: release.sha256 }, 'sha256')
+    readRequiredSha256({ sha256: release.sha256 }, 'sha256')
     readRequiredPositiveInteger({ sizeBytes: release.sizeBytes }, 'sizeBytes')
     const apkUrl = safeHttpUrl(release.apkUrl)
-    if (!apkUrl) {
+    const source = apkUrl ? new URL(apkUrl) : undefined
+    if (!source || source.protocol !== 'https:' || source.hostname !== 'github.com'
+      || source.username || source.password || source.port
+      || !/^v?\d+\.\d+\.\d+(?:-[a-z0-9]+(?:[.-][a-z0-9]+)*)?$/i.test(release.tagName)
+      || !source.pathname.startsWith(`/domidoremi/IsleMind/releases/download/${release.tagName}/`)) {
       const result = {
         status: 'error',
         reason: 'manifest_invalid',
-        message: st('updates.releaseManifestInvalid', { error: 'apkUrl must be an explicit HTTP(S) URL' }),
+        message: st('updates.releaseManifestInvalid', { error: 'APK source must be the selected official GitHub release' }),
         release,
       } satisfies ApkUpdateResult
       await logAppUpdateEvent('install', result)
@@ -258,12 +302,12 @@ async function installApkRelease(release: ApkReleaseInfo, options: ApkInstallOpt
     }
     const safeName = readRequiredString({ apkName: release.apkName }, 'apkName').replace(/[^\w.-]+/g, '-')
     if (!/^[\w][\w.-]*\.apk$/i.test(safeName)) throw createUpdateError('manifest_invalid', 'Invalid APK filename')
-    localUri = `${cacheDirectory}${safeName}`
+    localUri = `${cacheDirectory}islemind-${Date.now().toString(36)}-${++preparationSequence}-${safeName}`
     options.onProgress?.({ stage: 'downloading', release, localUri })
-    const download = await downloadApkWithProgress(apkUrl, localUri, release, options)
+    const download = await downloadApkWithProgress(source.href, localUri, release, options)
     assertInstallActive(options.signal)
     if (download.status < 200 || download.status >= 300) {
-      await discardDownloadedApk(download.uri)
+      await discardDownloadedApk(localUri)
       const result = {
         status: 'error',
         reason: 'network',
@@ -273,6 +317,7 @@ async function installApkRelease(release: ApkReleaseInfo, options: ApkInstallOpt
       await logAppUpdateEvent('install', result)
       return result
     }
+    if (download.uri !== localUri) throw createUpdateError('manifest_invalid', 'Download changed the prepared cache identity')
 
     options.onProgress?.({ stage: 'verifying', release, localUri: download.uri })
     const verificationFailure = await verifyDownloadedApk(release, download.uri, options.signal)
@@ -282,40 +327,23 @@ async function installApkRelease(release: ApkReleaseInfo, options: ApkInstallOpt
       return verificationFailure
     }
 
-    options.onProgress?.({ stage: 'opening-installer', release, localUri: download.uri })
-    installerPhase = true
-    const contentUri = await FileSystem.getContentUriAsync(download.uri)
-    assertInstallActive(options.signal)
-    // After this handoff cancellation cannot revoke the system installer's action.
-    installerHandedOff = true
-    await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
-      data: contentUri,
-      type: APK_MIME_TYPE,
-      flags: ANDROID_GRANT_READ_URI_PERMISSION,
-    })
-
-    const result = {
-      status: 'downloaded',
-      message: st('updates.installerOpenedMessage'),
-      release,
-      localUri: download.uri,
-    } satisfies ApkUpdateResult
-    await logAppUpdateEvent('install', result)
+    const prepared = Object.freeze({ release, localUri: download.uri })
+    preparedUpdates.set(prepared, Object.freeze(getVersionSnapshot()))
     await markDownloadedApkForCleanup(download.uri)
-    return result
+    assertInstallActive(options.signal)
+    return { status: 'prepared', message: st('updates.preparedMessage'), release, localUri: download.uri, prepared }
   } catch (error) {
     if (localUri) {
       await discardDownloadedApk(localUri)
     }
-    if (!installerHandedOff && (options.signal?.aborted || error instanceof ApkUpdateCancelledError)) {
+    if (options.signal?.aborted || error instanceof ApkUpdateCancelledError) {
       return { status: 'cancelled', message: st('updates.cancelled'), release }
     }
-    const reason = installerPhase ? 'installer_failed' : getUpdateReason(error) ?? 'network'
+    const reason = getUpdateReason(error) ?? 'network'
     const result = {
       status: 'error',
       reason,
-      message: reason === 'manifest_invalid' ? formatUpdateErrorMessage(reason, error) : reason === 'installer_failed'
-        ? st('updates.installerFailed', { error: formatError(error) })
+      message: reason === 'manifest_invalid' ? formatUpdateErrorMessage(reason, error)
         : st('updates.downloadOrOpenFailed', { error: formatError(error) }),
       release,
     } satisfies ApkUpdateResult
@@ -324,10 +352,69 @@ async function installApkRelease(release: ApkReleaseInfo, options: ApkInstallOpt
   }
 }
 
+export async function discardPreparedApk(prepared: PreparedApkUpdate): Promise<void> {
+  if (!preparedUpdates.has(prepared)) return
+  preparedUpdates.delete(prepared)
+  await discardDownloadedApk(prepared.localUri)
+}
+
+/** Recheck bytes and live eligibility immediately before the irreversible OS handoff. */
+export async function openPreparedApkInstaller(prepared: PreparedApkUpdate, options: ApkInstallOptions = {}): Promise<ApkUpdateResult> {
+  const release = prepared.release
+  const baseline = preparedUpdates.get(prepared)
+  if (!baseline || isGooglePlayDistribution() || Platform.OS !== 'android') {
+    return { status: 'error', reason: 'manifest_invalid', message: st('updates.invalidPreparation'), release }
+  }
+  if (installInProgress) return { status: 'busy', message: st('updates.installInProgress'), release }
+  installInProgress = true
+  let handedOff = false
+  try {
+    assertInstallActive(options.signal)
+    const current = getVersionSnapshot()
+    if (current.appVersion !== baseline.appVersion || current.buildVersion !== baseline.buildVersion
+      || compareReleaseToSnapshot(release, current) <= 0) throw createUpdateError('manifest_invalid', 'Installed baseline changed')
+    options.onProgress?.({ stage: 'verifying', release, localUri: prepared.localUri })
+    const failure = await verifyDownloadedApk(release, prepared.localUri, options.signal)
+    if (failure) { preparedUpdates.delete(prepared); return failure }
+    const contentUri = await FileSystem.getContentUriAsync(prepared.localUri)
+    assertInstallActive(options.signal)
+    if (!preparedUpdates.has(prepared)) throw new ApkUpdateCancelledError('Preparation revoked')
+    if (options.canOpenInstaller?.() !== true) {
+      return { status: 'prepared', message: st('updates.waitingForIdle'), release, prepared, localUri: prepared.localUri }
+    }
+    options.onProgress?.({ stage: 'opening-installer', release, localUri: prepared.localUri })
+    assertInstallActive(options.signal)
+    if (!preparedUpdates.has(prepared)) throw new ApkUpdateCancelledError('Preparation revoked')
+    if (options.canOpenInstaller?.() !== true) {
+      return { status: 'prepared', message: st('updates.waitingForIdle'), release, prepared, localUri: prepared.localUri }
+    }
+    handedOff = true
+    preparedUpdates.delete(prepared)
+    await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
+      data: contentUri, type: APK_MIME_TYPE, flags: ANDROID_GRANT_READ_URI_PERMISSION,
+    })
+    const result = { status: 'downloaded', message: st('updates.installerOpenedMessage'), release, localUri: prepared.localUri } satisfies ApkUpdateResult
+    await logAppUpdateEvent('install', result)
+    return result
+  } catch (error) {
+    if (!handedOff && (options.signal?.aborted || error instanceof ApkUpdateCancelledError)) {
+      await discardPreparedApk(prepared)
+      return { status: 'cancelled', message: st('updates.cancelled'), release }
+    }
+    await discardPreparedApk(prepared)
+    const reason = getUpdateReason(error) ?? 'installer_failed'
+    if (handedOff) await discardDownloadedApk(prepared.localUri)
+    const result = { status: 'error', reason, message: reason === 'installer_failed'
+      ? st('updates.installerFailed', { error: formatError(error) }) : formatUpdateErrorMessage(reason, error), release } satisfies ApkUpdateResult
+    await logAppUpdateEvent('install', result, error)
+    return result
+  } finally { installInProgress = false }
+}
+
 // Compatibility orchestration only. The GitHub transport lives in platform/native;
 // delete this bridge when the update use case moves behind a Settings-owned port.
-async function fetchLatestRelease(tag: GithubTagVersionSnapshot): Promise<ApkReleaseInfo | null> {
-  const taggedRelease = await fetchGithubTaggedAndroidReleaseSnapshot(tag)
+async function fetchLatestRelease(tag: GithubTagVersionSnapshot, options?: GithubReleaseChannelRequestOptions): Promise<ApkReleaseInfo | null> {
+  const taggedRelease = await fetchGithubTaggedAndroidReleaseSnapshot(tag, options)
   return normalizeGithubTaggedRelease(taggedRelease, getSupportedCpuArchitectures())
 }
 
@@ -403,6 +490,9 @@ function normalizeApkUpdateManifest(payload: unknown, supportedCpuArchitectures:
 
 function parseApkUpdateManifest(payload: unknown): ApkUpdateManifest {
   const record = asRecord(payload)
+  if (record.status === 'quarantined' || record.status === 'revoked') {
+    throw createUpdateError('manifest_invalid', 'APK release is quarantined or revoked')
+  }
   const versionName = readRequiredString(record, 'versionName')
   const releaseUrl = readRequiredWebUrl(record, 'releaseUrl')
   const versionCode = readRequiredPositiveInteger(record, 'versionCode')

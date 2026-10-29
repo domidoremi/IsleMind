@@ -14,15 +14,15 @@ jest.mock('@/store/chatStore', () => ({
 }))
 jest.mock('./ChatStatusBanners', () => ({ CompressionBanner: () => null, ConversationHealthBanner: () => null }))
 jest.mock('./ProgramErrorBanner', () => {
-  const { Pressable, Text, View } = require('react-native')
+  const { Pressable: MockPressable, Text, View } = require('react-native')
   return { ProgramErrorBanner: ({ message, onDismiss }: { message: string; onDismiss: () => void }) => (
-    <View accessibilityRole="alert"><Text>{message}</Text><Pressable accessibilityRole="button" accessibilityLabel="Dismiss" onPress={onDismiss} /></View>
+    <View accessibilityRole="alert"><Text>{message}</Text><MockPressable accessibilityRole="button" accessibilityLabel="Dismiss" onPress={onDismiss} /></View>
   ) }
 })
 jest.mock('./ConversationTaskStatusCard', () => {
-  const { Pressable } = require('react-native')
+  const { Pressable: MockPressable } = require('react-native')
   return { ConversationTaskStatusCard: ({ onCancel }: { onCancel: () => void }) => (
-    <Pressable accessibilityRole="button" accessibilityLabel="Cancel task" onPress={onCancel} />
+    <MockPressable accessibilityRole="button" accessibilityLabel="Cancel task" onPress={onCancel} />
   ) }
 })
 jest.mock('./conversationTaskState', () => ({ cancelConversationTask: jest.fn() }))

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Platform, Pressable, Text, TextInput } from 'react-native'
+import { Platform, Pressable as MockPressable, Text, TextInput } from 'react-native'
 import { act, fireEvent, render } from '@testing-library/react-native'
 import { SettingsEditBoundary, useSettingsDraft, useSettingsLeave } from './SettingsEditBoundary'
 
@@ -20,9 +20,9 @@ function Form({ busy = false }: { busy?: boolean }) {
   const replaceDraft = useSettingsDraft(Boolean(draft), busy, () => setDraft(''), draft)
   const leave = useSettingsLeave()
   return <><TextInput testID="draft" value={draft} onChangeText={setDraft} />
-    <Pressable testID="help" onPress={() => setHelp(!help)}><Text>{help ? 'reader' : 'editor'}</Text></Pressable>
-    <Pressable testID="replace" onPress={() => void replaceDraft(mockNavigate)}><Text>Replace</Text></Pressable>
-    <Pressable testID="leave" onPress={() => void leave(mockNavigate)}><Text>Leave</Text></Pressable></>
+    <MockPressable testID="help" onPress={() => setHelp(!help)}><Text>{help ? 'reader' : 'editor'}</Text></MockPressable>
+    <MockPressable testID="replace" onPress={() => void replaceDraft(mockNavigate)}><Text>Replace</Text></MockPressable>
+    <MockPressable testID="leave" onPress={() => void leave(mockNavigate)}><Text>Leave</Text></MockPressable></>
 }
 beforeEach(() => { jest.clearAllMocks(); mockConfirm.mockResolvedValue(false) })
 it('reading help does not submit, discard or serialize a draft', async () => {

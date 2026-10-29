@@ -1,4 +1,5 @@
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { ActivityIndicator, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'

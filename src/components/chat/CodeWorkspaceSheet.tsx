@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Modal, ScrollView, View, useWindowDimensions } from 'react-native'
+import { ScrollView, View, useWindowDimensions } from 'react-native'
+import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'

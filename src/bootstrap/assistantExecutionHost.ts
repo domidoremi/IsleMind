@@ -20,6 +20,14 @@ export function createAssistantExecutionHost(input: {
   trimCaches?: (critical: boolean) => void
 }) {
   const entries = new Map<string, Entry>()
+  const activityListeners = new Set<(busy: boolean) => void>()
+  let activeExecutions = 0
+  const publishActivity = () => {
+    for (const listener of [...activityListeners]) {
+      // An observational UI subscription cannot interfere with execution authority.
+      try { listener(activeExecutions > 0) } catch { /* Keep the execution scope intact. */ }
+    }
+  }
   let visible = true
   let generation = Date.now()
   let timer: ReturnType<typeof setExecutionInterval> | undefined
@@ -77,6 +85,11 @@ export function createAssistantExecutionHost(input: {
     return entry
   }
   return {
+    isBusy: () => activeExecutions > 0,
+    subscribeActivity(listener: (busy: boolean) => void) {
+      activityListeners.add(listener)
+      return () => { activityListeners.delete(listener) }
+    },
     /** A scope spans the whole invocation, including consecutive local dispatch
      * and delegated children. Stored running state alone is never CPU authority. */
     executionStarted({ runId, rootRunId }: { runId: AssistantRunId; rootRunId: AssistantRunId }) {
@@ -84,8 +97,11 @@ export function createAssistantExecutionHost(input: {
       if (entry.picker) throw new Error('System picker is awaiting the user')
       const token = Symbol(runId)
       entry.executions.add(token)
+      if (++activeExecutions === 1) publishActivity()
       return () => {
-        if (!entry.executions.delete(token) || entry.executions.size) return
+        if (!entry.executions.delete(token)) return
+        if (--activeExecutions === 0) publishActivity()
+        if (entry.executions.size) return
         ++entry.generation
         release(entry, 'completed')
       }

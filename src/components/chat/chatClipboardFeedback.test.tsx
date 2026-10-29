@@ -39,8 +39,8 @@ jest.mock('@/hooks/useAppTheme', () => ({
 jest.mock('@/components/ui/isle', () => ({
   IslePressable: require('react-native').Pressable,
   IsleButton: ({ label, ...props }: any) => {
-    const { Pressable, Text } = require('react-native')
-    return <Pressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></Pressable>
+    const { Pressable: MockPressable, Text } = require('react-native')
+    return <MockPressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></MockPressable>
   },
   ISLE_MIN_TOUCH_TARGET: 44,
   useIsleDialog: jest.fn(),

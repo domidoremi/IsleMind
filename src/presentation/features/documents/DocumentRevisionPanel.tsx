@@ -5,6 +5,7 @@ import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IsleSelect } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import { DOCUMENT_REVISION_INPUT_LIMIT, DOCUMENT_REVISION_INSTRUCTION_LIMIT, DocumentRevisionError, type DocumentDraft, type DocumentRevisionPort, type DocumentRevisionSource, type DocumentRevisionTarget, type SavedDocument } from '@/modules/documents'
 
 export interface DocumentRevisionBase { draft: DocumentDraft; saved: SavedDocument | null }
@@ -24,6 +25,7 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
   const [selected, setSelected] = useState<string[]>([])
   const [reading, setReading] = useState<string>()
   const [running, setRunning] = useState(false)
+  useAppUpdateBlocker(open || running || reading !== undefined, 'document-revision')
   const [error, setError] = useState<string>()
   const [proposal, setProposal] = useState<{ base: DocumentRevisionBase; body: string; target: DocumentRevisionTarget; sources: DocumentRevisionSource[] }>()
   const operation = useRef<AbortController | null>(null)

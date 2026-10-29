@@ -6,6 +6,7 @@ import { getColors } from '@/theme/colors'
 import { IsleDialogProvider, useIsleDialog } from '../isle/Dialog'
 import { IsleThemeProvider } from '../isle/IsleThemeProvider'
 import { useSettingsLifetime } from '@/components/settings/SettingsEditBoundary'
+import { ApkAutomaticDownloadConsent } from '@/components/updates/ApkAutomaticDownloadConsent'
 
 let mockMotion = 'none'
 let mockTheme = 'minimal'
@@ -128,6 +129,58 @@ it.each(['minimal', 'monet', 'material', 'liquid-glass'])('%s confirmation remai
   expect(await outcome).toBe(true)
   expect(screen.queryByText('Continue?')).toBeNull()
   expect(screen.container.queryAll(node => node.props.animationType === 'none' && node.props.transparent === true)).toHaveLength(0)
+})
+
+it.each(['confirm', 'cancel', 'close'])('uses a unified Material consent surface and settles only through %s', async action => {
+  mockTheme = 'material'
+  const dimensions = jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({
+    width: 360, height: 640, scale: 1, fontScale: 1.6,
+  })
+  const onConfirm = jest.fn()
+  let outcome: Promise<boolean> | undefined
+  function ConsentTrigger() {
+    const dialog = useIsleDialog()
+    return <Pressable accessibilityLabel="Ask automatic downloads" onPress={() => {
+      outcome = dialog.confirm({
+        title: 'Enable automatic downloads?',
+        message: 'Prepare downloads, not installation.',
+        cancelLabel: 'Not now', confirmLabel: 'Enable auto-download', onConfirm,
+        renderBody: () => <ApkAutomaticDownloadConsent />,
+      })
+    }} />
+  }
+  try {
+    const screen = await render(<IsleDialogProvider><ConsentTrigger /></IsleDialogProvider>)
+    await fireEvent.press(screen.getByLabelText('Ask automatic downloads'))
+    const colors = getColors('light', 'material')
+    const surface = colors.ui.semantic.surface.muted
+    expect(screen.getByTestId('dialog-experience-material')).toHaveStyle({ backgroundColor: surface })
+    expect(screen.getByTestId('dialog-actions')).toHaveStyle({
+      backgroundColor: surface, justifyContent: 'flex-end', flexWrap: 'wrap',
+    })
+    expect(screen.getByRole('header', { name: 'Enable automatic downloads?' })).toHaveStyle({ fontSize: 20, lineHeight: 28 })
+    for (const testID of ['dialog-cancel-action', 'dialog-confirm-action']) {
+      expect(screen.getByTestId(testID)).toHaveStyle({
+        flexBasis: 'auto', flexGrow: 0, flexShrink: 1, minWidth: 0, maxWidth: '100%',
+      })
+    }
+    expect(screen.getByTestId('dialog-cancel-action')).toHaveStyle({ backgroundColor: 'transparent', borderWidth: 0 })
+    expect(screen.getByText('Not now')).toHaveStyle({ color: colors.primary })
+    expect(screen.getByRole('button', { name: 'dialog.close' })).toHaveStyle({
+      width: 44, minHeight: 44, flexShrink: 0, backgroundColor: 'transparent',
+    })
+    await fireEvent.press(screen.getByRole('button', { name: 'updates.autoDownloadDetails' }))
+    expect(screen.getByText('updates.autoDownloadNetworkDetail')).toBeTruthy()
+    expect(screen.getByText('Enable automatic downloads?')).toBeTruthy()
+    expect(onConfirm).not.toHaveBeenCalled()
+    await fireEvent.press(screen.getByTestId(`dialog-${action}-action`))
+    expect(await outcome).toBe(action === 'confirm')
+    expect(onConfirm).toHaveBeenCalledTimes(action === 'confirm' ? 1 : 0)
+    expect(screen.queryByText('Enable automatic downloads?')).toBeNull()
+    await screen.unmount()
+  } finally {
+    dimensions.mockRestore()
+  }
 })
 
 it.each(['animal-island-ui', 'minimal', 'monet', 'material', 'liquid-glass'])('%s removes only the editor-owned prompt on editor unmount', async theme => {

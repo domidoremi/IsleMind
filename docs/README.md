@@ -32,7 +32,9 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 - [Project README](../README.md): setup, development, builds, tests and release usage.
 - [Architecture](./architecture/architecture.md): module ownership, trust, persistence, recovery, platform constraints and open decisions.
 - [Module public API](./architecture/module-public-api.md): supported entry points and caller contracts.
+- [Update delivery](./architecture/architecture.md#17-update-delivery): configurable foreground checks, channel qualification, verified APK preparation, idle consent-bound handoff, cumulative notes, and the separate OTA/publishing roadmap.
 - [Technology radar](./technology-radar.md): adoption criteria, dated technology decisions and unresolved privacy/licensing questions.
 - [Google Play preparation](./release/google-play.md): store build channel, submission prerequisites, listing/privacy drafts and verification requirements.
+- [1.1.5 candidate preparation](./release/qualification-1.1.5.md): release scope, candidate-only signing/build boundaries and remaining qualification.
 
 Architecture owns [qualification requirements and current limitations](./architecture/architecture.md#qualification-reference). Test results do not grant policy exceptions or release approval.

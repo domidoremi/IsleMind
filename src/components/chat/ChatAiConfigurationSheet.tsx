@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Modal } from '@/components/ui/AppModal'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MotiView } from 'moti'
 

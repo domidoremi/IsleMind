@@ -58,7 +58,7 @@ Network access is limited to:
 [Read the release notes and check available downloads](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2).
 APK downloads and their `.sha256` checksums appear as release attachments when available. Preview builds are intended for testing; back up your data before installing.
 
-The current source version is `1.1.4` (Android build `129`). This is a source-only release and does not publish a new APK; the download listing retains its separate `1.1.2` / `127` identity.
+The current source version is `1.1.5` (Android build `130`), a release candidate in preparation. No new APK has been publicly released; the download listing retains its separate `1.1.2` / `127` identity.
 
 ### What’s new
 

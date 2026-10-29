@@ -1,10 +1,13 @@
-import { act, fireEvent, render } from '@testing-library/react-native'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react-native'
 import { Linking, ScrollView } from 'react-native'
 import Constants from 'expo-constants'
 import { AnimatePresence, MotiView } from 'moti'
 import { THEME_MOTION_DURATIONS } from '@/theme/themeTokens'
 import { SystemSettingsPanelContent } from './SystemSettingsPanelContent'
-import { checkLatestApkRelease, downloadAndOpenApkInstaller, type ApkReleaseInfo, type ApkUpdateResult } from '@/platform/native/androidApkUpdates'
+import { checkLatestApkRelease, prepareApkRelease, openPreparedApkInstaller, downloadAndOpenApkInstaller,
+  type ApkReleaseInfo, type ApkUpdateResult } from '@/platform/native/androidApkUpdates'
+import { useAutomaticApkUpdateInstall } from '@/components/updates/useAutomaticApkUpdateInstall'
+import { appUpdateActivity } from '@/presentation/app-shell/appUpdateActivity'
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
 import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import { IsleButton } from '@/components/ui/isle'
@@ -18,9 +21,13 @@ const mockTranslate = (key: string) => key
 const mockState = { providers: [], settings: {
   theme: 'dark', themeId: 'material', language: 'zh-CN', backgroundMotion: undefined as ThemeBackgroundMotion | undefined,
   neverRemindUpdates: false, ignoredApkUpdate: undefined as ApkUpdateIgnoreState | undefined,
+  autoApkDownloadEnabled: false, apkUpdateBannerEnabled: true,
+  apkUpdateChannel: 'stable' as 'stable' | 'every-release',
 } }
 let mockMotion = 'full'
-const mockDialog = { toast: jest.fn(), confirm: jest.fn(), notice: jest.fn(), banner: jest.fn(), dismissBanner: jest.fn() }
+const mockDialog = { toast: jest.fn(), confirm: jest.fn(), notice: jest.fn(), banner: jest.fn(), dismissBanner: jest.fn(),
+  hasPendingDialogs: () => false, subscribeDialogs: () => () => undefined }
+const mockSettingsListeners = new Set<(state: typeof mockState) => void>()
 const mockUpdateSettings = jest.fn()
 const release: ApkReleaseInfo = {
   version: '1.1.3', tagName: 'v1.1.3', name: 'IsleMind 1.1.3', htmlUrl: 'https://example.test/release',
@@ -35,6 +42,10 @@ function deferred<T>() {
 jest.mock('@/store/settingsStore', () => ({
   useSettingsStore: Object.assign((select: (state: unknown) => unknown) => select(mockState), {
     getState: () => ({ ...mockState, updateSettings: mockUpdateSettings }),
+    subscribe: (listener: (state: typeof mockState) => void) => {
+      mockSettingsListeners.add(listener)
+      return () => { mockSettingsListeners.delete(listener) }
+    },
   }),
 }))
 jest.mock('@/presentation/features/settings/settingsStorePersistenceCommand', () => ({
@@ -60,7 +71,18 @@ jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: mockTranslate })
 jest.mock('expo-router', () => ({ router: { push: jest.fn(), replace: jest.fn() } }))
 jest.mock('expo-application', () => ({ nativeApplicationVersion: '1.0.0', nativeBuildVersion: '1' }))
 jest.mock('expo-constants', () => ({ expoConfig: {} }))
-jest.mock('@/platform/native/androidApkUpdates', () => ({ checkLatestApkRelease: jest.fn(), downloadAndOpenApkInstaller: jest.fn() }))
+jest.mock('@/platform/native/androidApkUpdates', () => ({
+  checkLatestApkRelease: jest.fn(), prepareApkRelease: jest.fn(), openPreparedApkInstaller: jest.fn(),
+  discardPreparedApk: jest.fn(async () => undefined), downloadAndOpenApkInstaller: jest.fn(),
+  getVersionSnapshot: () => ({ appVersion: '1.0.0', buildVersion: '1', updateMode: 'apk', hotUpdateMode: 'disabled' }),
+  formatApkSizeBytes: (size: number) => `${size} B`,
+}))
+// Root progress is exercised across themes; production five-second timing has its own integration suite.
+jest.mock('@/core/appUpdateIdle', () => ({
+  ...jest.requireActual('@/core/appUpdateIdle'), APP_UPDATE_QUIET_PERIOD_MS: 1,
+  scheduleIdleAppUpdate: (input: Parameters<typeof import('@/core/appUpdateIdle')['scheduleIdleAppUpdate']>[0]) =>
+    jest.requireActual('@/core/appUpdateIdle').scheduleIdleAppUpdate({ ...input, quietPeriodMs: 1 }),
+}))
 jest.mock('@/bootstrap/androidStatusNotification', () => ({ clearAndroidStatusNotification: jest.fn(), updateAndroidStatusNotification: jest.fn() }))
 jest.mock('animal-island-ui-rn', () => ({ ...jest.requireActual('animal-island-ui-rn'), RadioGroup: require('react-native').View }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke: {} }))
@@ -83,6 +105,11 @@ jest.mock('moti', () => ({
   AnimatePresence: jest.fn(({ children }) => children),
 }))
 
+function UpdateRoot(props: Parameters<typeof SystemSettingsPanelContent>[0]) {
+  useAutomaticApkUpdateInstall()
+  return <SystemSettingsPanelContent {...props} />
+}
+
 beforeEach(() => {
   jest.clearAllMocks()
   mockMotion = 'full'
@@ -90,10 +117,23 @@ beforeEach(() => {
   mockState.settings.backgroundMotion = undefined
   mockState.settings.neverRemindUpdates = false
   mockState.settings.ignoredApkUpdate = undefined
+  mockState.settings.autoApkDownloadEnabled = false
+  mockState.settings.apkUpdateBannerEnabled = true
+  mockState.settings.apkUpdateChannel = 'stable'
+  mockSettingsListeners.clear()
+  appUpdateActivity.setForeground(true)
+  mockUpdateSettings.mockImplementation((patch) => {
+    Object.assign(mockState.settings, patch)
+    for (const listener of mockSettingsListeners) listener(mockState)
+  })
   Constants.expoConfig!.extra = { distributionChannel: 'github' }
   mockDialog.confirm.mockResolvedValue(true)
   jest.mocked(checkLatestApkRelease).mockReset().mockResolvedValue({ status: 'available', message: 'available', release })
-  jest.mocked(downloadAndOpenApkInstaller).mockReset().mockResolvedValue({ status: 'downloaded', message: 'opened' })
+  jest.mocked(prepareApkRelease).mockReset().mockImplementation(async (target) => ({
+    status: 'prepared', message: 'prepared', release: target,
+    prepared: { release: target, localUri: 'file:///cache/update.apk' },
+  }))
+  jest.mocked(openPreparedApkInstaller).mockReset().mockResolvedValue({ status: 'downloaded', message: 'opened' })
   jest.mocked(flushPersistedSettings).mockReset().mockResolvedValue(undefined)
 })
 
@@ -102,28 +142,28 @@ it('keeps manual checks usable with never-remind enabled and the target previous
   mockState.settings.ignoredApkUpdate = {
     installedVersion: '1.0.0', installedBuildVersion: '1', targetVersion: release.version,
   }
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
   expect(mockDialog.confirm).toHaveBeenCalledWith(expect.objectContaining({
     confirmLabel: 'updates.updateNow', cancelLabel: 'updates.ignoreVersion', renderBody: expect.any(Function),
   }))
-  expect(downloadAndOpenApkInstaller).toHaveBeenCalledTimes(1)
+  expect(prepareApkRelease).toHaveBeenCalledTimes(1)
   expect(mockUpdateSettings).not.toHaveBeenCalledWith(expect.objectContaining({ neverRemindUpdates: false }))
 })
 
 it('persists the ignored target with the actual native installed baseline without starting an installer', async () => {
   mockDialog.confirm.mockResolvedValueOnce(false)
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
   expect(mockUpdateSettings).toHaveBeenCalledWith({ ignoredApkUpdate: {
     installedVersion: '1.0.0', installedBuildVersion: '1', targetVersion: release.version,
   } })
   expect(flushPersistedSettings).toHaveBeenCalled()
-  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
 })
 
 it('saves the independent never-remind switch', async () => {
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   const toggle = screen.container.queryAll(node => node.props.title === 'settings.neverRemindUpdates')[0]
   expect(toggle.props.active).toBe(false)
   await fireEvent.press(toggle)
@@ -134,7 +174,7 @@ it('saves the independent never-remind switch', async () => {
 
 it('shows the persisted enabled switch and reports a failed reminder-setting save', async () => {
   mockState.settings.neverRemindUpdates = true
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   const enabledToggle = screen.container.queryAll(node => node.props.title === 'settings.neverRemindUpdates')[0]
   expect(enabledToggle.props.active).toBe(true)
   jest.mocked(flushPersistedSettings).mockRejectedValueOnce(new Error('storage unavailable'))
@@ -149,8 +189,8 @@ it.each(CANONICAL_THEME_IDS)('names actual %s APK progress, retires a percentage
   const check = deferred<ApkUpdateResult>()
   const install = deferred<ApkUpdateResult>()
   jest.mocked(checkLatestApkRelease).mockReturnValueOnce(check.promise)
-  jest.mocked(downloadAndOpenApkInstaller).mockReturnValueOnce(install.promise)
-  const screen = await render(<IsleThemeProvider><SystemSettingsPanelContent panel="updates" /></IsleThemeProvider>)
+  jest.mocked(prepareApkRelease).mockReturnValueOnce(install.promise)
+  const screen = await render(<IsleThemeProvider><UpdateRoot panel="updates" /></IsleThemeProvider>)
   try {
     expect(screen.queryByRole('progressbar')).toBeNull()
     await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
@@ -160,17 +200,17 @@ it.each(CANONICAL_THEME_IDS)('names actual %s APK progress, retires a percentage
     }
     expect(currentValue('settings.checkingUpdate')).toBeUndefined()
     await act(async () => { check.resolve({ status: 'available', message: 'available', release }); await check.promise })
-    const options = jest.mocked(downloadAndOpenApkInstaller).mock.calls[0][1]!
+    const options = jest.mocked(prepareApkRelease).mock.calls[0][1]!
     await act(() => options.onProgress?.({ stage: 'downloading', release, percent: 25 }))
-    expect(currentValue('settings.downloadingApk')).toBe(25)
+    expect(currentValue('settings.apkUpdateProgressDownloading')).toBe(25)
     await act(() => options.onProgress?.({ stage: 'verifying', release }))
-    expect(currentValue('settings.verifyingApk')).toBeUndefined()
-    expect(screen.queryByRole('progressbar', { name: 'settings.downloadingApk' })).toBeNull()
+    expect(currentValue('settings.apkUpdateProgressVerifying')).toBeUndefined()
+    expect(screen.queryByRole('progressbar', { name: 'settings.apkUpdateProgressDownloading' })).toBeNull()
     expect(screen.queryByText('25%')).toBeNull()
-    await fireEvent.press(screen.getByRole('button', { name: 'updates.cancelDownload' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'updates.cancelPending' }))
     expect(options.signal?.aborted).toBe(true)
     await act(() => options.onProgress?.({ stage: 'downloading', release, percent: 90 }))
-    expect(currentValue('settings.verifyingApk')).toBeUndefined()
+    expect(screen.queryByRole('progressbar')).toBeNull()
     expect(screen.queryByText('90%')).toBeNull()
     await act(async () => { install.resolve({ status: 'cancelled', message: 'cancelled' }); await install.promise })
     expect(screen.queryByRole('progressbar')).toBeNull()
@@ -202,7 +242,7 @@ it.each([
 it('opens Google Play only on a user click and reports opening errors', async () => {
   Constants.expoConfig!.extra = { distributionChannel: 'google-play' }
   const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   expect(openURL).not.toHaveBeenCalled()
   await fireEvent.press(screen.getByRole('button', { name: 'updates.openGooglePlay' }))
   expect(openURL).toHaveBeenCalledWith('https://play.google.com/store/apps/details?id=com.islemind.app')
@@ -210,34 +250,34 @@ it('opens Google Play only on a user click and reports opening errors', async ()
   await fireEvent.press(screen.getByRole('button', { name: 'updates.openGooglePlay' }))
   expect(mockDialog.toast).toHaveBeenCalledWith({ title: 'updates.storeOpenFailed', tone: 'danger' })
   expect(checkLatestApkRelease).not.toHaveBeenCalled()
-  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
 })
 
 it('guards immediate repeated clicks before React can disable the check button', async () => {
   const pending = deferred<ApkUpdateResult>()
   jest.mocked(checkLatestApkRelease).mockReturnValueOnce(pending.promise)
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   const button = jest.mocked(IsleButton).mock.calls.findLast(([props]) => props.label === 'settings.checkApk')![0]
   const event = {} as Parameters<NonNullable<typeof button.onPress>>[0]
   await act(() => { button.onPress?.(event); button.onPress?.(event) })
   expect(checkLatestApkRelease).toHaveBeenCalledTimes(1)
   await act(() => pending.resolve({ status: 'available', message: 'available', release }))
   expect(mockDialog.confirm).toHaveBeenCalledTimes(1)
-  expect(downloadAndOpenApkInstaller).toHaveBeenCalledTimes(1)
-  expect(mockUpdateSettings).toHaveBeenCalledWith({ lastApkUpdateCheckAt: expect.any(Number) })
+  expect(prepareApkRelease).toHaveBeenCalledTimes(1)
+  expect(mockUpdateSettings).toHaveBeenCalledWith({ lastApkUpdateCheckAt: expect.any(Number), lastApkUpdateCheckChannel: 'stable' })
   expect(screen.getByRole('button', { name: 'settings.checkApk' })).toBeEnabled()
 })
 
 it('cancels download, ignores stale progress and allows retry without an error dialog', async () => {
   const pending = deferred<ApkUpdateResult>()
-  jest.mocked(downloadAndOpenApkInstaller).mockImplementationOnce(async (_release, options) => {
+  jest.mocked(prepareApkRelease).mockImplementationOnce(async (_release, options) => {
     options?.onProgress?.({ stage: 'downloading', release, percent: 10 })
     return pending.promise
   })
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
-  const options = jest.mocked(downloadAndOpenApkInstaller).mock.calls[0][1]!
-  await fireEvent.press(screen.getByRole('button', { name: 'updates.cancelDownload' }))
+  const options = jest.mocked(prepareApkRelease).mock.calls[0][1]!
+  await fireEvent.press(screen.getByRole('button', { name: 'updates.cancelPending' }))
   expect(options.signal?.aborted).toBe(true)
   expect(screen.getByRole('button', { name: 'updates.cancelling' })).toBeDisabled()
   const banners = mockDialog.banner.mock.calls.length
@@ -255,25 +295,25 @@ it('cancels download, ignores stale progress and allows retry without an error d
 it.each(['unmount', 'panel-change'] as const)('never starts an installer after leaving a pending confirmation: %s', async exit => {
   const confirmation = deferred<boolean>()
   mockDialog.confirm.mockReturnValueOnce(confirmation.promise)
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
   expect(mockDialog.confirm).toHaveBeenCalledTimes(1)
   if (exit === 'unmount') await screen.unmount()
-  else await screen.rerender(<SystemSettingsPanelContent panel="appearance" />)
+  else await screen.rerender(<UpdateRoot panel="appearance" />)
   await act(() => confirmation.resolve(true))
-  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
   if (exit === 'panel-change') {
-    await screen.rerender(<SystemSettingsPanelContent panel="updates" />)
+    await screen.rerender(<UpdateRoot panel="updates" />)
     expect(screen.getByRole('button', { name: 'settings.checkApk' })).toBeEnabled()
   }
 })
 
 it('aborts on unmount and does not publish late native progress or terminal feedback', async () => {
   const pending = deferred<ApkUpdateResult>()
-  jest.mocked(downloadAndOpenApkInstaller).mockReturnValueOnce(pending.promise)
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  jest.mocked(prepareApkRelease).mockReturnValueOnce(pending.promise)
+  const screen = await render(<UpdateRoot panel="updates" />)
   await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
-  const options = jest.mocked(downloadAndOpenApkInstaller).mock.calls[0][1]!
+  const options = jest.mocked(prepareApkRelease).mock.calls[0][1]!
   await screen.unmount()
   expect(options.signal?.aborted).toBe(true)
   const notifications = jest.mocked(updateAndroidStatusNotification).mock.calls.length
@@ -286,21 +326,71 @@ it('aborts on unmount and does not publish late native progress or terminal feed
   expect(mockDialog.toast).not.toHaveBeenCalled()
 })
 
+it('keeps confirmed preparation owned by the root after navigating away from Settings', async () => {
+  const pending = deferred<ApkUpdateResult>()
+  jest.mocked(prepareApkRelease).mockReturnValueOnce(pending.promise)
+  const screen = await render(<UpdateRoot panel="updates" />)
+  await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
+  const options = jest.mocked(prepareApkRelease).mock.calls[0][1]!
+  await screen.rerender(<UpdateRoot panel="appearance" />)
+  expect(options.signal?.aborted).toBe(false)
+  await act(() => pending.resolve({
+    status: 'prepared', message: 'Ready', prepared: { release, localUri: 'file:///cache/update.apk' },
+  }))
+  await waitFor(() => expect(openPreparedApkInstaller).toHaveBeenCalledTimes(1))
+})
+
+it('preserves synchronous consent when the panel changes before the confirmation promise settles', async () => {
+  const confirmation = deferred<boolean>()
+  const candidate = { ...release }
+  jest.mocked(checkLatestApkRelease).mockResolvedValueOnce({ status: 'available', message: 'Available', release: candidate })
+  mockDialog.confirm.mockReturnValueOnce(confirmation.promise)
+  const screen = await render(<UpdateRoot panel="updates" />)
+  await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
+  const options = mockDialog.confirm.mock.calls[0][0]
+  await act(() => options.onConfirm())
+  candidate.apkUrl = 'https://example.test/replaced-after-consent.apk'
+  await screen.rerender(<UpdateRoot panel="appearance" />)
+  await act(() => confirmation.resolve(true))
+  await waitFor(() => expect(prepareApkRelease).toHaveBeenCalledTimes(1))
+  expect(jest.mocked(prepareApkRelease).mock.calls[0][0].apkUrl).toBe(release.apkUrl)
+})
+
+it('revokes an unapproved manual result when the release channel changes', async () => {
+  const pending = deferred<ApkUpdateResult>()
+  jest.mocked(checkLatestApkRelease).mockReturnValueOnce(pending.promise)
+  const screen = await render(<UpdateRoot panel="updates" />)
+  await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
+  await act(() => {
+    mockState.settings.apkUpdateChannel = 'every-release'
+    for (const listener of mockSettingsListeners) listener(mockState)
+    pending.resolve({ status: 'available', message: 'Old channel', release })
+  })
+  expect(mockDialog.confirm).not.toHaveBeenCalled()
+  expect(prepareApkRelease).not.toHaveBeenCalled()
+  expect(mockUpdateSettings).not.toHaveBeenCalled()
+})
+
 it('recovers from unexpected check exceptions without recording a successful check', async () => {
   jest.mocked(checkLatestApkRelease).mockRejectedValueOnce(new Error('unexpected failure'))
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
   expect(mockDialog.notice).toHaveBeenCalledWith(expect.objectContaining({ title: 'settings.apkUpdateFailed', tone: 'danger' }))
   expect(mockUpdateSettings).not.toHaveBeenCalled()
   expect(screen.getByRole('button', { name: 'settings.checkApk' })).toBeEnabled()
   await fireEvent.press(screen.getByRole('button', { name: 'settings.checkApk' }))
-  expect(downloadAndOpenApkInstaller).toHaveBeenCalledTimes(1)
+  expect(prepareApkRelease).toHaveBeenCalledTimes(1)
 })
-afterEach(() => jest.restoreAllMocks())
+afterEach(async () => {
+  await cleanup()
+  expect(downloadAndOpenApkInstaller).not.toHaveBeenCalled()
+  appUpdateActivity.setForeground(false)
+  jest.restoreAllMocks()
+})
 
 it.each(['github', 'google-play'])('renders channel-appropriate update controls for %s', async channel => {
   Constants.expoConfig!.extra = { distributionChannel: channel }
-  const screen = await render(<SystemSettingsPanelContent panel="updates" />)
+  const screen = await render(<UpdateRoot panel="updates" />)
   if (channel === 'google-play') {
     expect(screen.getByText('updates.googlePlayManaged')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'settings.checkApk' })).toBeNull()

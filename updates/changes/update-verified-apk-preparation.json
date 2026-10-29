@@ -1,0 +1,24 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "update-verified-apk-preparation",
+  "createdAtMs": 1793179117451,
+  "audience": "user",
+  "priority": "routine",
+  "delivery": "native",
+  "category": "privacy",
+  "platforms": [
+    "android"
+  ],
+  "files": [
+    "src/core/apkAutomaticDownloadPolicy.ts",
+    "src/platform/native/androidApkUpdates.ts",
+    "src/components/updates/useAutomaticApkUpdatePreparation.ts",
+    "src/components/updates/apkUpdateDeliveryCoordinator.ts",
+    "src/components/updates/ApkAutomaticDownloadConsent.tsx"
+  ],
+  "texts": {
+    "en": "APK preparation is separate from installation approval. Optional default-off preparation requires explicit Wi-Fi policy consent, and immutable official APK bytes are reverified before installer handoff.",
+    "zh-CN": "APK 准备与安装批准分离。默认关闭的自动准备需明确同意 Wi-Fi 策略，固定的官方 APK 文件在安装器交接前会重新校验。",
+    "ja": "APK の準備とインストール承認を分離しました。初期状態で無効な自動準備には Wi-Fi ポリシーへの明示的な同意が必要で、固定された公式 APK を引き渡し前に再検証します。"
+  }
+}

@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -36,6 +39,15 @@ jobs:
 
       - name: Type check
         run: bun run type-check
+
+      - name: Signed catalog and release-planning contracts
+        run: bun run test:update-delivery
+
+      - name: Read-only release plan
+        env:
+          PLAN_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+          PLAN_HEAD: ${{ github.sha }}
+        run: node scripts/release-plan.js --base "$PLAN_BASE" --head "$PLAN_HEAD"
 
       - name: Offline user guide contracts
         run: |

@@ -1,0 +1,24 @@
+{
+  "schema": "islemind.release-change.v1",
+  "id": "update-consent-target",
+  "createdAtMs": 1793108127796,
+  "audience": "user",
+  "priority": "routine",
+  "delivery": "ota-compatible",
+  "category": "fixes",
+  "platforms": [
+    "android"
+  ],
+  "files": [
+    "src/components/ui/isle/Dialog.tsx",
+    "src/components/updates/apkUpdateInstallCoordinator.ts",
+    "src/components/updates/apkUpdateTarget.ts",
+    "src/components/updates/useAutomaticApkUpdateInstall.ts",
+    "src/presentation/features/settings/apkUpdateInteraction.ts"
+  ],
+  "texts": {
+    "en": "Installation stays bound to the version you approved, and cancelled downloads cannot publish stale progress over the final result.",
+    "zh-CN": "安装会锁定用户同意的更新版本，取消下载后旧进度提示不会覆盖最终结果。",
+    "ja": "同意したバージョンだけをインストールします。キャンセル後の古い進捗通知は最終結果を上書きしません。"
+  }
+}

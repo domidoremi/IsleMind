@@ -5,6 +5,8 @@ export interface AppVersion {
 }
 
 export interface AppReleaseNotes {
+  /** Stable release identity supplied by the transport, not a text similarity key. */
+  sourceId?: string
   version: string
   versionCode?: number
   notes: string

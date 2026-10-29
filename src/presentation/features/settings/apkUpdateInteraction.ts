@@ -1,4 +1,5 @@
 import { createApkUpdateIgnoreState, type ApkUpdateTarget, type InstalledApkVersion } from '@/modules/settings'
+import { appUpdateActivity } from '@/presentation/app-shell/appUpdateActivity'
 
 let manualChecks = 0
 const automaticPrompts = new Set<AbortController>()
@@ -7,12 +8,14 @@ const handledTargets = new Set<string>()
 /** A manual action owns confirmation; cancel any queued automatic duplicate without ignoring it. */
 export function beginManualApkUpdateCheck(): () => void {
   manualChecks += 1
+  const releaseBlocker = appUpdateActivity.acquireBlocker('manual-update-check')
   for (const controller of automaticPrompts) controller.abort()
   let finished = false
   return () => {
     if (finished) return
     finished = true
     manualChecks -= 1
+    releaseBlocker()
   }
 }
 

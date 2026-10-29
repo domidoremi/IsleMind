@@ -293,13 +293,12 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           : result?.synced
             ? t('providerSettings.activationPartial')
             : t('providerSettings.activationFailed')
-        dialog.toast({ title, message: summary.message, tone: summary.tone, position: 'bottom', durationMs: 3800, dedupeKey: 'provider-activation', priority: summary.tone === 'danger' ? 'high' : 'normal' })
+        dialog.toast({ title, message: summary.message, tone: summary.tone, durationMs: 3800, dedupeKey: 'provider-activation', priority: summary.tone === 'danger' ? 'high' : 'normal' })
       } else {
         dialog.toast({
           title: doneTitle,
           message: summary.message,
           tone: summary.tone,
-          position: 'bottom',
           durationMs: 4200,
           dedupeKey: 'provider-activation',
           priority: summary.tone === 'danger' ? 'high' : 'normal',

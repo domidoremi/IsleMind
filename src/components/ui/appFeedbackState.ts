@@ -8,8 +8,10 @@ export interface AppFeedbackOptions {
   message?: string
   tone?: AppFeedbackTone
   durationMs?: number
+  /** @deprecated Transient feedback is always top-aligned; kept for legacy callers. */
   position?: AppFeedbackPosition
   topOffset?: number
+  /** @deprecated Bottom placement is no longer used for transient feedback. */
   bottomOffset?: number
   actionLabel?: string
   onAction?: () => void

@@ -232,7 +232,6 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
           title: t('conversation.deleteCompleted'),
           message: t('conversation.deleteCompletedMessage', { title: displayTitle }),
           tone: 'mint',
-          position: 'bottom',
           durationMs: 2400,
         })
       } finally {
@@ -262,7 +261,6 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
       title: t('conversation.renameSaved'),
       message: t('conversation.renameSavedMessage', { title: nextTitle }),
       tone: 'mint',
-      position: 'bottom',
       durationMs: 2200,
     })
   }
