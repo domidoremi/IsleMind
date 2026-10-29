@@ -14,21 +14,26 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-release-${{ inputs.tag }}
   cancel-in-progress: false
 
+env:
+  ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}
+  REQUESTED_TAG: ${{ github.event.inputs.tag }}
+  JAVA_TOOL_OPTIONS: --enable-native-access=ALL-UNNAMED
+
 jobs:
-  release-android-apk:
-    name: Build signed release APKs
+  release-quality:
+    name: Qualify immutable release source
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}
-      REQUESTED_TAG: ${{ github.event.inputs.tag }}
-      JAVA_TOOL_OPTIONS: --enable-native-access=ALL-UNNAMED
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      source_commit: ${{ steps.meta.outputs.source_commit }}
+      ui_commit: ${{ steps.ui.outputs.commit }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -52,9 +57,6 @@ jobs:
           distribution: temurin
           java-version: 25.0.4+101.0.LTS
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
-
       - name: Resolve release metadata
         id: meta
         shell: bash
@@ -77,8 +79,11 @@ jobs:
             echo "::error::Release tag $TAG does not match package.json version $PACKAGE_VERSION."
             exit 1
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "source_commit=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Check Android signing secrets
         shell: bash
@@ -101,19 +106,18 @@ jobs:
           fi
 
       - name: Prepare RN theme workspace
-        run: node scripts/prepare-animal-island-ui.js
+        id: ui
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/prepare-animal-island-ui.js
+          echo "commit=$(git -C ../animal-island-ui rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Type check
         run: bun run type-check
-
-      - name: Verify and record build toolchain
-        run: |
-          mkdir -p dist-apk
-          node scripts/android-build-toolchain.js > dist-apk/build-toolchain.json
-          cat dist-apk/build-toolchain.json
 
       - name: Release quality contracts
         run: |
@@ -127,6 +131,93 @@ jobs:
           bun run test:architecture-contract
           bun run test:walking-skeleton
           bun run test:task-runtime
+
+      - name: Checkout workflow verification tools
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: .ci-tools
+          persist-credentials: false
+
+      - name: Verify workflow control contracts
+        run: |
+          node node_modules/jest/bin/jest.js --runInBand --config '{"testEnvironment":"node","transform":{},"roots":["<rootDir>/.ci-tools/scripts"],"testMatch":["**/validate-release-apk-set.test.js","**/update-delivery-workflow.test.js"]}'
+
+  build-release-apk:
+    name: Build signed APK (${{ matrix.arch }}, ${{ matrix.model_variant }})
+    needs: release-quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - arch: universal-64
+            abi_filters: arm64-v8a,x86_64
+            model_variant: no-model
+          - arch: arm64-v8a
+            abi_filters: arm64-v8a
+            model_variant: no-model
+          - arch: x86_64
+            abi_filters: x86_64
+            model_variant: no-model
+          - arch: armeabi-v7a-legacy
+            abi_filters: armeabi-v7a
+            model_variant: no-model
+          - arch: universal-64
+            abi_filters: arm64-v8a,x86_64
+            model_variant: with-model-small
+          - arch: arm64-v8a
+            abi_filters: arm64-v8a
+            model_variant: with-model-small
+          - arch: x86_64
+            abi_filters: x86_64
+            model_variant: with-model-small
+          - arch: armeabi-v7a-legacy
+            abi_filters: armeabi-v7a
+            model_variant: with-model-small
+    env:
+      ANIMAL_ISLAND_UI_REF: ${{ needs.release-quality.outputs.ui_commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-quality.outputs.source_commit }}
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.21.0
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25.0.4+101.0.LTS
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Prepare RN theme workspace
+        run: node scripts/prepare-animal-island-ui.js
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify and record build toolchain
+        shell: bash
+        run: |
+          mkdir -p dist-apk
+          # Every merged artifact filename identifies its matrix producer.
+          node scripts/android-build-toolchain.js > "dist-apk/build-toolchain-${{ matrix.arch }}-${{ matrix.model_variant }}.json"
+          cat "dist-apk/build-toolchain-${{ matrix.arch }}-${{ matrix.model_variant }}.json"
 
       - name: Generate Android project
         run: CI=1 bunx expo prebuild --platform android --clean
@@ -143,56 +234,35 @@ jobs:
       - name: Build release APKs
         shell: bash
         env:
+          VERSION: ${{ needs.release-quality.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          ABI_FILTERS: ${{ matrix.abi_filters }}
+          MODEL_VARIANT: ${{ matrix.model_variant }}
           ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_STORE_FILE: islemind-release.keystore
           ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.meta.outputs.version }}"
           mkdir -p dist-apk
-          for model_variant in no-model with-model-small; do
-            extra_args=()
-            if [ "$model_variant" = "with-model-small" ]; then
-              extra_args+=(--fail-on-missing-models)
-            fi
-            bun scripts/prepare-model-bundle.js --variant "$model_variant" "${extra_args[@]}"
-            copied=0
-            for build_pass in "universal-64:arm64-v8a,x86_64" "arm64-v8a:arm64-v8a" "x86_64:x86_64" "armeabi-v7a-legacy:armeabi-v7a"; do
-              IFS=':' read -r arch abi_filters <<< "$build_pass"
-              rm -rf android/app/.cxx android/app/build/outputs/apk/release
-              # Keep R8/resource shrinking on the explicit local QA path until an exact-current
-              # physical-device regression pass covers startup, recovery, keyboard, themes, and memory.
-              (cd android && ISLEMIND_MODEL_BUNDLE="$model_variant" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$model_variant" ./gradlew assembleRelease --rerun-tasks --no-daemon --stacktrace -PislemindAbiFilters="$abi_filters" -PislemindEnableAbiSplits=false -PislemindUniversalApk=false -PreactNativeArchitectures="$abi_filters" -PhermesEnabled=true)
-              shopt -s nullglob
-              apks=(android/app/build/outputs/apk/release/*.apk)
-              if [ "${#apks[@]}" -ne 1 ]; then
-                echo "::error::Expected one APK for $arch $model_variant, found ${#apks[@]}."
-                printf '%s\n' "${apks[@]}"
-                exit 1
-              fi
-              target="dist-apk/IsleMind-${VERSION}-${arch}-${model_variant}.apk"
-              cp "${apks[0]}" "$target"
-              sha256sum "$target" > "${target}.sha256"
-              bun scripts/write-release-source-snapshots.js "$target"
-              copied=$((copied + 1))
-            done
-            for required_arch in universal-64 arm64-v8a x86_64 armeabi-v7a-legacy; do
-              if [ ! -f "dist-apk/IsleMind-${VERSION}-${required_arch}-${model_variant}.apk" ]; then
-                echo "::error::Missing ${required_arch} ${model_variant} APK asset."
-                find android/app/build/outputs/apk/release -maxdepth 1 -type f -print || true
-                exit 1
-              fi
-            done
-          done
-          bun scripts/prepare-model-bundle.js --variant no-model
-          git restore --source=HEAD -- src/generated/modelBundle.ts
-          count="$(find dist-apk -type f -name '*.apk' | wc -l | tr -d ' ')"
-          if [ "$count" -lt 8 ]; then
-            echo "::error::Expected 8 APK assets, found $count."
+          extra_args=()
+          if [ "$MODEL_VARIANT" = "with-model-small" ]; then
+            extra_args+=(--fail-on-missing-models)
+          fi
+          bun scripts/prepare-model-bundle.js --variant "$MODEL_VARIANT" "${extra_args[@]}"
+          # Keep R8/resource shrinking off until the exact-current device matrix qualifies it.
+          (cd android && ISLEMIND_MODEL_BUNDLE="$MODEL_VARIANT" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$MODEL_VARIANT" ./gradlew assembleRelease --rerun-tasks --no-daemon --stacktrace -PislemindAbiFilters="$ABI_FILTERS" -PislemindEnableAbiSplits=false -PislemindUniversalApk=false -PreactNativeArchitectures="$ABI_FILTERS" -PhermesEnabled=true)
+          shopt -s nullglob
+          apks=(android/app/build/outputs/apk/release/*.apk)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "::error::Expected one APK for $ARCH $MODEL_VARIANT, found ${#apks[@]}."
+            printf '%s\n' "${apks[@]}"
             exit 1
           fi
-          bun scripts/validate-android-16kb-apk.js --strict dist-apk/*-universal-64-*.apk dist-apk/*-arm64-v8a-*.apk dist-apk/*-x86_64-*.apk
+          target="dist-apk/IsleMind-${VERSION}-${ARCH}-${MODEL_VARIANT}.apk"
+          cp "${apks[0]}" "$target"
+          sha256sum "$target" > "${target}.sha256"
+          bun scripts/write-release-source-snapshots.js "$target"
 
       - name: Remove decoded signing keystore
         if: always()
@@ -202,12 +272,126 @@ jobs:
       - name: Validate release signing
         run: bun scripts/validate-android-release-signing.js dist-apk/*.apk
 
+      - name: Validate 64-bit page alignment
+        if: ${{ matrix.arch != 'armeabi-v7a-legacy' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/validate-android-16kb-apk.js --strict dist-apk/*.apk | tee "$RUNNER_TEMP/16kb-validation.log"
+          if grep -q 'skipped' "$RUNNER_TEMP/16kb-validation.log"; then
+            echo "::error::Every 64-bit APK requires actual ZIP and ELF alignment verification."
+            exit 1
+          fi
+
+      - name: Upload variant artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: islemind-android-candidate-${{ matrix.arch }}-${{ matrix.model_variant }}
+          path: dist-apk/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  release-android-apk:
+    name: Validate and collect signed release APKs
+    needs: [release-quality, build-release-apk]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      ANIMAL_ISLAND_UI_REF: ${{ needs.release-quality.outputs.ui_commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-quality.outputs.source_commit }}
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.21.0
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25.0.4+101.0.LTS
+
+      - name: Prepare ELF inspection tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$SDK" ]; then
+            echo "::error::An Android SDK is required for independent APK verification."
+            exit 1
+          fi
+          READELF="$SDK/ndk/27.1.12297006/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          if [ ! -x "$READELF" ]; then
+            "$SDK/cmdline-tools/latest/bin/sdkmanager" "ndk;27.1.12297006"
+          fi
+          test -x "$READELF"
+          echo "LLVM_READELF=$READELF" >> "$GITHUB_ENV"
+
+      - name: Prepare RN theme workspace
+        run: node scripts/prepare-animal-island-ui.js
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate verification Android project
+        run: CI=1 bunx expo prebuild --platform android --clean
+
+      - name: Checkout verification tools
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: .ci-tools
+          persist-credentials: false
+
+      - name: Download all candidate variants
+        uses: actions/download-artifact@v8
+        with:
+          pattern: islemind-android-candidate-*
+          path: dist-apk
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Validate complete APK set and source binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .ci-tools/scripts/validate-release-apk-set.js --source-root "$GITHUB_WORKSPACE" > dist-apk/candidate-set.json
+          cat dist-apk/candidate-set.json
+
+      - name: Validate release signing
+        run: bun scripts/validate-android-release-signing.js dist-apk/*.apk
+
+      - name: Validate 64-bit page alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/validate-android-16kb-apk.js --strict dist-apk/*-universal-64-*.apk dist-apk/*-arm64-v8a-*.apk dist-apk/*-x86_64-*.apk | tee "$RUNNER_TEMP/16kb-validation.log"
+          if grep -q 'skipped' "$RUNNER_TEMP/16kb-validation.log"; then
+            echo "::error::Complete candidate validation cannot skip ZIP or ELF alignment verification."
+            exit 1
+          fi
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
           name: islemind-android-release-apks
           path: dist-apk/*
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
 
       - name: Publish GitHub Release
         if: ${{ inputs.publish_release == true }}
@@ -216,7 +400,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ steps.meta.outputs.tag }}"
+          TAG="$REQUESTED_TAG"
           # Build the immutable tag, not the branch containing this workflow.
           git fetch --no-tags origin "refs/tags/$TAG"
           if [ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$(git rev-parse HEAD)" ]; then

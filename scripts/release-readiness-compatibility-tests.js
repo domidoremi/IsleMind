@@ -2118,9 +2118,9 @@ function assertReleaseWorkflowIntegration() {
     assert.ok(source.includes('bun install --frozen-lockfile'), `${name} workflow installs from bun.lock without mutation`)
     assert.ok(source.includes('bun run type-check'), `${name} workflow type-checks through Bun`)
     assert.doesNotMatch(source, /cache:\s*npm|\bnpm\s+(?:ci|install|run)\b|\bnpx\b/, `${name} workflow has no npm package-management path`)
-    const jobs = Object.values(parse(source).jobs)
+    const jobs = Object.entries(parse(source).jobs)
     assert.ok(jobs.length > 0, `${name} workflow has build jobs`)
-    for (const job of jobs) {
+    for (const [jobId, job] of jobs) {
       const nodeSetups = job.steps.filter(step => step.uses?.startsWith('actions/setup-node@'))
       const bunSetups = job.steps.filter(step => step.uses?.startsWith('oven-sh/setup-bun@'))
       assert.equal(nodeSetups.length, 1, `${name} workflow installs Node exactly once for Node scripts`)
@@ -2129,16 +2129,36 @@ function assertReleaseWorkflowIntegration() {
       assert.equal(bunSetups.length, 1, `${name} workflow retains Bun package management`)
       assert.equal(bunSetups[0].with?.['bun-version'], qualifiedBuildToolchain.bun, `${name} workflow pins the qualified Bun version`)
       assert.ok(job.steps.some(step => step.run === 'bun install --frozen-lockfile'), `${name} build job consumes the Bun lockfile`)
-      assert.ok(job.steps.some(step => step.run === 'bun run type-check'), `${name} build job retains the type gate`)
+      const hasTypeGate = job.steps.some(step => step.run === 'bun run type-check')
+      const sourceGatedStage = name === 'signed release' && ['build-release-apk', 'release-android-apk'].includes(jobId)
+      assert.ok(hasTypeGate || sourceGatedStage, `${name} ${jobId} retains its own type gate or the required source-gate dependency`)
     }
   }
 
   const releaseWorkflow = parse(releaseWorkflowSource)
+  const quality = releaseWorkflow.jobs['release-quality']
+  const build = releaseWorkflow.jobs['build-release-apk']
+  const collection = releaseWorkflow.jobs['release-android-apk']
+  assert.ok(quality && build && collection, 'release source validation, matrix builds, and collection are required stages')
+  assert.ok(quality.steps.some(step => step.run === 'bun run type-check'), 'immutable release source passes the type gate')
+  assert.equal(build.needs, 'release-quality', 'every matrix APK requires successful source validation')
+  assert.deepEqual(collection.needs, ['release-quality', 'build-release-apk'], 'collection requires source validation and the complete matrix')
+  for (const job of [quality, build, collection]) {
+    assert.equal(job.if, undefined, 'release stages cannot bypass successful predecessor gates')
+    assert.equal(job['continue-on-error'], undefined, 'release stages cannot accept failed predecessor gates')
+  }
+  assert.deepEqual(build.strategy.matrix.include, require('./validate-release-apk-set').releaseApkMatrix(), 'the signed release preserves all eight APK variants')
   const releaseSteps = releaseWorkflow.jobs['release-android-apk'].steps
-  const checkout = releaseSteps.find(step => step.uses?.startsWith('actions/checkout@'))
+  const checkout = quality.steps.find(step => step.name === 'Checkout')
   assert.equal(releaseWorkflow.on.workflow_dispatch.inputs.tag.required, true, 'release builds require an explicit existing tag')
   assert.equal(checkout.with.ref, 'refs/tags/${{ inputs.tag }}', 'build the selected tag, not the workflow branch')
   assert.equal(checkout.with['persist-credentials'], false, 'checkout does not retain write credentials')
+  for (const job of [build, collection]) {
+    const sourceCheckout = job.steps.find(step => step.name === 'Checkout')
+    assert.equal(sourceCheckout.with.ref, '${{ needs.release-quality.outputs.source_commit }}', 'every downstream stage consumes the same validated source commit')
+    assert.equal(sourceCheckout.with['persist-credentials'], false, 'downstream source checkouts do not retain write credentials')
+    assert.equal(job.env.ANIMAL_ISLAND_UI_REF, '${{ needs.release-quality.outputs.ui_commit }}', 'the paired UI commit remains immutable across stages')
+  }
   assert.equal(releaseWorkflow.permissions.actions, undefined, 'release builds do not need artifact deletion permissions')
   assert.equal(releaseWorkflow.concurrency['cancel-in-progress'], false, 'a newer build cannot cancel publication in progress')
   const publication = releaseSteps.find(step => step.name === 'Publish GitHub Release').run
