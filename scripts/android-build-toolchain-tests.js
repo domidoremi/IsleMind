@@ -12,6 +12,27 @@ let passed = 0
 function test(name, action) { action(); passed++; console.log(`PASS ${name}`) }
 const qualifiedJava = { vendor: pins.javaVendor, version: pins.javaVersion, runtimeVersion: pins.javaRuntimeVersion }
 
+function assertWorkflowToolchain(workflow, name) {
+  for (const [jobId, job] of Object.entries(workflow.jobs)) {
+    const setup = prefix => job.steps.find(step => step.uses?.startsWith(prefix))
+    assert.equal(setup('actions/setup-node@')?.with['node-version'], pins.node, name)
+    assert.equal(setup('oven-sh/setup-bun@')?.with['bun-version'], pins.bun, name)
+    assert.ok(job.steps.some(step => step.run === 'bun install --frozen-lockfile'), name)
+    if (name === 'runner-android-apk' || name === 'release-android-apk') {
+      assert.equal(setup('actions/setup-java@')?.with['java-version'], pins.javaDistributionVersion, name)
+      assert.equal(setup('actions/setup-java@').with.distribution, 'temurin', name)
+      const env = { ...workflow.env, ...job.env }
+      assert.equal(env.JAVA_TOOL_OPTIONS, '--enable-native-access=ALL-UNNAMED', `${name} ${jobId} JAVA_TOOL_OPTIONS`)
+      const compilesApk = name === 'runner-android-apk'
+        || jobId === 'build-release-apk'
+        || job.steps.some(step => /\bgradlew(?:\.bat)?\s/.test(step.run || ''))
+      if (compilesApk) {
+        assert.ok(job.steps.some(step => step.run?.includes('node scripts/android-build-toolchain.js')), `${name} ${jobId} toolchain capture`)
+      }
+    }
+  }
+}
+
 test('exact runtime and vendor, not just Java major, are required', () => {
   assert.deepEqual(parseJavaProperties('  java.vendor = Eclipse Adoptium\r\n  java.version = 25.0.4.1\r\n  java.runtime.version = 25.0.4.1+1-LTS\r\n'), qualifiedJava)
   assert.equal(assertQualifiedJava(qualifiedJava), qualifiedJava)
@@ -104,18 +125,34 @@ test('mise, package manager and Node declarations match the qualified pins', () 
 test('all workflows use pinned Node and Bun; native runner JDKs are exact', () => {
   for (const name of ['architecture-gates', 'runner-android-apk', 'release-android-apk', 'eas-android-apk']) {
     const workflow = yaml.parse(read(`.github/workflows/${name}.yml`))
-    for (const job of Object.values(workflow.jobs)) {
-      const setup = prefix => job.steps.find(step => step.uses?.startsWith(prefix))
-      assert.equal(setup('actions/setup-node@')?.with['node-version'], pins.node, name)
-      assert.equal(setup('oven-sh/setup-bun@')?.with['bun-version'], pins.bun, name)
-      assert.ok(job.steps.some(step => step.run === 'bun install --frozen-lockfile'), name)
-      if (name === 'runner-android-apk' || name === 'release-android-apk') {
-        assert.equal(setup('actions/setup-java@')?.with['java-version'], pins.javaDistributionVersion, name)
-        assert.equal(setup('actions/setup-java@').with.distribution, 'temurin', name)
-        assert.equal(job.env.JAVA_TOOL_OPTIONS, '--enable-native-access=ALL-UNNAMED', name)
-        assert.ok(job.steps.some(step => step.run?.includes('node scripts/android-build-toolchain.js')), name)
-      }
-    }
+    assertWorkflowToolchain(workflow, name)
+  }
+})
+
+test('inherited Java options and every job override remain mandatory', () => {
+  const workflow = yaml.parse(read('.github/workflows/release-android-apk.yml'))
+  const missing = structuredClone(workflow)
+  delete missing.env.JAVA_TOOL_OPTIONS
+  assert.throws(() => assertWorkflowToolchain(missing, 'release-android-apk'), /JAVA_TOOL_OPTIONS/)
+  for (const jobId of Object.keys(workflow.jobs)) {
+    const overridden = structuredClone(workflow)
+    overridden.jobs[jobId].env = { ...overridden.jobs[jobId].env, JAVA_TOOL_OPTIONS: '' }
+    assert.throws(() => assertWorkflowToolchain(overridden, 'release-android-apk'), /JAVA_TOOL_OPTIONS/)
+  }
+})
+
+test('native matrix producers cannot omit build toolchain capture', () => {
+  const workflow = yaml.parse(read('.github/workflows/release-android-apk.yml'))
+  const build = workflow.jobs['build-release-apk']
+  build.steps = build.steps.filter(step => !step.run?.includes('node scripts/android-build-toolchain.js'))
+  assert.throws(() => assertWorkflowToolchain(workflow, 'release-android-apk'), /build-release-apk toolchain capture/)
+})
+
+test('adding Gradle work to a verification stage requires its own toolchain capture', () => {
+  for (const jobId of ['release-quality', 'release-android-apk']) {
+    const workflow = yaml.parse(read('.github/workflows/release-android-apk.yml'))
+    workflow.jobs[jobId].steps.push({ name: 'Unexpected native build', run: './gradlew assembleRelease' })
+    assert.throws(() => assertWorkflowToolchain(workflow, 'release-android-apk'), /toolchain capture/)
   }
 })
 
