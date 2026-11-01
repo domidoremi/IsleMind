@@ -34,7 +34,7 @@ export function RuntimeDiagnosticsDetails({
   pluginCatalog,
 }: RuntimeDiagnosticsDetailsProps) {
   const { t } = useTranslation()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { colors } = useAppTheme()
   const { width, fontScale } = useWindowDimensions()
   const compact = width / fontScale < 600

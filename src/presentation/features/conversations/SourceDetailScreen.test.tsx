@@ -18,7 +18,10 @@ jest.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
 }))
 jest.mock('@/hooks/useAppTheme', () => ({
-  useAppTheme: () => ({ colors: jest.requireActual('@/theme/colors').getColors('light', 'minimal') }),
+  useAppTheme: () => {
+    const colors = jest.requireActual('@/theme/colors').getColors('light', 'minimal')
+    return { colors, design: colors.design, canonicalThemeId: 'minimal', isLiquidGlass: false }
+  },
 }))
 jest.mock('@/components/ui/isle', () => {
   const { Pressable, Text, View } = jest.requireActual('react-native')
@@ -189,12 +192,12 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockResolvedValue(documentSource())
     const view = await render(<SourceDetailScreen readLocalSource={read} />)
     await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
-    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({
-      title: outcome === 'success' ? 'common.copied' : 'common.copyFailed',
-      tone: outcome === 'success' ? 'mint' : 'danger',
-    })))
+    if (outcome === 'success') {
+      await waitFor(() => expect(view.getByRole('button', { name: 'common.copied' })).toBeTruthy())
+      expect(view.queryByTestId('source-copy-feedback')).toBeNull()
+    } else await waitFor(() => expect(view.getByTestId('source-copy-feedback')).toHaveTextContent('source.clipboardUnavailable'))
     expect(write).toHaveBeenCalledWith('Cited document\n\nCaptured excerpt')
-    expect(toast).toHaveBeenCalledTimes(1)
+    expect(toast).not.toHaveBeenCalled()
   })
 
   it('never substitutes the first citation when the requested identity is missing', async () => {

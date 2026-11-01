@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { AccessibilityInfo, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
@@ -19,15 +19,16 @@ import {
   enqueueAppToast,
   type AppFeedbackItem,
   type AppFeedbackOptions,
-  type AppFeedbackTone,
 } from '@/components/ui/appFeedbackState'
 import { resolveAppFeedbackTimeout } from '@/components/ui/appFeedbackTimeout'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
-
-type DialogTone = AppFeedbackTone
+import { IsleDialogContext } from './isleDialogContext'
+import type { BannerOptions, ConfirmOptions, DialogTone, IsleDialogApi, IsleDialogChip, IsleDialogMetric, NoticeOptions, ToastOptions } from './isleDialogTypes'
+export { IsleLocalFeedbackProvider } from './isleDialogContext'
+export type { BannerOptions, IsleDialogApi, IsleDialogChip, IsleDialogMetric, ToastOptions } from './isleDialogTypes'
 
 const DIALOG_ACTION_LAYOUT: ViewStyle = {
   flexBasis: 160,
@@ -36,47 +37,6 @@ const DIALOG_ACTION_LAYOUT: ViewStyle = {
   minWidth: 0,
   maxWidth: '100%',
   alignSelf: 'stretch',
-}
-
-export interface IsleDialogChip {
-  label: string
-  tone?: DialogTone
-}
-
-export interface IsleDialogMetric {
-  label: string
-  before?: string
-  after?: string
-  tone?: DialogTone
-}
-
-interface ConfirmOptions {
-  title: string
-  /** Cancels this pending confirmation only; used by request-scoped consent. */
-  signal?: AbortSignal
-  /** Synchronous consent receipt; runs before the confirmation promise settles. */
-  onConfirm?: () => void
-  message?: string
-  confirmLabel?: string
-  cancelLabel?: string
-  tone?: DialogTone
-  chips?: IsleDialogChip[]
-  metrics?: IsleDialogMetric[]
-  renderBody?: () => ReactNode
-}
-
-interface NoticeOptions {
-  title: string
-  message?: string
-  tone?: DialogTone
-  actionLabel?: string
-  renderBody?: () => ReactNode
-}
-
-export interface ToastOptions extends AppFeedbackOptions {}
-
-export interface BannerOptions extends Omit<AppFeedbackOptions, 'durationMs' | 'position' | 'topOffset' | 'bottomOffset' | 'priority'> {
-  id?: string
 }
 
 interface DialogState extends ConfirmOptions {
@@ -90,17 +50,6 @@ interface BannerState extends BannerOptions {
   id: string
 }
 
-interface IsleDialogApi {
-  confirm: (options: ConfirmOptions) => Promise<boolean>
-  notice: (options: NoticeOptions) => void
-  toast: (options: ToastOptions) => void
-  banner: (options: BannerOptions) => string
-  dismissBanner: (id: string) => void
-  hasPendingDialogs: () => boolean
-  subscribeDialogs: (listener: () => void) => () => void
-}
-
-const IsleDialogContext = createContext<IsleDialogApi | null>(null)
 const missingProviderWarnings = new Set<string>()
 
 function warnMissingProvider(method: keyof IsleDialogApi) {

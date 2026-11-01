@@ -107,7 +107,7 @@ function ScrollToBottomControl({
   onPress: () => void
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { t } = useTranslation()
   const countLabel = unreadCount > 99 ? '99+' : String(unreadCount)
   const accessibilityLabel = unreadCount > 0

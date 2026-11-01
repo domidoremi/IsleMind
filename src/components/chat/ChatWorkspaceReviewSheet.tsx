@@ -101,7 +101,7 @@ export function ChatWorkspaceReviewSheet({
   onCancelConfirmation,
 }: ChatWorkspaceReviewSheetProps) {
   const { colors, isLiquidGlass } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const insets = useSafeAreaInsets()
   const { height, width } = useWindowDimensions()
   const presentation = projection ? presentChatWorkspaceReview(projection) : null

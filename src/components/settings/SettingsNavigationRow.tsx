@@ -6,8 +6,8 @@ import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 /** A shared navigation treatment, not an editor: values never become controls here. */
-export function SettingsNavigationRow({ title, status, icon, onPress, id, last = false, preview, tile = false }: {
-  title: string; status?: string; icon: AppIconName; onPress: () => void; id: string; last?: boolean; preview?: ReactNode; tile?: boolean
+export function SettingsNavigationRow({ title, status, detail, icon, onPress, id, last = false, preview, tile = false }: {
+  title: string; status?: string; detail?: string; icon: AppIconName; onPress: () => void; id: string; last?: boolean; preview?: ReactNode; tile?: boolean
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
   const minimal = canonicalThemeId === 'minimal'
@@ -18,23 +18,25 @@ export function SettingsNavigationRow({ title, status, icon, onPress, id, last =
   const open = minimal || editorial
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
-  return <IslePressable testID={id} accessibilityRole="button" accessibilityLabel={[title, status].filter(Boolean).join(', ')}
+  return <IslePressable testID={id} accessibilityRole="button" accessibilityLabel={[title, status].filter(Boolean).join(', ')} accessibilityHint={detail}
+    haptic
     onPress={onPress} onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}
     onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-    style={{ minHeight: stacked ? 124 : minimal ? 56 : editorial ? 76 : 68, flexDirection: stacked ? 'column' : 'row', alignItems: stacked ? 'flex-start' : 'center', gap: stacked ? 18 : 12,
+    style={{ minHeight: stacked ? 106 : minimal ? 56 : editorial ? 76 : 68, flexDirection: stacked ? 'column' : 'row', alignItems: stacked ? 'flex-start' : 'center', gap: stacked ? 12 : 12,
       width: stacked ? '48%' : undefined, flexGrow: stacked ? 1 : 0,
       paddingHorizontal: open ? 2 : stacked ? 18 : 14, paddingVertical: minimal ? 10 : 14,
       borderRadius: open ? 0 : journal ? 8 : glass ? 22 : 16,
-      backgroundColor: hovered || focused ? colors.ui.semantic.surface.muted : stacked ? colors.ui.semantic.surface.raised : 'transparent',
+      backgroundColor: hovered || focused ? colors.ui.icon.accentBackground : stacked ? colors.design?.semantic.color.surfaceContainer ?? colors.ui.semantic.surface.raised : 'transparent',
       borderWidth: 1, borderColor: focused ? colors.ui.semantic.control.focus : 'transparent' }}>
     {!editorial ? <View pointerEvents="none" style={{ width: minimal ? 22 : stacked ? 28 : 36, height: minimal ? 28 : 36,
       borderRadius: journal ? 6 : glass ? 18 : 10, borderWidth: journal ? StyleSheet.hairlineWidth : 0, borderColor: colors.ui.section.divider,
-      alignItems: 'center', justifyContent: 'center', backgroundColor: open || stacked || journal ? 'transparent' : colors.ui.semantic.surface.muted }}>
+      alignItems: 'center', justifyContent: 'center', backgroundColor: open || stacked || journal ? 'transparent' : colors.ui.icon.accentBackground }}>
       <AppIcon name={icon} color={minimal ? colors.textSecondary : colors.ui.icon.accentForeground} size={stacked ? 26 : journal ? 22 : 19} />
     </View> : null}
     <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
       <Text style={{ ...colors.design?.semantic.typography.body, ...(editorial ? colors.design?.semantic.typography.title : null), fontWeight: colors.design?.semantic.typography.label.fontWeight, color: colors.text }}>{title}</Text>
       {status ? <Text style={{ ...colors.design?.semantic.typography.caption, color: colors.textSecondary }}>{status}</Text> : null}
+      {detail && detail !== status ? <Text numberOfLines={2} style={{ ...colors.design?.semantic.typography.caption, color: colors.textSecondary, lineHeight: 19 }}>{detail}</Text> : null}
     </View>
     {!stacked && !minimal ? preview : null}
     <View pointerEvents="none" style={stacked ? { position: 'absolute', top: 22, right: 18 } : undefined}>

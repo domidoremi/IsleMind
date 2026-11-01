@@ -1,11 +1,11 @@
 import { act, fireEvent, render } from '@testing-library/react-native'
-import { StyleSheet, Text } from 'react-native'
+import { StyleSheet, Text, View } from 'react-native'
 import { Collapse, Image, Modal, Tag, useTheme } from 'animal-island-ui-rn'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { getColors } from '@/theme/colors'
 import { THEME_MOTION_DURATIONS } from '@/theme/themeTokens'
-import type { CanonicalThemeId } from '@/types/settingsContracts'
+import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsContracts'
 import { IsleButton, IsleCard, IsleCollapse, IsleInput, IsleModal, IsleSelect, IsleSwitch } from './IsleKit'
 import { IsleImage } from './Image'
 import { IsleTag } from './Tag'
@@ -42,6 +42,27 @@ function setTheme(id: CanonicalThemeId = 'animal-island-ui', mode: 'light' | 'da
 beforeEach(() => {
   setTheme()
   jest.mocked(useMotionPreference).mockReturnValue('none')
+})
+
+it.each(CANONICAL_THEME_IDS)('keeps the action label and icon slot stable through pending and success in %s', async family => {
+  setTheme(family)
+  const press = jest.fn()
+  const view = await render(<IsleThemeProvider><AppButton testID="save" label="Save" feedbackPhase="idle" feedbackLabel="Saved" onPress={press} /></IsleThemeProvider>)
+  const slot = view.getByTestId('save-status', { includeHiddenElements: true })
+  const label = view.getByText('Save')
+  await view.rerender(<IsleThemeProvider><AppButton testID="save" label="Save" feedbackPhase="pending" feedbackLabel="Saved" onPress={press} /></IsleThemeProvider>)
+  expect(view.getByTestId('save-status', { includeHiddenElements: true })).toBe(slot)
+  expect(slot).toHaveStyle({ width: 18, height: 18 })
+  expect(view.getByText('Save')).toBe(label)
+  expect(view.getByRole('button', { name: 'Save' })).toBeDisabled()
+  expect(view.getByRole('button', { name: 'Save' }).props.accessibilityState.busy).toBe(true)
+  await fireEvent.press(view.getByRole('button', { name: 'Save' }))
+  expect(press).not.toHaveBeenCalled()
+  await view.rerender(<IsleThemeProvider><AppButton testID="save" label="Save" feedbackPhase="success" feedbackLabel="Saved" onPress={press} /></IsleThemeProvider>)
+  expect(view.getByTestId('save-status', { includeHiddenElements: true })).toBe(slot)
+  expect(view.getByText('Save')).toBe(label)
+  expect(view.getByRole('button', { name: 'Save. Saved' })).not.toBeDisabled()
+  expect(view.queryByTestId('save-announcement')).toBeNull()
 })
 
 it('projects Animal Island native input focus without changing its callbacks or value', async () => {
@@ -163,6 +184,26 @@ it.each(['light', 'dark'] as const)('renders the fork button and preserves busy/
 })
 
 it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
+  'keeps centered %s actions bounded and their labels centered while loading', async family => {
+    setTheme(family)
+    const label = 'A longer centered action'
+    const tree = (loading: boolean) => <IsleThemeProvider>
+      <View style={{ width: 224, alignItems: 'center' }}>
+        <IsleButton label={label} loading={loading} style={{ alignSelf: 'center' }} testID="bounded-action" />
+      </View>
+    </IsleThemeProvider>
+    const screen = await render(tree(false))
+    expect(screen.getByTestId('bounded-action')).toHaveStyle({ alignSelf: 'center', minWidth: 0, maxWidth: '100%', flexShrink: 1, minHeight: 44 })
+    expect(screen.getByText(label)).toHaveStyle({ textAlign: 'center' })
+    await screen.rerender(tree(true))
+    expect(screen.getByTestId('bounded-action')).toHaveStyle({ alignSelf: 'center', minWidth: 0, maxWidth: '100%', flexShrink: 1, minHeight: 44 })
+    expect(screen.getByText(label)).toHaveStyle({ textAlign: 'center' })
+    expect(screen.getByRole('button', { name: label })).toBeDisabled()
+    await screen.unmount()
+  },
+)
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
   'explicitly clears a finished %s button busy state without dropping caller states', async family => {
     setTheme(family)
     const onPress = jest.fn()
@@ -223,13 +264,17 @@ it('keeps uncontrolled input and switch values when changing themes in a mounted
     <IsleSwitch defaultChecked />
   </IsleThemeProvider>
   const screen = await render(tree())
+  const nativeField = screen.getByTestId('field')
   await fireEvent.changeText(screen.getByTestId('field'), 'draft')
   await fireEvent.press(screen.getByRole('switch'))
-  for (const id of ['minimal', 'material', 'liquid-glass', 'animal-island-ui'] as const) {
-    setTheme(id)
-    await screen.rerender(tree())
-    expect(screen.getByTestId('field').props.value).toBe('draft')
-    expect(screen.getByRole('switch', { checked: false })).toBeTruthy()
+  for (const id of ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const) {
+    for (const mode of ['light', 'dark'] as const) {
+      setTheme(id, mode)
+      await screen.rerender(tree())
+      expect(screen.getByTestId('field')).toBe(nativeField)
+      expect(screen.getByTestId('field').props.value).toBe('draft')
+      expect(screen.getByRole('switch', { checked: false })).toBeTruthy()
+    }
   }
   await fireEvent.press(screen.getByRole('button', { name: 'common.clear' }))
   expect(screen.getByTestId('field').props.value).toBe('')

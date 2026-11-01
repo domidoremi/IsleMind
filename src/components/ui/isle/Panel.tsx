@@ -1,4 +1,4 @@
-import type { PropsWithChildren } from 'react'
+import { Fragment, type PropsWithChildren } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { GlassSurface } from './GlassSurface'
@@ -30,9 +30,7 @@ export function IslePanel({
 }: IslePanelProps) {
   const { colors, design, isLiquidGlass } = useAppTheme()
   const resolvedMaterial = material ?? (blur ? 'glass' : 'paper')
-  if (design.family === 'animal-island-ui' && resolvedMaterial !== 'transparent') {
-    return <NativeCard style={[style, contentStyle]}>{children}</NativeCard>
-  }
+  const native = design.family === 'animal-island-ui' && resolvedMaterial !== 'transparent'
   const resolvedRadius = Math.min(radius ?? colors.ui.radius.panel, colors.ui.radius.panel)
   const functionalMaterial = isLiquidGlass && resolvedMaterial !== 'transparent'
   const tokenBackground = panelBackground(resolvedMaterial, colors)
@@ -70,21 +68,27 @@ export function IslePanel({
     isLiquidGlass ? glassShadowStyle(colors, shouldElevate ? 'surface' : 'none') : null,
   ]
 
-  if (functionalMaterial) {
-    return (
+  const nativeStyle = StyleSheet.flatten([{ borderRadius: 20, paddingVertical: 16, paddingHorizontal: 24 }, style, contentStyle])
+  // The material may change; descendants must not be moved into a new card tree.
+  return (
       <GlassSurface
         colors={colors}
+        enabled={functionalMaterial}
         variant={resolvedMaterial === 'chrome' ? 'chrome' : 'floating'}
         intensity={intensity}
         borderRadius={resolvedRadius}
         shadow={shouldElevate ? 'surface' : 'none'}
-        style={[panelStyle, contentStyle, { borderWidth: 0 }]}
+        style={native ? nativeStyle : [panelStyle, contentStyle, functionalMaterial ? { borderWidth: 0 } : null]}
       >
-        {children}
+        {native ? <View key="material" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill}>
+          <NativeCard style={[StyleSheet.absoluteFill, { borderRadius: nativeStyle.borderRadius,
+            ...(nativeStyle.backgroundColor !== undefined ? { backgroundColor: nativeStyle.backgroundColor } : null),
+            ...(nativeStyle.borderColor !== undefined ? { borderColor: nativeStyle.borderColor } : null),
+            ...(nativeStyle.borderWidth !== undefined ? { borderWidth: nativeStyle.borderWidth } : null) }]} />
+        </View> : null}
+        <Fragment key="content">{children}</Fragment>
       </GlassSurface>
     )
-  }
-  return <View style={[panelStyle, contentStyle]}>{children}</View>
 }
 
 const styles = StyleSheet.create({

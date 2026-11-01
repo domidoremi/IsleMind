@@ -43,61 +43,41 @@ type ApplyStarterDraft = (draft: string) => void
 const reviewingActions = new Set<string>()
 
 export function copyChatMessageText({
-  dialog,
   message,
-  t,
 }: {
   dialog: ChatMessageActionDialog
   message: Message
   t: TFunction
 }) {
-  void copyConversationMessageFinalText(message)
-    .then(() => dialog.toast({ title: t('common.copied'), message: t('chat.messageCopied'), tone: 'mint' }))
-    .catch(() => dialog.toast({ title: t('common.copyFailed'), message: t('chat.clipboardUnavailable'), tone: 'danger' }))
+  return copyConversationMessageFinalText(message).then(() => true, () => false)
 }
 
-export function copyChatMessageProcessTrace({
-  dialog,
+export async function copyChatMessageProcessTrace({
   message,
-  t,
 }: {
   dialog: ChatMessageActionDialog
   message: Message
   t: TFunction
-}) {
+}): Promise<boolean> {
   const traceText = collectVisibleProcessTraces(message).map(formatProcessTraceForCopy).filter(Boolean).join('\n\n')
   if (!traceText.trim()) {
-    dialog.toast({ title: t('messageBubble.copyProcessTraceEmpty'), tone: 'amber' })
-    return
+    return false
   }
-  void Clipboard.setStringAsync(traceText)
-    .then((copied) => {
-      if (!copied) throw new Error('Clipboard write failed')
-      dialog.toast({ title: t('common.copied'), message: t('messageBubble.copyProcessTraceCopied'), tone: 'mint' })
-    })
-    .catch(() => dialog.toast({ title: t('common.copyFailed'), message: t('chat.clipboardUnavailable'), tone: 'danger' }))
+  try { return await Clipboard.setStringAsync(traceText) === true } catch { return false }
 }
 
-export function copyChatMessageWorkArtifact({
-  dialog,
+export async function copyChatMessageWorkArtifact({
   message,
-  t,
 }: {
   dialog: ChatMessageActionDialog
   message: Message
   t: TFunction
-}) {
+}): Promise<boolean> {
   const workArtifact = summarizeWorkArtifact(message.responseText ?? message.content)
   if (!workArtifact.hasWorkArtifact || !workArtifact.handoffText.trim()) {
-    dialog.toast({ title: t('messageBubble.copyWorkArtifactEmpty'), tone: 'amber' })
-    return
+    return false
   }
-  void Clipboard.setStringAsync(workArtifact.handoffText)
-    .then((copied) => {
-      if (!copied) throw new Error('Clipboard write failed')
-      dialog.toast({ title: t('common.copied'), message: t('messageBubble.copyWorkArtifactCopied'), tone: 'mint' })
-    })
-    .catch(() => dialog.toast({ title: t('common.copyFailed'), message: t('chat.clipboardUnavailable'), tone: 'danger' }))
+  try { return await Clipboard.setStringAsync(workArtifact.handoffText) === true } catch { return false }
 }
 
 export function continueChatMessageWorkArtifact({

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Platform, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
-import { Text, TextInput } from '@/components/ui/AppText'
+import { AppFontContext, Text, TextInput } from '@/components/ui/AppText'
 import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import { resolveWebTextMetricsStyle } from '@/components/ui/webTextMetrics'
 import { MotiView } from 'moti'
@@ -222,11 +222,11 @@ export function IsleButton({
   const flattenedStyle = StyleSheet.flatten(style)
   const minimumButtonHeight = resolveMinimumTouchTargetHeight(height, flattenedStyle, ISLE_MIN_TOUCH_TARGET)
   if (palette.themeId === 'animal-island-ui') {
-    const labelStyle = [labelTypography, { fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4) }, textStyle]
+    const labelStyle = [labelTypography, { fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), textAlign: 'center' as const }, textStyle]
     const metrics = resolveWebTextMetricsStyle(labelStyle)
     return <NativeButton type={type} size={size} danger={danger} ghost={ghost} block={block} loading={loading} disabled={disabled} multiline={multiline}
       icon={icon} onPress={onPress} accessibilityLabel={accessibilityLabel ?? label} accessibilityRole={accessibilityRole}
-      accessibilityState={buttonAccessibilityState} testID={testID} textStyle={metrics ? [...labelStyle, metrics] : labelStyle} style={[style, { minHeight: minimumButtonHeight }]}>
+      accessibilityState={buttonAccessibilityState} testID={testID} textStyle={metrics ? [...labelStyle, metrics] : labelStyle} style={[{ minWidth: 0, maxWidth: '100%', flexShrink: 1 }, style, { minHeight: minimumButtonHeight }]}>
       {children ?? label}
     </NativeButton>
   }
@@ -238,7 +238,7 @@ export function IsleButton({
     </View>
   ) : undefined
   const contentNode = children || label ? (
-    <Text numberOfLines={multiline ? undefined : 1} style={[labelTypography, { flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), fontWeight: labelTypography?.fontWeight ?? (primary ? '700' : '600'), includeFontPadding: false, textAlignVertical: 'center' }, multiline ? { textAlign: 'center' } : null, textStyle]}>
+    <Text numberOfLines={multiline ? undefined : 1} style={[labelTypography, { flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), fontWeight: labelTypography?.fontWeight ?? (primary ? '700' : '600'), includeFontPadding: false, textAlignVertical: 'center', textAlign: 'center' }, textStyle]}>
       {children ?? label}
     </Text>
   ) : undefined
@@ -264,6 +264,9 @@ export function IsleButton({
       style={[
         {
           position: 'relative',
+          minWidth: 0,
+          maxWidth: '100%',
+          flexShrink: 1,
           alignSelf: block ? 'stretch' : 'flex-start',
            borderRadius: buttonExpression?.shape === 'capsule'
              ? palette.ui.radius.chip
@@ -345,6 +348,7 @@ export function IsleInput({
   inputStyle?: StyleProp<TextStyle>
 }) {
   const palette = useIslePalette()
+  const fontFamily = useContext(AppFontContext)
   const focusMotion = useThemeMotion('accent')
   const { t } = useTranslation()
   const [focused, setFocused] = useState(false)
@@ -359,6 +363,7 @@ export function IsleInput({
   const fieldExpression = design ? resolveThemeComponentExpression(design.family, 'textField') : null
   const fieldTokens = design?.component.field
   const fieldFamily = design?.family ?? 'minimal'
+  const nativeMaterial = fieldFamily === 'animal-island-ui'
   const borderColor = status === 'error'
     ? palette.ui.tone.danger.border
     : status === 'warning'
@@ -405,40 +410,20 @@ export function IsleInput({
     ? Math.max(76, Math.min(multilineMaxHeight, Math.ceil(multilineContentHeight || 56) + 18))
     : undefined
   const inputMinimumHeight = multiline ? 76 : Math.max(height, ISLE_MIN_TOUCH_TARGET)
-  if (palette.themeId === 'animal-island-ui') {
-    return <View style={wrapperStyle}>
-      {label ? <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{label}</Text> : null}
-      <NativeInput prefix={prefix} suffix={suffix} allowClear={allowClear} status={status} size={size} shadow={shadow}
-        value={currentValue} onChangeText={(nextValue) => {
-          if (!controlled) setUncontrolledValue(nextValue)
-          onChangeText?.(nextValue)
-        }} onClear={onClear}
-        clearAriaLabel={clearAccessibilityLabel ?? t('common.clear')} disabled={disabled}
-        onFocus={(event) => { setFocused(true); onFocus?.(event) }}
-        onBlur={(event) => { setFocused(false); onBlur?.(event) }}
-        multiline={multiline} aria-label={props.accessibilityLabel ?? label}
-        inputProps={{ ...props, scrollEnabled: multiline ? scrollEnabled ?? true : scrollEnabled,
-          onContentSizeChange: (event) => {
-            if (multiline) setMultilineContentHeight(event.nativeEvent.contentSize.height)
-            onContentSizeChange?.(event)
-          } }} inputStyle={[design?.semantic.typography.body, inputStyle]}
-        style={{ minHeight: inputMinimumHeight, height: multiline ? multilineShellHeight : inputMinimumHeight }} />
-    </View>
-  }
   return (
     <View style={wrapperStyle}>
       {label ? <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{label}</Text> : null}
       <MotiView
         testID={palette.liquidGlass ? 'theme-input-focus-liquid-glass' : undefined}
         animate={{
-          backgroundColor: disabled
+          backgroundColor: nativeMaterial ? 'transparent' : disabled
             ? input.disabledBackground
             : fieldFamily === 'minimal'
               ? 'transparent'
               : focused
                 ? input.backgroundFocused
                 : input.background,
-          borderColor: activeBorderColor,
+          borderColor: nativeMaterial ? 'transparent' : activeBorderColor,
         }}
         transition={focusMotion.transition}
         style={{
@@ -446,7 +431,7 @@ export function IsleInput({
           minHeight: Math.max(inputMinimumHeight, fieldTokens?.minHeight ?? inputMinimumHeight),
           maxHeight: multiline ? multilineMaxHeight : undefined,
           borderRadius: fieldRadius,
-          paddingHorizontal: size === 'large' ? 16 : 12,
+          paddingHorizontal: nativeMaterial ? 0 : size === 'large' ? 16 : 12,
           position: 'relative',
           borderWidth: inputBorderWidth,
           shadowColor: statusShadow,
@@ -464,9 +449,10 @@ export function IsleInput({
           multiline={!!multiline}
           prefix={prefix}
           input={(
-            <TextInput
-              {...props}
-              underlineColorAndroid={palette.liquidGlass ? 'transparent' : props.underlineColorAndroid}
+            <NativeInput
+              size={size}
+              status={status}
+              shadow={nativeMaterial && shadow}
               value={currentValue}
               onChangeText={(nextValue) => {
                 if (!controlled) setUncontrolledValue(nextValue)
@@ -480,22 +466,25 @@ export function IsleInput({
                 setFocused(true)
                 onFocus?.(event)
               }}
-              editable={editable}
+              disabled={disabled}
               multiline={multiline}
-              scrollEnabled={multiline ? scrollEnabled ?? true : scrollEnabled}
-              onContentSizeChange={(event) => {
-                if (multiline) setMultilineContentHeight(event.nativeEvent.contentSize.height)
-                onContentSizeChange?.(event)
-              }}
-              accessibilityLabel={props.accessibilityLabel ?? (typeof label === 'string' ? label : undefined)}
-              accessibilityState={{
-                ...props.accessibilityState,
-                disabled: disabled || props.accessibilityState?.disabled === true,
-              }}
-              aria-invalid={status === 'error' || undefined}
+              aria-label={props.accessibilityLabel ?? label}
               placeholderTextColor={input.placeholderForeground}
-              style={[
+              inputProps={{
+                ...props,
+                underlineColorAndroid: palette.liquidGlass ? 'transparent' : props.underlineColorAndroid,
+                scrollEnabled: multiline ? scrollEnabled ?? true : scrollEnabled,
+                onContentSizeChange: (event) => {
+                  if (multiline) setMultilineContentHeight(event.nativeEvent.contentSize.height)
+                  onContentSizeChange?.(event)
+                },
+                accessibilityState: { ...props.accessibilityState, disabled: disabled || props.accessibilityState?.disabled === true },
+              }}
+              style={[{ flex: 1, minWidth: 0, width: undefined, minHeight: inputMinimumHeight, height: multiline ? multilineShellHeight : inputMinimumHeight },
+                !nativeMaterial ? { paddingHorizontal: 0, backgroundColor: 'transparent', borderRadius: 0, boxShadow: 'none', opacity: 1 } : null]}
+              inputStyle={[
                 {
+                  fontFamily,
                   flex: 1,
                   minWidth: 0,
                   minHeight: multiline ? Math.max(64, multilineShellHeight ? multilineShellHeight - 6 : 78) : Math.max(44, (fieldTokens?.minHeight ?? height) - 4),
@@ -1020,7 +1009,7 @@ export function IsleProgress({
   style,
 }: IsleProgressProps) {
   const palette = useIslePalette()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0
   const visualPercent = indeterminate ? Math.max(PROGRESS_INSIDE_MIN_FILL, safePercent || PROGRESS_INSIDE_MIN_FILL) : safePercent
   const trackHeight = size === 'small' ? 7 : size === 'large' ? 12 : 9

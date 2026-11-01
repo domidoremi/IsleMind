@@ -32,6 +32,13 @@ it('exposes undo only after persistence succeeds, and removes it on save failure
   expect(hook.result.current.canUndo).toBe(false)
   expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'danger' }))
 })
+it('lets an explicit appearance save own its error receipt without granting undo on failure', async () => {
+  mockFlush.mockRejectedValueOnce(new Error('storage unavailable'))
+  const hook = await renderHook(usePreferenceUndo)
+  await act(() => hook.result.current.updateSettings({ themeId: 'monet' }, { reportFailure: false }))
+  expect(hook.result.current.canUndo).toBe(false)
+  expect(mockToast).not.toHaveBeenCalled()
+})
 it('undoes untouched fields only, including protection against an ABA edit', async () => {
   const hook = await renderHook(usePreferenceUndo)
   await act(() => hook.result.current.updateSettings({ hapticsEnabled: false, commandPaletteEnabled: false }))

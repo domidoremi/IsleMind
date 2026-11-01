@@ -42,7 +42,7 @@ export function ContextDiagnosticsSection({
   assetCardSurface,
 }: ContextDiagnosticsSectionProps) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { t } = useTranslation()
   const [selfTestDetailsOpen, setSelfTestDetailsOpen] = useState(false)
   const [ragActivityOpen, setRagActivityOpen] = useState(false)
@@ -177,7 +177,7 @@ export function ContextDiagnosticsSection({
 }
 
 function AnimatedDiagnosticsRow({ index, children }: { index: number; children: ReactNode }) {
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   return (
     <MotiView
       from={motion === 'full' ? { opacity: 0, translateY: 8 } : undefined}

@@ -9,10 +9,13 @@ jest.mock('./SettingsEditBoundary', () => ({ ...jest.requireActual('./SettingsEd
 jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal') }) }))
+jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
+jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
+jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 jest.mock('@/components/ui/isle', () => {
   const { View, Pressable: MockPressable, Text, TextInput } = require('react-native')
   return { useIsleDialog: () => ({ toast: mockToast }), IslePressable: MockPressable, IsleInput: TextInput,
-    IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
+    IsleField: ({ label, labelAccessory, inputProps }: any) => <View>{labelAccessory}<TextInput accessibilityLabel={label} {...inputProps} /></View>,
     IsleButton: ({ label, ...props }: any) => <MockPressable accessibilityRole="button" {...props}><Text>{label}</Text></MockPressable>,
     IsleSelect: ({ options, onChange, disabled }: any) => <View>{options.map((option: any) => <MockPressable key={option.value} accessibilityLabel={option.label} disabled={disabled} onPress={() => onChange(option.value)}><Text>{option.label}</Text></MockPressable>)}</View>,
   }
@@ -28,7 +31,7 @@ it('retains parent-owned input and detects an external change from an undefined 
   await act(() => hook.result.current.save('proxyBaseUrl', commit, value => value))
   expect(commit).not.toHaveBeenCalled()
   expect(hook.result.current.entries.proxyBaseUrl?.draft).toBe('https://draft.invalid/v1')
-  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.conflict' }))
+  expect(mockToast).not.toHaveBeenCalled()
   expect(hook.result.current.entries.proxyBaseUrl?.error).toBe('conflict')
 })
 it('preserves failed writes for retry, and resets explicitly without committing', async () => {
@@ -45,6 +48,36 @@ it('preserves failed writes for retry, and resets explicitly without committing'
   await act(() => hook.result.current.discard('proxyBaseUrl'))
   expect(commit).toHaveBeenCalledTimes(2)
   expect(hook.result.current.entries.proxyBaseUrl).toBeUndefined()
+})
+
+it('shows pending only on the saving field and validates the fixed receipt against durable settings', async () => {
+  let finish!: () => void
+  mockFlush.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+  function Fields() {
+    const session = useSettingsFieldSession()
+    return <>
+      <SavedSettingsField session={session} settingKey="proxyBaseUrl" label="Proxy" value={String(mockSettings.proxyBaseUrl ?? '')} onCommit={value => { mockSettings.proxyBaseUrl = value }} />
+      <SavedSettingsField session={session} settingKey="assistantDisplayName" label="Name" value={String(mockSettings.assistantDisplayName ?? '')} onCommit={value => { mockSettings.assistantDisplayName = value }} />
+    </>
+  }
+  const view = await render(<Fields />)
+  const proxyStatus = view.getByTestId('settings-field-proxyBaseUrl-status')
+  const nameStatus = view.getByTestId('settings-field-assistantDisplayName-status')
+  await fireEvent.changeText(view.getByLabelText('Proxy'), 'https://draft.invalid')
+  await fireEvent.press(view.getByRole('button', { name: 'settingsWorkspace.save' }))
+  expect(proxyStatus.props.accessibilityState.busy).toBe(true)
+  expect(nameStatus.props.accessibilityState.busy).toBe(false)
+  expect(proxyStatus.props.accessibilityLabel).toBe('settingsWorkspace.saving')
+  expect(view.queryByText('settingsWorkspace.saved')).toBeNull()
+  await act(() => finish())
+  expect(view.getByTestId('settings-field-proxyBaseUrl-status')).toBe(proxyStatus)
+  expect(proxyStatus.props.accessibilityLabel).toBe('settingsWorkspace.saved')
+  expect(proxyStatus).toHaveStyle({ width: 18, height: 18 })
+  expect(nameStatus.props.accessibilityLabel).toBeUndefined()
+  mockSettings.proxyBaseUrl = 'https://external.invalid'
+  await view.rerender(<Fields />)
+  expect(proxyStatus.props.accessibilityLabel).toBeUndefined()
+  expect(view.queryByText('settingsWorkspace.saved')).toBeNull()
 })
 
 it.each(['resolve', 'reject'])('suppresses late save feedback after unmount when persistence will %s', async outcome => {
@@ -74,7 +107,7 @@ it('retains the draft as a conflict when the saved field changes while persisten
   await act(async () => { resolve(); await saving })
   expect(hook.result.current.entries.proxyBaseUrl?.draft).toBe('draft')
   expect(hook.result.current.entries.proxyBaseUrl?.error).toBe('conflict')
-  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.conflict' }))
+  expect(mockToast).not.toHaveBeenCalled()
   expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.saved' }))
   await act(() => hook.result.current.save('proxyBaseUrl', commit, value => value))
   expect(commit).toHaveBeenCalledTimes(1)
@@ -113,5 +146,7 @@ it('selects saved references without committing until Save and preserves legacy 
   await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
   expect(screen.queryByRole('alert')).toBeNull()
   expect(screen.queryByRole('button', { name: 'settingsWorkspace.save' })).toBeNull()
+  expect(screen.getByTestId('settings-field-providerAllowlist-status').props.accessibilityLabel).toBe('settingsWorkspace.saved')
+  expect(screen.getByTestId('settings-field-providerAllowlist-status')).toHaveStyle({ width: 18, height: 18 })
   expect(mockFlush).toHaveBeenCalledTimes(2)
 })

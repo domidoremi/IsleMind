@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { CONTENT_REPORT_EXCERPT_LIMIT, CONTENT_REPORT_NOTE_LIMIT, CONTENT_REPORT_REASONS, ContentReportError,
   contentReportExcerpt, type ContentReport, type ContentReportReason, type ContentReporting } from '@/modules/conversations'
 
@@ -79,7 +80,12 @@ export function ContentReportScreen({ source, reporting, onClose }: {
       contentContainerStyle={{ padding: 20, paddingBottom: 48, gap: 18, width: '100%', maxWidth: 760, alignSelf: 'center' }}>
       {source === undefined ? <Text style={textStyle}>{t('common.loading')}</Text> : null}
       {source === null ? <Text accessibilityRole="alert" style={textStyle}>{t('contentReport.sourceUnavailable')}</Text> : null}
-      {!configuration ? <Text accessibilityRole="alert" style={textStyle}>{t('contentReport.unavailable')}</Text> : null}
+      {!configuration ? <View style={{ paddingVertical: 20, gap: 14 }}>
+        <View pointerEvents="none" accessible={false} importantForAccessibility="no-hide-descendants" style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: colors.ui.icon.accentBackground, alignItems: 'center', justifyContent: 'center' }}>
+          <AppIcon name="shield" size={24} color={colors.ui.icon.accentForeground} />
+        </View>
+        <Text accessibilityRole="alert" style={textStyle}>{t('contentReport.unavailable')}</Text>
+      </View> : null}
       {configuration ? <View style={{ gap: 10 }}>
         <Text style={textStyle}>{t('contentReport.recipient', { operator: configuration.operator })}</Text>
         <Text selectable style={textStyle}>{configuration.endpoint}</Text>

@@ -108,28 +108,49 @@ describe('ProviderCardGrid', () => {
     expect(view.getByTestId('provider-toggle-bravo').props.accessibilityState).toEqual({ expanded: false })
   })
 
-  it('keeps the production card accessibility and out-of-card detail contracts', () => {
+  it('keeps the production connection row accessibility and out-of-row detail contracts', () => {
     const source = readFileSync(join(__dirname, '..', 'ProviderSettingsContent.tsx'), 'utf8')
+    const connectionRowSource = readFileSync(join(__dirname, '..', 'ProviderConnectionRow.tsx'), 'utf8')
     const rowStart = source.indexOf('function ProviderListRow(')
     const detailStart = source.indexOf('function DeferredProviderDetails(')
+    expect(rowStart).toBeGreaterThanOrEqual(0)
+    expect(detailStart).toBeGreaterThan(rowStart)
     const rowSource = source.slice(rowStart, detailStart)
 
-    expect(source).toContain('accessibilityRole="checkbox"')
-    expect(source).toContain('accessibilityState={{ checked: selected }}')
-    expect(source).toContain('accessibilityState={{ expanded }}')
-    expect(source).toContain('testID={`provider-edit-${provider.id}`}')
+    expect(connectionRowSource).toContain('accessibilityRole="checkbox"')
+    expect(connectionRowSource).toContain('accessibilityState={{ checked: props.selected }}')
+    expect(connectionRowSource).toContain('accessibilityState={{ expanded: props.expanded }}')
+    expect(connectionRowSource).toContain('testID={`provider-edit-${props.id}`}')
     expect(source).toContain("t('providerSettings.deleteSelected')")
     expect(source).toContain('confirmRemoveSupplierGroup(group)')
-    // Settings typography allows wrapping; the full identity must also remain
-    // available to assistive technology in every production row variant.
-    const rowButtons = rowSource.match(/<IslePressable\b[\s\S]*?accessibilityState=\{\{ expanded \}\}/g) ?? []
-    expect(rowButtons).toHaveLength(1)
-    for (const button of rowButtons) {
-      expect(button).toContain('accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}')
+    // The extracted row may truncate visible labels, but its full identity and
+    // independent selection, opening and editing actions must stay connected.
+    for (const contract of [
+      '<ProviderConnectionRow id={provider.id}',
+      'name={providerDisplayName}',
+      'endpoint={providerUrl}',
+      'stateLabel={providerStateLabel}',
+      'enabled={provider.enabled} featured={featured} selected={selected} batchMode={batchMode} expanded={expanded}',
+      'onToggleSelected={onToggleSelected}',
+      'onOpen={() => onExpandedChange(!expanded)}',
+      'onEdit={onEdit}',
+    ]) {
+      expect(rowSource).toContain(contract)
     }
-    expect(rowSource).not.toContain('numberOfLines=')
+    for (const contract of [
+      "accessibilityLabel={[props.name, props.stateLabel, props.modelsLabel, props.endpoint].join('. ')}",
+      'accessibilityLabel={props.selectLabel}',
+      'accessibilityLabel={props.editLabel}',
+      'onPress={props.onToggleSelected}',
+      'onPress={props.onOpen}',
+      'onPress={props.onEdit}',
+    ]) {
+      expect(connectionRowSource).toContain(contract)
+    }
     expect(rowSource).not.toContain('count: provider.models.length')
-    expect(rowSource).toContain('count: modelInventory.selectableModels')
+    expect(rowSource).toContain("modelsLabel={t('settingsSubsystem.modelCount', { count: modelInventory.selectableModels })}")
+    expect(rowSource).toContain("selectLabel={`${t('providerSettings.selectProvider')} ${providerDisplayName}`}")
+    expect(rowSource).toContain("editLabel={`${t('common.edit')} ${providerDisplayName}`}")
     expect(rowSource).toContain('useMemo(() => summarizeProviderModelInventory(provider), [provider])')
     expect(rowSource).toContain("provider.baseUrl?.trim() || t('providerSettings.baseUrl')")
     expect(rowSource).not.toContain('getProviderSelectableModels(provider).length')

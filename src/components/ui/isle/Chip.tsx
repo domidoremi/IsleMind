@@ -16,7 +16,7 @@ export interface IsleChipProps {
 
 export function IsleChip({ children, active = false, tone = 'default', style }: IsleChipProps) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const ornamented = colors.ui.monet && colors.ui.ornamented
   const family = colors.design?.family ?? 'minimal'
   const toneToken = tone === 'danger'

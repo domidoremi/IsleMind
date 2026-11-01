@@ -66,7 +66,7 @@ export function AppStatusSurface({
   children,
 }: AppStatusSurfaceProps) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const insets = useSafeAreaInsets()
   const { t } = useTranslation()
   const toneToken = colors.ui.semantic.feedback[tone]

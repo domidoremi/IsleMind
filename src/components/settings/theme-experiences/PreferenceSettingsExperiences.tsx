@@ -64,11 +64,9 @@ function PreferenceSectionBand({
           flex: compact ? undefined : 1,
           width: compact ? '100%' : undefined,
           minWidth: 0,
-          padding: design.semantic.spacing.lg,
-          borderRadius: design.semantic.radius.extraLarge,
-          backgroundColor: index % 2 === 0 ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: colors.ui.semantic.chrome.border,
+          paddingVertical: design.semantic.spacing.md,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.ui.section.divider,
         }}
       >
         <Text style={{ marginBottom: design.semantic.spacing.md, color: colors.textSecondary, fontSize: design.semantic.typography.label.fontSize, lineHeight: design.semantic.typography.label.lineHeight, fontWeight: '600' }}>{label}</Text>

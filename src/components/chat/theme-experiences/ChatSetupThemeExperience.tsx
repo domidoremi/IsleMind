@@ -80,13 +80,13 @@ function MaterialSetupExperience({ colors, chrome, status, content, controls, co
 function LiquidGlassSetupExperience({ chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
   return (
     <View testID="chat-setup-experience-liquid-glass" style={styles.root}>
-      <View style={styles.glassLayer}>{chrome}</View>
+      <View pointerEvents="box-none" style={styles.glassLayer}>{chrome}</View>
       <View style={styles.glassStatusLayer}>{status}</View>
       <View style={styles.glassSetupCanvas}>
         <View style={styles.glassSetupColumn}>{content}</View>
       </View>
       {controls}
-      <View style={styles.glassLayer}>{composer}</View>
+      <View pointerEvents="box-none" style={styles.glassLayer}>{composer}</View>
     </View>
   )
 }
@@ -108,7 +108,8 @@ const styles = StyleSheet.create({
   materialRailMarkerShort: { width: 8, height: 8, borderRadius: 4 },
   materialSetupColumn: { flex: 1, minWidth: 0, paddingHorizontal: 2 },
   materialComposerDock: { paddingHorizontal: 2 },
-  glassLayer: { zIndex: 2 },
+  // Absolute children need a sized native parent for hit and accessibility bounds.
+  glassLayer: { ...StyleSheet.absoluteFill, zIndex: 2 },
   glassStatusLayer: { zIndex: 1, paddingHorizontal: 4 },
   glassSetupCanvas: { flex: 1, position: 'relative', overflow: 'hidden', paddingHorizontal: 3 },
   glassSetupColumn: { flex: 1, minHeight: 0, minWidth: 0, paddingHorizontal: 4 },

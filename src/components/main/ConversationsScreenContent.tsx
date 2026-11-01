@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import type { AIProvider } from '@/types/providerContracts'
 import { HistoryEmptyStateFrame, HistoryHeaderFrame, type HistoryVisualTokens } from './history/HistoryPresentation'
+import { PageFeedbackBoundary, PageFeedbackRegion } from '@/components/ui/PageFeedback'
 
 interface ConversationsScreenContentProps {
   active?: boolean
@@ -111,7 +112,11 @@ interface VisibleConversationRange {
   searchActive: boolean
 }
 
-export function ConversationsScreenContent({ active = true, shellNavigation = false, onHome }: ConversationsScreenContentProps) {
+export function ConversationsScreenContent(props: ConversationsScreenContentProps) {
+  return <PageFeedbackBoundary><ConversationsScreenBody {...props} /></PageFeedbackBoundary>
+}
+
+function ConversationsScreenBody({ active = true, shellNavigation = false, onHome }: ConversationsScreenContentProps) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -1208,6 +1213,7 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
         search={historySearch}
         summary={historySummary}
       />
+      <PageFeedbackRegion style={{ marginHorizontal: 14, marginBottom: 8 }} />
       <FlashList
         ref={listRef}
         data={filteredConversations}

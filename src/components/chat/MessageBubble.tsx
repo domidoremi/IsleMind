@@ -32,6 +32,8 @@ import { MessageBubbleThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 import { hasWideMessageContent, resolveMessageBubbleMaxWidth, resolveMessageBubbleRowAlignment } from './messageBubbleLayout'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useActionFeedback, type ActionFeedbackPhase } from '@/hooks/useActionFeedback'
+import { ActionFeedback } from '@/components/ui/ActionFeedback'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage, getWorkflowRecoveryActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
 import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
@@ -74,9 +76,9 @@ export interface MessageBubbleProps {
   activeActionMessageId?: string | null
   onActionMessageChange?: (messageId: string | null) => void
   onLayoutChangeRequest?: (options?: { force?: boolean }) => void
-  onCopy?: (message: Message) => void
-  onCopyProcessTrace?: (message: Message) => void
-  onCopyWorkArtifact?: (message: Message) => void
+  onCopy?: (message: Message) => void | Promise<boolean>
+  onCopyProcessTrace?: (message: Message) => void | Promise<boolean>
+  onCopyWorkArtifact?: (message: Message) => void | Promise<boolean>
   onContinueWorkArtifact?: (message: Message) => void
   onContinueAgentWorkflow?: (message: Message) => void
   onConfirmAction?: (message: Message) => void
@@ -144,6 +146,12 @@ function MessageBubbleComponent({
   const configuredAssistantDisplayName = useSettingsStore((state) => state.settings.assistantDisplayName)
   const assistantDisplayName = resolveChatAssistantDisplayName(configuredAssistantDisplayName)
   const [localActionsOpen, setLocalActionsOpen] = useState(false)
+  const copyIdentity = useMemo(() => ({}), [conversationId, message.id, message.responseText, message.content])
+  const traceIdentity = useMemo(() => ({}), [conversationId, message.id, message.reasoning, message.retrievalTrace, message.toolCalls])
+  const copyFeedback = useMessageCopyReceipt(copyIdentity, message, onCopy)
+  const traceFeedback = useMessageCopyReceipt(traceIdentity, message, onCopyProcessTrace)
+  const artifactFeedback = useMessageCopyReceipt(copyIdentity, message, onCopyWorkArtifact)
+  const copyWithFeedback = copyFeedback.copy
   const isUser = message.role === 'user'
   const isStreamingContent = !isUser && isMessageResponseActive(message)
   const liveStreamingTraceSnapshot = useChatStreamingStore((state) =>
@@ -393,7 +401,8 @@ function MessageBubbleComponent({
             {hasDefaultWorkArtifactActions ? (
               <WorkArtifactQuickActions
                 hapticsEnabled={hapticsEnabled}
-                onCopy={onCopyWorkArtifact ? () => onCopyWorkArtifact(message) : undefined}
+                onCopy={onCopyWorkArtifact ? artifactFeedback.copy : undefined}
+                copyPhase={artifactFeedback.phase}
                 onContinue={onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined}
               />
             ) : null}
@@ -405,10 +414,13 @@ function MessageBubbleComponent({
             displayText={displayText}
             isLastAssistant={isLastAssistant}
             onClose={() => setActionBarOpen(false)}
-            onCopy={onCopy ? () => onCopy(message) : undefined}
+            onCopy={onCopy ? copyWithFeedback : undefined}
+            copyPhase={copyFeedback.phase}
             canCopyProcessTrace={canCopyProcessTrace}
-            onCopyProcessTrace={onCopyProcessTrace ? () => onCopyProcessTrace(message) : undefined}
-            onCopyWorkArtifact={onCopyWorkArtifact ? () => onCopyWorkArtifact(message) : undefined}
+            onCopyProcessTrace={onCopyProcessTrace ? traceFeedback.copy : undefined}
+            copyTracePhase={traceFeedback.phase}
+            onCopyWorkArtifact={onCopyWorkArtifact ? artifactFeedback.copy : undefined}
+            copyArtifactPhase={artifactFeedback.phase}
             onContinueWorkArtifact={onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined}
             canContinueAgentWorkflow={canContinueAgentWorkflow}
             onContinueAgentWorkflow={onContinueAgentWorkflow ? () => onContinueAgentWorkflow(message) : undefined}
@@ -448,11 +460,15 @@ function MessageBubbleComponent({
         {showCompletedQuickActions ? (
           <MessageCompletedQuickActions
             motion={motion}
-            onCopy={onCopy ? () => onCopy(message) : undefined}
+            onCopy={onCopy ? copyWithFeedback : undefined}
+            copyPhase={copyFeedback.phase}
             onSpeak={onSpeak ? () => onSpeak(message) : undefined}
             onRegenerate={isLastAssistant ? onRegenerate : undefined}
           />
         ) : null}
+        {!showCompletedQuickActions ? <ActionFeedback phase={copyFeedback.phase} successLabel={t('common.copied')} errorLabel={t('chat.clipboardUnavailable')} /> : null}
+        <ActionFeedback phase={traceFeedback.phase} successLabel={t('messageBubble.copyProcessTraceCopied')} errorLabel={t('chat.clipboardUnavailable')} />
+        <ActionFeedback phase={artifactFeedback.phase} successLabel={t('messageBubble.copyWorkArtifactCopied')} errorLabel={t(hasDefaultWorkArtifactActions ? 'chat.clipboardUnavailable' : 'messageBubble.copyWorkArtifactEmpty')} />
         {showInlineRetry ? (
           <MessageInlineRetry motion={motion} onPress={() => onRetry?.(message)} />
         ) : null}
@@ -489,21 +505,36 @@ function AssistantBrandBadge({ brand }: { brand: ProviderBrand }) {
   )
 }
 
+function useMessageCopyReceipt(identity: unknown, message: Message, onCopy?: (message: Message) => void | Promise<boolean>) {
+  const feedback = useActionFeedback(identity)
+  const copy = () => {
+    void feedback.run(async () => {
+      const result = onCopy?.(message)
+      // Legacy callbacks do not expose a verifiable clipboard result.
+      if (result === undefined) { feedback.reset(); return false }
+      return result
+    })
+  }
+  return { phase: feedback.phase, copy }
+}
+
 function MessageCompletedQuickActions({
   motion,
   onCopy,
+  copyPhase = 'idle',
   onSpeak,
   onRegenerate,
 }: {
   motion: MotionIntensity
   onCopy?: () => void
+  copyPhase?: ActionFeedbackPhase
   onSpeak?: () => void
   onRegenerate?: () => void
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const actions: Array<{ id: string; label: string; icon: AppIconName; onPress: () => void }> = []
-  if (onCopy) actions.push({ id: 'copy', label: t('common.copy'), icon: 'copy', onPress: onCopy })
+  if (onCopy) actions.push({ id: 'copy', label: t(copyPhase === 'success' ? 'common.copied' : 'common.copy'), icon: copyPhase === 'success' ? 'check' : 'copy', onPress: onCopy })
   if (onSpeak) actions.push({ id: 'speak', label: t('messageBubble.speak'), icon: 'voice', onPress: onSpeak })
   if (onRegenerate) actions.push({ id: 'regenerate', label: t('messageBubble.regenerate'), icon: 'regenerate', onPress: onRegenerate })
 
@@ -520,12 +551,15 @@ function MessageCompletedQuickActions({
           haptic
           accessibilityRole="button"
           accessibilityLabel={action.label}
+          disabled={action.id === 'copy' && copyPhase === 'pending'}
+          accessibilityState={{ busy: action.id === 'copy' && copyPhase === 'pending' }}
           onPress={action.onPress}
           style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlSmall }}
         >
-          <AppIcon name={action.icon} color={colors.textTertiary} size={15} strokeWidth={appIconStroke.regular} />
+          <AppIcon name={action.icon} color={action.id === 'copy' && copyPhase === 'success' ? colors.ui.tone.success.foreground : colors.textTertiary} size={15} strokeWidth={appIconStroke.regular} />
         </IslePressable>
       ))}
+      <ActionFeedback phase={copyPhase} successLabel={t('common.copied')} errorLabel={t('chat.clipboardUnavailable')} style={{ flexShrink: 1, marginLeft: 6 }} />
     </MotiView>
   )
 }
@@ -966,6 +1000,7 @@ type MessageActionSheetAction = {
   onPress: () => void
   danger?: boolean
   emphasized?: boolean
+  disabled?: boolean
 }
 
 function MessageActionSheet({
@@ -974,9 +1009,12 @@ function MessageActionSheet({
   isLastAssistant,
   onClose,
   onCopy,
+  copyPhase = 'idle',
   canCopyProcessTrace,
   onCopyProcessTrace,
+  copyTracePhase = 'idle',
   onCopyWorkArtifact,
+  copyArtifactPhase = 'idle',
   onContinueWorkArtifact,
   canContinueAgentWorkflow,
   onContinueAgentWorkflow,
@@ -1007,9 +1045,12 @@ function MessageActionSheet({
   isLastAssistant: boolean
   onClose: () => void
   onCopy?: () => void
+  copyPhase?: ActionFeedbackPhase
   canCopyProcessTrace: boolean
   onCopyProcessTrace?: () => void
+  copyTracePhase?: ActionFeedbackPhase
   onCopyWorkArtifact?: () => void
+  copyArtifactPhase?: ActionFeedbackPhase
   onContinueWorkArtifact?: () => void
   canContinueAgentWorkflow: boolean
   onContinueAgentWorkflow?: () => void
@@ -1097,7 +1138,7 @@ function MessageActionSheet({
     if (unlockTimer.current) clearTimeout(unlockTimer.current)
   }, [])
 
-  function action(id: string, label: string, icon: AppIconName, onPress: (() => void) | undefined, options: Pick<MessageActionSheetAction, 'danger' | 'emphasized'> = {}): MessageActionSheetAction | null {
+  function action(id: string, label: string, icon: AppIconName, onPress: (() => void) | undefined, options: Pick<MessageActionSheetAction, 'danger' | 'emphasized' | 'disabled'> = {}): MessageActionSheetAction | null {
     return onPress ? { id, label, icon, onPress, ...options } : null
   }
 
@@ -1108,7 +1149,7 @@ function MessageActionSheet({
     !isUser && canPrepareAndroidUndo ? action('android-undo', t('messageBubble.prepareAndroidUndo'), 'undo', onPrepareAndroidUndo, { emphasized: true }) : null,
   ].filter((item): item is MessageActionSheetAction => item !== null)
   const commonActions = [
-    hasText ? action('copy', t('common.copy'), 'copy', onCopy) : null,
+    hasText ? action('copy', t(copyPhase === 'success' ? 'common.copied' : 'common.copy'), copyPhase === 'success' ? 'check' : 'copy', onCopy, { disabled: copyPhase === 'pending' }) : null,
     isUser && hasText ? action('edit', t('common.edit'), 'edit', onEdit) : null,
     !isUser && (message.status === 'error' || message.status === 'cancelled') ? action('retry', t('messageBubble.retry'), 'retry', onRetry, { emphasized: true }) : null,
     !isUser && isLastAssistant && message.status !== 'streaming' ? action('regenerate', t('messageBubble.regenerate'), 'regenerate', onRegenerate) : null,
@@ -1119,8 +1160,8 @@ function MessageActionSheet({
   ].filter((item): item is MessageActionSheetAction => item !== null)
   const secondaryActions = [
     action('report', t('contentReport.title'), 'shield', onReport),
-    canCopyProcessTrace ? action('copy-trace', t('messageBubble.copyProcessTrace'), 'trace', onCopyProcessTrace) : null,
-    hasText && !isUser ? action('copy-artifact', t('messageBubble.copyWorkArtifact'), 'list-check', onCopyWorkArtifact) : null,
+    canCopyProcessTrace ? action('copy-trace', t(copyTracePhase === 'success' ? 'common.copied' : 'messageBubble.copyProcessTrace'), copyTracePhase === 'success' ? 'check' : 'trace', onCopyProcessTrace, { disabled: copyTracePhase === 'pending' }) : null,
+    hasText && !isUser ? action('copy-artifact', t(copyArtifactPhase === 'success' ? 'common.copied' : 'messageBubble.copyWorkArtifact'), copyArtifactPhase === 'success' ? 'check' : 'list-check', onCopyWorkArtifact, { disabled: copyArtifactPhase === 'pending' }) : null,
     hasText && !isUser ? action('continue-artifact', t('messageBubble.continueWorkArtifact'), 'spark', onContinueWorkArtifact) : null,
     !isUser && canOpenWorkflowSettings ? action('workflow-settings', reviewWorkflowSettingsLabel, 'settings-sliders', onConfigure) : null,
     !isUser && canSaveWorkflowSkill ? action('save-workflow', t('messageBubble.saveAgentWorkflow'), 'workflow', onSaveWorkflowSkill) : null,
@@ -1288,6 +1329,8 @@ function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheet
       testID={`message-action-menu-item-${canonicalThemeId}-${action.id}`}
       accessibilityRole="menuitem"
       accessibilityLabel={action.label}
+      disabled={action.disabled}
+      accessibilityState={{ busy: action.disabled }}
       onPress={onPress}
       style={({ pressed }) => ({
         minHeight: 50,
@@ -1317,10 +1360,12 @@ function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheet
 function WorkArtifactQuickActions({
   hapticsEnabled,
   onCopy,
+  copyPhase = 'idle',
   onContinue,
 }: {
   hapticsEnabled: boolean
   onCopy?: () => void
+  copyPhase?: ActionFeedbackPhase
   onContinue?: () => void
 }) {
   const { colors, isLiquidGlass } = useAppTheme()
@@ -1350,12 +1395,13 @@ function WorkArtifactQuickActions({
     >
       {onCopy ? (
         <WorkArtifactQuickActionButton
-          label={t('messageBubble.copyWorkArtifact')}
+          label={t(copyPhase === 'success' ? 'common.copied' : 'messageBubble.copyWorkArtifact')}
+          disabled={copyPhase === 'pending'}
           onPress={run(onCopy)}
           backgroundColor={actionChrome.itemSurface}
           borderColor={actionChrome.itemBorder}
         >
-          <AppIcon name="list-check" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
+          <AppIcon name={copyPhase === 'success' ? 'check' : 'list-check'} color={copyPhase === 'success' ? colors.ui.tone.success.foreground : colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
         </WorkArtifactQuickActionButton>
       ) : null}
       {onContinue ? (
@@ -1378,17 +1424,21 @@ function WorkArtifactQuickActionButton({
   backgroundColor,
   borderColor,
   onPress,
+  disabled = false,
 }: {
   label: string
   children: ReactNode
   backgroundColor: string
   borderColor: string
   onPress: () => void
+  disabled?: boolean
 }) {
   const { colors } = useAppTheme()
   return (
     <IslePressable
       onPress={onPress}
+      disabled={disabled}
+      accessibilityState={{ busy: disabled }}
       accessible
       accessibilityRole="button"
       accessibilityLabel={label}

@@ -4,7 +4,10 @@ import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { AppIcon, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
+import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
+import { MotiView } from 'moti'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { useSettingsLeave } from './SettingsEditBoundary'
 import { SettingsSectionContext, useSettingsTarget } from './SettingsSection'
 import { restoreAccessibilityFocus } from '@/platform/native/restoreAccessibilityFocus'
@@ -23,6 +26,8 @@ export interface SettingsTask {
 /** Complex editors mount on demand; small related tasks can stay visible inline. */
 export function SettingsTaskWorkspace({ tasks, value, onTaskChange, overview, inline = false, alwaysVisible = [] }: { inline?: boolean; alwaysVisible?: readonly string[]; tasks: SettingsTask[]; value?: string | null; onTaskChange?: (id: string | undefined) => void; overview?: ReactNode }) {
   const { colors, canonicalThemeId } = useAppTheme()
+  const disclosureMotion = useThemeMotion('accent')
+  const entranceMotion = disclosureMotion.intensity === 'full' ? 'full' : 'none'
   const { t } = useTranslation()
   const target = useSettingsTarget()
   const { resetScroll, setTaskNavigation } = useContext(SettingsSectionContext)
@@ -33,6 +38,7 @@ export function SettingsTaskWorkspace({ tasks, value, onTaskChange, overview, in
   const [localSelection, setLocalSelection] = useState<string | undefined>(matched)
   const selected = value === undefined ? localSelection : value ?? undefined
   function select(id: string | undefined, focus = true) {
+    if (!inline && focus) resetScroll?.(!id)
     navigating.current = focus
     if (value === undefined) setLocalSelection(id)
     else changeRef.current?.(id)
@@ -42,7 +48,6 @@ export function SettingsTaskWorkspace({ tasks, value, onTaskChange, overview, in
   useEffect(() => {
     if (inline || !navigating.current) return
     navigating.current = false
-    resetScroll?.()
     if (heading.current) return restoreAccessibilityFocus(heading.current as unknown as GestureResponderEvent['currentTarget'])
   }, [selected])
   useEffect(() => { if (value === undefined) changeRef.current?.(localSelection) }, [localSelection, value])
@@ -60,31 +65,36 @@ export function SettingsTaskWorkspace({ tasks, value, onTaskChange, overview, in
     setTaskNavigation?.(!inline && current ? { title: current.title, onBack: back } : undefined)
     return () => setTaskNavigation?.(undefined)
   }, [current?.id, current?.title, back, setTaskNavigation, inline])
-  if (inline) return <View testID="settings-inline-workspace" style={{ gap: canonicalThemeId === 'monet' ? 28 : 16 }}>
+  if (inline) return <View testID="settings-inline-workspace" style={{ gap: canonicalThemeId === 'monet' ? 28 : 22 }}>
     {tasks.map((task, index) => {
       const pinned = alwaysVisible.includes(task.id)
       const expanded = pinned || selected === task.id
-      const open = canonicalThemeId === 'minimal' || canonicalThemeId === 'monet'
+      const open = canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' || canonicalThemeId === 'material'
       const journal = canonicalThemeId === 'animal-island-ui'
       const glass = canonicalThemeId === 'liquid-glass'
-      return <View key={task.id} style={{ minWidth: 0, borderRadius: open ? 0 : journal ? 4 : glass ? 24 : 16,
-        padding: open ? 0 : 12, backgroundColor: open ? 'transparent' : glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.muted,
+      return <IsleMotionFrame key={task.id} role="section" layout enter={false} motion={entranceMotion} style={{ minWidth: 0, borderRadius: open ? 0 : journal ? 4 : glass ? 24 : 16,
+        padding: open ? 0 : 12, backgroundColor: open ? 'transparent' : glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.raised,
         borderTopWidth: open ? StyleSheet.hairlineWidth : 0, borderTopColor: colors.ui.section.divider,
         borderLeftWidth: journal ? 3 : 0, borderLeftColor: colors.ui.icon.accentForeground }}>
         <IslePressable testID={`settings-task-${task.id}`} accessibilityRole={pinned ? 'header' : 'button'} accessibilityLabel={task.title}
           accessibilityState={pinned ? undefined : { expanded }} disabled={pinned}
           onPress={() => void leave(() => select(expanded ? undefined : task.id, false))}
-          style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          {canonicalThemeId === 'monet' ? <Text style={{ color: colors.textTertiary }}>{String(index + 1).padStart(2, '0')}</Text> : open ? null : <AppIcon name={task.icon} size={18} color={colors.textSecondary} />}
-          <Text style={{ flex: 1, color: colors.text, fontSize: canonicalThemeId === 'monet' ? 20 : 16, lineHeight: 26, fontWeight: '700' }}>{task.title}</Text>
-          {!pinned ? <Text style={{ color: colors.textSecondary, fontSize: 20 }}>{expanded ? '−' : '+'}</Text> : null}
+          style={{ minHeight: 52, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          {canonicalThemeId === 'monet' ? <Text style={{ color: colors.textTertiary }}>{String(index + 1).padStart(2, '0')}</Text> : canonicalThemeId === 'minimal' ? null : <AppIcon name={task.icon} size={18} color={expanded ? colors.ui.icon.accentForeground : colors.textSecondary} />}
+          <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+            <Text style={{ color: colors.text, fontSize: canonicalThemeId === 'monet' ? 20 : 16, lineHeight: 26, fontWeight: '700' }}>{task.title}</Text>
+            {!expanded && (task.summary || task.description) ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18 }}>{task.summary || task.description}</Text> : null}
+          </View>
+          {!pinned ? <MotiView pointerEvents="none" accessible={false} animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={disclosureMotion.intensity === 'full' ? disclosureMotion.transition : { type: 'timing', duration: 0 }}>
+            <AppIcon name="collapse" size={18} color={expanded ? colors.ui.icon.accentForeground : colors.textTertiary} />
+          </MotiView> : null}
         </IslePressable>
-        {expanded ? <View testID={`settings-task-editor-${task.id}`} style={{ gap: 12, paddingBottom: 12 }}>{task.content}</View> : null}
-      </View>
+        {expanded ? <IsleMotionFrame role="section" motion={entranceMotion} direction="forward" testID={`settings-task-editor-${task.id}`} style={{ gap: 12, paddingBottom: 12 }}>{task.content}</IsleMotionFrame> : null}
+      </IsleMotionFrame>
     })}
     {overview}
   </View>
-  if (current) return <View testID={`settings-task-editor-${current.id}`} style={{ gap: 12 }}>
+  if (current) return <IsleMotionFrame key={current.id} role="section" motion={entranceMotion} direction="forward" testID={`settings-task-editor-${current.id}`} style={{ gap: 16 }}>
     {!setTaskNavigation ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
       <IslePressable accessibilityRole="button" accessibilityLabel={t('common.back')} onPress={back}
         style={{ minHeight: 44, minWidth: 44, justifyContent: 'center' }}>
@@ -93,15 +103,15 @@ export function SettingsTaskWorkspace({ tasks, value, onTaskChange, overview, in
       <View ref={heading} accessible accessibilityRole="header" tabIndex={-1}><Text style={{ color: colors.text, fontSize: 21, lineHeight: 29, fontWeight: '700' }}>{current.title}</Text></View>
     </View> : null}
     {current.content}
-  </View>
-  return <View testID="settings-task-list" style={{ gap: 16 }}>
-    <View style={{ padding: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : 4,
-      borderRadius: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : canonicalThemeId === 'animal-island-ui' ? 4 : colors.ui.radius.panel,
-      backgroundColor: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 'transparent' : colors.ui.semantic.surface.raised,
+  </IsleMotionFrame>
+  return <IsleMotionFrame key="task-list" role="section" motion={entranceMotion} testID="settings-task-list" style={{ gap: 20 }}>
+    <View style={{ padding: canonicalThemeId === 'liquid-glass' || canonicalThemeId === 'animal-island-ui' ? 4 : 0,
+      borderRadius: canonicalThemeId === 'liquid-glass' ? colors.ui.radius.panel : canonicalThemeId === 'animal-island-ui' ? 4 : 0,
+      backgroundColor: canonicalThemeId === 'liquid-glass' ? colors.ui.semantic.chrome.background : 'transparent',
       borderLeftWidth: canonicalThemeId === 'animal-island-ui' ? 3 : 0, borderLeftColor: colors.ui.icon.accentForeground }}>
       {tasks.map((task, index) => <SettingsNavigationRow key={task.id} id={`settings-task-${task.id}`}
-        title={task.title} status={task.summary} icon={task.icon} last={index === tasks.length - 1} onPress={() => select(task.id)} />)}
+        title={task.title} status={task.summary} detail={task.description} icon={task.icon} last={index === tasks.length - 1} onPress={() => select(task.id)} />)}
     </View>
     {overview}
-  </View>
+  </IsleMotionFrame>
 }

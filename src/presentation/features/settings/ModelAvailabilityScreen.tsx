@@ -11,6 +11,8 @@ import type { ProviderCredentialSource } from '@/types/providerContracts'
 import { credentialSourceLabel, hasCredentialBlockEvidence } from './modelAvailabilityPresentation'
 import { resolveProviderDisplayName } from './providerPresentation'
 import { useModelAvailabilityPage } from './useModelAvailabilityPage'
+import { IsleEmptyState } from '@/components/ui/isle/EmptyState'
+import { FeedbackGlyph } from '@/components/ui/FeedbackGlyph'
 
 type AvailabilityListItem = { kind: 'current'; row: ProviderModelCurrent }
   | { kind: 'history'; row: ProviderModelHistoryPage['items'][number] }
@@ -190,9 +192,9 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
     ListHeaderComponent={<View style={{ gap: 12 }}>
       {controls}
       {page.failed ? <Text accessibilityRole="alert" style={textStyle}>{t('modelAvailability.readFailed')}</Text> : null}
-      {page.loading ? <Text style={textStyle}>{t('common.loading')}</Text> : null}
+      {page.loading ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}><FeedbackGlyph phase="pending" label={t('common.loading')} /><Text style={textStyle}>{t('common.loading')}</Text></View> : null}
       <Text style={headingStyle}>{t('modelAvailability.currentState')}</Text>
-      {!page.current.length && !page.loading ? <Text style={textStyle}>{t('modelAvailability.noEvidence')}</Text> : null}
+      {!page.current.length && !page.loading && !page.failed ? <Text style={textStyle}>{t('modelAvailability.noEvidence')}</Text> : null}
     </View>}
     renderItem={({ item }) => {
       if (item.kind === 'current') {
@@ -210,7 +212,7 @@ export function ModelAvailabilityScreen({ initialProviderId = '', availability, 
       {page.latestFailure ? <View style={{ gap: 4 }}><Text style={headingStyle}>{t('modelAvailability.latestError')}</Text><Text style={textStyle}>{scopeLabel(page.latestFailure)} · {page.latestFailure.modelId ?? ''}</Text><Text style={textStyle}>{observationLabel(page.latestFailure)}</Text></View> : null}
       <Text style={headingStyle}>{t('modelAvailability.history')}</Text>
       {page.history ? <Text style={textStyle}>{t('modelAvailability.observationCounts', page.history.counts)}</Text> : null}
-      {!page.history?.items.length && !page.loading ? <Text style={textStyle}>{t('modelAvailability.noObservations')}</Text> : null}
+      {!page.history?.items.length && !page.loading && !page.failed ? <IsleEmptyState title={t('modelAvailability.noObservations')} icon="health" contextual /> : null}
       </View>
       const row = item.row
       return <IslePanel contentStyle={{ padding: 10, gap: 4 }}>

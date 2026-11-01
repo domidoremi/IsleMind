@@ -63,13 +63,13 @@ export function HistoryEmptyStateFrame({
       actionBusy={actionBusy}
       actionDisabled={actionDisabled}
       onAction={onAction}
-      contextual
+      icon={kind === 'history-empty' ? 'conversation' : 'search'}
     />
   )
 
   if (themeId === 'monet') {
     return (
-      <View testID={`history-empty-experience-monet-${kind}`} style={[styles.themeEmptySurface, styles.monetEmptySurface, { borderLeftColor: tokens.accent, backgroundColor: tokens.surfaceMuted }]}>
+      <View testID={`history-empty-experience-monet-${kind}`} style={[styles.themeEmptySurface, styles.monetEmptySurface, { borderLeftColor: tokens.accent }]}>
         {empty}
       </View>
     )
@@ -77,7 +77,7 @@ export function HistoryEmptyStateFrame({
 
   if (themeId === 'material') {
     return (
-      <View testID={`history-empty-experience-material-${kind}`} style={[styles.themeEmptySurface, styles.materialEmptySurface, { borderColor: tokens.borderStrong, backgroundColor: tokens.surfaceMuted }]}>
+      <View testID={`history-empty-experience-material-${kind}`} style={[styles.themeEmptySurface, styles.materialEmptySurface]}>
         {empty}
       </View>
     )
@@ -85,7 +85,7 @@ export function HistoryEmptyStateFrame({
 
   if (themeId === 'liquid-glass') {
     return (
-      <View testID={`history-empty-experience-liquid-glass-${kind}`} style={[styles.themeEmptySurface, styles.glassEmptySurface, { borderColor: tokens.accentBorder, backgroundColor: tokens.surface }]}>
+      <View testID={`history-empty-experience-liquid-glass-${kind}`} style={[styles.themeEmptySurface, styles.glassEmptySurface]}>
         {empty}
       </View>
     )
@@ -127,7 +127,7 @@ export function HistoryHeaderFrame({ themeId, tokens, compact, shellNavigation, 
     case 'material':
       return (
         <View testID="history-header-experience-material" style={[styles.headerBase, { paddingHorizontal: compact ? 14 : 16, paddingTop: shellNavigation ? 8 : 12, paddingBottom: shellNavigation ? 10 : 14 }]}>
-          <View style={[styles.materialHeaderFocus, { borderColor: tokens.border, backgroundColor: tokens.surfaceMuted }]}>
+          <View style={[styles.materialHeaderFocus, { borderColor: tokens.border }]}>
             {header}
             <View style={styles.headerSearch}>{search}</View>
           </View>
@@ -598,16 +598,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   materialEmptySurface: {
-    borderWidth: 1,
-    borderRadius: 22,
     paddingHorizontal: 8,
-    overflow: 'hidden',
   },
   glassEmptySurface: {
-    borderWidth: 1,
-    borderRadius: 26,
     paddingHorizontal: 10,
-    overflow: 'hidden',
   },
   routeEmptyRoot: {
     flex: 1,

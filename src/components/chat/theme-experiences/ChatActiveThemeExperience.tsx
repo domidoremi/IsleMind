@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
@@ -78,7 +78,7 @@ function MaterialActiveExperience({ colors, chrome, status, messageList, control
 function LiquidGlassActiveExperience({ chrome, status, messageList, controls, composer }: ChatActiveThemeExperienceProps) {
   return (
     <View testID="chat-active-experience-liquid-glass" style={styles.root}>
-      <View style={styles.glassChromeLayer}>{chrome}</View>
+      <View pointerEvents="box-none" style={styles.glassChromeLayer}>{chrome}</View>
       <View style={styles.glassStatusLayer}>{status}</View>
       <View style={styles.glassCanvas}>
         <View style={styles.glassMessageColumnWrap}>
@@ -86,7 +86,7 @@ function LiquidGlassActiveExperience({ chrome, status, messageList, controls, co
         </View>
       </View>
       {controls}
-      <View style={styles.glassComposerLayer}>{composer}</View>
+      <View pointerEvents="box-none" style={styles.glassComposerLayer}>{composer}</View>
     </View>
   )
 }
@@ -120,10 +120,11 @@ const styles = {
   // navigation semantics and only narrowed the reading column.
   materialMessageColumn: { flex: 1, minWidth: 0 } as const,
   materialComposerDock: {} as const,
-  glassChromeLayer: { zIndex: 2 } as const,
+  // Preserve the floating layout while giving Android a real control viewport.
+  glassChromeLayer: { ...StyleSheet.absoluteFill, zIndex: 2 } as const,
   glassStatusLayer: { zIndex: 1, paddingHorizontal: 4 } as const,
   glassCanvas: { flex: 1, minHeight: 0, position: 'relative' } as const,
   glassMessageColumnWrap: { flex: 1, minHeight: 0 } as const,
   glassMessageColumn: { flex: 1, minWidth: 0, marginHorizontal: 4 } as const,
-  glassComposerLayer: { zIndex: 2 } as const,
+  glassComposerLayer: { ...StyleSheet.absoluteFill, zIndex: 2 } as const,
 }

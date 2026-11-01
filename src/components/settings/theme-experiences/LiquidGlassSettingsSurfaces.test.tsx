@@ -63,9 +63,10 @@ it.each([
       const shadow = StyleSheet.flatten(node.props.style)?.boxShadow
       return !!shadow && shadow !== 'none'
     })
-    expect(shells).toHaveLength(10)
-    // Every shell uses the shared material, not merely a translucent View.
-    expect(screen.getAllByTestId('glass-material', { includeHiddenElements: true })).toHaveLength(10)
+    expect(shells).toHaveLength(9)
+    // Provider reading content stays opaque; only its header is a glass shell.
+    expect(screen.getAllByTestId('glass-material', { includeHiddenElements: true })).toHaveLength(9)
+    expect(screen.getByText('Provider content').parent).toHaveStyle({ backgroundColor: colors.ui.semantic.surface.raised })
     for (const shell of shells) {
       const style = StyleSheet.flatten(shell.props.style)
       expect(style).toMatchObject({ borderRadius: colors.design!.semantic.radius.extraLarge, elevation: 0, shadowOpacity: 0 })

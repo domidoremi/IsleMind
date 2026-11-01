@@ -489,6 +489,12 @@
   "documents": {
     "title": "文档",
     "new": "新建文档",
+    "localSpace": "本地写作空间",
+    "libraryCount": "{{count}} 篇文档",
+    "refreshing": "正在更新文档列表",
+    "refreshFailed": "刷新未完成，下面保留上次读取的文档。",
+    "openHint": "打开并编辑本地文档",
+    "emptyTitle": "让一个想法，成为一篇文档",
     "untitled": "未命名文档",
     "createFromAnswer": "创建文档",
     "libraryNotice": "可编辑文档独立于聊天保存在本地，不会自动加入知识库或发送给 AI。",
@@ -499,6 +505,7 @@
     "loadFailed": "无法读取已保存的文档。未替换或重新创建任何数据。",
     "sourceUnavailable": "该回复不存在、仍在执行、没有正文，或超出了文档大小限制。",
     "documentTitle": "文档标题",
+    "writeMode": "编辑",
     "body": "Markdown 正文",
     "retentionNotice": "保存后，正文和当时的来源信息将独立保留在本地，即使删除聊天也不会消失。编辑不会修改原聊天，也不会自动索引、请求 AI 或执行工具。",
     "unsaved": "未保存 — 点击「保存」前，修改不会被保留。",
@@ -688,6 +695,8 @@
     }
   },
   "chat": {
+    "selectModel": "选择模型",
+    "setupDraftPlaceholder": "先写下想法，选好模型后再发送",
     "codeWorkspace": "代码与文件",
     "unifiedToolsHint": "直接在同一对话中提问、使用工具或处理代码，无需切换模式或先创建智能体定义。现有权限和预算仍然有效。",
     "workspacePrivacyHint": "这里只列出应用自己的工作区路径。选择后仅加入草稿，不发送、不授权。发送后，模型可能通过已授权工具读取相关内容；请勿包含凭据。",
@@ -1258,7 +1267,8 @@
   "dialog": {
     "close": "关闭",
     "closeLayer": "关闭弹层",
-    "ok": "知道了"
+    "ok": "知道了",
+    "pendingFeedback": "还有 {{count}} 条操作结果"
   },
   "renderGuard": {
     "content": "内容",
@@ -2422,7 +2432,16 @@
     "runtimeDiagnosticMediaGenerationKind": {
       "image-generation": "图片",
       "video-generation": "视频"
-    }
+    },
+    "appearancePreview": "外观预览",
+    "appearanceImmediateHint": "点选主题或深浅模式会立即生效并保存。自定义颜色可先预览，再应用。",
+    "appearancePreviewHint": "强调色试选只改变预览。应用后才会保存并更新全应用，不会清空其他草稿或停止正在执行的工作。",
+    "appearancePreviewSample": "每一种主题，都让思路清晰。",
+    "appearancePreviewInput": "写下你的下一个想法...",
+    "applyAppearance": "应用外观",
+    "appearanceApplied": "外观已应用并保存",
+    "previewAccent": "选择用于预览",
+    "themeAccentSelectedHint": "颜色已选入预览，应用外观后才会保存。"
   },
   "preferences": {
     "identity": "身份",
@@ -2513,6 +2532,8 @@
     "exported": "技能已复制",
     "exportFile": "导出文件",
     "exportDownloadPrepared": "技能文件下载已准备好",
+    "exportSharePrepared": "技能文件分享已准备好",
+    "exportFailed": "技能导出失败，请重试。",
     "deleteTitle": "删除技能？",
     "deleted": "技能已删除",
     "saved": "已保存",
@@ -4230,6 +4251,7 @@
     "resetFilters": "重置",
     "requestLog": "请求日志",
     "providerStatistics": "供应商统计",
+    "successRate": "成功率",
     "modelStatistics": "模型统计",
     "loading": "正在加载使用统计",
     "loadFailed": "无法加载使用统计",
@@ -4239,12 +4261,18 @@
     "exporting": "正在导出",
     "exportTitle": "导出使用统计",
     "exportCopied": "使用统计已复制",
+    "exportFailed": "使用统计导出失败",
     "clearTitle": "清除使用记录？",
     "clearDetail": "这会删除已保存的请求用量，且无法撤销。",
     "confirmClear": "清除记录",
     "clearing": "正在清除",
     "redacted": "敏感请求内容已隐藏",
     "requestDetail": "请求详情",
+    "detailRoute": "请求路径",
+    "detailTokens": "Token 明细",
+    "detailTiming": "耗时与费用",
+    "detailDiagnostics": "重试与异常",
+    "detailOther": "其他信息",
     "detailUnavailable": "无法读取这条请求的详情。",
     "pricing": "自定义价格",
     "addOverride": "添加价格",
@@ -4364,5 +4392,14 @@
     "save": "保存",
     "enabledTools": "{{count}} 类工具已启用",
     "accessRules": "{{count}} 条访问规则"
+  },
+  "livelyUi": {
+    "homeTitle": "从一个想法开始",
+    "settingsIntro": "按你的习惯，整理模型、工具和工作空间。",
+    "providerIntro": "先添加一个连接，再选择模型。也可以粘贴已有配置。",
+    "agentEmptyTitle": "让复杂任务有迹可循",
+    "agentEmptyDescription": "从一段对话启动任务，这里会保留真实进展和需要你确认的步骤。",
+    "agentRunMissingHint": "返回任务列表，打开一项可用的运行记录。应用没有重新启动任务。",
+    "helpIntro": "按任务查找用法，也可以搜索离线手册。"
   }
 }

@@ -73,7 +73,7 @@ beforeEach(() => {
   mockList.mockReset().mockImplementation(async () => mockSkills)
   mockConfirm.mockResolvedValue(true)
   mockDelete.mockResolvedValue(undefined)
-  mockClipboardWrite.mockResolvedValue(undefined)
+  mockClipboardWrite.mockResolvedValue(true)
   mockFileWrite.mockResolvedValue(undefined)
   mockFileDelete.mockResolvedValue(undefined)
   mockShareAvailable.mockResolvedValue(true)
@@ -280,6 +280,32 @@ it('does not start file export or sharing after a pending clipboard copy loses i
   await act(async () => { resolve(); await Promise.resolve() })
   expect(mockFileWrite).not.toHaveBeenCalled()
   expect(mockShare).not.toHaveBeenCalled()
+})
+
+it.each(['success', 'false', 'reject'] as const)('confirms a native export clipboard fallback only when it succeeded: %s', async outcome => {
+  mockShareAvailable.mockResolvedValueOnce(false)
+  if (outcome === 'reject') mockClipboardWrite.mockRejectedValueOnce(new Error('clipboard denied'))
+  else mockClipboardWrite.mockResolvedValueOnce(outcome === 'success')
+  const screen = await render(<SettingsEditBoundary><SkillSettingsContent /></SettingsEditBoundary>)
+  await fireEvent.press(screen.getByTestId('settings-task-saved'))
+  await fireEvent.press(screen.getByLabelText('common.share'))
+  expect(mockShare).not.toHaveBeenCalled()
+  expect(mockFileDelete).toHaveBeenCalled()
+  if (outcome === 'success') expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'skills.exported', tone: 'mint' }))
+  else {
+    expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: 'mint' }))
+    expect(screen.getByText('skills.exportFailed')).toBeTruthy()
+  }
+})
+
+it('reports native sharing separately from a clipboard copy that did not succeed', async () => {
+  mockClipboardWrite.mockResolvedValueOnce(false)
+  const screen = await render(<SettingsEditBoundary><SkillSettingsContent /></SettingsEditBoundary>)
+  await fireEvent.press(screen.getByTestId('settings-task-saved'))
+  await fireEvent.press(screen.getByLabelText('common.share'))
+  expect(mockShare).toHaveBeenCalledTimes(1)
+  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'skills.exportSharePrepared', tone: 'mint' }))
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'skills.exported' }))
 })
 
 it('cleans its bounded temporary export and never opens sharing after a cancelled file write', async () => {

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import { View } from 'react-native'
+import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
@@ -28,14 +29,14 @@ export function ChatEmptyStateExperience(props: ChatEmptyStateExperienceProps) {
   }
 }
 
-function MinimalEmptyStateExperience({ intro, boundary, starter, action }: ChatEmptyStateExperienceProps) {
+function MinimalEmptyStateExperience({ intro, boundary, starter, action, context }: ChatEmptyStateExperienceProps) {
   return (
-    <View testID="chat-empty-experience-minimal" style={styles.minimalRoot}>
+    <IsleMotionFrame role="section" testID="chat-empty-experience-minimal" style={[styles.minimalRoot, context === 'setup' ? { gap: 20 } : null]}>
       {intro}
       {boundary}
       {starter}
       {action}
-    </View>
+    </IsleMotionFrame>
   )
 }
 
@@ -55,14 +56,14 @@ function MonetEmptyStateExperience({ colors, intro, boundary, starter, action }:
   )
 }
 
-function MaterialEmptyStateExperience({ colors, intro, boundary, starter, action }: ChatEmptyStateExperienceProps) {
+function MaterialEmptyStateExperience({ intro, boundary, starter, action }: ChatEmptyStateExperienceProps) {
   return (
-    <View testID="chat-empty-experience-material" style={[styles.materialRoot, { backgroundColor: colors.ui.semantic.surface.muted, borderColor: colors.ui.semantic.chrome.border }]}>
+    <IsleMotionFrame role="section" testID="chat-empty-experience-material" style={styles.materialRoot}>
       {intro}
       <View style={styles.materialActionRow}>{action}</View>
       {boundary}
       {starter}
-    </View>
+    </IsleMotionFrame>
   )
 }
 
@@ -88,7 +89,7 @@ const styles = {
   monetBrushLong: { height: 3, flex: 1.2, borderRadius: 2 } as const,
   monetBrushShort: { height: 3, flex: 0.42, borderRadius: 2 } as const,
   monetBrushMid: { height: 2, flex: 0.72, borderRadius: 2 } as const,
-  materialRoot: { width: '100%', maxWidth: 760, alignSelf: 'center' as const, gap: 12, padding: 16, borderRadius: 18, borderWidth: 0 } as const,
+  materialRoot: { width: '100%', maxWidth: 480, alignSelf: 'center' as const, gap: 24, paddingVertical: 12 } as const,
   materialActionRow: { alignItems: 'center' as const } as const,
   glassRoot: { width: '100%', maxWidth: 780, alignSelf: 'center' as const, gap: 12 } as const,
   glassActionBar: { minHeight: 54, alignSelf: 'center' as const, alignItems: 'center' as const, justifyContent: 'center' as const, padding: 6 } as const,

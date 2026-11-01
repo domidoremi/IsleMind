@@ -36,7 +36,7 @@ export function KnowledgeImportSection({
   onImportPlainText,
 }: KnowledgeImportSectionProps) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { t } = useTranslation()
   const [pasteOpen, setPasteOpen] = useState(false)
   const importDisabled = importing || blocked

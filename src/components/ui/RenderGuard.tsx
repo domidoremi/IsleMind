@@ -8,6 +8,8 @@ import { IsleButton } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { logRenderError } from '@/services/runtimeHealthLog'
+import { useActionFeedback } from '@/hooks/useActionFeedback'
+import { ActionFeedback } from './ActionFeedback'
 
 interface RenderGuardProps {
   children: ReactNode
@@ -58,12 +60,6 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
     this.setState({ error: null })
   }
 
-  copyFallback = () => {
-    const text = this.props.fallbackText || this.state.error?.message || ''
-    if (!text.trim()) return
-    void Clipboard.setStringAsync(text)
-  }
-
   render() {
     if (!this.state.error) return this.props.children
 
@@ -83,8 +79,8 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 10 }}>
               <IsleButton compact label={strings.retryRender} icon={<AppIcon name="retry" color={colors.textSecondary} size={13} />} onPress={this.reset} />
-              {this.props.fallbackText ? (
-                <IsleButton compact label={strings.copyRaw} icon={<AppIcon name="copy" color={colors.textSecondary} size={13} />} onPress={this.copyFallback} />
+              {this.props.fallbackText?.trim() ? (
+                <RenderGuardCopyAction text={this.props.fallbackText} label={strings.copyRaw} />
               ) : null}
             </View>
           </View>
@@ -92,6 +88,20 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
       </IslePanel>
     )
   }
+}
+
+function RenderGuardCopyAction({ text, label }: { text: string; label: string }) {
+  const { t } = useTranslation()
+  const { colors } = useAppTheme()
+  const feedback = useActionFeedback(text)
+  const pending = feedback.phase === 'pending'
+  const copied = feedback.phase === 'success'
+  return <View style={{ minWidth: 0, flexShrink: 1, alignItems: 'flex-start' }}>
+    <IsleButton compact testID="render-guard-copy" label={copied ? t('common.copied') : label}
+      icon={<AppIcon name={copied ? 'check' : 'copy'} color={colors.textSecondary} size={13} />}
+      busy={pending} disabled={pending} onPress={() => void feedback.run(async () => await Clipboard.setStringAsync(text) === true)} />
+    <ActionFeedback testID="render-guard-copy-feedback" phase={feedback.phase} errorLabel={t('common.copyFailed')} />
+  </View>
 }
 
 export function RenderGuard(props: RenderGuardProps) {

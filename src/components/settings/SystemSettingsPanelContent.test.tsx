@@ -17,6 +17,14 @@ import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
 
 const mockExportData = jest.fn()
 const mockImportData = jest.fn()
+const mockRuntimeLogRead = jest.fn()
+const mockClipboardWrite = jest.fn()
+jest.mock('expo-clipboard', () => ({ setStringAsync: (text: string) => mockClipboardWrite(text) }))
+jest.mock('@/platform/native/runtimeLog', () => ({
+  readRuntimeLogText: () => mockRuntimeLogRead(),
+  getRuntimeLogPath: () => 'file:///runtime-fixture.json',
+  getRuntimeLogInfo: async () => ({ path: 'file:///runtime-fixture.json', size: 0, maxBytes: 1048576 }),
+}))
 const mockTranslate = (key: string) => key
 const mockState = { providers: [], settings: {
   theme: 'dark', themeId: 'material', language: 'zh-CN', backgroundMotion: undefined as ThemeBackgroundMotion | undefined,
@@ -112,6 +120,8 @@ function UpdateRoot(props: Parameters<typeof SystemSettingsPanelContent>[0]) {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockRuntimeLogRead.mockResolvedValue('runtime fixture')
+  mockClipboardWrite.mockResolvedValue(true)
   mockMotion = 'full'
   mockState.settings.themeId = 'material'
   mockState.settings.backgroundMotion = undefined
@@ -481,4 +491,25 @@ it('reports a browser backup as generated without presenting an expiring blob UR
     title: 'settings.exportReady', message: 'settings.exportBrowserReadyMessage',
   }))
   expect(screen.getByRole('button', { name: 'settings.exportJson' })).toBeEnabled()
+})
+
+it.each(['success', 'false', 'reject'] as const)('confirms a runtime-log copy only after a verified clipboard result: %s', async outcome => {
+  if (outcome === 'reject') mockClipboardWrite.mockRejectedValueOnce(new Error('clipboard denied'))
+  else mockClipboardWrite.mockResolvedValueOnce(outcome === 'success')
+  const screen = await render(<SystemSettingsPanelContent panel="diagnostics" />)
+  await fireEvent.press(screen.getByRole('button', { name: 'settings.runtimeLogCopy' }))
+  expect(mockClipboardWrite).toHaveBeenCalledWith('runtime fixture')
+  expect(mockDialog.toast).toHaveBeenCalledWith(expect.objectContaining({
+    title: outcome === 'success' ? 'settings.runtimeLogCopied' : 'settings.runtimeLogCopyFailed',
+    tone: outcome === 'success' ? 'mint' : 'danger',
+  }))
+  if (outcome !== 'success') expect(mockDialog.toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'settings.runtimeLogCopied' }))
+})
+
+it('retains a readable failure when runtime-log reading fails before clipboard access', async () => {
+  mockRuntimeLogRead.mockRejectedValueOnce(new Error('log storage unavailable'))
+  const screen = await render(<SystemSettingsPanelContent panel="diagnostics" />)
+  await fireEvent.press(screen.getByRole('button', { name: 'settings.runtimeLogCopy' }))
+  expect(mockClipboardWrite).not.toHaveBeenCalled()
+  expect(mockDialog.toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settings.runtimeLogCopyFailed', tone: 'danger' }))
 })

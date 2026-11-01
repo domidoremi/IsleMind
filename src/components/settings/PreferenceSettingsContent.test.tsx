@@ -23,7 +23,7 @@ jest.mock('@/components/ui/isle', () => {
   const { Pressable: MockPressable, Text, TextInput, View } = require('react-native')
   return {
     IslePressable: MockPressable, IsleToggle: View,
-    IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
+    IsleField: ({ label, labelAccessory, inputProps }: any) => <View>{labelAccessory}<TextInput accessibilityLabel={label} {...inputProps} /></View>,
     IsleButton: ({ label, ...props }: any) => <MockPressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></MockPressable>,
     useIsleDialog: () => ({ toast: mockToast, confirm: mockConfirm }),
   }
@@ -67,7 +67,9 @@ it('keeps exact numeric input on blur, rejects incomplete values, and saves only
   await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
   expect(mockUpdate).toHaveBeenCalledWith({ defaultTemperature: 1.2 })
   expect(mockFlush).toHaveBeenCalledTimes(1)
-  expect(mockToast).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'settingsWorkspace.saved' }))
+  expect(screen.getByTestId('settings-field-defaultTemperature-status').props.accessibilityLabel).toBe('settingsWorkspace.saved')
+  expect(screen.getByTestId('settings-field-defaultTemperature-status')).toHaveStyle({ width: 18, height: 18 })
+  expect(mockToast).not.toHaveBeenCalled()
 })
 
 it('guards task navigation and clears discarded workflow input without committing', async () => {
@@ -92,12 +94,14 @@ it('preserves identity input after persistence failure and refuses to overwrite 
   mockFlush.mockRejectedValueOnce(new Error('storage unavailable'))
   await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
   expect(input.props.value).toBe('My assistant')
-  expect(mockToast).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'settingsWorkspace.saveFailed' }))
+  expect(screen.getByText('settingsWorkspace.saveFailed')).toBeTruthy()
+  expect(mockToast).not.toHaveBeenCalled()
   mockSettings.assistantDisplayName = 'Changed elsewhere'
   mockUpdate.mockClear()
   await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
   expect(mockUpdate).not.toHaveBeenCalled()
-  expect(mockToast).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'settingsWorkspace.conflict' }))
+  expect(screen.getByText('settingsWorkspace.conflict')).toBeTruthy()
+  expect(mockToast).not.toHaveBeenCalled()
   await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.reload' }))
   expect(screen.getByLabelText('preferences.assistantDisplayName').props.value).toBe('Changed elsewhere')
 })

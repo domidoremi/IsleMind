@@ -43,6 +43,33 @@ function fixture(patch: Partial<AssistantRun> = {}) {
     } }
 }
 
+it('retains the current run while a read-only refresh is pending', async () => {
+  const fx = fixture({ result: { outputText: 'Keep the current result visible' } as AssistantRun['result'] })
+  const view = await render(<AgentRunScreen runtime={fx.runtime} runId="run-1" onFreshRun={() => {}} onOpenRun={() => {}} />)
+  await waitFor(() => expect(view.getByText('Keep the current result visible')).toBeTruthy())
+  let finish!: (run: AssistantRun) => void
+  fx.mocks.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  await fireEvent.press(view.getByRole('button', { name: 'agentTasks.refresh' }))
+  expect(view.getByText('Keep the current result visible')).toBeTruthy()
+  expect(view.getByRole('button', { name: 'agentTasks.refresh' })).toBeDisabled()
+  expect(fx.mocks.start).not.toHaveBeenCalled()
+  expect(fx.mocks.resume).not.toHaveBeenCalled()
+  await act(async () => finish(fx.run))
+  await waitFor(() => expect(view.getByRole('button', { name: 'agentTasks.refresh' })).not.toBeDisabled())
+  await view.unmount()
+})
+
+it('shows a real empty task state without starting an executor', async () => {
+  const fx = fixture()
+  fx.mocks.listRuns.mockResolvedValue([])
+  const view = await render(<AgentTasksScreen runtime={fx.runtime} onOpenRun={() => {}} onManageAgents={() => {}} />)
+  await waitFor(() => expect(view.getByText('agentTasks.empty')).toBeTruthy())
+  expect(view.getByText('livelyUi.agentEmptyDescription')).toBeTruthy()
+  expect(fx.mocks.start).not.toHaveBeenCalled()
+  expect(view.queryByLabelText('agentTasks.request')).toBeNull()
+  await view.unmount()
+})
+
 it('launches only after a user command, defaults to no background permission, and suppresses double start', async () => {
   const fx = fixture(); const open = jest.fn()
   let finish!: (run: AssistantRun) => void

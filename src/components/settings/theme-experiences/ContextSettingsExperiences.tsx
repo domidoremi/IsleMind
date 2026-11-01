@@ -25,7 +25,7 @@ export function MonetContextSettingsLead({ summary, toggles }: ContextSettingsLe
   return (
     <View testID="context-settings-experience-monet" style={{ gap: design.semantic.spacing.md }}>
       {summary ? <View style={{ paddingHorizontal: design.semantic.spacing.sm }}>{summary}</View> : null}
-      <View style={{ padding: design.semantic.spacing.md, borderRadius: design.semantic.radius.large, backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderLeftColor: colors.primary }}>{toggles}</View>
+      <View style={{ paddingLeft: design.semantic.spacing.md, borderLeftWidth: 3, borderLeftColor: colors.primary }}>{toggles}</View>
     </View>
   )
 }
@@ -34,7 +34,7 @@ export function MaterialContextSettingsLead({ summary, toggles }: ContextSetting
   const { colors, design } = useAppTheme()
   return (
     <View testID="context-settings-experience-material" style={{ gap: design.semantic.spacing.md }}>
-      <View style={{ padding: design.semantic.spacing.lg, borderRadius: design.semantic.radius.extraLarge, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.semantic.chrome.border }}>{toggles}</View>
+      <View style={{ paddingVertical: design.semantic.spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.ui.section.divider }}>{toggles}</View>
       {summary ? <View>{summary}</View> : null}
     </View>
   )

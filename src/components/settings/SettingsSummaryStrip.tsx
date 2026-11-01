@@ -17,6 +17,7 @@ export function SettingsSummaryStrip({ items }: { items: SettingsSummaryItem[] }
   const compact = width / fontScale < 430
   const singleColumn = width / fontScale < 320
   const dividerColor = colors.ui.semantic.chrome.border
+  const surface = colors.design?.semantic.color.surfaceContainer ?? colors.ui.semantic.surface.muted
   const renderItem = (item: SettingsSummaryItem, index: number) => {
     const toneColor = item.tone === 'mint'
       ? colors.ui.tone.success.foreground
@@ -67,14 +68,14 @@ export function SettingsSummaryStrip({ items }: { items: SettingsSummaryItem[] }
 
   if (compact) {
     return (
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', borderRadius: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : colors.ui.radius.panel, overflow: 'hidden', borderWidth: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : StyleSheet.hairlineWidth, borderColor: dividerColor, backgroundColor: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 'transparent' : colors.ui.semantic.surface.muted }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', borderRadius: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : colors.ui.radius.panel, overflow: 'hidden', borderWidth: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : StyleSheet.hairlineWidth, borderColor: dividerColor, backgroundColor: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 'transparent' : surface }}>
         {items.map(renderItem)}
       </View>
     )
   }
 
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', borderRadius: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : colors.ui.radius.panel, overflow: 'hidden', borderWidth: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : StyleSheet.hairlineWidth, borderColor: dividerColor, backgroundColor: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 'transparent' : colors.ui.semantic.surface.muted }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', borderRadius: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : colors.ui.radius.panel, overflow: 'hidden', borderWidth: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 0 : StyleSheet.hairlineWidth, borderColor: dividerColor, backgroundColor: canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' ? 'transparent' : surface }}>
       {items.map(renderItem)}
     </View>
   )

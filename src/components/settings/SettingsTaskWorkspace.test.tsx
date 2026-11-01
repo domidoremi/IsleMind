@@ -2,6 +2,7 @@ import { fireEvent, render } from '@testing-library/react-native'
 import { useState } from 'react'
 import { TextInput } from 'react-native'
 import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
+import { SettingsSectionContext } from './SettingsSection'
 
 let mockTarget: string | undefined
 let mockMayLeave = true
@@ -79,4 +80,27 @@ it('locates a nested field in the inline layout without hiding everyday fields',
   const screen = await render(<SettingsTaskWorkspace inline alwaysVisible={['identity']} tasks={tasks} />)
   expect(screen.getByLabelText('Name editor')).toBeTruthy()
   expect(screen.getByLabelText('Token editor')).toBeTruthy()
+})
+
+it('captures the task list position before opening and restores it only after a guarded return', async () => {
+  const resetScroll = jest.fn()
+  const screen = await render(<SettingsSectionContext.Provider value={{ register: () => undefined, resetScroll }}>
+    <SettingsTaskWorkspace tasks={tasks} />
+  </SettingsSectionContext.Provider>)
+  await fireEvent.press(screen.getByTestId('settings-task-identity'))
+  expect(resetScroll).toHaveBeenLastCalledWith(false)
+  mockMayLeave = false
+  await fireEvent.press(screen.getByLabelText('common.back'))
+  expect(resetScroll).toHaveBeenCalledTimes(1)
+  mockMayLeave = true
+  await fireEvent.press(screen.getByLabelText('common.back'))
+  expect(resetScroll).toHaveBeenLastCalledWith(true)
+})
+
+it('explains tasks without mounting their editors', async () => {
+  const screen = await render(<SettingsTaskWorkspace tasks={tasks} />)
+  expect(screen.getByText('Change the assistant name')).toBeTruthy()
+  expect(screen.getByText('Adjust output limits')).toBeTruthy()
+  expect(screen.queryByLabelText('Name editor')).toBeNull()
+  expect(screen.queryByLabelText('Token editor')).toBeNull()
 })

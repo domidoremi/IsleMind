@@ -109,16 +109,19 @@ const RENDERERS: Record<CanonicalThemeId, Renderer> = {
 
 function renderAnimalIsland(props: ThemeExpressionSurfaceProps) {
   const content = props.kind === 'message-content' || props.kind === 'markdown' || props.kind === 'code-block'
-  if (content) return <View testID={props.testID} style={{ backgroundColor: 'transparent', minWidth: 0 }}>{props.children}</View>
-  return <View onLayout={props.onLayout} style={{ minWidth: 0, maxWidth: '100%', alignSelf: props.kind === 'message' && props.isUser ? 'flex-end' : 'stretch' }}>
-    <NativeCard testID={props.testID} style={{ padding: props.kind === 'message' ? 14 : props.horizontalPadding ?? 12, minWidth: 0, maxWidth: '100%',
-      ...(props.kind === 'message' && props.isUser ? { backgroundColor: props.colors.ui.message.userBackground } : null),
-      borderRadius: 6, borderBottomRightRadius: props.kind === 'composer' ? 22 : 6,
-      borderLeftWidth: props.kind === 'chrome' ? 0 : 3, borderLeftColor: props.colors.ui.section.divider,
-      ...(props.selected || props.alertBorder ? { borderWidth: 2, borderColor: props.alertBorder ?? props.colors.primary } : null) }}>
-      {props.children}
-    </NativeCard>
-  </View>
+  const cardStyle = { padding: props.kind === 'message' ? 14 : props.horizontalPadding ?? 12,
+    borderRadius: 6, borderBottomRightRadius: props.kind === 'composer' ? 22 : 6,
+    borderLeftWidth: props.kind === 'chrome' ? 0 : 3, borderLeftColor: props.colors.ui.section.divider,
+    ...(props.kind === 'message' && props.isUser ? { backgroundColor: props.colors.ui.message.userBackground } : null),
+    ...(props.selected || props.alertBorder ? { borderWidth: 2, borderColor: props.alertBorder ?? props.colors.primary } : null) }
+  return <GlassSurface colors={props.colors} enabled={false} testID={props.testID} onLayout={props.onLayout}
+    style={[{ minWidth: 0, maxWidth: '100%', alignSelf: props.kind === 'message' && props.isUser ? 'flex-end' : 'stretch' },
+      content ? { backgroundColor: 'transparent' } : cardStyle]}>
+    {!content ? <View key="material" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill}>
+      <NativeCard style={[StyleSheet.absoluteFill, cardStyle]} />
+    </View> : null}
+    <View key="content" style={{ minWidth: 0 }}>{props.children}</View>
+  </GlassSurface>
 }
 
 export function ThemeExpressionSurface(props: ThemeExpressionSurfaceProps) {
@@ -144,7 +147,7 @@ function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpr
         : material.background
   const ownsMaterial = isChrome || props.kind === 'composer' || isCodeBlock || userMessage
   return (
-    <View
+    <GlassSurface colors={props.colors} enabled={false}
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
@@ -172,8 +175,8 @@ function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpr
       {isMessage && props.isUser ? (
         <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.minimalMessageIndex, { backgroundColor: props.colors.ui.control.primaryBackground }]} />
       ) : null}
-      {props.children}
-    </View>
+      <View key="content" style={{ minWidth: 0 }}>{props.children}</View>
+    </GlassSurface>
   )
 }
 
@@ -189,7 +192,7 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
   const isAssistantMessage = isMessage && !props.isUser
   const ownsMaterial = isChrome || props.kind === 'composer' || isCodeBlock || (isMessage && props.isUser)
   const contentFrame = (
-    <View style={[
+    <View key="content" style={[
       styles.monetContentFrame,
       props.kind === 'composer' ? styles.monetComposerFrame : null,
       isMessage && !props.isUser ? styles.monetAssistantContentFrame : null,
@@ -199,7 +202,7 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
     </View>
   )
   return (
-    <View
+    <GlassSurface colors={props.colors} enabled={false}
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
@@ -231,7 +234,7 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
       ]}
     >
       {contentFrame}
-    </View>
+    </GlassSurface>
   )
 }
 
@@ -246,7 +249,7 @@ function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExp
   const isNestedRichContent = props.kind === 'code-block'
   const ownsMaterial = isChrome || props.kind === 'composer' || isCodeBlock || (isMessage && props.isUser)
   return (
-    <View
+    <GlassSurface colors={props.colors} enabled={false}
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
@@ -278,7 +281,7 @@ function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExp
         },
       ]}
     >
-      <View style={[
+      <View key="content" style={[
         styles.materialContentFrame,
         props.kind === 'composer' ? styles.materialComposerFrame : null,
         isMessage && props.isUser ? styles.materialUserContentFrame : null,
@@ -286,7 +289,7 @@ function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExp
       ]}>
         {props.children}
       </View>
-    </View>
+    </GlassSurface>
   )
 }
 
@@ -305,7 +308,7 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
           { width: '100%', minWidth: 0, borderWidth: props.alertBorder ? 1 : 0, borderColor: props.alertBorder ?? 'transparent' },
         ]}
       >
-        {props.children}
+        <View key="content" style={{ minWidth: 0 }}>{props.children}</View>
       </GlassSurface>
     )
   }
@@ -317,7 +320,7 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
   const isNestedRichContent = props.kind === 'code-block'
   const userSurface = rgbaColor(props.colors.ui.message.userBackground, 0.74)
   return (
-    <View
+    <GlassSurface colors={props.colors} enabled={false}
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
@@ -335,14 +338,14 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
         },
       ]}
     >
-      <View style={[
+      <View key="content" style={[
         styles.glassContentFrame,
         isMessage && props.isUser ? styles.glassUserContentFrame : null,
         isMessage && !props.isUser ? styles.glassAssistantContentFrame : null,
       ]}>
         {props.children}
       </View>
-    </View>
+    </GlassSurface>
   )
 }
 

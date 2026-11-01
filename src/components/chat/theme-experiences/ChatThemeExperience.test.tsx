@@ -31,6 +31,34 @@ it.each(['setup', 'active'] as const)(
   },
 )
 
+it.each(['setup', 'active'] as const)(
+  'gives Liquid Glass %s floating controls viewport-sized, pass-through parents',
+  async phase => {
+    const props = {
+      themeId: 'liquid-glass' as const,
+      colors: getColors('light', 'liquid-glass'),
+      compactViewport: true,
+      chrome: <View testID="glass-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 58 }} />,
+      status: null,
+      controls: null,
+      composer: <View testID="glass-composer" style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 88 }} />,
+    }
+    const screen = await render(phase === 'setup'
+      ? <ChatSetupThemeExperience {...props} content={<View style={{ flex: 1 }} />} />
+      : <ChatActiveThemeExperience {...props} documentMetadata="" documentTitle="" messageList={<View style={{ flex: 1 }} />} />,
+    )
+    const root = screen.getByTestId(`chat-${phase}-experience-liquid-glass`)
+
+    for (const id of ['glass-header', 'glass-composer']) {
+      const layer = screen.getByTestId(id).parent
+      expect(layer?.parent).toBe(root)
+      expect(StyleSheet.flatten(layer?.props.style)).toEqual(expect.objectContaining(StyleSheet.absoluteFill))
+      expect(layer?.props.pointerEvents).toBe('box-none')
+      expect(layer?.props.importantForAccessibility).not.toBe('no-hide-descendants')
+    }
+  },
+)
+
 it('keeps Material setup content horizontally centered inside every canvas wrapper', async () => {
   const screen = await render(
     <ChatSetupThemeExperience

@@ -12,6 +12,7 @@ import { PressableScale } from '@/components/ui/PressableScale'
 import { IslePanel, type IsleMaterial } from './Panel'
 import { IsleButton, IsleInput, IsleSwitch as IsleStyledSwitch } from './IsleKit'
 import { GlassSurface } from './GlassSurface'
+import { PageFeedbackIndicator } from '@/components/ui/PageFeedback'
 export type IsleTone = 'default' | 'mint' | 'amber' | 'danger' | 'sky' | 'ink'
 export type IsleSize = 'sm' | 'md' | 'lg'
 
@@ -170,11 +171,13 @@ export function IsleSection({
 
 export function IsleField({
   label,
+  labelAccessory,
   note,
   inputProps,
   style,
 }: {
   label: string
+  labelAccessory?: ReactNode
   note?: string
   inputProps: TextInputProps
   style?: StyleProp<ViewStyle>
@@ -182,8 +185,13 @@ export function IsleField({
   const { colors } = useAppTheme()
   return (
     <View style={style}>
+      {labelAccessory ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 20, marginBottom: 6 }}>
+        <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+        {labelAccessory}
+      </View> : null}
       <IsleInput
-        label={label}
+        label={labelAccessory ? undefined : label}
+        accessibilityLabel={inputProps.accessibilityLabel ?? label}
         {...inputProps}
         size="middle"
         inputStyle={inputProps.style}
@@ -213,7 +221,7 @@ export function IsleToggle({
   const toggleSurface = active
     ? colors.ui.liquidGlass
       ? colors.ui.semantic.chrome.background
-      : colors.ui.semantic.surface.muted
+      : colors.design?.semantic.color.surfaceContainer ?? colors.ui.semantic.surface.muted
     : colors.ui.liquidGlass || playful
       ? colors.ui.actionBar.itemBackground
       : 'transparent'
@@ -486,6 +494,7 @@ export function IsleHeader({
           </Text>
           {subtitle ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '500', marginTop: 2, includeFontPadding: false }}>{subtitle}</Text> : null}
         </View>
+        <PageFeedbackIndicator />
         {trailing}
       </View>
     </IslePanel>
@@ -594,7 +603,7 @@ export function IsleDisclosure({
     ? colors.ui.tone.danger.background
     : colors.ui.liquidGlass
       ? colors.ui.semantic.chrome.background
-      : colors.ui.semantic.surface.muted
+      : colors.design?.semantic.color.surfaceContainer ?? colors.ui.semantic.surface.muted
   const collapsedBorderColor = danger
     ? colors.ui.tone.danger.border
     : colors.ui.liquidGlass || playful
@@ -614,7 +623,7 @@ export function IsleDisclosure({
       <MotiView
         animate={{
           backgroundColor: expanded ? expandedBackground : collapsedBackground,
-          borderColor: danger ? colors.ui.tone.danger.border : expanded ? colors.ui.control.primaryBorder : collapsedBorderColor,
+          borderColor: danger ? colors.ui.tone.danger.border : expanded ? colors.ui.section.divider : collapsedBorderColor,
         }}
         transition={accentMotion.transition}
         style={{

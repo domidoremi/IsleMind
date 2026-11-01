@@ -44,7 +44,7 @@ export function ContextCapacitySheet({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
   const [state, setState] = useState<SheetState>({ kind: 'loading' })
