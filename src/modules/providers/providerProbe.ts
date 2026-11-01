@@ -28,7 +28,7 @@ export type ProviderProbeQuotaState = 'available' | 'limited' | 'exhausted' | 'u
 export type ProviderProbeReadiness = 'ready' | 'partial' | 'blocked'
 
 export interface ProviderProbeIssue {
-  code: 'bad_base_url' | 'credential_mismatch'
+  code: 'bad_base_url' | 'credential_mismatch' | 'endpoint_unavailable'
   message: string
 }
 
@@ -142,7 +142,7 @@ export function createProviderProbe(dependencies: ProviderProbeDependencies): Pr
       const configuredProvider = { ...request.provider, apiKey }
       const configurationIssue = dependencies.configurationIssue(configuredProvider, apiKey)
       if (configurationIssue) {
-        return result(baseEvidence, 'invalid_configuration', false, startedAt, {
+        return result(baseEvidence, configurationIssue.code === 'endpoint_unavailable' ? 'unsupported_route' : 'invalid_configuration', false, startedAt, {
           redactedReason: redactProviderProbeReason(configurationIssue.message, apiKey),
         })
       }

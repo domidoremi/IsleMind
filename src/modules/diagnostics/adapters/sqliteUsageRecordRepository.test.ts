@@ -128,6 +128,9 @@ const snapshot: UsagePortableSnapshot = {
     version: '2026-08-30',
     effectiveFrom: 1,
     source: 'manual',
+    sourceUrl: 'https://example.invalid/pricing',
+    verifiedAt: '2026-10-31',
+    billingConditions: 'Synthetic provider-specific test price.',
     rates: {
       inputNanodollarsPerMillionTokens: 1,
       outputNanodollarsPerMillionTokens: 2,

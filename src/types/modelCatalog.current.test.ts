@@ -45,7 +45,7 @@ describe('current provider model catalog', () => {
 
   it('keeps the old DeepSeek Flash alias deprecated but exposes its current vision capability', () => {
     expect(getModelConfig('deepseek-v4-flash', 'openai-compatible')).toMatchObject({
-      deprecated: true, supportsVision: true, contextWindow: 1000000, maxOutputTokens: 384000,
+      deprecated: true, supportsVision: true, contextWindow: 1000000, maxOutputTokens: 393216,
     })
     expect(getModelConfig('deepseek-v4-pro', 'openai-compatible')).toMatchObject({ deprecated: false, supportsVision: false })
   })
@@ -76,7 +76,7 @@ describe('current provider model catalog', () => {
     })
     expect(getModelConfig('deepseek-flash', 'openai-compatible')).toMatchObject({
       contextWindow: 1000000,
-      maxOutputTokens: 384000,
+      maxOutputTokens: 393216,
       supportsVision: true,
       reasoningMode: 'deepseek-thinking',
     })

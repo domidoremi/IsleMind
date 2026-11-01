@@ -1,7 +1,7 @@
 import { estimateTextTokens } from '@/core'
 import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
-import { checkProviderContextCapacity, MAX_PROVIDER_REQUEST_CODE_UNITS, ProviderContextCapacityError, getWireProviderType, providerContextOverflowMessage,
+import { checkProviderContextCapacity, dashScopeAdditionalOutputReservation, MAX_PROVIDER_REQUEST_CODE_UNITS, ProviderContextCapacityError, getWireProviderType, providerContextOverflowMessage,
   resolveProviderLocalCompressionPrivacy, type ProviderRuntimeChatRequest, type ProviderRuntimeTraceCallback } from '@/modules/providers'
 import { summarizeContextPackingHistory, UNTRUSTED_HISTORY_SUMMARY_PREAMBLE } from '@/modules/assistant-runtime'
 import { assertExecutionResourcesAvailable } from './executionResources'
@@ -33,8 +33,10 @@ export function checkFinalProviderRequestCapacity(input: {
   const capacity = getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
   const outputLimit = capacity.outputTokenLimit
   const wire = getWireProviderType(input.provider)
+  const additionalOutputTokens = dashScopeAdditionalOutputReservation(input.provider, input.model, body)
+  if (additionalOutputTokens === undefined) throw new ProviderContextCapacityError('reasoning_estimate_unavailable')
   const calibrationKey = JSON.stringify([input.provider.id, input.model, wire, Array.isArray(body.input) ? 'responses' : Array.isArray(body.contents) ? 'contents' : 'messages'])
-  return { ...checkProviderContextCapacity({ body, providerType: wire, model: input.model,
+  return { ...checkProviderContextCapacity({ body, providerType: wire, model: input.model, additionalOutputTokens,
     inputCalibrationFactor: providerTokenCalibration.factor(calibrationKey),
     contextWindow: capacity.contextWindow,
     // A remote model row may still contain inferred/clamped display defaults.

@@ -1,0 +1,122 @@
+diff --git a/v3/helpers/parseUtil.cjs b/v3/helpers/parseUtil.cjs
+--- a/v3/helpers/parseUtil.cjs
++++ b/v3/helpers/parseUtil.cjs
+@@ -38,6 +38,8 @@
+ exports.makeIssue = makeIssue;
+ exports.EMPTY_PATH = [];
+ function addIssueToContext(ctx, issueData) {
++    // Bound retained diagnostics; invalid parses still fail.
++    if (ctx.common.issues.length >= 1000) return;
+     const overrideMap = (0, errors_js_1.getErrorMap)();
+     const issue = (0, exports.makeIssue)({
+         issueData: issueData,
+diff --git a/v3/types.cjs b/v3/types.cjs
+--- a/v3/types.cjs
++++ b/v3/types.cjs
+@@ -1791,6 +1791,7 @@
+                     message: def.exactLength.message,
+                 });
+                 status.dirty();
++                if (tooBig) return parseUtil_js_1.INVALID;
+             }
+         }
+         if (def.minLength !== null) {
+@@ -1817,18 +1818,27 @@
+                     message: def.maxLength.message,
+                 });
+                 status.dirty();
+-            }
+-        }
++                return parseUtil_js_1.INVALID;
++            }
++        }
++        // Bound invalid-array diagnostics and async fan-out; valid arrays are not truncated.
++        const result = [];
+         if (ctx.common.async) {
+-            return Promise.all([...ctx.data].map((item, i) => {
+-                return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
+-            })).then((result) => {
++            return (async () => {
++                for (let offset = 0; offset < ctx.data.length; offset += 64) {
++                    if (ctx.common.issues.length >= 1000) return parseUtil_js_1.INVALID;
++                    const batch = Array.from(ctx.data.slice(offset, offset + 64));
++                    const parsed = await Promise.all(batch.map((item, i) =>
++                        def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, offset + i))));
++                    result.push(...parsed);
++                }
+                 return parseUtil_js_1.ParseStatus.mergeArray(status, result);
+-            });
+-        }
+-        const result = [...ctx.data].map((item, i) => {
+-            return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
+-        });
++            })();
++        }
++        for (let i = 0; i < ctx.data.length; i++) {
++            if (ctx.common.issues.length >= 1000) return parseUtil_js_1.INVALID;
++            result.push(def.type._parseSync(new ParseInputLazyPath(ctx, ctx.data[i], ctx.path, i)));
++        }
+         return parseUtil_js_1.ParseStatus.mergeArray(status, result);
+     }
+     get element() {
+diff --git a/v3/helpers/parseUtil.js b/v3/helpers/parseUtil.js
+--- a/v3/helpers/parseUtil.js
++++ b/v3/helpers/parseUtil.js
+@@ -30,6 +30,8 @@
+ };
+ export const EMPTY_PATH = [];
+ export function addIssueToContext(ctx, issueData) {
++    // Bound retained diagnostics; invalid parses still fail.
++    if (ctx.common.issues.length >= 1000) return;
+     const overrideMap = getErrorMap();
+     const issue = makeIssue({
+         issueData: issueData,
+diff --git a/v3/types.js b/v3/types.js
+--- a/v3/types.js
++++ b/v3/types.js
+@@ -1770,6 +1770,7 @@
+                     message: def.exactLength.message,
+                 });
+                 status.dirty();
++                if (tooBig) return INVALID;
+             }
+         }
+         if (def.minLength !== null) {
+@@ -1796,18 +1797,27 @@
+                     message: def.maxLength.message,
+                 });
+                 status.dirty();
+-            }
+-        }
++                return INVALID;
++            }
++        }
++        // Bound invalid-array diagnostics and async fan-out; valid arrays are not truncated.
++        const result = [];
+         if (ctx.common.async) {
+-            return Promise.all([...ctx.data].map((item, i) => {
+-                return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
+-            })).then((result) => {
++            return (async () => {
++                for (let offset = 0; offset < ctx.data.length; offset += 64) {
++                    if (ctx.common.issues.length >= 1000) return INVALID;
++                    const batch = Array.from(ctx.data.slice(offset, offset + 64));
++                    const parsed = await Promise.all(batch.map((item, i) =>
++                        def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, offset + i))));
++                    result.push(...parsed);
++                }
+                 return ParseStatus.mergeArray(status, result);
+-            });
+-        }
+-        const result = [...ctx.data].map((item, i) => {
+-            return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
+-        });
++            })();
++        }
++        for (let i = 0; i < ctx.data.length; i++) {
++            if (ctx.common.issues.length >= 1000) return INVALID;
++            result.push(def.type._parseSync(new ParseInputLazyPath(ctx, ctx.data[i], ctx.path, i)));
++        }
+         return ParseStatus.mergeArray(status, result);
+     }
+     get element() {

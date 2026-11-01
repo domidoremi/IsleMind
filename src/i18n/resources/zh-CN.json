@@ -4141,6 +4141,7 @@
   "providerIssue": {
     "missingBaseUrl": "自定义端点必须填写 Base URL；兼容协议本身不提供供应商地址。",
     "invalidBaseUrl": "自定义 Base URL 必须是有效的 http:// 或 https:// 地址。",
+    "githubModelsRetired": "GitHub Models 已于 2026 年 7 月 30 日退役，推理 API 和模型列表已不可用。已保存的配置会保留，请明确选择其他供应商：https://docs.github.com/en/github-models",
     "mimoTpKeyWrongMode": "MiMo 的 tp- Key 属于 Token Plan，请切换到 Token Plan 模式和对应区域。",
     "mimoSkKeyWrongMode": "MiMo 的 sk- Key 属于按量付费，请切换到按量付费模式，或更换为 tp- Token Plan Key。",
     "mimoTpKeyPaygUrl": "MiMo 的 tp- Token Plan Key 不能调用按量付费 Base URL，请使用 token-plan-*.xiaomimimo.com/v1。",

@@ -16,6 +16,8 @@ import {
 import { createProviderTrace, extractTracesFromJson, summarizeToolEvent } from './providerTracePolicy'
 import { getModelConfig } from '@/types/modelCatalog'
 import { redactSensitiveText } from '@/core'
+import { providerProtocolAdapterPolicy } from './providerModelExecutionProfile'
+import type { ProviderRuntimeChatRequest } from '@/modules/providers'
 
 const providerStreamParsingPolicy = createProviderStreamParsingPolicy({
   translate: st,
@@ -32,6 +34,10 @@ export const {
 
 export const providerResponseParsingPolicy = createProviderResponseParsingPolicy({
   readResponseText: safeProviderResponseText,
+  resolveStreamProtocol(request) {
+    const protocol = providerProtocolAdapterPolicy.resolve(request as ProviderRuntimeChatRequest).protocol
+    return protocol === 'anthropic-compatible' ? 'anthropic' : protocol
+  },
   parseStreamChunk: parseProviderStreamChunk,
   extractTraces: extractTracesFromJson,
   splitTaggedThinkingOutputText,

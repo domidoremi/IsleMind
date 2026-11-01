@@ -4,6 +4,7 @@ import {
   createSqliteUsagePortableSnapshotRepository,
   createSqliteUsageRecordRepository,
   createUsageStatisticsService,
+  isBuiltInUsagePricingEndpoint,
   resolveUsageRouteAttribution,
   type UsageAttemptReason,
   type UsageOperationSource,
@@ -17,6 +18,7 @@ import {
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
 import type { MessageUsage } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
+import { getProviderEffectiveBaseUrl } from '@/types/providerBaseUrls'
 import { conversationPersistence } from '@/bootstrap/conversationPersistence'
 
 const usageRecordRepository = createSqliteUsageRecordRepository(createExpoSqliteDatabaseProvider())
@@ -32,7 +34,7 @@ let legacyImportPromise: Promise<void> | undefined
 let lastRetentionAt = 0
 
 export interface ProviderUsageAttemptInput {
-  provider: Pick<AIProvider, 'id' | 'name' | 'type'>
+  provider: Pick<AIProvider, 'id' | 'name' | 'type' | 'baseUrl' | 'credentialMode' | 'tokenPlanRegion' | 'wireProtocol'>
   credentialGroupId?: string
   requestedModel?: string
   upstreamModel: string
@@ -120,6 +122,8 @@ export async function recordProviderUsageAttempt(input: ProviderUsageAttemptInpu
         ...(finiteCount(usage.reasoningTokens) === undefined ? {} : { reasoningTokens: finiteCount(usage.reasoningTokens) }),
       } : {},
       costProvenance: 'unavailable',
+    }, {
+      allowBuiltInPricing: isBuiltInUsagePricingEndpoint(input.provider.type, getProviderEffectiveBaseUrl(input.provider)),
     })
   } catch {
     return false

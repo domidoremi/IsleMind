@@ -9,7 +9,6 @@ import {
   extractCitationsFromText,
   extractProviderCitations,
   extractProviderCitationsFromSse,
-  type ProviderCitation,
   type ProviderCitationSource,
   type ProviderRetrievalSource,
 } from './providerCitations'
@@ -22,6 +21,7 @@ import {
 } from './providerResponseText'
 import {
   extractAnthropicReplayContentBlocks,
+  extractGoogleReplayContentParts,
   extractOpenAIReasoningContent,
   extractOpenAIResponseReplayItems,
 } from './providerReplay'
@@ -38,6 +38,10 @@ import {
   type ProviderToolCall,
 } from './providerToolCalls'
 import { extractUsage } from './providerUsage'
+import { finishProviderStream, ProviderStreamLifecycleError } from './providerStreamLifecycle'
+import type { ProviderResponseParsingResult, ProviderStreamOutcome, ProviderStreamProtocol } from './providerResponseContracts'
+
+export type { ProviderResponseParsingResult } from './providerResponseContracts'
 
 export interface ProviderResponseBody {
   text: string
@@ -51,21 +55,6 @@ export interface ProviderResponseParsingRequest {
   structuredOutput?: ProviderStructuredOutputRequest
 }
 
-export interface ProviderResponseParsingResult {
-  text: string
-  usage?: MessageUsage
-  citations?: ProviderCitation[]
-  traces?: ProcessTrace[]
-  providerToolCalls?: ProviderToolCall[]
-  reasoningContent?: string
-  responseItems?: Record<string, unknown>[]
-  providerContentBlocks?: Record<string, unknown>[]
-  credentialGroupId?: string
-  responseId?: string
-  remoteCompactFallbackUsed?: boolean
-  remoteCompactFallbackReason?: string
-}
-
 export interface ProviderParsedStreamChunk {
   text: string
   traces: ProcessTrace[]
@@ -75,14 +64,20 @@ export interface ProviderParsedStreamChunk {
   reasoningContent?: string
   responseItems?: Record<string, unknown>[]
   providerContentBlocks?: Record<string, unknown>[]
+  googleContentParts?: Record<string, unknown>[]
+  terminal?: boolean
+  malformedData?: boolean
+  streamProtocol?: ProviderStreamProtocol
+  streamOutcome?: ProviderStreamOutcome
 }
 
 export interface ProviderResponseParsingPolicyDependencies {
   readResponseText(response: Response): Promise<string>
+  resolveStreamProtocol?(request: ProviderResponseParsingRequest): ProviderStreamProtocol
   parseStreamChunk(
     chunk: string,
     providerType: ProviderType,
-    options?: { includeReasoning?: boolean },
+    options?: { includeReasoning?: boolean; protocol?: ProviderStreamProtocol },
   ): ProviderParsedStreamChunk
   extractTraces(
     json: any,
@@ -204,7 +199,14 @@ export function createProviderResponseParsingPolicy(
     providerType: ProviderType,
   ): ProviderResponseParsingResult {
     const trimmed = raw.trim()
-    if (!trimmed) return { text: '' }
+    const expectedProtocol = dependencies.resolveStreamProtocol?.(request)
+    if (!trimmed) {
+      throw new ProviderStreamLifecycleError({
+        status: 'interrupted',
+        protocol: expectedProtocol ?? (providerType === 'anthropic' ? 'anthropic' : providerType === 'google' ? 'google' : 'openai-chat'),
+        reason: 'missing_protocol_completion',
+      }, { text: '' })
+    }
 
     if (trimmed.startsWith('{')) {
       const parsedJson = parseProviderBufferedStreamJson(trimmed, request)
@@ -213,6 +215,7 @@ export function createProviderResponseParsingPolicy(
 
     const parsed = dependencies.parseStreamChunk(raw, providerType, {
       includeReasoning: providerReasoningResponseCanBeParsed(request),
+      ...(expectedProtocol ? { protocol: expectedProtocol } : {}),
     })
     const text = stripProviderTextToolCallBlocks(parsed.text)
     const source = providerCitationSource(request, providerType)
@@ -225,9 +228,16 @@ export function createProviderResponseParsingPolicy(
       reasoningContent: parsed.reasoningContent,
       responseItems: parsed.responseItems,
       providerContentBlocks: parsed.providerContentBlocks,
+      googleContentParts: parsed.googleContentParts,
     }, parsed.text)
+    const protocol = expectedProtocol ?? parsed.streamProtocol ?? (providerType === 'anthropic' ? 'anthropic' : providerType === 'google' ? 'google' : 'openai-chat')
+    const streamOutcome = parsed.malformedData
+      ? { status: 'interrupted' as const, protocol, reason: 'malformed_sse_data' }
+      : finishProviderStream(protocol, parsed.streamOutcome, parsed.terminal === true)
+    if (streamOutcome.status !== 'completed') throw new ProviderStreamLifecycleError(streamOutcome, result)
     return {
       ...result,
+      streamOutcome,
       citations: dedupeCitations([
         ...extractCitationsFromText(result.text, request.retrievalSources),
         ...(source ? extractProviderCitationsFromSse(raw, source, result.text) : []),
@@ -287,6 +297,7 @@ export function createProviderResponseParsingPolicy(
           usage: extractUsage(json, 'google', { includeReasoning }),
           traces: dependencies.extractTraces(json, 'google', { includeReasoning }),
           providerToolCalls: finalizeProviderToolCalls(extractProviderToolCalls(json, 'google')),
+          googleContentParts: extractGoogleReplayContentParts(json),
         })
         return {
           ...result,

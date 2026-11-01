@@ -227,6 +227,41 @@ async function roundTrip(p: AIProvider, result: ProviderRuntimeCompletionResult,
 }
 
 describe('provider completion → canonical continuation → next request', () => {
+  it.each(['plain', 'rich'] as const)('round-trips complete Gemini signed parts through %s canonical continuation', async (path) => {
+    const parts = [
+      { text: '  signed thought\n ', thought: true, thoughtSignature: 'signature-thought' },
+      { functionCall: { id: 'server-a', name: 'lookup', args: { city: 'Taipei' } }, thoughtSignature: 'signature-call' },
+      { text: 'text between calls' },
+      { functionCall: { id: 'server-b', name: 'lookup', args: { city: 'Tokyo' } } },
+      { text: '', thoughtSignature: 'signature-empty' },
+    ]
+    const p = provider('google', 'gemini-3.8-flash')
+    const result = {
+      text: 'text between calls', traces: [], googleContentParts: parts,
+      providerToolCalls: extractProviderToolCalls({ candidates: [{ content: { parts } }] }, 'google'),
+    }
+    const before = JSON.stringify(result)
+    const { body } = await roundTrip(p, result, path)
+    const contents = body.contents as { role: string; parts: Record<string, unknown>[] }[]
+    expect(contents.find((content) => content.role === 'model')?.parts).toEqual(parts)
+    expect(contents.filter((content) => content.parts.some((part) => part.functionResponse))).toEqual([{
+      role: 'user', parts: [
+        { functionResponse: { id: 'server-b', name: 'lookup', response: { result: 'result-server-b' } } },
+        { functionResponse: { id: 'server-a', name: 'lookup', response: { result: 'result-server-a' } } },
+      ],
+    }])
+    expect(JSON.stringify(result)).toBe(before)
+  })
+
+  it.each(['plain', 'rich'] as const)('keeps late empty-text Gemini signatures without a tool call through %s', async (path) => {
+    const parts = [{ text: '  Answer\n' }, { text: '', thoughtSignature: 'signature-late' }]
+    const { body } = await roundTrip(provider('google', 'gemini-3.8-flash'), {
+      text: '  Answer\n', traces: [], googleContentParts: parts,
+    }, path)
+    expect(body.contents).toContainEqual({ role: 'model', parts })
+    expect(JSON.stringify(body)).not.toContain('functionCall')
+  })
+
   it('round-trips Gemini call IDs and per-part signatures without assigning one to unsigned calls', async () => {
     const parts = [
       { functionCall: { id: 'server-a', name: 'lookup', args: { city: 'Taipei' } }, thoughtSignature: 'opaque-signature' },

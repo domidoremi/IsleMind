@@ -9,6 +9,7 @@ import { buildEstimatedUsage, estimateTextTokens } from '@/services/tokenUsage'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import type { ChatErrorCode } from '@/types/providerContracts'
+import type { MessageUsage } from '@/types/chatContracts'
 
 export const conversationAssistantMessageProjection = createConversationAssistantMessageProjectionPolicy({
   buildEstimatedUsage,
@@ -29,6 +30,7 @@ export function projectConversationAssistantFailure(input: {
   content: string
   errorCode?: ChatErrorCode
   providerId?: string
+  providerUsage?: MessageUsage
 }): void {
   createProjectionExecutor(input).projectFailure(() => {
     const conversation = useChatStore.getState().conversations.find(
@@ -40,6 +42,7 @@ export function projectConversationAssistantFailure(input: {
       content: input.content,
       errorCode: input.errorCode ?? 'unknown',
       providerId: input.providerId,
+      providerUsage: input.providerUsage,
       completedAt: Date.now(),
     })
   })

@@ -35,6 +35,7 @@ export type ChatReasoningReplayPart =
       signature?: string
     }>
   | Readonly<{ kind: 'redacted'; data: string }>
+  | Readonly<{ kind: 'google-content'; data: string }>
 
 export interface ChatToolCallProviderMetadata {
   readonly providerCallId?: string
@@ -287,6 +288,16 @@ function isChatReasoningReplayPart(value: unknown): value is ChatReasoningReplay
   if (value.kind === 'redacted') {
     return hasExactKeys(value, ['kind', 'data'])
       && isBoundedString(value.data, 1_048_576)
+  }
+  if (value.kind === 'google-content') {
+    if (!hasExactKeys(value, ['kind', 'data']) || !isBoundedString(value.data, 1_048_576)) return false
+    try {
+      const parts: unknown = JSON.parse(value.data)
+      assertJsonTraversalBudget(parts, 1_048_576)
+      return Array.isArray(parts) && parts.length > 0 && parts.length <= 4_096 && parts.every((part) => isJsonRecord(part))
+    } catch {
+      return false
+    }
   }
   return false
 }

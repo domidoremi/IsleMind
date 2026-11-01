@@ -269,8 +269,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     responsesApi: true,
   }),
   preset('github-models', 'GitHub Models', 'openai-compatible', 'https://models.github.ai/inference', ['github models', 'github-models'], [/models\.github\.ai/i], {
+    chat: false,
+    streaming: false,
+    modelList: false,
     vision: false,
-    nativeTools: true,
+    nativeTools: false,
     files: false,
     audioInput: false,
     audioTranscription: false,

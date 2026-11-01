@@ -8,6 +8,20 @@ test('missing or non-positive output bounds cannot pass admission', () => {
   expect(checkProviderContextCapacity({ body: {}, contextWindow: 1000, modelMaxOutputTokens: 500 }).reservedOutputTokens).toBe(500)
 })
 
+test('adapter output reservations cannot lower the wire cap or overflow safe accounting', () => {
+  for (const additionalOutputTokens of [-1, NaN, 0.5, Number.MAX_SAFE_INTEGER]) {
+    expect(() => checkProviderContextCapacity({
+      body: { max_tokens: 100 }, contextWindow: 1000, additionalOutputTokens,
+    })).toThrow('invalid_capacity')
+  }
+  expect(() => checkProviderContextCapacity({
+    body: { max_tokens: 100 }, contextWindow: 1000, additionalOutputTokens: 800,
+  })).toThrow('context_capacity')
+  expect(checkProviderContextCapacity({
+    body: { max_tokens: 100 }, contextWindow: 1000, additionalOutputTokens: 20,
+  }).reservedOutputTokens).toBe(120)
+})
+
 test('accounts for assembled tool schemas and output, even without history compression', () => {
   const body = { messages: [{ role: 'user', content: 'hello' }], max_tokens: 100 }
   expect(checkProviderContextCapacity({ body, contextWindow: 1000, modelMaxOutputTokens: 100 }).limit).toBe(850)

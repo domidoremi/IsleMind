@@ -217,7 +217,7 @@ async function richFixture(
     const body = JSON.parse(String(requestOptions.body))
     const first = !body.messages?.some((message: { role: string }) => message.role === 'tool')
     const name = body.tools?.[0]?.function?.name
-    return new Response(JSON.stringify({ choices: [{ message: first
+    return new Response(JSON.stringify({ choices: [{ finish_reason: first ? 'tool_calls' : 'stop', message: first
       ? { content: '', tool_calls: [{ id: 'first-call', type: 'function', function: { name, arguments: '{"target":"fixture"}' } }] }
       : { content: 'Evidence-backed fixture answer' } }],
       usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } }), { status: 200 })
@@ -336,7 +336,7 @@ it('preserves the original attachment owner across multiple paid canonical Rich 
     const body = JSON.parse(String(options.body))
     const calls = body.messages.filter((message: { role: string }) => message.role === 'tool').length
     const name = body.tools?.[0]?.function?.name
-    return new Response(JSON.stringify({ choices: [{ message: calls < 2
+    return new Response(JSON.stringify({ choices: [{ finish_reason: calls < 2 ? 'tool_calls' : 'stop', message: calls < 2
       ? { content: '', tool_calls: [{ id: `call-${calls}`, type: 'function',
         function: { name, arguments: '{"target":"fixture"}' } }] }
       : { content: 'Two-receipt evidence-backed answer' } }],
@@ -459,7 +459,7 @@ it.each(['primary', 'group'] as const)(
     fixture.effects.streamWire.mockImplementation(async (_url: string, options: RequestInit) => {
       const body = JSON.parse(String(options.body))
       const calls = body.messages.filter((message: { role: string }) => message.role === 'tool').length
-      return new Response(JSON.stringify({ choices: [{ message: calls < 2
+      return new Response(JSON.stringify({ choices: [{ finish_reason: calls < 2 ? 'tool_calls' : 'stop', message: calls < 2
         ? { content: '', tool_calls: [{ id: `alias-call-${calls}`, type: 'function',
           function: { name: body.tools[0].function.name, arguments: '{"target":"fixture"}' } }] }
         : { content: 'Two alias-bound receipts' } }],
@@ -834,7 +834,7 @@ it.each(['primary', 'group'] as const)('uses the same real admission and budget 
     expect(admitted.executionConstraint?.providerCatalog).toEqual(f.catalog)
     const firstOutput = `<${MCP_TOOL_CALL_TAG}>{"serverId":"${BUILT_IN_CAPABILITY_SERVER_ID}","toolName":"read_fixture","arguments":{}}</${MCP_TOOL_CALL_TAG}>`
     expect(parseMcpToolRequest(firstOutput)).toMatchObject({ toolName: 'read_fixture' })
-    fixture.effects.streamWire.mockImplementationOnce(async () => new Response(JSON.stringify({ choices: [{ message: {
+    fixture.effects.streamWire.mockImplementationOnce(async () => new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: {
       content: 'Tagged evidence-backed answer' } }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } }),
       { status: 200 }))
     const tagged = createConversationMcpToolTurnRuntime({ conversationId: 'conversation', assistantMessageId: 'response',

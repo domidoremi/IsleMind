@@ -4143,6 +4143,7 @@
   "providerIssue": {
     "missingBaseUrl": "A custom endpoint requires a Base URL; a compatibility protocol does not provide a vendor address.",
     "invalidBaseUrl": "Custom Base URL must be a valid http:// or https:// address.",
+    "githubModelsRetired": "GitHub Models retired on July 30, 2026; inference and model discovery are no longer available. Saved configuration is retained. Choose another provider explicitly: https://docs.github.com/en/github-models",
     "mimoTpKeyWrongMode": "MiMo tp- keys belong to Token Plan. Switch to Token Plan mode and the matching region.",
     "mimoSkKeyWrongMode": "MiMo sk- keys belong to metered billing. Switch to metered mode, or use a tp- Token Plan key.",
     "mimoTpKeyPaygUrl": "MiMo tp- Token Plan keys cannot call the metered Base URL. Use token-plan-*.xiaomimimo.com/v1.",

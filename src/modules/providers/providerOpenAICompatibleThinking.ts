@@ -1,6 +1,13 @@
 import type { ReasoningEffort } from '@/core'
 import type { AIModel, AIProvider } from '@/types/providerContracts'
 
+// DeepSeek's current API maps minimal to low and medium/xhigh to high.
+export function normalizeDeepSeekReasoningEffort(effort?: ReasoningEffort): 'none' | 'low' | 'high' | 'max' {
+  if (effort === 'none') return 'none'
+  if (effort === 'minimal' || effort === 'low') return 'low'
+  return effort === 'max' ? 'max' : 'high'
+}
+
 export interface OpenAICompatibleThinkingRequestLike {
   provider: AIProvider
   model: string
@@ -84,13 +91,8 @@ export function createOpenAICompatibleThinkingPolicy(
     ) {
       return undefined
     }
-    const effort = request.reasoningEffort ?? 'medium'
-    if (effort === 'none' || effort === 'minimal') return { type: 'disabled' }
-    return {
-      type: 'enabled',
-      // DeepSeek maps medium/xhigh to high; max is an explicit opt-in.
-      effort: effort === 'low' || effort === 'max' ? effort : 'high',
-    }
+    const effort = normalizeDeepSeekReasoningEffort(request.reasoningEffort)
+    return effort === 'none' ? { type: 'disabled' } : { type: 'enabled', effort }
   }
 
   function normalizeDashScopeThinking(

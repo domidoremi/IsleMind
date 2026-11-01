@@ -1,0 +1,2266 @@
+{
+  "schema": "islemind.provider-maintenance.v1",
+  "reviewedAt": "2026-10-31",
+  "owner": "project-maintainer",
+  "nextReview": "2026-11-07",
+  "toolchain": {
+    "node": "24.21.0",
+    "bun": "1.4.2"
+  },
+  "boundaries": {
+    "providerCalls": false,
+    "credentialsUsed": false,
+    "deviceQualification": false,
+    "apkPublished": false,
+    "remoteCiVerified": false,
+    "branchProtectionConfigured": false,
+    "scheduledAutomation": false
+  },
+  "sources": [
+    {
+      "id": "openai-responses",
+      "url": "https://developers.openai.com/api/reference/resources/responses/streaming-events",
+      "reviewedAt": "2026-10-31",
+      "scope": "completed/failed/incomplete streaming terminal events"
+    },
+    {
+      "id": "anthropic-streaming",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/streaming",
+      "reviewedAt": "2026-10-31",
+      "scope": "message_stop, error and usage lifecycle"
+    },
+    {
+      "id": "google-streaming",
+      "url": "https://ai.google.dev/api/generate-content",
+      "reviewedAt": "2026-10-31",
+      "scope": "finishReason and blocked responses"
+    },
+    {
+      "id": "vertex-openai-parameters",
+      "url": "https://cloud.google.com/vertex-ai/generative-ai/docs/migrate/openai/overview",
+      "reviewedAt": "2026-10-31",
+      "scope": "max_completion_tokens is a max_tokens alias; reasoning_effort and response_format"
+    },
+    {
+      "id": "gpt-5-mini",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-mini",
+      "reviewedAt": "2026-10-31",
+      "scope": "standard token rates and Deprecated label; no retirement date inferred"
+    },
+    {
+      "id": "gpt-5-nano",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-nano",
+      "reviewedAt": "2026-10-31",
+      "scope": "standard token rates and Deprecated label; no retirement date inferred"
+    },
+    {
+      "id": "registry-advisories",
+      "url": "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+      "reviewedAt": "2026-10-31",
+      "scope": "exact locked registry package versions; patches do not erase registry advisories"
+    },
+    {
+      "id": "fireworks-reasoning",
+      "url": "https://docs.fireworks.ai/api-reference/post-chatcompletions.md",
+      "reviewedAt": "2026-10-31",
+      "scope": "reasoning_effort accepted max value and supplier/model-specific validation; no new model support inferred"
+    },
+    {
+      "id": "sambanova-structured-output",
+      "url": "https://sambanova-systems.mintlify.dev/docs/api-reference/chat-completions/create-chat-based-completion.md",
+      "reviewedAt": "2026-10-31",
+      "scope": "OpenAPI 1.2.0 response_format JSON schema; conflicting stream terminal descriptions require actual wire evidence"
+    },
+    {
+      "id": "xai-reasoning",
+      "url": "https://docs.x.ai/developers/model-capabilities/text/reasoning",
+      "reviewedAt": "2026-10-31",
+      "scope": "model-specific effort levels; a generic compatible display label is not supplier request-control evidence"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F01",
+      "status": "local-fixed",
+      "owner": "provider-runtime-maintainer",
+      "change": "Explicit terminal outcomes, exactly-once settlement, interrupted EOF, preserved partial output/usage and reader cleanup.",
+      "tests": [
+        "scripts/provider-stream-lifecycle-tests.js",
+        "src/modules/providers/providerStreamLifecycle.test.ts"
+      ]
+    },
+    {
+      "id": "F02",
+      "status": "mitigated-with-expiry",
+      "owner": "dependency-security-maintainer",
+      "change": "Compatible upgrades for 10 original advisory identities; four registry advisories remain under exact, scoped, expiring reviews.",
+      "tests": [
+        "scripts/dependency-security-tests.js",
+        "scripts/dependency-advisory-audit.js"
+      ]
+    },
+    {
+      "id": "F03",
+      "status": "local-fixed",
+      "owner": "provider-model-maintainer",
+      "change": "Request shape selects the actual wire adapter; explicit schema is sent or rejected instead of silently dropped.",
+      "tests": [
+        "src/modules/providers/providerRequestShapePolicy.test.ts",
+        "provider-capability-matrix"
+      ]
+    },
+    {
+      "id": "F04",
+      "status": "local-fixed",
+      "owner": "provider-model-maintainer",
+      "change": "Shared Fireworks effort enum and normalization across discovery, UI and wire policy; explicit remote and legacy persisted generic metadata keep GLM-5.2 none/high/max; evidence-free compatible discovery stays empty across JSON reload.",
+      "tests": [
+        "src/modules/providers/providerModelDiscoveryMapping.test.ts",
+        "fireworks-provider-compatibility"
+      ]
+    },
+    {
+      "id": "F05",
+      "status": "local-fixed",
+      "owner": "catalog-usage-maintainer",
+      "change": "Exact GPT-5 mini/nano prices; native-type relays require manual pricing; existing historical costs are not repriced.",
+      "tests": [
+        "src/modules/diagnostics/application/usagePricingCatalog.test.ts",
+        "src/modules/diagnostics/application/usageStatistics.test.ts"
+      ]
+    },
+    {
+      "id": "F06",
+      "status": "local-fixed",
+      "owner": "provider-transport-maintainer",
+      "change": "Protocol-specific Messages endpoint completion preserves custom prefixes and full endpoints.",
+      "tests": [
+        "src/modules/providers/providerRouteAssembly.test.ts"
+      ]
+    },
+    {
+      "id": "F07",
+      "status": "local-fixed",
+      "owner": "provider-transport-maintainer",
+      "change": "Dotted/slashed model-not-found IDs are classified without relaxing HTML/echo counterexamples.",
+      "tests": [
+        "src/modules/providers/providerOperationResult.test.ts"
+      ]
+    },
+    {
+      "id": "F08",
+      "status": "local-fixed",
+      "owner": "catalog-usage-maintainer",
+      "change": "Mini/nano show the sourced Deprecated lifecycle without deleting saved configurations or inventing shutdown dates.",
+      "tests": [
+        "src/modules/diagnostics/application/usagePricingCatalog.test.ts"
+      ]
+    }
+  ],
+  "goals": [
+    {
+      "id": "G1",
+      "status": "local-fixed",
+      "owner": "provider-runtime-maintainer",
+      "acceptance": "Permanent protocol lifecycle fixtures; completion/failure/incomplete/interruption/caller cancellation remain distinct."
+    },
+    {
+      "id": "G2",
+      "status": "mitigated-with-expiry",
+      "owner": "dependency-security-maintainer",
+      "acceptance": "Public isolated audit and security regressions pass with visible exact-version exceptions; no clean-lock claim."
+    },
+    {
+      "id": "G3",
+      "status": "local-fixed",
+      "owner": "provider-model-maintainer",
+      "acceptance": "UI reasoning, persisted catalog, conformance admission and actual serialized body agree for regression fixtures."
+    },
+    {
+      "id": "G4",
+      "status": "local-fixed",
+      "owner": "provider-transport-maintainer",
+      "acceptance": "Endpoint matrix and conservative model-error classification regressions pass."
+    },
+    {
+      "id": "G5",
+      "status": "local-fixed",
+      "owner": "catalog-usage-maintainer",
+      "acceptance": "Sourced lifecycle and exact scoped price calculations; unavailable relay pricing stays unavailable."
+    },
+    {
+      "id": "G6",
+      "status": "local-infrastructure",
+      "owner": "test-ci-maintainer",
+      "acceptance": "All 62 current offline focuses, retaining the original 58, pass in separate processes; exact 12 SQLite targets, lifecycle/security/maintenance contracts and architecture dependency/transport gates are locally verified and wired into PR/manual CI; remote execution and branch protection remain unverified."
+    },
+    {
+      "id": "G7",
+      "status": "local-infrastructure",
+      "owner": "project-maintainer",
+      "acceptance": "Visible dated source/impact/test/owner/review ledger and expiring exceptions; no scheduled automation."
+    },
+    {
+      "id": "G8",
+      "status": "external-pending",
+      "owner": "release-maintainer-and-android-validator",
+      "acceptance": "Approved cost-capped live smoke and exact source/APK/signature/device receipts; collector self-tests are not device qualification."
+    },
+    {
+      "id": "G9",
+      "status": "host-only",
+      "owner": "runtime-storage-maintainer-and-android-validator",
+      "acceptance": "Four real parser/Usage synthetic-host scenarios each retain 30 raw samples, excluded warmups, p50/p95 and observed boundary memory; fixed-device startup/UI/sampled peak-memory receipts remain pending."
+    }
+  ],
+  "regression": {
+    "mode": "offline-isolated-processes",
+    "offlineFocuses": [
+      "provider-activation",
+      "provider-stream-parsing",
+      "provider-native-tool-declarations",
+      "assistant-provider-tool-turn",
+      "upstream-governance",
+      "provider-client-simulation",
+      "provider-store-cleanup",
+      "provider-presets",
+      "provider-model-discovery",
+      "provider-model-family",
+      "provider-capability-matrix",
+      "provider-compatibility-contract",
+      "provider-embedding",
+      "provider-credential-sync",
+      "provider-model-list",
+      "openai-provider-compatibility",
+      "anthropic-provider-compatibility",
+      "deepseek-provider-compatibility",
+      "xai-provider-compatibility",
+      "openrouter-provider-compatibility",
+      "newapi-provider-compatibility",
+      "azure-openai-provider-compatibility",
+      "aws-bedrock-provider-compatibility",
+      "vertex-ai-provider-compatibility",
+      "ollama-provider-compatibility",
+      "lm-studio-provider-compatibility",
+      "localai-provider-compatibility",
+      "vllm-provider-compatibility",
+      "sglang-provider-compatibility",
+      "provider-relay-compatibility",
+      "provider-local-runtime-compatibility",
+      "provider-hosted-compatibility",
+      "provider-custom-compatible-compatibility",
+      "moonshot-provider-compatibility",
+      "bigmodel-provider-compatibility",
+      "tencent-hunyuan-provider-compatibility",
+      "baidu-qianfan-provider-compatibility",
+      "baichuan-provider-compatibility",
+      "zero-one-provider-compatibility",
+      "stepfun-provider-compatibility",
+      "volcengine-ark-provider-compatibility",
+      "dashscope-provider-compatibility",
+      "minimax-provider-compatibility",
+      "mistral-provider-compatibility",
+      "groq-provider-compatibility",
+      "together-provider-compatibility",
+      "fireworks-provider-compatibility",
+      "perplexity-provider-compatibility",
+      "cohere-provider-compatibility",
+      "cerebras-provider-compatibility",
+      "sambanova-provider-compatibility",
+      "nvidia-nim-provider-compatibility",
+      "huggingface-provider-compatibility",
+      "github-models-provider-compatibility",
+      "deepinfra-provider-compatibility",
+      "novita-provider-compatibility",
+      "siliconflow-provider-compatibility",
+      "modelscope-provider-compatibility",
+      "provider-text-tool-calls",
+      "mimo-native-search",
+      "provider-probe-usage",
+      "provider-conversation-admission"
+    ],
+    "sqliteTargets": [
+      "./src/platform/storage/sqliteWalIntegration.test.ts",
+      "./src/modules/tasks/adapters/sqliteTaskEffects.test.ts",
+      "./src/modules/assistant-runtime/adapters/sqliteHarnessLifecycle.test.ts",
+      "./src/modules/assistant-runtime/adapters/sqliteAgentDefinitionRepository.test.ts",
+      "./src/modules/assistant-runtime/adapters/sqliteRunBudgetStore.test.ts",
+      "./src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution.test.ts",
+      "./src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort.test.ts",
+      "./src/modules/conversations/adapters/sqliteConversationPreference.test.ts",
+      "./src/modules/conversations/adapters/sqliteConversationRepository.test.ts",
+      "./src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts",
+      "./src/modules/documents/adapters/sqliteDocumentRepository.test.ts",
+      "./src/modules/providers/adapters/sqliteModelAvailabilityRepository.test.ts"
+    ],
+    "verification": "complete-local-provider-validation-with-documented-limits",
+    "originalAuditedFocuses": [
+      "provider-native-tool-declarations",
+      "assistant-provider-tool-turn",
+      "upstream-governance",
+      "provider-client-simulation",
+      "provider-presets",
+      "provider-model-discovery",
+      "provider-model-family",
+      "provider-capability-matrix",
+      "provider-compatibility-contract",
+      "provider-embedding",
+      "provider-credential-sync",
+      "provider-model-list",
+      "openai-provider-compatibility",
+      "anthropic-provider-compatibility",
+      "deepseek-provider-compatibility",
+      "xai-provider-compatibility",
+      "openrouter-provider-compatibility",
+      "newapi-provider-compatibility",
+      "azure-openai-provider-compatibility",
+      "aws-bedrock-provider-compatibility",
+      "vertex-ai-provider-compatibility",
+      "ollama-provider-compatibility",
+      "lm-studio-provider-compatibility",
+      "localai-provider-compatibility",
+      "vllm-provider-compatibility",
+      "sglang-provider-compatibility",
+      "provider-relay-compatibility",
+      "provider-local-runtime-compatibility",
+      "provider-hosted-compatibility",
+      "provider-custom-compatible-compatibility",
+      "moonshot-provider-compatibility",
+      "bigmodel-provider-compatibility",
+      "tencent-hunyuan-provider-compatibility",
+      "baidu-qianfan-provider-compatibility",
+      "baichuan-provider-compatibility",
+      "zero-one-provider-compatibility",
+      "stepfun-provider-compatibility",
+      "volcengine-ark-provider-compatibility",
+      "dashscope-provider-compatibility",
+      "minimax-provider-compatibility",
+      "mistral-provider-compatibility",
+      "groq-provider-compatibility",
+      "together-provider-compatibility",
+      "fireworks-provider-compatibility",
+      "perplexity-provider-compatibility",
+      "cohere-provider-compatibility",
+      "cerebras-provider-compatibility",
+      "sambanova-provider-compatibility",
+      "nvidia-nim-provider-compatibility",
+      "huggingface-provider-compatibility",
+      "github-models-provider-compatibility",
+      "deepinfra-provider-compatibility",
+      "novita-provider-compatibility",
+      "siliconflow-provider-compatibility",
+      "modelscope-provider-compatibility",
+      "provider-text-tool-calls",
+      "mimo-native-search",
+      "provider-probe-usage"
+    ],
+    "originalFailureTriage": [
+      {
+        "focus": "provider-capability-matrix",
+        "classification": "fixture-contract-drift",
+        "decision": "Non-generating Bedrock probe remains non-generating; unsupported discovery is explicitly blocked.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/provider-capability-matrix.log"
+        ]
+      },
+      {
+        "focus": "newapi-provider-compatibility",
+        "classification": "fixture-contract-drift",
+        "decision": "HTTP 501 remains upstream_error; no broad network-error fallback.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/newapi-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "azure-openai-provider-compatibility",
+        "classification": "fixture-provenance-incomplete",
+        "decision": "Declare max_tokens support in the cap fixture; retain unsupported-parameter omission.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/azure-openai-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "aws-bedrock-provider-compatibility",
+        "classification": "fixture-provenance-incomplete",
+        "decision": "Give the synthetic request explicit parameter provenance rather than restoring implicit cap sending.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/aws-bedrock-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "vertex-ai-provider-compatibility",
+        "classification": "fixture-provenance-incomplete",
+        "decision": "Explicit cap provenance follows the documented max_completion_tokens/max_tokens alias; unsupported schema paths remain blocked.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/vertex-ai-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "localai-provider-compatibility",
+        "classification": "fixture-contract-drift",
+        "decision": "Protocol-reference support is partial; unimplemented grammar and explicit schemas remain visibly blocked.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/localai-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "provider-local-runtime-compatibility",
+        "classification": "code-defect-fixed",
+        "decision": "F07: dotted/slashed missing-model identifiers are classified without weakening HTML and echoed-text counterexamples.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/provider-local-runtime-compatibility.log"
+        ]
+      },
+      {
+        "focus": "provider-hosted-compatibility",
+        "classification": "fixture-provenance-incomplete",
+        "decision": "Hosted cap fixtures declare explicit user provenance; provider defaults are not silently sent.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/provider-hosted-compatibility.log"
+        ]
+      },
+      {
+        "focus": "mistral-provider-compatibility",
+        "classification": "fixture-contract-drift",
+        "decision": "Unsupported generic file_data is omitted and admission remains blocked; no attachment control is invented.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/mistral-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "groq-provider-compatibility",
+        "classification": "fixture-provenance-incomplete",
+        "decision": "Responses cap fixture supplies explicit provenance and retains max_output_tokens wire assertions.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/groq-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "fireworks-provider-compatibility",
+        "classification": "code-defect-fixed",
+        "decision": "F04: shared supplier policy keeps GLM-5.2 none/high/max for catalog defaults, explicit remote parameter metadata and legacy generic persistence instead of importing DashScope/OpenAI enums.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/fireworks-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "sambanova-provider-compatibility",
+        "classification": "code-defect-fixed",
+        "decision": "F03: body shaping selects the actual wire adapter and explicitly requested JSON schema is sent or rejected.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/sambanova-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "novita-provider-compatibility",
+        "classification": "code-consistency-fixed",
+        "decision": "An explicit reasoning-effort denial stays authoritative; response-side reasoning metadata cannot reopen the control.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/novita-provider-compatibility.log"
+        ]
+      },
+      {
+        "focus": "modelscope-provider-compatibility",
+        "classification": "fixture-contract-drift",
+        "decision": "An unqualified invalid-model 400 remains invalid_request; no blanket model-unavailable classifier is added.",
+        "status": "verified-in-final-independent-run",
+        "owner": "test-ci-maintainer",
+        "verifiedAt": "2026-10-31T09:45:34.736Z",
+        "evidence": [
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/modelscope-provider-compatibility.log"
+        ]
+      }
+    ],
+    "lastLocalVerification": {
+      "verifiedAt": "2026-10-31T09:49:29.529Z",
+      "timeZone": "Asia/Taipei",
+      "status": "provider-local-validation-passed-with-documented-limits",
+      "mode": "offline product validation plus isolated public-registry review; no providers/devices",
+      "evidenceRoot": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation",
+      "source": {
+        "revision": "59aefb6207a9bed70ee6b73e1ac10fe8f140a30c",
+        "inputDigestSha256": "6f817fafbb83440a2bc2a69147bc2dacbc700e7778bef27ae065088b12588eee",
+        "inputCount": 1614,
+        "stableAcrossRuns": true,
+        "excludedInputs": [
+          "scripts/fixtures/provider-maintenance-ledger.json"
+        ],
+        "fingerprintReceipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/source-fingerprints.json",
+          "sha256": "f7ce99ff386a23ecf493538628679942d6f046f0d18e12cfbcd7d00c773d9065"
+        }
+      },
+      "toolchain": {
+        "node": "24.21.0",
+        "bun": "1.4.2"
+      },
+      "focuses": {
+        "total": 62,
+        "passed": 62,
+        "failed": 0,
+        "originalAudited": 58,
+        "originalRetained": 58,
+        "completedMarkers": 62,
+        "originalFailureTriageVerified": 14,
+        "receipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-current-source/results.json",
+          "sha256": "f9d1c76e080f0371cda9fd1ebd032854b452a748021a070b4077b560ad6f4d18"
+        }
+      },
+      "jest": {
+        "suites": {
+          "passed": 351,
+          "failed": 0,
+          "total": 351
+        },
+        "tests": {
+          "passed": 4472,
+          "failed": 0,
+          "pending": 0,
+          "total": 4472
+        },
+        "receipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/full-jest-current-source/results.json",
+          "sha256": "c889cea4df0d433a7a3eba533426bedf3f069368d8dbfc0fe3763d3e251e644c"
+        }
+      },
+      "targetedJest": {
+        "suites": 3,
+        "passed": 86,
+        "failed": 0,
+        "receipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/final-code-preflight/targeted-jest-results.json",
+          "sha256": "a782777ac67a1006def0920ad218c2eccc38d41c17a885e96eb635a7cc634197"
+        }
+      },
+      "sqlite": {
+        "passed": 94,
+        "failed": 0,
+        "files": 12,
+        "actualPackageScript": true,
+        "sourceSnapshot": "dotenv-free; current-source hashes; verified equality of dependency inputs, lock, all patches and paired UI manifest; clean frozen dependencies reused through a checked junction",
+        "receipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/final-current-source-snapshot/sqlite-results.json",
+          "sha256": "ea68095f7851ff7a864c4358c4ee0f579ab05537d4f63811dbf3f5309aa24ffb"
+        },
+        "snapshotReceipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/final-current-source-snapshot/snapshot.json",
+          "sha256": "97a7866602f903e4665f418f406a6df62ba05358b38757b46c7508ffa5e561bd"
+        }
+      },
+      "related": {
+        "total": 20,
+        "passed": 20,
+        "failed": 0,
+        "collectorMode": "self-tests only; no provider inference or device calls",
+        "receipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/related-current-source-complete/results.json",
+          "sha256": "ea0396ac7f1e96bc9420a8006efd784c1b5cb4c15c9e25aeb5f0278c81b7ba05"
+        }
+      },
+      "architecture": {
+        "typeCheck": "passed",
+        "includeTypeDependencyGate": "passed",
+        "cycles": 0,
+        "transportBoundary": "passed",
+        "selfTest": "passed",
+        "moduleGate": {
+          "status": "failed-pre-existing-unrelated-document-set-conflict",
+          "issues": [
+            {
+              "file": "docs/architecture/complete-ui-experience.md",
+              "specifier": "",
+              "rule": "architecture-document-set"
+            }
+          ],
+          "waived": false,
+          "documentPreserved": true
+        },
+        "receipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/final-code-preflight/results.json",
+          "sha256": "9e47ec976be78b1754eabf7b94c25b87fac185ee705d635ba64f28602ba2adf5"
+        }
+      },
+      "security": {
+        "decision": "reviewed-exceptions-remain",
+        "reviewedAt": "2026-10-31T09:37:35.726Z",
+        "originalIdentitiesResolvedByCompatibleUpgrades": 10,
+        "remainingAdvisoryIdentities": 4,
+        "affectedLockedVersionMatches": 5,
+        "reviewReceipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/advisories-pre-final-ledger/report.json",
+          "sha256": "bb1692a00938d29d468648b7b5a2f373c3e0b18ea8a8e50bba1c721dffae5858"
+        },
+        "postLedgerAuditReport": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/advisories-final-policy/report.json",
+        "postLedgerAuditRequirement": "The final report must pass and fingerprint this final ledger. The external receipt owns that hash to avoid a self-referential ledger fingerprint; no clean-lock claim."
+      },
+      "hostPerformance": {
+        "scope": "host-synthetic-not-android",
+        "scenarios": 4,
+        "samplesPerScenario": 30,
+        "warmupsExcludedPerScenario": 5,
+        "rawLatencySamples": 120,
+        "gc": "forced-before-each-sample",
+        "memorySampling": "process.memoryUsage before and after each operation; misses in-operation peaks",
+        "allOwnedTestJobsCompletedBeforeSampling": true,
+        "nativeQualified": false,
+        "comparableBaselineComparisonPerformed": false,
+        "receipt": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/host-current-source-baseline/results.json",
+          "sha256": "f0dc258ac214a83a41fc5784f1eb1ee87edd418e02e7ee1acdbf1a9ab3d44cbd"
+        },
+        "rawReport": {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/host-current-source-baseline/host-performance.json",
+          "sha256": "9ea0e9bcd2a015af704e26edb754592d6e7bf4835b05eaf07601a2e7955e098b"
+        }
+      },
+      "limitations": [
+        "Four scoped security exceptions remain; glob/minimatch tooling risks are unpatched and deepmerge/Zod backports are limited.",
+        "The separate module architecture gate retains the original complete-ui-experience.md document-set conflict without a waiver.",
+        "Hosted CI execution, required branch protection, approved live smoke, exact APK/signature qualification and fixed-device performance remain pending."
+      ],
+      "supersededAttempts": [
+        {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/all-focus-final",
+          "reason": "Interrupted after 49 passing focuses before architecture follow-ups; not a complete inventory certification."
+        },
+        {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/full-jest-final",
+          "reason": "Predates the shared response contracts, CLI-dispatch regression and explicit Fireworks metadata fix; not final-current-tree certification."
+        },
+        {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/latest-fireworks-preflight",
+          "reason": "Two newly added fixtures lacked the required empty apiKey field; architecture self-test used a too-short 120-second timeout. Corrected without weakening assertions."
+        },
+        {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/related-current-source",
+          "reason": "The copied collector CLI lacked adjacent contract modules; corrected to execute the actual current CLI from the dotenv-free cwd, without the unnecessary TS override."
+        },
+        {
+          "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/related-final",
+          "reason": "SQLite used the pre-fix Bun preload ordering; timed out through package-script recursion. Owned recursive children were checked and cleaned up; the real corrected package entrypoint passes."
+        }
+      ]
+    },
+    "lastOfficialApiVerification": {
+      "schema": "islemind.provider-official-api-verification.v1",
+      "status": "complete-local-offline-source-validation-with-disclosed-limits",
+      "verifiedAt": "2026-10-31T20:39:21.942Z",
+      "reviewDate": "2026-11-01",
+      "timeZone": "Asia/Taipei",
+      "owner": "project-maintainer",
+      "nextReview": "2026-11-07",
+      "mode": "offline-allowlisted-environment; immutable failed/superseded receipts; no provider inference",
+      "boundaries": {
+        "userCredentialsUsed": false,
+        "paidSmokeRun": false,
+        "realProviderInference": false,
+        "deviceQualification": false,
+        "localServerQualification": false,
+        "remoteCiQualification": false,
+        "releaseApproval": false,
+        "commitPushOrPublish": false
+      },
+      "worktreePolicy": {
+        "userAuthorizedAtReviewDate": "2026-11-01",
+        "preservePreExistingAndNewChanges": true,
+        "repairAndRerunLatestSourceAfterDrift": true,
+        "neverRevertWithoutExplicitInstructions": true,
+        "startingBaselines": [
+          {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\baseline.json",
+            "sha256": "011806d30422bd0fb8bbb23d7562a0a667808268450c8a25dbf9b07a72652d3e"
+          },
+          {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\resume-authorized-baseline-1.json",
+            "sha256": "de21d397a5c1f10cd3f468d2d562382d28fecacd3d41140514888e681842bf3e"
+          }
+        ],
+        "frozenWorktree": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\worktree-frozen-before.json",
+          "sha256": "eda25612886153ea7f2de2e0458ddb82cc1b807c885fe28f8b75496eb669f889"
+        },
+        "finalPreservationReceipt": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\final-workspace-preservation.json",
+        "finalPreservationRequirement": "The external final receipt must confirm only this appended record and review documentation differ from the frozen tree."
+      },
+      "source": {
+        "revision": "59aefb6207a9bed70ee6b73e1ac10fe8f140a30c",
+        "inputCount": 1630,
+        "inputDigestSha256": "1869dad43ad41032f0a83b49b93faa7a3a0ba4136a7aa147d461c3039d7d85e8",
+        "stableDuringAllRequiredSourceJobs": true,
+        "fingerprintReceipt": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\source-fingerprints.json",
+          "sha256": "61e7820f0adfc5674d809b0999dc26b450e1dd0a2dfcac0548be23345676bc27"
+        },
+        "excludedInputs": [
+          "scripts/fixtures/provider-maintenance-ledger.json"
+        ],
+        "officialSourceReviewFixtureIncluded": true
+      },
+      "sourceReview": {
+        "identities": 45,
+        "sourceRecordsIncludingLimitedOrUnavailableEvidence": 70,
+        "localCounterexampleGroups": 12,
+        "record": {
+          "path": "G:\\Project\\IsleMind\\scripts\\fixtures\\provider-official-docs-review.json",
+          "sha256": "440ef06aa011ebe90624ade55d257788b987e0ff141492bdb08723bba09da1ed"
+        },
+        "catalog": {
+          "file": "src/modules/providers/providerCompatibilityCatalog.ts",
+          "sha256": "50afde9f9bf6bf6a1aa8ba6d87c90bb5f35f85d13d0417a952355caabb01e53d",
+          "identities": 45
+        },
+        "qualification": "Selected documented facets only; not all models, routes, accounts or fully certified suppliers."
+      },
+      "officialTargeted": {
+        "suites": 6,
+        "passedSuites": 6,
+        "failedSuites": 0,
+        "tests": 218,
+        "passed": 218,
+        "failed": 0,
+        "pending": 0,
+        "receipt": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\official-targeted-receipt.json",
+          "sha256": "f85c834c36c95bd5fd9d0b9e046a59aca919151edc3ce56a5db024dcab94ac3c"
+        },
+        "results": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\official-targeted.json",
+          "sha256": "75650c9369584cf1c1e83100beaedfcab09795e0ca4f834272225b813d821aa1"
+        }
+      },
+      "additionalUiAcceptance": {
+        "current": {
+          "suites": 9,
+          "passedSuites": 9,
+          "failedSuites": 0,
+          "tests": 137,
+          "passed": 137,
+          "failed": 0,
+          "pending": 0,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\ui-current-receipt.json",
+            "sha256": "ce47e5cba0e37c6e2d44467e926f49804652089a9e0742aab6efb75eef85964e"
+          },
+          "results": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\ui-current.json",
+            "sha256": "9c27f316df0438a4046095a0f93873dda2c76b592807e24de61d55665d00e3fa"
+          }
+        },
+        "feedbackFixtureRepair": {
+          "suites": 3,
+          "passedSuites": 3,
+          "failedSuites": 0,
+          "tests": 75,
+          "passed": 75,
+          "failed": 0,
+          "pending": 0,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\ui-feedback-repair-receipt.json",
+            "sha256": "f3e7564721aa733cb5bd149d8c29abc6c4a8f9d6d67e07dfe50eb97fbff600bb"
+          },
+          "results": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\ui-feedback-repair.json",
+            "sha256": "80d3af0beec322138ba0c5cf248dedce1e8596837c40adbf7f9a743d95edc29b"
+          }
+        },
+        "decision": "Keep the new stable status-slot UI and extracted provider connection row. Assertions use saved accessibility receipts, stable Save labels, busy/disabled controls and absent extra success rows; strict persistence, failure and retry checks remain. Connection-row acceptance checks prop forwarding, complete accessible identity and independent selection/open/edit actions."
+      },
+      "fullJest": {
+        "suites": 359,
+        "passedSuites": 359,
+        "failedSuites": 0,
+        "tests": 4679,
+        "passed": 4679,
+        "failed": 0,
+        "pending": 0,
+        "receipt": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\full-jest-receipt.json",
+          "sha256": "a34b0b6d90cfad4cd9a0dac5c739a1dd83bdd960f0d7120e3735b85e6b54e39e"
+        },
+        "results": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\full-jest.json",
+          "sha256": "95475b38c7cc27482322d94ec95160a2f80960d2530a4ae8781850909257db7a"
+        }
+      },
+      "independentFocuses": {
+        "total": 62,
+        "passed": 62,
+        "failed": 0,
+        "receipt": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\all-focuses-receipt.json",
+          "sha256": "a258b97e9fbd3876235d496fba7534ee92508f92ded06aa7a32a595fc763219b"
+        },
+        "results": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\all-focuses\\results.json",
+          "sha256": "92890af1cafc60ac3893056be2832e89ae0165fa17a02ea50f1ad3da80dd6806"
+        }
+      },
+      "sqlite": {
+        "tests": 94,
+        "passed": 94,
+        "failed": 0,
+        "files": 12,
+        "bunVersion": "1.4.2",
+        "actualPackageScript": true,
+        "targets": [
+          "./src/platform/storage/sqliteWalIntegration.test.ts",
+          "./src/modules/tasks/adapters/sqliteTaskEffects.test.ts",
+          "./src/modules/assistant-runtime/adapters/sqliteHarnessLifecycle.test.ts",
+          "./src/modules/assistant-runtime/adapters/sqliteAgentDefinitionRepository.test.ts",
+          "./src/modules/assistant-runtime/adapters/sqliteRunBudgetStore.test.ts",
+          "./src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution.test.ts",
+          "./src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort.test.ts",
+          "./src/modules/conversations/adapters/sqliteConversationPreference.test.ts",
+          "./src/modules/conversations/adapters/sqliteConversationRepository.test.ts",
+          "./src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts",
+          "./src/modules/documents/adapters/sqliteDocumentRepository.test.ts",
+          "./src/modules/providers/adapters/sqliteModelAvailabilityRepository.test.ts"
+        ],
+        "receipt": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\sqlite-package-receipt.json",
+          "sha256": "cd8700e2a7ed6a0d4d34a902092f727c1b6a1f417de378b63112ff129219e205"
+        },
+        "sourceSnapshot": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\sqlite-source-snapshot\\snapshot.json",
+          "sha256": "53b3b3f73d7760b9efc2826cc149563441b707077eba68dce3aadedf6dfed6d2"
+        },
+        "snapshotStable": true,
+        "isolation": "Fresh dotenv-free current-source snapshot; exact copied source; unchanged dependency fields, lock, all patches and paired manifest; checked clean frozen dependency junction; no installation or lifecycle scripts."
+      },
+      "related": {
+        "total": 23,
+        "passed": 23,
+        "failed": 0,
+        "nodeScriptChecks": {
+          "total": 22,
+          "passed": 22,
+          "failed": 0,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\related-results.json",
+            "sha256": "dca40cb0f36536e5c8ee4da00a9180406affcbb16f39ba808885a5ac0a866a13"
+          }
+        },
+        "androidCollectorSelfTest": {
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\android-collector-self-receipt.json",
+            "sha256": "d82ca97400907ba0f40830521a9de5e5ebad300d67fbd09bdaca0f84884ba847"
+          },
+          "mode": "self-test only; no device access or real provider calls"
+        },
+        "explicitModelDependentCapCheck": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\matrix-counterexample-receipt.json",
+          "sha256": "c0341d67095e9650159ff30ca82f0647042eab185ee24ad7b00f7647f6cf982a"
+        }
+      },
+      "architecture": {
+        "typeCheck": {
+          "passed": true,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\type-check-receipt.json",
+            "sha256": "fcd6cad99280479177ea6f21ebb799d36d48a6263791733755d55389330d3ae9"
+          }
+        },
+        "includeTypeDependencyGate": {
+          "passed": true,
+          "cycles": 0,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\architecture-dependencies-receipt.json",
+            "sha256": "e12d5cc55555fa853d18475aa6084b4bbee19256a312732e9f70d05cd320ecc3"
+          }
+        },
+        "transportBoundary": {
+          "passed": true,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\architecture-transport-receipt.json",
+            "sha256": "b823223bd2923592f479f1c49970bd7e76adc74d1389be788096b8c24fab4ee0"
+          }
+        },
+        "dependencySelfTest": {
+          "passed": true,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\architecture-dependency-self-receipt.json",
+            "sha256": "bba6bb6922bc980898537c71b9c064abe5cfd0219e130863065f91d376aa693b"
+          }
+        },
+        "boundarySelfTest": {
+          "passed": true,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\architecture-boundary-self-receipt.json",
+            "sha256": "b5756f376f8624564408684c19dd33d721edaf8ec07721221b5fd0c0508c5a72"
+          }
+        },
+        "moduleGate": {
+          "status": "passed",
+          "waived": false,
+          "issues": [],
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\architecture-module-gate-receipt.json",
+            "sha256": "6e54806a3393f8459155c61ee4e567ed9eaa7365f9921f4deb5e7c276cda9b8c"
+          },
+          "historicalFindingRetained": {
+            "status": "failed-pre-existing-unrelated-document-set-conflict",
+            "issues": [
+              {
+                "file": "docs/architecture/complete-ui-experience.md",
+                "specifier": "",
+                "rule": "architecture-document-set"
+              }
+            ],
+            "waived": false,
+            "documentPreserved": true
+          },
+          "interpretation": "Recheck the current gate without changing its policy or rewriting older evidence; a current pass is not a waiver of the historical record."
+        }
+      },
+      "security": {
+        "dependencyRegressionsPassed": true,
+        "receipt": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\dependency-security-receipt.json",
+          "sha256": "68d86389a1127bb43b91a20200fde2e8c1a530076f916e8076450c0b74cafbb4"
+        },
+        "retainedRegistryReviewDate": "2026-10-31T09:52:15.451Z",
+        "currentPolicyPrecheck": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\security-policy-precheck.json",
+          "sha256": "f82308855c816965a965ae9b06dc04c436d08ad22f5222cfd9e8b841112c65b8"
+        },
+        "advisoryIdentitiesStillExcepted": 4,
+        "affectedLockedVersionMatches": 5,
+        "earliestExpiry": "2026-11-07T00:00:00+08:00",
+        "newRegistryScanPerformed": false,
+        "cleanLockClaim": false,
+        "exceptionDatesExtended": false,
+        "finalOfflineRevalidation": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\security-offline-revalidation.json",
+        "finalRevalidationRequirement": "Must pass against this final ledger. The external report owns its ledger fingerprint and hash to avoid a self-referential record."
+      },
+      "finalization": {
+        "postLedgerContractReceipt": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\post-ledger-contracts-receipt.json",
+        "finalArtifactManifest": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\final-local-verification.json",
+        "requirement": "Post-ledger contracts, final offline security policy revalidation and final worktree preservation must pass before goal completion."
+      },
+      "additionalFixtureRepairs": [
+        {
+          "classification": "required-conformance-test-argument",
+          "file": "src/bootstrap/providerOfficialRequestRegression.test.ts",
+          "decision": "Pass the already shaped body to the two-argument conformance resolver."
+        },
+        {
+          "classification": "model-dependent-output-field-fixture-drift",
+          "file": "scripts/provider-parameter-matrix-tests.js",
+          "decision": "Hosted Qwen3.7 Max/Qwen3.5 Plus use the documented combined cap; the non-default open-source API fixture retains the legacy answer cap. Preserve explicit priority, clamping, omission and mutual alias exclusion.",
+          "before": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-3\\provider-parameter-matrix-receipt.json",
+            "sha256": "96eef00316b519b4547787d518d78d0b34d339388feb62b5bb665b4073f944af"
+          },
+          "after": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\matrix-counterexample-receipt.json",
+            "sha256": "c0341d67095e9650159ff30ca82f0647042eab185ee24ad7b00f7647f6cf982a"
+          }
+        },
+        {
+          "classification": "new-ui-accessible-feedback-contract-drift",
+          "files": [
+            "src/bootstrap/settingsManagementPersistence.test.tsx",
+            "src/bootstrap/settingsRootLegacyRouteComposition.test.tsx",
+            "src/components/chat/MessageBubble.recovery.test.tsx"
+          ],
+          "decision": "Align old selectors with preserved accessible status glyphs and stable controls without reverting production UI or weakening strict-write, pending-lock, recovery and failure assertions.",
+          "before": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-3\\full-jest.json",
+            "sha256": "21e2c5a72cbc7ff1485f8cab0f55afe78727160d9849f418649068c7a15e0c39"
+          },
+          "after": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\ui-feedback-repair-receipt.json",
+            "sha256": "f3e7564721aa733cb5bd149d8c29abc6c4a8f9d6d67e07dfe50eb97fbff600bb"
+          }
+        },
+        {
+          "classification": "extracted-provider-connection-row-contract-drift",
+          "file": "src/components/providers/__tests__/ProviderCardGrid.test.tsx",
+          "decision": "Preserve the extracted connection row; check the parent prop wiring and child accessibility/action contracts instead of looking for removed inline JSX. Keep the existing rendered grid and connection-row regressions.",
+          "before": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-7\\full-jest.json",
+            "sha256": "2f05371e9eb9db7feb1c94e09e65c4465cc2aa83f3d8e2540109f9b491e67641"
+          },
+          "after": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\ui-current-receipt.json",
+            "sha256": "ce47e5cba0e37c6e2d44467e926f49804652089a9e0742aab6efb75eef85964e"
+          }
+        },
+        {
+          "classification": "extracted-provider-connection-row-layout-guard-drift",
+          "file": "scripts/provider-performance-guards-tests.js",
+          "decision": "Inspect the rendered connection component rather than removed inline layout. Keep shrinkable width, flexible height, bounded visible labels and full accessible identity checks alongside all existing bounded-catalog, lazy-diagnostics and coalesced-write performance regressions.",
+          "before": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-8\\provider-performance-guards-receipt.json",
+            "sha256": "162147ecbc0bba7ec7ae03250acf61e609a70ac136e99907639be6b67db1b702"
+          },
+          "after": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\provider-performance-guards-receipt.json",
+            "sha256": "bde07abadba71b81c56301532c515d29b15b5c9982d6a0d707fb5623d95ec7b9"
+          }
+        }
+      ],
+      "limitations": [
+        "Coverage counts identities and selected facets, not fully certified suppliers or every model/API facet.",
+        "Baichuan and ModelScope current articles were client shells; Zero-One obtained only an official example.",
+        "SiliconFlow current full pages and LocalAI full content remain unavailable; retained primary excerpts have explicit limited scope.",
+        "Ark combined/legacy cap semantics are model-dependent; opaque ep model IDs and unimplemented optional controls are not qualified.",
+        "SambaNova terminal documentation conflicts; explicitly approved cost-capped live evidence would be required to settle it.",
+        "Complex tool/cache/tier/holiday pricing and unmatched model prices require independent exact evidence/manual pricing; prior recorded costs are not repriced.",
+        "Original security exception deadlines and remote CI/device gaps are not waived. The prior architecture-document-set observation remains in historical maintenance evidence.",
+        "The current module architecture gate reports no issues without an audit-policy change or waiver; this host-local pass is not project-wide release or device approval.",
+        "Security policy was revalidated offline using retained public-registry evidence, not a new vulnerability feed scan; four original exceptions and their deadlines remain.",
+        "Jest and copied SQLite fixtures qualify host-local source contracts only, not Android layout, device behavior, supplier accounts, approved paid smoke or remote CI.",
+        "Source fingerprints cover the declared checkout input inventory, not every ignored build output or complete installed/transitive dependency reachability."
+      ],
+      "supersededAttempts": [
+        {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-1",
+          "reason": "Targeted API tests passed, but the two-argument test call still failed type checking."
+        },
+        {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-2",
+          "reason": "Concurrent UI source drift and a newly introduced icon test import error; no latest-tree certification."
+        },
+        {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-3",
+          "reason": "User-authorized source drift, old DashScope field expectation and old visible-success-row selectors; interrupted/failed receipts retained."
+        },
+        {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-4",
+          "reason": "All source jobs passed, then two user-authorized UI working-state scripts arrived before finalization. No stale-tree verification record was appended."
+        },
+        {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-5",
+          "reason": "User-authorized source changes invalidated the frozen inventory before broad jobs launched; no latest-tree certification."
+        },
+        {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-6",
+          "reason": "Further user-authorized source changes invalidated the frozen inventory before broad jobs launched; no latest-tree certification."
+        },
+        {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-7",
+          "reason": "The 62 focus test markers passed but source drift invalidated acceptance; full Jest also found an obsolete inline connection-row accessibility assertion. All diagnostics are retained."
+        },
+        {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-8",
+          "reason": "Stable source passed full Jest, all 62 focuses, SQLite, official API, type and architecture checks; one old performance script still inspected removed inline row layout. No incomplete verification was appended."
+        }
+      ]
+    },
+    "officialApiRevalidations": [
+      {
+        "schema": "islemind.provider-official-api-revalidation.v1",
+        "id": "final-acceptance-11",
+        "metadataFinalizationRecovery": {
+          "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\metadata-finalization-recovery-plan.json",
+          "sha256": "be78287d5276389999194087c205f2ffe8fb926d7d11e58cbee3ae1f6c4f85d2"
+        },
+        "status": "complete-local-offline-source-validation-with-disclosed-limits",
+        "verifiedAt": "2026-11-01T06:03:37.952Z",
+        "reviewDate": "2026-11-01",
+        "timeZone": "Asia/Taipei",
+        "owner": "project-maintainer",
+        "nextReview": "2026-11-07",
+        "mode": "offline-allowlisted-environment; append-only history; no provider inference or new registry scan",
+        "boundaries": {
+          "userCredentialsUsed": false,
+          "paidSmokeRun": false,
+          "realProviderInference": false,
+          "deviceQualification": false,
+          "localServerQualification": false,
+          "remoteCiQualification": false,
+          "releaseApproval": false,
+          "commitPushOrPublish": false
+        },
+        "previousVerification": {
+          "sourceInputDigestSha256": "1869dad43ad41032f0a83b49b93faa7a3a0ba4136a7aa147d461c3039d7d85e8",
+          "recordPointer": "regression.lastOfficialApiVerification",
+          "archivedLedger": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\maintenance-ledger-before.json",
+            "sha256": "662f1fffcf191458a5be283bbd668bd83736641da35c0293ba925716d6e5d3da"
+          },
+          "initialAcceptance": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-9\\final-local-verification.json",
+            "sha256": "ed2bdb208d8f0a31556394b229fa852d159cb4611d75c9cd938e24eade402f6e"
+          }
+        },
+        "worktreePolicy": {
+          "preservePreExistingAndNewChanges": true,
+          "repairAndRerunLatestSourceAfterDrift": true,
+          "neverRevertWithoutExplicitInstructions": true,
+          "startingBaseline": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\baseline.json",
+            "sha256": "60cf96321cdbfedaf2cca3765904911fc1a92f8cc8e9ce1e1c486e6c9e5a4e0e"
+          },
+          "frozenWorktree": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\worktree-frozen-before.json",
+            "sha256": "7e9a72df82999612109fcdfb3285543235c5eaccab2cc6f16ec675b437d1ada9"
+          },
+          "fullGitVisibleFileCount": 1860,
+          "finalPreservationReceipt": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\final-workspace-preservation.json",
+          "requirement": "Only this appended ledger history and review documentation may change after full-tree freeze; all earlier records must remain intact."
+        },
+        "source": {
+          "revision": "59aefb6207a9bed70ee6b73e1ac10fe8f140a30c",
+          "inputCount": 1639,
+          "inputDigestSha256": "1d0c8ec1c03ee1a60810226895d96d33c98b1e4f242d96e86cd23b310bdcb216",
+          "stableDuringAllRequiredSourceJobs": true,
+          "fingerprintReceipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\source-fingerprints.json",
+            "sha256": "dc664247b4ed3118e30ca440680c942f9d547300c85f472277f21a542b646dcd"
+          },
+          "excludedInputs": [
+            "scripts/fixtures/provider-maintenance-ledger.json"
+          ],
+          "officialSourceReviewFixtureIncluded": true,
+          "fullGitVisibleWorktreeSeparatelyFrozen": true
+        },
+        "sourceReview": {
+          "identities": 45,
+          "sourceRecordsIncludingLimitedOrUnavailableEvidence": 73,
+          "localCounterexampleGroups": 13,
+          "record": {
+            "path": "G:\\Project\\IsleMind\\scripts\\fixtures\\provider-official-docs-review.json",
+            "sha256": "31112e89a284f89edc618515360b531c457b2d4534758f38c026def225c88453"
+          },
+          "catalog": {
+            "file": "src/modules/providers/providerCompatibilityCatalog.ts",
+            "sha256": "ea31d4ccb753ba58a018d456b8bfc55254b09bbf9914f1f2dbcd7f723888dd4f",
+            "identities": 45
+          },
+          "originalSourceRecordsAndFindingsPreserved": true,
+          "otherProviderRecordsAndVerifiedValuesPreserved": true,
+          "extensionReceipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\source-review-extension.json",
+            "sha256": "0e95fbf61e4d85af2820469c4b947a75d71ee685d0394b0813adf88cb9f610b6"
+          },
+          "selectedPrimaryText": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\official-tool-excerpts.json",
+            "sha256": "fb2e407e13dd8be14896c4e9583cceba930dcf62a16ee8636810689b153e3311"
+          },
+          "directFetchFailureReceipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\official-docs-fetch-1\\fetch-results.json",
+            "sha256": "5eadfe37353e3f9560b218f7fe984bdaecef0064cf2ee3289b1438a61aa5d9ed"
+          },
+          "qualification": "Selected primary excerpts and offline source contracts only; no original full-page LocalAI retrieval or local backend/model qualification."
+        },
+        "officialTargeted": {
+          "suites": 6,
+          "passedSuites": 6,
+          "failedSuites": 0,
+          "tests": 236,
+          "passed": 236,
+          "failed": 0,
+          "pending": 0,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\official-targeted-receipt.json",
+            "sha256": "badf493b73fa8afbb2712f78e638e3435a531364a9a020e83da8d47ff8d09892"
+          },
+          "results": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\official-targeted.json",
+            "sha256": "1593b941b1693d83ab206ca380f9d4b11405d97d09cf7a61657980237f88a536"
+          }
+        },
+        "localAIReplayAcceptance": {
+          "tests": 16,
+          "passed": 16,
+          "failed": 0,
+          "independentFocus": {
+            "total": 1,
+            "passed": 1,
+            "failed": 0,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\localai-focus-receipt.json",
+              "sha256": "0656c37146a7b0ceff1d01d759632003e669dd9395888d8c5c582c8cdb2c32b9"
+            },
+            "results": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\localai-focus\\results.json",
+              "sha256": "177289689960bcc5b8c847fdc97518774c8999b61c7afc67e51ae839ec88d805"
+            }
+          },
+          "before": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\localai-counterexample-before\\counterexample-receipt.json",
+            "sha256": "d296e133ee764a2efb5863d9214f396cf90c8443f1160639cff8a12bc42697ac"
+          },
+          "after": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\official-targeted-receipt.json",
+            "sha256": "badf493b73fa8afbb2712f78e638e3435a531364a9a020e83da8d47ff8d09892"
+          },
+          "decision": "Explicit LocalAI Chat assistant tool turns preserve returned reasoning through the canonical reasoning field; aliases parse without trimming. No model controls, text-only replay, identity inference, Anthropic/Responses routes or grammar support are enabled."
+        },
+        "additionalUiAcceptance": {
+          "current": {
+            "suites": 15,
+            "passedSuites": 15,
+            "failedSuites": 0,
+            "tests": 179,
+            "passed": 179,
+            "failed": 0,
+            "pending": 0,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\ui-current-receipt.json",
+              "sha256": "ac54b46e561e880ee90b8a495e576feb231347bc04ef800548991fec9ffb5f29"
+            },
+            "results": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\ui-current.json",
+              "sha256": "09ac7a83c98ad37e554942327676b848be3aabea1ded17d941b15aa752876bcc"
+            }
+          },
+          "feedbackFixtureRepair": {
+            "suites": 3,
+            "passedSuites": 3,
+            "failedSuites": 0,
+            "tests": 75,
+            "passed": 75,
+            "failed": 0,
+            "pending": 0,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\ui-feedback-repair-receipt.json",
+              "sha256": "80fd05a6f9c32eb2eb261e4814f1bcf10c956f511ff0561cd0e2706d6383b763"
+            },
+            "results": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\ui-feedback-repair.json",
+              "sha256": "946fbe2421f653b66452e23ed3eb65635db3b65af80dd7d06ccbd90817e3902b"
+            }
+          },
+          "decision": "Preserve new document editor, provider settings and usage detail UI. Native absoluteFill uses the supported installed API; the stable/fluid status slot is unchanged. Neutral redacted detail contracts remove the parent/child type cycle while preserving public type re-exports and redaction."
+        },
+        "fullJest": {
+          "suites": 362,
+          "passedSuites": 362,
+          "failedSuites": 0,
+          "tests": 4711,
+          "passed": 4711,
+          "failed": 0,
+          "pending": 0,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\full-jest-receipt.json",
+            "sha256": "a632322b92594c7c726ab08bf45c413d4b3f7835f5c8f4a9b4eb305b5e9d94fd"
+          },
+          "results": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\full-jest.json",
+            "sha256": "521fe281815420b7c7be5d8f571eedbfdba70e574aa1f3286056c164f726c7bc"
+          }
+        },
+        "independentFocuses": {
+          "total": 62,
+          "passed": 62,
+          "failed": 0,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\all-focuses-receipt.json",
+            "sha256": "791b59334851109c5581d7f2720b622cc9606bc2ee8606212ff9a91c143e892b"
+          },
+          "results": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\all-focuses\\results.json",
+            "sha256": "9bfd6ff93cf28cf1b5019f00ec4c2567d003fe276d9fb103bfd51e0cbded3aaf"
+          }
+        },
+        "sqlite": {
+          "tests": 94,
+          "passed": 94,
+          "failed": 0,
+          "files": 12,
+          "bunVersion": "1.4.2",
+          "actualPackageScript": true,
+          "targets": [
+            "./src/platform/storage/sqliteWalIntegration.test.ts",
+            "./src/modules/tasks/adapters/sqliteTaskEffects.test.ts",
+            "./src/modules/assistant-runtime/adapters/sqliteHarnessLifecycle.test.ts",
+            "./src/modules/assistant-runtime/adapters/sqliteAgentDefinitionRepository.test.ts",
+            "./src/modules/assistant-runtime/adapters/sqliteRunBudgetStore.test.ts",
+            "./src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution.test.ts",
+            "./src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort.test.ts",
+            "./src/modules/conversations/adapters/sqliteConversationPreference.test.ts",
+            "./src/modules/conversations/adapters/sqliteConversationRepository.test.ts",
+            "./src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts",
+            "./src/modules/documents/adapters/sqliteDocumentRepository.test.ts",
+            "./src/modules/providers/adapters/sqliteModelAvailabilityRepository.test.ts"
+          ],
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\sqlite-package-receipt.json",
+            "sha256": "5c31e8723aeba92d0db7c21d63da8b93967afaeb4a442691ea287850128ce1f5"
+          },
+          "sourceSnapshot": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\sqlite-source-snapshot\\snapshot.json",
+            "sha256": "bc5fd0c594217194fcaa56cfbe229dd8675fca12622942088e38875eac62cac8"
+          },
+          "snapshotStable": true,
+          "isolation": "Fresh dotenv-free equal-source snapshot; unchanged dependencies, lock, patches and paired manifest; no install or lifecycle scripts."
+        },
+        "related": {
+          "total": 23,
+          "passed": 23,
+          "failed": 0,
+          "nodeScriptChecks": {
+            "total": 22,
+            "passed": 22,
+            "failed": 0,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\related-results.json",
+              "sha256": "5ac8a545f6351c7aa15733d49363e4ca45f552bd2e0fcd40d337145f8fe39a64"
+            }
+          },
+          "androidCollectorSelfTest": {
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\android-collector-self-receipt.json",
+              "sha256": "84374c5b7ccb39b10139bcac5093f05c0f17c1a44417c8a68ec17d6b3ddbef86"
+            },
+            "mode": "self-test only; no device access or real provider calls"
+          },
+          "explicitModelDependentCapCheck": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\matrix-counterexample-receipt.json",
+            "sha256": "24c3b8e2f5aa07cb0ca24557146316d5343c8db4c21e421a233123b4588841d6"
+          }
+        },
+        "architecture": {
+          "typeCheck": {
+            "passed": true,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\type-check-receipt.json",
+              "sha256": "cc6238f226f371504f2b73210a67703145f174c9bdafaae371efd26b8c0809ae"
+            }
+          },
+          "includeTypeDependencyGate": {
+            "passed": true,
+            "cycles": 0,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\architecture-dependencies-receipt.json",
+              "sha256": "3d49f94540246b6d113d4bc6deffd99eb013a577f9b949b8274976355d95b466"
+            }
+          },
+          "transportBoundary": {
+            "passed": true,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\architecture-transport-receipt.json",
+              "sha256": "5e2007041d333220104f8057ea3ff2f44c447860c207154846e53ac1dee36fc5"
+            }
+          },
+          "dependencySelfTest": {
+            "passed": true,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\architecture-dependency-self-receipt.json",
+              "sha256": "cd0133f64f9f202ad117761454f9c79092c7508796e1d42180dd832a37a4a7ea"
+            }
+          },
+          "boundarySelfTest": {
+            "passed": true,
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\architecture-boundary-self-receipt.json",
+              "sha256": "84537872a465179f479f56ce3bab449214126d33d47731675d13be435f7fcb57"
+            }
+          },
+          "moduleGate": {
+            "status": "passed",
+            "waived": false,
+            "issues": [],
+            "receipt": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\architecture-module-gate-receipt.json",
+              "sha256": "1188208cbd50e15352ffa4ee7c71b33e807e869b6d1bf756360d6a09e4b4665c"
+            },
+            "historicalFindingRetained": {
+              "status": "failed-pre-existing-unrelated-document-set-conflict",
+              "issues": [
+                {
+                  "file": "docs/architecture/complete-ui-experience.md",
+                  "specifier": "",
+                  "rule": "architecture-document-set"
+                }
+              ],
+              "waived": false,
+              "documentPreserved": true
+            }
+          }
+        },
+        "security": {
+          "dependencyRegressionsPassed": true,
+          "receipt": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\dependency-security-receipt.json",
+            "sha256": "483b6bece6499db7609fd7bb2466297925df0e1a2c65c4e937d3d3898f99d16c"
+          },
+          "retainedRegistryReviewDate": "2026-10-31T09:52:15.451Z",
+          "currentPolicyPrecheck": {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\security-policy-precheck.json",
+            "sha256": "34d85fedd537b693885f96b8bfa00ec99dac450b118b150e8090bd1d744e5398"
+          },
+          "advisoryIdentitiesStillExcepted": 4,
+          "affectedLockedVersionMatches": 5,
+          "earliestExpiry": "2026-11-07T00:00:00+08:00",
+          "newRegistryScanPerformed": false,
+          "cleanLockClaim": false,
+          "exceptionDatesExtended": false,
+          "finalOfflineRevalidation": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\security-offline-revalidation.json"
+        },
+        "finalization": {
+          "postLedgerContractReceipt": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\post-ledger-contracts-receipt.json",
+          "finalArtifactManifest": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\final-local-verification.json",
+          "requirement": "Post-ledger contracts, final retained offline security policy and full-worktree preservation must pass before claiming complete acceptance."
+        },
+        "additionalFixtureRepairs": [
+          {
+            "classification": "new-request-regression-type-errors",
+            "file": "src/bootstrap/providerOfficialRequestRegression.test.ts",
+            "before": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\diagnostic-2\\type-check-receipt.json",
+              "sha256": "5f6cbee06079bfcb3b73794a4b762cb16d0dd7176dba6ffeb643a6302e93b8e3"
+            },
+            "decision": "Remove a nonexistent capabilities field and pass the existing response request directly to the buffered SSE parser; no coverage is removed."
+          },
+          {
+            "classification": "removed-installed-native-api",
+            "files": [
+              "src/presentation/features/documents/DocumentEditorTools.tsx",
+              "src/presentation/features/documents/DocumentEditorTools.test.tsx"
+            ],
+            "decision": "Use documented StyleSheet.absoluteFill instead of the API removed in React Native 0.85; retain all status-slot layout/accessibility behavior."
+          },
+          {
+            "classification": "new-parent-child-include-type-cycle",
+            "files": [
+              "src/components/settings/UsageRequestDetail.tsx",
+              "src/components/settings/UsageStatisticsContent.tsx",
+              "src/components/settings/usageRequestDetailTypes.ts"
+            ],
+            "before": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\diagnostic-2\\include-type-graph-receipt.json",
+              "sha256": "bda973d444f9c369ff4a284a131e9c4e902059ad374776554d704bbf66dca332"
+            },
+            "after": {
+              "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-11\\architecture-dependencies-receipt.json",
+              "sha256": "3d49f94540246b6d113d4bc6deffd99eb013a577f9b949b8274976355d95b466"
+            },
+            "decision": "Extract only shared redacted contracts, preserve parent exports and leave architecture policy unchanged."
+          }
+        ],
+        "limitations": [
+          "Coverage counts identities and selected facets, not fully certified suppliers or every model/API facet.",
+          "Baichuan and ModelScope current articles were client shells; Zero-One obtained only an official example.",
+          "SiliconFlow current full pages and original LocalAI HTML bodies remain unavailable; additional current LocalAI tool-extracted primary sections qualify only documented Chat reasoning/tool replay facets, not a full page, installed model or backend.",
+          "Ark combined/legacy cap semantics are model-dependent; opaque ep model IDs and unimplemented optional controls are not qualified.",
+          "SambaNova terminal documentation conflicts; explicitly approved cost-capped live evidence would be required to settle it.",
+          "Complex tool/cache/tier/holiday pricing and unmatched model prices require independent exact evidence/manual pricing; prior recorded costs are not repriced.",
+          "Existing security exception deadlines, remote CI/device gaps and the unrelated architecture-document-set conflict are not waived.",
+          "Tool-extracted selected LocalAI primary paragraphs are not original HTML/full-page retrieval; failed direct host GET receipts remain retained.",
+          "LocalAI backend, installed runtime version, model/parser configuration, Anthropic/Responses routes and constrained grammar remain unqualified.",
+          "React Native tests qualify source and accessibility contracts only, not Android/browser/device layouts or a full SDK migration.",
+          "Four existing security exceptions cover five locked-version matches; original dates are not extended and retained evidence is not a new registry scan.",
+          "The current unchanged module gate reports zero issues; historical document-set findings and old acceptance receipts remain preserved.",
+          "No credentials, real inference, paid smoke, local-server/device qualification, remote CI, commit, push or publication was used.",
+          "The curated source digest excludes the verification ledger as before; the separate full git-visible inventory covers remaining checkout files, not ignored outputs or complete installed dependency reachability."
+        ],
+        "supersededAttempts": [
+          {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\final-acceptance-10",
+            "reason": "Windows process interruption and unavailable git source probe; original source/ledger remained unchanged, partial evidence retained without a verification append."
+          }
+        ],
+        "preservedDiagnostics": [
+          {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\diagnostic-1",
+            "qualification": "Intermediate evidence only; does not independently certify this final source."
+          },
+          {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\diagnostic-2",
+            "qualification": "Intermediate evidence only; does not independently certify this final source."
+          },
+          {
+            "path": "C:\\Users\\barna\\.codex\\visualizations\\2026\\10\\31\\01a19103-0e59-7d30-8ded-a301a9cef67a\\official-api-review\\continuation-2026-11-01\\followup-1\\diagnostic-3",
+            "qualification": "Intermediate evidence only; does not independently certify this final source."
+          }
+        ]
+      }
+    ]
+  },
+  "security": {
+    "resolvedOriginalAdvisories": [
+      "GHSA-qr28-fpjm-wq7f",
+      "GHSA-gfr2-rv44-r23c",
+      "GHSA-vfgh-jcmw-g37q",
+      "GHSA-pqg4-j6r4-53mv",
+      "GHSA-86w9-cpqp-85rv",
+      "GHSA-vc2v-76pw-4v95",
+      "GHSA-68fv-2mgg-jv7q",
+      "GHSA-qhr7-859c-m2p7",
+      "GHSA-6j4f-fj2g-mc7p",
+      "GHSA-q2hr-2g5m-vwhr"
+    ],
+    "limitations": "Static production-import and locked-consumer checks are not exact APK/Web reachability certification. Dynamic imports and bundled tool entrypoints require a separate artifact review.",
+    "exceptions": [
+      {
+        "id": "GHSA-gcqx-w48m-w2h4",
+        "package": "deepmerge",
+        "versions": [
+          "4.3.1"
+        ],
+        "severity": "low",
+        "reviewedAt": "2026-10-31T00:00:00+08:00",
+        "owner": "dependency-security-maintainer",
+        "scope": "mitigated-tooling-static-review",
+        "expectedConsumers": [
+          "@expo/config@57.0.9",
+          "jest-config@29.7.0"
+        ],
+        "mitigation": "Registered own-property-write backport covers source, CJS and UMD bundles.",
+        "limitations": "No official safe release; local mitigation is not a registry fix or exhaustive prototype-pollution proof.",
+        "nextAction": "Check upstream safe release or reviewed parent replacement; remove the patch after equivalent regressions pass.",
+        "nextReview": "2026-11-14T00:00:00+08:00",
+        "expiresAt": "2026-11-14T00:00:00+08:00",
+        "patch": {
+          "file": "patches/deepmerge@4.3.1.patch",
+          "sha256": "e3325bcfd1a109a1da85e71ca9d4f1f5bbeeda8157ea0d00ee78f930ba739901"
+        }
+      },
+      {
+        "id": "GHSA-mrhx-c7xc-m3w5",
+        "package": "zod",
+        "versions": [
+          "3.25.76"
+        ],
+        "severity": "high",
+        "reviewedAt": "2026-10-31T00:00:00+08:00",
+        "owner": "dependency-security-maintainer",
+        "scope": "mitigated-tooling-static-review",
+        "expectedConsumers": [
+          "@expo/cli@57.0.27",
+          "eslint-plugin-react-hooks@7.1.1"
+        ],
+        "mitigation": "Generated v3 CJS/ESM backport caps issues, fails oversized constrained arrays early and bounds async array fan-out.",
+        "limitations": "Only v3 entrypoints are mitigated; bundled v4 entrypoints and all collection types are not covered. Zod v4 is a breaking consumer migration.",
+        "nextAction": "Review official compatible backport or coordinated Expo/eslint parent migration, including all bundled entrypoints.",
+        "nextReview": "2026-11-14T00:00:00+08:00",
+        "expiresAt": "2026-11-14T00:00:00+08:00",
+        "patch": {
+          "file": "patches/zod@3.25.76.patch",
+          "sha256": "5ff928c9dc0b176b93347593cf4080278536df6dc6f8de7fab574f7051e4f27f"
+        }
+      },
+      {
+        "id": "GHSA-3g3m-2fjr-6pw4",
+        "package": "glob",
+        "versions": [
+          "13.0.6"
+        ],
+        "severity": "moderate",
+        "reviewedAt": "2026-10-31T00:00:00+08:00",
+        "owner": "dependency-security-maintainer",
+        "scope": "unpatched-tooling-static-review",
+        "expectedConsumers": [
+          "@expo/cli@57.0.27",
+          "@expo/config-plugins@57.0.9",
+          "@expo/config@57.0.9",
+          "@expo/fingerprint@0.20.13",
+          "@expo/metro-config@57.0.12",
+          "@jest/reporters@29.7.0",
+          "jest-config@29.7.0",
+          "jest-runtime@29.7.0",
+          "test-exclude@6.0.0"
+        ],
+        "mitigation": "No product-source direct import found; known Expo/Jest configuration and build consumers stay pinned.",
+        "limitations": "AbortSignal traversal advisory remains unpatched. Static tooling scope does not certify an APK or exclude hostile workspaces.",
+        "nextAction": "Review a scoped cancellation backport or parent-supported safe glob release; add aborted traversal regression before approval.",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "expiresAt": "2026-11-07T00:00:00+08:00"
+      },
+      {
+        "id": "GHSA-g3hv-75wg-m249",
+        "package": "minimatch",
+        "versions": [
+          "3.1.5",
+          "10.2.6"
+        ],
+        "severity": "moderate",
+        "reviewedAt": "2026-10-31T00:00:00+08:00",
+        "owner": "dependency-security-maintainer",
+        "scope": "unpatched-tooling-static-review",
+        "expectedConsumers": [
+          "@eslint/config-array@0.21.2",
+          "@eslint/eslintrc@3.3.7",
+          "@expo/fingerprint@0.20.13",
+          "@typescript-eslint/typescript-estree@8.70.0",
+          "eslint-plugin-react@7.37.5",
+          "eslint@9.39.5",
+          "glob@13.0.6",
+          "glob@7.2.3",
+          "test-exclude@6.0.0"
+        ],
+        "mitigation": "Both brace-expansion branches are upgraded; known glob/Expo/eslint/Jest consumers remain pinned.",
+        "limitations": "globparts amplification advisory remains unpatched; brace fixes do not fix minimatch. A forced minimatch 11 upgrade can break legacy consumers.",
+        "nextAction": "Review compatible amplification backports or parent/major migrations for both locked branches with glob/Metro/Jest compatibility tests.",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "expiresAt": "2026-11-07T00:00:00+08:00"
+      }
+    ],
+    "advisoryDispositions": [
+      {
+        "id": "GHSA-qr28-fpjm-wq7f",
+        "package": "decode-uri-component",
+        "severity": "high",
+        "original": true,
+        "previousVersions": [
+          "0.5.0"
+        ],
+        "currentVersions": [
+          "0.5.1"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "query-string -> URI decoder used by Router links",
+        "lockedConsumers": [
+          "query-string@7.1.3"
+        ],
+        "reachability": {
+          "native": "Shared runtime parser dependency is used by app surfaces; exact APK reachability is not qualified.",
+          "web": "Shared runtime parser dependency is used by app surfaces; exact Web bundle reachability is not qualified.",
+          "build": "The reviewed parser is included through its locked runtime consumer; this is not a build artifact certification."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-qr28-fpjm-wq7f",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-gfr2-rv44-r23c",
+        "package": "markdown-it",
+        "severity": "high",
+        "original": true,
+        "previousVersions": [
+          "14.3.2"
+        ],
+        "currentVersions": [
+          "14.3.3"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "react-native-markdown-display -> default Markdown reference parser used by chat/document/help surfaces",
+        "lockedConsumers": [
+          "react-native-markdown-display@7.0.2"
+        ],
+        "reachability": {
+          "native": "Shared runtime parser dependency is used by app surfaces; exact APK reachability is not qualified.",
+          "web": "Shared runtime parser dependency is used by app surfaces; exact Web bundle reachability is not qualified.",
+          "build": "The reviewed parser is included through its locked runtime consumer; this is not a build artifact certification."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-gfr2-rv44-r23c",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-vfgh-jcmw-g37q",
+        "package": "markdown-it",
+        "severity": "low",
+        "original": true,
+        "previousVersions": [
+          "14.3.2"
+        ],
+        "currentVersions": [
+          "14.3.3"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "react-native-markdown-display -> inline HTML parser; HTML-off only mitigated this separate advisory",
+        "lockedConsumers": [
+          "react-native-markdown-display@7.0.2"
+        ],
+        "reachability": {
+          "native": "Shared runtime parser dependency is used by app surfaces; exact APK reachability is not qualified.",
+          "web": "Shared runtime parser dependency is used by app surfaces; exact Web bundle reachability is not qualified.",
+          "build": "The reviewed parser is included through its locked runtime consumer; this is not a build artifact certification."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-vfgh-jcmw-g37q",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-pqg4-j6r4-53mv",
+        "package": "shell-quote",
+        "severity": "critical",
+        "original": true,
+        "previousVersions": [
+          "1.10.0"
+        ],
+        "currentVersions": [
+          "1.11.0"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "react-devtools-core -> shell token quoting; regression constructs strings and never executes a shell",
+        "lockedConsumers": [
+          "react-devtools-core@6.1.5"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-pqg4-j6r4-53mv",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-86w9-cpqp-85rv",
+        "package": "node-forge",
+        "severity": "high",
+        "original": true,
+        "previousVersions": [
+          "1.4.0"
+        ],
+        "currentVersions": [
+          "1.4.2"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Expo CLI / @expo/code-signing-certificates -> RSA signature verification and PEM parsing",
+        "lockedConsumers": [
+          "@expo/cli@57.0.27",
+          "@expo/code-signing-certificates@0.0.6"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-86w9-cpqp-85rv",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-vc2v-76pw-4v95",
+        "package": "compression",
+        "severity": "high",
+        "original": true,
+        "previousVersions": [
+          "1.8.1"
+        ],
+        "currentVersions": [
+          "1.8.2"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Expo CLI -> development HTTP compression and premature-close cleanup",
+        "lockedConsumers": [
+          "@expo/cli@57.0.27"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-vc2v-76pw-4v95",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-68fv-2mgg-jv7q",
+        "package": "source-map-js",
+        "severity": "high",
+        "original": true,
+        "previousVersions": [
+          "1.2.1"
+        ],
+        "currentVersions": [
+          "1.2.2"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "postcss -> indexed source-map offset processing",
+        "lockedConsumers": [
+          "postcss@8.5.26"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-68fv-2mgg-jv7q",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-qhr7-859c-m2p7",
+        "package": "brace-expansion",
+        "severity": "high",
+        "original": true,
+        "previousVersions": [
+          "1.1.18",
+          "5.0.9"
+        ],
+        "currentVersions": [
+          "1.1.21",
+          "5.0.12"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Legacy and modern minimatch -> brace group expansion",
+        "lockedConsumers": [
+          "minimatch@10.2.6",
+          "minimatch@3.1.5"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-6j4f-fj2g-mc7p",
+        "package": "brace-expansion",
+        "severity": "high",
+        "original": true,
+        "previousVersions": [
+          "1.1.18",
+          "5.0.9"
+        ],
+        "currentVersions": [
+          "1.1.21",
+          "5.0.12"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Legacy and modern minimatch -> comma-part recursion and argument fan-out",
+        "lockedConsumers": [
+          "minimatch@10.2.6",
+          "minimatch@3.1.5"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-q2hr-2g5m-vwhr",
+        "package": "brace-expansion",
+        "severity": "moderate",
+        "original": true,
+        "previousVersions": [
+          "1.1.18",
+          "5.0.9"
+        ],
+        "currentVersions": [
+          "1.1.21",
+          "5.0.12"
+        ],
+        "status": "resolved-by-compatible-upgrade",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Legacy and modern minimatch -> quadratic rewrite expansion",
+        "lockedConsumers": [
+          "minimatch@10.2.6",
+          "minimatch@3.1.5"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "limitations": "No longer matched by this reviewed advisory after a compatible locked-version upgrade; not a claim that the package has no other vulnerabilities or that an existing release artifact was repaired."
+      },
+      {
+        "id": "GHSA-gcqx-w48m-w2h4",
+        "package": "deepmerge",
+        "severity": "low",
+        "original": true,
+        "previousVersions": [
+          "4.3.1"
+        ],
+        "currentVersions": [
+          "4.3.1"
+        ],
+        "status": "mitigated-with-expiry",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Expo config and Jest config -> mergeObject own-property writes",
+        "lockedConsumers": [
+          "@expo/config@57.0.9",
+          "jest-config@29.7.0"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-gcqx-w48m-w2h4",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-14T00:00:00+08:00",
+        "affectedLockedVersions": [
+          "4.3.1"
+        ],
+        "scope": "mitigated-tooling-static-review",
+        "expiresAt": "2026-11-14T00:00:00+08:00",
+        "limitations": "No official safe release; local mitigation is not a registry fix or exhaustive prototype-pollution proof."
+      },
+      {
+        "id": "GHSA-mrhx-c7xc-m3w5",
+        "package": "zod",
+        "severity": "high",
+        "original": true,
+        "previousVersions": [
+          "3.25.76"
+        ],
+        "currentVersions": [
+          "3.25.76"
+        ],
+        "status": "mitigated-with-expiry",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Expo CLI and eslint React-hooks plugin -> Zod v3 collection validation",
+        "lockedConsumers": [
+          "@expo/cli@57.0.27",
+          "eslint-plugin-react-hooks@7.1.1"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-security-tests.js",
+          "scripts/dependency-advisory-audit.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-14T00:00:00+08:00",
+        "affectedLockedVersions": [
+          "3.25.76"
+        ],
+        "scope": "mitigated-tooling-static-review",
+        "expiresAt": "2026-11-14T00:00:00+08:00",
+        "limitations": "Only v3 entrypoints are mitigated; bundled v4 entrypoints and all collection types are not covered. Zod v4 is a breaking consumer migration."
+      },
+      {
+        "id": "GHSA-3g3m-2fjr-6pw4",
+        "package": "glob",
+        "severity": "moderate",
+        "original": false,
+        "previousVersions": [],
+        "currentVersions": [
+          "13.0.6",
+          "7.2.3"
+        ],
+        "status": "unpatched-with-expiry",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Expo/Jest build tooling -> glob path matching; public registry still flags glob 13.0.6",
+        "lockedConsumers": [
+          "@expo/cli@57.0.27",
+          "@expo/config-plugins@57.0.9",
+          "@expo/config@57.0.9",
+          "@expo/fingerprint@0.20.13",
+          "@expo/metro-config@57.0.12",
+          "@jest/reporters@29.7.0",
+          "jest-config@29.7.0",
+          "jest-runtime@29.7.0",
+          "test-exclude@6.0.0"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-advisory-audit.js",
+          "scripts/provider-maintenance-contracts.test.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-3g3m-2fjr-6pw4",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "affectedLockedVersions": [
+          "13.0.6"
+        ],
+        "scope": "unpatched-tooling-static-review",
+        "expiresAt": "2026-11-07T00:00:00+08:00",
+        "limitations": "AbortSignal traversal advisory remains unpatched. Static tooling scope does not certify an APK or exclude hostile workspaces."
+      },
+      {
+        "id": "GHSA-g3hv-75wg-m249",
+        "package": "minimatch",
+        "severity": "moderate",
+        "original": false,
+        "previousVersions": [],
+        "currentVersions": [
+          "10.2.6",
+          "3.1.5"
+        ],
+        "status": "unpatched-with-expiry",
+        "owner": "dependency-security-maintainer",
+        "entryPoint": "Expo/eslint/glob tooling -> legacy and modern pattern matching; both locked branches remain flagged",
+        "lockedConsumers": [
+          "@eslint/config-array@0.21.2",
+          "@eslint/eslintrc@3.3.7",
+          "@expo/fingerprint@0.20.13",
+          "@typescript-eslint/typescript-estree@8.70.0",
+          "eslint-plugin-react@7.37.5",
+          "eslint@9.39.5",
+          "glob@13.0.6",
+          "glob@7.2.3",
+          "test-exclude@6.0.0"
+        ],
+        "reachability": {
+          "native": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "web": "No direct production import in the scanned app/src source; transitive or bundled reachability is not qualified.",
+          "build": "Locked development/build consumer path is reviewed; hostile input control and exact build artifact reachability are not certified."
+        },
+        "regressionFiles": [
+          "scripts/dependency-advisory-audit.js",
+          "scripts/provider-maintenance-contracts.test.js"
+        ],
+        "advisoryUrl": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+        "reviewedAt": "2026-10-31",
+        "nextReview": "2026-11-07T00:00:00+08:00",
+        "affectedLockedVersions": [
+          "3.1.5",
+          "10.2.6"
+        ],
+        "scope": "unpatched-tooling-static-review",
+        "expiresAt": "2026-11-07T00:00:00+08:00",
+        "limitations": "globparts amplification advisory remains unpatched; brace fixes do not fix minimatch. A forced minimatch 11 upgrade can break legacy consumers."
+      }
+    ]
+  },
+  "reviewPolicy": {
+    "urgentUpstreamTriage": "within one working day",
+    "mainRouteSourcesMaxAgeDays": 14,
+    "otherRoutesReviewDays": 30,
+    "unknownAdvisories": "fail closed in CI",
+    "expiredExceptions": "fail closed in CI",
+    "schedulerInstalled": false
+  },
+  "externalValidation": {
+    "liveSmoke": {
+      "approved": false,
+      "costCapUsd": null,
+      "required": [
+        "provider and credential scope",
+        "endpoint/region/model",
+        "stream/tools/schema/replay receipt",
+        "explicit approval and fee ceiling"
+      ]
+    },
+    "release": {
+      "qualified": false,
+      "required": [
+        "source revision and dirty-input fingerprints",
+        "APK SHA-256",
+        "signing certificate SHA-256",
+        "installed package digest",
+        "device identity and raw scenario evidence"
+      ]
+    },
+    "collectorCommands": [
+      "node scripts/provider-compatibility-live-smoke-plan.js --self-test",
+      "bun --no-env-file scripts/collect-provider-runtime-android.js --self-test"
+    ]
+  },
+  "performance": {
+    "scope": "host-synthetic-not-android",
+    "minimumSamples": 30,
+    "warmups": 5,
+    "maxRegressionRatio": 1.1,
+    "memory": "Observed process RSS/heap at operation boundaries; not in-operation peak memory.",
+    "nativeQualified": false,
+    "nativePending": [
+      "fixed device and OS/build/ABI",
+      "cold and warm startup",
+      "Usage UI load",
+      "stream UI refresh",
+      "peak memory with sampling method/interval",
+      "same history/record/event scales",
+      "exact source/APK/signature evidence"
+    ],
+    "lastHostBaseline": {
+      "measuredAt": "2026-10-31T09:46:46.176Z",
+      "sourceRevision": "59aefb6207a9bed70ee6b73e1ac10fe8f140a30c",
+      "inputDigestSha256": "6f817fafbb83440a2bc2a69147bc2dacbc700e7778bef27ae065088b12588eee",
+      "conditions": {
+        "samples": 30,
+        "warmups": 5,
+        "timer": "performance.now",
+        "gc": "forced-before-each-sample",
+        "memorySampling": "process.memoryUsage before and after each operation; misses in-operation peaks",
+        "hostLoad": "not controlled; background workload and thermal state are not certified",
+        "network": "none; offline guard; synthetic parser input and in-memory Usage repository"
+      },
+      "scenarios": [
+        {
+          "id": "chat-sse",
+          "count": 30,
+          "p50Ms": 5.5988000000015745,
+          "p95Ms": 6.817199999999502,
+          "maxObservedRssBytes": 486182912,
+          "maxObservedHeapUsedBytes": 59307968,
+          "scale": {
+            "events": 1000,
+            "bytes": 68124
+          }
+        },
+        {
+          "id": "responses-sse",
+          "count": 30,
+          "p50Ms": 5.339700000000448,
+          "p95Ms": 6.28269999999975,
+          "maxObservedRssBytes": 485335040,
+          "maxObservedHeapUsedBytes": 54967560,
+          "scale": {
+            "events": 1000,
+            "bytes": 57131
+          }
+        },
+        {
+          "id": "usage-summary",
+          "count": 30,
+          "p50Ms": 0.3316000000013446,
+          "p95Ms": 3.185699999999997,
+          "maxObservedRssBytes": 483901440,
+          "maxObservedHeapUsedBytes": 51515072,
+          "scale": {
+            "records": 10000
+          }
+        },
+        {
+          "id": "usage-snapshot",
+          "count": 30,
+          "p50Ms": 2.6670999999987544,
+          "p95Ms": 3.6132999999990716,
+          "maxObservedRssBytes": 484089856,
+          "maxObservedHeapUsedBytes": 55367824,
+          "scale": {
+            "records": 10000,
+            "pageSize": 100,
+            "repository": "synthetic-in-memory-not-sqlite"
+          }
+        }
+      ],
+      "receipt": {
+        "path": "C:/Users/barna/.codex/visualizations/2026/10/31/01a19103-0e59-7d30-8ded-a301a9cef67a/provider-remediation/host-current-source-baseline/host-performance.json",
+        "sha256": "9ea0e9bcd2a015af704e26edb754592d6e7bf4835b05eaf07601a2e7955e098b"
+      },
+      "comparisonPerformed": false,
+      "nativeQualified": false
+    }
+  },
+  "upstreamObservations": [
+    {
+      "id": "sambanova-chat-terminal-doc-conflict",
+      "status": "live-evidence-needed",
+      "owner": "provider-runtime-maintainer",
+      "reviewedAt": "2026-10-31",
+      "source": "sambanova-structured-output",
+      "observation": "The same current OpenAPI document describes response.completed in the HTTP 200 summary but data: [DONE] in the stream property.",
+      "decision": "Do not promote a documentation conflict to live compatibility or weaken protocol completion checks; retain the verified offline fixtures.",
+      "nextAction": "Capture the actual Chat Completions terminal marker during an explicitly approved, cost-capped supplier smoke.",
+      "nextReview": "2026-11-07"
+    }
+  ],
+  "documentation": "docs/release/provider-maintenance-2026-10-31.md"
+}

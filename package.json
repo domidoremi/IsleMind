@@ -3,8 +3,12 @@
   "version": "1.1.5",
   "packageManager": "bun@1.4.2",
   "workspaces": {
-    "packages": ["../animal-island-ui"],
-    "selfContained": ["animal-island-ui-rn"]
+    "packages": [
+      "../animal-island-ui"
+    ],
+    "selfContained": [
+      "animal-island-ui-rn"
+    ]
   },
   "main": "expo-router/entry",
   "bin": {
@@ -20,7 +24,7 @@
     "android": "node node_modules/expo/bin/cli run:android",
     "ios": "node node_modules/expo/bin/cli run:ios",
     "test": "bun --no-env-file run test:sqlite && jest",
-    "test:sqlite": "bun --no-env-file test src/platform/storage/sqliteWalIntegration.test.ts src/modules/tasks/adapters/sqliteTaskEffects.test.ts src/modules/assistant-runtime/adapters/sqliteHarnessLifecycle.test.ts src/modules/assistant-runtime/adapters/sqliteAgentDefinitionRepository.test.ts src/modules/assistant-runtime/adapters/sqliteRunBudgetStore.test.ts src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution.test.ts src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort.test.ts src/modules/conversations/adapters/sqliteConversationPreference.test.ts src/modules/conversations/adapters/sqliteConversationRepository.test.ts src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts src/modules/documents/adapters/sqliteDocumentRepository.test.ts src/modules/providers/adapters/sqliteModelAvailabilityRepository.test.ts",
+    "test:sqlite": "bun --no-env-file test --preload ./scripts/offline-provider-test-guard.js ./src/platform/storage/sqliteWalIntegration.test.ts ./src/modules/tasks/adapters/sqliteTaskEffects.test.ts ./src/modules/assistant-runtime/adapters/sqliteHarnessLifecycle.test.ts ./src/modules/assistant-runtime/adapters/sqliteAgentDefinitionRepository.test.ts ./src/modules/assistant-runtime/adapters/sqliteRunBudgetStore.test.ts ./src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution.test.ts ./src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort.test.ts ./src/modules/conversations/adapters/sqliteConversationPreference.test.ts ./src/modules/conversations/adapters/sqliteConversationRepository.test.ts ./src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts ./src/modules/documents/adapters/sqliteDocumentRepository.test.ts ./src/modules/providers/adapters/sqliteModelAvailabilityRepository.test.ts",
     "test:watch": "jest --watch",
     "test:coverage": "bun --no-env-file run test:sqlite && jest --coverage",
     "test:android-capability-boundary": "node scripts/android-capability-boundary-audit.js",
@@ -63,6 +67,10 @@
     "test:android-accessibility-focus": "node scripts/android-accessibility-focus-tests.js",
     "test:android-font-scale": "node scripts/android-font-scale-tests.js",
     "test:dependency-security": "node scripts/dependency-security-tests.js",
+    "test:dependency-advisories": "node scripts/dependency-advisory-audit.js",
+    "test:provider-maintenance-contracts": "jest --runInBand --runTestsByPath scripts/provider-maintenance-contracts.test.js",
+    "test:provider-official-docs-review": "node --require ./scripts/offline-provider-test-guard.js ./node_modules/jest/bin/jest.js --runInBand --runTestsByPath scripts/provider-official-docs-review.test.js src/modules/providers/providerOfficialApiRegression.test.ts src/bootstrap/providerOfficialRequestRegression.test.ts src/bootstrap/providerContextCapacity.test.ts src/modules/providers/providerDashScopePolicy.test.ts src/types/modelCatalog.current.test.ts",
+    "test:provider-performance-baseline": "node --expose-gc scripts/provider-performance-baseline.js",
     "test:product-mobile-web-render-evidence": "node scripts/product-mobile-web-render-evidence-tests.js",
     "test:product-mobile-native-evidence": "node scripts/product-mobile-native-evidence-tests.js",
     "test:product-mobile-native-evidence:collect": "node scripts/collect-product-mobile-native-adb-evidence.js",
@@ -117,7 +125,7 @@
     "test:provider-activation": "node scripts/provider-intelligence-tests.js --focus=provider-activation",
     "test:provider-stream-parsing": "node scripts/provider-intelligence-tests.js --focus=provider-stream-parsing",
     "test:provider-parameter-matrix": "node scripts/provider-parameter-matrix-tests.js",
-    "test:diagnostics-usage-sqlite": "bun test src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts",
+    "test:diagnostics-usage-sqlite": "bun --no-env-file test ./src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts",
     "test:provider-streaming-policy": "node scripts/provider-streaming-policy-tests.js",
     "test:provider-live-smoke:plan": "node scripts/provider-compatibility-live-smoke-plan.js",
     "test:provider-live-smoke:plan:self": "node scripts/provider-compatibility-live-smoke-plan.js --self-test",
@@ -170,7 +178,9 @@
     "theme:release-gate-status": "node scripts/theme-release-gate-specs.js --status",
     "test:theme-system": "bun run test:theme-system:source && bun run test:theme-system:audit && bun run test:theme-contrast && bun run test:theme-system:qa",
     "test:product-mobile-web-render-evidence:collect": "node scripts/collect-product-mobile-web-render-evidence.js",
-    "test:browser-storage-evidence": "bun scripts/collect-product-mobile-web-render-evidence.js --storage-evidence-only"
+    "test:browser-storage-evidence": "bun scripts/collect-product-mobile-web-render-evidence.js --storage-evidence-only",
+    "test:provider-compatibility": "node scripts/provider-compatibility-tests.js",
+    "test:provider-stream-lifecycle": "node scripts/provider-stream-lifecycle-tests.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -253,9 +263,15 @@
     "react": "$react",
     "react-native": "$react-native",
     "react-native-svg": "$react-native-svg",
-    "decode-uri-component": "0.5.0",
+    "decode-uri-component": "0.5.1",
     "uuid": "11.1.1",
-    "markdown-it": "14.3.2",
+    "markdown-it": "14.3.3",
+    "shell-quote": "1.11.0",
+    "compression": "1.8.2",
+    "source-map-js": "1.2.2",
+    "node-forge": "1.4.2",
+    "brace-expansion@^1": "1.1.21",
+    "brace-expansion@^5": "5.0.12",
     "react-native-screens": "4.26.2"
   },
   "private": true,
@@ -327,6 +343,8 @@
     "react-native@0.86.3": "patches/react-native@0.86.3.patch",
     "expo-sqlite@57.0.3": "patches/expo-sqlite@57.0.3.patch",
     "expo-clipboard@57.0.2": "patches/expo-clipboard@57.0.2.patch",
-    "query-string@7.1.3": "patches/query-string@7.1.3.patch"
+    "query-string@7.1.3": "patches/query-string@7.1.3.patch",
+    "deepmerge@4.3.1": "patches/deepmerge@4.3.1.patch",
+    "zod@3.25.76": "patches/zod@3.25.76.patch"
   }
 }

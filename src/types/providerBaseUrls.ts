@@ -104,6 +104,17 @@ export function getProviderConfigIssue(provider: Pick<AIProvider, 'type' | 'base
       message: 'providerIssue.invalidBaseUrl',
     }
   }
+  try {
+    if (new URL(getProviderEffectiveBaseUrl(provider)).hostname.toLowerCase() === 'models.github.ai') {
+      return {
+        code: 'endpoint_unavailable',
+        messageKey: 'providerIssue.githubModelsRetired',
+        message: 'GitHub Models was retired on 2026-07-30. Inference and model discovery are no longer available. Saved configuration is retained; choose another provider explicitly. https://docs.github.com/en/github-models',
+      }
+    }
+  } catch {
+    // Keep malformed/custom endpoint handling separate from exact host evidence.
+  }
   if (provider.type !== 'xiaomi-mimo') return null
   const keyMode = detectProviderCredentialMode(apiKey)
   const selectedMode = provider.credentialMode ?? 'token-plan'

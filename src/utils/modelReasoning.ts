@@ -1,7 +1,7 @@
 import type { ReasoningEffort } from '@/core'
 import { getModelConfig } from '@/types/modelCatalog'
 import type { AIProvider } from '@/types/providerContracts'
-import { getProviderCompatibilityEvidenceForProvider, providerCompatibilityCapabilityCanBeSentForProvider } from '@/modules/providers'
+import { getProviderCompatibilityEvidenceForProvider, getProviderFireworksReasoningEffortOptions, normalizeProviderFireworksReasoningEffort, providerCompatibilityCapabilityCanBeSentForProvider } from '@/modules/providers'
 import { normalizeModelId as normalizeSharedModelId } from '@/utils/modelId'
 export type ReasoningControlValue = ReasoningEffort | 'default'
 
@@ -10,6 +10,11 @@ export function getReasoningEffortOptions(provider: AIProvider | undefined, mode
   const config = getModelConfig(model, provider.type, provider.modelConfigs)
   if (!providerAllowsReasoningControls(provider, config)) return []
   const canUseConfigReasoning = canUseModelReasoningMetadata(provider, config)
+  // A generic catalog match must not replace this supplier's wire controls.
+  if (isFireworksReasoningModel(provider, model) && (!providerModelReasoningWasDeclared(provider, config.id)
+    || (config.source === 'remote' && config.reasoningMode === 'openai-effort'))) {
+    return getFireworksReasoningEffortOptions(model)
+  }
   if (config.reasoningMode === 'minimax-thinking') {
     return canUseConfigReasoning && isMiniMaxThinkingModel(provider, model) ? config.reasoningEfforts ?? ['none', 'high'] : []
   }
@@ -68,6 +73,7 @@ export function providerSupportsReasoning(provider: AIProvider | undefined, mode
 }
 
 function providerAllowsReasoningControls(provider: AIProvider, config: ReturnType<typeof getModelConfig>): boolean {
+  if (provider.capabilities?.reasoningEffort === false) return false
   const explicitDeclaration = provider.capabilities?.reasoningEffort === true ||
     (config.source === 'remote' && Boolean(config.reasoningMode || config.reasoningEfforts?.length))
   return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'reasoning', explicitDeclaration)
@@ -84,6 +90,12 @@ function providerModelConfigWasDeclared(provider: AIProvider, modelId: string): 
   return (provider.modelConfigs ?? []).some((item) => sameModelId(item.id, modelId))
 }
 
+function providerModelReasoningWasDeclared(provider: AIProvider, modelId: string): boolean {
+  return (provider.modelConfigs ?? []).some((item) =>
+    sameModelId(item.id, modelId) && Boolean(item.reasoningMode || item.reasoningEfforts?.length),
+  )
+}
+
 function sameModelId(left: string | undefined, right: string | undefined): boolean {
   return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase())
 }
@@ -96,7 +108,7 @@ export function modelSupportsSamplingControls(provider: AIProvider | undefined, 
   const canUseConfigReasoning = canUseModelReasoningMetadata(provider, config)
   if (isOpenAIReasoningModel(provider, model) || (canUseConfigReasoning && config.reasoningMode === 'openai-effort')) return false
   if (isKimiThinkingModel(provider, model) || (canUseConfigReasoning && config.reasoningMode === 'kimi-thinking')) return false
-  if ((isDeepSeekThinkingModel(provider, model) || (canUseConfigReasoning && config.reasoningMode === 'deepseek-thinking')) && reasoningEffort !== 'none' && reasoningEffort !== 'minimal') return false
+  if ((isDeepSeekThinkingModel(provider, model) || (canUseConfigReasoning && config.reasoningMode === 'deepseek-thinking')) && reasoningEffort !== 'none') return false
   const reasoningEnabled = Boolean(reasoningEffort && reasoningEffort !== 'none' && reasoningEffort !== 'minimal')
   if (!reasoningEnabled) return true
   return ![
@@ -215,7 +227,7 @@ export function isTogetherReasoningModel(provider: AIProvider, model: string): b
 
 export function isFireworksReasoningModel(provider: AIProvider, model: string): boolean {
   if (!isProviderFamily(provider, 'fireworks', /fireworks|api\.fireworks\.ai/i)) return false
-  return fireworksReasoningProfile(model) !== undefined
+  return getFireworksReasoningEffortOptions(model).length > 0
 }
 
 export function isPerplexityReasoningModel(provider: AIProvider, model: string): boolean {
@@ -296,46 +308,12 @@ function togetherReasoningEffortOptions(_model: string): ReasoningEffort[] {
   return ['low', 'medium', 'high']
 }
 
-type FireworksReasoningProfile =
-  | 'qwen3'
-  | 'minimax-m2'
-  | 'deepseek-binary'
-  | 'deepseek-v4'
-  | 'glm-binary'
-  | 'glm-5.2'
-  | 'gpt-oss'
-
 export function getFireworksReasoningEffortOptions(model: string): ReasoningEffort[] {
-  const profile = fireworksReasoningProfile(model)
-  if (profile === 'gpt-oss' || profile === 'minimax-m2') return ['low', 'medium', 'high']
-  if (profile === 'deepseek-v4') return ['none', 'low', 'medium', 'high', 'xhigh', 'max']
-  if (profile === 'glm-5.2') return ['none', 'high', 'max']
-  if (profile === 'qwen3' || profile === 'deepseek-binary' || profile === 'glm-binary') return ['none', 'low', 'medium', 'high']
-  return []
+  return getProviderFireworksReasoningEffortOptions(model)
 }
 
 export function normalizeFireworksReasoningEffort(model: string, effort: ReasoningEffort): ReasoningEffort | undefined {
-  const profile = fireworksReasoningProfile(model)
-  if (!profile) return undefined
-  if (profile === 'gpt-oss' || profile === 'minimax-m2') {
-    if (effort === 'none') return undefined
-    if (effort === 'minimal') return 'low'
-    if (effort === 'xhigh' || effort === 'max') return 'high'
-    return ['low', 'medium', 'high'].includes(effort) ? effort : 'medium'
-  }
-  if (profile === 'deepseek-v4') {
-    if (effort === 'minimal') return 'low'
-    if (effort === 'xhigh' || effort === 'max') return 'max'
-    return ['none', 'low', 'medium', 'high'].includes(effort) ? effort : 'high'
-  }
-  if (profile === 'glm-5.2') {
-    if (effort === 'none') return 'none'
-    if (effort === 'xhigh' || effort === 'max') return 'max'
-    return 'high'
-  }
-  if (effort === 'minimal') return 'low'
-  if (effort === 'xhigh' || effort === 'max') return 'high'
-  return ['none', 'low', 'medium', 'high'].includes(effort) ? effort : 'medium'
+  return normalizeProviderFireworksReasoningEffort(model, effort)
 }
 
 export function isXAIMultiAgentReasoningModel(model: string): boolean {
@@ -354,23 +332,6 @@ function isProviderFamily(provider: AIProvider, presetId: string, pattern: RegEx
   if (provider.presetId === presetId || provider.detectedPresetId === presetId) return true
   const text = [provider.id, provider.name, provider.baseUrl].filter(Boolean).join(' ')
   return pattern.test(text)
-}
-
-function fireworksReasoningProfile(model: string): FireworksReasoningProfile | undefined {
-  const normalized = normalizeModelId(model)
-  const compact = normalized.replace(/[._-]/g, '')
-  if (/^gpt-oss(?:[-.]|$)/.test(normalized)) return 'gpt-oss'
-  if (/^qwen3(?:p5)?(?:[-.]|$)/.test(normalized) || /^qwen3\.5(?:[-.]|$)/.test(normalized)) return 'qwen3'
-  if (/^minimax-m2(?:[-.]|$)/.test(normalized)) return 'minimax-m2'
-  if (/^deepseek/.test(normalized)) {
-    if (/v4/.test(compact)) return 'deepseek-v4'
-    if (/v3p?[12]/.test(compact)) return 'deepseek-binary'
-  }
-  if (/^glm/.test(normalized)) {
-    if (/glm52/.test(compact)) return 'glm-5.2'
-    if (/glm4[567]|glm51/.test(compact)) return 'glm-binary'
-  }
-  return undefined
 }
 
 export function normalizeModelId(model: string): string {

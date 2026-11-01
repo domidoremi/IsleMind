@@ -4139,6 +4139,7 @@
   "providerIssue": {
     "missingBaseUrl": "カスタムエンドポイントには Base URL が必要です。互換プロトコル自体はプロバイダーのアドレスを提供しません。",
     "invalidBaseUrl": "カスタム Base URL は有効な http:// または https:// アドレスである必要があります。",
+    "githubModelsRetired": "GitHub Models は 2026 年 7 月 30 日に提供を終了し、推論 API とモデル一覧は利用できません。保存済みの設定は保持されます。別のプロバイダーを明示的に選択してください：https://docs.github.com/en/github-models",
     "mimoTpKeyWrongMode": "MiMo の tp- キーは Token Plan 用です。Token Plan モードと対応リージョンへ切り替えてください。",
     "mimoSkKeyWrongMode": "MiMo の sk- キーは従量課金用です。従量課金モードへ切り替えるか、tp- Token Plan キーを使用してください。",
     "mimoTpKeyPaygUrl": "MiMo の tp- Token Plan キーは従量課金 Base URL を呼び出せません。token-plan-*.xiaomimimo.com/v1 を使用してください。",

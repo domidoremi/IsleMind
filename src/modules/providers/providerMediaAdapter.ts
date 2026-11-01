@@ -8,6 +8,7 @@ export interface ProviderAudioTranscriptionInput {
   mimeType: string
   fileName?: string
   model?: string
+  language?: string
 }
 
 export interface ProviderSpeechInput {
@@ -49,11 +50,25 @@ export function createProviderMediaAdapter(dependencies: ProviderMediaAdapterDep
       if (provider.type !== 'openai' && provider.type !== 'openai-compatible') {
         throw new Error('audio_transcription_unavailable')
       }
+      const cohere = isCohereTranscriptionRoute(provider, dependencies.resolveBaseUrl(provider))
+      let fileName = input.fileName ?? 'audio.m4a'
+      if (cohere) {
+        if (!input.model?.trim()) throw new Error('audio_transcription_model_required')
+        if (!input.language?.trim()) throw new Error('audio_transcription_language_required')
+        const extension = cohereAudioExtension(input.mimeType)
+        if (!extension || input.fileName && !/\.(?:flac|mp3|mpeg|mpga|ogg|wav)$/i.test(input.fileName)) {
+          throw new Error('audio_transcription_format_unavailable')
+        }
+        fileName = input.fileName ?? `audio.${extension}`
+      }
       const form = new FormData()
       form.append('model', model)
+      if (input.language?.trim()) form.append('language', input.language.trim())
+      if (cohere) form.append('response_format', 'json')
+      // Cohere requires file last; other optional fields must precede it.
       form.append('file', {
         uri: `data:${input.mimeType};base64,${input.audioBase64}`,
-        name: input.fileName ?? 'audio.m4a',
+        name: fileName,
         type: input.mimeType,
       } as unknown as Blob)
       const response = await dependencies.request(`${trimTrailingSlash(dependencies.resolveBaseUrl(provider))}/audio/transcriptions`, {
@@ -84,6 +99,27 @@ export function createProviderMediaAdapter(dependencies: ProviderMediaAdapterDep
       if (!response.ok) throw new ProviderHttpError(response.status, await safeProviderResponseText(response))
       return arrayBufferToBase64(await response.arrayBuffer())
     },
+  }
+}
+
+function isCohereTranscriptionRoute(provider: AIProvider, baseUrl: string): boolean {
+  if (provider.presetId === 'cohere' || provider.detectedPresetId === 'cohere') return true
+  try {
+    const url = new URL(baseUrl)
+    return ['api.cohere.ai', 'api.cohere.com'].includes(url.hostname.toLowerCase())
+      && /^\/compatibility\/v1(?:\/|$)/.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
+function cohereAudioExtension(mimeType: string): string | undefined {
+  switch (mimeType.split(';')[0].trim().toLowerCase()) {
+    case 'audio/flac': case 'audio/x-flac': return 'flac'
+    case 'audio/mpeg': case 'audio/mp3': case 'audio/mpga': return 'mp3'
+    case 'audio/ogg': case 'application/ogg': return 'ogg'
+    case 'audio/wav': case 'audio/wave': case 'audio/x-wav': return 'wav'
+    default: return undefined
   }
 }
 

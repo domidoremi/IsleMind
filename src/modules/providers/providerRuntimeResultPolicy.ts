@@ -1,4 +1,6 @@
 import type { ChatErrorCode } from '@/types/providerContracts'
+import type { ProviderStreamOutcome } from './providerStreamLifecycle'
+import type { ProviderResponseParsingResult } from './providerResponseParsing'
 
 export interface CredentialScopedResult {
   credentialGroupId?: string
@@ -7,6 +9,8 @@ export interface CredentialScopedResult {
 export interface ProviderRuntimeError extends Error {
   credentialGroupId?: string
   chatErrorCode?: ChatErrorCode
+  streamOutcome?: ProviderStreamOutcome
+  partialResult?: ProviderResponseParsingResult
 }
 
 export type RuntimeErrorCallback = (error: Error) => void

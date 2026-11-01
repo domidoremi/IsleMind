@@ -340,7 +340,9 @@ export async function prepareProviderRuntimePipeline(input: ProviderRuntimePipel
   }
   const issue = getProviderConfigIssue(runtimeReq.provider, runtimeReq.provider.apiKey)
   if (issue) {
-    effectiveReq.provider = updateCredentialGroupHealth(effectiveReq.provider, credential.credentialGroupId, false)
+    if (issue.code !== 'endpoint_unavailable') {
+      effectiveReq.provider = updateCredentialGroupHealth(effectiveReq.provider, credential.credentialGroupId, false)
+    }
     return blocked('credential', requestedModel, upstreamModel, effectiveReq, credential.credentialGroupId, providerRuntimeError(`${issue.code}: ${issue.message}`, credential.credentialGroupId))
   }
   const hostedIssue = getHostedProviderSupportIssue(runtimeReq.provider, 'chat')

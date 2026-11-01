@@ -230,7 +230,11 @@ export const conversationAssistantFinalizationRuntime =
         content: toUserFacingError(input.error.message, errorCode),
         errorCode,
         providerId: input.providerId,
+        providerUsage: input.error.partialResult?.usage,
       })
+    },
+    shouldPenalizeProviderFailure(error) {
+      return error.streamOutcome?.status !== 'incomplete'
     },
   })
 

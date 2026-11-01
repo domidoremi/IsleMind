@@ -5,6 +5,8 @@ import { buildProviderFallbackCandidates } from './providerFallbackCandidates'
 import type { AIProvider } from '@/types/providerContracts'
 import type { ProviderRuntimeChatRequest } from '@/modules/providers'
 import { providerRequestSerializer } from './providerRequestBinding'
+import { getReasoningEffortOptions, providerSupportsReasoning } from '@/utils/modelReasoning'
+import { getModelConfig } from '@/types/modelCatalog'
 
 const provider: AIProvider = {
   id: 'profile-test', name: 'Profile test', type: 'openai', enabled: true,
@@ -52,6 +54,28 @@ it('keeps explicit provider restrictions consistent across controls and admissio
   expect(getConversationReasoningEffortOptions(restricted, 'reasoner')).toEqual([])
   const candidates = buildProviderFallbackCandidates({ providers: [restricted], original: { providerId: restricted.id, model: 'reasoner' }, requiredCapabilities: ['reasoning'] })
   expect(candidates.candidates).toHaveLength(0)
+})
+
+it('does not inherit another supplier reasoning controls for Fireworks GLM-5.2', () => {
+  const fireworks: AIProvider = { ...provider, type: 'openai-compatible', presetId: 'fireworks',
+    name: 'Fireworks', baseUrl: 'https://api.fireworks.ai/inference/v1', modelAliases: [],
+    models: ['accounts/fireworks/models/glm-5.2'] }
+  expect(getReasoningEffortOptions(fireworks, fireworks.models[0])).toEqual(['none', 'high', 'max'])
+  expect(getConversationReasoningEffortOptions(fireworks, fireworks.models[0])).toEqual(['none', 'high', 'max'])
+  const declared = { ...fireworks, modelConfigs: [{
+    ...getModelConfig(fireworks.models[0], fireworks.type), reasoningMode: 'fireworks-reasoning-effort' as const,
+    reasoningEfforts: ['high' as const], source: 'remote' as const,
+  }] }
+  expect(getReasoningEffortOptions(declared, declared.models[0])).toEqual(['high'])
+})
+
+it('keeps Novita response reasoning separate from selectable request controls', () => {
+  const novita: AIProvider = { ...provider, type: 'openai-compatible', presetId: 'novita',
+    name: 'Novita', baseUrl: 'https://api.novita.ai/openai/v1', modelAliases: [],
+    models: ['zai-org/glm-5.2'], capabilities: { ...provider.capabilities!, reasoningEffort: false } }
+  expect(getReasoningEffortOptions(novita, novita.models[0])).toEqual([])
+  expect(providerSupportsReasoning(novita, novita.models[0])).toBe(false)
+  expect(getConversationReasoningEffortOptions(novita, novita.models[0])).toEqual([])
 })
 
 it('uses the serialized Responses protocol for attachment-dependent conformance', () => {

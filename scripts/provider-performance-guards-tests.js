@@ -109,16 +109,27 @@ async function run() {
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'PROVIDER_MANUAL_SORT_RAIL_PROVIDER_LIMIT', 'provider settings gates drag rails on heavy imported lists')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT', 'provider settings defers heavy inline detail mount on imported lists')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'DeferredProviderDetails', 'provider settings renders expanded details through a deferring wrapper')
-  assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', '<ScrollView', 'provider settings uses a deterministic scroll layout for provider cards')
-  assertSourceExcludes('src/components/providers/ProviderSettingsContent.tsx', 'FlashList', 'provider settings avoids virtualized row measurement gaps on provider cards')
-  assertSourceIncludes('src/components/providers/ProviderCardGrid.tsx', 'aspectRatio: 1', 'provider settings uses stable square provider tiles')
+  assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', '<ScrollView', 'provider settings uses a deterministic scroll layout for provider connections')
+  assertSourceExcludes('src/components/providers/ProviderSettingsContent.tsx', 'FlashList', 'provider settings avoids virtualized row measurement gaps on provider connections')
+  assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', '<View accessibilityRole="list" testID="provider-connections"', 'provider settings retains its accessible connection-list identity')
   const providerRows = readSource('src/components/providers/ProviderSettingsContent.tsx').split('function ProviderListRow(')[1]?.split('function DeferredProviderDetails(')[0]
   assert.ok(providerRows, 'provider settings retains its provider row surface')
-  assert.ok(providerRows.includes('flex: 1, minWidth: 0'), 'provider row text stays within the available width')
-  assert.ok(/minHeight:\s*(?:[7-9]\d|\d{3,})/.test(providerRows), 'provider rows retain a generous minimum height and can grow with scaled text')
-  assert.equal(providerRows.includes('height: 76'), false, 'provider rows do not fix the height of scaled text')
-  assert.equal(providerRows.includes('numberOfLines='), false, 'provider names wrap rather than truncate at large font sizes')
-  assert.ok(providerRows.includes('accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}'), 'provider rows expose full names and state to accessibility')
+  assert.ok(providerRows.includes('return <ProviderConnectionRow'), 'provider settings delegates row layout to the rendered connection component')
+  const connectionRow = readSource('src/components/providers/ProviderConnectionRow.tsx')
+  const connectionRowStyles = Object.fromEntries(['row', 'open', 'identity'].map(name => {
+    const style = connectionRow.match(new RegExp(`\\b${name}:\\s*\\{([^}]+)\\}`))?.[1]
+    assert.ok(style, `the rendered connection row retains its ${name} layout`)
+    assert.ok(/\bminWidth:\s*0\b/.test(style), `connection ${name} layout can shrink within the available width`)
+    assert.equal(/(?:^|,)\s*height\s*:/.test(style), false, `connection ${name} layout does not fix the height of scaled text`)
+    return [name, style]
+  }))
+  for (const name of ['open', 'identity']) {
+    assert.ok(/\bflex:\s*1\b/.test(connectionRowStyles[name]), `connection ${name} text uses the available width`)
+  }
+  assert.ok(Number(connectionRowStyles.open.match(/\bminHeight:\s*(\d+)/)?.[1]) >= 70, 'provider rows retain a generous minimum height and can grow with scaled text')
+  assert.ok(/<Text numberOfLines=\{3\}[^>]*>\{props\.name\}<\/Text>/.test(connectionRow), 'visible provider names wrap within a bounded three-line identity column')
+  assert.ok(/<Text numberOfLines=\{1\}[^>]*>\{props\.endpoint\}<\/Text>/.test(connectionRow), 'visible provider endpoints are bounded without widening the row')
+  assert.ok(connectionRow.includes("accessibilityLabel={[props.name, props.stateLabel, props.modelsLabel, props.endpoint].join('. ')}"), 'provider rows expose full names, state, models and endpoints to accessibility')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'await importSession.save(', 'provider settings delegates import persistence to its session')
   assertSourceIncludes('src/components/providers/useProviderImportSession.ts', "persist: 'deferred'", 'provider import defers the heavy provider persistence flush after the UI recovers')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', "await publishImportProgress({ stage: 'parsing'", 'provider import starts the foreground-service notification before yielding to background')

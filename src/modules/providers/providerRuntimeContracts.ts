@@ -26,6 +26,7 @@ export interface ProviderRuntimeChatMessage {
   reasoningContent?: string
   responseItems?: Record<string, unknown>[]
   providerContentBlocks?: Record<string, unknown>[]
+  googleContentParts?: Record<string, unknown>[]
   toolCallId?: string
   name?: string
   toolCalls?: ProviderToolCall[]

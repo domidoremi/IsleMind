@@ -63,6 +63,7 @@ export interface ConversationAssistantFailureInput {
   content: string
   errorCode: ChatErrorCode
   providerId?: string
+  providerUsage?: MessageUsage
   completedAt: number
 }
 
@@ -147,8 +148,9 @@ export function createConversationAssistantMessageProjectionPolicy(
 
     buildFailurePlan(input: ConversationAssistantFailureInput): ConversationAssistantFailurePlan {
       const message = input.message
-      const outputText = input.content || message?.content || ''
-      const usage = dependencies.buildEstimatedUsage(
+      const outputText = message?.content || input.content || ''
+      const usage = input.providerUsage?.source === 'provider' ? input.providerUsage
+        : message?.usage?.source === 'provider' ? message.usage : dependencies.buildEstimatedUsage(
         selectUsageInputMessages(input.conversation, message?.id ?? ''),
         outputText,
       )
@@ -164,8 +166,8 @@ export function createConversationAssistantMessageProjectionPolicy(
           completedAt: input.completedAt,
           durationMs: message?.startedAt ? input.completedAt - message.startedAt : message?.durationMs,
           usage,
-          estimatedTokens: true,
-          tokenCount: dependencies.estimateTextTokens(outputText),
+          estimatedTokens: usage.source === 'estimated',
+          tokenCount: usage.outputTokens ?? dependencies.estimateTextTokens(outputText),
         },
         taskCompletion: {
           status: 'failed',

@@ -26,7 +26,7 @@ export function resolveProviderModelExecutionProfile(input: ProfileRequest) {
   const modelConfig = getModelConfig(model, provider.type, provider.modelConfigs)
   const adapter = providerProtocolAdapterPolicy.resolve(request as ProviderRuntimeChatRequest)
   const raw = resolveProviderCapabilityManifest({ ...request, protocolAdapterId: adapter.id })
-  const capabilities: ProviderFallbackModelProjection['capabilities'] = ['text']
+  const capabilities: ProviderFallbackModelProjection['capabilities'] = raw.modalities.input.text ? ['text'] : []
   if (raw.modalities.input.image && canSend(provider, 'vision', provider.capabilities?.vision === true)) capabilities.push('image')
   if (raw.modalities.input.file && canSend(provider, 'files', provider.capabilities?.files === true)) capabilities.push('file')
   if (raw.modalities.input.audio && canSend(provider, 'audio', provider.capabilities?.audioInput === true)) capabilities.push('audio')

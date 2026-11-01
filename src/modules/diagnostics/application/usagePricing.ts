@@ -11,6 +11,18 @@ export interface UsageCostResult {
   pricing?: UsagePricingSnapshot
 }
 
+export function isBuiltInUsagePricingEndpoint(providerType: string, baseUrl: string): boolean {
+  const host = ({ openai: 'api.openai.com', anthropic: 'api.anthropic.com', google: 'generativelanguage.googleapis.com' } as Record<string, string>)[providerType]
+  if (!host) return false
+  try {
+    const url = new URL(baseUrl)
+    return url.protocol === 'https:' && url.hostname === host
+      && (!url.port || url.port === '443') && !url.username && !url.password
+  } catch {
+    return false
+  }
+}
+
 export function normalizeUsagePricingModel(model: string): string {
   return model
     .trim()

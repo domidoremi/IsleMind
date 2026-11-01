@@ -395,7 +395,7 @@ const requiredContracts = [
       ['src/modules/providers/providerConfigPolicy.ts', /export function createProviderConfigPolicy/],
       ['src/modules/providers/providerResponseParsing.ts', /export function createProviderResponseParsingPolicy/],
       ['src/modules/providers/providerStreamParsing.ts', /export function createProviderStreamParsingPolicy/],
-      ['src/modules/providers/providerStreamParsing.ts', /const \{ sawDataLine, terminal \} = visitProviderSseData\(chunk, appendPayload\)/],
+      ['src/modules/providers/providerStreamParsing.ts', /const \{ sawDataLine, terminal, malformedData \} = visitProviderSseData\(chunk, appendPayload\)/],
       ['src/modules/providers/providerSseData.ts', /export function visitProviderSseData/],
       ['src/modules/providers/providerSseData.ts', /terminal\s*=\s*false/],
       ['src/modules/providers/providerSseData.ts', /terminal\s*=\s*true/],
@@ -12500,7 +12500,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       'src/modules/providers/providerStreamParsing.ts',
       [
         'export function createProviderStreamParsingPolicy() {}',
-        'const { sawDataLine, terminal } = visitProviderSseData(chunk, appendPayload)',
+        'const { sawDataLine, terminal, malformedData } = visitProviderSseData(chunk, appendPayload)',
       ].join('\n'),
     ],
     [

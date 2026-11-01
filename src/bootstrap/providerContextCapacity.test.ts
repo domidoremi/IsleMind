@@ -97,6 +97,86 @@ test('an uncapped wire request reserves the model maximum, never the app default
   expect(checkFinalProviderRequestCapacity({ ...req, body: { ...body, max_tokens: 100 } }).reservedOutputTokens).toBe(100)
 })
 
+test.each(['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'])(
+  'uncapped %s reserves the exact documented 384K maximum, not a rounded display value', (model) => {
+    const req = request()
+    req.model = model
+    req.provider.presetId = 'deepseek'
+    req.provider.baseUrl = 'https://api.deepseek.com'
+    expect(checkFinalProviderRequestCapacity({ ...req, body: { messages: [] } }).reservedOutputTokens).toBe(393216)
+    expect(getModelConfig(model, req.provider.type).outputTokenLimit).toEqual({ tokens: 393216, source: 'catalog' })
+  },
+)
+
+test.each(['qwen3.8-27b', 'qwen3.7-max', 'glm-5.2'])(
+  'DashScope %s legacy answer caps reserve the separately bounded thinking output', (model) => {
+    const req = request(100_000)
+    req.model = model
+    req.provider.presetId = 'dashscope'
+    req.provider.baseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    const body = { messages: [], max_tokens: 100, enable_thinking: true, thinking_budget: 500 }
+    expect(checkFinalProviderRequestCapacity({ ...req, body }).reservedOutputTokens).toBe(600)
+  },
+)
+
+test('DashScope combined caps include the documented ten-token tolerance without double counting thinking', () => {
+  const req = request(100_000)
+  req.model = 'qwen3.8-max'
+  req.provider.presetId = 'dashscope'
+  const body = { messages: [], max_completion_tokens: 100, enable_thinking: true, thinking_budget: 500 }
+  expect(checkFinalProviderRequestCapacity({ ...req, body }).reservedOutputTokens).toBe(110)
+})
+
+test('DashScope thinking reservation rejects a legacy answer cap that otherwise appears to fit', () => {
+  const req = request(700)
+  req.model = 'qwen3.8-27b'
+  req.provider.presetId = 'dashscope'
+  req.provider.modelConfigs = mapOpenAICompatibleModels({ data: [{
+    id: req.model, context_window: 700, max_output_tokens: 512,
+  }] }, 'openai-compatible')
+  const body = { messages: [], max_tokens: 100, enable_thinking: true, thinking_budget: 500 }
+  expect(() => checkFinalProviderRequestCapacity({ ...req, body })).toThrow('context_capacity')
+  expect(checkFinalProviderRequestCapacity({
+    ...req, body: { ...body, enable_thinking: false },
+  }).reservedOutputTokens).toBe(100)
+})
+
+test('DashScope combined-cap tolerance also participates in final context admission', () => {
+  const req = request(1000)
+  req.model = 'qwen3.8-max'
+  req.provider.presetId = 'dashscope'
+  req.provider.modelConfigs = mapOpenAICompatibleModels({ data: [{
+    id: req.model, context_window: 1000, max_output_tokens: 512,
+  }] }, 'openai-compatible')
+  const measured = checkFinalProviderRequestCapacity({ ...req, body: { messages: [], max_completion_tokens: 100 } })
+  const capWithoutTolerance = measured.limit - measured.rawInputTokens
+  expect(() => checkFinalProviderRequestCapacity({
+    ...req, body: { messages: [], max_completion_tokens: capWithoutTolerance },
+  })).toThrow('context_capacity')
+})
+
+test.each(['glm-5.3', 'deepseek-v4-pro'])(
+  'DashScope %s legacy caps already include thinking, including ignored GLM thinking_budget', (model) => {
+    const req = request(100_000)
+    req.model = model
+    req.provider.presetId = 'dashscope'
+    expect(checkFinalProviderRequestCapacity({ ...req, body: { messages: [], max_tokens: 100, thinking_budget: 500 } }).reservedOutputTokens).toBe(100)
+  },
+)
+
+test('DashScope cannot treat unbounded default or mandatory thinking as an answer-only cap', () => {
+  const req = request(100_000)
+  req.provider.presetId = 'dashscope'
+  for (const model of ['qwen3.8-27b', 'qwen3.8-2.4t-a95b', 'qwen3.7-max-preview']) {
+    req.model = model
+    expect(() => checkFinalProviderRequestCapacity({ ...req, body: { messages: [], max_tokens: 100 } })).toThrow('reasoning_estimate_unavailable')
+  }
+  req.model = 'qwen3.8-27b'
+  expect(checkFinalProviderRequestCapacity({ ...req, body: { messages: [], max_tokens: 100, enable_thinking: false } }).reservedOutputTokens).toBe(100)
+  req.model = 'qwen3.8-2.4t-a95b'
+  expect(() => checkFinalProviderRequestCapacity({ ...req, body: { messages: [], max_tokens: 100, enable_thinking: false } })).toThrow('reasoning_estimate_unavailable')
+})
+
 test.each(['id-only discovery', 'legacy remote', 'remerged legacy remote'])(
   '%s cannot turn inferred output defaults into an uncapped bound', (source) => {
     const req = request()

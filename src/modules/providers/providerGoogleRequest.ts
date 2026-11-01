@@ -7,6 +7,7 @@ export interface GoogleRequestMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string | readonly ProviderContentPart[]
   attachmentTarget?: boolean
+  googleContentParts?: readonly Record<string, unknown>[]
 }
 
 export interface GoogleRequestShape {
@@ -60,17 +61,26 @@ export function createGoogleRequestBodyBuilder<
         : undefined
 
       for (const message of request.messages) {
-        const parts = toGoogleContentParts(message.content)
+        const parts = message.role === 'assistant' && message.googleContentParts?.length
+          ? message.googleContentParts.map((part) => ({ ...part }))
+          : toGoogleContentParts(message.content)
         if (message === attachmentMessage) {
           for (const attachment of attachments) {
             const part = dependencies.buildAttachmentPart(attachment)
             if (part) parts.push(part)
           }
         }
-        contents.push({
-          role: message.role === 'assistant' ? 'model' : 'user',
-          parts,
-        })
+        const role = message.role === 'assistant' ? 'model' : 'user'
+        const previous = contents[contents.length - 1]
+        const previousParts = previous?.parts as Record<string, unknown>[] | undefined
+        // Parallel results are a single user turn after all model call parts.
+        if (role === 'user' && previous?.role === 'user'
+          && parts.every((part) => part.functionResponse)
+          && previousParts?.every((part) => part.functionResponse)) {
+          previousParts.push(...parts)
+        } else {
+          contents.push({ role, parts })
+        }
       }
 
       const requestParameters = dependencies.resolveRequestParameters(request)
