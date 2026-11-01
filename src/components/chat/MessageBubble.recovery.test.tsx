@@ -1,9 +1,13 @@
 import { act, fireEvent, render } from '@testing-library/react-native'
 import type { Message } from '@/types/chatContracts'
 import { MessageBubble } from './MessageBubble'
+import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsContracts'
+
+let mockFamily: CanonicalThemeId = 'minimal'
+let mockMode: 'light' | 'dark' = 'light'
 
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }))
-jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal'), canonicalThemeId: 'minimal' }) }))
+jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors(mockMode, mockFamily), canonicalThemeId: mockFamily }) }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
 jest.mock('@/store/settingsStore', () => ({ useSettingsStore: (select: any) => select({ settings: { hapticsEnabled: false } }) }))
 jest.mock('@/store/chatStreamingStore', () => ({
@@ -41,6 +45,74 @@ jest.mock('./tracePresentation', () => ({
 
 const message: Message = { id: 'cancelled-answer', role: 'assistant', status: 'cancelled', content: '', timestamp: 1 }
 const props = { conversationId: 'chat', message, index: 0, motion: 'none' as const, viewportHeight: 800 }
+beforeEach(() => { mockFamily = 'minimal'; mockMode = 'light' })
+
+it('locks a pending copy and retains its eventual receipt through every appearance', async () => {
+  let complete!: (value: boolean) => void
+  const onCopy = jest.fn(() => new Promise<boolean>(resolve => { complete = resolve }))
+  const answer = { ...message, status: 'done' as const, content: 'A completed answer.' }
+  const tree = () => <MessageBubble {...props} message={answer} onCopy={onCopy} />
+  const view = await render(tree())
+  await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
+  expect(view.getByRole('button', { name: 'common.copy' })).toBeDisabled()
+  await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
+  for (const family of CANONICAL_THEME_IDS) for (const mode of ['dark', 'light'] as const) {
+    mockFamily = family; mockMode = mode
+    await view.rerender(tree())
+    expect(view.queryByRole('button', { name: 'common.copied' })).toBeNull()
+    expect(view.getByRole('button', { name: 'common.copy' })).toBeDisabled()
+  }
+  expect(onCopy).toHaveBeenCalledTimes(1)
+  await act(() => complete(true))
+  expect(view.getByRole('button', { name: 'common.copied' })).toBeEnabled()
+  expect(view.queryByText('common.copied')).toBeNull()
+})
+
+it.each(['false', 'reject'] as const)('shows a local copy failure for %s and keeps the answer available for retry', async outcome => {
+  const onCopy = outcome === 'false' ? jest.fn().mockResolvedValueOnce(false) : jest.fn().mockRejectedValueOnce(new Error('Clipboard unavailable'))
+  onCopy.mockResolvedValueOnce(true)
+  const answer = { ...message, status: 'done' as const, content: 'Keep this answer.' }
+  const view = await render(<MessageBubble {...props} message={answer} onCopy={onCopy} />)
+  await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
+  expect(view.getByText('chat.clipboardUnavailable')).toBeTruthy()
+  expect(view.getByText(answer.content)).toBeTruthy()
+  expect(view.queryByRole('button', { name: 'common.copied' })).toBeNull()
+  await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
+  expect(view.getByRole('button', { name: 'common.copied' })).toBeTruthy()
+  expect(view.queryByText('chat.clipboardUnavailable')).toBeNull()
+})
+
+it('cannot mark a changed answer copied when an older clipboard operation finishes', async () => {
+  let complete!: (value: boolean) => void
+  const onCopy = jest.fn(() => new Promise<boolean>(resolve => { complete = resolve }))
+  const answer = { ...message, status: 'done' as const, content: 'First version.' }
+  const view = await render(<MessageBubble {...props} message={answer} onCopy={onCopy} />)
+  await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
+  await view.rerender(<MessageBubble {...props} message={{ ...answer, content: 'Updated version.' }} onCopy={onCopy} />)
+  await act(() => complete(true))
+  expect(view.queryByRole('button', { name: 'common.copied' })).toBeNull()
+  expect(view.getByText('Updated version.')).toBeTruthy()
+  expect(view.getByRole('button', { name: 'common.copy' })).toBeEnabled()
+})
+
+it('does not fabricate success or failure for a legacy void copy handler', async () => {
+  const onCopy = jest.fn()
+  const view = await render(<MessageBubble {...props} message={{ ...message, status: 'done', content: 'Answer.' }} onCopy={onCopy} />)
+  await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
+  expect(onCopy).toHaveBeenCalledTimes(1)
+  expect(view.queryByRole('button', { name: 'common.copied' })).toBeNull()
+  expect(view.queryByText('chat.clipboardUnavailable')).toBeNull()
+})
+
+it('updates the work-artifact copy control only after its verified result', async () => {
+  const onCopyWorkArtifact = jest.fn().mockResolvedValue(true)
+  const answer = { ...message, status: 'done' as const, content: '## Summary\n- Ready.\n## Action items\n- Owner: Alex; Next: Review the draft.' }
+  const view = await render(<MessageBubble {...props} message={answer} onCopyWorkArtifact={onCopyWorkArtifact} />)
+  await fireEvent.press(view.getByRole('button', { name: 'messageBubble.copyWorkArtifact' }))
+  expect(onCopyWorkArtifact).toHaveBeenCalledWith(answer)
+  expect(view.getByRole('button', { name: 'common.copied' })).toBeTruthy()
+  expect(view.queryByText('messageBubble.copyWorkArtifactCopied')).toBeNull()
+})
 
 it.each(['', 'Partial reply'])('offers an explicit retry after cancellation with content %j', async content => {
   const onRetry = jest.fn()

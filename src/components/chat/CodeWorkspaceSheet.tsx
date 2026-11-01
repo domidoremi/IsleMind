@@ -15,7 +15,7 @@ import { useMotionPreference } from '@/hooks/useMotionPreference'
 export function CodeWorkspaceSheet({ onClose, onInsertPath }: { onClose: () => void; onInsertPath: (path: string) => void }) {
   const { t } = useTranslation()
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
   const [page, setPage] = useState<BuiltInWorkspaceFilePage>({ files: [] })

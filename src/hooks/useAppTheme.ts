@@ -1,4 +1,4 @@
-import { useColorScheme } from 'react-native'
+import { useSystemColorScheme } from './useSystemColorScheme'
 import { getColors, normalizeThemeAccent, normalizeThemeId, resolveThemeMode } from '@/theme/colors'
 import { resolveThemeDesignTokens } from '@/theme/themeTokens'
 import { resolveBackgroundEnvironment } from '@/theme/backgroundEnvironment'
@@ -7,7 +7,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 const BACKGROUND_STARTUP_SEED = Date.now() >>> 0
 
 export function useAppTheme() {
-  const systemScheme = useColorScheme()
+  const systemScheme = useSystemColorScheme()
   const themeMode = useSettingsStore((state) => state.settings.theme)
   const storedThemeId = useSettingsStore((state) => state.settings.themeId)
   const storedThemeAccent = useSettingsStore((state) => state.settings.themeAccent)
@@ -18,7 +18,7 @@ export function useAppTheme() {
   // Keep the bridge and native projection on the same normalized value while
   // a corrupt snapshot is being hydrated.
   const themeAccent = normalizeThemeAccent(storedThemeAccent)
-  const resolvedTheme = resolveThemeMode(themeMode, systemScheme === 'unspecified' ? null : systemScheme)
+  const resolvedTheme = resolveThemeMode(themeMode, systemScheme)
   const canonicalThemeId = normalizeThemeId(storedThemeId)
   const palette = getColors(resolvedTheme, canonicalThemeId, undefined, themeAccent)
   const design = palette.design ?? resolveThemeDesignTokens(canonicalThemeId, resolvedTheme)

@@ -101,11 +101,13 @@ import { ProviderContextCapacityError } from '@/modules/providers'
 import { assistantRunBudgetStore } from './assistantRunGovernance'
 import type { ProviderExecutionTarget } from '@/modules/providers'
 import { providerRequestHasRouteBoundContinuation, type ProviderFailoverRoute } from '@/modules/providers'
+import { finishProviderStream, mergeProviderStreamOutcome, ProviderStreamLifecycleError, type ProviderStreamOutcome, type ProviderStreamProtocol } from '@/modules/providers'
 
 export type { ProviderRuntimeFallbackEffects } from '@/bootstrap/providerRuntimeFallbackEffects'
 
 const CHAT_REQUEST_TIMEOUT_MS = 60000
 const TERMINAL_READER_CLOSE_GRACE_MS = 50
+const CHAT_USAGE_TRAILER_GRACE_MS = 250
 
 type ProviderUsageAttemptReason = 'initial' | 'retry' | 'rectification' | 'fallback'
 
@@ -689,7 +691,15 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       result = parseProviderBufferedStreamResponse(raw, input.req, getWireProviderType(input.req.provider))
       observedUsage = result.usage
     } catch (error) {
-      await recordSuccessfulProviderUsageAttempt(response, input, undefined, 'failed', error instanceof Error ? error.name : 'parse_failed')
+      const partial = error instanceof ProviderStreamLifecycleError ? error.partialResult : undefined
+      observedUsage = partial?.usage
+      await recordSuccessfulProviderUsageAttempt(response, input, observedUsage,
+        error instanceof ProviderStreamLifecycleError && error.streamOutcome.status === 'incomplete' ? 'partial' : 'failed',
+        error instanceof Error ? error.name : 'parse_failed')
+      if (partial?.text) {
+        input.onChunk(partial.text)
+        throwIfProviderRuntimeAborted(input.controller.signal)
+      }
       throw error
     }
     if (result.text || result.providerToolCalls?.length) {
@@ -742,25 +752,44 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   let providerReasoningContent = ''
   let providerResponseItems: Record<string, unknown>[] = []
   let providerContentBlocks: Record<string, unknown>[] = []
+  const googleContentParts: Record<string, unknown>[] = []
+  let providerResponseId: string | undefined
+  let providerStreamOutcome: ProviderStreamOutcome | undefined
+  let protocolTerminal = false
   const textToolCallFilter = createProviderTextToolCallStreamFilter()
   const wireProviderType = getWireProviderType(input.req.provider)
-  const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req), preserveReplayIndexes: true }
+  const adapterProtocol = resolveProviderProtocolAdapter(input.req).protocol
+  const streamProtocol: ProviderStreamProtocol = adapterProtocol === 'anthropic-compatible' ? 'anthropic' : adapterProtocol
+  const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req), preserveReplayIndexes: true, protocol: streamProtocol }
   const providerCitationSource = resolveStreamProviderCitationSource(input.req.provider, wireProviderType)
   const citationCollector = providerCitationSource ? createProviderCitationCollector(providerCitationSource) : undefined
   let completionDelivered = false
+  let completionStarted = false
   let readerCancelRequested = false
+  let readerReleased = false
+  let chatTrailerDeadline: number | undefined
+  let chatTrailerExpired = false
+
+  function releaseReader(): void {
+    if (readerReleased) return
+    try {
+      reader!.releaseLock?.()
+      readerReleased = true
+    } catch {}
+  }
 
   function cancelReader(): void {
     if (readerCancelRequested) return
     readerCancelRequested = true
     try {
-      void Promise.resolve(reader!.cancel()).catch(() => undefined)
+      void Promise.resolve(reader!.cancel()).catch(() => undefined).finally(releaseReader)
     } catch {}
+    releaseReader()
   }
 
   async function completeStream(): Promise<void> {
-    if (completionDelivered) return
-    completionDelivered = true
+    if (completionStarted) return
+    completionStarted = true
 
     const finalParsed = parseProviderStreamChunk(buffer, wireProviderType, streamParseOptions)
     citationCollector?.addSse(buffer)
@@ -785,22 +814,33 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     providerReasoningContent += finalParsed.reasoningContent ?? ''
     providerResponseItems = mergeOpenAIResponseReplayItems([...providerResponseItems, ...(finalParsed.responseItems ?? [])])
     providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(finalParsed.providerContentBlocks ?? [])])
+    googleContentParts.push(...(finalParsed.googleContentParts ?? []))
+    providerResponseId = finalParsed.responseId ?? providerResponseId
+    providerStreamOutcome = mergeProviderStreamOutcome(providerStreamOutcome, finalParsed.streamOutcome)
+    protocolTerminal = protocolTerminal || finalParsed.terminal === true
     for (const trace of finalParsed.traces) {
       input.onTrace?.(trace)
       throwIfProviderRuntimeAborted(input.controller.signal)
     }
-    providerUsage = finalParsed.usage ?? providerUsage
+    if (finalParsed.usage) providerUsage = { ...providerUsage, ...Object.fromEntries(Object.entries(finalParsed.usage).filter(([, value]) => value !== undefined)) } as MessageUsage
     const structuredOutputText = providerStructuredOutputToolCallText(providerToolCalls, input.req.structuredOutput)
     const finalText = structuredOutputText ?? fullText
     const finalResult = withProviderTextToolCallFallback({
       text: finalText,
       traces: providerTraces,
       usage: providerUsage,
+      responseId: providerResponseId,
       providerToolCalls: finalizeProviderToolCalls(filterProviderStructuredOutputToolCalls(providerToolCalls, input.req.structuredOutput)),
       ...(providerReasoningContent ? { reasoningContent: providerReasoningContent } : {}),
       ...(providerResponseItems.length ? { responseItems: providerResponseItems } : {}),
       ...(providerContentBlocks.length ? { providerContentBlocks: sanitizeAnthropicReplayContentBlocks(providerContentBlocks) } : {}),
+      ...(googleContentParts.length ? { googleContentParts } : {}),
     }, finalText)
+    const streamOutcome = finalParsed.malformedData
+      ? { status: 'interrupted' as const, protocol: streamProtocol, reason: 'malformed_sse_data' }
+      : finishProviderStream(streamProtocol, providerStreamOutcome, protocolTerminal)
+    if (streamOutcome.status !== 'completed') throw new ProviderStreamLifecycleError(streamOutcome, finalResult)
+    finalResult.streamOutcome = streamOutcome
     finalResult.citations = dedupeCitations([
       ...extractCitationsFromText(finalResult.text, input.req.retrievalSources),
       ...(citationCollector?.finish(finalResult.text) ?? []),
@@ -825,6 +865,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
         controller: input.controller,
         fallbackEffects: input.fallbackEffects,
       })
+      completionDelivered = true
       if (!recovered) input.onError(emptyProviderResponseError(input.credentialGroupId))
       return
     }
@@ -849,6 +890,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       usage: providerUsage,
       textLength: fullText.length,
     }, runtimeLogOptions(input.req))
+    completionDelivered = true
     input.onDone(withCredentialGroup(finalResult, input.credentialGroupId))
   }
 
@@ -873,18 +915,53 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
         if (settled) return
         settled = true
         clearExecutionTimeout(cancelTimer)
+        releaseReader()
       },
       () => {
         if (settled) return
         settled = true
         clearExecutionTimeout(cancelTimer)
+        releaseReader()
       },
     )
   }
 
+  async function readNextStreamPacket() {
+    const awaitingChatUsage = streamProtocol === 'openai-chat'
+      && providerStreamOutcome?.protocol === 'openai-chat'
+      && (providerStreamOutcome.status === 'completed' || providerStreamOutcome.status === 'incomplete')
+    if (awaitingChatUsage) {
+      chatTrailerDeadline ??= Date.now() + CHAT_USAGE_TRAILER_GRACE_MS
+      if (chatTrailerDeadline <= Date.now()) {
+        chatTrailerExpired = true
+        return { done: true as const, value: undefined }
+      }
+    }
+    const read = reader!.read().catch((error: unknown) => {
+      if (input.controller.signal.aborted) throw error
+      throw new ProviderStreamLifecycleError({
+        status: 'interrupted', protocol: streamProtocol, reason: 'transport_read_failed',
+        message: error instanceof Error ? error.message : 'The response transport closed unexpectedly.',
+      }, withProviderTextToolCallFallback({ text: fullText, traces: providerTraces, usage: providerUsage }, fullText))
+    })
+    if (!awaitingChatUsage) return read
+    // A finish_reason permits completion, but allow a bounded window for usage.
+    let timer: ReturnType<typeof setExecutionTimeout> | undefined
+    try {
+      return await Promise.race([read, new Promise<{ done: true; value: undefined }>((resolve) => {
+        timer = setExecutionTimeout(() => {
+          chatTrailerExpired = true
+          resolve({ done: true, value: undefined })
+        }, Math.max(0, chatTrailerDeadline! - Date.now()))
+      })])
+    } finally {
+      if (timer !== undefined) clearExecutionTimeout(timer)
+    }
+  }
+
   async function readStream() {
     while (true) {
-      const { done, value } = await reader!.read()
+      const { done, value } = await readNextStreamPacket()
       throwIfProviderRuntimeAborted(input.controller.signal)
       if (value) {
         buffer += decoder.decode(value, { stream: !done })
@@ -908,6 +985,10 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
           providerReasoningContent += parsed.reasoningContent ?? ''
           providerResponseItems = mergeOpenAIResponseReplayItems([...providerResponseItems, ...(parsed.responseItems ?? [])])
           providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(parsed.providerContentBlocks ?? [])])
+          googleContentParts.push(...(parsed.googleContentParts ?? []))
+          providerResponseId = parsed.responseId ?? providerResponseId
+          providerStreamOutcome = mergeProviderStreamOutcome(providerStreamOutcome, parsed.streamOutcome)
+          protocolTerminal = protocolTerminal || parsed.terminal === true
           for (const trace of parsed.traces) {
             input.onTrace?.(trace)
             throwIfProviderRuntimeAborted(input.controller.signal)
@@ -919,7 +1000,14 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
             throwIfProviderRuntimeAborted(input.controller.signal)
           }
           citationCollector?.addSse(event)
+          if (parsed.malformedData) {
+            throw new ProviderStreamLifecycleError({
+              status: 'interrupted', protocol: streamProtocol, reason: 'malformed_sse_data',
+            }, { text: fullText, usage: providerUsage, traces: providerTraces, responseId: providerResponseId })
+          }
           if (parsed.terminal) {
+            // Bytes after the protocol terminal cannot extend this response.
+            buffer = ''
             try {
               await completeStream()
             } finally {
@@ -930,7 +1018,12 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
         }
       }
       if (done) {
-        await completeStream()
+        buffer += decoder.decode()
+        try {
+          await completeStream()
+        } finally {
+          if (chatTrailerExpired) cancelReader()
+        }
         return
       }
     }
@@ -956,16 +1049,23 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       response,
       input,
       providerUsage,
-      'failed',
-      error instanceof Error ? error.name : 'stream_failed',
+      error instanceof ProviderStreamLifecycleError && error.streamOutcome.status === 'incomplete' ? 'partial' : 'failed',
+      error instanceof ProviderStreamLifecycleError ? error.streamOutcome.reason : error instanceof Error ? error.name : 'stream_failed',
     )
     // An in-band error may follow partial output/protocol state. Persist the
     // capacity pause instead of treating it as empty output and replaying a turn.
     if (error instanceof ProviderContextCapacityError) throw error
+    // Token caps and safety stops are recoverable partial outcomes, not an
+    // unhealthy supplier or permission to replay a possibly executed tool.
+    if (error instanceof ProviderStreamLifecycleError && error.streamOutcome.status === 'incomplete') throw error
     void recordProviderRuntimeFailure({
       req: input.req,
       credentialGroupId: input.credentialGroupId,
       error,
+      ...(error instanceof ProviderStreamLifecycleError ? {
+        status: error.status, errorCode: error.code,
+        networkError: error.streamOutcome.status === 'interrupted',
+      } : {}),
       streamStarted,
       latencyMs: Date.now() - startedAt,
     })
@@ -973,6 +1073,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
   } finally {
     input.controller.signal.removeEventListener('abort', cancelReader)
     if (!completionDelivered) cancelReader()
+    else if (!protocolTerminal) releaseReader()
   }
   } finally {
     // Covers body-read/parse failures, callback throws, and abort after parse.

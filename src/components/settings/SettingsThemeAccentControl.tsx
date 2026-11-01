@@ -12,6 +12,7 @@ import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { getColors, normalizeThemeAccent } from '@/theme/colors'
 import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
 import { ThemeRadioMark } from './ThemeRadioMark'
+import { useSettingsDraft } from './SettingsEditBoundary'
 
 const THEME_ACCENT_OPTIONS = [
   { id: 'default', color: undefined, labelKey: 'settings.themeAccentDefault' },
@@ -27,10 +28,12 @@ export interface ThemeAccentDraft {
   customAccent?: string
 }
 
-export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
+export function SettingsThemeAccentControl({ value, draftRef, onChange, disabled = false, previewOnly = false }: {
   value?: string
   draftRef: RefObject<ThemeAccentDraft>
   onChange: (accent: string | undefined, event?: GestureResponderEvent) => void
+  disabled?: boolean
+  previewOnly?: boolean
 }) {
   const { t } = useTranslation()
   const { colors, canonicalThemeId, mode } = useAppTheme()
@@ -56,21 +59,27 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
   const normalized = normalizeThemeAccent(draft)
   const applied = Boolean(normalized && normalized === value)
   const invalid = validated && !normalized
+  const rawDirty = draftRef.current.text !== undefined && draft !== (customValue ?? '') && (!normalized || normalized !== value)
+  useSettingsDraft(rawDirty, disabled, () => {
+    draftRef.current.text = undefined
+    setDraft(customValue ?? ''); setValidated(false)
+  }, draft)
   const preview = useMemo(() => getColors(mode, canonicalThemeId, undefined, normalized ?? value), [mode, canonicalThemeId, normalized, value])
   const setText = (text: string) => {
+    if (disabled) return
     draftRef.current.text = text
     setDraft(text)
   }
   const apply = () => {
     setValidated(true)
-    if (!normalized || applied) return
+    if (disabled || !normalized || applied) return
     setText(normalized)
     onChange(normalized)
   }
   const hint = invalid
     ? t('settings.themeAccentInvalid')
     : applied
-      ? t('settings.themeAccentAppliedHint')
+      ? t(previewOnly ? 'settings.themeAccentSelectedHint' : 'settings.themeAccentAppliedHint')
       : normalized
         ? t('settings.themeAccentPreviewHint')
         : t('settings.themeAccentCustomHint')
@@ -84,6 +93,7 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
             label={t(item.labelKey)}
             color={item.color}
             active={value === item.color}
+          disabled={disabled}
             compact={width / fontScale < 600}
             onPress={(event) => { if (value !== item.color) onChange(item.color, event) }}
             testID={`settings-theme-accent-${item.id}`}
@@ -94,7 +104,7 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
           color={customValue ?? savedCustom}
           active={activeCustomThemeAccent}
           compact={width / fontScale < 600}
-          disabled={!customValue && !savedCustom}
+          disabled={disabled || (!customValue && !savedCustom)}
           onPress={(event) => {
             // The radio restores exactly the color it shows, never a hidden draft.
             const accent = customValue ?? savedCustom
@@ -107,6 +117,7 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
         <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>{t('settings.themeAccentCustom')}</Text>
         <View style={{ flexDirection: compact ? 'column' : 'row', gap: 8, alignItems: 'stretch' }}>
           <IsleInput
+            editable={!disabled}
             value={draft}
             onChangeText={setText}
             onFocus={() => setValidated(false)}
@@ -130,9 +141,9 @@ export function SettingsThemeAccentControl({ value, draftRef, onChange }: {
             testID="settings-theme-accent-input"
           />
           <IsleButton
-            label={t(applied ? 'settings.themeAccentApplied' : 'settings.themeAccentApply')}
+            label={t(previewOnly ? 'settings.previewAccent' : applied ? 'settings.themeAccentApplied' : 'settings.themeAccentApply')}
             tone={applied ? 'soft' : 'primary'}
-            disabled={!normalized || applied}
+            disabled={disabled || !normalized || applied}
             testID="settings-theme-accent-apply"
             onPress={apply}
             style={{ minHeight: 48, minWidth: compact ? undefined : 120, alignSelf: 'stretch' }}
@@ -173,7 +184,7 @@ function ThemeAccentSwatch({
 }) {
   const { colors, canonicalThemeId, mode } = useAppTheme()
   const swatchColor = color ?? getColors(mode, canonicalThemeId).ui.control.primaryBackground
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const radioExpression = resolveThemeComponentExpression(canonicalThemeId, 'radio')
   const themeExpression = resolveThemeExpression(canonicalThemeId)
   const borderColor = active

@@ -623,7 +623,7 @@ it.each(['blob', 'download'] as const)('keeps saved Skills intact and retryable 
     await savedPage(screen)
     jest.useFakeTimers()
     await fireEvent.press(screen.getByRole('button', { name: 'skills.exportFile' }))
-    await waitFor(() => expect(screen!.getByRole('alert')).toHaveTextContent('settingsWorkspace.saveFailed'))
+    await waitFor(() => expect(screen!.getByRole('alert')).toHaveTextContent('skills.exportFailed'))
     expect(browser.createObjectURL).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'skills.exportFile' })).toBeEnabled()
     expect(screen.queryByText(/synthetic-private/)).toBeNull()
@@ -1108,7 +1108,7 @@ it('shares only the actual saved Skill envelope and cleans the exact owned expor
   const screen = await managementScreen()
   await savedPage(screen)
   await fireEvent.press(screen.getByRole('button', { name: 'common.share' }))
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('settingsWorkspace.saveFailed'))
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('skills.exportFailed'))
   const [uri, raw] = jest.mocked(FileSystem.writeAsStringAsync).mock.calls[0]
   expect(JSON.parse(raw).skill.id).toBe(savedSkill.id)
   expect(Sharing.shareAsync).toHaveBeenCalledWith(uri, {

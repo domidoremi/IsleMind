@@ -78,7 +78,7 @@ export function ConversationNavigationRail({
   const { width: windowWidth } = useWindowDimensions()
   const { canonicalThemeId, design, colors } = useAppTheme()
   const { t } = useTranslation()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const compact = windowWidth < CONVERSATION_NAVIGATION_MOBILE_BREAKPOINT
   const navigationTokens = design.component.navigation
   // This control lives inside the glass sampling target. Liquid Glass therefore

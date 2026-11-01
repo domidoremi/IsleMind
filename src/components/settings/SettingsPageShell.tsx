@@ -5,23 +5,26 @@ import { router, useLocalSearchParams, useNavigation, usePathname } from 'expo-r
 import { useIsFocused } from 'expo-router/react-navigation'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
-import { IsleScreen } from '@/components/ui/isle'
+import { IslePressable, IsleScreen } from '@/components/ui/isle'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { PageFeedbackBoundary, PageFeedbackIndicator, PageFeedbackRegion } from '@/components/ui/PageFeedback'
 import { resolveSettingsChildReturnAction } from '@/presentation/app-shell/routeReturnPolicy'
 import { restoreAccessibilityFocus } from '@/platform/native/restoreAccessibilityFocus'
 import type { GestureResponderEvent } from 'react-native'
 import { settingsHelpTopic } from '@/presentation/features/settings/settingsRegistry'
 import { SettingsHelpButton } from './SettingsHelp'
 import { SettingsEditBoundary, useSettingsLeave } from './SettingsEditBoundary'
-import { SettingsSectionContext, type SettingsTaskNavigation } from './SettingsSection'
+import { SettingsSectionContext, type SettingsTaskNavigation, type SettingsUndoAction } from './SettingsSection'
 import { LiquidGlassSettingsPageExperience, MaterialSettingsPageExperience, MinimalSettingsPageExperience, MonetSettingsPageExperience } from './theme-experiences/SettingsPageExperiences'
 
 type Props = { title: string; subtitle?: string; children: ReactNode; focusKey?: string; scrollable?: boolean }
 const CONTENT_PADDING_TOP = 8
 const CONTENT_PADDING_BOTTOM = 48
 export function SettingsPageShell(props: Props) {
-  return <SettingsEditBoundary><SettingsPageFrame {...props} /></SettingsEditBoundary>
+  const pathname = usePathname()
+  return <PageFeedbackBoundary scopeKey={pathname}><SettingsEditBoundary><SettingsPageFrame {...props} /></SettingsEditBoundary></PageFeedbackBoundary>
 }
 function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Props) {
   const { colors, canonicalThemeId } = useAppTheme()
@@ -30,13 +33,16 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   const params = useLocalSearchParams<{ returnTo?: string | string[]; section?: string; locate?: string }>()
   const { width, fontScale } = useWindowDimensions()
   const compact = width / fontScale < 430
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const motionRef = useRef(motion)
   motionRef.current = motion
   const leave = useSettingsLeave()
   const navigation = useNavigation()
   const focused = useIsFocused()
   const scrollRef = useRef<ScrollView>(null)
+  const scrollOffset = useRef(0)
+  const taskListOffset = useRef(0)
+  const pendingTaskRestore = useRef<number | null>(null)
   const scrollLayout = useRef({ height: 0, contentHeight: 0, revision: 0 })
   const contentRef = useRef<View>(null)
   const nodes = useRef(new Map<string, View>())
@@ -57,6 +63,7 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   const keyboardFrame = useRef<number | null>(null)
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [taskNavigation, setTaskNavigation] = useState<SettingsTaskNavigation>()
+  const [undoAction, setUndoAction] = useState<SettingsUndoAction>()
   const titleRef = useRef<View>(null)
   const previousTaskTitle = useRef<string | undefined>(undefined)
   useEffect(() => {
@@ -123,6 +130,7 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   }, [locate])
   const cancel = useCallback(() => {
     epoch.current += 1; restore.current = null; consumed.current = targetRef.current
+    pendingTaskRestore.current = null
     if (keyboardFrame.current !== null) { cancelAnimationFrame(keyboardFrame.current); keyboardFrame.current = null }
   }, [])
   useLayoutEffect(() => {
@@ -184,23 +192,42 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   }, [focused, keyboardHeight, returnToSettings])
   const Experience = canonicalThemeId === 'monet' ? MonetSettingsPageExperience : canonicalThemeId === 'material' ? MaterialSettingsPageExperience : canonicalThemeId === 'liquid-glass' ? LiquidGlassSettingsPageExperience : MinimalSettingsPageExperience
   const leading = <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="sm" glyph="back" onNavigate={returnToSettings} color={colors.text} />
+  const undoControl = undoAction ? <IslePressable haptic testID="settings-undo" accessibilityRole="button"
+    accessibilityLabel={t('settingsWorkspace.undo')} disabled={undoAction.disabled}
+    accessibilityState={{ disabled: undoAction.disabled, busy: undoAction.disabled }} onPress={undoAction.onPress}
+    style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlLarge }}>
+    <AppIcon name="undo" size={18} color={colors.textSecondary} />
+  </IslePressable> : undefined
   const content = <View ref={contentRef} collapsable={false} style={{ width: '100%', maxWidth: 860, alignSelf: 'center', flex: scrollable ? undefined : 1 }}>
-    <Experience titleRef={titleRef} title={taskNavigation?.title ?? title} trailing={<SettingsHelpButton compact topic={settingsHelpTopic(pathname, target)} />} rootTitle={t('settings.title')} routeKey={pathname.split('/').filter(Boolean).pop() ?? 'settings'} compact={compact} leading={leading}>
+    <Experience titleRef={titleRef} title={taskNavigation?.title ?? title} subtitle={taskNavigation ? undefined : subtitle} trailing={<View style={{ flexDirection: 'row', alignItems: 'center' }}><PageFeedbackIndicator action={undoControl} /><SettingsHelpButton compact topic={settingsHelpTopic(pathname, target)} /></View>} rootTitle={t('settings.title')} routeKey={pathname.split('/').filter(Boolean).pop() ?? 'settings'} compact={compact} leading={leading}>
       {null}
     </Experience>
     <View style={scrollable ? undefined : { flex: 1 }}>{children}</View>
   </View>
   return <IsleScreen padded={false} background="default" backgroundState={keyboardHeight ? 'input' : 'idle'}>
-    <SettingsSectionContext.Provider value={{ target: focused && !transitioning ? target : undefined, highlight, register, setTaskNavigation, resetScroll: () => { cancel(); scrollRef.current?.scrollTo({ y: 0, animated: false }) } }}>
+    <PageFeedbackRegion style={{ marginHorizontal: compact ? 14 : 18, marginTop: 8 }} />
+    <SettingsSectionContext.Provider value={{ target: focused && !transitioning ? target : undefined, highlight, register, setTaskNavigation, setUndoAction, resetScroll: (restoreList = false) => {
+      cancel()
+      if (!restoreList) taskListOffset.current = scrollOffset.current
+      else pendingTaskRestore.current = taskListOffset.current
+      scrollRef.current?.scrollTo({ y: restoreList ? taskListOffset.current : 0, animated: false })
+    } }}>
       {scrollable ? <ScrollView ref={scrollRef} onLayout={event => {
         scrollLayout.current = { ...scrollLayout.current, height: event.nativeEvent.layout.height, revision: scrollLayout.current.revision + 1 }
         locate()
       }} {...(Platform.OS === 'web' ? { onWheel: cancel, onTouchMove: cancel } : {})} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets removeClippedSubviews={false} onScrollBeginDrag={cancel} scrollEventThrottle={64} onScroll={event => {
         const offset = event.nativeEvent.contentOffset.y
+        if (pendingTaskRestore.current === null) scrollOffset.current = offset
         const entry = [...positions.current].filter(([, y]) => y <= offset + 16).sort((a, b) => b[1] - a[1])[0]
         viewport.current = entry ? { id: entry[0], offset: offset - entry[1] } : null
       }} onContentSizeChange={(_width, contentHeight) => {
         scrollLayout.current = { ...scrollLayout.current, contentHeight, revision: scrollLayout.current.revision + 1 }
+        if (pendingTaskRestore.current !== null) {
+          const y = Math.min(pendingTaskRestore.current, Math.max(0, contentHeight - scrollLayout.current.height))
+          pendingTaskRestore.current = null
+          scrollOffset.current = y
+          scrollRef.current?.scrollTo({ y, animated: false })
+        }
         nodes.current.forEach((node, id) => register(id, node)); locate()
       }} contentContainerStyle={{ alignItems: 'center', paddingHorizontal: compact ? 14 : 18, paddingTop: CONTENT_PADDING_TOP, paddingBottom: CONTENT_PADDING_BOTTOM }}>{content}</ScrollView> : content}
     </SettingsSectionContext.Provider>

@@ -37,22 +37,18 @@ describe.each([
   it.each(['success', 'false', 'rejection'] as const)('reports only the actual clipboard outcome: %s', async (outcome) => {
     if (outcome === 'rejection') jest.mocked(Clipboard.setStringAsync).mockRejectedValueOnce(new Error('Unavailable'))
     else jest.mocked(Clipboard.setStringAsync).mockResolvedValueOnce(outcome === 'success')
-    copy({ dialog, message, t })
-    await waitFor(() => expect(dialog.toast).toHaveBeenCalledWith(expect.objectContaining({
-      title: outcome === 'success' ? 'common.copied' : 'common.copyFailed',
-      tone: outcome === 'success' ? 'mint' : 'danger',
-    })))
+    expect(await copy({ dialog, message, t })).toBe(outcome === 'success')
+    expect(dialog.toast).not.toHaveBeenCalled()
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expectedText())
-    expect(dialog.toast).toHaveBeenCalledTimes(1)
   })
 })
 
-it('does not touch the clipboard for absent process traces or work artifacts', () => {
+it('does not touch the clipboard for absent process traces or work artifacts', async () => {
   const empty: Message = { ...message, content: 'Plain answer', responseText: undefined, retrievalTrace: [] }
-  copyChatMessageProcessTrace({ dialog, message: empty, t })
-  copyChatMessageWorkArtifact({ dialog, message: empty, t })
+  expect(await copyChatMessageProcessTrace({ dialog, message: empty, t })).toBe(false)
+  expect(await copyChatMessageWorkArtifact({ dialog, message: empty, t })).toBe(false)
   expect(Clipboard.setStringAsync).not.toHaveBeenCalled()
-  expect(dialog.toast.mock.calls.map(([feedback]) => feedback.tone)).toEqual(['amber', 'amber'])
+  expect(dialog.toast).not.toHaveBeenCalled()
 })
 
 it.each([true, false])('an unavailable diff can only be declined or dismissed (decline=%s)', async decline => {

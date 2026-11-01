@@ -26,7 +26,7 @@ export interface ProviderRuntimeFallbackRequest<Attachment extends ProviderSelec
   previousResponseId?: string
   remoteCompactEligible?: boolean
   remoteCompactFallback?: { messages: { role: 'user' | 'assistant'; content: string }[]; contextPrompt: string }
-  messages?: readonly { toolCallId?: string; toolCalls?: readonly unknown[]; responseItems?: readonly unknown[]; providerContentBlocks?: readonly unknown[]; reasoningContent?: string }[]
+  messages?: readonly { toolCallId?: string; toolCalls?: readonly unknown[]; responseItems?: readonly unknown[]; providerContentBlocks?: readonly unknown[]; googleContentParts?: readonly unknown[]; reasoningContent?: string }[]
 }
 
 export function routeForRuntimeFallback(
@@ -57,7 +57,7 @@ export function providerRequestHasRouteBoundContinuation(request: ProviderRuntim
   // on every route change, even if the new route also supports compaction.
   if (request.remoteCompactEligible && request.remoteCompactFallback) return false
   return Boolean(request.previousResponseId || request.messages?.some((message) => message.toolCallId
-    || message.toolCalls?.length || message.responseItems?.length || message.providerContentBlocks?.length || message.reasoningContent))
+    || message.toolCalls?.length || message.responseItems?.length || message.providerContentBlocks?.length || message.googleContentParts?.length || message.reasoningContent))
 }
 
 export function requiredFallbackCapabilities(request: ProviderRuntimeFallbackRequest): string[] {

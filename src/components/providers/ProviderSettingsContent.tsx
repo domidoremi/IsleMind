@@ -12,9 +12,12 @@ import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
+import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
 import { ProviderTokenField } from './ProviderTokenField'
+import { ProviderConnectionRow } from './ProviderConnectionRow'
+import { ProviderConfigurationHeader } from './ProviderConfigurationHeader'
 import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { ISLE_MIN_TOUCH_TARGET, IsleField, IsleIconButton, IsleProgress } from '@/components/ui/isle'
@@ -48,11 +51,9 @@ import { useProviderActivationJob } from '@/components/providers/useProviderActi
 import { isExistingProviderImport, useProviderImportSession } from '@/components/providers/useProviderImportSession'
 import { PROVIDER_CARD_DETAIL_MAX_WIDTH } from '@/components/providers/ProviderCardGrid'
 import {
-  LiquidGlassProviderSettingsExperience,
-  MaterialProviderSettingsExperience,
-  MinimalProviderSettingsExperience,
-  MonetProviderSettingsExperience,
+  CanonicalProviderSettingsExperience,
 } from '@/components/providers/theme-experiences/ProviderSettingsExperiences'
+import { PageFeedbackBoundary, PageFeedbackIndicator, PageFeedbackRegion } from '@/components/ui/PageFeedback'
 import type { RuntimeDiagnosticsProviderDetail, RuntimeDiagnosticsSummary } from '@/bootstrap/runtimeDiagnostics'
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
@@ -136,14 +137,14 @@ interface ProviderSettingsContentProps {
 }
 
 export function ProviderSettingsContent(props: ProviderSettingsContentProps) {
-  return <SettingsEditBoundary><ProviderSettingsBody {...props} /></SettingsEditBoundary>
+  return <PageFeedbackBoundary><SettingsEditBoundary><ProviderSettingsBody {...props} /></SettingsEditBoundary></PageFeedbackBoundary>
 }
 
 function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpenAddConsumed, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const insets = useSafeAreaInsets()
   const { width, fontScale } = useWindowDimensions()
   const compactWidth = width < 430
@@ -652,13 +653,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     )
   }
 
-  const ProviderSettingsExperience = canonicalThemeId === 'monet'
-    ? MonetProviderSettingsExperience
-    : canonicalThemeId === 'material'
-      ? MaterialProviderSettingsExperience
-      : canonicalThemeId === 'liquid-glass'
-        ? LiquidGlassProviderSettingsExperience
-        : MinimalProviderSettingsExperience
   const providerAttention = providerModelAccessHasRules ? <SettingsSummaryStrip items={providerAttentionItems.filter(item => item.key === 'policy')} /> : undefined
   const providerActivation = activationJob
     ? <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />
@@ -705,24 +699,25 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
         {renderProviderItem({ item: provider, index })}
       </View>)}
     </View>
-  ) : <View testID="provider-empty" style={{ padding: 32, gap: 18, alignItems: 'center' }}>
-    <View accessible={false} importantForAccessibility="no-hide-descendants" style={{ width: 60, height: 60, borderRadius: 20, backgroundColor: colors.ui.semantic.surface.muted, alignItems: 'center', justifyContent: 'center' }}><AppIcon name={providers.length ? 'search' : 'provider-key'} size={26} color={colors.ui.icon.accentForeground} /></View>
-    <Text style={{ color: colors.text, fontSize: 18, lineHeight: 26, fontWeight: '600', textAlign: 'center' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
+  ) : <IsleMotionFrame role="section" testID="provider-empty" style={{ paddingVertical: 48, paddingHorizontal: 20, gap: 22, alignItems: 'center', maxWidth: 420, width: '100%', alignSelf: 'center' }}>
+    <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={{ width: 72, height: 72, borderRadius: 24, backgroundColor: colors.ui.icon.accentBackground, alignItems: 'center', justifyContent: 'center' }}><AppIcon name={providers.length ? 'search' : 'provider-key'} size={30} color={colors.ui.icon.accentForeground} /></View>
+    <Text accessibilityRole="header" style={{ color: colors.text, fontSize: 23, lineHeight: 32, fontWeight: '600', textAlign: 'center' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
     {!providers.length ? <>
-
-      <IsleButton tone="primary" label={t('settingsUx.addConnection')} onPress={() => setImportOpen(true)} />
+      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22, textAlign: 'center' }}>{t('livelyUi.providerIntro')}</Text>
+      <IsleButton testID="provider-empty-add-connection" tone="primary" label={t('settingsUx.addConnection')} onPress={() => setImportOpen(true)} style={{ alignSelf: 'center' }} />
     </> : null}
-  </View>
+  </IsleMotionFrame>
 
   const content = (
     <>
+      <PageFeedbackRegion style={{ marginHorizontal: pagePadding, marginTop: 8 }} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0} style={{ flex: 1 }}>
         <ScrollView
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
           contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: embedded ? Math.max(insets.top, 0) + 8 : 8, paddingBottom: Math.max(insets.bottom, 20) + 76 }}
         >
-          <ProviderSettingsExperience
+          <CanonicalProviderSettingsExperience
             title={t('settings.providerManagement')}
             subtitle=""
             backLabel={t('common.back')}
@@ -735,7 +730,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
             tools={providerTools}
           >
             {providerRegistry}
-          </ProviderSettingsExperience>
+          </CanonicalProviderSettingsExperience>
         </ScrollView>
       </KeyboardAvoidingView>
       {addOpen ? <ProviderFormModal
@@ -819,6 +814,7 @@ function ProviderConfigurationSheet({
   async function requestSheetClose() { await leave(onClose) }
 
   return (
+    <PageFeedbackBoundary scopeKey={provider?.id}>
     <Modal transparent visible={visible && Boolean(provider)} animationType={motion === 'full' ? 'slide' : 'none'} statusBarTranslucent navigationBarTranslucent onRequestClose={handleRequestClose}>
       <View accessibilityViewIsModal style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Pressable accessible={false} accessibilityRole="none" onPress={() => void requestSheetClose()} style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]} />
@@ -831,18 +827,11 @@ function ProviderConfigurationSheet({
             <View style={{ alignItems: 'center', paddingTop: 6 }}>
               <View style={{ width: 34, height: 3, borderRadius: 2, backgroundColor: colors.textTertiary, opacity: 0.34 }} />
             </View>
-            <View style={{ minHeight: 50, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.material.sheet.border }}>
-              <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
-                <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={16} />
-              </View>
-              <Text accessibilityRole="header" style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 18, lineHeight: 25, fontWeight: '800', includeFontPadding: false }}>
-                {providerName}
-              </Text>
-              <SettingsHelpButton compact topic="models" />
-              <IslePressable haptic accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={() => void requestSheetClose()} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
-                <AppIcon name="close" color={colors.textSecondary} size={17} />
-              </IslePressable>
+            <View style={{ minHeight: 50, paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.material.sheet.border }}>
+              <ProviderConfigurationHeader name={providerName} closeLabel={t('common.close')} onClose={() => void requestSheetClose()}
+                feedback={<PageFeedbackIndicator />} help={<SettingsHelpButton compact topic="models" />} />
             </View>
+            <PageFeedbackRegion style={{ marginHorizontal: 12, marginTop: 8 }} />
             <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 18) + 20 }}>
               {provider ? (
                 <>
@@ -865,6 +854,7 @@ function ProviderConfigurationSheet({
         </KeyboardAvoidingView>
       </View>
     </Modal>
+    </PageFeedbackBoundary>
   )
 }
 
@@ -1102,41 +1092,20 @@ function useWebVisualKeyboardInset(active: boolean): number {
   return inset
 }
 
-function ProviderListRow({ provider, featured, selected, batchMode, expanded, onToggleSelected, onExpandedChange, onEdit }: {
+function ProviderListRow({ provider, position, featured, selected, batchMode, expanded, onToggleSelected, onExpandedChange, onEdit }: {
   provider: AIProvider; position: number; featured: boolean; selected: boolean; batchMode: boolean; expanded: boolean
   onToggleSelected: () => void; onExpandedChange: (next: boolean) => void; onEdit: () => void
 }) {
-  const { colors } = useAppTheme()
   const { t } = useTranslation()
   const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
   const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
   const providerUrl = provider.baseUrl?.trim() || t('providerSettings.baseUrl')
   const providerStateLabel = featured && provider.enabled ? t('providerSettings.defaultConnection') : t(provider.enabled ? 'settings.enabled' : 'settings.disabled')
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.ui.section.divider, backgroundColor: selected ? colors.ui.semantic.surface.muted : 'transparent' }}>
-    {batchMode ? <IslePressable accessibilityRole="checkbox" accessibilityLabel={`${t('providerSettings.selectProvider')} ${providerDisplayName}`}
-      accessibilityState={{ checked: selected }} onPress={onToggleSelected}
-      style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}>
-      <AppIcon name={selected ? 'check' : 'list-check'} color={colors.textSecondary} size={18} />
-    </IslePressable> : null}
-    <IslePressable testID={`provider-open-${provider.id}`} accessibilityRole="button"
-      accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`} accessibilityState={{ expanded }}
-      onPress={() => onExpandedChange(!expanded)}
-      style={{ flex: 1, minWidth: 0, minHeight: 76, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: colors.ui.semantic.surface.muted, alignItems: 'center', justifyContent: 'center' }}><AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={19} /></View>
-      <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-        <Text style={{ color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: '700' }}>{providerDisplayName}</Text>
-        <Text style={{ color: colors.textTertiary, fontSize: 13, lineHeight: 19 }}>{providerUrl}</Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{providerStateLabel} · {t('settingsSubsystem.modelCount', { count: modelInventory.selectableModels })}</Text>
-      </View>
-      <AppIcon name="back-next" color={colors.textTertiary} size={16} />
-    </IslePressable>
-    {!batchMode ? <IslePressable testID={`provider-edit-${provider.id}`} accessibilityRole="button"
-      accessibilityLabel={`${t('common.edit')} ${providerDisplayName}`} onPress={onEdit}
-      style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}>
-      <AppIcon name="edit" color={colors.textSecondary} size={18} />
-    </IslePressable> : null}
-  </View>
+  return <ProviderConnectionRow id={provider.id} position={position} name={providerDisplayName} endpoint={providerUrl}
+    stateLabel={providerStateLabel} modelsLabel={t('settingsSubsystem.modelCount', { count: modelInventory.selectableModels })}
+    selectLabel={`${t('providerSettings.selectProvider')} ${providerDisplayName}`} editLabel={`${t('common.edit')} ${providerDisplayName}`}
+    enabled={provider.enabled} featured={featured} selected={selected} batchMode={batchMode} expanded={expanded}
+    onToggleSelected={onToggleSelected} onOpen={() => onExpandedChange(!expanded)} onEdit={onEdit} />
 }
 
 function DeferredProviderDetails({
@@ -1250,7 +1219,7 @@ function DragRail({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { subtleBorderWidth, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
   const translateY = useSharedValue(0)
   const dragging = useSharedValue(0)
@@ -1383,7 +1352,7 @@ function MoveButton({ label, icon, disabled, onPress }: { label: string; icon: '
 
 function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { subtleBorderWidth, mutedSurface, chromeBorder } = resolveProviderChrome(colors)
   return (
     <IslePressable haptic accessibilityLabel={label} accessibilityState={{ selected: active }} onPress={onPress} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center' }}>
@@ -1598,7 +1567,7 @@ export function ProviderFormModal({
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
   const { height, width } = useWindowDimensions()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const bodyScrollRef = useRef<ScrollView>(null)
   const fieldOffsetsRef = useRef<Partial<Record<ProviderFormFieldId, number>>>({})
   const focusedFieldRef = useRef<ProviderFormFieldId | null>(null)
@@ -2060,7 +2029,7 @@ export function ProviderImportModal({
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
   const { height, width, fontScale } = useWindowDimensions()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const bodyScrollRef = useRef<ScrollView>(null)
   const [input, setInput] = useState('')
   const existingProviders = useSettingsStore(state => state.providers)

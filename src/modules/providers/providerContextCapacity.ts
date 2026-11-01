@@ -7,7 +7,7 @@ export const FINAL_CONTEXT_WINDOW_RATIO = 0.85
 export const MAX_PROVIDER_REQUEST_CODE_UNITS = 16 * 1024 * 1024
 
 export class ProviderContextCapacityError extends Error {
-  constructor(readonly code: 'context_capacity' | 'request_too_large' | 'invalid_capacity' | 'media_estimate_unavailable') {
+  constructor(readonly code: 'context_capacity' | 'request_too_large' | 'invalid_capacity' | 'media_estimate_unavailable' | 'reasoning_estimate_unavailable') {
     super(code)
     this.name = 'ProviderContextCapacityError'
   }
@@ -36,6 +36,8 @@ export function checkProviderContextCapacity(input: {
   contextWindow: number
   /** Reliable model maximum when the wire envelope has no output cap. Not an app default. */
   modelMaxOutputTokens?: number
+  /** Source-backed separate thinking output or provider tolerance; never reduces a wire cap. */
+  additionalOutputTokens?: number
   providerType?: string
   model?: string
   /** Provider-specific media estimate supplied by an adapter when available. */
@@ -103,8 +105,13 @@ export function checkProviderContextCapacity(input: {
   if (typeof requestedOutput !== 'number' || !Number.isSafeInteger(requestedOutput) || requestedOutput <= 0) {
     throw new ProviderContextCapacityError('invalid_capacity')
   }
-  // Thinking tokens are included in these wire output caps. They must not be
-  // added again. Media remains explicitly estimated, not exact accounting.
+  const additionalOutput = input.additionalOutputTokens ?? 0
+  const reservedOutput = requestedOutput + additionalOutput
+  if (!Number.isSafeInteger(additionalOutput) || additionalOutput < 0 || !Number.isSafeInteger(reservedOutput)) {
+    throw new ProviderContextCapacityError('invalid_capacity')
+  }
+  // Most wire caps include thinking. An adapter must separately reserve it
+  // for documented answer-only caps. Media remains an estimate, not billing.
   const mediaTokens = input.mediaInputTokens ?? measuredMediaTokens
   if (!Number.isSafeInteger(mediaTokens) || mediaTokens < 0) throw new ProviderContextCapacityError('invalid_capacity')
   const factor = input.inputCalibrationFactor ?? 1
@@ -112,9 +119,9 @@ export function checkProviderContextCapacity(input: {
   const rawInputTokens = tokens + mediaTokens
   const estimatedInputTokens = Math.ceil(rawInputTokens * factor)
   const limit = Math.floor(input.contextWindow * FINAL_CONTEXT_WINDOW_RATIO)
-  if (estimatedInputTokens + requestedOutput > limit) throw new ProviderContextCapacityError('context_capacity')
+  if (estimatedInputTokens + reservedOutput > limit) throw new ProviderContextCapacityError('context_capacity')
   return { estimatedInputTokens, rawInputTokens, managedTextBytes: textBytes,
-    reservedOutputTokens: requestedOutput, limit, mediaEstimated: mediaCount > 0 }
+    reservedOutputTokens: reservedOutput, limit, mediaEstimated: mediaCount > 0 }
 }
 
 /** Both SDK/camelCase and REST/snake_case spellings occur in assembled bodies. */

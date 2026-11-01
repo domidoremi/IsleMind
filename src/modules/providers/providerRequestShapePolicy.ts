@@ -6,6 +6,7 @@ import type { ProviderStructuredOutputRequest, ProviderStructuredOutputRequestSh
 import { providerStructuredOutputToolName, providerStructuredOutputToolSchema, usesAnthropicNativeJsonOutput } from './providerStructuredOutput'
 import { selectProviderToolDeclarations } from './providerToolDeclarations'
 import { createProviderToolCapabilityPolicy } from './providerToolCapabilityPolicy'
+import type { ProviderProtocolAdapter } from './providerProtocolAdapter'
 
 export interface ProviderRequestShapeManifest {
   modalities: { input: { image: boolean; file: boolean } }
@@ -31,6 +32,7 @@ export function createProviderRequestShapePolicy<Attachment extends ProviderSele
   compatibilityCapabilityStatus(provider: AIProvider, capability: ProviderRequestCompatibilityCapability): ProviderRequestCompatibilityStatus
   usesProtocolReferenceEvidence(provider: AIProvider): boolean
   modelCapabilityCanBeSent(provider: AIProvider, modelId: string, capability: ProviderRequestShapeCapability): boolean
+  resolveProtocolAdapter(request: Request): Pick<ProviderProtocolAdapter, 'protocol'>
 }) {
   const toolCapabilityPolicy = createProviderToolCapabilityPolicy({
     compatibilityCapabilityCanBeSent(provider, capability, explicitDeclaration) {
@@ -45,7 +47,7 @@ export function createProviderRequestShapePolicy<Attachment extends ProviderSele
     const image = toolCapabilityPolicy.supportsProviderInputCapability(request.provider, modelConfig, 'vision')
     const file = toolCapabilityPolicy.supportsProviderInputCapability(request.provider, modelConfig, 'files')
     const toolsSupported = toolCapabilityPolicy.supportsNativeProviderTools(request.provider, modelConfig)
-    const structuredOutput = resolveStructuredOutputManifest(request.provider, request.model)
+    const structuredOutput = resolveStructuredOutputManifest(request)
     return { modalities: { input: { image, file } }, tools: { supported: toolsSupported }, structuredOutput }
   }
 
@@ -117,9 +119,10 @@ export function createProviderRequestShapePolicy<Attachment extends ProviderSele
   }
   return { resolveCapabilityManifest, requestModelCapabilityCanBeSent, selectAttachments, selectDeclaredTools, resolveStructuredOutputRequestPolicy, buildAnthropicStructuredOutputTool, buildAnthropicStructuredOutputConfig, buildGoogleStructuredOutputConfig }
 
-  function resolveStructuredOutputManifest(provider: AIProvider, model: string): ProviderRequestShapeManifest['structuredOutput'] {
+  function resolveStructuredOutputManifest(request: Request): ProviderRequestShapeManifest['structuredOutput'] {
+    const { provider, model } = request
     const family = providerRequestFamily(provider)
-    const protocol = providerRequestProtocol(provider, family)
+    const protocol = providerRequestProtocol(provider, dependencies.resolveProtocolAdapter(request).protocol)
     const modelConfig = getModelConfig(model, provider.type, provider.modelConfigs)
     const modelDeclared = modelDeclaresCapability(modelConfig, 'responseFormat')
     const contractClaimed = dependencies.compatibilityCapabilityCanBeSent(provider, 'structuredOutput', modelDeclared)
@@ -194,14 +197,12 @@ function providerRequestFamily(provider: AIProvider): string {
   return provider.wireProtocol === 'anthropic-compatible' ? 'anthropic-compatible' : 'openai-compatible'
 }
 
-function providerRequestProtocol(provider: AIProvider, family: string): string {
-  if (provider.wireProtocol === 'anthropic-compatible') return 'anthropic-compatible'
-  if (provider.type === 'anthropic') return 'anthropic-messages'
-  if (provider.type === 'google') return 'google-generate-content'
-  if (provider.type === 'openai') return provider.capabilities?.responsesApi === false ? 'openai-chat-completions' : 'openai-responses'
-  if (provider.capabilities?.responsesApi === true) return 'openai-responses'
-  if (family === 'google') return 'google-generate-content'
-  return 'openai-compatible'
+function providerRequestProtocol(provider: AIProvider, protocol: ProviderProtocolAdapter['protocol']): string {
+  if (protocol === 'anthropic-compatible') return 'anthropic-compatible'
+  if (protocol === 'anthropic') return 'anthropic-messages'
+  if (protocol === 'google') return 'google-generate-content'
+  if (protocol === 'openai-responses') return 'openai-responses'
+  return provider.type === 'openai' ? 'openai-chat-completions' : 'openai-compatible'
 }
 
 function structuredOutputRequestShape(family: string, protocol: string): ProviderStructuredOutputRequestShape {

@@ -210,7 +210,7 @@ function MaterialControlCatalog({ entries, compact }: { entries: SettingsControl
       {entries.map((entry) => {
         const tone = controlTone(colors, entry)
         return (
-          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ minHeight: compact ? 72 : 86, width: compact ? '100%' : '48.8%', flexGrow: compact ? 0 : 1, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: entry.active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted }}>
+          <IslePressable key={entry.key} testID={`settings-${entry.key}-toggle`} haptic accessibilityRole="button" accessibilityLabel={`${entry.title}. ${entry.detail}`} accessibilityState={{ selected: entry.active }} onPress={entry.onPress} style={{ minHeight: compact ? 72 : 86, width: compact ? '100%' : '48.8%', flexGrow: compact ? 0 : 1, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 16, backgroundColor: entry.active ? colors.ui.actionBar.itemActiveBackground : colors.design?.semantic.color.surfaceContainer ?? colors.ui.semantic.surface.muted }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
               <View testID={`settings-control-icon-material-${entry.key}`} style={{ width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent', borderWidth: 0 }}><AppIcon name={entry.icon} color={tone.foreground} size={18} /></View>
               <View style={{ flex: 1 }} />

@@ -243,7 +243,7 @@ export function ChatSetupWorkspace({
           onReasoningChange={setupState.setSetupReasoningEffort}
           systemPrompt={setupState.setupSystemPrompt}
           onSystemPromptChange={setupState.setSetupSystemPrompt}
-          inputPlaceholder={chatComposerPlaceholder}
+          inputPlaceholder={setupNeedsConfiguration ? t('chat.setupDraftPlaceholder') : chatComposerPlaceholder}
           systemPromptPlaceholder={chatSystemPromptPlaceholder}
           onOpenModelPicker={openAiConfiguration}
           switchableProviders={setupState.quickModelProviders}

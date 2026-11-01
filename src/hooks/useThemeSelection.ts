@@ -1,11 +1,12 @@
 import { useCallback, useLayoutEffect, useRef } from 'react'
-import { Platform, useColorScheme, type GestureResponderEvent } from 'react-native'
+import { Platform, type GestureResponderEvent } from 'react-native'
 import { useThemeTransition } from 'animal-island-ui-rn'
 import { useSettingsStore } from '@/store/settingsStore'
 import { getColors, normalizeThemeAccent, normalizeThemeId } from '@/theme/colors'
 import type { Settings } from '@/types/settingsContracts'
+import { useSystemColorScheme } from './useSystemColorScheme'
 
-type ThemeSelection = Partial<Pick<Settings, 'theme' | 'themeId' | 'themeAccent'>>
+export type ThemeSelection = Partial<Pick<Settings, 'theme' | 'themeId' | 'themeAccent'>>
 
 /** Keep the initiating control under the pointer when themed headers change height. */
 export function captureThemeSelectionAnchor(event?: GestureResponderEvent): (() => void) | undefined {
@@ -27,22 +28,25 @@ export function captureThemeSelectionAnchor(event?: GestureResponderEvent): (() 
 /** User-initiated appearance changes only; hydration and system changes stay immediate. */
 export function useThemeSelection(onError: (error: unknown) => void, commit?: (selection: ThemeSelection) => void) {
   const transition = useThemeTransition()
-  const systemScheme = useColorScheme()
+  const systemScheme = useSystemColorScheme()
   const pending = useRef(0)
+  const lastCompletion = useRef<Promise<boolean> | null>(null)
   const requested = useRef<ThemeSelection>({})
   const restoreAnchor = useRef<(() => void) | undefined>(undefined)
   useLayoutEffect(() => {
     restoreAnchor.current?.()
     restoreAnchor.current = undefined
   })
-  return useCallback((selection: ThemeSelection, event?: GestureResponderEvent) => {
+  return useCallback((selection: ThemeSelection, event?: GestureResponderEvent, canCommit?: () => boolean) => {
     const settings = useSettingsStore.getState().settings
     const unchanged = () => {
       const current = useSettingsStore.getState().settings
       return Object.entries(selection).every(([key, value]) => current[key as keyof ThemeSelection] === value)
     }
     const intended = pending.current ? { ...settings, ...requested.current } : settings
-    if (Object.entries(selection).every(([key, value]) => intended[key as keyof ThemeSelection] === value)) return
+    if (Object.entries(selection).every(([key, value]) => intended[key as keyof ThemeSelection] === value)) {
+      return pending.current ? lastCompletion.current ?? Promise.resolve(false) : Promise.resolve(true)
+    }
     if (!pending.current) requested.current = {}
     requested.current = { ...requested.current, ...selection }
     const next = { ...settings, ...requested.current }
@@ -53,17 +57,23 @@ export function useThemeSelection(onError: (error: unknown) => void, commit?: (s
       ? { x: press.pageX, y: press.pageY }
       : undefined
     pending.current += 1
-    void transition(() => {
+    let accepted = true
+    const completion = transition(() => {
       if (!unchanged()) {
+        if (canCommit && !canCommit()) { accepted = false; return }
         restoreAnchor.current = anchor
         if (commit) commit(selection)
         else useSettingsStore.getState().updateSettings(selection)
       }
     }, { origin, color: destination.background.canvas })
+      .then(() => accepted)
       .catch((error) => {
         if (restoreAnchor.current === anchor) restoreAnchor.current = undefined
         onError(error)
+        return false
       })
       .finally(() => { pending.current -= 1 })
+    lastCompletion.current = completion
+    return completion
   }, [commit, onError, systemScheme, transition])
 }

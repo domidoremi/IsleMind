@@ -24,3 +24,15 @@ test('single protocol counters, genuine zeros and absent usage retain their mean
   expect(extractUsage({ usage: { input_tokens: -1, prompt_tokens: 7, output_tokens: NaN } }, 'openai-compatible')).toMatchObject({ inputTokens: 7, totalTokens: 7 })
   expect(extractUsage({ usage: { completion_tokens: 4, completion_tokens_details: { reasoning_tokens: 2 } } }, 'openai-compatible', { includeReasoning: false })).not.toHaveProperty('reasoningTokens')
 })
+it.each(['response.completed', 'response.failed', 'response.incomplete'])('retains wrapped Responses usage on %s', type => {
+  expect(extractUsage({ type, response: { usage: { input_tokens: 12, output_tokens: 4,
+    input_tokens_details: { cached_tokens: 3 }, output_tokens_details: { reasoning_tokens: 2 } } } }, 'openai')).toMatchObject({
+    source: 'provider', inputTokens: 12, outputTokens: 4, totalTokens: 16, cacheReadInputTokens: 3, reasoningTokens: 2,
+  })
+})
+
+it('retains Claude message_start input usage for a later output-only delta', () => {
+  expect(extractUsage({ type: 'message_start', message: { usage: { input_tokens: 12 } } }, 'anthropic')).toMatchObject({
+    source: 'provider', inputTokens: 12,
+  })
+})

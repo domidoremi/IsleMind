@@ -16,6 +16,9 @@ import type { AIProvider } from '@/types/providerContracts'
 import { SettingsReferenceField, type SettingsReferenceOption } from '@/components/settings/SettingsReferenceField'
 import { useSettingsBrowserLeave } from '@/components/settings/SettingsEditBoundary'
 import { getProviderPreferredModel, getProviderSelectableModels } from '@/utils/providerModels'
+import { IsleEmptyState } from '@/components/ui/isle/EmptyState'
+import { FeedbackGlyph } from '@/components/ui/FeedbackGlyph'
+import { WorkspaceIntro } from '@/components/ui/WorkspaceIntro'
 
 const PAGE_SIZE = 20
 type TextField = Exclude<keyof AgentDefinitionForm, 'source' | 'actionCapability' | 'reviewerMode'>
@@ -198,9 +201,10 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
         }, 'saveFailed') }} />
       </View>
     </IslePanel> : null}
-    <Text style={headingStyle}>{t('agents.savedDefinitions')}</Text>
+    <WorkspaceIntro compact icon="reasoning" title={t('agents.savedDefinitions')}
+      status={<FeedbackGlyph phase={loading ? 'pending' : 'idle'} label={t('common.loading')} />} />
     {readFailed ? <Text accessibilityRole="alert" style={bodyStyle}>{t('agents.readFailed')}</Text> : null}
-    {loading ? <Text style={bodyStyle}>{t('common.loading')}</Text> : !readFailed && !items.length ? <Text style={bodyStyle}>{t('agents.empty')}</Text> : null}
+    {!loading && !readFailed && !items.length ? <IsleEmptyState title={t('agents.empty')} description={t('agents.managementOnly')} icon="reasoning" contextual /> : null}
     {items.map((item) => <IslePanel key={item.id} contentStyle={{ padding: 14, gap: 8 }}>
       <Text style={headingStyle}>{item.name}</Text>
       <Text selectable style={bodyStyle}>{item.id} · {t('agents.revision', { revision: item.revision })}</Text>

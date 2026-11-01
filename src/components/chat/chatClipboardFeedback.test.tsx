@@ -112,9 +112,11 @@ afterEach(async () => {
 it.each(cases)('rich code copy reports %s instead of assuming a resolved promise means success', async (outcome) => {
   clipboardOutcome(outcome)
   const view = await render(<MessageContent content={'```js\nconst answer = 42\n```'} />)
+  const originalLabel = view.getByText('common.copy')
   await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
-  const label = outcome === 'success' ? 'common.copied' : 'common.copyFailed'
+  const label = outcome === 'success' ? 'common.copy. common.copied' : 'common.copyFailed'
   expect(view.getByRole('button', { name: label })).toBeTruthy()
+  if (outcome === 'success') expect(view.getByText('common.copy')).toBe(originalLabel)
   expect(Clipboard.setStringAsync).toHaveBeenCalledWith('const answer = 42\n')
   await act(async () => jest.advanceTimersByTime(1300))
   expect(view.getByRole('button', { name: 'common.copy' })).toBeTruthy()
@@ -125,7 +127,8 @@ it('keeps a failed rich-block action available for an immediate successful retry
   const view = await render(<MessageContent content={'```js\nconst answer = 42\n```'} />)
   await fireEvent.press(view.getByRole('button', { name: 'common.copy' }))
   await fireEvent.press(view.getByRole('button', { name: 'common.copyFailed' }))
-  expect(view.getByRole('button', { name: 'common.copied' })).toBeTruthy()
+  expect(view.getByRole('button', { name: 'common.copy. common.copied' })).toBeTruthy()
+  expect(view.getByText('common.copy')).toBeTruthy()
   expect(jest.mocked(Clipboard.setStringAsync).mock.calls).toEqual([['const answer = 42\n'], ['const answer = 42\n']])
 })
 

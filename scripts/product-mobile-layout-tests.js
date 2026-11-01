@@ -386,8 +386,10 @@ function assertSourceIntegration() {
   assert.match(mainPagerSource, /<RetainedSettingsScreenContent onHome=\{showHome\} \/>/, 'Settings keeps a stable direct Home-return action without visibility-driven re-renders')
   assert.match(settingsNavigationSource, /export const SettingsNavigationContent = memo\(function SettingsNavigationContent/, 'the retained Settings tree memoizes parent-only pager updates')
   assert.doesNotMatch(settingsScreenSource + settingsNavigationSource, /usePathname/, 'returning to Settings does not introduce route-driven scroll resets')
-  assert.match(settingsPageSource, /resetScroll: \(\) => \{ cancel\(\); scrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/, 'explicit task/detail navigation can reset stale offsets before content shrinks')
-  assert.match(settingsTaskSource, /if \(inline \|\| !navigating\.current\) return[\s\S]*?resetScroll\?\.\(\)[\s\S]*?\}, \[selected\]\)/, 'task scroll reset follows explicit selection changes, not ordinary re-renders')
+  assert.match(settingsPageSource, /resetScroll: \(restoreList = false\) => \{[\s\S]*?cancel\(\)[\s\S]*?if \(!restoreList\) taskListOffset\.current = scrollOffset\.current/, 'explicit task navigation captures the list before content shrinks')
+  assert.match(settingsPageSource, /pendingTaskRestore\.current = taskListOffset\.current[\s\S]*?y: restoreList \? taskListOffset\.current : 0/, 'guarded return restores the task list instead of discarding its position')
+  assert.match(settingsPageSource, /onContentSizeChange=[\s\S]*?contentHeight - scrollLayout\.current\.height[\s\S]*?scrollTo\(\{ y, animated: false \}\)/, 'native restoration waits for the new content dimensions and clamps to the viewport')
+  assert.match(settingsTaskSource, /function select\(id: string \| undefined, focus = true\) \{[\s\S]*?if \(!inline && focus\) resetScroll\?\.\(!id\)/, 'task scroll work belongs to an explicit interaction, not ordinary re-renders')
   assert.match(systemSettingsSource, /if \(panel !== 'advanced'\) return[\s\S]*refreshSystemStatusNotificationStatus/, 'native notification status loads only on its settings page')
   assert.match(systemSettingsSource, /if \(!expandedGroups\.governance \|\| !expandedGovernanceGroups\.observability \|\| observabilityKeyLoaded\) return[\s\S]*getObservabilitySinkApiKey/, 'secure observability credentials load only when their disclosure is visible')
 

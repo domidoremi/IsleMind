@@ -8,12 +8,13 @@ export function visitProviderSseData(
   let malformedData = false
   for (const event of chunk.replace(/\r\n|\r/g, '\n').split('\n\n')) {
     const payloads: string[] = []
+    let eventDone = false
     for (const line of event.split('\n')) {
       const match = /^data:(.*)$/.exec(line)
       if (!match) continue
       sawDataLine = true
       const payload = match[1].startsWith(' ') ? match[1].slice(1) : match[1]
-      if (payload.trim() === '[DONE]') terminal = true
+      if (payload.trim() === '[DONE]') { eventDone = true; break }
       else payloads.push(payload)
     }
     // Standards-compliant multiline fields first; retain the existing tolerance
@@ -22,6 +23,7 @@ export function visitProviderSseData(
       if (payloads.length === 1) malformedData = true
       else for (const payload of payloads) if (!appendPayload(payload)) malformedData = true
     }
+    if (eventDone) { terminal = true; break }
   }
   return { sawDataLine, terminal, malformedData }
 }

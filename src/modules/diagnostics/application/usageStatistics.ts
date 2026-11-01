@@ -20,13 +20,13 @@ export function createUsageStatisticsService(
   const retentionMs = options.retentionMs ?? DEFAULT_USAGE_RETENTION_MS
   const builtInPricing = options.builtInPricing ?? []
   return {
-    async record(record) {
+    async record(record, pricingPolicy = {}) {
       if (record.costProvenance !== 'unavailable' || record.dataSource === 'legacy-message') {
         return repository.append(record)
       }
       const manualPricing = await repository.listPricingEntries()
       const pricing = resolveUsagePricingEntry(
-        [...builtInPricing, ...manualPricing],
+        [...(pricingPolicy.allowBuiltInPricing === false ? [] : builtInPricing), ...manualPricing],
         record.providerId,
         record.pricingModel ?? record.upstreamModel,
         record.occurredAt,

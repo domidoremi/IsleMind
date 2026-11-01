@@ -1,7 +1,8 @@
 import { useContext, useEffect } from 'react'
 import { act, fireEvent, render } from '@testing-library/react-native'
+import { Pressable, TextInput } from 'react-native'
 import { SettingsPageShell } from './SettingsPageShell'
-import { SettingsSectionContext } from './SettingsSection'
+import { SettingsSectionContext, useSettingsUndoAction } from './SettingsSection'
 
 let mockParams = { section: 'target', locate: '1' }
 let mockFocused = true
@@ -11,6 +12,7 @@ let mockContentHeight = 2344
 let mockStackIndex = 1
 const mockEvents = new Map<string, () => void>()
 const mockScroll = jest.fn()
+let mockUndoHandler = () => undefined
 const mockMeasurements: Array<(x: number, y: number, width: number, height: number) => void> = []
 const mockNode = { measureLayout: (_parent: unknown, done: (x: number, y: number, width: number, height: number) => void) => mockMeasurements.push(done) }
 const mockNavigation = { getState: () => ({ index: mockStackIndex }), addListener: (event: string, handler: () => void) => { mockEvents.set(event, handler); return () => mockEvents.delete(event) } }
@@ -20,9 +22,11 @@ jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) =>
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockMotion }))
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal'), canonicalThemeId: 'minimal' }) }))
 jest.mock('@/components/navigation/AnimatedNavigationTrigger', () => ({ AnimatedNavigationTrigger: () => null }))
+jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
+jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 jest.mock('./SettingsHelp', () => ({ SettingsHelpButton: () => null }))
 jest.mock('./SettingsEditBoundary', () => ({ SettingsEditBoundary: ({ children }: any) => children, useSettingsLeave: () => (action: () => void) => action() }))
-jest.mock('./theme-experiences/SettingsPageExperiences', () => ({ MinimalSettingsPageExperience: () => null }))
+jest.mock('./theme-experiences/SettingsPageExperiences', () => ({ MinimalSettingsPageExperience: ({ trailing }: any) => trailing }))
 jest.mock('react-native', () => {
   const original = jest.requireActual('react-native')
   const React = require('react')
@@ -32,19 +36,102 @@ jest.mock('react-native', () => {
     ScrollView: { value: React.forwardRef((props: any, ref: any) => { React.useImperativeHandle(ref, () => ({ scrollTo: mockScroll })); return <original.View {...props} testID="scroll" /> }) },
   })
 })
-jest.mock('@/components/ui/isle', () => ({ IsleScreen: ({ children }: any) => children }))
+jest.mock('@/components/ui/isle', () => ({
+  IsleScreen: ({ children }: any) => children,
+  IslePressable: (props: any) => {
+    if (props.testID === 'settings-undo') mockUndoHandler = props.onPress
+    const Pressable = require('react-native').Pressable
+    return <Pressable {...props} />
+  },
+}))
 function Target() {
   const { target, register } = useContext(SettingsSectionContext)
   useEffect(() => { if (target) register(target, mockNode as any); return () => { if (target) register(target, null) } }, [target, register])
   return null
+}
+function UndoContent({ available, busy = false, onUndo }: { available: boolean; busy?: boolean; onUndo: () => void }) {
+  useSettingsUndoAction(available, onUndo, busy)
+  return <TextInput testID="undo-draft" defaultValue="retain this input" />
 }
 function flushMeasurements() { const pending = mockMeasurements.splice(0); pending.forEach(done => done(0, 120, 100, 44)) }
 async function layoutScroll(screen: Awaited<ReturnType<typeof render>>) {
   await fireEvent(screen.getByTestId('scroll'), 'layout', { nativeEvent: { layout: { width: 390, height: 844 } } })
   await fireEvent(screen.getByTestId('scroll'), 'contentSizeChange', 390, 2400)
 }
+function TaskScrollControls() {
+  const { resetScroll } = useContext(SettingsSectionContext)
+  return <>
+    <Pressable testID="open-task" onPress={() => resetScroll?.(false)} />
+    <Pressable testID="return-to-tasks" onPress={() => resetScroll?.(true)} />
+    <TextInput testID="task-scroll-owner" defaultValue="Keep this owner" />
+  </>
+}
 beforeEach(() => { mockParams = { section: 'target', locate: '1' }; mockFocused = true; mockMotion = 'full'; mockStackIndex = 1; mockContentHeight = 2344; mockDimensions = { width: 390, height: 844, scale: 1, fontScale: 1 }; mockScroll.mockClear(); mockMeasurements.length = 0 })
 afterEach(() => jest.useRealTimers())
+
+it('restores the task list offset after its native content height is available', async () => {
+  mockParams = { section: '', locate: '1' }
+  const screen = await render(<SettingsPageShell title="Settings"><TaskScrollControls /></SettingsPageShell>)
+  await layoutScroll(screen)
+  const owner = screen.getByTestId('task-scroll-owner')
+  await fireEvent(screen.getByTestId('scroll'), 'scroll', { nativeEvent: { contentOffset: { y: 600 } } })
+  await fireEvent.press(screen.getByTestId('open-task'))
+  expect(mockScroll).toHaveBeenLastCalledWith({ y: 0, animated: false })
+  await fireEvent(screen.getByTestId('scroll'), 'scroll', { nativeEvent: { contentOffset: { y: 0 } } })
+  await fireEvent(screen.getByTestId('scroll'), 'contentSizeChange', 390, 500)
+  await fireEvent.press(screen.getByTestId('return-to-tasks'))
+  await fireEvent(screen.getByTestId('scroll'), 'scroll', { nativeEvent: { contentOffset: { y: 0 } } })
+  await fireEvent(screen.getByTestId('scroll'), 'contentSizeChange', 390, 2400)
+  expect(mockScroll).toHaveBeenLastCalledWith({ y: 600, animated: false })
+  expect(screen.getByTestId('task-scroll-owner')).toBe(owner)
+})
+
+it('does not force a pending task restoration after the user starts dragging', async () => {
+  mockParams = { section: '', locate: '1' }
+  const screen = await render(<SettingsPageShell title="Settings"><TaskScrollControls /></SettingsPageShell>)
+  await layoutScroll(screen)
+  await fireEvent(screen.getByTestId('scroll'), 'scroll', { nativeEvent: { contentOffset: { y: 600 } } })
+  await fireEvent.press(screen.getByTestId('open-task'))
+  await fireEvent.press(screen.getByTestId('return-to-tasks'))
+  await fireEvent(screen.getByTestId('scroll'), 'scrollBeginDrag')
+  mockScroll.mockClear()
+  await fireEvent(screen.getByTestId('scroll'), 'contentSizeChange', 390, 2400)
+  expect(mockScroll).not.toHaveBeenCalled()
+})
+it('keeps undo in the fixed header slot without replacing content, and blocks stale or busy actions', async () => {
+  const undo = jest.fn()
+  const latestUndo = jest.fn()
+  const page = (available: boolean, busy = false, onUndo = undo) => <SettingsPageShell title="Settings">
+    <UndoContent available={available} busy={busy} onUndo={onUndo} />
+  </SettingsPageShell>
+  const screen = await render(page(false))
+  const input = screen.getByTestId('undo-draft')
+  const slot = screen.getByTestId('page-feedback-indicator')
+  expect(slot).toHaveStyle({ width: 44, height: 44 })
+  expect(screen.queryByTestId('settings-undo')).toBeNull()
+  await screen.rerender(page(true))
+  const action = mockUndoHandler
+  expect(screen.getByTestId('page-feedback-indicator')).toBe(slot)
+  expect(screen.getByTestId('undo-draft')).toBe(input)
+  expect(screen.getByTestId('settings-undo')).toHaveStyle({ width: 44, height: 44 })
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.undo' }))
+  expect(undo).toHaveBeenCalledTimes(1)
+  await screen.rerender(page(true, true, latestUndo))
+  expect(screen.getByTestId('settings-undo')).toBeDisabled()
+  await act(() => action())
+  expect(latestUndo).not.toHaveBeenCalled()
+  await screen.rerender(page(true, false, latestUndo))
+  await act(() => action())
+  expect(latestUndo).toHaveBeenCalledTimes(1)
+  await screen.rerender(page(false))
+  expect(screen.getByTestId('undo-draft')).toBe(input)
+  expect(screen.queryByTestId('settings-undo')).toBeNull()
+  await act(() => action())
+  await screen.rerender(page(true, false, latestUndo))
+  await screen.unmount()
+  await act(() => action())
+  expect(latestUndo).toHaveBeenCalledTimes(1)
+})
 it('waits for native appearance on an initial deep link at stack index zero', async () => {
   mockStackIndex = 0
   const screen = await render(<SettingsPageShell title="Settings"><Target /></SettingsPageShell>)

@@ -82,7 +82,9 @@ export function createProviderRegistryPolicy(dependencies: ProviderRegistryPolic
     const heuristic = detect(input); const baseUrl = input.baseUrl?.trim(); const apiKey = input.apiKey?.trim()
     if (!baseUrl || !apiKey) return { ...heuristic, ok: false, reason: dependencies.messages.probeSkippedMissing(heuristic.reason) }
     const issue = dependencies.configurationIssue(baseUrl, apiKey)
-    if (issue?.code === 'bad_base_url') return { ...heuristic, ok: false, reason: dependencies.messages.invalidConfiguration(issue.messageKey ?? issue.message, issue.message) }
+    if (issue?.code === 'bad_base_url' || issue?.code === 'endpoint_unavailable') {
+      return { ...heuristic, ok: false, reason: dependencies.messages.invalidConfiguration(issue.messageKey ?? issue.message, issue.message) }
+    }
     const probeProvider = {
       id: 'probe',
       type: 'openai-compatible' as const,

@@ -49,7 +49,7 @@ interface ConversationRowProps {
 export const ConversationRow = memo(function ConversationRow({ conversation, index, themeId, active = false, interactionDisabled = false, now = Date.now(), isInteractionBlocked, onInteractionBlocked, modelLabel, onOpen, onRenameFocus, onLayoutHeight, searchMatchSummary, searchMatchFieldLabel, searchMatchAccessibilitySummary }: ConversationRowProps) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { width } = useWindowDimensions()
   const compact = width < 390
   const remove = useChatStore((state) => state.delete)

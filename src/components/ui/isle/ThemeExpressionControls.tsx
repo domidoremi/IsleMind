@@ -87,7 +87,7 @@ export function ThemeInputExpressionBody({ family, colors, prefix, input, suffix
   const focusMotion = useThemeMotion('accent', { themeId: family })
   const spatial = focusMotion.intensity === 'full'
   const content = (
-    <View style={[styles.inputRow, multiline ? styles.inputRowMultiline : null]}>
+    <View key="content" style={[styles.inputRow, multiline ? styles.inputRowMultiline : null]}>
       {prefix}
       {input}
       {suffix}

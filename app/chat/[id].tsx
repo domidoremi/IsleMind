@@ -103,7 +103,7 @@ export default function ConversationDeepLinkScreen() {
       ) : (
         <View testID="missing-chat-minimal" style={{ flex: 1, paddingHorizontal: 28, justifyContent: 'center', alignItems: 'center' }}>
           <Text style={{ color: colors.text, fontSize: 21, lineHeight: 28, fontWeight: '800', textAlign: 'center' }}>{t('conversation.notFound')}</Text>
-          <IsleButton label={t('conversation.viewHistory')} tone="primary" onPress={() => router.push('/conversations')} style={{ marginTop: 20 }} />
+          <IsleButton label={t('conversation.viewHistory')} tone="primary" onPress={() => router.push('/conversations')} style={{ marginTop: 20, alignSelf: 'center' }} />
         </View>
       )}
     </ThemeDetailFrame>

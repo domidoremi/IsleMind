@@ -4,6 +4,8 @@ import { Text } from '@/components/ui/AppText'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IsleButton as BaseIsleButton, type IsleButtonType } from './IsleKit'
 import { IsleChip as BaseIsleChip, type IsleChipTone } from './Chip'
+import { FeedbackAnnouncement, FeedbackGlyph } from '../FeedbackGlyph'
+import type { ActionFeedbackPhase } from '@/hooks/useActionFeedback'
 export type IsleTone = 'primary' | 'soft' | 'danger' | 'mint' | 'amber' | 'default' | 'sky' | 'ink'
 export type IsleSize = 'sm' | 'md' | 'lg'
 export type IsleVariant = IsleButtonType
@@ -18,6 +20,8 @@ export interface IsleButtonProps {
   onPress?: NonNullable<PressableProps['onPress']>
   disabled?: boolean
   busy?: boolean
+  feedbackPhase?: ActionFeedbackPhase
+  feedbackLabel?: string
   tone?: IsleTone
   compact?: boolean
   block?: boolean
@@ -26,17 +30,22 @@ export interface IsleButtonProps {
   textStyle?: StyleProp<TextStyle>
 }
 
-export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, disabled = false, busy = false, tone = 'soft', compact = false, block = false, multiline = false, style, textStyle }: IsleButtonProps) {
+export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, disabled = false, busy = false, feedbackPhase, feedbackLabel, tone = 'soft', compact = false, block = false, multiline = false, style, textStyle }: IsleButtonProps) {
+  const { colors } = useAppTheme()
+  const pending = busy || feedbackPhase === 'pending'
+  const phase = pending ? 'pending' : feedbackPhase
+  const foreground = buttonTypeForTone(tone) === 'primary' ? colors.ui.control.primaryForeground : colors.text
   return (
-    <BaseIsleButton
+    <><BaseIsleButton
       label={label}
-      accessibilityLabel={accessibilityLabel}
+      accessibilityLabel={phase === 'success' && feedbackLabel ? `${accessibilityLabel ?? label}. ${feedbackLabel}` : accessibilityLabel}
+      accessibilityState={{ busy: pending }}
       testID={testID}
-      icon={icon}
+      icon={feedbackPhase === undefined ? icon : <FeedbackGlyph phase={phase} announce={false} color={foreground} idleIcon={icon} testID={testID ? `${testID}-status` : undefined} />}
       type={buttonTypeForTone(tone)}
       danger={tone === 'danger'}
-      loading={busy}
-      disabled={disabled}
+      loading={feedbackPhase === undefined && pending}
+      disabled={disabled || pending}
       onPress={onPress}
       size={compact ? 'small' : 'middle'}
       block={block}
@@ -44,6 +53,7 @@ export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, d
       style={style}
       textStyle={textStyle}
     />
+    {feedbackPhase !== undefined ? <FeedbackAnnouncement message={phase === 'success' ? feedbackLabel : undefined} testID={testID ? `${testID}-announcement` : undefined} /> : null}</>
   )
 }
 

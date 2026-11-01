@@ -101,7 +101,7 @@ export function MemoryReviewSection<Memory extends MemoryItem>({
   renderItemRow,
 }: MemoryReviewSectionProps<Memory>) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { t } = useTranslation()
   // Search/review entry points can open details initially, but cannot override an explicit close.
   const [filtersOpen, setFiltersOpen] = useState<boolean | undefined>()

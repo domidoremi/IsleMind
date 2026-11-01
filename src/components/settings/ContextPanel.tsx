@@ -212,7 +212,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const lifetime = useSettingsLifetime()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { width, fontScale } = useWindowDimensions()
   const compact = width / fontScale < 390
   const settings = useSettingsStore((state) => state.settings)
@@ -2054,7 +2054,7 @@ function ContextFoldoutHeader({ title, detail }: { title: string; detail?: strin
 
 function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; onPress: () => void }) {
   const { colors, canonicalThemeId } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   if (canonicalThemeId === 'minimal') {
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 50, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>

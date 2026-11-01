@@ -95,7 +95,7 @@ interface SkillSettingsContentProps {
 
 export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: SkillSettingsContentProps = {}) {
   const { colors, canonicalThemeId } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const { width, fontScale } = useWindowDimensions()
@@ -419,10 +419,11 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
     if (signal?.aborted) return
     const raw = exportSkill(skill)
     const safeName = (skill.name.replace(/[^\w.-]+/g, '-').replace(/^[.-]+|[.-]+$/g, '').slice(0, 80) || 'skill')
+    let receiptKey = 'skills.exportDownloadPrepared'
     if (Platform.OS === 'web') {
       downloadBrowserJsonFile(raw, `${safeName}.isleskill`)
     } else {
-      await Clipboard.setStringAsync(raw)
+      const copied = await Clipboard.setStringAsync(raw).catch(() => false)
       if (signal?.aborted) return
       const root = FileSystem.cacheDirectory ?? FileSystem.documentDirectory
       if (!root) throw new Error('File storage is unavailable')
@@ -439,13 +440,15 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
             dialogTitle: `${skill.name}.isleskill`,
             UTI: 'public.json',
           })
-        }
+          receiptKey = 'skills.exportSharePrepared'
+        } else if (copied === true) receiptKey = 'skills.exported'
+        else throw new Error(t('chat.clipboardUnavailable'))
       } finally {
         await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)
       }
     }
     if (signal?.aborted) return
-    dialog.toast({ title: t(Platform.OS === 'web' ? 'skills.exportDownloadPrepared' : 'skills.exported'), message: `${skill.name}.isleskill`, tone: 'mint' })
+    dialog.toast({ title: t(receiptKey), message: `${skill.name}.isleskill`, tone: 'mint' })
   }
 
   async function removeSkill(skill: SkillDefinition) {
@@ -729,7 +732,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                   <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, alignItems: actionCompact ? 'stretch' : 'center' }}>
                     {!registeredToolchainSkillIds.has(createPortableSkillToolchainManifest(skill).id) ? <IsleButton label={t('skills.registerToolchain')} disabled={saving} compact icon={<AppIcon name="workflow" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => registerSkillInToolchain(skill))} style={actionButtonStyle} /> : <IsleChip active tone="mint">{t('skills.toolchainRegistered')}</IsleChip>}
                     <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
-                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill), 'skills.exportFailed')} style={actionButtonStyle} />
                     <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
                   </View>
                 }
@@ -870,7 +873,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                       style={actionButtonStyle}
                     />
                     <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
-                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill), 'skills.exportFailed')} style={actionButtonStyle} />
                     <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
                   </View>
                 }
@@ -903,7 +906,7 @@ function SkillFoldoutHeader({ title, description }: { title: string; description
 
 function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string; detail?: string }) {
   const { colors, canonicalThemeId } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const borderColor = canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBorder : canonicalThemeId === 'monet' ? colors.material.stroke : colors.ui.semantic.chrome.border
   if (canonicalThemeId === 'minimal') {
     return (
@@ -956,7 +959,7 @@ function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string
 
 function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; tone?: 'amber'; onPress: () => void }) {
   const { colors, canonicalThemeId } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const borderColor = tone === 'amber' ? colors.ui.tone.warning.border : canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const backgroundColor = tone === 'amber' ? colors.ui.tone.warning.background : canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const textColor = tone === 'amber' ? colors.ui.tone.warning.foreground : colors.textSecondary

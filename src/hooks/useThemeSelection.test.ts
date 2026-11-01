@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react-native'
-import { Platform, type GestureResponderEvent } from 'react-native'
+import { Appearance, Platform, type GestureResponderEvent } from 'react-native'
 import { useThemeTransition } from 'animal-island-ui-rn'
 import { useSettingsStore } from '@/store/settingsStore'
 import { getColors } from '@/theme/colors'
@@ -30,7 +30,7 @@ it('allows settings to record undo at the actual transition commit, not at click
   transition.mockImplementation(callback => new Promise<void>(resolve => { apply = () => { callback(); resolve() } }))
   const commit = jest.fn(selection => updateSettings(selection))
   const { result } = await renderHook(() => useThemeSelection(jest.fn(), commit))
-  await act(() => result.current({ theme: 'dark' }))
+  await act(() => { void result.current({ theme: 'dark' }) })
   expect(commit).not.toHaveBeenCalled()
   await act(() => apply())
   expect(commit).toHaveBeenCalledWith({ theme: 'dark' })
@@ -44,6 +44,31 @@ it('passes the press origin and destination canvas, then applies through the exi
     origin: { x: 42, y: 70 }, color: getColors('dark', 'animal-island-ui').background.canvas,
   })
   expect(updateSettings).toHaveBeenCalledWith({ theme: 'dark', themeId: 'animal-island-ui' })
+  expect(onError).not.toHaveBeenCalled()
+})
+
+it('uses the current system snapshot for the destination canvas', async () => {
+  const scheme = jest.spyOn(Appearance, 'getColorScheme').mockReturnValue('dark')
+  try {
+    const { result } = await renderHook(() => useThemeSelection(jest.fn()))
+    await act(() => result.current({ theme: 'system', themeId: 'monet' }))
+    expect(transition.mock.calls[0][1].color).toBe(getColors('system', 'monet', 'dark').background.canvas)
+  } finally {
+    scheme.mockRestore()
+  }
+})
+
+it('checks draft ownership at the actual transition commit without overwriting a newer setting', async () => {
+  let apply!: () => void
+  transition.mockImplementation(callback => new Promise<void>(resolve => { apply = () => { callback(); resolve() } }))
+  const onError = jest.fn()
+  const { result } = await renderHook(() => useThemeSelection(onError))
+  let completion!: Promise<boolean>
+  await act(() => { completion = result.current({ themeId: 'monet' }, undefined, () => settings.theme === 'light') })
+  settings = { ...settings, theme: 'dark' }
+  await act(async () => { apply(); expect(await completion).toBe(false) })
+  expect(updateSettings).not.toHaveBeenCalled()
+  expect(settings).toMatchObject({ theme: 'dark', themeId: 'minimal' })
   expect(onError).not.toHaveBeenCalled()
 })
 

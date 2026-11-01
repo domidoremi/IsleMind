@@ -1,8 +1,8 @@
 import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { usePreferenceUndo } from './usePreferenceUndo'
 import { SettingsValueSlider } from './SettingsValueSlider'
-import { SavedSettingsField, useSettingsFieldSession } from './SettingsFieldSession'
-import { SettingsSection, useSettingsTarget } from './SettingsSection'
+import { SavedSettingsField, SettingsFieldReceipt, useSettingsFieldSession } from './SettingsFieldSession'
+import { SettingsSection, useSettingsTarget, useSettingsUndoAction } from './SettingsSection'
 import { IsleButton } from '@/components/ui/isle'
 import { useEffect, useState } from 'react'
 import type { Settings } from '@/types/settingsContracts'
@@ -29,12 +29,13 @@ import { useSettingsStore } from '@/store/settingsStore'
 export function PreferenceSettingsContent() {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const settings = useSettingsStore((state) => state.settings)
   const { updateSettings, undo, canUndo } = usePreferenceUndo()
   const { fontScale } = useWindowDimensions()
   const [contentWidth, setContentWidth] = useState(0)
   const fieldSession = useSettingsFieldSession()
+  useSettingsUndoAction(canUndo, undo, fieldSession.busy)
   const target = useSettingsTarget()
   // The page applies safe-area/padding and a maxWidth. Window width can select
   // columns that do not fit (notably 200% text in landscape). Stay stacked until
@@ -176,7 +177,6 @@ export function PreferenceSettingsContent() {
   )
   return (
     <View testID="preference-settings-content" style={{ width: '100%', minWidth: 0 }} onLayout={event => setContentWidth(event.nativeEvent.layout.width)}>
-    {canUndo ? <IsleButton label={t('settingsWorkspace.undo')} onPress={undo} /> : null}
     <SettingsTaskWorkspace inline alwaysVisible={['identity', 'interaction', 'generation']} tasks={[
       { id: 'identity', title: t('preferences.identity'), description: t('settingsUx.identityHint'), icon: 'bot', summary: settings.assistantDisplayName || t('preferences.identityDefault'), content: <SettingsSection id="identity">{identitySection}</SettingsSection> },
       { id: 'generation', title: t('preferences.generation'), description: t('settingsUx.generationHint'), icon: 'settings-sliders', targets: ['generation-temperature', 'generation-tokens'], content: <SettingsSection id="generation">{generationSection}</SettingsSection> },
@@ -328,7 +328,10 @@ function PreferenceNumericField({ session, settingKey, label, value, range, kind
   const locked = session.busy || Boolean(entry)
   return <View style={[style, { gap: 8 }]}>
     {onReset ? <>
-      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{label}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 20 }}>
+        <Text style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: '700', color: colors.text }}>{label}</Text>
+        <SettingsFieldReceipt session={session} settingKey={settingKey} />
+      </View>
       <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {[false, true].map(option => <IslePressable key={String(option)} disabled={locked} accessibilityRole="radio" accessibilityState={{ checked: custom === option, disabled: locked }} onPress={() => {
           setCustom(option)
@@ -341,15 +344,17 @@ function PreferenceNumericField({ session, settingKey, label, value, range, kind
     {custom ? <>
       {onReset && value === undefined && !entry ? <Text style={{ fontSize: 14, color: colors.textSecondary }}>{t('settingsWorkspace.chooseValue')}</Text> : null}
       {onReset && !locked ? <SettingsValueSlider label={label} value={value ?? range.min} min={range.min} max={range.max} step={kind === 'decimal' ? 0.1 : 1} logarithmic={kind === 'integer' && range.min > 0} onCommit={apply} /> : null}
-      <IsleField label={onReset ? '' : label} inputProps={{ accessibilityLabel: label, value: draft, editable: !session.busy, onChangeText: next => {
+      <IsleField label={onReset ? '' : label} labelAccessory={onReset ? undefined : <SettingsFieldReceipt session={session} settingKey={settingKey} />} inputProps={{ accessibilityLabel: label, value: draft, editable: !session.busy, onChangeText: next => {
         const accepted = acceptNumericDraft(draft, next, kind)
         if (accepted !== draft) session.edit(settingKey, accepted, saved)
       }, keyboardType: kind === 'integer' ? 'number-pad' : 'decimal-pad', placeholder: onReset ? t('settingsWorkspace.chooseValue') : placeholder }} />
       {entry ? <>
-        <Text accessibilityLiveRegion="polite" style={{ fontSize: 14, color: colors.textSecondary }}>{t(invalid ? 'settingsWorkspace.error' : entry.error ? `settingsWorkspace.${entry.error}` : 'settingsWorkspace.unsaved')}</Text>
+        <Text accessibilityRole={entry.error ? 'alert' : 'text'} accessibilityLiveRegion={entry.error ? 'assertive' : 'polite'} style={{ fontSize: 14, color: entry.error ? colors.ui.tone.danger.foreground : colors.textSecondary }}>{t(invalid ? 'settingsWorkspace.error' : entry.error ? `settingsWorkspace.${entry.error}` : 'settingsWorkspace.unsaved')}</Text>
         <Text style={{ fontSize: 14, color: colors.textSecondary }}>{range.min}–{range.max}</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          <IsleButton label={t(session.busy ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={session.busy || invalid} onPress={() => void session.save(settingKey, text => apply(commitNumericDraft(text, range, kind)!), text => text)} />
+          <IsleButton label={t('settingsWorkspace.save')} feedbackPhase={session.savingKey === settingKey ? 'pending' : 'idle'}
+            icon={<AppIcon name="check" size={16} color={colors.text} />} busy={session.savingKey === settingKey}
+            disabled={session.busy || invalid} onPress={() => void session.save(settingKey, text => apply(commitNumericDraft(text, range, kind)!), text => text)} />
           <IsleButton label={t('settingsWorkspace.reload')} disabled={session.busy} onPress={() => session.discard(settingKey)} />
         </View>
       </> : null}

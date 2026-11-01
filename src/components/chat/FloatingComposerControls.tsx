@@ -49,7 +49,7 @@ export function ComposerToolButton({
   onPress: () => void
 }) {
   const { colors, isLiquidGlass } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const accessibilityLabel = stateLabel ? `${label}: ${stateLabel}` : label
   // Glass panels already own the lens; wide tool controls stay transparent
   // with a hairline instead of opaque item cards inside them.
@@ -159,7 +159,7 @@ function getReasoningVisualLevel(effort: NonNullable<Conversation['reasoningEffo
 
 export function QuickChoiceButton({ label, active, accessibilityHint, maxWidth, onPress }: { label: string; active: boolean; accessibilityHint?: string; maxWidth?: number; onPress: () => void }) {
   const { colors, isLiquidGlass } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const textMaxWidth = maxWidth ? Math.max(24, maxWidth - 24) : undefined
   const activeForeground = colors.ui.control.primaryForeground
   const inactiveBackground = resolveChatControlSurface(colors, isLiquidGlass, false, 'muted')

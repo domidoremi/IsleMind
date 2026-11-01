@@ -3,11 +3,13 @@ import type { ProviderFailoverCandidate, ProviderFailoverRoute } from './provide
 import { annotateFailoverCandidatesWithHealth, type ProviderHealthRecord } from './providerHealth'
 import type { ProviderCredentialSource } from './providerCredentials'
 import { providerFailoverRouteIdentityKey } from './providerFailoverPolicy'
+import { getProviderCompatibilityEvidenceForProvider } from './providerCompatibilityCatalog'
 
 export const PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA = 'islemind.provider-fallback-candidate-build.v1'
 
 export type ProviderFallbackCandidateRejectionReason =
   | 'provider_disabled'
+  | 'provider_retired'
   | 'no_candidate_models'
   | 'model_deprecated'
   | 'no_enabled_credentials'
@@ -73,6 +75,10 @@ export function createProviderFallbackCandidateBuilder(
     let credentialGroupCount = 0
 
     for (const provider of input.providers) {
+      if (getProviderCompatibilityEvidenceForProvider(provider).serviceLifecycle?.status === 'retired') {
+        rejectedCandidates.push({ providerId: provider.id, reason: 'provider_retired' })
+        continue
+      }
       if (!provider.enabled && input.includeDisabledProviders !== true) {
         rejectedCandidates.push({ providerId: provider.id, reason: 'provider_disabled' })
         continue

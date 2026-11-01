@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
+import { FeedbackAnnouncement } from '@/components/ui/FeedbackGlyph'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { ThemeExpressionSurface } from '@/components/ui/isle/ThemeExpressionSurface'
 import { shouldPromotePlainDelimitedRows } from './messageContentTablePromotion'
@@ -1200,7 +1201,7 @@ function CardHeader({
       {actions.map((action) => {
         const key = actionKey(action)
         const feedback = actionFeedback?.key === key ? actionFeedback : null
-        const displayLabel = feedback?.label ?? action.label
+        const displayLabel = feedback?.failed ? feedback.label : action.label
         const accessibilityHint = action.accessibilityHint ?? t('messageContent.copyBlockHint')
         const foreground = feedback?.failed ? colors.ui.tone.danger.foreground : isUser ? userMessage.userForeground : codeSurface ? colors.ui.code.text : colors.textTertiary
         return (
@@ -1209,7 +1210,7 @@ function CardHeader({
             haptic
             accessibilityRole="button"
             onPress={runAction(action)}
-            accessibilityLabel={displayLabel}
+            accessibilityLabel={feedback && !feedback.failed ? `${action.label}. ${feedback.label}` : displayLabel}
             accessibilityHint={accessibilityHint}
             style={{
               minHeight: ISLE_MIN_TOUCH_TARGET,
@@ -1223,10 +1224,11 @@ function CardHeader({
               borderColor: feedback?.failed ? colors.ui.tone.danger.border : 'transparent',
             }}
           >
-            <AppIcon name="copy" color={foreground} size={10.5} strokeWidth={appIconStroke.strong} />
-              <Text numberOfLines={1} accessibilityLiveRegion={feedback ? 'polite' : undefined} style={{ color: foreground, fontSize: 10, fontWeight: '800', maxWidth: 78 }}>
+            <AppIcon name={feedback && !feedback.failed ? 'check' : 'copy'} color={foreground} size={10.5} strokeWidth={appIconStroke.strong} />
+              <Text numberOfLines={1} accessibilityLiveRegion={feedback?.failed ? 'assertive' : undefined} style={{ color: foreground, fontSize: 10, fontWeight: '800', maxWidth: 78 }}>
                 {displayLabel}
               </Text>
+            <FeedbackAnnouncement message={feedback && !feedback.failed ? feedback.label : undefined} />
           </IslePressable>
         )
       })}

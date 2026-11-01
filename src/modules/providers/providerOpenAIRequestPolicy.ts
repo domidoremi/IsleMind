@@ -2,6 +2,8 @@ import type { ReasoningEffort } from '@/core'
 import type { Attachment } from '@/types/chatContracts'
 import type { AIModel, AIProvider } from '@/types/providerContracts'
 import type { WebSearchMode } from '@/types/settingsContracts'
+import { dashScopePreservesThinkingByDefault, dashScopeSupportsMaxCompletionTokens, isDashScopeChatContract } from './providerDashScopePolicy'
+import { isLocalAIChatReplayContract } from './providerLocalAIReasoningReplay'
 
 export interface OpenAIRequestInput {
   provider: AIProvider
@@ -81,6 +83,7 @@ export interface OpenAIRequestPolicy {
 export function getOpenAIChatMaxTokensField(req: OpenAIRequestInput): 'max_completion_tokens' | 'max_tokens' {
   if (req.provider.type === 'openai') return 'max_completion_tokens'
   if (req.provider.type === 'xiaomi-mimo') return 'max_completion_tokens'
+  if (isDashScopeChatContract(req.provider)) return dashScopeSupportsMaxCompletionTokens(req.provider, req.model) ? 'max_completion_tokens' : 'max_tokens'
   if (providerMatches(req.provider, 'groq', /groq|api\.groq\.com/i)) return 'max_completion_tokens'
   if (providerMatches(req.provider, 'minimax', /minimax|mini[-_ ]?max|minimaxi|海螺/i)) return 'max_completion_tokens'
   if (providerMatches(req.provider, 'moonshot', /moonshot|kimi/i)) return 'max_completion_tokens'
@@ -268,6 +271,9 @@ export function createOpenAIRequestPolicy(dependencies: OpenAIRequestPolicyDepen
   ): OpenAICompatibleReasoningReplayField | undefined {
     if (req.provider.type !== 'openai-compatible' && req.provider.type !== 'xiaomi-mimo') return undefined
     if (req.provider.wireProtocol === 'anthropic-compatible') return undefined
+    if (dashScopePreservesThinkingByDefault(req.provider, req.model)) return 'reasoning_content'
+    // Returned tool-turn state is independent of optional model reasoning controls.
+    if (isLocalAIChatReplayContract(req.provider)) return msg.toolCalls?.length ? 'reasoning' : undefined
     const modelConfig = dependencies.resolveModelConfig(req.model, req.provider)
     if (!providerReasoningCanBeSent(req.provider, modelConfig)) return undefined
     if (isReasoningModel('xiaomi-mimo', req.provider, req.model)) return msg.toolCalls?.length ? 'reasoning_content' : undefined

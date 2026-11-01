@@ -1,6 +1,7 @@
 import type { ReasoningEffort } from '@/core'
 import type { AIModel, ModelReasoningMode, ProviderPresetId, ProviderType } from '@/types/providerContracts'
 import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types/modelCatalog'
+import { getProviderFireworksReasoningEffortOptions } from './providerFireworksReasoning'
 export type OpenAIModelListItem = {
   id?: string
   object?: string
@@ -88,7 +89,7 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
   }
   return sortModelConfigs(
     Array.from(itemsById.entries()).map(([id, remote]) => {
-      const reasoningMode = openAICompatibleReasoningModeFromModel(remote, options)
+      const reasoningMode = openAICompatibleReasoningModeFromModel(remote, options, id)
       const supportsVision = supportsVisionFromOpenAIModel(remote)
       const supportsFiles = supportsFilesFromOpenAIModel(remote)
       const supportsTools = supportsToolsFromOpenAIModel(remote)
@@ -128,9 +129,10 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
         supportsTools,
         supportedParameters,
         preferredEndpoint,
-        ...(reasoningMode ? {
+        ...(reasoningMode || providerType === 'openai-compatible' ? {
           reasoningMode,
-          reasoningEfforts: openAICompatibleReasoningEffortsFromMode(reasoningMode),
+          // Persist an empty list so a reload cannot restore another supplier's controls.
+          reasoningEfforts: reasoningMode ? openAICompatibleReasoningEffortsFromMode(reasoningMode, id) : [],
         } : {}),
         source: 'remote',
       })
@@ -144,7 +146,7 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
         supportsTools: supportsTools ?? null,
         preferredEndpoint: preferredEndpoint ?? 'chat-completions',
         reasoningMode,
-        reasoningEfforts: reasoningMode ? openAICompatibleReasoningEffortsFromMode(reasoningMode) : undefined,
+        reasoningEfforts: reasoningMode ? openAICompatibleReasoningEffortsFromMode(reasoningMode, id) : [],
       }
     }),
     providerType
@@ -373,18 +375,21 @@ function supportedParametersFromOpenAIModel(model?: OpenAIModelListItem): string
   return values.length ? [...new Set(values)] : undefined
 }
 
-function openAICompatibleReasoningModeFromModel(model: OpenAIModelListItem | undefined, options: OpenAIModelMappingOptions): ModelReasoningMode | undefined {
+function openAICompatibleReasoningModeFromModel(model: OpenAIModelListItem | undefined, options: OpenAIModelMappingOptions, modelId: string): ModelReasoningMode | undefined {
   const supportedParameters = openAIModelSupportedParameterSet(model)
   if (options.providerPresetId === 'deepinfra') {
     const tags = openAIModelTags(model)
     if (tags.has('reasoning_effort') || tags.has('reasoning') || supportedParameters.has('reasoning_effort')) return 'deepinfra-reasoning-effort'
   }
+  if (options.providerPresetId === 'fireworks' && supportedParameters.has('reasoning_effort')
+    && getProviderFireworksReasoningEffortOptions(modelId).length) return 'fireworks-reasoning-effort'
   if (supportedParameters.has('enable_thinking') || supportedParameters.has('thinking_budget')) return 'dashscope-thinking'
   if (supportedParameters.has('reasoning_effort')) return 'openai-effort'
   return undefined
 }
 
-function openAICompatibleReasoningEffortsFromMode(mode: ModelReasoningMode): ReasoningEffort[] {
+function openAICompatibleReasoningEffortsFromMode(mode: ModelReasoningMode, modelId: string): ReasoningEffort[] {
+  if (mode === 'fireworks-reasoning-effort') return getProviderFireworksReasoningEffortOptions(modelId)
   if (mode === 'deepinfra-reasoning-effort') return DEEPINFRA_REASONING_EFFORTS
   if (mode === 'dashscope-thinking') return DASHSCOPE_THINKING_EFFORTS
   return OPENAI_COMPATIBLE_REASONING_EFFORTS

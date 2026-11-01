@@ -37,7 +37,7 @@ check('workspace lock retains the native dependency maps and exact dayjs integri
   const npmLock = JSON.parse(readFork('package-lock.json'))
   const date = npmLock.packages['node_modules/dayjs']
   assert.ok(date?.version && date.integrity, 'the existing native lock supplies the date version and integrity')
-  assert.deepEqual(lock.packages['animal-island-ui-rn/dayjs'], [
+  assert.deepEqual(lock.packages['animal-island-ui-rn/dayjs'] ?? lock.packages.dayjs, [
     `dayjs@${date.version}`, '', {}, date.integrity,
   ])
   const installed = require(require.resolve('dayjs/package.json', { paths: [fork] }))
@@ -141,14 +141,15 @@ check('dayjs is the existing library date dependency and the host lock includes 
   const lock = parse('const lock = ' + read('bun.lock'), { sourceType: 'script' }).program.body[0].declarations[0].init
   assert.equal(lock.type, 'ObjectExpression', 'Bun text lock remains an object')
   const source = read('bun.lock')
-  assert.ok(source.includes('"dayjs": "^1.11.23"'))
-  assert.ok(source.includes('"animal-island-ui-rn/dayjs": ["dayjs@1.11.23"'), 'the self-contained workspace retains its installed date runtime')
+  const parsedLock = require('json5').parse(source)
+  assert.equal(parsedLock.workspaces['../animal-island-ui'].dependencies.dayjs, forkManifest.dependencies.dayjs)
+  assert.ok(parsedLock.packages['animal-island-ui-rn/dayjs'] ?? parsedLock.packages.dayjs, 'the self-contained workspace retains its scoped or hoisted date runtime')
   assert.equal(manifest.dependencies.dayjs, undefined, 'no duplicate application-owned date dependency')
 })
 
 check('customized application controls dispatch to the fork', () => {
   const kit = read('src/components/ui/isle/IsleKit.tsx')
-  for (const name of ['Button', 'Input', 'Switch', 'Card', 'Select', 'Progress']) assert.ok(kit.includes('<Native' + name + ' '))
+  for (const name of ['Button', 'Input', 'Switch', 'Card', 'Select', 'Progress']) assert.ok(new RegExp('<Native' + name + '\\s').test(kit), `${name} must render the fork control`)
   for (const name of ['Title', 'Collapse', 'Modal', 'Table', 'Time', 'Checkbox', 'Tabs']) {
     assert.ok(kit.includes(name + ' as Isle' + name))
     assert.ok(!kit.includes('export function Isle' + name + '('))

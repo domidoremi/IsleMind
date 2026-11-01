@@ -1,6 +1,7 @@
 import {
   isChatReasoningReplay,
   isChatToolCallProviderMetadata,
+  measureJsonCharacters,
   type ChatReasoningReplayPart,
   type ChatToolCallProviderMetadata,
 } from '@/core'
@@ -44,6 +45,12 @@ export function toProviderContinuationReplay(
     } else if (block.type === 'redacted_thinking' && typeof block.data === 'string') {
       replay.push({ kind: 'redacted', data: block.data })
     }
+  }
+  const googleParts = result.googleContentParts
+  if (googleParts?.some((part) => part.thoughtSignature || part.functionCall)) {
+    // Keep complete native parts, including empty-text signatures and ordering.
+    measureJsonCharacters(googleParts, 1_048_576)
+    replay.push({ kind: 'google-content', data: JSON.stringify(googleParts) })
   }
   if (!isChatReasoningReplay(replay)) {
     throw new Error('Provider continuation state is invalid or exceeds the supported size limit.')

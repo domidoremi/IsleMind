@@ -144,7 +144,7 @@ jest.mock('@/components/ui/isle', () => {
       }
       return <MockPressable {...props} />
     }, IsleToggle: ({ title, description }: any) => <View><Text>{title}</Text>{description ? <Text>{description}</Text> : null}</View>, IsleChip: Text, IsleProgress: jest.requireActual('@/components/ui/isle/IsleKit').IsleProgress, ThemeExpressionRegion: View,
-    IsleField: ({ label, inputProps }: any) => <TextInput accessibilityLabel={label} {...inputProps} />,
+    IsleField: ({ label, labelAccessory, inputProps }: any) => <View>{labelAccessory}<TextInput accessibilityLabel={label} {...inputProps} /></View>,
     IsleButton: ({ label, ...props }: any) => {
       if (['contextPanel.localModel.cancelDownload', 'contextPanel.localModel.retrySelectionSave', 'contextPanel.localModel.reviewStateReset'].includes(label)) mockModelPresses[label] = props.onPress
       if (['contextPanel.cancelKnowledgeRebuild', 'contextPanel.cancelSelfTest', 'contextPanel.cancelRagEvaluation'].includes(label)) mockImportPresses[label] = props.onPress
@@ -2749,12 +2749,13 @@ it('blocks duplicate saves and acknowledges success only after persistence', asy
   const screen = await render(<Page />)
   await fireEvent.changeText(screen.getByLabelText(label), 'https://draft.invalid')
   await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
-  expect(screen.getByRole('button', { name: 'settingsWorkspace.saving' })).toBeDisabled()
-  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.saving' }))
+  expect(screen.getByRole('button', { name: 'settingsWorkspace.save' })).toBeDisabled()
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
   expect(mockUpdate).toHaveBeenCalledTimes(1)
   expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.saved' }))
   await act(async () => { finish() })
-  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settingsWorkspace.saved' }))
+  expect(screen.getByTestId('settings-field-localModelDownloadMirrorBaseUrl-status').props.accessibilityLabel).toBe('settingsWorkspace.saved')
+  expect(mockToast).not.toHaveBeenCalled()
   expect(screen.queryByRole('button', { name: 'settingsWorkspace.save' })).toBeNull()
 })
 

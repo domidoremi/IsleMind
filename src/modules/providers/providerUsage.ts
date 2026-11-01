@@ -21,7 +21,7 @@ export function extractUsage(
 ): ProviderUsage | undefined {
   const includeReasoning = options.includeReasoning !== false
   if (providerType === 'anthropic') {
-    const usage = json.usage as Record<string, unknown> | undefined
+    const usage = (json.usage ?? (json.message as { usage?: unknown } | undefined)?.usage) as Record<string, unknown> | undefined
     const uncachedInputTokens = numberValue(usage?.input_tokens)
     const outputTokens = numberValue(usage?.output_tokens)
     const cacheReadInputTokens = numberValue(usage?.cache_read_input_tokens)
@@ -59,7 +59,7 @@ export function extractUsage(
     }
   }
 
-  const usage = json.usage as Record<string, unknown> | undefined
+  const usage = (json.usage ?? (json.response as { usage?: unknown } | undefined)?.usage) as Record<string, unknown> | undefined
   const inputTokens = aliasCount(usage?.input_tokens, usage?.prompt_tokens)
   const outputTokens = aliasCount(usage?.output_tokens, usage?.completion_tokens)
   const totalTokens = numberValue(usage?.total_tokens) ?? sumOptional(inputTokens, outputTokens)

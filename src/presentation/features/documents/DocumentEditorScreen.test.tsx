@@ -3,6 +3,16 @@ import { AppState, type AppStateStatus } from 'react-native'
 import { act, fireEvent, render } from '@testing-library/react-native'
 import { SAVED_DOCUMENT_SCHEMA, parseSavedDocument, type DocumentRepository, type DocumentRevisionPort, type DocumentRevisionSource, type SavedDocument } from '@/modules/documents'
 import DocumentEditorScreen from './DocumentEditorScreen'
+import * as Clipboard from 'expo-clipboard'
+import type { IsleButtonProps } from '@/components/ui/isle/Controls'
+import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsContracts'
+
+let mockFamily: CanonicalThemeId = 'minimal'
+
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn() }))
+jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
+jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
+jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 
 const mockRoute: { id?: string; conversationId?: string; messageId?: string } = { id: 'saved' }
 jest.mock('expo-router', () => ({
@@ -13,15 +23,27 @@ jest.mock('expo-router', () => ({
 }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: jest.requireActual('@/theme/colors').getColors('light', 'minimal') }) }))
+jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({
+  colors: jest.requireActual('@/theme/colors').getColors('light', mockFamily), canonicalThemeId: mockFamily,
+}) }))
 jest.mock('@/presentation/app-shell/ThemeDetailFrame', () => ({ ThemeDetailFrame: ({ children, actions }: { children: ReactNode; actions: ReactNode }) => <>{actions}{children}</> }))
-jest.mock('react-native-markdown-display', () => ({ children }: { children: ReactNode }) => <>{children}</>)
+jest.mock('react-native-markdown-display', () => ({ children }: { children: ReactNode }) => {
+  const Text = require('react-native').Text
+  return <Text>{children}</Text>
+})
 jest.mock('@/store/chatStore', () => ({ useChatStore: { getState: () => ({ conversations: [], loadAll: async () => undefined }) } }))
 jest.mock('@/components/ui/isle', () => {
   const { Pressable, Text, TextInput, View } = jest.requireActual('react-native')
-  const Button = ({ label, accessibilityLabel, onPress, disabled, busy }: { label: string; accessibilityLabel?: string; onPress?: () => void; disabled?: boolean; busy?: boolean }) => <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} disabled={disabled || busy} onPress={onPress}><Text>{label}</Text></Pressable>
+  const { FeedbackAnnouncement, FeedbackGlyph } = jest.requireActual('@/components/ui/FeedbackGlyph')
+  const Button = ({ label, accessibilityLabel, onPress, disabled, busy, feedbackPhase, feedbackLabel, testID }: IsleButtonProps) => <Pressable testID={testID} accessibilityRole="button"
+    accessibilityLabel={feedbackPhase === 'success' && feedbackLabel ? `${accessibilityLabel ?? label}. ${feedbackLabel}` : accessibilityLabel ?? label}
+    disabled={disabled || busy || feedbackPhase === 'pending'} onPress={onPress}>
+    <Text>{label}</Text>{feedbackPhase !== undefined ? <FeedbackGlyph phase={feedbackPhase} announce={false} testID={testID ? `${testID}-status` : undefined} /> : null}
+    {feedbackPhase !== undefined ? <FeedbackAnnouncement message={feedbackPhase === 'success' ? feedbackLabel : undefined} testID={testID ? `${testID}-announcement` : undefined} /> : null}
+  </Pressable>
   return {
     IsleButton: Button,
+    IslePressable: Pressable,
     IsleInput: ({ label, inputStyle: _style, ...props }: { label: string; inputStyle: unknown }) => <View><Text>{label}</Text><TextInput {...props} /></View>,
     IsleSelect: ({ options, onChange, disabled }: { options: { label: string; value: string }[]; onChange: (value: string) => void; disabled: boolean }) => <View>{options.map((item) => <Button key={item.value} label={item.label} disabled={disabled} onPress={() => onChange(item.value)} />)}</View>,
     IsleCheckbox: ({ options, onChange, disabled, value }: { options: { label: string; value: string }[]; value: string[]; onChange: (value: string[]) => void; disabled: boolean }) => <View>{options.map((item) => <Button key={item.value} label={item.label} disabled={disabled} onPress={() => onChange(value.includes(item.value) ? value.filter((id) => id !== item.value) : [...value, item.value])} />)}</View>,
@@ -61,8 +83,74 @@ async function openRevision(view: View) {
   await fireEvent.press(view.getByRole('button', { name: 'Provider · model' }))
   await fireEvent.changeText(view.getByTestId('document-revision-instruction'), 'Add the permitted alternative.')
 }
-beforeEach(() => { mockRoute.id = 'saved'; delete mockRoute.conversationId; delete mockRoute.messageId })
+beforeEach(() => { mockFamily = 'minimal'; mockRoute.id = 'saved'; delete mockRoute.conversationId; delete mockRoute.messageId })
 afterEach(() => jest.restoreAllMocks())
+
+it('exposes writing modes and source expansion without saving, generating, or losing the current body', async () => {
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  const body = view.getByTestId('document-body')
+  await fireEvent.changeText(body, 'A human draft, not a generated proposal.')
+  expect(view.getByTestId('document-mode-edit').props.accessibilityState.selected).toBe(true)
+  expect(view.getByTestId('document-origin-toggle').props.accessibilityState.expanded).toBe(false)
+  await fireEvent.press(view.getByTestId('document-origin-toggle'))
+  expect(view.getByTestId('document-origin-toggle').props.accessibilityState.expanded).toBe(true)
+  expect(view.getByTestId('document-body')).toBe(body)
+  expect(view.getByTestId('document-origin')).toBeTruthy()
+  await fireEvent.press(view.getByTestId('document-origin-toggle'))
+  expect(view.queryByTestId('document-origin')).toBeNull()
+  await fireEvent.press(view.getByTestId('document-mode-preview'))
+  expect(view.getByTestId('document-mode-preview').props.accessibilityState.selected).toBe(true)
+  expect(view.getByTestId('document-preview')).toHaveTextContent(/A human draft, not a generated proposal./)
+  await fireEvent.press(view.getByTestId('document-mode-edit'))
+  expect(view.getByTestId('document-body').props.value).toBe('A human draft, not a generated proposal.')
+  expect(f.save).not.toHaveBeenCalled()
+  expect(f.create).not.toHaveBeenCalled()
+  expect(f.port.propose).not.toHaveBeenCalled()
+})
+
+it('keeps body, title, toolbar, and save-state identity while changing theme presentation', async () => {
+  const f = fixture()
+  const page = () => <DocumentEditorScreen repository={f.repository} revision={f.port} />
+  const view = await render(page())
+  const body = view.getByTestId('document-body')
+  const title = view.getByTestId('document-title')
+  const status = view.getByTestId('document-save-status')
+  const toolbar = view.getByTestId('document-editor-toolbar')
+  await fireEvent.changeText(body, 'A draft that survives appearance changes.')
+  for (const family of CANONICAL_THEME_IDS) {
+    mockFamily = family
+    await view.rerender(page())
+    expect(view.getByTestId('document-body')).toBe(body)
+    expect(view.getByTestId('document-title')).toBe(title)
+    expect(view.getByTestId('document-save-status')).toBe(status)
+    expect(view.getByTestId('document-editor-toolbar')).toBe(toolbar)
+    expect(body.props.value).toBe('A draft that survives appearance changes.')
+  }
+  expect(f.save).not.toHaveBeenCalled()
+  expect(f.port.propose).not.toHaveBeenCalled()
+})
+
+it.each(['success', 'false', 'reject'] as const)('confirms only a real document-copy outcome: %s', async outcome => {
+  if (outcome === 'reject') jest.mocked(Clipboard.setStringAsync).mockRejectedValueOnce(new Error('Clipboard unavailable'))
+  else jest.mocked(Clipboard.setStringAsync).mockResolvedValueOnce(outcome === 'success')
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await fireEvent.changeText(view.getByTestId('document-body'), 'Draft to copy, not save.')
+  await fireEvent.press(view.getByRole('button', { name: 'documents.copyText' }))
+  expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('Draft to copy, not save.')
+  expect(view.getByTestId('document-body').props.value).toBe('Draft to copy, not save.')
+  expect(f.save).not.toHaveBeenCalled()
+  if (outcome === 'success') {
+    expect(view.queryByTestId('document-copy-announcement')).toBeNull()
+    expect(view.getByRole('button', { name: 'documents.copyText. documents.copyNotice' })).toBeTruthy()
+    expect(view.queryByTestId('document-copy-feedback')).toBeNull()
+  }
+  else {
+    expect(view.getByTestId('document-copy-status').props.accessibilityLabel).toBeUndefined()
+    expect(view.getByText('chat.clipboardUnavailable')).toBeTruthy()
+  }
+})
 
 it('requires explicit generation, review, acceptance and then a separate revision-fenced Save; immutable origin stays cancelled', async () => {
   const f = fixture()

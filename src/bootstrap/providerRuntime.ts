@@ -738,7 +738,7 @@ function resolveProviderModelList(): Promise<ProviderModelList> {
     configurationIssue(provider, apiKey) {
       const issue = getProviderConfigIssue(provider, apiKey)
       return issue ? {
-        code: issue.code === 'bad_base_url' ? 'bad_base_url' : 'credential_mismatch',
+        code: issue.code === 'endpoint_unavailable' ? 'endpoint_unavailable' : issue.code === 'bad_base_url' ? 'bad_base_url' : 'credential_mismatch',
         message: st(issue.messageKey ?? issue.message, undefined, issue.message),
       } : undefined
     },
@@ -858,7 +858,7 @@ function resolveProviderModelTest(): Promise<ProviderModelTest> {
       configurationIssue(provider, apiKey) {
         const issue = getProviderConfigIssue(provider, apiKey)
         return issue ? {
-          code: issue.code === 'bad_base_url' ? 'bad_base_url' : 'credential_mismatch',
+          code: issue.code === 'endpoint_unavailable' ? 'endpoint_unavailable' : issue.code === 'bad_base_url' ? 'bad_base_url' : 'credential_mismatch',
           message: st(issue.messageKey ?? issue.message, undefined, issue.message),
         } : undefined
       },
@@ -892,7 +892,7 @@ function resolveProviderModelTest(): Promise<ProviderModelTest> {
     configurationIssue(provider, apiKey) {
       const issue = getProviderConfigIssue(provider, apiKey)
       return issue ? {
-        code: issue.code === 'bad_base_url' ? 'bad_base_url' : 'credential_mismatch',
+        code: issue.code === 'endpoint_unavailable' ? 'endpoint_unavailable' : issue.code === 'bad_base_url' ? 'bad_base_url' : 'credential_mismatch',
         message: st(issue.messageKey ?? issue.message, undefined, issue.message),
       } : undefined
     },
@@ -1135,7 +1135,7 @@ function toProviderRuntimeMessages(
           },
           ...(providerThoughtSignature(call) ? { thoughtSignature: providerThoughtSignature(call) } : {}),
         })))
-        return [{ role: 'assistant' as const, content }]
+        return [{ role: 'assistant' as const, content, ...providerReplayFields(message.reasoningReplay) }]
       }
       if (message.role === 'tool') {
         const id = message.toolCallId ? googleCallIds.get(message.toolCallId) : undefined
@@ -1195,7 +1195,7 @@ function providerThoughtSignature(
 
 function providerReplayFields(
   replay: readonly ChatReasoningReplayPart[] | undefined,
-): Pick<ProviderRuntimeChatMessage, 'reasoningContent' | 'responseItems' | 'providerContentBlocks'> {
+): Pick<ProviderRuntimeChatMessage, 'reasoningContent' | 'responseItems' | 'providerContentBlocks' | 'googleContentParts'> {
   if (!replay?.length) return {}
   const reasoningContent = replay
     .filter((part): part is Extract<ChatReasoningReplayPart, { kind: 'text' | 'thinking' }> => (
@@ -1214,6 +1214,7 @@ function providerReplayFields(
         }]
       : [])
   const providerContentBlocks: Record<string, unknown>[] = []
+  const googleContentParts: Record<string, unknown>[] = []
   for (const part of replay) {
     if (part.kind === 'thinking') {
       providerContentBlocks.push({
@@ -1223,11 +1224,13 @@ function providerReplayFields(
       })
     }
     if (part.kind === 'redacted') providerContentBlocks.push({ type: 'redacted_thinking', data: part.data })
+    if (part.kind === 'google-content') googleContentParts.push(...JSON.parse(part.data) as Record<string, unknown>[])
   }
   return {
     ...(reasoningContent ? { reasoningContent } : {}),
     ...(responseItems.length ? { responseItems } : {}),
     ...(providerContentBlocks.length ? { providerContentBlocks } : {}),
+    ...(googleContentParts.length ? { googleContentParts } : {}),
   }
 }
 

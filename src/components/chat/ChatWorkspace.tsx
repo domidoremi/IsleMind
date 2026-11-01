@@ -8,6 +8,7 @@ import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useIsleDialog, type IsleBackgroundState } from '@/components/ui/isle'
+import { PageFeedbackBoundary } from '@/components/ui/PageFeedback'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
@@ -81,7 +82,11 @@ interface ChatWorkspaceProps {
   onSettings?: () => void
 }
 
-export function ChatWorkspace({ conversation, active = true, showBack = false, embedded = false, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty, initialRequestedOutputMode = 'auto', shellNavigation = false, topChromeInset = 0, showSetupEmptyState = true, runtimeRepairIntent, settingsTransitionActive = false, onHistory, onSettings }: ChatWorkspaceProps) {
+export function ChatWorkspace(props: ChatWorkspaceProps) {
+  return <PageFeedbackBoundary scopeKey={props.conversation?.id}><ChatWorkspaceBody {...props} /></PageFeedbackBoundary>
+}
+
+function ChatWorkspaceBody({ conversation, active = true, showBack = false, embedded = false, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty, initialRequestedOutputMode = 'auto', shellNavigation = false, topChromeInset = 0, showSetupEmptyState = true, runtimeRepairIntent, settingsTransitionActive = false, onHistory, onSettings }: ChatWorkspaceProps) {
   const { colors, isLiquidGlass } = useAppTheme()
   const { t } = useTranslation()
   const chatSystemPromptPlaceholder = t(CHAT_PRESENTATION_CATALOG.systemPromptPlaceholderKey)
@@ -89,7 +94,7 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
   const insets = useSafeAreaInsets()
   const visualTopInset = embedded ? 0 : Math.max(insets.top, 0)
   const { height: windowHeight, width: windowWidth } = useWindowDimensions()
-  const motion = useMotionPreference(isLiquidGlass)
+  const motion = useMotionPreference(true)
   const chatMotion = Platform.OS === 'android' && !isLiquidGlass && motion === 'full' ? 'reduced' : motion
   const updateConversation = useChatStore((state) => state.updateConversation)
   const switchConversationModel = useChatStore((state) => state.switchConversationModel)

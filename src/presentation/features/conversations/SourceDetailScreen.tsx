@@ -26,6 +26,10 @@ import type { KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import { CanonicalSourceReader } from './CanonicalSourceReader'
 import { resolveCapturedCitation } from './sourceCitationSelection'
 import { ProviderCitationPassages } from './ProviderCitationPassages'
+import { useActionFeedback } from '@/hooks/useActionFeedback'
+import { ActionFeedback } from '@/components/ui/ActionFeedback'
+import { PageFeedbackRegion } from '@/components/ui/PageFeedback'
+import { IsleEmptyState } from '@/components/ui/isle/EmptyState'
 
 type ProcessTraceGroupKey = 'agentPlan' | 'context' | 'search' | 'toolActivity' | 'agentSynthesis' | 'agentRecovery' | 'other'
 
@@ -53,6 +57,7 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
   const [readerBackgroundState, setReaderBackgroundState] = useState<IsleBackgroundState>('idle')
 
   const mode = firstParam(params.kind) === 'process' ? 'process' : 'source'
+  const copyFeedback = useActionFeedback(JSON.stringify([conversationId, messageId, citation?.id, mode]))
   const webPreviewSupported = Platform.OS !== 'web'
   const webUrl = mode === 'source' ? safeHttpUrl(rawWebUrl) : undefined
   // A new target or Refresh needs fresh state and callback ownership, not just a new WebView URI.
@@ -111,16 +116,13 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
   }, [returnToConversation])
 
   async function copyCurrent() {
-    try {
+    await copyFeedback.run(async () => {
       const content = mode === 'process'
         ? buildSourceProcessTraceCopyText(traces)
         : [citation?.title, citation?.url, citation?.excerpt].filter(Boolean).join('\n\n')
       const copied = await Clipboard.setStringAsync(content || webUrl || '')
-      if (!copied) throw new Error('Clipboard write failed')
-      dialog.toast({ title: t('common.copied'), message: mode === 'process' ? t('source.processCopied') : t('source.sourceCopied'), tone: 'mint' })
-    } catch {
-      dialog.toast({ title: t('common.copyFailed'), message: t('source.clipboardUnavailable'), tone: 'danger' })
-    }
+      return copied
+    })
   }
 
   async function openExternal() {
@@ -146,8 +148,9 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
       backgroundState={backgroundState}
       actions={
         <View style={{ flexDirection: 'row', gap: 7 }}>
-          <IsleIconButton label={t('common.copy')} size="sm" onPress={() => void copyCurrent()}>
-            <AppIcon name="copy" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
+          <IsleIconButton label={t(copyFeedback.phase === 'success' ? 'common.copied' : 'common.copy')} size="sm"
+            disabled={copyFeedback.phase === 'pending'} onPress={() => void copyCurrent()}>
+            <AppIcon name={copyFeedback.phase === 'success' ? 'check' : 'copy'} color={copyFeedback.phase === 'success' ? colors.ui.tone.success.foreground : colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
           </IsleIconButton>
           {webUrl && webPreviewSupported ? (
               <IsleIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
@@ -163,6 +166,8 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
       }
     >
       <View style={{ flex: 1 }}>
+        <PageFeedbackRegion style={{ marginHorizontal: 18 }} />
+        <ActionFeedback phase={copyFeedback.phase} successLabel={t('common.copied')} errorLabel={t('source.clipboardUnavailable')} style={{ paddingHorizontal: 18 }} testID="source-copy-feedback" />
         {mode === 'source' && citations.length > 1 ? (
           <ScrollView horizontal style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 8, gap: 8 }}>
             {citations.map((item, index) => (
@@ -302,10 +307,7 @@ function LocalSourceReader({ citation, conversationId, messageId, messageTimesta
   const { t } = useTranslation()
   if (!citation || !conversationId || !messageId || messageTimestamp === undefined) {
     return (
-      <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
-        <Text style={{ color: colors.text, fontSize: 19, fontWeight: '800' }}>{t('source.noSource')}</Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>{t('source.noSourceMessage')}</Text>
-      </View>
+      <IsleEmptyState title={t('source.noSource')} description={t('source.noSourceMessage')} icon="source" />
     )
   }
   return <CanonicalSourceReader citation={citation} conversationId={conversationId} messageId={messageId} messageTimestamp={messageTimestamp} readLocalSource={readLocalSource} header={

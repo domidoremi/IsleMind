@@ -489,6 +489,12 @@
   "documents": {
     "title": "ドキュメント",
     "new": "新規ドキュメント",
+    "localSpace": "端末内の執筆スペース",
+    "libraryCount": "{{count}} 件のドキュメント",
+    "refreshing": "ドキュメント一覧を更新中",
+    "refreshFailed": "更新が完了しませんでした。前回読み込んだドキュメントを引き続き表示しています。",
+    "openHint": "ローカルドキュメントを開いて編集",
+    "emptyTitle": "ひとつのアイデアを、一枚のページに",
     "untitled": "無題のドキュメント",
     "createFromAnswer": "ドキュメントを作成",
     "libraryNotice": "チャットとは独立して端末内に保存される、編集可能なドキュメントです。ナレッジへの自動追加や AI への送信は行いません。",
@@ -499,6 +505,7 @@
     "loadFailed": "保存データを読み込めませんでした。置換や再作成は行っていません。",
     "sourceUnavailable": "回答が見つからないか、実行中、空、または保存可能なサイズを超えています。",
     "documentTitle": "タイトル",
+    "writeMode": "編集",
     "body": "Markdown テキスト",
     "retentionNotice": "保存すると本文と取得時の出典情報が端末内に残り、チャットを削除しても保持されます。編集しても元のチャットは変わりません。自動索引、AI リクエスト、ツール実行は行いません。",
     "unsaved": "未保存 —「保存」を押すまで変更は保持されません。",
@@ -688,6 +695,8 @@
     }
   },
   "chat": {
+    "selectModel": "モデルを選択",
+    "setupDraftPlaceholder": "アイデアを下書きして、モデルを選んで送信",
     "codeWorkspace": "コードとファイル",
     "unifiedToolsHint": "回答、ツール作業、コードは同じ会話で扱えます。モードの切り替えやエージェント定義は不要です。既存の権限と予算は引き続き適用されます。",
     "workspacePrivacyHint": "アプリ内のワークスペースのパスだけを表示します。選択すると下書きに追加され、送信や権限の付与は行いません。送信後は許可済みのツールで関連内容を読み取る場合があります。認証情報は含めないでください。",
@@ -1258,7 +1267,8 @@
   "dialog": {
     "close": "閉じる",
     "closeLayer": "ダイアログを閉じる",
-    "ok": "OK"
+    "ok": "OK",
+    "pendingFeedback": "ほかに {{count}} 件の操作結果があります"
   },
   "renderGuard": {
     "content": "内容",
@@ -2422,7 +2432,16 @@
     "runtimeDiagnosticMediaGenerationKind": {
       "image-generation": "画像",
       "video-generation": "動画"
-    }
+    },
+    "appearancePreview": "外観プレビュー",
+    "appearanceImmediateHint": "テーマやライト・ダークモードの選択はすぐに適用・保存されます。カスタムカラーはプレビューしてから適用できます。",
+    "appearancePreviewHint": "アクセントカラーの選択はプレビューにのみ反映されます。適用すると保存され、アプリ全体に反映されます。他の下書きや実行中の処理は維持されます。",
+    "appearancePreviewSample": "どのテーマでも、考えをすっきりと。",
+    "appearancePreviewInput": "次のアイデアを書いてみましょう...",
+    "applyAppearance": "外観を適用",
+    "appearanceApplied": "外観を適用して保存しました",
+    "previewAccent": "プレビュー用に選択",
+    "themeAccentSelectedHint": "プレビュー用の色です。外観を適用すると保存されます。"
   },
   "preferences": {
     "identity": "アイデンティティ",
@@ -2509,6 +2528,8 @@
     "exported": "スキルをコピーしました",
     "exportFile": "ファイルにエクスポート",
     "exportDownloadPrepared": "スキルのダウンロードを準備しました",
+    "exportSharePrepared": "スキルの共有を準備しました",
+    "exportFailed": "スキルをエクスポートできませんでした。もう一度お試しください。",
     "deleteTitle": "スキルを削除しますか？",
     "deleted": "スキルを削除しました",
     "saved": "保存済み",
@@ -4139,6 +4160,7 @@
   "providerIssue": {
     "missingBaseUrl": "カスタムエンドポイントには Base URL が必要です。互換プロトコル自体はプロバイダーのアドレスを提供しません。",
     "invalidBaseUrl": "カスタム Base URL は有効な http:// または https:// アドレスである必要があります。",
+    "githubModelsRetired": "GitHub Models は 2026 年 7 月 30 日に提供を終了し、推論 API とモデル一覧は利用できません。保存済みの設定は保持されます。別のプロバイダーを明示的に選択してください：https://docs.github.com/en/github-models",
     "mimoTpKeyWrongMode": "MiMo の tp- キーは Token Plan 用です。Token Plan モードと対応リージョンへ切り替えてください。",
     "mimoSkKeyWrongMode": "MiMo の sk- キーは従量課金用です。従量課金モードへ切り替えるか、tp- Token Plan キーを使用してください。",
     "mimoTpKeyPaygUrl": "MiMo の tp- Token Plan キーは従量課金 Base URL を呼び出せません。token-plan-*.xiaomimimo.com/v1 を使用してください。",
@@ -4227,6 +4249,7 @@
     "resetFilters": "リセット",
     "requestLog": "リクエストログ",
     "providerStatistics": "プロバイダー統計",
+    "successRate": "成功率",
     "modelStatistics": "モデル統計",
     "loading": "使用統計を読み込み中",
     "loadFailed": "使用統計を読み込めませんでした",
@@ -4236,12 +4259,18 @@
     "exporting": "エクスポート中",
     "exportTitle": "使用統計をエクスポート",
     "exportCopied": "使用統計をコピーしました",
+    "exportFailed": "使用統計をエクスポートできませんでした",
     "clearTitle": "使用履歴を消去しますか？",
     "clearDetail": "保存されたリクエスト使用量を削除します。この操作は元に戻せません。",
     "confirmClear": "履歴を消去",
     "clearing": "消去中",
     "redacted": "機密性のあるリクエスト内容は非表示です",
     "requestDetail": "リクエスト詳細",
+    "detailRoute": "リクエスト経路",
+    "detailTokens": "トークン内訳",
+    "detailTiming": "応答時間と料金",
+    "detailDiagnostics": "再試行とエラー",
+    "detailOther": "その他の情報",
     "detailUnavailable": "リクエスト詳細を利用できません。",
     "pricing": "カスタム料金",
     "addOverride": "料金を追加",
@@ -4361,5 +4390,14 @@
     "save": "保存",
     "enabledTools": "{{count}} 種類のツールが有効",
     "accessRules": "アクセスルール {{count}} 件"
+  },
+  "livelyUi": {
+    "homeTitle": "アイデアから始めよう",
+    "settingsIntro": "モデル、ツール、作業環境を自分の使い方に合わせます。",
+    "providerIntro": "接続を追加してモデルを選びます。既存の設定も貼り付けられます。",
+    "agentEmptyTitle": "複雑な作業に明確な道筋を",
+    "agentEmptyDescription": "会話からタスクを開始すると、実際の進捗と承認が必要な手順がここに表示されます。",
+    "agentRunMissingHint": "タスク一覧から利用可能な実行記録を開いてください。タスクは再開されていません。",
+    "helpIntro": "作業別に章を選ぶか、オフラインのガイドを検索できます。"
   }
 }

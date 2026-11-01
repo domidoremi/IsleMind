@@ -32,9 +32,12 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 - [Project README](../README.md): setup, development, builds, tests and release usage.
 - [Architecture](./architecture/architecture.md): module ownership, trust, persistence, recovery, platform constraints and open decisions.
 - [Module public API](./architecture/module-public-api.md): supported entry points and caller contracts.
+- [Complete UI experience](./release/complete-ui-experience.md): route coverage, stable theme/content ownership, preview/apply transactions, local feedback and acceptance limits.
 - [Update delivery](./architecture/architecture.md#17-update-delivery): configurable foreground checks, channel qualification, verified APK preparation, idle consent-bound handoff, cumulative notes, and the separate OTA/publishing roadmap.
 - [Technology radar](./technology-radar.md): adoption criteria, dated technology decisions and unresolved privacy/licensing questions.
 - [Google Play preparation](./release/google-play.md): store build channel, submission prerequisites, listing/privacy drafts and verification requirements.
 - [1.1.5 candidate preparation](./release/qualification-1.1.5.md): release scope, candidate-only signing/build boundaries and remaining qualification.
+- [Provider maintenance](./release/provider-maintenance-2026-10-31.md): F01-F08 remediation, source-linked offline gates, advisory dispositions and pending live/device qualification.
+- [Official provider API review](./release/provider-api-review-2026-10-31.md): 45 classified identities, dated primary evidence and limitations, 12 local counterexample groups, and current-tree offline acceptance.
 
 Architecture owns [qualification requirements and current limitations](./architecture/architecture.md#qualification-reference). Test results do not grant policy exceptions or release approval.

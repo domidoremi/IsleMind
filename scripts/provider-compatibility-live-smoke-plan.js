@@ -106,6 +106,14 @@ function runSelfTest() {
   assert.ok(emptyPlan.summary.missingEnv.includes('ISLEMIND_SUB2API_BASE_URL'), 'plan records missing Sub2API env without a value')
   assert.ok(emptyPlan.providers.some((provider) => provider.providerId === 'aws-bedrock'), 'plan includes hosted providers with live gates')
   assert.ok(emptyPlan.providers.some((provider) => provider.providerId === 'ollama'), 'plan includes local runtime providers with live gates')
+  assert.ok(!emptyPlan.providers.some((provider) => provider.providerId === 'github-models'), 'retired GitHub Models is not a missing-key qualification opportunity')
+  const retiredPlan = collectProviderCompatibilityLiveSmokePlan({
+    env: { ISLEMIND_GITHUB_MODELS_API_KEY: 'synthetic-retired-service-key' },
+    providerIds: ['github-models'],
+    generatedAt: '2026-10-31T00:00:00+08:00',
+  })
+  assert.deepEqual(retiredPlan.providers, [], 'even configured credentials cannot produce a retired-service smoke gate')
+  assert.equal(retiredPlan.summary.gateCount, 0, 'retired-service plan remains plan-only with no dispatchable gate')
   assert.doesNotMatch(JSON.stringify(emptyPlan), /secret-value|AKIDEXAMPLE|ya29\.example/, 'plan does not serialize env values')
 
   const readyBedrockPlan = collectProviderCompatibilityLiveSmokePlan({

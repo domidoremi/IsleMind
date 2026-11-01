@@ -31,9 +31,14 @@ const stubs = {
   '@/i18n/service': { st: key => key },
   '@/hooks/useAppTheme': { useAppTheme: () => theme },
   '@/hooks/useMotionPreference': { useMotionPreference: () => 'none' },
+  '@/hooks/useThemeMotion': { useThemeMotion: (role, options = {}) => ({
+    ...require('../src/theme/themeMotion.ts').resolveThemeMotion({ ...options, role, themeId: theme.canonicalThemeId, intensity: 'none' }),
+    intensity: 'none',
+  }) },
   '@/store/settingsStore': { useSettingsStore: selector => selector({ settings: { hapticsEnabled: false } }) },
   '@/store/chatStreamingStore': { useChatStreamingStore: () => undefined, mergeMessageWithStreamingTraceSnapshot: message => message },
   '@/components/ui/AppIcon': { AppIcon: empty, appIconStroke: {} },
+  './AppIcon': { AppIcon: empty, appIconStroke: {} },
   '@/components/ui/ProviderBrandIcon': { ProviderBrandIcon: empty },
   '@/components/ui/isle': { IslePressable: web.Pressable, ISLE_MIN_TOUCH_TARGET: 44 },
   '@/components/ui/RenderGuard': { RenderGuard: passthrough },
@@ -44,7 +49,10 @@ const stubs = {
   },
   '@/presentation/features/conversations/workflowSkillSuggestionSelector': { getWorkflowSkillSuggestionFromMessage: empty },
   './MessageSources': { MessageSources: empty },
-  './GlassSurface': { GlassSurface: passthrough },
+  './GlassSurface': {
+    GlassSurface: ({ colors, enabled, variant, shadow, intensity, borderRadius, focused, children, ...props }) => React.createElement(web.View, props, children),
+    GlassSurfaceActivity: passthrough,
+  },
   // The separate RN-library family is outside this four-family layout matrix.
   'animal-island-ui-rn': { Card: web.View },
 }

@@ -26,6 +26,7 @@ jest.mock('@/components/navigation/AnimatedNavigationTrigger', () => ({ Animated
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('@/components/ui/isle', () => ({
   IslePressable: require('react-native').Pressable,
+  IsleMotionFrame: require('react-native').View,
   IsleSearchField: require('react-native').TextInput,
   IsleButton: ({ label, onPress }: any) => {
     const React = require('react')

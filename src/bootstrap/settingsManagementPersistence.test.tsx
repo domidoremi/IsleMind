@@ -126,7 +126,7 @@ it.each(themeCases)('composes %s %s real reference Save and remount with seriali
   expect(useSettingsStore.getState().settings.providerAllowlist).toEqual(['legacy-*'])
   expect(records.get(APPLICATION_DATA_STORAGE_KEYS.SETTINGS)).toBe(before)
   await fireEvent.press(view.getByRole('button', { name: 'settingsWorkspace.save' }))
-  await waitFor(() => expect(view.getByText('settingsWorkspace.saved')).toBeTruthy())
+  await waitFor(() => expect(view.getByRole('text', { name: 'settingsWorkspace.saved' })).toBeTruthy())
   expect(JSON.parse(records.get(APPLICATION_DATA_STORAGE_KEYS.SETTINGS)!)).toMatchObject({
     providerAllowlist: ['legacy-*', configuredProvider.id], defaultProvider: configuredProvider.id,
     lastPreferredModel: { providerId: configuredProvider.id, model: 'saved-alias' },
@@ -153,7 +153,7 @@ it('retains a real failed settings write as an unsaved draft and retries seriali
   await waitFor(() => {
     for (const alert of view.getAllByRole('alert')) expect(alert).toHaveTextContent('settingsWorkspace.saveFailed')
   })
-  expect(view.queryByText('settingsWorkspace.saved')).toBeNull()
+  expect(view.queryByRole('text', { name: 'settingsWorkspace.saved' })).toBeNull()
   expect(records.get(APPLICATION_DATA_STORAGE_KEYS.SETTINGS)).toBe(before)
   // A failed disk write does not roll back the existing in-memory store mutation.
   expect(useSettingsStore.getState().settings.providerAllowlist).toEqual(['legacy-*', configuredProvider.id])
@@ -340,12 +340,12 @@ it('blocks leaving during a real pending serialized settings write and reports s
     await fireEvent.press(view.getByRole('button', { name: 'settingsWorkspace.save' }))
     await started
     expect(records.get(APPLICATION_DATA_STORAGE_KEYS.SETTINGS)).toBe(before)
-    expect(view.queryByText('settingsWorkspace.saved')).toBeNull()
+    expect(view.queryByRole('text', { name: 'settingsWorkspace.saved' })).toBeNull()
     await fireEvent.press(view.getByRole('button', { name: 'Leave settings' }))
     expect(view.queryByText('settingsWorkspace.discardTitle')).toBeNull()
     expect(mockLeave).not.toHaveBeenCalled()
     await act(async () => { release(); await flushPersistedSettings() })
-    await waitFor(() => expect(view.getByText('settingsWorkspace.saved')).toBeTruthy())
+    await waitFor(() => expect(view.getByRole('text', { name: 'settingsWorkspace.saved' })).toBeTruthy())
     expect(JSON.parse(records.get(APPLICATION_DATA_STORAGE_KEYS.SETTINGS)!).providerAllowlist).toEqual(['legacy-*', configuredProvider.id])
   } finally { release(); await view.unmount() }
 })

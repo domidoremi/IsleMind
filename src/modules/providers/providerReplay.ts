@@ -1,5 +1,13 @@
 import { numberValue } from './providerUsage'
 
+export function extractGoogleReplayContentParts(json: any): Record<string, unknown>[] | undefined {
+  const parts = json?.candidates?.[0]?.content?.parts
+  if (!Array.isArray(parts)) return undefined
+  const records = parts.map(asRecord)
+  if (!records.length || records.some((part) => !part)) return undefined
+  return records.map((part) => ({ ...part! }))
+}
+
 export function extractOpenAIReasoningContent(json: any): string | undefined {
   const reasoning = [
     json?.choices?.[0]?.message?.reasoning_content,
@@ -29,7 +37,11 @@ export function extractOpenAIResponseReplayItems(json: any): Record<string, unkn
   addItems(json?.output)
   addItems(json?.response?.output)
   const item = asRecord(json?.item)
-  if (item && item.type === 'reasoning') items.push({ ...item })
+  // An added reasoning item's ciphertext is not yet a replayable input.
+  if (item && item.type === 'reasoning'
+    && (json?.type === 'response.output_item.done' || typeof json?.type !== 'string')) {
+    items.push({ ...item })
+  }
   if (asRecord(json) && isOpenAIResponsesReplayItem(json)) items.push({ ...json })
 
   const merged = mergeOpenAIResponseReplayItems(items)

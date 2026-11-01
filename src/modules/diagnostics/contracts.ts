@@ -50,6 +50,9 @@ export interface UsagePricingEntry {
   version: string
   effectiveFrom: number
   source: 'built-in' | 'manual'
+  sourceUrl?: string
+  verifiedAt?: string
+  billingConditions?: string
   rates: UsagePricingRates
 }
 
@@ -218,7 +221,7 @@ export interface UsagePortableSnapshotRepository {
 }
 
 export interface UsageStatisticsService {
-  record(record: UsageRecord): Promise<boolean>
+  record(record: UsageRecord, pricingPolicy?: { allowBuiltInPricing?: boolean }): Promise<boolean>
   snapshot(request?: UsageRecordPageRequest): Promise<UsageStatisticsSnapshot>
   listPricingEntries(): Promise<readonly UsagePricingEntry[]>
   savePricingEntry(entry: UsagePricingEntry, expectedRevision?: string): Promise<void>

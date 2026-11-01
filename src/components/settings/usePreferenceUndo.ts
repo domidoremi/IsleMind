@@ -18,7 +18,7 @@ export function usePreferenceUndo() {
     for (const key of reversible) if (!Object.is(next.settings[key], previous.settings[key])) revisions.current.set(key, (revisions.current.get(key) ?? 0) + 1)
   }), [])
   useEffect(() => () => { sequence.current += 1 }, [])
-  function updateSettings(patch: Partial<Settings>) {
+  function updateSettings(patch: Partial<Settings>, options?: { reportFailure?: boolean }) {
     const operation = ++sequence.current
     setPending(null)
     const store = useSettingsStore.getState()
@@ -28,7 +28,7 @@ export function usePreferenceUndo() {
     if (keys.length && keys.every(key => reversible.has(key))) {
       const versions = new Map(keys.map(key => [key, revisions.current.get(key) ?? 0]))
       void flushPersistedSettings().then(() => { if (operation === sequence.current) setPending({ previous, versions }) })
-        .catch(() => dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }))
+        .catch(() => { if (options?.reportFailure !== false) dialog.toast({ title: t('settingsWorkspace.saveFailed'), tone: 'danger' }) })
     }
   }
   function undo() {

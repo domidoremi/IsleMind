@@ -40,6 +40,7 @@ export interface BuildProviderNativeToolRevisionMessagesInput {
   firstReasoningContent?: string
   firstResponseItems?: ProviderRuntimeCompletionResult['responseItems']
   firstProviderContentBlocks?: ProviderRuntimeCompletionResult['providerContentBlocks']
+  firstGoogleContentParts?: ProviderRuntimeCompletionResult['googleContentParts']
   call: ProviderToolCall
   tool: AgentProviderToolNameMapEntry
   toolOutput: string
@@ -298,7 +299,8 @@ export function buildProviderNativeToolRevisionMessages(
 
   return [
     ...input.messages,
-    { role: 'assistant', content: assistantParts },
+    { role: 'assistant', content: assistantParts,
+      ...(input.firstGoogleContentParts?.length ? { googleContentParts: input.firstGoogleContentParts } : {}) },
     {
       role: 'user',
       content: [{

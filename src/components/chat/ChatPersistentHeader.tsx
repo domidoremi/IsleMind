@@ -11,6 +11,7 @@ import { ISLE_MIN_TOUCH_TARGET, IsleOverlayPressable } from '@/components/ui/isl
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
+import { PageFeedbackIndicator } from '@/components/ui/PageFeedback'
 
 import { ChatChromeThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 
@@ -67,8 +68,8 @@ export function ChatPersistentHeader({
   trailingContent,
 }: ChatPersistentHeaderProps) {
   const { t } = useTranslation()
-  const { width: viewportWidth } = useWindowDimensions()
-  const motion = useMotionPreference(themeId === 'liquid-glass')
+  const { width: viewportWidth, fontScale } = useWindowDimensions()
+  const motion = useMotionPreference(true)
   const { active: leadingActive, running: leadingRunning, trigger: triggerLeading } = useNavigationTrigger(onLeadingPress)
   const minimal = themeId === 'minimal'
   const monet = themeId === 'monet'
@@ -99,7 +100,8 @@ export function ChatPersistentHeader({
     alignItems: 'center',
     justifyContent: 'center',
   }
-  const compactHeaderLayout = viewportWidth <= 340
+  const compactHeaderLayout = viewportWidth / fontScale <= 340
+  const displayTitle = title.trim() || t('chat.selectModel')
 
   const leadingControl = (
     <IsleOverlayPressable
@@ -115,9 +117,10 @@ export function ChatPersistentHeader({
 
   const modelControl = (
     <IsleOverlayPressable
+      testID="chat-model-control"
       onPress={onModelPress}
       accessibilityRole="button"
-      accessibilityLabel={modelAccessibilityLabel ?? `${t('chat.model')}: ${title}`}
+      accessibilityLabel={title.trim() && modelAccessibilityLabel ? modelAccessibilityLabel : `${t('chat.model')}: ${displayTitle}`}
       accessibilityHint={modelAccessibilityHint ?? t('chat.quickModelAccessibilityHint')}
       accessibilityState={{ expanded: modelMenuOpen }}
       style={[
@@ -130,7 +133,7 @@ export function ChatPersistentHeader({
       ]}
     >
       <MotiView
-        key={`${title}:${subtitle ?? ''}`}
+        key={`${displayTitle}:${subtitle ?? ''}`}
         from={motion === 'full' ? { opacity: 0.72, translateY: monet ? 3 : 2 } : undefined}
         animate={{ opacity: 1, translateY: 0 }}
         transition={{ type: 'timing', duration: motion === 'full' ? (monet ? 240 : 176) : 1 }}
@@ -148,6 +151,7 @@ export function ChatPersistentHeader({
             ) : null
           ) : null}
           <Text
+            testID="chat-model-title"
             accessibilityRole="header"
             numberOfLines={1}
             ellipsizeMode="middle"
@@ -160,7 +164,7 @@ export function ChatPersistentHeader({
               { color: colors.text },
             ]}
           >
-            {title}
+            {displayTitle}
           </Text>
           <MotiView
             animate={{ rotate: modelMenuOpen ? '180deg' : '0deg' }}
@@ -212,7 +216,7 @@ export function ChatPersistentHeader({
       <AppIcon name="layers" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
     </IsleOverlayPressable>
   ) : null
-  const actions = <>{trailingContent}{contextCapacityAction}{newConversationAction}{settingsAction}</>
+  const actions = <><PageFeedbackIndicator />{trailingContent}{contextCapacityAction}{newConversationAction}{settingsAction}</>
 
   return (
     <ChatChromeThemeSurface themeId={themeId} colors={colors} alertBorder={alertBorder} onLayout={onLayout}>

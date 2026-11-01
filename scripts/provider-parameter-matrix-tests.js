@@ -29,7 +29,7 @@ const REASONING_MODE_WIRE_CONTRACT = {
   'gemini-thinking-level': { provider: { type: 'google', presetId: 'google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' }, path: ['generationConfig', 'thinkingConfig', 'thinkingLevel'], maxTokensPath: ['generationConfig', 'maxOutputTokens'] },
   'gemini-thinking-budget': { provider: { type: 'google', presetId: 'google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' }, path: ['generationConfig', 'thinkingConfig', 'thinkingBudget'], maxTokensPath: ['generationConfig', 'maxOutputTokens'] },
   'deepseek-thinking': { provider: { type: 'openai-compatible', presetId: 'deepseek', baseUrl: 'https://api.deepseek.com/v1' }, path: ['thinking', 'type'], maxTokensPath: ['max_tokens'] },
-  'dashscope-thinking': { provider: { type: 'openai-compatible', presetId: 'dashscope', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }, path: ['enable_thinking'], maxTokensPath: ['max_tokens'] },
+  'dashscope-thinking': { provider: { type: 'openai-compatible', presetId: 'dashscope', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }, path: ['enable_thinking'], maxTokensPath: ['max_completion_tokens'] },
   'kimi-thinking': { provider: { type: 'openai-compatible', presetId: 'moonshot', baseUrl: 'https://api.moonshot.ai/v1' }, path: ['thinking', 'type'], maxTokensPath: ['max_completion_tokens'] },
   'minimax-thinking': { provider: { type: 'openai-compatible', presetId: 'minimax', baseUrl: 'https://api.minimax.io/v1' }, path: ['thinking', 'type'], maxTokensPath: ['max_completion_tokens'] },
   'xai-reasoning-effort': { provider: { type: 'openai-compatible', presetId: 'xai', baseUrl: 'https://api.x.ai/v1' }, path: ['reasoning', 'effort'], maxTokensPath: ['max_output_tokens'] },
@@ -198,6 +198,52 @@ function assertMaxTokensPrecedence() {
       `${mode} falls back to the catalog default output budget for ${model.id}`
     )
   }
+}
+
+function assertDashScopeModelSpecificOutputCaps() {
+  // Combined caps belong to the documented hosted families, not every newer Qwen model name.
+  for (const [modelId, field, otherField] of [
+    ['qwen3.7-max', 'max_completion_tokens', 'max_tokens'],
+    ['qwen3.5-plus', 'max_completion_tokens', 'max_tokens'],
+  ]) {
+    assert.ok(DEFAULT_MODELS.some(model => model.id === modelId), `${modelId} is a current catalog fixture`)
+    const config = getModelConfig(modelId, 'openai-compatible')
+    const userValue = Math.max(1, Math.floor(config.defaultMaxTokens / 2))
+    const explicitBody = buildReasoningBody('dashscope-thinking', modelId, {
+      maxTokens: userValue,
+      generationParameterSources: { maxTokens: 'explicit' },
+    })
+    assert.equal(explicitBody[field], userValue, `${modelId} sends the explicit budget through ${field}`)
+    assert.equal(explicitBody[otherField], undefined, `${modelId} does not also send ${otherField}`)
+
+    const overCapBody = buildReasoningBody('dashscope-thinking', modelId, {
+      maxTokens: config.maxOutputTokens + 100000,
+      generationParameterSources: { maxTokens: 'explicit' },
+    })
+    assert.equal(overCapBody[field], config.maxOutputTokens, `${modelId} clamps only the documented cap field`)
+    assert.equal(overCapBody[otherField], undefined, `${modelId} does not reopen the other cap field when clamping`)
+
+    const providerDefaultBody = buildReasoningBody('dashscope-thinking', modelId, {
+      maxTokens: userValue,
+      generationParameterSources: { maxTokens: 'provider-default' },
+    })
+    assert.equal(providerDefaultBody[field], undefined, `${modelId} preserves an unsent provider-default budget`)
+    assert.equal(providerDefaultBody[otherField], undefined, `${modelId} does not replace omission with the other alias`)
+  }
+
+  // This documented API fixture need not be installed as a default catalog model.
+  const legacyBody = buildReasoningBody('dashscope-thinking', 'qwen3.8-27b', {
+    maxTokens: 4096,
+    generationParameterSources: { maxTokens: 'explicit' },
+  })
+  assert.equal(legacyBody.max_tokens, 4096, 'Open-source Qwen retains the explicit legacy answer cap')
+  assert.equal(legacyBody.max_completion_tokens, undefined, 'Open-source Qwen does not inherit a hosted combined cap')
+  const legacyDefaultBody = buildReasoningBody('dashscope-thinking', 'qwen3.8-27b', {
+    maxTokens: 4096,
+    generationParameterSources: { maxTokens: 'provider-default' },
+  })
+  assert.equal(legacyDefaultBody.max_tokens, undefined, 'A legacy provider-default budget stays unsent')
+  assert.equal(legacyDefaultBody.max_completion_tokens, undefined, 'Legacy omission does not activate the unsupported alias')
 }
 
 // The conversation store seeds a configured global preference as an explicit override, so the
@@ -458,6 +504,7 @@ function run() {
 
   assertReasoningModesReachTheWire()
   assertMaxTokensPrecedence()
+  assertDashScopeModelSpecificOutputCaps()
   assertConfiguredPreferenceStaysExplicit()
 
   console.log('Provider parameter matrix tests passed')

@@ -123,6 +123,18 @@ export interface ProviderCompatibilityEvidence {
   behaviorDocs: readonly ProviderCompatibilityBehavior[]
   behaviorStatusOverrides?: Partial<Record<ProviderCompatibilityBehavior, ProviderCompatibilityCapabilityStatus>>
   liveSmoke?: readonly ProviderCompatibilityLiveSmokeGate[]
+  serviceLifecycle?: Readonly<{
+    status: 'retired'
+    effectiveDate: string
+    sourceUrl: string
+    reviewedAt: string
+  }>
+  serviceMigration?: Readonly<{
+    effectiveDate: string
+    sourceUrl: string
+    reviewedAt: string
+    notes: string
+  }>
   auditState: ProviderCompatibilityAuditState
   notes: string
 }
@@ -242,7 +254,10 @@ const CONFORMANCE_READY_RELAY_DECLARABLE_BEHAVIORS: readonly ProviderCompatibili
 function evidence(input: ProviderCompatibilityEvidence): ProviderCompatibilityEvidence {
   return {
     ...input,
-    behaviorDocs: uniqueBehaviors([...CORE_PROVIDER_COMPATIBILITY_BEHAVIORS, ...input.behaviorDocs]),
+    behaviorDocs: uniqueBehaviors([
+      ...(input.serviceLifecycle?.status === 'retired' ? [] : CORE_PROVIDER_COMPATIBILITY_BEHAVIORS),
+      ...input.behaviorDocs,
+    ]),
   }
 }
 
@@ -273,7 +288,8 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     protocol: 'openai-responses',
     officialDocs: [
       'https://developers.openai.com/api/docs',
-      'https://developers.openai.com/api/reference/responses/create',
+      'https://developers.openai.com/api/reference/resources/responses/methods/create',
+      'https://developers.openai.com/api/reference/resources/responses/streaming-events',
       'https://platform.openai.com/docs/api-reference/responses',
       'https://platform.openai.com/docs/api-reference/embeddings/create',
       'https://platform.openai.com/docs/guides/function-calling',
@@ -288,7 +304,8 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     id: 'anthropic',
     protocol: 'anthropic-messages',
     officialDocs: [
-      'https://platform.claude.com/docs/en/api/messages/create',
+      'https://platform.claude.com/docs/en/api/http/messages/create',
+      'https://platform.claude.com/docs/en/build-with-claude/streaming',
       'https://platform.claude.com/docs/en/api/models/list',
       'https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview',
       'https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool',
@@ -309,11 +326,13 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
       'https://ai.google.dev/gemini-api/docs/google-search',
       'https://ai.google.dev/gemini-api/docs/thinking',
       'https://ai.google.dev/gemini-api/docs/caching',
+      'https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures',
+      'https://ai.google.dev/gemini-api/docs/generate-content/long-decode',
     ],
     endpointFamilies: ['/v1beta/models/{model}:generateContent', '/v1beta/models'],
     behaviorDocs: ['auth', 'chat', 'streaming', 'tools', 'structuredOutput', 'nativeSearch', 'vision', 'audio', 'files', 'reasoning', 'modelList', 'errors', 'rateLimits', 'citations'],
     auditState: 'conformance-ready',
-    notes: 'Native Gemini generateContent path with documented context caching. Caching reduces repeated-prefix processing but is not native context compaction; remoteCompact remains unclaimed. Vertex-hosted native routing is tracked separately under vertex-ai.',
+    notes: 'Native Gemini generateContent path with documented context caching and complete signed-part replay, including late empty-text signatures and parallel tool-call order. Current primary docs label Generate Content as Legacy; Interactions migration is not automatic. Long-decode CONTINUATION retains partial output and authoritative usage but is incomplete locally and cannot trigger an unapproved billed hop. Caching reduces repeated-prefix processing but is not native context compaction; remoteCompact remains unclaimed. Vertex-hosted native routing is tracked separately under vertex-ai.',
   }),
   deepseek: evidence({
     id: 'deepseek',
@@ -338,7 +357,7 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     endpointFamilies: ['/compatible-mode/v1/chat/completions'],
     behaviorDocs: COMMON_OPENAI_COMPATIBLE_BEHAVIORS.filter((behavior) => !['files', 'audio', 'modelList', 'structuredOutput'].includes(behavior)),
     auditState: 'conformance-ready',
-    notes: 'OpenAI-compatible DashScope chat path with Qwen thinking, stream-usage, tools, and image_url coverage. Generic /models sync, file_data, response_format request controls, /audio/transcriptions, /audio/speech, and Qwen-Omni chat audio remain unclaimed until source-backed runtime fixtures exist.',
+    notes: 'OpenAI-compatible DashScope chat with Qwen thinking, stream usage, tools and image_url coverage. The dated API contract selects max_completion_tokens only for its documented model families, reserves the combined cap plus the documented ten-token tolerance, and keeps max_tokens for older/third-party routes. Legacy answer-only caps reserve a supported explicit thinking_budget separately; an unbounded default/mandatory thinking route fails local admission rather than treating the answer cap as a total bound. Default-preserving Qwen/Kimi models replay complete reasoning_content on every prior assistant turn without opting older models into preserve_thinking or mixing reasoning into content. Generic /models sync, file_data, response_format request controls, /audio/transcriptions, /audio/speech and Qwen-Omni chat audio remain unclaimed.',
   }),
   moonshot: evidence({
     id: 'moonshot',
@@ -507,7 +526,8 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     id: 'perplexity',
     protocol: 'openai-compatible',
     officialDocs: [
-      'https://docs.perplexity.ai/api-reference/sonar-post.md',
+      'https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview.md',
+      'https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/how-to.md',
       'https://docs.perplexity.ai/docs/sonar/features.md',
       'https://docs.perplexity.ai/docs/sonar/models.md',
       'https://docs.perplexity.ai/docs/sonar/media.md',
@@ -515,10 +535,16 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
       'https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers.md',
       'https://docs.perplexity.ai/docs/sdk/error-handling.md',
     ],
-    endpointFamilies: ['/v1/sonar', '/v1/async/sonar'],
-    behaviorDocs: ['auth', 'chat', 'streaming', 'structuredOutput', 'nativeSearch', 'vision', 'files', 'reasoning', 'errors', 'rateLimits', 'citations'],
+    endpointFamilies: ['/v1/sonar'],
+    behaviorDocs: ['auth', 'chat', 'streaming', 'structuredOutput', 'nativeSearch', 'vision', 'files', 'reasoning', 'errors', 'rateLimits', 'citations', 'deprecation'],
     auditState: 'conformance-ready',
-    notes: 'Sonar uses the official /v1/sonar endpoint with provider-native search, top-level citations/search_results, JSON Schema response_format, image_url/file_url media parts, and reasoning_effort for reasoning Sonar models. Generic /models sync and OpenAI Responses tools are intentionally unclaimed.',
+    serviceMigration: {
+      effectiveDate: '2026-09-27',
+      sourceUrl: 'https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview.md',
+      reviewedAt: '2026-10-31',
+      notes: 'Sonar support ended; synchronous and streaming requests still work through gradual server-side migration. Async Sonar is unavailable. Saved routes and models are retained; explicit /v1/agent migration requires separate schema, tools, media and billing mapping.',
+    },
+    notes: 'Official migration docs say Sonar support ended on 2026-09-27, but synchronous and streaming requests still work and are gradually reformulated server-side as Agent API requests. Async Sonar is no longer supported. IsleMind preserves the saved /v1/sonar synchronous/streaming route, native search, citations/search_results and existing request contracts; it does not automatically migrate models or bodies to /v1/agent. Explicit Agent API routing, tool/search/media mapping and billing need separate app contracts and fixtures. Generic /models sync and OpenAI Responses tools remain unclaimed.',
   }),
   cohere: evidence({
     id: 'cohere',
@@ -534,7 +560,7 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     endpointFamilies: ['/compatibility/v1/chat/completions', '/compatibility/v1/embeddings', '/compatibility/v1/audio/transcriptions', '/v2/chat', '/v2/embed', '/v2/rerank', '/v1/models'],
     behaviorDocs: ['auth', 'chat', 'streaming', 'tools', 'structuredOutput', 'reasoning', 'audio', 'embeddings', 'errors', 'rateLimits', 'deprecation'],
     auditState: 'conformance-ready',
-    notes: 'Compatibility API supports OpenAI-format chat, streaming, tools, structured outputs, embeddings, audio transcriptions, and reasoning_effort limited to none/high. IsleMind keeps generic model-list sync, compatibility vision/files, and native Cohere documents/citations unclaimed until provider-specific routing exists; native /v1/models, /v2/chat, /v2/embed, and /v2/rerank are mapped as official surfaces but are not flattened into the compatibility preset.',
+    notes: 'Compatibility API supports OpenAI-format chat, streaming, tools, structured outputs, embeddings, audio transcriptions, and reasoning_effort limited to none/high. Transcription requires an explicit model and language, JSON output, file last, and FLAC/MP3/MPEG/MPGA/OGG/WAV input; MP4/M4A/WEBM are rejected before dispatch. IsleMind keeps generic model-list sync, compatibility vision/files, and native Cohere documents/citations unclaimed until provider-specific routing exists; native /v1/models, /v2/chat, /v2/embed, and /v2/rerank are mapped as official surfaces but are not flattened into the compatibility preset.',
   }),
   cerebras: evidence({
     id: 'cerebras',
@@ -615,14 +641,17 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     protocol: 'openai-compatible',
     officialDocs: [
       'https://docs.github.com/en/github-models',
-      'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
-      'https://docs.github.com/en/rest/models/catalog',
-      'https://docs.github.com/en/rest/about-the-rest-api/api-versions',
     ],
-    endpointFamilies: ['/inference/chat/completions', '/catalog/models'],
-    behaviorDocs: [...CORE_PROVIDER_COMPATIBILITY_BEHAVIORS, 'tools', 'vision', 'modelList', 'hostedRouting'],
-    auditState: 'conformance-ready',
-    notes: 'GitHub Models documents OpenAI-compatible inference with GitHub token auth and a separate GET /catalog/models discovery route. IsleMind preserves Bearer inference auth and adds only the documented GitHub JSON media type and conservative 2022-11-28 API version headers. Generic file_data attachments, audio, speech, reasoning_effort, embeddings, rerank, structured output request controls, and OpenAI Responses routing stay unclaimed until official docs and app routing prove those surfaces.',
+    endpointFamilies: [],
+    behaviorDocs: ['deprecation'],
+    serviceLifecycle: {
+      status: 'retired',
+      effectiveDate: '2026-07-30',
+      sourceUrl: 'https://docs.github.com/en/github-models',
+      reviewedAt: '2026-10-31',
+    },
+    auditState: 'docs-mapped',
+    notes: 'GitHub Models retired on 2026-07-30: the playground, model catalog, inference API and BYOK are no longer available to any customer. Official sources reviewed 2026-10-31 replace the historical endpoint documentation. Saved configurations and historical wire parsing remain intact, but the models.github.ai endpoint is blocked before dispatch and the preset no longer advertises active chat, streaming, tools or model discovery. Migration to another supplier is explicit, never an automatic rewrite.',
   }),
   deepinfra: evidence({
     id: 'deepinfra',
@@ -650,6 +679,8 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     id: 'novita',
     protocol: 'openai-compatible',
     officialDocs: [
+      'https://docs.novita.ai/api-reference/model-apis-llm-create-chat-completion',
+      'https://docs.novita.ai/guides/llm-reasoning',
       'https://novita.ai/docs/llms.txt',
       'https://novita.ai/docs/guides/llm-api',
       'https://novita.ai/docs/api-reference/model-apis-llm-create-chat-completion',
@@ -695,21 +726,19 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     id: 'modelscope',
     protocol: 'openai-compatible',
     officialDocs: [
-      'https://modelscope.cn/docs/model-service/API-Inference/intro',
+      'https://www.modelscope.cn/docs/model-service/API-Inference/intro',
       'https://www.modelscope.cn/docs/model-service/API-Inference/API%20Reference/chat-completion',
-      'https://api-inference.modelscope.cn/v1/models',
-      'https://api-inference.modelscope.cn/v1/chat/completions',
-      'https://api-inference.modelscope.cn/v1/embeddings',
     ],
     endpointFamilies: ['/v1/chat/completions', '/v1/models', '/v1/embeddings'],
     behaviorDocs: [...CORE_PROVIDER_COMPATIBILITY_BEHAVIORS, 'embeddings', 'modelList'],
     auditState: 'conformance-ready',
-    notes: 'ModelScope API-Inference exposes an OpenAI-compatible base at https://api-inference.modelscope.cn/v1. IsleMind keeps chat, streaming, public /v1/models sync, Bearer-token auth diagnostics, OpenAI-compatible response parsing, and generic /v1/embeddings routing covered. Qwen/DeepSeek model names do not inherit DashScope thinking or stream-usage fields. Vision, file_data attachments, chat audio, transcription, speech, OpenAI Responses, reasoning_effort, and OpenAI-format tool declarations stay unclaimed until source-backed ModelScope request fixtures prove those surfaces.',
+    notes: 'IsleMind retains its historically mapped ModelScope API-Inference base at https://api-inference.modelscope.cn/v1, with chat, streaming, public /v1/models sync, Bearer-token auth diagnostics, response parsing and generic /v1/embeddings routing covered offline. The current official article returned a client shell during the dated review; it is not current schema or live endpoint verification, and no model API was called for documentation evidence. Qwen/DeepSeek model names do not inherit DashScope thinking or stream-usage fields. Vision, file_data, chat audio, transcription, speech, OpenAI Responses, reasoning_effort and OpenAI-format tool declarations remain unclaimed until source-backed request fixtures prove those surfaces.',
   }),
   'volcengine-ark': evidence({
     id: 'volcengine-ark',
     protocol: 'openai-compatible',
     officialDocs: [
+      'https://docs.volcengine.com/docs/82379/1494384',
       'https://www.volcengine.com/docs/82379/1494384',
       'https://www.volcengine.com/docs/82379/1330310',
       'https://www.volcengine.com/docs/82379/1262342',
@@ -725,11 +754,11 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
   'baidu-qianfan': evidence({
     id: 'baidu-qianfan',
     protocol: 'openai-compatible',
-    officialDocs: ['https://cloud.baidu.com/doc/WENXINWORKSHOP/s/Fm2vrveyu', 'https://cloud.baidu.com/doc/WENXINWORKSHOP/s/4m2u2ai7e'],
+    officialDocs: ['https://cloud.baidu.com/doc/qianfan-api/s/3m7of64lb', 'https://cloud.baidu.com/doc/qianfan-api/s/Dmba8k71y'],
     endpointFamilies: ['/v2/chat/completions', '/v2/models'],
     behaviorDocs: [...CORE_PROVIDER_COMPATIBILITY_BEHAVIORS, 'tools', 'vision', 'modelList'],
     auditState: 'conformance-ready',
-    notes: 'Baidu Qianfan v2 OpenAI-compatible route with official chat and model-list docs mapped. IsleMind keeps Bearer auth, chat, streaming, /v2/models sync, OpenAI-format tools, image_url vision, max_tokens, OpenAI-compatible parsing, and rate-limit diagnostics covered offline. Generic file_data attachments, response_format request controls, audio/speech, embeddings, rerank, OpenAI Responses, and reasoning controls stay unclaimed until source-backed runtime fixtures exist.',
+    notes: 'Baidu Qianfan v2 OpenAI-compatible route with current qianfan-api chat and model-list documentation; obsolete WENXINWORKSHOP links redirect to the product overview rather than API contracts. IsleMind keeps Bearer auth, chat, streaming, /v2/models sync, OpenAI-format tools, image_url vision, max_tokens, OpenAI-compatible parsing, and rate-limit diagnostics covered offline. New documented Responses/Anthropic surfaces do not automatically enable app routing. Generic file_data attachments, response_format request controls, audio/speech, embeddings, rerank, OpenAI Responses, and reasoning controls stay unclaimed until source-backed runtime fixtures exist.',
   }),
   'tencent-hunyuan': evidence({
     id: 'tencent-hunyuan',
@@ -741,16 +770,16 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     endpointFamilies: ['/v1/chat/completions', '/v1/models'],
     behaviorDocs: [...CORE_PROVIDER_COMPATIBILITY_BEHAVIORS, 'tools', 'vision', 'modelList'],
     auditState: 'conformance-ready',
-    notes: 'Tencent Hunyuan OpenAI-compatible route with official Chat Completions and model-list docs mapped. IsleMind keeps Bearer auth, chat, streaming, /v1/models sync, OpenAI-format tools, image_url vision, max_tokens, OpenAI-compatible parsing, and rate-limit diagnostics covered offline. Generic file_data attachments, response_format request controls, audio/speech, embeddings, rerank, OpenAI Responses, and reasoning controls stay unclaimed until source-backed runtime fixtures exist.',
+    notes: 'Tencent Hunyuan OpenAI-compatible route with official Chat Completions and model-list docs mapped. The current official page announces gradual migration to TokenHub: existing purchased services continue, while new model purchases and capabilities move there; this is not a documented shutdown date and does not trigger endpoint rewrites. IsleMind keeps Bearer auth, chat, streaming, /v1/models sync, OpenAI-format tools, image_url vision, max_tokens, OpenAI-compatible parsing, and rate-limit diagnostics covered offline. Generic file_data attachments, response_format request controls, audio/speech, embeddings, rerank, OpenAI Responses, and reasoning controls stay unclaimed until source-backed runtime fixtures exist.',
   }),
   baichuan: evidence({
     id: 'baichuan',
     protocol: 'openai-compatible',
-    officialDocs: ['https://platform.baichuan-ai.com/docs/api'],
+    officialDocs: ['https://platform.baichuan-ai.com/docs-v2/guide', 'https://platform.baichuan-ai.com/docs-v2/api'],
     endpointFamilies: ['/v1/chat/completions'],
     behaviorDocs: CORE_PROVIDER_COMPATIBILITY_BEHAVIORS,
     auditState: 'conformance-ready',
-    notes: 'Baichuan documents POST https://api.baichuan-ai.com/v1/chat/completions with JSON body, Bearer auth, the stream switch, and an error-code page. IsleMind keeps chat, streaming, max_tokens, OpenAI-compatible parsing, static/manual catalog behavior, and error diagnostics covered offline. Generic /models sync, OpenAI-format tools, image_url vision, file_data attachments, response_format request controls, audio/speech, embeddings, rerank, OpenAI Responses, and reasoning controls stay unclaimed until source-backed runtime fixtures exist.',
+    notes: 'IsleMind retains its historically documented Baichuan Chat Completions/Bearer/streaming/max_tokens mapping and offline parser/diagnostic fixtures. The current docs-v2 API and guide locators returned unavailable or shell-only content during the dated review; this is not evidence of API shutdown or current schema verification. No capability is upgraded from those retrievals. Generic /models sync, OpenAI-format tools, image_url vision, file_data, response_format, audio/speech, embeddings, rerank, OpenAI Responses and reasoning controls remain unclaimed.',
   }),
   stepfun: evidence({
     id: 'stepfun',
@@ -801,6 +830,7 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     officialDocs: [
       'https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html',
       'https://docs.aws.amazon.com/bedrock/latest/userguide/apis.html',
+      'https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions.html',
       'https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions-mantle.html',
       'https://docs.aws.amazon.com/bedrock/latest/userguide/inference-api.html',
       'https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html',
@@ -824,7 +854,7 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
       }),
     ],
     auditState: 'needs-live-smoke',
-    notes: 'Current Bedrock endpoint and API overviews distinguish Mantle from direct Runtime APIs; Mantle docs prove OpenAI-compatible Chat Completions, streaming, /v1/models, and Bearer API-key auth. IsleMind keeps that hosted path partial-ready while direct Runtime InvokeModel signing is implemented for non-streaming Anthropic-style chat only. Bedrock Responses, structured output, OpenAI-format tools, multimodal/files, reasoning request controls, Runtime model-list, Runtime streaming, Converse/ConverseStream, and account/model access remain unclaimed until current AWS docs or live smoke prove them.',
+    notes: 'Current AWS docs recommend Runtime Chat Completions at /openai/v1/chat/completions with API-key or SigV4 auth, retain Mantle compatibility, and make the Mantle /v1 versus /openai/v1 prefix model-specific. Runtime does not implement OpenAI GET /models. IsleMind currently maps Mantle chat/streaming/model listing and native Runtime InvokeModel signing for non-streaming Anthropic-style chat; it does not silently migrate saved Mantle or native Runtime settings to the newer Runtime Chat API. Runtime Chat, Responses, structured output, OpenAI-format tools, multimodal/files, reasoning controls, Runtime model listing/streaming and Converse/ConverseStream remain unclaimed app routes or account-dependent qualifications.',
   }),
   'vertex-ai': evidence({
     id: 'vertex-ai',
@@ -902,15 +932,16 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
     protocol: 'local-openai-compatible',
     officialDocs: [
       'https://localai.io/basics/getting_started/',
-      'https://localai.io/features/text-generation/',
-      'https://localai.io/features/openai-functions/',
+      'https://localai.io/docs/features/text-generation/',
+      'https://localai.io/docs/features/openai-functions/',
+      'https://localai.io/docs/features/interleaved-thinking/',
       'https://localai.io/features/constrained_grammars/',
       'https://localai.io/features/embeddings/',
       'https://localai.io/features/audio-to-text/',
       'https://localai.io/features/text-to-audio/',
     ],
     endpointFamilies: ['/v1/chat/completions', '/v1/models', '/v1/embeddings', '/v1/audio/transcriptions', '/v1/audio/speech'],
-    behaviorDocs: [...COMMON_LOCAL_OPENAI_BEHAVIORS, 'audio', 'embeddings'],
+    behaviorDocs: [...COMMON_LOCAL_OPENAI_BEHAVIORS, 'reasoning', 'audio', 'embeddings'],
     liveSmoke: [
       liveSmokeGate({
         id: 'localai-local-chat-audio',
@@ -921,7 +952,7 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
       }),
     ],
     auditState: 'protocol-reference',
-    notes: 'LocalAI is documented as an OpenAI-compatible local REST API. Current docs map Chat Completions, /v1/models, OpenAI functions/tools, grammar-constrained outputs, embeddings, audio transcription, and OpenAI-compatible speech/TTS. LocalAI structured output is documented through grammar / grammar_json_functions rather than IsleMind\'s current response_format planner, so app-side structured-output request controls stay blocked until a LocalAI grammar planner exists. Installed model, backend, build tags, and server configuration still determine the actual capabilities, so IsleMind keeps LocalAI as protocol-reference and treats multimodal/tool/audio/embedding behavior as declared, discovered, or manually configured local state.',
+    notes: 'LocalAI is documented as an OpenAI-compatible local REST API. Current docs map Chat Completions, /v1/models, OpenAI functions/tools, grammar-constrained outputs, embeddings, audio transcription, and OpenAI-compatible speech/TTS. Current primary excerpts document reasoning and reasoning_content response fields; inbound Chat assistant messages accept either alias. For explicitly configured LocalAI Chat tool turns, IsleMind replays already-returned thinking through the canonical reasoning field, separately from content, while retaining the tool call and result. This output parsing and replay does not enable undeclared model reasoning controls or infer LocalAI identity from a display name or local address. LocalAI structured output is documented through grammar / grammar_json_functions rather than IsleMind\'s current response_format planner, so app-side structured-output request controls stay blocked until a LocalAI grammar planner exists. Newly documented Anthropic and Responses endpoints do not qualify or automatically enable those app routes. Installed model, backend, build tags, reasoning/tool parsers and server configuration still determine the actual capabilities, so IsleMind keeps LocalAI as protocol-reference and treats multimodal/tool/audio/embedding behavior as declared, discovered, or manually configured local state.',
   }),
   vllm: evidence({
     id: 'vllm',
@@ -1052,7 +1083,7 @@ export const PROVIDER_COMPATIBILITY_EVIDENCE = {
         skippedWithout: 'Requires the active Sub2API gateway URL, API key, and a supplier-backed model id without flattening supplier capabilities into the client.',
       }),
     ],
-    notes: 'Current Sub2API public site is a minimal AI API Gateway page; the active GitHub source appears to be Wei-Shaw/sub2api, whose README documents a relay platform for subscription quota distribution, API key distribution, load balancing, request forwarding, configurable rate limits, and Claude/OpenAI/Gemini/Antigravity subscription unification. Endpoint-level OpenAI-compatible Chat/Responses/Models docs remain weak and the README does not document response_format, reasoning_effort, or tool_call payload contracts, so IsleMind keeps Sub2API docs-mapped and requires explicit relay capability declarations or remote model metadata instead of flattening supplier capabilities into the preset.',
+    notes: 'The current maintainer README documents subscription/API-key quota distribution, load balancing, OpenAI Responses WebSocket ingress controls and account-specific Grok/xAI Chat, Responses, Claude-compatible and media bridges. Those are community gateway routes, not official vendor or supplier-independent payload/billing guarantees. IsleMind keeps Sub2API docs-mapped and requires explicit relay declarations or model metadata for optional capabilities rather than flattening the upstream supplier capabilities into its preset. README routing descriptions do not qualify this app for every account bridge or tool/structured-output/reasoning schema.',
   }),
   'openai-compatible': evidence({
     id: 'openai-compatible',
@@ -1139,6 +1170,7 @@ export function resolveProviderCompatibilityCapabilityStatus(
   behavior: ProviderCompatibilityBehavior
 ): ProviderCompatibilityCapabilityStatus {
   const evidence = PROVIDER_COMPATIBILITY_EVIDENCE[id]
+  if (evidence.serviceLifecycle?.status === 'retired') return behavior === 'deprecation' ? 'supported' : 'unsupported'
   const override = evidence.behaviorStatusOverrides?.[behavior]
   if (override) return override
   if (!evidence.behaviorDocs.includes(behavior)) return 'unsupported'
@@ -1372,6 +1404,7 @@ function providerCompatibilityExplicitDeclarationCanOpenCapability(
   evidence: ProviderCompatibilityEvidence,
   behavior: ProviderCompatibilityBehavior,
 ): boolean {
+  if (evidence.serviceLifecycle?.status === 'retired') return false
   if (!DECLARABLE_PROTOCOL_REFERENCE_BEHAVIORS.includes(behavior)) return false
   if (evidence.auditState !== 'conformance-ready') return true
   return evidence.behaviorDocs.includes('relayRouting') &&
@@ -1379,7 +1412,8 @@ function providerCompatibilityExplicitDeclarationCanOpenCapability(
 }
 
 export function getProviderCompatibilityLiveSmokeGates(id: ProviderCompatibilityEvidenceId): readonly ProviderCompatibilityLiveSmokeGate[] {
-  return PROVIDER_COMPATIBILITY_EVIDENCE[id].liveSmoke ?? []
+  const evidence = PROVIDER_COMPATIBILITY_EVIDENCE[id]
+  return evidence.serviceLifecycle?.status === 'retired' ? [] : evidence.liveSmoke ?? []
 }
 
 export function resolveProviderCompatibilityLiveSmokeStatus(
@@ -1400,6 +1434,7 @@ export function findProviderCompatibilityLiveSmokeGaps(presetIds: readonly Provi
   return presetIds.filter((id) => {
     if (id === 'custom-endpoint') return false
     const evidence = PROVIDER_COMPATIBILITY_EVIDENCE[id]
+    if (evidence.serviceLifecycle?.status === 'retired') return false
     return evidence.auditState !== 'conformance-ready' && getProviderCompatibilityLiveSmokeGates(id).length === 0
   })
 }

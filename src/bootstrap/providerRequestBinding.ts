@@ -45,6 +45,7 @@ const providerRequestShapePolicy = createProviderRequestShapePolicy<Attachment, 
   compatibilityCapabilityStatus: providerRequestCompatibilityPolicy.capabilityStatus,
   usesProtocolReferenceEvidence: providerRequestCompatibilityPolicy.usesProtocolReferenceEvidence,
   modelCapabilityCanBeSent: providerModelCapabilityCanBeSent,
+  resolveProtocolAdapter: resolveProviderProtocolAdapter,
 })
 
 const providerNativeSearchPolicy = createProviderNativeSearchPolicy<ProviderRuntimeChatRequest>({

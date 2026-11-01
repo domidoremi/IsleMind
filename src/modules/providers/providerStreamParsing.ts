@@ -5,6 +5,7 @@ import type { ProcessTrace } from '@/core'
 import { asRecord, stringValue, stringifyReasoningDetails } from './providerJsonPolicy'
 import {
   extractAnthropicReplayContentBlocks,
+  extractGoogleReplayContentParts,
   extractOpenAIReasoningContent,
   extractOpenAIResponseReplayItems,
   mergeAnthropicReplayContentBlocks,
@@ -20,24 +21,30 @@ import {
 import { isDoneEvent, isReasoningEventType, isToolEventType, stableTraceId } from './providerTracePolicy'
 import { extractUsage } from './providerUsage'
 import { visitProviderSseData } from './providerSseData'
-import { assertProviderResponseContextCapacity, ProviderContextCapacityError } from './providerContextCapacity'
+import { assertProviderResponseContextCapacity } from './providerContextCapacity'
+import { mergeProviderStreamOutcome, observeProviderStreamLifecycle, type ProviderStreamOutcome, type ProviderStreamProtocol } from './providerStreamLifecycle'
 
 export interface ParsedProviderStreamChunk {
   text: string
   traces: ProcessTrace[]
   terminal?: boolean
+  malformedData?: boolean
+  streamProtocol?: ProviderStreamProtocol
+  streamOutcome?: ProviderStreamOutcome
   usage?: MessageUsage
   responseId?: string
   providerToolCalls?: ProviderToolCall[]
   reasoningContent?: string
   responseItems?: Record<string, unknown>[]
   providerContentBlocks?: Record<string, unknown>[]
+  googleContentParts?: Record<string, unknown>[]
 }
 
 export interface ProviderStreamParseOptions {
   includeReasoning?: boolean
   /** Internal stream assembly only; remove indexes at the completion boundary. */
   preserveReplayIndexes?: boolean
+  protocol?: ProviderStreamProtocol
 }
 
 export interface ProviderStreamParsingPolicyDependencies {
@@ -110,63 +117,75 @@ export function createProviderStreamParsingPolicy(
     let reasoningContent = ''
     let responseItems: Record<string, unknown>[] = []
     let providerContentBlocks: Record<string, unknown>[] = []
+    const googleContentParts: Record<string, unknown>[] = []
+    let streamOutcome: ProviderStreamOutcome | undefined
+    let streamProtocol = options.protocol ?? protocolForType(providerType)
+    let nativeTerminal = false
     function appendPayload(payload: string): boolean {
-      try {
-        const json = JSON.parse(payload)
-        const parsed = parseProviderStreamEvent(json, providerType, { ...options, preserveReplayIndexes: true })
-        text += parsed.text
-        traces.push(...parsed.traces)
-        providerToolCalls = mergeProviderToolCallParts([
-          ...providerToolCalls,
-          ...(parsed.providerToolCalls ?? []),
-        ])
-        usage = parsed.usage ?? usage
-        responseId = parsed.responseId ?? responseId
-        reasoningContent += parsed.reasoningContent ?? ''
-        responseItems = mergeOpenAIResponseReplayItems([
-          ...responseItems,
-          ...(parsed.responseItems ?? []),
-        ])
-        providerContentBlocks = mergeAnthropicReplayContentBlocks([
-          ...providerContentBlocks,
-          ...(parsed.providerContentBlocks ?? []),
-        ])
-        return true
-      } catch (error) {
-        if (error instanceof ProviderContextCapacityError) throw error
-        return false
-      }
+      if (nativeTerminal || !payload.trim()) return true
+      let json: unknown
+      try { json = JSON.parse(payload) } catch { return false }
+      const parsed = parseProviderStreamEvent(json, providerType, { ...options, preserveReplayIndexes: true })
+      text += parsed.text
+      traces.push(...parsed.traces)
+      providerToolCalls = mergeProviderToolCallParts([
+        ...providerToolCalls,
+        ...(parsed.providerToolCalls ?? []),
+      ])
+      usage = parsed.usage ?? usage
+      responseId = parsed.responseId ?? responseId
+      reasoningContent += parsed.reasoningContent ?? ''
+      responseItems = mergeOpenAIResponseReplayItems([
+        ...responseItems,
+        ...(parsed.responseItems ?? []),
+      ])
+      providerContentBlocks = mergeAnthropicReplayContentBlocks([
+        ...providerContentBlocks,
+        ...(parsed.providerContentBlocks ?? []),
+      ])
+      googleContentParts.push(...(parsed.googleContentParts ?? []))
+      streamOutcome = mergeProviderStreamOutcome(streamOutcome, parsed.streamOutcome)
+      streamProtocol = parsed.streamProtocol ?? streamProtocol
+      nativeTerminal = parsed.terminal === true
+      return true
     }
 
-    const { sawDataLine, terminal } = visitProviderSseData(chunk, appendPayload)
+    const { sawDataLine, terminal, malformedData } = visitProviderSseData(chunk, appendPayload)
     const trimmed = chunk.trim()
     if (!sawDataLine && trimmed.startsWith('{')) {
-      try {
-        const parsed = parseProviderStreamEvent(JSON.parse(trimmed), providerType, options)
-        return {
-          text: parsed.text,
-          traces: dedupeTraces(parsed.traces),
-          usage: parsed.usage,
-          responseId: parsed.responseId,
-          providerToolCalls: mergeProviderToolCallParts(parsed.providerToolCalls ?? []),
-          reasoningContent: parsed.reasoningContent,
-          responseItems: parsed.responseItems,
-          providerContentBlocks: parsed.providerContentBlocks,
-          terminal: false,
-        }
-      } catch (error) {
-        if (error instanceof ProviderContextCapacityError) throw error
+      let json: unknown
+      try { json = JSON.parse(trimmed) } catch {
+        return { text: '', traces: [], malformedData: true, streamProtocol }
+      }
+      const parsed = parseProviderStreamEvent(json, providerType, options)
+      return {
+        text: parsed.text,
+        traces: dedupeTraces(parsed.traces),
+        usage: parsed.usage,
+        responseId: parsed.responseId,
+        providerToolCalls: mergeProviderToolCallParts(parsed.providerToolCalls ?? []),
+        reasoningContent: parsed.reasoningContent,
+        responseItems: parsed.responseItems,
+        providerContentBlocks: parsed.providerContentBlocks,
+        googleContentParts: parsed.googleContentParts,
+        terminal: parsed.terminal === true,
+        streamProtocol: parsed.streamProtocol ?? streamProtocol,
+        streamOutcome: parsed.streamOutcome,
       }
     }
     return {
       text,
       traces: dedupeTraces(traces),
-      terminal,
+      terminal: terminal || nativeTerminal,
+      malformedData,
+      streamProtocol,
+      streamOutcome,
       usage,
       responseId,
       providerToolCalls,
       ...(reasoningContent ? { reasoningContent } : {}),
       ...(responseItems.length ? { responseItems } : {}),
+      ...(googleContentParts.length ? { googleContentParts } : {}),
       ...(providerContentBlocks.length
         ? {
             providerContentBlocks: options.preserveReplayIndexes
@@ -178,6 +197,15 @@ export function createProviderStreamParsingPolicy(
   }
 
   function parseProviderStreamEvent(
+    json: any,
+    providerType: ProviderType,
+    options: ProviderStreamParseOptions = {},
+  ): ParsedProviderStreamChunk {
+    const parsed = parseProviderStreamEventContent(json, providerType, options)
+    return { ...parsed, ...observeProviderStreamLifecycle(json, options.protocol ?? protocolForType(providerType)) }
+  }
+
+  function parseProviderStreamEventContent(
     json: any,
     providerType: ProviderType,
     options: ProviderStreamParseOptions = {},
@@ -398,6 +426,7 @@ export function createProviderStreamParsingPolicy(
           traces,
           usage: extractUsage(json, 'google', { includeReasoning }),
           providerToolCalls: extractProviderToolCalls(json, 'google'),
+          googleContentParts: extractGoogleReplayContentParts(json),
         }
       }
       default:
@@ -411,4 +440,8 @@ export function createProviderStreamParsingPolicy(
     splitSseBuffer,
     dedupeTraces,
   }
+}
+
+function protocolForType(providerType: ProviderType): ProviderStreamProtocol {
+  return providerType === 'anthropic' ? 'anthropic' : providerType === 'google' ? 'google' : 'openai-chat'
 }

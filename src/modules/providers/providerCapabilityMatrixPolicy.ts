@@ -750,7 +750,16 @@ function buildRateLimitStatus(provider: AIProvider): ProviderCapabilityStatus {
 }
 
 function buildDeprecationStatus(provider: AIProvider): ProviderCapabilityStatus {
-  const contractStatus = resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'deprecation')
+  const evidence = getProviderCompatibilityEvidenceForProvider(provider)
+  const contractStatus = resolveProviderCompatibilityCapabilityStatus(evidence.id, 'deprecation')
+  if (evidence.serviceLifecycle?.status === 'retired') {
+    return { area: 'deprecation', level: 'full', contractStatus,
+      reason: `service retired on ${evidence.serviceLifecycle.effectiveDate}; saved configuration is retained, official endpoint dispatch is blocked, and migration requires explicit provider selection. ${evidence.serviceLifecycle.sourceUrl}` }
+  }
+  if (evidence.serviceMigration) {
+    return { area: 'deprecation', level: 'partial', contractStatus,
+      reason: `service migration notice effective ${evidence.serviceMigration.effectiveDate}: ${evidence.serviceMigration.notes} ${evidence.serviceMigration.sourceUrl}` }
+  }
   const deprecatedModels = providerKnownModelIds(provider)
     .map((modelId) => ({ modelId, config: dependencies.getModelConfig(modelId, provider.type, provider.modelConfigs) }))
     .filter((item) => item.config.deprecated === true)
@@ -1243,7 +1252,7 @@ function buildMultimodalStatus(provider: AIProvider): ProviderCapabilityStatus {
     return { area: 'multimodal', level: 'partial', contractStatus, reason: `provider has ${sendable.length} contract-allowed multimodal path(s)${blockedText}` }
   }
   if (declarations.length > 0) {
-    return { area: 'multimodal', level: 'partial', contractStatus, reason: 'provider configuration declares multimodal paths, but the compatibility contract does not allow those request parameters yet' }
+    return { area: 'multimodal', level: 'partial', contractStatus, reason: `provider configuration declares multimodal paths, but the compatibility contract does not allow those request parameters yet; blocked declarations: ${blocked.map((item) => item.label).join(', ')}` }
   }
   return { area: 'multimodal', level: 'partial', contractStatus, reason: 'provider currently behaves as text-first in the access layer' }
 }

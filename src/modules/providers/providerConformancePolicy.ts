@@ -2,6 +2,9 @@ import type { Attachment } from '@/types/chatContracts'
 import type { AIModel, AIProvider, ProviderType, ProviderProtocolAdapterId } from '@/types/providerContracts'
 import type { GenerationParameterKey, ReasoningEffort } from '@/core'
 import { isBedrockRuntimeProvider } from './providerAwsBedrockRouting'
+import { dashScopePreservesThinkingByDefault, dashScopeSupportsMaxCompletionTokens } from './providerDashScopePolicy'
+import { hasLocalAIChatReasoningReplay } from './providerLocalAIReasoningReplay'
+import { normalizeDeepSeekReasoningEffort } from './providerOpenAICompatibleThinking'
 import {
   getProviderCompatibilityEvidenceForProvider,
   providerCompatibilityCapabilityCanBeSentForProvider,
@@ -255,6 +258,7 @@ export interface ProviderCapabilityManifest {
 export interface ProviderConformanceRequest {
   provider: AIProvider
   model: string
+  messages?: readonly { role: string; reasoningContent?: string; toolCalls?: readonly unknown[] }[]
   /** Request-local serializer decision; never a persisted model preference. */
   protocolAdapterId?: ProviderProtocolAdapterId
   reasoningEffort?: ReasoningEffort
@@ -344,9 +348,15 @@ export function createProviderConformancePolicy(
   const requestShape = inferReasoningRequestShape(input, family, protocol)
   const selectableEfforts = dependencies.getReasoningEffortOptions(provider, input.model)
   const familySourceUrl = providerSourceUrl(family)
-  const sourceUrl = hostedProviderFamily(family) ? familySourceUrl ?? modelConfig.sourceUrl : modelConfig.sourceUrl ?? familySourceUrl
+  const serviceLifecycle = getProviderCompatibilityEvidenceForProvider(provider).serviceLifecycle
+  const retired = serviceLifecycle?.status === 'retired'
+  const sourceUrl = retired ? serviceLifecycle.sourceUrl
+    : hostedProviderFamily(family) ? familySourceUrl ?? modelConfig.sourceUrl : modelConfig.sourceUrl ?? familySourceUrl
   const sourceConfidence = sourceUrl ? 'source-backed' : 'inferred'
   const toolCapabilities = PROVIDER_TOOL_CAPABILITY_POLICY.resolveProviderToolCapabilityManifest(provider, modelConfig)
+  const defaultDashScopeThinkingReplay = dashScopePreservesThinkingByDefault(provider, input.model)
+  const localAIThinkingReplay = protocol === 'openai-compatible' &&
+    input.messages?.some(message => hasLocalAIChatReasoningReplay(provider, message)) === true
 
   return {
     id: `${family}:${input.model}`,
@@ -355,7 +365,7 @@ export function createProviderConformancePolicy(
     providerType: provider.type,
     model: input.model,
     transport: {
-      streaming: provider.capabilities?.streaming !== false && modelConfig.supportsStreaming !== false,
+      streaming: !retired && provider.capabilities?.streaming !== false && modelConfig.supportsStreaming !== false,
       preferredEndpoint: modelConfig.preferredEndpoint,
     },
     context: {
@@ -364,14 +374,14 @@ export function createProviderConformancePolicy(
     },
     modalities: {
       input: {
-        text: true,
+        text: !retired,
         image: toolCapabilities.modalities.input.image,
         file: toolCapabilities.modalities.input.file,
         audio: toolCapabilities.modalities.input.audio,
         video: family === 'minimax' && isMiniMaxM3Model(input.provider, input.model),
       },
       output: {
-        text: true,
+        text: !retired,
         speech: toolCapabilities.modalities.output.speech,
       },
     },
@@ -386,9 +396,10 @@ export function createProviderConformancePolicy(
       maxTokensField: inferMaxTokensField(input, family, protocol),
       samplingFields: ['temperature', 'top_p', 'topP', 'top_k', 'topK'],
       unsupportedFieldsWhenReasoning: reasoningUnsupportedPayloadFields(requestShape),
-      requiresReasoningStatePassthrough: reasoningRequiresStatePassthrough(family, requestShape),
+      requiresReasoningStatePassthrough: defaultDashScopeThinkingReplay || localAIThinkingReplay || reasoningRequiresStatePassthrough(family, requestShape),
       streamUsageField: streamUsageField(family, protocol),
-      reasoningStatePreservationField: reasoningStatePreservationField(family, requestShape),
+      reasoningStatePreservationField: defaultDashScopeThinkingReplay ? 'reasoning_content'
+        : localAIThinkingReplay ? 'reasoning' : reasoningStatePreservationField(family, requestShape),
       reasoningOutputSplitField: reasoningOutputSplitField(input, family, protocol),
       reasoningSummaryField: reasoningSummaryField(family, protocol),
     },
@@ -400,7 +411,7 @@ export function createProviderConformancePolicy(
     structuredOutput: inferStructuredOutput(input, family, protocol),
     source: {
       url: sourceUrl,
-      verifiedAt: modelConfig.verifiedAt ?? providerSourceVerifiedAt(family),
+      verifiedAt: retired ? serviceLifecycle.reviewedAt : modelConfig.verifiedAt ?? providerSourceVerifiedAt(family),
       confidence: sourceConfidence,
     },
   }
@@ -747,6 +758,7 @@ function inferMaxTokensField(
 ): ProviderCapabilityManifest['payload']['maxTokensField'] {
   if (protocol === 'openai-responses') return 'max_output_tokens'
   if (family === 'google') return 'generationConfig.maxOutputTokens'
+  if (protocol === 'openai-compatible' && dashScopeSupportsMaxCompletionTokens(input.provider, input.model)) return 'max_completion_tokens'
   if (family === 'xiaomi-mimo') {
     return input.provider.wireProtocol === 'anthropic-compatible' ? 'max_tokens' : 'max_completion_tokens'
   }
@@ -939,7 +951,6 @@ function reasoningEffortDisables(shape: ProviderReasoningRequestShape, effort: R
     'anthropic-output-config-effort',
     'anthropic-adaptive',
     'anthropic-budget',
-    'deepseek-thinking',
     'dashscope-thinking',
     'siliconflow-thinking-budget',
     'kimi-thinking',
@@ -948,7 +959,7 @@ function reasoningEffortDisables(shape: ProviderReasoningRequestShape, effort: R
 
 function providerReasoningValue(shape: ProviderReasoningRequestShape, effort: ReasoningEffort | undefined, model: string): string | number | boolean | undefined {
   if (!effort) return undefined
-  if (shape === 'deepseek-thinking') return effort === 'xhigh' || effort === 'max' ? 'max' : 'high'
+  if (shape === 'deepseek-thinking') return normalizeDeepSeekReasoningEffort(effort)
   if (shape === 'dashscope-thinking') return OFF_EFFORTS.has(effort) ? false : dashScopeThinkingBudgetValue(model, effort)
   if (shape === 'kimi-thinking') return OFF_EFFORTS.has(effort) ? 'disabled' : 'enabled'
   if (shape === 'minimax-thinking') return OFF_EFFORTS.has(effort) ? 'disabled' : 'adaptive'
@@ -1190,7 +1201,7 @@ function providerSourceUrl(family: ProviderConformanceFamily): string | undefine
     case 'deepseek':
       return 'https://api-docs.deepseek.com/guides/thinking_mode'
     case 'dashscope':
-      return 'https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope'
+      return 'https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions'
     case 'moonshot':
       return 'https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart'
     case 'xai':
@@ -1198,9 +1209,9 @@ function providerSourceUrl(family: ProviderConformanceFamily): string | undefine
     case 'bigmodel':
       return 'https://docs.bigmodel.cn/cn/guide/models'
     case 'baidu-qianfan':
-      return 'https://cloud.baidu.com/doc/WENXINWORKSHOP/s/Fm2vrveyu'
+      return 'https://cloud.baidu.com/doc/qianfan-api/s/3m7of64lb'
     case 'baichuan':
-      return 'https://platform.baichuan-ai.com/docs/api'
+      return 'https://platform.baichuan-ai.com/docs-v2/api'
     case 'zero-one':
       return 'https://platform.lingyiwanwu.com/docs/api-reference'
     case 'stepfun':
@@ -1228,11 +1239,11 @@ function providerSourceUrl(family: ProviderConformanceFamily): string | undefine
     case 'huggingface':
       return 'https://huggingface.co/docs/inference-providers/tasks/chat-completion.md'
     case 'github-models':
-      return 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models'
+      return 'https://docs.github.com/en/github-models'
     case 'deepinfra':
       return 'https://docs.deepinfra.com/chat/overview.md'
     case 'novita':
-      return 'https://novita.ai/docs/api-reference/model-apis-llm-create-chat-completion'
+      return 'https://docs.novita.ai/api-reference/model-apis-llm-create-chat-completion'
     case 'siliconflow':
       return 'https://docs.siliconflow.cn/cn/api-reference/chat-completions/chat-completions'
     case 'modelscope':

@@ -2,13 +2,14 @@ import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { useSettingsDraft } from './SettingsEditBoundary'
 import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import { usePreferenceUndo } from './usePreferenceUndo'
-import { SettingsSection, useSettingsTarget } from './SettingsSection'
+import { SettingsSection, useSettingsTarget, useSettingsUndoAction } from './SettingsSection'
 import { SETTINGS_DESTINATIONS } from '@/presentation/features/settings/settingsRegistry'
 import { SettingsPageShell } from './SettingsPageShell'
 import { RadioGroup } from 'animal-island-ui-rn'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { StyleSheet, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from 'react-native'
 import { Text } from '@/components/ui/AppText'
+import { FeedbackGlyph } from '@/components/ui/FeedbackGlyph'
 
 import { router } from 'expo-router'
 import * as Application from 'expo-application'
@@ -34,6 +35,8 @@ import { type SettingsControlView } from '@/components/settings/theme-experience
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useThemeSelection } from '@/hooks/useThemeSelection'
+import { useAppearanceDraft } from './useAppearanceDraft'
+import { AppearancePreview } from './AppearancePreview'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { PortableBackupCategory, PortableDataExportOptions, PortableDataExportResult, PortableDataRestorePreview } from '@/modules/data-management'
 import {
@@ -342,9 +345,9 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   const providers = useSettingsStore((state) => state.providers)
   const settings = useSettingsStore((state) => state.settings)
   const { updateSettings, undo, canUndo } = usePreferenceUndo()
-  const selectTheme = useThemeSelection(useCallback((error: unknown) => {
-    dialog.toast({ title: t('settings.themeChangeFailed'), message: userFacingErrorDetail(error), tone: 'danger' })
-  }, [dialog, t]), updateSettings)
+  const selectTheme = useThemeSelection(useCallback(() => undefined, []), selection => updateSettings(selection, { reportFailure: false }))
+  const appearance = useAppearanceDraft(settings, selectTheme)
+  useSettingsUndoAction(panel === 'appearance' && canUndo, undo, appearance.busy || fieldSession.busy)
   const setLanguage = useSettingsStore((state) => state.setLanguage)
   const resetSettings = useSettingsStore((state) => state.clearAll)
   const getObservabilitySinkApiKey = useSettingsStore((state) => state.getObservabilitySinkApiKey)
@@ -395,15 +398,10 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const foldoutBodyStyle = { marginTop: 10, paddingHorizontal: 0, paddingVertical: 2, gap: 10 }
   const foldoutCardStyle = (gap = 10): ViewStyle => ({
-    // Foldouts are logical groups, not another stack of cards. Material may
-    // use one tonal plane; the other families rely on spacing and rules.
-    borderRadius: canonicalThemeId === 'material' ? 8 : canonicalThemeId === 'liquid-glass' ? 12 : 0,
+    // Foldouts remain on the canvas; their actual fields own the surfaces.
+    borderRadius: canonicalThemeId === 'liquid-glass' ? 12 : 0,
     padding: canonicalThemeId === 'minimal' ? 4 : 8,
-    backgroundColor: canonicalThemeId === 'material'
-      ? colors.ui.semantic.surface.muted
-      : canonicalThemeId === 'liquid-glass'
-        ? 'transparent'
-        : 'transparent',
+    backgroundColor: 'transparent',
     borderWidth: 0,
     borderBottomWidth: canonicalThemeId === 'material' || canonicalThemeId === 'liquid-glass' ? subtleBorderWidth : 0,
     borderBottomColor: colors.ui.semantic.chrome.border,
@@ -1067,7 +1065,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
         import('expo-clipboard'),
       ])
       const text = await readRuntimeLogText()
-      await Clipboard.setStringAsync(text || t('settings.runtimeLogEmpty'))
+      if (await Clipboard.setStringAsync(text || t('settings.runtimeLogEmpty')) !== true) throw new Error(t('chat.clipboardUnavailable'))
       dialog.toast({ title: t('settings.runtimeLogCopied'), tone: 'mint' })
     } catch (error) {
       dialog.toast({
@@ -1125,7 +1123,6 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
           const groups = Object.keys(fieldSession.entries).map(key => SETTINGS_DESTINATIONS.find(entry => entry.section === `governance.${key}`)?.parentSection).filter(Boolean)
           setExpandedGovernanceGroups(current => ({ ...current, ...Object.fromEntries(groups.map(group => [group!, true])) }))
         }} /> : null}
-      {panel === 'appearance' && canUndo ? <IsleButton label={t('settingsWorkspace.undo')} onPress={undo} /> : null}
       <AnimatePresence>
       {controlView === 'system' && expandedGroups.appearance ? (
         <MotiView
@@ -1138,6 +1135,32 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
           style={foldoutBodyStyle}
         >
           <View testID="settings-appearance-page" style={{ gap: 24 }}>
+          <View testID="settings-appearance-status" style={{ gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>{t('settings.appearanceImmediateHint')}</Text>
+              <FeedbackGlyph phase={appearance.busy ? 'pending' : appearance.saved ? 'success' : 'idle'}
+                label={appearance.busy ? t('settingsWorkspace.saving') : appearance.saved ? t('settings.appearanceApplied') : undefined}
+                testID="settings-appearance-status-glyph" />
+            </View>
+            {appearance.error ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 21 }}>{t(`settingsWorkspace.${appearance.error}`)}</Text> : null}
+          </View>
+          <SettingsSection id="mode" style={{ gap: 12 }}><SettingsInlineLabel
+            title={t('settings.themeMode')}
+            detail={t('settings.themeModeCurrent', { value: settings.theme === 'system' ? t('settings.themeSystem') : settings.theme === 'dark' ? t('settings.themeDark') : t('settings.themeLight') })}
+          />
+          <RadioGroup testID="settings-theme-mode-group" accessibilityLabel={t('settings.themeMode')} style={{ flexDirection: actionCompact ? 'column' : 'row', gap: 8 }}>
+            {(['light', 'dark', 'system'] satisfies ThemeMode[]).map((item) => (
+              <ThemeModeCard
+                key={item}
+                label={item === 'system' ? t('settings.themeSystem') : item === 'dark' ? t('settings.themeDark') : t('settings.themeLight')}
+                active={appearance.draft.theme === item}
+                disabled={appearance.busy}
+                onPress={(event) => { void appearance.choose({ theme: item }, event) }}
+                testID={`settings-theme-mode-${item}`}
+              />
+            ))}
+          </RadioGroup>
+          </SettingsSection>
           <SettingsSection id="theme" style={{ gap: 12 }}><SettingsInlineLabel
             title={t('settings.themeFamily')}
             detail={t('settings.themeFamilyCurrent', { value: t(THEME_FAMILY_OPTIONS.find((item) => item.id === activeThemeId)?.labelKey ?? 'settings.themeMinimal') })}
@@ -1149,26 +1172,11 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 themeId={item.id}
                 label={t(item.labelKey)}
                 detail={t(item.detailKey)}
-                active={activeThemeId === item.id}
+                active={appearance.draft.themeId === item.id}
                 compact={actionCompact}
-                onPress={(event) => selectTheme({ themeId: item.id }, event)}
+                disabled={appearance.busy}
+                onPress={(event) => { void appearance.choose({ themeId: item.id }, event) }}
                 testID={`settings-theme-family-${item.id}`}
-              />
-            ))}
-          </RadioGroup>
-          </SettingsSection>
-          <SettingsSection id="mode" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}><SettingsInlineLabel
-            title={t('settings.themeMode')}
-            detail={t('settings.themeModeCurrent', { value: settings.theme === 'system' ? t('settings.themeSystem') : settings.theme === 'dark' ? t('settings.themeDark') : t('settings.themeLight') })}
-          />
-          <RadioGroup testID="settings-theme-mode-group" accessibilityLabel={t('settings.themeMode')} style={{ flexDirection: actionCompact ? 'column' : 'row', gap: 8 }}>
-            {(['light', 'dark', 'system'] satisfies ThemeMode[]).map((item) => (
-              <ThemeModeCard
-                key={item}
-                label={item === 'system' ? t('settings.themeSystem') : item === 'dark' ? t('settings.themeDark') : t('settings.themeLight')}
-                active={settings.theme === item}
-                onPress={(event) => selectTheme({ theme: item }, event)}
-                testID={`settings-theme-mode-${item}`}
               />
             ))}
           </RadioGroup>
@@ -1178,10 +1186,22 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             detail={settings.themeAccent ?? t('settings.themeAccentDefault')}
           />
           <SettingsThemeAccentControl
-            value={settings.themeAccent}
+            value={appearance.draft.themeAccent}
             draftRef={themeAccentDraft}
-            onChange={(themeAccent, event) => selectTheme({ themeAccent }, event)}
+            disabled={appearance.busy}
+            previewOnly
+            onChange={(themeAccent) => appearance.edit({ themeAccent })}
           />
+          </SettingsSection>
+          <SettingsSection id="theme.preview" style={{ gap: 10 }}>
+            <AppearancePreview selection={appearance.draft} />
+            <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>{t('settings.appearancePreviewHint')}</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              <IsleButton testID="settings-appearance-apply" label={t('settings.applyAppearance')} busy={appearance.busy}
+                feedbackPhase={appearance.busy ? 'pending' : 'idle'} icon={<AppIcon name="check" size={16} color={colors.text} />}
+                disabled={appearance.busy || !appearance.dirty || appearance.error === 'conflict'} onPress={(event) => { void appearance.apply(event) }} />
+              {appearance.dirty || appearance.error ? <IsleButton label={t('settingsWorkspace.reload')} disabled={appearance.busy} onPress={appearance.discard} /> : null}
+            </View>
           </SettingsSection>
           <SettingsSection id="background" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}><SettingsInlineLabel
             title={t('settings.backgroundEnvironment')}
@@ -2061,6 +2081,7 @@ function ThemeFamilyCard({
   detail,
   active,
   compact,
+  disabled = false,
   onPress,
   testID,
 }: {
@@ -2069,6 +2090,7 @@ function ThemeFamilyCard({
   detail: string
   active: boolean
   compact: boolean
+  disabled?: boolean
   onPress: (event: GestureResponderEvent) => void
   testID: string
 }) {
@@ -2097,7 +2119,7 @@ function ThemeFamilyCard({
         ? 12
         : 22
   return (
-    <IslePressable haptic testID={testID} accessibilityRole="radio" accessibilityLabel={`${label}. ${detail}`} accessibilityState={{ checked: active }} aria-checked={active} onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', minWidth: 0, minHeight: 144 }}>
+    <IslePressable haptic testID={testID} disabled={disabled} accessibilityRole="radio" accessibilityLabel={`${label}. ${detail}`} accessibilityState={{ checked: active, disabled }} aria-checked={active} onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', minWidth: 0, minHeight: 144 }}>
       <MotiView
         animate={{
           backgroundColor: active && radioExpression.surface !== 'boundary' ? colors.ui.semantic.surface.raised : inactiveBackground,
@@ -2105,6 +2127,7 @@ function ThemeFamilyCard({
         }}
         transition={accentMotion.transition}
         style={{
+          flex: 1,
           minHeight: 144,
           borderRadius: cardRadius,
           // The appearance picker is an anchor while the rest of the UI changes.
@@ -2129,7 +2152,7 @@ function ThemeFamilyCard({
           </Text>
           <ThemeRadioMark active={active} />
         </View>
-        <Text style={{ minHeight: 30, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>
+        <Text numberOfLines={2} style={{ minHeight: 40, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>
           {detail}
         </Text>
       </MotiView>
@@ -2182,7 +2205,7 @@ function ThemeFamilyPreview({ themeId, colors }: { themeId: CanonicalThemeId; co
   )
 }
 
-function ThemeModeCard({ label, active, onPress, testID }: { label: string; active: boolean; onPress: (event: GestureResponderEvent) => void; testID: string }) {
+function ThemeModeCard({ label, active, onPress, testID, disabled = false }: { label: string; active: boolean; onPress: (event: GestureResponderEvent) => void; testID: string; disabled?: boolean }) {
   const { colors, canonicalThemeId } = useAppTheme()
   const accentMotion = useThemeMotion('accent')
   const radioExpression = resolveThemeComponentExpression(canonicalThemeId, 'radio')
@@ -2207,7 +2230,7 @@ function ThemeModeCard({ label, active, onPress, testID }: { label: string; acti
         ? 12
         : 20
   return (
-    <IslePressable haptic testID={testID} accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ checked: active }} aria-checked={active} onPress={onPress} style={{ flex: 1, minWidth: 0, minHeight: themeModeCardHeight }}>
+    <IslePressable haptic testID={testID} disabled={disabled} accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ checked: active, disabled }} aria-checked={active} onPress={onPress} style={{ flex: 1, minWidth: 0, minHeight: themeModeCardHeight }}>
       <MotiView
         animate={{
           backgroundColor: active && radioExpression.surface === 'boundary' ? colors.ui.semantic.surface.base : active ? colors.ui.control.primaryBackground : inactiveBackground,
@@ -2234,7 +2257,7 @@ function ThemeModeCard({ label, active, onPress, testID }: { label: string; acti
             <View style={{ flex: 1, backgroundColor: active ? colors.design?.semantic.color.selection ?? colors.ui.semantic.surface.muted : colors.ui.liquidGlass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.muted }} />
           </View>
         </View>
-        <Text style={{ color: active ? radioExpression.surface === 'boundary' ? colors.text : colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>
+        <Text style={{ maxWidth: '100%', flexShrink: 1, textAlign: 'center', color: active ? radioExpression.surface === 'boundary' ? colors.text : colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>
           {label}
         </Text>
       </MotiView>

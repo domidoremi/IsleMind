@@ -444,6 +444,7 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
   projectProviderModelFailure(input: AssistantConversationProviderFailureInput<TProviderError>): void
   projectProviderNativeSearchFailure(input: AssistantConversationProviderFailureInput<TProviderError>): void
   projectProviderTerminalFailure(input: AssistantConversationProviderFailureInput<TProviderError>): void
+  shouldPenalizeProviderFailure?(error: TProviderError): boolean
 }
 
 export type AssistantConversationFinalizationOutcome<
@@ -910,6 +911,7 @@ export function createAssistantConversationFinalizationRuntime<
       dependencies.projectProviderNativeSearchFailure(input)
     }
     dependencies.projectProviderTerminalFailure(input)
+    if (dependencies.shouldPenalizeProviderFailure?.(input.error) === false) return
     void dependencies.updateProviderCredentialGroupHealth(
       input.providerId,
       input.credentialGroupId,

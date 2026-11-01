@@ -77,6 +77,7 @@ export function UsageStatisticsScreen() {
   const [refreshing, setRefreshing] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [exportingFormat, setExportingFormat] = useState<UsageExportFormat | null>(null)
+  const exportLock = useRef(false)
   const [savingPricingOverrideId, setSavingPricingOverrideId] = useState<string | 'new' | null>(null)
   const [requestDetail, setRequestDetail] = useState<UsageRequestDetailState>(null)
   const loadSequence = useRef(0)
@@ -289,12 +290,14 @@ export function UsageStatisticsScreen() {
   }
 
   async function exportUsage(format: UsageExportFormat) {
+    if (exportLock.current) return
+    exportLock.current = true
     setExportingFormat(format)
     try {
       const payload = await exportUsageStatistics(runtimeFilter, format)
       const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory
       if (Platform.OS === 'web' || !directory) {
-        await Clipboard.setStringAsync(payload)
+        if (await Clipboard.setStringAsync(payload) !== true) throw new Error(t('chat.clipboardUnavailable'))
         dialog.toast({ title: t('usage.exportCopied'), tone: 'mint' })
         return
       }
@@ -306,10 +309,13 @@ export function UsageStatisticsScreen() {
           dialogTitle: t('usage.exportTitle'),
         })
       } else {
-        await Clipboard.setStringAsync(payload)
+        if (await Clipboard.setStringAsync(payload) !== true) throw new Error(t('chat.clipboardUnavailable'))
         dialog.toast({ title: t('usage.exportCopied'), tone: 'mint' })
       }
+    } catch (error) {
+      dialog.toast({ title: t('usage.exportFailed'), message: describeUserFacingError(error, t), tone: 'danger' })
     } finally {
+      exportLock.current = false
       setExportingFormat(null)
     }
   }

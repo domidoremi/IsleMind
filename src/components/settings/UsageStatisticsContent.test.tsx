@@ -11,7 +11,10 @@ jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'no
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
-jest.mock('@shopify/flash-list', () => ({ FlashList: () => null }))
+jest.mock('@shopify/flash-list', () => ({ FlashList: ({ data, renderItem, keyExtractor, ListEmptyComponent, ...props }: any) => {
+  const View = require('react-native').View
+  return <View {...props}>{data.length ? data.map((item: any, index: number) => <View key={keyExtractor(item)}>{renderItem({ item, index })}</View>) : ListEmptyComponent}</View>
+} }))
 jest.mock('./SettingsHelp', () => ({ SettingsHelpButton: () => null }))
 jest.mock('@/components/ui/isle', () => {
   const { Pressable: MockPressable, Text, View } = require('react-native')
@@ -35,6 +38,84 @@ const inputLabel = 'Input price, per 1M tokens'
 const outputLabel = 'Output price, per 1M tokens'
 const page = (value: UsageStatisticsContentProps) => <SettingsEditBoundary><UsageStatisticsContent {...value} /></SettingsEditBoundary>
 beforeEach(() => { jest.clearAllMocks(); mockConfirm.mockResolvedValue(false) })
+afterEach(() => jest.restoreAllMocks())
+
+it('exposes expanded state on filters and secondary statistics without changing requests or firing other actions', async () => {
+  const value = props(), screen = await render(page(value))
+  expect(screen.getByTestId('usage-filters-toggle').props.accessibilityState.expanded).toBe(false)
+  expect(screen.getByTestId('usage-details-toggle').props.accessibilityState.expanded).toBe(false)
+  await fireEvent.press(screen.getByTestId('usage-filters-toggle'))
+  await fireEvent.press(screen.getByTestId('usage-details-toggle'))
+  expect(screen.getByTestId('usage-filters-toggle').props.accessibilityState.expanded).toBe(true)
+  expect(screen.getByTestId('usage-details-toggle').props.accessibilityState.expanded).toBe(true)
+  expect(value.onFiltersChange).not.toHaveBeenCalled()
+  expect(value.onRequestPress).not.toHaveBeenCalled()
+})
+
+it('fills the request sheet reading plane while preserving the existing field insets and redacted values', async () => {
+  const value = props()
+  value.requestDetail = { status: 'ready', detail: {
+    requestId: 'request', title: 'Request detail', status: 'failed', statusLabel: 'Failed',
+    fields: [
+      { id: 'model', label: 'Model', value: 'Local writing model' },
+      { id: 'total', label: 'Total tokens', value: '3,840' },
+    ],
+  } }
+  const screen = await render(page(value))
+  expect(screen.getByTestId('usage-detail-reading-plane')).toHaveStyle({
+    backgroundColor: require('@/theme/colors').getColors('light', 'minimal').material.sheet.body,
+    paddingHorizontal: 12, paddingTop: 8, paddingBottom: 24,
+    marginHorizontal: -12, marginTop: -8, marginBottom: -24,
+  })
+  expect(screen.getByTestId('usage-detail-value-model')).toHaveTextContent('Local writing model')
+  expect(screen.getByTestId('usage-detail-value-total')).toHaveTextContent('3,840')
+  expect(value.onRequestPress).not.toHaveBeenCalled()
+  expect(value.onCloseRequestDetail).not.toHaveBeenCalled()
+})
+
+it('uses the measured reading column at large font scale and keeps every request metric and the detail action', async () => {
+  jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({ width: 1200, height: 844, scale: 1, fontScale: 2 })
+  const value = props()
+  value.requests = [{
+    id: 'request', timestampLabel: '11:24', providerLabel: 'Reference connection', modelLabel: 'A long reference model name',
+    sourceLabel: 'Knowledge', measurementLabel: 'Provider supplied', status: 'failed', statusLabel: 'Failed',
+    tokensLabel: '3,840 tokens', inputTokensLabel: '3,200 input', outputTokensLabel: '640 output',
+    cacheTokensLabel: '120 cached', latencyLabel: '1.6s', firstTokenLabel: 'First token 0.38s', estimatedCostLabel: '$0.014',
+  }]
+  const screen = await render(page(value))
+  await fireEvent(screen.getByTestId('usage-content'), 'layout', { nativeEvent: { layout: { width: 760, height: 900 } } })
+  const row = screen.getByTestId('usage-request-request')
+  expect(row).toHaveStyle({ flexDirection: 'column', alignItems: 'stretch' })
+  expect(screen.getByTestId('usage-context-request')).toHaveStyle({ flexDirection: 'row', flexWrap: 'wrap' })
+  expect(screen.getByText('Reference connection')).toBeTruthy()
+  expect(screen.getByText('· Knowledge')).toBeTruthy()
+  for (const label of ['3,840 tokens', '3,200 input / 640 output', '120 cached', '1.6s', 'First token 0.38s']) expect(screen.getByText(label)).toBeTruthy()
+  expect(screen.queryByText('$0.014')).toBeNull()
+  await fireEvent.press(row)
+  expect(value.onRequestPress).toHaveBeenCalledWith('request')
+  await screen.rerender(page({ ...value, filters: { ...value.filters, includeEstimates: true } }))
+  expect(screen.getByTestId('usage-request-request')).toBe(row)
+  expect(screen.getByText('$0.014')).toBeTruthy()
+})
+
+it('labels grouped values and secondary rates instead of leaving a column of unexplained numbers', async () => {
+  const value = props()
+  value.activeTab = 'providers'
+  value.providers = [{
+    id: 'provider', label: 'Research and reference connection', requestCountLabel: '3', tokensLabel: '8K',
+    successRateLabel: '67%', averageLatencyLabel: '1.6s', cacheHitRateLabel: '25%', estimatedCostLabel: '$0.03', share: 0.4,
+  }]
+  const screen = await render(page(value))
+  const row = screen.getByTestId('usage-breakdown-provider')
+  expect(row.props.accessibilityLabel).toContain('Requests 3')
+  expect(row.props.accessibilityLabel).toContain('Total tokens 8K')
+  expect(screen.getByText('usage.successRate 67%')).toBeTruthy()
+  expect(screen.getByText('Average latency 1.6s')).toBeTruthy()
+  expect(screen.queryByText('Estimated cost $0.03')).toBeNull()
+  await screen.rerender(page({ ...value, filters: { ...value.filters, includeEstimates: true } }))
+  expect(screen.getByTestId('usage-breakdown-provider')).toBe(row)
+  expect(screen.getByText('Estimated cost $0.03')).toBeTruthy()
+})
 
 it('guards sheet dismissal and navigation, but explicit cancel destroys the local draft', async () => {
   const value = props(), screen = await render(page(value))

@@ -489,6 +489,12 @@
   "documents": {
     "title": "Documents",
     "new": "New document",
+    "localSpace": "Your local writing space",
+    "libraryCount": "Documents: {{count}}",
+    "refreshing": "Refreshing the document list",
+    "refreshFailed": "Refresh did not finish. The last-read documents remain below.",
+    "openHint": "Open and edit the local document",
+    "emptyTitle": "Give an idea a page",
     "untitled": "Untitled document",
     "createFromAnswer": "Create document",
     "libraryNotice": "Your editable documents, saved locally and independently of Chat. They are not automatically added to Knowledge or sent to an AI.",
@@ -499,6 +505,7 @@
     "loadFailed": "The saved documents could not be read. Nothing has been replaced or recreated.",
     "sourceUnavailable": "This answer is missing, still running, empty, or too large to retain as a document.",
     "documentTitle": "Document title",
+    "writeMode": "Write",
     "body": "Markdown text",
     "retentionNotice": "Save retains this text and its captured origin locally, even if the chat is deleted. Editing never changes the chat. No automatic indexing, AI request, or tool execution.",
     "unsaved": "Unsaved — edits are not retained until you press Save.",
@@ -688,6 +695,8 @@
     }
   },
   "chat": {
+    "selectModel": "Choose a model",
+    "setupDraftPlaceholder": "Draft an idea. Choose a model to send.",
     "codeWorkspace": "Code & files",
     "unifiedToolsHint": "Use the same chat for answers, tool tasks and code. Existing permissions and budgets still apply; no mode switch or Agent definition is required.",
     "workspacePrivacyHint": "This lists only app-owned workspace paths. Selecting a path adds it to your draft without sending or granting access. On Send, the model may read relevant content through authorized tools. Do not include credentials.",
@@ -1258,7 +1267,8 @@
   "dialog": {
     "close": "Close",
     "closeLayer": "Close dialog",
-    "ok": "OK"
+    "ok": "OK",
+    "pendingFeedback": "{{count}} more result(s) to review"
   },
   "renderGuard": {
     "content": "Content",
@@ -2422,7 +2432,16 @@
     "runtimeDiagnosticMediaGenerationKind": {
       "image-generation": "image",
       "video-generation": "video"
-    }
+    },
+    "appearancePreview": "Appearance preview",
+    "appearanceImmediateHint": "Choose a theme or light/dark mode to apply and save immediately. Preview custom colors before applying them.",
+    "appearancePreviewHint": "Accent selections only change this preview. Apply to save and update the app; other drafts and running work stay intact.",
+    "appearancePreviewSample": "A clear place to think, in every theme.",
+    "appearancePreviewInput": "Your next idea...",
+    "applyAppearance": "Apply appearance",
+    "appearanceApplied": "Appearance applied and saved",
+    "previewAccent": "Select for preview",
+    "themeAccentSelectedHint": "This color is selected for the preview. Apply appearance to save it."
   },
   "preferences": {
     "identity": "Identity",
@@ -2513,6 +2532,8 @@
     "exported": "Skill copied",
     "exportFile": "Export file",
     "exportDownloadPrepared": "Skill download prepared",
+    "exportSharePrepared": "Skill share prepared",
+    "exportFailed": "Could not export the skill. Try again.",
     "deleteTitle": "Delete Skill?",
     "deleted": "Skill deleted",
     "saved": "Saved",
@@ -4143,6 +4164,7 @@
   "providerIssue": {
     "missingBaseUrl": "A custom endpoint requires a Base URL; a compatibility protocol does not provide a vendor address.",
     "invalidBaseUrl": "Custom Base URL must be a valid http:// or https:// address.",
+    "githubModelsRetired": "GitHub Models retired on July 30, 2026; inference and model discovery are no longer available. Saved configuration is retained. Choose another provider explicitly: https://docs.github.com/en/github-models",
     "mimoTpKeyWrongMode": "MiMo tp- keys belong to Token Plan. Switch to Token Plan mode and the matching region.",
     "mimoSkKeyWrongMode": "MiMo sk- keys belong to metered billing. Switch to metered mode, or use a tp- Token Plan key.",
     "mimoTpKeyPaygUrl": "MiMo tp- Token Plan keys cannot call the metered Base URL. Use token-plan-*.xiaomimimo.com/v1.",
@@ -4231,6 +4253,7 @@
     "resetFilters": "Reset",
     "requestLog": "Request log",
     "providerStatistics": "Providers",
+    "successRate": "Success rate",
     "modelStatistics": "Models",
     "loading": "Loading usage",
     "loadFailed": "Could not load usage",
@@ -4240,12 +4263,18 @@
     "exporting": "Exporting",
     "exportTitle": "Export usage",
     "exportCopied": "Usage copied",
+    "exportFailed": "Could not export usage",
     "clearTitle": "Clear usage history?",
     "clearDetail": "This removes stored request usage and cannot be undone.",
     "confirmClear": "Clear history",
     "clearing": "Clearing",
     "redacted": "Sensitive request content is hidden",
     "requestDetail": "Request detail",
+    "detailRoute": "Request Route",
+    "detailTokens": "Token Breakdown",
+    "detailTiming": "Timing and Cost",
+    "detailDiagnostics": "Retries and Errors",
+    "detailOther": "Additional Information",
     "detailUnavailable": "Request detail is unavailable.",
     "pricing": "Price overrides",
     "addOverride": "Add price",
@@ -4365,5 +4394,14 @@
     "save": "Save",
     "enabledTools": "{{count}} tool families enabled",
     "accessRules": "{{count}} access rules"
+  },
+  "livelyUi": {
+    "homeTitle": "Start with an idea",
+    "settingsIntro": "Shape your models, tools, and workspace around the way you work.",
+    "providerIntro": "Add a connection, then choose a model. You can also paste an existing configuration.",
+    "agentEmptyTitle": "Give complex work a clear path",
+    "agentEmptyDescription": "Start a task from a conversation. Its real progress and any steps that need your approval will appear here.",
+    "agentRunMissingHint": "Return to the task list to open an available run. Nothing has been restarted.",
+    "helpIntro": "Find a chapter by task, or search the offline guide."
   }
 }

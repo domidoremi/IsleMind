@@ -4,6 +4,8 @@ import { Text } from '@/components/ui/AppText'
 import { useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IslePanel } from '@/components/ui/isle'
+import { IsleEmptyState } from '@/components/ui/isle/EmptyState'
+import { FeedbackGlyph } from '@/components/ui/FeedbackGlyph'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import type { AgentTaskPort } from './agentTaskPort'
 import type { AssistantRun, PendingModelOperation } from '@/modules/assistant-runtime'
@@ -30,6 +32,7 @@ export function AgentRunScreen({ runtime, runId, onFreshRun, onOpenRun, loadWork
   const [steering, setSteering] = useState(''); const [title, setTitle] = useState(''); const [page, setPage] = useState(0)
   const [background, setBackground] = useState(false); const [refresh, setRefresh] = useState(0)
   const locked = useRef(false); const lifetime = useRef(0)
+  const loadedRunId = useRef<string | undefined>(undefined)
   const pending = run?.pendingModelOperation
   const fileEdit = pending?.operationId === `builtin:${BUILT_IN_CAPABILITY_SERVER_ID}:edit_file`
   const [fileReview, setFileReview] = useState<{ digest: string; diff?: string; failed?: boolean }>()
@@ -72,7 +75,11 @@ export function AgentRunScreen({ runtime, runId, onFreshRun, onOpenRun, loadWork
       if (journalEntry.type === 'stream.event' && !['usage', 'citation'].includes(String(journalEntry.data?.eventType))) return
       void loadBudget().catch(() => { if (epoch === lifetime.current) setFailed(true) })
     })
-    setLoading(true); setFailed(false); setRun(undefined); setBudget(undefined); setSources([]); setPage(0)
+    setLoading(true); setFailed(false)
+    if (loadedRunId.current !== runId) {
+      loadedRunId.current = runId
+      setRun(undefined); setBudget(undefined); setSources([]); setPage(0)
+    }
     // Notification navigation does only reads, after the app's bootstrap recovery barrier.
     void Promise.all([runtime.get(runId).then(accept), loadBudget()])
       .catch(() => { if (epoch === lifetime.current) setFailed(true) })
@@ -116,17 +123,21 @@ export function AgentRunScreen({ runtime, runId, onFreshRun, onOpenRun, loadWork
   const totals = budget ? runBudgetTotals(budget, Date.now()) : undefined
   const output = run?.result?.outputText ?? run?.checkpoint?.outputText ?? ''
   const offset = Math.min(page * PAGE, Math.max(0, Math.floor((output.length - 1) / PAGE) * PAGE))
-  return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, gap: 16 }}>
-    {loading ? <Text style={body}>{t('agentTasks.loading')}</Text> : null}
+  return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, padding: 20, gap: 20 }}>
+    {loading ? <View accessibilityState={{ busy: true }} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <FeedbackGlyph phase="pending" label={t('agentTasks.loading')} />
+      <Text style={body}>{t('agentTasks.loading')}</Text>
+    </View> : null}
     {failed ? <Text accessibilityRole="alert" style={body}>{t('agentTasks.failed')}</Text> : null}
-    {!loading && !run && !failed ? <Text style={body}>{t('agentTasks.missing')}</Text> : null}
-    <IsleButton label={t('agentTasks.refresh')} onPress={() => setRefresh((n) => n + 1)} disabled={busy} />
+    {!loading && !run && !failed ? <IsleEmptyState title={t('agentTasks.missing')} description={t('livelyUi.agentRunMissingHint')} icon="workflow" /> : null}
+    <IsleButton label={t('agentTasks.refresh')} onPress={() => setRefresh((n) => n + 1)} busy={loading} disabled={busy || loading} />
     {feedback ? <AgentNotice tone={feedback.key === 'failed' ? 'danger' : 'mint'} alert={feedback.key === 'failed'}
       label={t(feedback.key === 'failed' ? 'agentTasks.commandRefused' : 'agentTasks.commandDone')} body={t(`agentTasks.${feedback.key}`)}>
       {feedback.detail ? <Text selectable accessibilityLiveRegion="polite" style={body}>{feedback.detail}</Text> : null}
     </AgentNotice> : null}
     {run ? <>
       <AgentNotice testID="agent-run-status" tone={legacy ? 'default' : agentRunTone(run)}
+        pending={run.status === 'running' && !run.cancellationRequestedAt}
         label={legacy ? t('agentTasks.legacy') : run.cancellationRequestedAt && !terminal ? t('agentTasks.cancelling') : t(`agentTasks.status.${run.status}`)}
         title={run.agentDefinition?.name ?? run.model}>
         <Text selectable style={body}>{run.id}</Text>

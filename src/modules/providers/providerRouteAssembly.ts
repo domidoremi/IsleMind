@@ -3,7 +3,7 @@ import type { AIProvider } from '@/types/providerContracts'
 import { getProviderEffectiveBaseUrl } from '@/types/providerBaseUrls'
 import { isBedrockMantleBaseUrl, isBedrockRuntimeProvider, normalizeBedrockMantleBaseUrl } from './providerAwsBedrockRouting'
 import { isAzureOpenAIProvider, normalizeAzureOpenAIBaseUrl } from './providerAzureRouting'
-import { isGitHubModelsProvider, isNovitaProvider, isPerplexityProvider } from './providerIdentityPolicy'
+import { isGitHubModelsProvider, isMiniMaxProvider, isNovitaProvider, isPerplexityProvider } from './providerIdentityPolicy'
 
 export type ProviderUpstreamTransport = 'http_sse' | 'responses_websocket'
 export interface ProviderTransportSelection {
@@ -98,10 +98,13 @@ export function getXiaomiMimoAnthropicMessagesEndpoint(provider: AIProvider): st
   return getAnthropicCompatibleMessagesEndpoint(provider)
 }
 export function getAnthropicCompatibleMessagesEndpoint(provider: AIProvider): string {
-  const baseUrl = normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))
+  const baseUrl = normalizeProviderBaseUrl(getProviderEffectiveBaseUrl(provider).trim())
   if (!baseUrl) return ''
-  if (/\/v1$/i.test(baseUrl)) return `${baseUrl}/messages`
-  if (/\/anthropic$/i.test(baseUrl)) return `${baseUrl}/v1/messages`
+  if (/\/messages$/i.test(baseUrl)) return baseUrl
+  try {
+    if (!new URL(baseUrl).pathname.replace(/\/+$/, '')) return `${baseUrl}/v1/messages`
+  } catch { /* Invalid user endpoint is surfaced by the request. */ }
+  if (isMiniMaxProvider(provider) && /\/anthropic$/i.test(baseUrl)) return `${baseUrl}/v1/messages`
   return `${baseUrl}/messages`
 }
 export function getGoogleGenerateEndpoint(provider: AIProvider, model: string, stream: boolean): string {

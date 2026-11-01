@@ -1,0 +1,106 @@
+name: Provider Maintenance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Offline Provider And Maintenance Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.21.0
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Prepare pinned RN theme workspace
+        run: node scripts/prepare-animal-island-ui.js
+      - name: Install without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Link and build paired UI runtime
+        run: |
+          node scripts/prepare-animal-island-ui.js --link-runtimes
+          bun run build:ui
+      - name: Type check
+        run: node --require ./scripts/offline-provider-test-guard.js node_modules/typescript/bin/tsc --noEmit
+      - name: Provider architecture consistency
+        run: |
+          node --require ./scripts/offline-provider-test-guard.js scripts/architecture-dependency-audit.js --include-type --gate
+          node --require ./scripts/offline-provider-test-guard.js scripts/architecture-boundary-audit.js
+      - name: All independent provider focuses
+        run: node scripts/provider-compatibility-tests.js --report-dir=test-evidence/provider-maintenance/focuses
+      - name: Exactly-once stream lifecycle
+        run: node --require ./scripts/offline-provider-test-guard.js scripts/provider-stream-lifecycle-tests.js
+      - name: Current-source SQLite targets
+        run: bun --no-env-file run test:sqlite
+      - name: Dependency security behavior
+        run: node --require ./scripts/offline-provider-test-guard.js scripts/dependency-security-tests.js
+      - name: Full Jest including maintenance contracts
+        run: node --require ./scripts/offline-provider-test-guard.js node_modules/jest/bin/jest.js --runInBand --json --outputFile=test-evidence/provider-maintenance/jest.json
+      - name: Provider boundary regressions
+        run: |
+          for name in provider-protocol-compatibility provider-request-shaping-compatibility provider-runtime-gateway-compatibility provider-runtime-health-compatibility provider-failover-compatibility provider-operation-result-compatibility provider-model-lifecycle-compatibility provider-parameter-matrix provider-transport-security reasoning-runtime-compatibility structured-output-compatibility streaming-cleanup; do
+            node --require ./scripts/offline-provider-test-guard.js "scripts/${name}-tests.js"
+          done
+      - name: Live plan and Android collector self-tests only
+        run: |
+          node --require ./scripts/offline-provider-test-guard.js scripts/provider-compatibility-live-smoke-plan.js --self-test
+          bun --no-env-file --preload ./scripts/offline-provider-test-guard.js scripts/collect-provider-runtime-android.js --self-test
+      - name: Host-synthetic baseline, not device qualification
+        run: node --expose-gc --require ./scripts/offline-provider-test-guard.js scripts/provider-performance-baseline.js --samples=30 --report=test-evidence/provider-maintenance/host-performance.json
+      - name: Retain offline failure and baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: provider-maintenance-offline
+          path: test-evidence/provider-maintenance
+          if-no-files-found: ignore
+          retention-days: 7
+
+  advisories:
+    name: Isolated Public Dependency Advisory Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.21.0
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Prepare pinned RN theme manifest
+        run: node scripts/prepare-animal-island-ui.js
+      - name: Install reviewed tooling without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Audit manifest-lock-patch snapshot without dotenv or credentials
+        run: node scripts/dependency-advisory-audit.js --bun=bun --report-dir=test-evidence/provider-maintenance/advisories
+      - name: Retain raw scanner and review evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: provider-maintenance-advisories
+          path: test-evidence/provider-maintenance/advisories
+          if-no-files-found: ignore
+          retention-days: 7

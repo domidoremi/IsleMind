@@ -42,7 +42,7 @@ function hostFromUrl(value: string): string {
 
 export function McpSettingsContent() {
   const { colors, canonicalThemeId } = useAppTheme()
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const { width, fontScale } = useWindowDimensions()
@@ -464,7 +464,7 @@ function McpServerDetails({
   onToggleTool: (server: McpServerConfig, tool: McpToolManifest) => Promise<void>
   onDelete: (server: McpServerConfig) => Promise<void>
 }) {
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const { width, fontScale } = useWindowDimensions()
@@ -604,7 +604,7 @@ function McpServerDetails({
 }
 
 function McpDisclosureRow({ title, detail, icon, open, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; onPress: () => void }) {
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const { colors } = useAppTheme()
   return (
     <IslePressable

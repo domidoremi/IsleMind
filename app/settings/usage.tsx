@@ -7,13 +7,14 @@ import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 import { resolveSettingsChildReturnAction } from '@/presentation/app-shell/routeReturnPolicy'
 import { createLazyComponent } from '@/utils/lazyLoad'
 import { SettingsEditBoundary, useSettingsLeave } from '@/components/settings/SettingsEditBoundary'
+import { PageFeedbackBoundary, PageFeedbackRegion } from '@/components/ui/PageFeedback'
 
 const UsageStatisticsScreen = createLazyComponent(
   () => import('@/components/settings/UsageStatisticsScreen').then((module) => ({ default: module.UsageStatisticsScreen })),
 )
 
 export default function UsageStatisticsRoute() {
-  return <SettingsEditBoundary><UsageStatisticsRouteContent /></SettingsEditBoundary>
+  return <PageFeedbackBoundary scopeKey="settings-usage"><SettingsEditBoundary><UsageStatisticsRouteContent /></SettingsEditBoundary></PageFeedbackBoundary>
 }
 
 function UsageStatisticsRouteContent() {
@@ -42,6 +43,7 @@ function UsageStatisticsRouteContent() {
 
   return (
     <ThemeDetailFrame kind="usage" title={t('usage.title')} onBack={goBack} backLabel={t('common.back')}>
+      <PageFeedbackRegion />
       <UsageStatisticsScreen />
     </ThemeDetailFrame>
   )

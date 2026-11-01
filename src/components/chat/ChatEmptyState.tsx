@@ -1,4 +1,4 @@
-import { View, useWindowDimensions } from 'react-native'
+import { StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 
@@ -7,7 +7,7 @@ import {
   type NavigationGlyph,
 } from '@/components/navigation/AnimatedNavigationIcon'
 import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
-import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
+import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import {
@@ -202,6 +202,8 @@ function ChatEmptyStateIntro({
   compactLandscape = false,
   showDecoration = true,
   showDescription = true,
+  statusIcon,
+  statusLabel,
 }: {
   title: string
   description?: string
@@ -209,9 +211,11 @@ function ChatEmptyStateIntro({
   compactLandscape?: boolean
   showDecoration?: boolean
   showDescription?: boolean
+  statusIcon?: AppIconName
+  statusLabel?: string
 }) {
   const { colors } = useAppTheme()
-  const accessibilityLabel = description ? `${title}. ${description}` : title
+  const accessibilityLabel = [title, statusLabel, description].filter(Boolean).join('. ')
 
   if (colors.ui.experience.layout === 'editorial') {
     return (
@@ -242,6 +246,7 @@ function ChatEmptyStateIntro({
             >
               {title}
             </Text>
+            {statusLabel ? <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20, marginTop: 8 }}>{statusLabel}</Text> : null}
             {showDecoration ? (
               <View style={{ marginTop: 8, width: 54, height: 3, backgroundColor: colors.primary }} />
             ) : null}
@@ -273,20 +278,24 @@ function ChatEmptyStateIntro({
         maxWidth,
         alignSelf: 'center',
         alignItems: 'center',
-        gap: compactLandscape ? 3 : 6,
+        gap: compactLandscape ? 3 : 12,
       }}
     >
       {showDecoration ? (
-        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <View accessible={false} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+          style={colors.ui.monet ? undefined : { width: 68, height: 68, marginBottom: 8, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
           {colors.ui.monet ? (
             <MonetCompanionMark />
           ) : (
-            <AppIcon
-              name={CHAT_BOUNDARY.glyph}
-              color={colors.ui.icon.accentForeground}
-              size={20}
-              strokeWidth={appIconStroke.fine}
-            />
+            <>
+              {!colors.ui.minimal ? <View style={{ position: 'absolute', width: 86, height: 86, borderRadius: 30, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.section.divider, transform: [{ rotate: '9deg' }], opacity: 0.5 }} /> : null}
+              <AppIcon
+                name={statusIcon ?? CHAT_BOUNDARY.glyph}
+                color={colors.ui.icon.accentForeground}
+                size={30}
+                strokeWidth={appIconStroke.fine}
+              />
+            </>
           )}
         </View>
       ) : null}
@@ -304,11 +313,13 @@ function ChatEmptyStateIntro({
       >
         {title}
       </Text>
+      {statusLabel ? <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20, textAlign: 'center' }}>{statusLabel}</Text> : null}
       {description && showDescription ? (
         <Text
           style={{
             color: colors.textSecondary,
             ...colors.design?.semantic.typography.body,
+            maxWidth: Math.min(maxWidth, 400),
             textAlign: 'center',
             includeFontPadding: false,
           }}
@@ -405,6 +416,7 @@ export function ChatSetupEmptyState({
   onAction?: () => void
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
+  const { t } = useTranslation()
   const { width, height } = useWindowDimensions()
   const starterLayout = resolveProductMobileLayout(width).starter
   const setupLayout = resolveProductMobileChatSetupLayout(width, height)
@@ -425,12 +437,14 @@ export function ChatSetupEmptyState({
       title={title}
       context="setup"
       intro={<ChatEmptyStateIntro
-        title={title}
+        title={showAction ? t('livelyUi.homeTitle') : title}
+        statusLabel={showAction ? title : undefined}
         description={description}
         maxWidth={starterLayout.setupContentMaxWidth}
         compactLandscape={setupLayout.compactLandscape}
         showDecoration={setupLayout.showIntroDecoration}
         showDescription={setupLayout.showIntroDescription}
+        statusIcon={showAction ? 'provider-key' : undefined}
       />}
       boundary={null}
       starter={primaryStarter && onStarter ? (

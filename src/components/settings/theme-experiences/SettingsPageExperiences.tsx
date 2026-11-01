@@ -114,7 +114,7 @@ export function MonetSettingsPageExperience({
 export function MaterialSettingsPageExperience({
   title,
   subtitle,
-  rootTitle: _rootTitle,
+  rootTitle,
   routeKey: _routeKey,
   compact,
   leading,
@@ -125,17 +125,17 @@ export function MaterialSettingsPageExperience({
   const { colors } = useAppTheme()
   return (
     <View testID="settings-page-experience-material" style={styles.materialRoot}>
-      <View style={[styles.materialHeader, { minHeight: compact ? 58 : 64, backgroundColor: colors.ui.semantic.surface.muted, borderBottomColor: colors.ui.section.divider }]}>
-        <View style={[styles.materialLeadingSlot, { backgroundColor: colors.ui.semantic.surface.raised }]}>{leading}</View>
+      <View style={[styles.materialHeader, { minHeight: compact ? 72 : 80, borderBottomColor: colors.ui.section.divider }]}>
+        <View style={styles.materialLeadingSlot}>{leading}</View>
         <View style={styles.titleBlock}>
+          {title !== rootTitle ? <Text style={{ ...colors.design?.semantic.typography.caption, color: colors.textTertiary, marginBottom: 3 }}>{rootTitle}</Text> : null}
           <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.materialTitle, { color: colors.text }]}>{title}</Text></View>
           {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
         </View>
         {trailing}
-        <View pointerEvents="none" style={[styles.materialHeaderIndicator, { backgroundColor: colors.primary }]} />
+        <View accessible={false} importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.materialHeaderIndicator, { backgroundColor: colors.primary }]} />
       </View>
       <View testID="settings-detail-surface-material" style={[styles.materialContent, { paddingTop: compact ? 12 : 16 }]}>
-        <View pointerEvents="none" style={[styles.materialContentRail, { backgroundColor: colors.ui.semantic.surface.muted }]} />
         {children}
       </View>
     </View>
@@ -166,9 +166,9 @@ const styles = StyleSheet.create({
   // Reserve inline space for rotation without clipping the settings content.
   monetContentWash: { position: 'absolute', top: 26, right: 4, width: 132, height: 42, borderTopLeftRadius: 34, borderBottomLeftRadius: 12, opacity: 0.12, transform: [{ rotate: '4deg' }] },
   materialHeader: { position: 'relative', paddingHorizontal: 6, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  materialLeadingSlot: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  materialHeaderIndicator: { position: 'absolute', right: 18, bottom: 0, left: 66, height: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, opacity: 0.78 },
+  materialLeadingSlot: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  materialHeaderIndicator: { position: 'absolute', bottom: 0, left: 62, width: 28, height: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, opacity: 0.78 },
   materialTitle: { fontSize: 22, lineHeight: 29, fontWeight: '500', includeFontPadding: false },
-  materialContent: { position: 'relative', minWidth: 0, gap: 12, paddingLeft: 14 },
+  materialContent: { position: 'relative', minWidth: 0, gap: 16 },
   materialContentRail: { position: 'absolute', top: 14, bottom: 8, left: 0, width: 6, borderRadius: 3 },
 })

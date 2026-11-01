@@ -11,7 +11,7 @@ interface HighFrameSpinnerProps {
 }
 
 export function HighFrameSpinner({ color, size = 16, strokeWidth = 2, style }: HighFrameSpinnerProps) {
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const dotSize = Math.max(2, Math.round(size * 0.18))
   const radius = size / 2
 

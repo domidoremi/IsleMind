@@ -1,22 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
 import { router, useLocalSearchParams, useNavigation } from 'expo-router'
 import { usePreventRemove } from 'expo-router/react-navigation'
-import { Platform, ScrollView, View } from 'react-native'
+import { Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Text, TextInput } from '@/components/ui/AppText'
 import * as Clipboard from 'expo-clipboard'
 import { useTranslation } from 'react-i18next'
+import { useActionFeedback } from '@/hooks/useActionFeedback'
+import { ActionFeedback } from '@/components/ui/ActionFeedback'
+import { AppIcon } from '@/components/ui/AppIcon'
 import Markdown from 'react-native-markdown-display'
 import { IsleButton, IsleInput, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import { DOCUMENT_BODY_LIMIT, DOCUMENT_TITLE_LIMIT, DocumentConflictError, documentDraftFromMessage, parseDocumentReviewContext, type DocumentDraft, type DocumentRepository, type DocumentRevisionPort, type DocumentRevisionSource, type SavedDocument } from '@/modules/documents'
 import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
+import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 import { useChatStore } from '@/store/chatStore'
 import { DocumentRevisionPanel, type DocumentRevisionBase } from './DocumentRevisionPanel'
+import { DocumentContextToggle, DocumentEditorToolbar, DocumentSaveStatus } from './DocumentEditorTools'
 
 export default function DocumentEditorScreen({ repository, revision }: { repository: DocumentRepository; revision: DocumentRevisionPort }) {
   const { t } = useTranslation()
   const { colors } = useAppTheme()
+  const { height } = useWindowDimensions()
+  const typography = colors.design!.semantic.typography
+  const editorHeight = Math.max(280, Math.min(620, height * 0.46))
   const dialog = useIsleDialog()
   const navigation = useNavigation()
   const params = useLocalSearchParams<{ id?: string; conversationId?: string; messageId?: string }>()
@@ -25,6 +33,7 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
   const messageId = first(params.messageId)
   const [draft, setDraft] = useState<DocumentDraft | null>(null)
   const [saved, setSaved] = useState<SavedDocument | null>(null)
+  const copyFeedback = useActionFeedback(draft?.body)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<'loadFailed' | 'sourceUnavailable' | 'saveFailed' | 'conflict' | null>(null)
   const [busy, setBusy] = useState(false)
@@ -138,9 +147,7 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
 
   async function copyText() {
     if (!draft) return
-    const copied = await Clipboard.setStringAsync(draft.body).catch(() => false)
-    dialog.toast({ title: t(copied ? 'common.copied' : 'chat.clipboardUnavailable'),
-      message: copied ? t('documents.copyNotice') : undefined, tone: copied ? 'mint' : 'amber' })
+    await copyFeedback.run(() => Clipboard.setStringAsync(draft.body))
   }
 
   async function acceptRevision(base: DocumentRevisionBase, body: string, sources?: readonly DocumentRevisionSource[]): Promise<boolean> {
@@ -173,9 +180,11 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
   const origin = draft?.origin
   const review = draft?.reviewContext
   return <ThemeDetailFrame kind="documents" title={saved?.title ?? t('documents.new')} backLabel={t('documents.title')} onBack={returnToLibrary}
-    actions={<IsleButton label={t('common.save')} compact tone="primary" busy={busy} disabled={loading || !draft?.title.trim() || (!dirty && !!saved)} onPress={() => void save()} />}>
-    <ScrollView contentInsetAdjustmentBehavior="automatic" keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ padding: 20, gap: 18, paddingBottom: 48, width: '100%', maxWidth: 980, alignSelf: 'center' }}>
+    actions={<IsleButton label={t('common.save')} compact tone="primary" busy={busy} feedbackPhase={busy ? 'pending' : 'idle'}
+      icon={<AppIcon name="check" size={16} color={colors.ui.control.primaryForeground} />}
+      disabled={loading || !draft?.title.trim() || (!dirty && !!saved)} onPress={() => void save()} />}>
+    <ScrollView contentInsetAdjustmentBehavior="automatic" keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets
+      contentContainerStyle={styles.canvas}>
       {loading ? <Text style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
       {error ? <View style={{ gap: 12 }}>
         <Text selectable accessibilityRole="alert" style={{ color: colors.text }}>{t(`documents.${error}`)}</Text>
@@ -185,36 +194,40 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
         </View> : null}
       </View> : null}
       {!loading && draft ? <>
-        <Text selectable style={{ color: colors.textSecondary }}>{t('documents.retentionNotice')}</Text>
-        <Text testID="document-save-status" accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>
-          {t(busy ? 'documents.saving' : dirty ? 'documents.unsaved' : 'documents.saved')}
-        </Text>
-        <IsleInput label={t('documents.documentTitle')} accessibilityLabel={t('documents.documentTitle')} testID="document-title"
-          value={draft.title} editable={!busy} maxLength={DOCUMENT_TITLE_LIMIT} onChangeText={(title) => setDraft({ ...draft, title })} />
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          <IsleButton label={t(preview ? 'documents.edit' : 'documents.preview')} onPress={() => setPreview(!preview)} />
-          <IsleButton label={t('documents.copyText')} onPress={() => void copyText()} />
-          {origin ? <IsleButton label={t(showOrigin ? 'documents.hideOrigin' : 'documents.showOrigin')} onPress={() => setShowOrigin(!showOrigin)} /> : null}
-          {review ? <IsleButton label={t(showReview ? 'documents.review.hide' : 'documents.review.show')} onPress={() => setShowReview(!showReview)} /> : null}
-          {saved ? <IsleButton label={t('common.delete')} tone="danger" disabled={busy} onPress={() => void remove()} /> : null}
+        <View testID="document-editor-identity" style={styles.identity}>
+          <Text style={[typography.label, { color: colors.textSecondary }]}>{t('documents.localSpace')}</Text>
+          <IsleInput label={t('documents.documentTitle')} accessibilityLabel={t('documents.documentTitle')} testID="document-title"
+            inputStyle={typography.headline} value={draft.title} editable={!busy} maxLength={DOCUMENT_TITLE_LIMIT}
+            onChangeText={(title) => setDraft({ ...draft, title })} />
+          <DocumentSaveStatus status={busy ? 'saving' : dirty ? 'unsaved' : 'saved'} />
         </View>
-        {preview ? <View testID="document-preview">
+        <DocumentEditorToolbar preview={preview} onPreviewChange={setPreview} copyPhase={copyFeedback.phase} onCopy={() => void copyText()} />
+        <ActionFeedback phase={copyFeedback.phase} errorLabel={t('chat.clipboardUnavailable')} testID="document-copy-feedback" />
+        <View testID="document-writing-frame" style={[styles.writingFrame, { borderColor: colors.ui.semantic.chrome.border, backgroundColor: colors.ui.semantic.surface.base }]}>
+        {preview ? <View testID="document-preview" style={styles.preview}>
           <Markdown onLinkPress={() => false} rules={{
             image: (node) => <Text key={node.key} style={{ color: colors.textSecondary }}>{t('documents.imageNotLoaded')}</Text>,
-          }} style={{ body: { color: colors.text, fontSize: 16 }, code_inline: { color: colors.text, backgroundColor: colors.ui.semantic.surface.muted }, fence: { color: colors.text, backgroundColor: colors.ui.semantic.surface.muted } }}>
+          }} style={{ body: { ...typography.body, color: colors.text }, code_inline: { color: colors.text, backgroundColor: colors.ui.semantic.surface.muted }, fence: { color: colors.text, backgroundColor: colors.ui.semantic.surface.muted } }}>
             {draft.body.slice(0, 100_000)}
           </Markdown>
           {draft.body.length > 100_000 ? <Text selectable style={{ color: colors.textSecondary }}>{t('documents.previewLimit')}</Text> : null}
-          <Text selectable style={{ color: colors.textSecondary }}>{t('documents.previewNotice')}</Text>
+          <Text selectable style={[typography.caption, { color: colors.textSecondary }]}>{t('documents.previewNotice')}</Text>
         </View> : <View style={{ gap: 8 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '700' }}>{t('documents.body')}</Text>
+          <Text style={[typography.caption, { color: colors.textSecondary }]}>{t('documents.body')}</Text>
           <TextInput accessibilityLabel={t('documents.body')} testID="document-body"
             value={draft.body} multiline scrollEnabled editable={!busy} maxLength={DOCUMENT_BODY_LIMIT} autoCapitalize="sentences" autoCorrect={false}
-            style={{ height: 320, padding: 12, textAlignVertical: 'top', fontSize: 16, lineHeight: 24, color: colors.text,
-              borderWidth: 1, borderRadius: 8, borderColor: colors.ui.semantic.chrome.border, backgroundColor: colors.ui.semantic.surface.base }}
+            style={[typography.body, styles.bodyInput, { height: editorHeight, color: colors.text }]}
             onChangeText={(body) => setDraft({ ...draft, body })} />
         </View>}
-        {origin && showOrigin ? <View testID="document-origin" style={{ gap: 12, paddingTop: 16, borderTopWidth: 1, borderTopColor: colors.ui.semantic.chrome.border }}>
+        </View>
+        <Text selectable style={[typography.caption, { color: colors.textSecondary }]}>{t('documents.retentionNotice')}</Text>
+        {origin || review ? <View style={styles.contextControls}>
+          {origin ? <DocumentContextToggle testID="document-origin-toggle" open={showOrigin}
+            label={t(showOrigin ? 'documents.hideOrigin' : 'documents.showOrigin')} onPress={() => setShowOrigin(!showOrigin)} /> : null}
+          {review ? <DocumentContextToggle testID="document-review-toggle" open={showReview}
+            label={t(showReview ? 'documents.review.hide' : 'documents.review.show')} onPress={() => setShowReview(!showReview)} /> : null}
+        </View> : null}
+        {origin && showOrigin ? <IsleMotionFrame role="section" testID="document-origin" style={{ gap: 12, paddingTop: 16, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.ui.semantic.chrome.border }}>
           <Text selectable style={{ color: colors.text, fontWeight: '700' }}>{t('documents.originTitle')}</Text>
           <Text selectable style={{ color: colors.textSecondary }}>{t('documents.originNotice')}</Text>
           <Text selectable style={{ color: colors.text }}>{origin.conversationTitle} · {new Date(origin.messageTimestamp).toLocaleString()}</Text>
@@ -227,8 +240,8 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
             {citation.excerpt ? <Text selectable style={{ color: colors.textSecondary }}>{citation.excerpt}</Text> : null}
             {citation.url ? <Text selectable style={{ color: colors.textSecondary }}>{citation.url}</Text> : null}
           </View>)}
-        </View> : null}
-        {review && showReview ? <View testID="document-review-context" style={{ gap: 12, paddingTop: 16, borderTopWidth: 1, borderTopColor: colors.ui.semantic.chrome.border }}>
+        </IsleMotionFrame> : null}
+        {review && showReview ? <IsleMotionFrame role="section" testID="document-review-context" style={{ gap: 12, paddingTop: 16, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.ui.semantic.chrome.border }}>
           <Text selectable style={{ color: colors.text, fontWeight: '700' }}>{t('documents.review.title')}</Text>
           <Text selectable style={{ color: colors.textSecondary }}>{t('documents.review.notice')}</Text>
           <Text selectable style={{ color: colors.textSecondary }}>{t('documents.review.acceptedAt', { time: new Date(review.acceptedAt).toLocaleString() })}</Text>
@@ -241,11 +254,24 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
             <Text selectable testID={`document-review-source-${index}`} style={{ color: colors.text }}>{source.text}</Text>
           </View>)}
           <IsleButton label={t('documents.review.remove')} disabled={busy} onPress={() => void removeReview()} />
-        </View> : null}
+        </IsleMotionFrame> : null}
         <DocumentRevisionPanel key={JSON.stringify([id, conversationId, messageId])} draft={draft} saved={saved} port={revision} disabled={busy} onAccept={acceptRevision} />
+        {saved ? <View style={[styles.dangerFooter, { borderTopColor: colors.ui.semantic.chrome.border }]}>
+          <IsleButton compact label={t('common.delete')} tone="danger" disabled={busy} onPress={() => void remove()} />
+        </View> : null}
       </> : null}
     </ScrollView>
   </ThemeDetailFrame>
 }
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value }
+
+const styles = StyleSheet.create({
+  canvas: { padding: 20, gap: 18, paddingBottom: 48, width: '100%', maxWidth: 980, alignSelf: 'center' },
+  identity: { minWidth: 0, gap: 12 },
+  writingFrame: { minWidth: 0, padding: 16, borderWidth: StyleSheet.hairlineWidth, borderRadius: 8 },
+  bodyInput: { minWidth: 0, padding: 0, textAlignVertical: 'top' },
+  preview: { minWidth: 0, gap: 12 },
+  contextControls: { minWidth: 0 },
+  dangerFooter: { paddingTop: 18, borderTopWidth: StyleSheet.hairlineWidth, alignItems: 'flex-start' },
+})

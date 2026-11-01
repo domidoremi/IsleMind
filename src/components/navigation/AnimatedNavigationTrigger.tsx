@@ -15,7 +15,7 @@ interface NavigationTriggerOptions {
 }
 
 export function useNavigationTrigger(onNavigate: NavigateHandler, options: NavigationTriggerOptions = {}) {
-  const motion = useMotionPreference()
+  const motion = useMotionPreference(true)
   const durationMs = options.durationMs ?? NAVIGATION_TRIGGER_DURATION_MS
   const navigateRef = useRef(onNavigate)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)

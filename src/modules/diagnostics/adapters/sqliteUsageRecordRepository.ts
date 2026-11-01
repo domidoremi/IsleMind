@@ -145,6 +145,9 @@ const pricingEntrySchema = v.strictObject({
   version: v.pipe(v.string(), v.minLength(1), v.maxLength(128)),
   effectiveFrom: nonNegativeIntegerSchema,
   source: v.picklist(['built-in', 'manual']),
+  sourceUrl: v.optional(v.pipe(v.string(), v.maxLength(2048))),
+  verifiedAt: v.optional(v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/))),
+  billingConditions: v.optional(v.pipe(v.string(), v.maxLength(2048))),
   rates: pricingRatesSchema,
 })
 const usageDailyRollupSchema = v.strictObject({

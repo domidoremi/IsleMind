@@ -4,7 +4,7 @@ import { Keyboard, ScrollView, StyleSheet, View, useWindowDimensions } from 'rea
 import { Text } from '@/components/ui/AppText'
 import { router, type Href } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { IsleButton, IslePressable, IsleSearchField } from '@/components/ui/isle'
+import { IsleButton, IsleMotionFrame, IslePressable, IsleSearchField } from '@/components/ui/isle'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { AppIcon, type AppIconName } from '@/components/ui/AppIcon'
@@ -45,7 +45,7 @@ const SettingsSearch = memo(function SettingsSearch({ children }: { children: Re
 /** Shared destinations, different composition: a ledger, editorial flow, or a bounded control group. */
 function SettingsListSurface({ children, testID, tiles = false }: { children: ReactNode; testID?: string; tiles?: boolean }) {
   const { colors, canonicalThemeId } = useAppTheme()
-  const open = canonicalThemeId === 'minimal' || canonicalThemeId === 'monet'
+  const open = canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' || canonicalThemeId === 'material'
   const journal = canonicalThemeId === 'animal-island-ui'
   const glass = canonicalThemeId === 'liquid-glass'
   return <View testID={testID} style={{ padding: open || tiles ? 0 : 4, paddingLeft: journal ? 12 : undefined,
@@ -70,11 +70,11 @@ function ConnectionEntry({ label, name, model, action, hasConnections, onPress }
   const journal = canonicalThemeId === 'animal-island-ui'
   const foreground = material ? colors.design!.semantic.color.onPrimaryContainer : colors.text
   const content = <IslePressable testID="settings-entry-providers" accessibilityRole="button" accessibilityLabel={[label, name, model].filter(Boolean).join(', ')}
-    onPress={onPress} style={{ padding: minimal ? 4 : editorial ? 0 : 22, paddingVertical: minimal ? 16 : 22,
+    haptic onPress={onPress} style={{ padding: minimal ? 4 : editorial ? 0 : 18, paddingVertical: minimal ? 16 : 18,
       borderRadius: material ? 28 : journal ? 4 : glass ? 32 : 0,
       borderTopWidth: minimal ? 1 : 0, borderBottomWidth: minimal || editorial ? 1 : journal ? 2 : 0,
       borderColor: minimal || editorial ? colors.ui.section.divider : colors.ui.icon.accentForeground,
-      backgroundColor: material ? colors.design!.semantic.color.primaryContainer : journal ? colors.ui.semantic.surface.raised : 'transparent', gap: minimal ? 10 : 18 }}>
+      backgroundColor: material ? colors.design!.semantic.color.primaryContainer : journal ? colors.ui.semantic.surface.raised : 'transparent', gap: minimal ? 10 : 12 }}>
     <View style={{ flexDirection: glass ? 'column' : 'row', alignItems: glass ? 'center' : 'flex-start', gap: 16 }}>
       {!editorial ? <View accessible={false} importantForAccessibility="no-hide-descendants" style={{ width: minimal ? 28 : 48, height: minimal ? 32 : 48,
         borderRadius: glass ? 24 : journal ? 6 : material ? 16 : 0, borderWidth: journal ? 1 : 0, borderColor: colors.ui.section.divider,
@@ -145,6 +145,7 @@ export const SettingsNavigationContent = memo(function SettingsNavigationContent
         <View style={{ flex: 1, gap: editorial ? 8 : 2, alignItems: editorial ? 'center' : 'flex-start' }}>
           <Text style={{ ...type.caption, letterSpacing: editorial ? 4 : 2, color: colors.textSecondary }}>ISLEMIND</Text>
           <Text accessibilityRole="header" style={{ ...type.display, ...(minimal ? { fontSize: 26, lineHeight: 34 } : null), color: colors.text }}>{t('settings.title')}</Text>
+          <Text style={{ ...type.caption, lineHeight: 20, color: colors.textSecondary }}>{t('livelyUi.settingsIntro')}</Text>
         </View>
         <IslePressable accessibilityRole="button" accessibilityLabel={t('settingsWorkspace.manual')} onPress={() => openSettingsDestination(SETTINGS_DESTINATIONS.find(entry => entry.id === 'help')!)}
           style={{ minWidth: 44, minHeight: 44, borderRadius: glass ? 22 : journal ? 6 : material ? 16 : 0,
@@ -158,15 +159,15 @@ export const SettingsNavigationContent = memo(function SettingsNavigationContent
             action={t(hasConnections ? 'settingsUx.design.manageConnections' : 'settingsUx.design.pasteConfiguration')}
             hasConnections={hasConnections} onPress={openConnections} />
           <View testID="settings-groups" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: editorial ? 40 : wide ? 28 : 24 }}>
-            {groups.map((group, groupIndex) => <View key={group.id} style={{ width: wide ? '47%' : '100%', flexGrow: wide ? 1 : 0, gap: editorial ? 16 : 10 }}>
+            {groups.map((group, groupIndex) => <IsleMotionFrame role="section" order={groupIndex} key={group.id} style={{ width: wide ? '47%' : '100%', flexGrow: wide ? 1 : 0, gap: editorial ? 16 : 10 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: minimal || editorial ? 0 : 6 }}>
                 {editorial || journal ? <Text accessible={false} importantForAccessibility="no" style={{ ...type.title, color: colors.textTertiary }}>{String(groupIndex + 1).padStart(2, '0')}</Text> : null}
-                <Text accessibilityRole="header" style={{ ...(editorial || journal ? type.title : type.label), color: editorial || journal ? colors.text : colors.textSecondary }}>{t(`settingsUx.groups.${group.id}`)}</Text>
+                <Text accessibilityRole="header" style={{ ...(editorial || journal || group.id === 'everyday' ? type.title : type.label), color: editorial || journal || group.id === 'everyday' ? colors.text : colors.textSecondary }}>{t(`settingsUx.groups.${group.id}`)}</Text>
               </View>
               <SettingsListSurface testID={`settings-group-${group.id}`} tiles={everydayTiles && group.id === 'everyday'}>
                 {group.entries.map(id => SETTINGS_DESTINATIONS.find(entry => entry.id === id)!).map((entry, index, entries) => row(entry, index, entries, everydayTiles && group.id === 'everyday'))}
               </SettingsListSurface>
-            </View>)}
+            </IsleMotionFrame>)}
           </View>
         </View>}
       </SettingsSearch>

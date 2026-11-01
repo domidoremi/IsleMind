@@ -42,3 +42,32 @@ it('keeps critical content visible and preserves mounted children/configuration 
   expect(screen.getByTestId('page').props.transition).toBe(transition)
   expect(mounted).toHaveBeenCalledTimes(1)
 })
+
+it('interpolates layout only for an explicitly opted-in disclosure', async () => {
+  const screen = await render(<IsleMotionFrame role="section" layout enter={false} testID="disclosure" />)
+  expect(screen.getByTestId('disclosure').props.layout).toBeDefined()
+  expect(screen.getByTestId('disclosure').props.from).toBeUndefined()
+  const transition = screen.getByTestId('disclosure').props.layout
+  await screen.rerender(<IsleMotionFrame role="section" layout enter={false} testID="disclosure"><Text>Expanded</Text></IsleMotionFrame>)
+  expect(screen.getByTestId('disclosure').props.layout).toBe(transition)
+})
+
+it.each(['reduced', 'none'] as const)('does not interpolate disclosure layout with %s motion', async motion => {
+  const screen = await render(<IsleMotionFrame role="section" layout motion={motion} testID="disclosure" />)
+  expect(screen.getByTestId('disclosure').props.layout).toBeUndefined()
+  if (motion === 'none') {
+    expect(screen.getByTestId('disclosure').props.from).toBeUndefined()
+    expect(screen.getByTestId('disclosure').props.transition.duration).toBe(0)
+  } else {
+    expect(screen.getByTestId('disclosure').props.from.translateX).toBe(0)
+    expect(screen.getByTestId('disclosure').props.from.translateY).toBe(0)
+    expect(screen.getByTestId('disclosure').props.from.scale).toBe(1)
+  }
+})
+
+it('does not add layout animation to reading or streamed content', async () => {
+  const screen = await render(<IsleMotionFrame role="section" testID="reading"><Text>Original text</Text></IsleMotionFrame>)
+  expect(screen.getByTestId('reading').props.layout).toBeUndefined()
+  await screen.rerender(<IsleMotionFrame role="section" testID="reading"><Text>More streamed text</Text></IsleMotionFrame>)
+  expect(screen.getByTestId('reading').props.layout).toBeUndefined()
+})

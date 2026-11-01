@@ -4,6 +4,7 @@ import { getColors } from '@/theme/colors'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
 import { SettingsThemeAccentControl, type ThemeAccentDraft } from './SettingsThemeAccentControl'
+import { useSettingsDraft } from './SettingsEditBoundary'
 
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: jest.fn() }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
@@ -11,6 +12,7 @@ jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) =>
 jest.mock('moti', () => ({ MotiView: require('react-native').View, AnimatePresence: require('react').Fragment }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('@/components/ui/HighFrameSpinner', () => ({ HighFrameSpinner: () => null }))
+jest.mock('./SettingsEditBoundary', () => ({ useSettingsDraft: jest.fn() }))
 
 function setTheme(id: CanonicalThemeId = 'minimal', mode: 'light' | 'dark' = 'light', accent?: string) {
   const colors = getColors(mode, id, undefined, accent)
@@ -31,6 +33,19 @@ function setup() {
   </IsleThemeProvider>
   return { draftRef, onChange, tree }
 }
+
+it('registers unfinished raw color input as a draft and never claims it is saved in preview mode', async () => {
+  const draftRef = { current: {} as ThemeAccentDraft }
+  const onChange = jest.fn()
+  const view = await render(<IsleThemeProvider><SettingsThemeAccentControl previewOnly draftRef={draftRef} onChange={onChange} /></IsleThemeProvider>)
+  await fireEvent.changeText(view.getByTestId('settings-theme-accent-input'), '#abcd')
+  expect(jest.mocked(useSettingsDraft)).toHaveBeenLastCalledWith(true, false, expect.any(Function), '#abcd')
+  expect(onChange).not.toHaveBeenCalled()
+  await fireEvent.changeText(view.getByTestId('settings-theme-accent-input'), '#abc')
+  await fireEvent.press(view.getByTestId('settings-theme-accent-apply'))
+  expect(onChange).toHaveBeenCalledWith('#AABBCC')
+  expect(view.getByText('settings.previewAccent')).toBeTruthy()
+})
 
 it('preserves the labelled group and individually accessible radio choices', async () => {
   const { tree } = setup()

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { Text } from '@/components/ui/AppText'
@@ -8,8 +8,9 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 export interface SettingsReferenceOption { value: string; label: string }
 
 /** Selecting a reference changes the draft only; it never enables or authorizes a resource. */
-export function SettingsReferenceField({ label, value, options, onChange, disabled = false, multiple = true, catalogReady = true }: {
+export function SettingsReferenceField({ label, labelAccessory, value, options, onChange, disabled = false, multiple = true, catalogReady = true }: {
   label: string; value: string; options: SettingsReferenceOption[]; onChange: (value: string) => void
+  labelAccessory?: ReactNode
   disabled?: boolean; multiple?: boolean; catalogReady?: boolean
 }) {
   const { colors } = useAppTheme()
@@ -32,7 +33,10 @@ export function SettingsReferenceField({ label, value, options, onChange, disabl
     return true
   }
   return <View style={{ gap: 8 }}>
-    <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{label}</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 20 }}>
+      <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{label}</Text>
+      {labelAccessory}
+    </View>
     {selected.map(id => {
       const option = unique.find(item => item.value === id)
       const name = option?.label ?? (catalogReady ? `${id} · ${t('agents.unresolved')}` : id)

@@ -1105,6 +1105,12 @@ const buildGoogleBodyForTest = buildProviderProtocolRequestBodyForTest
 const buildOpenAIBodyForTest = buildProviderProtocolRequestBodyForTest
 const buildOpenAIResponsesBodyForTest = buildProviderProtocolRequestBodyForTest
 const getBodyForTest = (request) => providerRequestSerializer.serialize(request).body
+const OPENAI_RESPONSES_COMPLETED_FIXTURE = 'data: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n'
+function readerlessCompletedSseFixtureForTest(raw = OPENAI_RESPONSES_COMPLETED_FIXTURE) {
+  const response = new Response(raw, { status: 200 })
+  Object.defineProperty(response, 'body', { value: null })
+  return response
+}
 const {
   evaluateProviderPayloadRules: evaluatePayloadRulesForTest,
 } = require('../src/modules/providers/index.ts')
@@ -3907,10 +3913,11 @@ async function assertResponsesWebSocketTransportBehavior() {
 
     const toolCallSuccess = await runFakeWebSocketScenario(({ instance }) => {
       instance.open()
-      instance.message({ type: 'response.output_item.added', item: { id: 'rs_websocket_search', type: 'reasoning', encrypted_content: 'encrypted-websocket-reasoning', summary: [] } })
+      instance.message({ type: 'response.output_item.added', item: { id: 'rs_websocket_search', type: 'reasoning', encrypted_content: 'unfinished-websocket-reasoning', summary: [] } })
       instance.message({ type: 'response.output_item.added', item: { id: 'fc_websocket_search', call_id: 'call_websocket_search', type: 'function_call', name: 'search_web', arguments: '{"query":' } })
       instance.message({ type: 'response.function_call_arguments.delta', item_id: 'fc_websocket_search', delta: '"Isle' })
       instance.message({ type: 'response.function_call_arguments.delta', item_id: 'fc_websocket_search', delta: 'Mind"}' })
+      instance.message({ type: 'response.output_item.done', item: { id: 'rs_websocket_search', type: 'reasoning', encrypted_content: 'encrypted-websocket-reasoning', summary: [] } })
       instance.message({ type: 'response.completed', response: { id: 'resp-tool-ok' } })
     })
     assert.equal(toolCallSuccess.done?.providerToolCalls?.[0]?.id, 'fc_websocket_search', 'Responses WebSocket forwards provider tool call id')
@@ -4068,7 +4075,7 @@ async function assertProviderTextToolCallFallbackBehavior() {
   assert.equal(nonStreamingTextToolResult.text, '我需要搜索。', 'provider response parsing helper removes XML-style text tool-call blocks from plain responses')
   assert.equal(nonStreamingTextToolResult.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper recovers XML-style text tool calls from plain responses')
   assert.equal(nonStreamingTextToolResult.providerToolCalls?.[0]?.arguments?.limit, 5, 'provider response parsing helper keeps XML-style numeric arguments executable')
-  const bufferedSseTextToolResult = parseProviderBufferedStreamResponse(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: xmlStyleTextToolCall })}`, {
+  const bufferedSseTextToolResult = parseProviderBufferedStreamResponse(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: xmlStyleTextToolCall })}\n\n${OPENAI_RESPONSES_COMPLETED_FIXTURE}`, {
     provider: { id: 'buffered-text-tool-provider', type: 'openai', name: 'Buffered Text Tool Provider', apiKey: FAKE_KEY_A, models: [], enabled: true },
     model: 'gpt-5.5',
     messages: [],
@@ -9103,15 +9110,15 @@ async function assertUpstreamGovernanceBehavior() {
     })
     assert.ok(structuredOutputFallbackCandidates.rejectedCandidates.some((item) => item.providerId === customFallbackWithoutTools.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects candidates without structured-output request controls')
     assert.ok(structuredOutputFallbackCandidates.candidates.some((item) => item.providerId === fallbackCerebrasStructuredOutput.id && item.capabilities?.includes('structured_output')), 'runtime fallback keeps candidates whose provider contract supports structured-output request controls')
-    const fallbackGithubModelsFileOverclaim = applyProviderPreset({
-      id: 'fallback-github-file-overclaim',
+    const fallbackNimFileOverclaim = applyProviderPreset({
+      id: 'fallback-nim-file-overclaim',
       apiKey: FAKE_KEY_A,
-      models: ['openai/gpt-4.1-mini'],
+      models: ['synthetic-nim-overclaim'],
       enabled: true,
       capabilities: { files: true },
       modelConfigs: [{
-        id: 'openai/gpt-4.1-mini',
-        name: 'GPT-4.1 Mini via GitHub Models',
+        id: 'synthetic-nim-overclaim',
+        name: 'Synthetic offline NVIDIA NIM metadata',
         provider: 'openai-compatible',
         contextWindow: 1047576,
         maxTokens: 32768,
@@ -9120,11 +9127,11 @@ async function assertUpstreamGovernanceBehavior() {
         supportsVision: true,
         supportsFiles: true,
         source: 'remote',
-        sourceUrl: 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
+        sourceUrl: 'https://example.invalid/offline-metadata',
       }],
-    }, 'github-models')
+    }, 'nvidia-nim')
     const fileFallbackCandidates = buildProviderFallbackCandidates({
-      providers: [fallbackGithubModelsFileOverclaim, fallbackOpenAI],
+      providers: [fallbackNimFileOverclaim, fallbackOpenAI],
       original: routeForRuntimeFallback({
         provider: fallbackOpenAI,
         model: 'gpt-5.5',
@@ -9132,17 +9139,17 @@ async function assertUpstreamGovernanceBehavior() {
       }, 'openai-a'),
       requiredCapabilities: ['text', 'file'],
     })
-    assert.ok(fileFallbackCandidates.rejectedCandidates.some((item) => item.providerId === fallbackGithubModelsFileOverclaim.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects file candidates whose provider/model metadata overclaims an unsupported contract capability')
+    assert.ok(fileFallbackCandidates.rejectedCandidates.some((item) => item.providerId === fallbackNimFileOverclaim.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects active file candidates whose synthetic metadata overclaims an unsupported contract capability')
     assert.ok(fileFallbackCandidates.candidates.some((item) => item.providerId === fallbackOpenAI.id && item.capabilities?.includes('file')), 'runtime fallback keeps contract-backed file candidates')
-    const fallbackGithubModelsReasoningOverclaim = applyProviderPreset({
-      id: 'fallback-github-reasoning-overclaim',
+    const fallbackNimReasoningOverclaim = applyProviderPreset({
+      id: 'fallback-nim-reasoning-overclaim',
       apiKey: FAKE_KEY_A,
-      models: ['openai/gpt-4.1-mini'],
+      models: ['synthetic-nim-overclaim'],
       enabled: true,
       capabilities: { reasoningEffort: true },
       modelConfigs: [{
-        id: 'openai/gpt-4.1-mini',
-        name: 'GPT-4.1 Mini via GitHub Models',
+        id: 'synthetic-nim-overclaim',
+        name: 'Synthetic offline NVIDIA NIM metadata',
         provider: 'openai-compatible',
         contextWindow: 1047576,
         maxTokens: 32768,
@@ -9153,15 +9160,15 @@ async function assertUpstreamGovernanceBehavior() {
         reasoningMode: 'openai-reasoning-effort',
         reasoningEfforts: ['low', 'medium', 'high'],
         source: 'remote',
-        sourceUrl: 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
+        sourceUrl: 'https://example.invalid/offline-metadata',
       }],
-    }, 'github-models')
+    }, 'nvidia-nim')
     const reasoningFallbackCandidates = buildProviderFallbackCandidates({
-      providers: [fallbackGithubModelsReasoningOverclaim, fallbackOpenAI],
+      providers: [fallbackNimReasoningOverclaim, fallbackOpenAI],
       original: routeForRuntimeFallback({ provider: fallbackOpenAI, model: 'gpt-5.5', reasoningEffort: 'high' }, 'openai-a'),
       requiredCapabilities: ['text', 'reasoning'],
     })
-    assert.ok(reasoningFallbackCandidates.rejectedCandidates.some((item) => item.providerId === fallbackGithubModelsReasoningOverclaim.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects reasoning candidates whose provider/model metadata overclaims an unsupported contract capability')
+    assert.ok(reasoningFallbackCandidates.rejectedCandidates.some((item) => item.providerId === fallbackNimReasoningOverclaim.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects active reasoning candidates whose synthetic metadata overclaims an unsupported contract capability')
     assert.ok(reasoningFallbackCandidates.candidates.some((item) => item.providerId === fallbackOpenAI.id && item.capabilities?.includes('reasoning')), 'runtime fallback keeps contract-backed reasoning candidates')
     assert.equal(retryAfterMsFromFailure(429), 60000, 'runtime fallback helper maps rate limits to retry-after')
     assert.equal(retryAfterMsFromFailure(503), 20000, 'runtime fallback helper maps server errors to retry-after')
@@ -9210,7 +9217,7 @@ async function assertUpstreamGovernanceBehavior() {
     global.fetch = async (_url, init) => {
       fallbackBodies.push(init?.body ? JSON.parse(init.body) : null)
       fallbackSignals.push(init?.signal)
-      if (fallbackBodies.length === 1) return new Response(null, { status: 200 })
+      if (fallbackBodies.length === 1) return readerlessCompletedSseFixtureForTest()
       if (fallbackBodies.length === 2) return new Response('rate limit', { status: 429 })
       return new Response(JSON.stringify({ choices: [{ message: { content: 'fallback OK' } }] }), {
         status: 200,
@@ -9318,7 +9325,7 @@ async function assertUpstreamGovernanceBehavior() {
     global.fetch = async (_url, init) => {
       emptyFallbackBodies.push(init?.body ? JSON.parse(init.body) : null)
       if (emptyFallbackBodies.length === 1) {
-        return new Response('data: {"choices":[{"delta":{}}]}\n\ndata: [DONE]\n\n', {
+        return new Response(OPENAI_RESPONSES_COMPLETED_FIXTURE, {
           status: 200,
           headers: { 'content-type': 'text/event-stream' },
         })
@@ -9616,7 +9623,7 @@ async function assertUpstreamGovernanceBehavior() {
       requestStream: async () => {
         noReaderFallbackRequestCount += 1
         if (noReaderFallbackRequestCount === 1) {
-          return new Response(null, { status: 200 })
+          return readerlessCompletedSseFixtureForTest()
         }
         return new Response(JSON.stringify({
           id: 'resp_no_reader_fallback',
@@ -9980,7 +9987,8 @@ async function assertUpstreamGovernanceBehavior() {
     }
     global.fetch = async (_url, init) => {
       compatibleFallbackBodies.push(init?.body ? JSON.parse(init.body) : null)
-      if (compatibleFallbackBodies.length === 1) return new Response(null, { status: 200 })
+      if (compatibleFallbackBodies.length === 1) return readerlessCompletedSseFixtureForTest(
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
       if (compatibleFallbackBodies.length === 2) {
         return new Response(JSON.stringify({ error: { message: 'unsupported parameter: response_format and reasoning_effort' } }), {
           status: 400,
@@ -12259,16 +12267,20 @@ async function assertExpandedProviderPresetCoverage() {
   const githubModelsPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['openai/gpt-4.1'], enabled: false }, 'github-models')
   assert.equal(isGitHubModelsProvider(githubModelsPreset), true, 'provider identity helper detects GitHub Models presets')
   assert.equal(githubModelsPreset.type, 'openai-compatible', 'GitHub Models preset stays on the OpenAI-compatible inference shape')
-  assert.equal(githubModelsPreset.capabilities.modelList, true, 'GitHub Models preset keeps documented /models sync enabled')
+  assert.equal(githubModelsPreset.capabilities.chat, false, 'GitHub Models preset no longer advertises retired inference')
+  assert.equal(githubModelsPreset.capabilities.streaming, false, 'GitHub Models preset no longer advertises retired streaming')
+  assert.equal(githubModelsPreset.capabilities.modelList, false, 'GitHub Models preset no longer advertises the retired model catalog')
   assert.equal(githubModelsPreset.capabilities.vision, false, 'GitHub Models preset waits for model metadata before exposing image_url vision input')
   assert.equal(githubModelsPreset.capabilities.files, false, 'GitHub Models preset does not claim generic OpenAI file_data chat attachments')
   assert.equal(githubModelsPreset.capabilities.audioInput, false, 'GitHub Models preset does not claim chat audio input')
   assert.equal(githubModelsPreset.capabilities.audioTranscription, false, 'GitHub Models preset does not claim audio transcription endpoints')
   assert.equal(githubModelsPreset.capabilities.speech, false, 'GitHub Models preset does not claim speech output endpoints')
   assert.equal(githubModelsPreset.capabilities.reasoningEffort, false, 'GitHub Models preset does not claim reasoning_effort without source-backed provider docs')
-  assert.equal(githubModelsPreset.capabilities.nativeTools, true, 'GitHub Models preset exposes OpenAI-format function tools')
+  assert.equal(githubModelsPreset.capabilities.nativeTools, false, 'GitHub Models preset does not enable tools on retired inference')
   assert.equal(githubModelsPreset.capabilities.responsesApi, false, 'GitHub Models preset does not claim OpenAI Responses routing')
-  assert.equal(getAPIEndpointForTest(githubModelsPreset), 'https://models.github.ai/inference/chat/completions', 'GitHub Models preset routes chat through the official inference chat endpoint')
+  assert.deepEqual(githubModelsPreset.models, ['openai/gpt-4.1'], 'GitHub Models retirement preserves saved model selection')
+  assert.equal(getProviderConfigIssue(githubModelsPreset)?.code, 'endpoint_unavailable', 'retired GitHub Models is an endpoint issue, not a credential issue')
+  assert.equal(getAPIEndpointForTest(githubModelsPreset), 'https://models.github.ai/inference/chat/completions', 'historical GitHub Models endpoint assembly remains stable without authorizing dispatch')
   assert.equal(resolveProviderModelDiscoveryEndpoint(githubModelsPreset, githubModelsPreset.baseUrl), 'https://models.github.ai/catalog/models', 'GitHub Models discovery uses the documented catalog route rather than the inference namespace')
   assert.deepEqual(getGitHubModelsApiHeaders(), { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, 'GitHub Models discovery headers stay limited to documented media and API-version fields')
   const githubModelsHeaders = getProviderRequestHeaders(githubModelsPreset, { model: 'openai/gpt-4.1' })
@@ -13610,11 +13622,11 @@ async function assertProviderCapabilityMatrixBehavior() {
   )
   assert.equal(
     githubMultimodalOverclaimMatrix.statuses.find((status) => status.area === 'multimodal')?.contractStatus,
-    'partial',
-    'provider capability matrix reports mixed multimodal contract status when only vision is contract-backed'
+    'unsupported',
+    'provider capability matrix reports unsupported multimodal contracts for the retired service'
   )
   assert.ok(
-    describeProviderCapabilityStatus(githubMultimodalOverclaimMatrix, 'multimodal')?.includes('blocked declarations: files, audio input, audio transcription, speech output'),
+    describeProviderCapabilityStatus(githubMultimodalOverclaimMatrix, 'multimodal')?.includes('blocked declarations: vision, files, audio input, audio transcription, speech output'),
     'provider capability matrix names multimodal declarations blocked by the compatibility contract'
   )
   const githubVisionMetadataMatrix = buildProviderCapabilityMatrix({
@@ -13645,19 +13657,20 @@ async function assertProviderCapabilityMatrixBehavior() {
   })
   assert.equal(
     githubVisionMetadataMatrix.statuses.find((status) => status.area === 'vision')?.contractStatus,
-    'supported',
-    'provider capability matrix exposes canonical vision status for GitHub Models'
+    'unsupported',
+    'provider capability matrix does not revive retired GitHub Models vision from old metadata'
   )
   assert.equal(
     githubVisionMetadataMatrix.statuses.find((status) => status.area === 'vision')?.level,
-    'full',
-    'provider capability matrix allows GitHub Models vision from remote model metadata instead of provider flags alone'
+    'partial',
+    'provider capability matrix keeps old GitHub Models vision metadata non-sendable'
   )
   assert.equal(
     describeProviderCapabilityStatus(githubVisionMetadataMatrix, 'vision'),
-    'vision input is contract-backed and model-catalog gated for openai/gpt-4.1-mini',
-    'provider capability matrix explains remote metadata-backed vision support'
+    'vision input is unclaimed by the provider contract; image attachments remain disabled unless endpoint evidence or remote model metadata proves support',
+    'provider capability matrix explains blocked historical vision metadata'
   )
+  assert.match(describeProviderCapabilityStatus(githubVisionMetadataMatrix, 'deprecation'), /service retired on 2026-07-30.*saved configuration is retained.*https:\/\/docs\.github\.com\/en\/github-models/, 'provider matrix links service retirement to its dated official source')
   assert.equal(
     githubMultimodalOverclaimMatrix.statuses.find((status) => status.area === 'files')?.contractStatus,
     'unsupported',
@@ -14030,19 +14043,15 @@ async function assertProviderCapabilityMatrixBehavior() {
   assert.equal(preparedBedrockRuntimeBody.stream, undefined, 'Bedrock Runtime InvokeModel body omits stream')
   const originalFetch = global.fetch
   try {
-    global.fetch = async (input, init = {}) => {
-      assert.equal(String(input), 'https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-7-sonnet/invoke', 'Bedrock Runtime model test calls InvokeModel')
-      assert.equal(init.method, 'POST', 'Bedrock Runtime model test uses POST')
-      assert.match(init.headers.Authorization, /AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\//, 'Bedrock Runtime model test uses SigV4 Authorization')
-      assert.equal(init.headers['X-Amz-Security-Token'], 'session-token-example', 'Bedrock Runtime model test includes session token')
-      const body = JSON.parse(init.body)
-      assert.equal(body.anthropic_version, 'bedrock-2023-05-31', 'Bedrock Runtime model test sends Anthropic Bedrock API version')
-      assert.equal(body.stream, undefined, 'Bedrock Runtime model test omits stream for InvokeModel')
-      assert.equal(body.messages[0].role, 'user', 'Bedrock Runtime model test keeps Anthropic messages shape')
-      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'OK' }] }), { status: 200 })
+    let generatedProbeRequests = 0
+    global.fetch = async () => {
+      generatedProbeRequests++
+      assert.fail('A non-generating model test must not dispatch Bedrock InvokeModel')
     }
     const bedrockRuntimeReadyModelTest = await testProviderModelDetailed(bedrockRuntimeReadyProvider, 'anthropic.claude-3-7-sonnet', bedrockRuntimeCredentialJson)
-    assert.equal(bedrockRuntimeReadyModelTest.ok, true, 'Bedrock Runtime model test can use signed non-streaming InvokeModel when AWS credentials are supplied')
+    assert.equal(bedrockRuntimeReadyModelTest.ok, false, 'Bedrock Runtime model test fails closed when model discovery is unsupported')
+    assert.equal(bedrockRuntimeReadyModelTest.code, 'models_endpoint_unavailable', 'Unsupported non-generating discovery has an explicit boundary result')
+    assert.equal(generatedProbeRequests, 0, 'Supplying AWS credentials cannot implicitly authorize a generating probe')
   } finally {
     global.fetch = originalFetch
   }
@@ -14061,15 +14070,11 @@ async function assertProviderCapabilityMatrixBehavior() {
   }
   try {
     global.fetch = async (input, init = {}) => {
-      assert.equal(String(input), 'https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions', 'Bedrock Mantle model test calls the OpenAI-compatible chat endpoint')
-      assert.equal(init.method, 'POST', 'Bedrock Mantle model test uses POST')
+      assert.equal(String(input), 'https://bedrock-mantle.us-east-1.api.aws/v1/models', 'Bedrock Mantle model test uses non-generating model discovery')
+      assert.equal(init.method, 'GET', 'Bedrock Mantle model test does not generate tokens')
       assert.equal(init.headers.Authorization, `Bearer ${FAKE_KEY_A}`, 'Bedrock Mantle model test uses bearer API-key auth')
-      const body = JSON.parse(init.body)
-      assert.equal(body.model, 'openai.gpt-oss-120b-1:0', 'Bedrock Mantle model test preserves the requested model id')
-      assert.equal(body.stream, false, 'Bedrock Mantle model test stays non-streaming')
-      assert.equal(body.max_tokens, 32, 'Bedrock Mantle model test uses OpenAI-compatible max_tokens')
-      assert.equal(body.messages[0].role, 'user', 'Bedrock Mantle model test uses OpenAI-compatible messages')
-      return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), { status: 200 })
+      assert.equal(init.body, undefined, 'A non-generating model probe has no inference body')
+      return new Response(JSON.stringify({ data: [{ id: 'openai.gpt-oss-120b-1:0' }] }), { status: 200 })
     }
     const bedrockMantleModelTest = await testProviderModelDetailed(bedrockMantleProvider, 'openai.gpt-oss-120b-1:0', FAKE_KEY_A)
     assert.equal(bedrockMantleModelTest.ok, true, 'Bedrock Mantle provider model test can use the supported OpenAI-compatible endpoint')
@@ -22287,7 +22292,7 @@ async function run() {
   assert.ok(providerResponseParsingSource.includes('function providerReasoningResponseCanBeParsed'), 'provider response parsing centralizes response-side reasoning parse eligibility')
   assert.ok(providerResponseParsingSource.includes('providerCompatibilityEvidenceHasBehavior(evidence.id, \'reasoning\')'), 'provider response parsing uses compatibility evidence before emitting reasoning traces')
   assert.ok(providerResponseParsingSource.includes("extractUsage(json, 'openai-compatible', { includeReasoning })"), 'provider response parsing gates reasoning token usage through response-side reasoning eligibility')
-  assert.ok(providerRuntimeExecutorSource.includes('const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req), preserveReplayIndexes: true }'), 'stream runtime passes reasoning eligibility and preserves replay indexes until completion')
+  assert.match(providerRuntimeExecutorSource, /const streamParseOptions\s*=\s*\{\s*includeReasoning:\s*providerReasoningResponseCanBeParsed\(input\.req\),\s*preserveReplayIndexes:\s*true,\s*protocol:\s*streamProtocol\s*,?\s*\}/, 'stream runtime passes reasoning eligibility and protocol while preserving replay indexes until completion')
   assert.ok(providerRuntimeExecutorSource.includes('function resolveStreamProviderCitationSource'), 'stream runtime centralizes response-side provider citation parse eligibility')
   assert.ok(providerRuntimeExecutorSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'citations')"), 'stream runtime gates provider-native citation metadata through the compatibility contract')
   await assertProviderStreamParsingMigrationBehavior()
@@ -26976,7 +26981,7 @@ https://gateway.example/messages`
   assert.equal(getModelConfig('gpt-4o', 'openai').maxOutputTokens, 16384, 'GPT-4o output limit remains exact')
   assert.equal(getModelConfig('gpt-4.1', 'openai').supportsTools, true, 'OpenAI legacy chat models expose native tool support')
   assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').contextWindow, 1000000, 'DeepSeek V4 Pro context is official 1M')
-  assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').maxOutputTokens, 384000, 'DeepSeek V4 Pro output limit is official 384K')
+  assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').maxOutputTokens, 393216, 'DeepSeek V4 Pro output limit is the exact official 384K (393216), not a rounded decimal display value')
   assert.deepEqual(getModelConfig('deepseek-v4-pro', 'openai-compatible').reasoningEfforts, ['none', 'low', 'high', 'max'], 'DeepSeek V4 Pro exposes official low/high/max thinking efforts')
   assert.equal(getModelConfig('deepseek-chat', 'openai-compatible').reasoningMode, undefined, 'DeepSeek Chat alias remains the official non-thinking compatibility mode')
   assert.deepEqual(getModelConfig('deepseek-reasoner', 'openai-compatible').reasoningEfforts, ['high', 'xhigh'], 'DeepSeek Reasoner exposes only enabled official thinking efforts')
@@ -27851,7 +27856,7 @@ https://gateway.example/messages`
   assert.equal(nonStreamingTextToolResult.text, '我需要搜索。', 'provider response parsing helper removes XML-style text tool-call blocks from plain responses')
   assert.equal(nonStreamingTextToolResult.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper recovers XML-style text tool calls from plain responses')
   assert.equal(nonStreamingTextToolResult.providerToolCalls?.[0]?.arguments?.limit, 5, 'provider response parsing helper keeps XML-style numeric arguments executable')
-  const bufferedSseResult = parseProviderBufferedStreamResponse('data: {"type":"response.output_text.delta","delta":"Buffered answer"}', {
+  const bufferedSseResult = parseProviderBufferedStreamResponse(`data: {"type":"response.output_text.delta","delta":"Buffered answer"}\n\n${OPENAI_RESPONSES_COMPLETED_FIXTURE}`, {
     provider: { id: 'buffered-provider', type: 'openai', name: 'Buffered Provider', apiKey: FAKE_KEY_A, models: [], enabled: true },
     model: 'gpt-5.5',
     messages: [],
@@ -27872,7 +27877,7 @@ https://gateway.example/messages`
   )
   assert.equal(mislabelledNonStreamingSseResult.text, 'Recovered answer', 'provider response parsing helper aggregates SSE returned to non-streaming requests')
   assert.equal(mislabelledNonStreamingSseResult.citations?.[0]?.id, 'mislabelled-source', 'provider response parsing helper keeps retrieval citations for mislabelled non-streaming SSE')
-  const bufferedSseTextToolResult = parseProviderBufferedStreamResponse(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: xmlStyleTextToolCall })}`, {
+  const bufferedSseTextToolResult = parseProviderBufferedStreamResponse(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: xmlStyleTextToolCall })}\n\n${OPENAI_RESPONSES_COMPLETED_FIXTURE}`, {
     provider: { id: 'buffered-text-tool-provider', type: 'openai', name: 'Buffered Text Tool Provider', apiKey: FAKE_KEY_A, models: [], enabled: true },
     model: 'gpt-5.5',
     messages: [],
@@ -27932,6 +27937,8 @@ https://gateway.example/messages`
   const customReasoningStream = parseProviderBufferedStreamResponse([
     `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'Unclaimed stream reasoning.' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'Custom stream.' } }] })}`,
+    '',
+    'data: [DONE]',
     '',
   ].join('\n'), {
     provider: customReasoningProvider,
@@ -29407,15 +29414,15 @@ https://gateway.example/messages`
   const grokConsoleNonReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Non Reasoning Console')
   const grokHyphenHigh = grokConsoleModels.find((model) => model.id === 'grok-4.20-multi-agent-high')
   const grokHyphenXHigh = grokConsoleModels.find((model) => model.id === 'grok-4.20-multi-agent-xhigh')
-  assert.deepEqual(grokConsoleReasoning?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'provider model discovery maps Grok console reasoning labels to known xAI reasoning metadata')
-  assert.deepEqual(grokConsoleMultiAgent?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery maps Grok console multi-agent labels to known xAI multi-agent metadata')
+  assert.deepEqual(grokConsoleReasoning?.reasoningEfforts, [], 'compatible discovery does not treat Grok display labels as request-control evidence')
+  assert.deepEqual(grokConsoleMultiAgent?.reasoningEfforts, [], 'compatible discovery does not borrow native xAI multi-agent effort controls')
   assert.equal(grokConsoleNonReasoning?.reasoningMode, undefined, 'provider model discovery keeps Grok console non-reasoning labels without reasoning metadata')
   assert.equal(grokConsoleMultiAgent?.supportsVision, true, 'provider model discovery preserves Grok console vision badges')
   assert.equal(grokConsoleMultiAgent?.supportsTools, true, 'provider model discovery preserves Grok console tool badges')
   assert.equal(grokHyphenHigh?.name, 'Grok 4.20 Multi-Agent High', 'provider model discovery keeps Grok hyphen high display name distinct')
   assert.equal(grokHyphenXHigh?.name, 'Grok 4.20 Multi-Agent XHigh', 'provider model discovery keeps Grok hyphen xhigh display name distinct')
-  assert.deepEqual(grokHyphenHigh?.reasoningEfforts, ['high'], 'provider model discovery keeps Grok hyphen high fixed effort')
-  assert.deepEqual(grokHyphenXHigh?.reasoningEfforts, ['xhigh'], 'provider model discovery keeps Grok hyphen xhigh fixed effort')
+  assert.deepEqual(grokHyphenHigh?.reasoningEfforts, [], 'compatible discovery keeps a fixed-effort-looking id without inventing a request control')
+  assert.deepEqual(grokHyphenXHigh?.reasoningEfforts, [], 'compatible discovery keeps an xhigh-looking id without borrowing another supplier control')
   assert.equal(
     getProviderDisplayModel({ id: 'xai-relay', type: 'openai-compatible', name: 'xAI Relay', models: [], enabled: true, modelConfigs: grokConsoleModels }, 'grok-4.20-multi-agent-xhigh'),
     'Grok 4.20 Multi-Agent XHigh',
@@ -31420,15 +31427,21 @@ function assertProviderModelDiscoveryBehavior() {
   const grokConsoleNonReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Non Reasoning Console')
   const grokHyphenHigh = grokConsoleModels.find((model) => model.id === 'grok-4.20-multi-agent-high')
   const grokHyphenXHigh = grokConsoleModels.find((model) => model.id === 'grok-4.20-multi-agent-xhigh')
-  assert.deepEqual(grokConsoleReasoning?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'provider model discovery maps Grok console reasoning labels to known xAI reasoning metadata')
-  assert.deepEqual(grokConsoleMultiAgent?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery maps Grok console multi-agent labels to known xAI multi-agent metadata')
+  assert.deepEqual(grokConsoleReasoning?.reasoningEfforts, [], 'generic compatible Grok labels do not establish supplier-specific request controls')
+  assert.deepEqual(grokConsoleMultiAgent?.reasoningEfforts, [], 'generic compatible multi-agent labels do not establish supplier-specific request controls')
   assert.equal(grokConsoleNonReasoning?.reasoningMode, undefined, 'provider model discovery keeps Grok console non-reasoning labels without reasoning metadata')
   assert.equal(grokConsoleMultiAgent?.supportsVision, true, 'provider model discovery preserves Grok console vision badges')
   assert.equal(grokConsoleMultiAgent?.supportsTools, true, 'provider model discovery preserves Grok console tool badges')
   assert.equal(grokHyphenHigh?.name, 'Grok 4.20 Multi-Agent High', 'provider model discovery keeps Grok hyphen high display name distinct')
   assert.equal(grokHyphenXHigh?.name, 'Grok 4.20 Multi-Agent XHigh', 'provider model discovery keeps Grok hyphen xhigh display name distinct')
-  assert.deepEqual(grokHyphenHigh?.reasoningEfforts, ['high'], 'provider model discovery keeps Grok hyphen high fixed effort')
-  assert.deepEqual(grokHyphenXHigh?.reasoningEfforts, ['xhigh'], 'provider model discovery keeps Grok hyphen xhigh fixed effort')
+  assert.deepEqual(grokHyphenHigh?.reasoningEfforts, [], 'a high label without endpoint evidence does not establish a fixed request effort')
+  assert.deepEqual(grokHyphenXHigh?.reasoningEfforts, [], 'an xhigh label without endpoint evidence does not establish a fixed request effort')
+  for (const discovered of grokConsoleModels) {
+    const persisted = JSON.parse(JSON.stringify(discovered))
+    const reloaded = getModelConfig(discovered.id, 'openai-compatible', [persisted])
+    assert.equal(reloaded.reasoningMode, undefined, 'generic compatible discovery does not recover an xAI wire mode from its display name after persistence')
+    assert.deepEqual(reloaded.reasoningEfforts, [], 'persisted generic compatible discovery does not recover supplier-specific effort options')
+  }
 
   const vendorLabeledModels = mapOpenAICompatibleModels({
     data: [
@@ -31457,8 +31470,8 @@ function assertProviderModelDiscoveryBehavior() {
   assert.equal(vendorLabeledModels.filter((model) => model.id === 'grok-4.20-multi-agent-high').length, 1, 'provider model discovery deduplicates repeated parenthesized technical ids')
   assert.deepEqual(
     vendorLabeledModels.find((model) => model.id === 'grok-4.20-multi-agent-high')?.reasoningEfforts,
-    ['high'],
-    'provider model discovery preserves Grok fixed-effort metadata after parenthesized id extraction'
+    [],
+    'parenthesized id extraction does not establish supplier-specific effort control'
   )
 
   const opaqueDisplayNameModels = mapOpenAICompatibleModels({
@@ -31471,11 +31484,11 @@ function assertProviderModelDiscoveryBehavior() {
   const opaqueQwen = opaqueDisplayNameModels.find((model) => model.id === 'relay/model-a')
   const opaqueMiniMax = opaqueDisplayNameModels.find((model) => model.id === 'relay/model-b')
   const opaqueGrok = opaqueDisplayNameModels.find((model) => model.id === 'relay/model-c')
-  assert.deepEqual(opaqueQwen?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'provider model discovery uses display_name to infer Qwen metadata for opaque ids')
+  assert.deepEqual(opaqueQwen?.reasoningEfforts, [], 'opaque compatible model labels do not establish Qwen request controls')
   assert.equal(opaqueQwen?.supportsVision, true, 'provider model discovery uses display_name to infer Qwen vision support for opaque ids')
-  assert.deepEqual(opaqueMiniMax?.reasoningEfforts, ['none', 'high'], 'provider model discovery uses display_name to infer MiniMax thinking metadata for opaque ids')
+  assert.deepEqual(opaqueMiniMax?.reasoningEfforts, [], 'opaque compatible model labels do not establish MiniMax request controls')
   assert.equal(opaqueMiniMax?.supportsVision, true, 'provider model discovery uses display_name to infer MiniMax vision support for opaque ids')
-  assert.deepEqual(opaqueGrok?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery uses display_name to infer Grok multi-agent metadata for opaque ids')
+  assert.deepEqual(opaqueGrok?.reasoningEfforts, [], 'opaque compatible model labels do not establish xAI multi-agent request controls')
 
   const newApiSyncedModels = mapOpenAICompatibleModels({
     data: [
@@ -31570,6 +31583,14 @@ function assertProviderCompatibilityContractBehavior() {
     assert.equal(item.id, presetId, `compatibility evidence id matches preset ${presetId}`)
     assert.ok(item.officialDocs.length > 0, `compatibility evidence for ${presetId} keeps at least one official docs URL`)
     assert.ok(item.officialDocs.every((url) => /^https?:\/\//.test(url)), `compatibility evidence for ${presetId} uses web docs URLs`)
+    if (item.serviceLifecycle?.status === 'retired') {
+      assert.equal(presetId, 'github-models', 'only the primary-source-confirmed retired service gets the retirement branch')
+      assert.deepEqual(item.serviceLifecycle, { status: 'retired', effectiveDate: '2026-07-30', sourceUrl: 'https://docs.github.com/en/github-models', reviewedAt: '2026-10-31' }, 'retirement carries exact source and dates')
+      assert.deepEqual(item.endpointFamilies, [], 'a retired service does not claim active endpoint families')
+      assert.deepEqual(item.behaviorDocs, ['deprecation'], 'a retired service does not inherit the active core contract')
+      assert.deepEqual(getProviderCompatibilityLiveSmokeGates(presetId), [], 'credentials cannot qualify a retired service')
+      continue
+    }
     assert.ok(item.endpointFamilies.length > 0, `compatibility evidence for ${presetId} keeps endpoint family notes`)
     assert.ok(item.behaviorDocs.includes('chat'), `compatibility evidence for ${presetId} includes chat behavior`)
     assert.ok(item.behaviorDocs.includes('errors'), `compatibility evidence for ${presetId} includes error behavior`)
@@ -31594,9 +31615,9 @@ function assertProviderCompatibilityContractBehavior() {
   assert.deepEqual(
     findProviderCompatibilityLiveSmokeGaps(presetIds),
     [],
-    'every non-ready provider family has an explicit env-gated live smoke contract'
+    'every non-ready active provider family has an explicit env-gated live smoke contract'
   )
-  const nonReadyPresetIds = presetIds.filter((presetId) => presetId !== 'custom-endpoint' && getProviderCompatibilityEvidence(presetId).auditState !== 'conformance-ready')
+  const nonReadyPresetIds = presetIds.filter((presetId) => presetId !== 'custom-endpoint' && getProviderCompatibilityEvidence(presetId).auditState !== 'conformance-ready' && getProviderCompatibilityEvidence(presetId).serviceLifecycle?.status !== 'retired')
   for (const presetId of nonReadyPresetIds) {
     const gates = getProviderCompatibilityLiveSmokeGates(presetId)
     assert.ok(gates.length > 0, `compatibility evidence for ${presetId} declares at least one live smoke gate`)
@@ -31920,7 +31941,8 @@ function assertProviderCompatibilityContractBehavior() {
     'Baidu Qianfan compatibility evidence is ready once chat, model-list, tools, vision, unsupported surfaces, and diagnostics have focused coverage'
   )
   assert.ok(
-    getProviderCompatibilityEvidence('baidu-qianfan').officialDocs.some((url) => url.includes('cloud.baidu.com/doc/WENXINWORKSHOP/s/Fm2vrveyu')) &&
+    getProviderCompatibilityEvidence('baidu-qianfan').officialDocs.some((url) => url.includes('cloud.baidu.com/doc/qianfan-api/s/3m7of64lb')) &&
+      getProviderCompatibilityEvidence('baidu-qianfan').officialDocs.some((url) => url.includes('cloud.baidu.com/doc/qianfan-api/s/Dmba8k71y')) &&
       getProviderCompatibilityEvidence('baidu-qianfan').endpointFamilies.includes('/v2/models') &&
       providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'tools') &&
       providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'vision') &&
@@ -31940,9 +31962,9 @@ function assertProviderCompatibilityContractBehavior() {
     'Baichuan compatibility evidence is ready once core chat, unsupported surfaces, and diagnostics have focused coverage'
   )
   assert.ok(
-    getProviderCompatibilityEvidence('baichuan').officialDocs.some((url) => url.includes('platform.baichuan-ai.com/docs/api')) &&
+    getProviderCompatibilityEvidence('baichuan').officialDocs.some((url) => url.includes('platform.baichuan-ai.com/docs-v2/api')) &&
       getProviderCompatibilityEvidence('baichuan').endpointFamilies.includes('/v1/chat/completions'),
-    'Baichuan compatibility evidence records official docs for chat completions behavior'
+    'Baichuan compatibility evidence retains the current locator without calling an unavailable page current API verification'
   )
   assert.ok(
     !getProviderCompatibilityEvidence('baichuan').endpointFamilies.some((endpoint) => endpoint.includes('/models')) &&
@@ -32158,11 +32180,12 @@ function assertProviderCompatibilityContractBehavior() {
     'Perplexity compatibility evidence is promoted once Sonar routing, media, reasoning, and citations have focused coverage'
   )
   assert.ok(
-    getProviderCompatibilityEvidence('perplexity').officialDocs.some((url) => url.includes('/api-reference/sonar-post.md')) &&
+    getProviderCompatibilityEvidence('perplexity').officialDocs.some((url) => url.includes('/migrate-from-sonar/overview.md')) &&
       getProviderCompatibilityEvidence('perplexity').officialDocs.some((url) => url.includes('/docs/sonar/media.md')) &&
       getProviderCompatibilityEvidence('perplexity').officialDocs.some((url) => url.includes('/docs/sonar/features.md')) &&
       getProviderCompatibilityEvidence('perplexity').endpointFamilies.includes('/v1/sonar') &&
-      getProviderCompatibilityEvidence('perplexity').endpointFamilies.includes('/v1/async/sonar') &&
+      !getProviderCompatibilityEvidence('perplexity').endpointFamilies.includes('/v1/async/sonar') &&
+      providerCompatibilityEvidenceHasBehavior('perplexity', 'deprecation') &&
       providerCompatibilityEvidenceHasBehavior('perplexity', 'structuredOutput') &&
       providerCompatibilityEvidenceHasBehavior('perplexity', 'vision') &&
       providerCompatibilityEvidenceHasBehavior('perplexity', 'files') &&
@@ -32312,21 +32335,18 @@ function assertProviderCompatibilityContractBehavior() {
   )
   assert.equal(
     getProviderCompatibilityEvidence('github-models').auditState,
-    'conformance-ready',
-    'GitHub Models compatibility evidence is ready once hosted chat, model list, tools, vision, and unsupported-surface boundaries have focused coverage'
+    'docs-mapped',
+    'GitHub Models retains sourced retirement evidence rather than active conformance readiness'
   )
   assert.ok(
-    getProviderCompatibilityEvidence('github-models').officialDocs.some((url) => url.includes('/github-models')) &&
-      getProviderCompatibilityEvidence('github-models').officialDocs.some((url) => url.includes('/prototyping-with-ai-models')) &&
-      getProviderCompatibilityEvidence('github-models').officialDocs.some((url) => url.includes('/rest/models/catalog')) &&
-      getProviderCompatibilityEvidence('github-models').officialDocs.some((url) => url.includes('/rest/about-the-rest-api/api-versions')) &&
-      getProviderCompatibilityEvidence('github-models').endpointFamilies.includes('/inference/chat/completions') &&
-      getProviderCompatibilityEvidence('github-models').endpointFamilies.includes('/catalog/models') &&
-      providerCompatibilityEvidenceHasBehavior('github-models', 'tools') &&
-      providerCompatibilityEvidenceHasBehavior('github-models', 'vision') &&
-      providerCompatibilityEvidenceHasBehavior('github-models', 'modelList') &&
-      providerCompatibilityEvidenceHasBehavior('github-models', 'hostedRouting'),
-    'GitHub Models compatibility evidence records official docs for hosted OpenAI-compatible chat, model listing, tools, and model-metadata vision'
+    getProviderCompatibilityEvidence('github-models').officialDocs.includes('https://docs.github.com/en/github-models') &&
+      getProviderCompatibilityEvidence('github-models').endpointFamilies.length === 0 &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'tools') &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'vision') &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'modelList') &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'hostedRouting') &&
+      providerCompatibilityEvidenceHasBehavior('github-models', 'deprecation'),
+    'GitHub Models compatibility evidence records full-service retirement, not historical API availability'
   )
   assert.ok(
     !providerCompatibilityEvidenceHasBehavior('github-models', 'files') &&
@@ -32443,13 +32463,13 @@ function assertProviderCompatibilityContractBehavior() {
   assert.ok(
     getProviderCompatibilityEvidence('modelscope').officialDocs.some((url) => url.includes('/API-Inference/intro')) &&
       getProviderCompatibilityEvidence('modelscope').officialDocs.some((url) => url.includes('/chat-completion')) &&
-      getProviderCompatibilityEvidence('modelscope').officialDocs.some((url) => url.includes('api-inference.modelscope.cn/v1/models')) &&
+      getProviderCompatibilityEvidence('modelscope').officialDocs.every((url) => new URL(url).hostname === 'www.modelscope.cn') &&
       getProviderCompatibilityEvidence('modelscope').endpointFamilies.includes('/v1/chat/completions') &&
       getProviderCompatibilityEvidence('modelscope').endpointFamilies.includes('/v1/models') &&
       getProviderCompatibilityEvidence('modelscope').endpointFamilies.includes('/v1/embeddings') &&
       providerCompatibilityEvidenceHasBehavior('modelscope', 'embeddings') &&
       providerCompatibilityEvidenceHasBehavior('modelscope', 'modelList'),
-    'ModelScope compatibility evidence records official docs/live endpoint evidence for chat, model list, and embeddings'
+    'ModelScope separates official documentation locators from offline-covered API routes; a live models URL is not documentation evidence'
   )
   assert.ok(
     !providerCompatibilityEvidenceHasBehavior('modelscope', 'tools') &&
@@ -33927,7 +33947,7 @@ async function assertNewAPIProviderCompatibilityBehavior() {
   const newApiRateLimit = JSON.stringify({ error: { message: 'Too many requests', type: 'rate_limit_error', code: 'rate_limit_exceeded' } })
   assert.equal(classifyHttpStatus(429, newApiRateLimit), 'rate_limited', 'NewAPI 429 errors classify as rate_limited')
   const newApiFilesUnimplemented = JSON.stringify({ error: { message: 'Files API is not implemented', type: 'not_implemented', code: 'not_implemented' } })
-  assert.equal(classifyHttpStatus(501, newApiFilesUnimplemented), 'network_error', 'NewAPI unimplemented Files endpoint stays a provider-side server error')
+  assert.equal(classifyHttpStatus(501, newApiFilesUnimplemented), 'upstream_error', 'NewAPI unimplemented Files endpoint stays a provider-side server error')
   assert.ok(extractProviderErrorDetail(newApiFilesUnimplemented).includes('Files API is not implemented'), 'NewAPI unimplemented Files errors preserve provider messages for diagnostics')
 }
 
@@ -34314,8 +34334,9 @@ async function assertLocalAIProviderCompatibilityBehavior() {
     required: ['answer'],
   }
   const evidence = getProviderCompatibilityEvidence('localai')
-  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/text-generation/'), 'LocalAI evidence records Text Generation docs')
-  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/openai-functions/'), 'LocalAI evidence records OpenAI functions/tools docs')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/docs/features/text-generation/'), 'LocalAI evidence records current Text Generation docs')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/docs/features/openai-functions/'), 'LocalAI evidence records current OpenAI functions/tools docs')
+  assert.ok(evidence.officialDocs.includes('https://localai.io/docs/features/interleaved-thinking/'), 'LocalAI evidence records the explicit returned tool-turn reasoning contract')
   assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/constrained_grammars/'), 'LocalAI evidence records constrained grammar docs')
   assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/embeddings/'), 'LocalAI evidence records embeddings docs')
   assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/audio-to-text/'), 'LocalAI evidence records audio transcription docs')
@@ -34327,6 +34348,7 @@ async function assertLocalAIProviderCompatibilityBehavior() {
   assert.ok(evidence.endpointFamilies.includes('/v1/audio/speech'), 'LocalAI evidence records speech endpoint')
   assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'structuredOutput'), 'LocalAI evidence claims documented grammar-constrained output behavior')
   assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'tools'), 'LocalAI evidence claims documented OpenAI-format tool use')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'reasoning'), 'LocalAI evidence documents returned reasoning fields without qualifying every local model or enabling unknown reasoning controls')
   assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'embeddings'), 'LocalAI evidence claims documented embeddings')
   assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'audio'), 'LocalAI evidence claims documented local audio endpoints')
 
@@ -34358,8 +34380,8 @@ async function assertLocalAIProviderCompatibilityBehavior() {
   const chatConformance = resolveProviderRequestConformanceForTest(chatReq, chatBody)
   assert.equal(chatConformance.manifest.family, 'localai', 'LocalAI conformance records the local runtime family')
   assert.equal(chatConformance.manifest.protocol, 'openai-compatible', 'LocalAI default route uses Chat Completions')
-  assert.equal(chatConformance.manifest.structuredOutput.contractClaimed, true, 'LocalAI conformance records grammar-backed structured-output evidence')
-  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'localai-grammar', 'LocalAI conformance records the grammar-specific structured-output shape')
+  assert.equal(chatConformance.manifest.structuredOutput.contractClaimed, false, 'LocalAI does not promote grammar reference evidence into an implemented request contract')
+  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'none', 'LocalAI leaves an unimplemented grammar request shape unclaimed')
   assert.equal(chatConformance.manifest.structuredOutput.appRequestControl, false, 'LocalAI conformance keeps app request controls disabled until IsleMind maps grammar')
   assert.equal(chatConformance.manifest.structuredOutput.strictJsonSchema, false, 'LocalAI conformance does not claim OpenAI strict JSON schema support')
   assert.ok(chatConformance.manifest.source.url?.includes('localai.io/features/text-generation'), 'LocalAI conformance source URL points to official docs')
@@ -34949,7 +34971,7 @@ async function assertAzureOpenAIProviderCompatibilityBehavior() {
       supportsVision: true,
       supportsFiles: false,
       supportsTools: true,
-      supportedParameters: ['response_format', 'tools'],
+      supportedParameters: ['response_format', 'tools', 'max_tokens'],
       preferredEndpoint: 'chat-completions',
       sourceUrl: 'https://learn.microsoft.com/azure/ai-foundry/openai/reference',
       verifiedAt: '2026-06-22',
@@ -35175,6 +35197,7 @@ async function assertHostedCloudProviderCompatibilityBehavior() {
     provider: azureV1Provider,
     model: 'gpt-4.1',
     messages: [{ role: 'user', content: 'Use Azure hosted chat.' }],
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 128,
     providerToolDeclarations: [providerToolDeclaration],
   })
@@ -35193,6 +35216,7 @@ async function assertHostedCloudProviderCompatibilityBehavior() {
     provider: azureResponsesProvider,
     model: 'azure/gpt-5.2-responses',
     messages: [{ role: 'user', content: 'Use Azure hosted Responses.' }],
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 128,
     providerToolDeclarations: [providerToolDeclaration],
   })
@@ -35246,6 +35270,7 @@ async function assertHostedCloudProviderCompatibilityBehavior() {
     provider: bedrockMantleProvider,
     model: 'openai.gpt-oss-120b-1:0',
     messages: [{ role: 'user', content: 'Use Bedrock Mantle chat.' }],
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 64,
     providerToolDeclarations: [providerToolDeclaration],
   })
@@ -35264,6 +35289,7 @@ async function assertHostedCloudProviderCompatibilityBehavior() {
     model: 'anthropic.claude-3-7-sonnet',
     messages: [{ role: 'user', content: 'Use Bedrock Runtime InvokeModel.' }],
     stream: false,
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 32,
   })
   const bedrockRuntimeConformance = resolveProviderRequestConformanceForTest({
@@ -35299,6 +35325,14 @@ async function assertHostedCloudProviderCompatibilityBehavior() {
     id: 'vertex-openai-hosted',
     baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi',
     capabilities: { nativeTools: true },
+    modelConfigs: [{
+      id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'openai-compatible',
+      contextWindow: 1048576, maxTokens: 65536, maxOutputTokens: 65536, defaultMaxTokens: 2048,
+      supportsTools: true, supportedParameters: ['max_tokens', 'max_completion_tokens', 'tools'],
+      sourceUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/migrate/openai/overview',
+      verifiedAt: '2026-10-31',
+      preferredEndpoint: 'chat-completions', source: 'remote',
+    }],
   }
   const vertexEvidence = getProviderCompatibilityEvidence('vertex-ai')
   assert.equal(vertexEvidence.auditState, 'needs-live-smoke', 'Vertex AI keeps live project/region behavior separate from offline hosted coverage')
@@ -35311,10 +35345,12 @@ async function assertHostedCloudProviderCompatibilityBehavior() {
     provider: vertexOpenAIProvider,
     model: 'gemini-2.5-pro',
     messages: [{ role: 'user', content: 'Use Vertex OpenAI-compatible chat.' }],
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 96,
     providerToolDeclarations: [providerToolDeclaration],
   })
-  assert.equal(vertexBody.max_tokens, 96, 'Vertex AI OpenAI-compatible body uses max_tokens')
+  assert.equal(vertexBody.max_completion_tokens, 96, 'Vertex AI Gemini body uses the documented max_completion_tokens alias')
+  assert.equal(vertexBody.max_tokens, undefined, 'Vertex AI Gemini body emits only one output-budget field')
   assert.equal(vertexBody.tools[0].function.name, 'inspect_hosted_context', 'Vertex AI OpenAI-compatible body preserves provider tools')
   const vertexConformance = resolveProviderRequestConformanceForTest({
     provider: vertexOpenAIProvider,
@@ -35397,6 +35433,7 @@ function assertAWSBedrockProviderCompatibilityBehavior() {
     provider: bedrockMantleProvider,
     model: 'openai.gpt-oss-120b-1:0',
     messages: [{ role: 'user', content: 'Use Bedrock Mantle chat.' }],
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 64,
     providerToolDeclarations: [providerToolDeclaration],
   })
@@ -35421,6 +35458,7 @@ function assertAWSBedrockProviderCompatibilityBehavior() {
     model: 'anthropic.claude-3-7-sonnet',
     messages: [{ role: 'user', content: 'Use Bedrock Runtime InvokeModel.' }],
     stream: false,
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 32,
   })
   const bedrockRuntimeConformance = resolveProviderRequestConformanceForTest({
@@ -35486,8 +35524,9 @@ async function assertVertexAIProviderCompatibilityBehavior() {
       supportsTools: true,
       reasoningMode: 'openai-effort',
       reasoningEfforts: ['low', 'medium', 'high'],
-      sourceUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/start/openai',
-      verifiedAt: '2026-06-22',
+      supportedParameters: ['max_tokens', 'max_completion_tokens', 'response_format', 'tools', 'reasoning_effort'],
+      sourceUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/migrate/openai/overview',
+      verifiedAt: '2026-10-31',
       source: 'remote',
     }],
     enabled: true,
@@ -35518,12 +35557,14 @@ async function assertVertexAIProviderCompatibilityBehavior() {
     provider: vertexOpenAIProvider,
     model: 'gemini-2.5-pro',
     messages: [{ role: 'user', content: 'Use Vertex AI hosted chat.' }],
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 96,
     reasoningEffort: 'low',
     providerToolDeclarations: [providerToolDeclaration],
     structuredOutput: { type: 'json_schema', name: 'vertex_result', schema: { type: 'object' }, strict: true },
   })
-  assert.equal(vertexBody.max_tokens, 96, 'Vertex AI OpenAI-compatible body uses max_tokens')
+  assert.equal(vertexBody.max_completion_tokens, 96, 'Vertex AI Gemini body uses the documented max_completion_tokens alias')
+  assert.equal(vertexBody.max_tokens, undefined, 'Vertex AI Gemini body emits only one output-budget field')
   assert.equal(vertexBody.reasoning_effort, 'low', 'Vertex AI OpenAI-compatible body preserves documented reasoning_effort')
   assert.equal(vertexBody.tools[0].function.name, 'inspect_vertex_context', 'Vertex AI OpenAI-compatible body preserves tools')
   assert.equal(vertexBody.response_format.type, 'json_schema', 'Vertex AI OpenAI-compatible body preserves response_format structured output')
@@ -36803,7 +36844,7 @@ async function assertBaiduQianfanProviderCompatibilityBehavior() {
   assert.equal(qianfanConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim Baidu Qianfan speech output')
   assert.equal(qianfanConformance.manifest.reasoning.supported, false, 'provider conformance keeps Baidu Qianfan reasoning disabled until source-backed controls exist')
   assert.equal(qianfanConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records Baidu Qianfan OpenAI-format tool declarations')
-  assert.ok(qianfanConformance.manifest.source.url?.includes('cloud.baidu.com/doc/WENXINWORKSHOP/s/Fm2vrveyu'), 'provider conformance links Baidu Qianfan to official docs')
+  assert.ok(qianfanConformance.manifest.source.url?.includes('cloud.baidu.com/doc/qianfan-api/s/3m7of64lb'), 'provider conformance links Baidu Qianfan to the current official Chat API reference')
   assert.equal(qianfanConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Baidu Qianfan as source-backed')
 
   const originalFetch = global.fetch
@@ -36954,7 +36995,7 @@ async function assertBaichuanProviderCompatibilityBehavior() {
   assert.equal(baichuanConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim Baichuan speech output')
   assert.equal(baichuanConformance.manifest.reasoning.supported, false, 'provider conformance keeps Baichuan reasoning disabled until source-backed controls exist')
   assert.equal(baichuanConformance.manifest.tools.supported, false, 'provider conformance does not claim Baichuan provider tools')
-  assert.ok(baichuanConformance.manifest.source.url?.includes('platform.baichuan-ai.com/docs/api'), 'provider conformance links Baichuan to official docs')
+  assert.ok(baichuanConformance.manifest.source.url?.includes('platform.baichuan-ai.com/docs-v2/api'), 'provider conformance retains the current Baichuan docs locator without upgrading its unavailable evidence')
   assert.equal(baichuanConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Baichuan as source-backed')
 
   const baichuanImageBody = buildOpenAIBodyForTest({
@@ -37534,8 +37575,8 @@ async function assertDashScopeProviderCompatibilityBehavior() {
   assert.equal(qwenThinkingBody.enable_thinking, true, 'DashScope Qwen thinking requests send enable_thinking')
   assert.equal(qwenThinkingBody.thinking_budget, 262144, 'DashScope Qwen high thinking uses the official 256K budget for qwen3.7')
   assert.deepEqual(qwenThinkingBody.stream_options, { include_usage: true }, 'DashScope streaming requests include usage metadata')
-  assert.equal(qwenThinkingBody.max_tokens, 4096, 'DashScope Qwen requests use OpenAI-compatible max_tokens')
-  assert.equal(qwenThinkingBody.max_completion_tokens, undefined, 'DashScope Qwen requests avoid max_completion_tokens')
+  assert.equal(qwenThinkingBody.max_completion_tokens, 4096, 'documented DashScope Qwen families cap combined thinking and answer output')
+  assert.equal(qwenThinkingBody.max_tokens, undefined, 'documented combined-output requests do not also send the legacy answer-only cap')
   assert.equal(qwenThinkingBody.modalities, undefined, 'DashScope chat requests do not claim Qwen-Omni audio output before runtime mapping exists')
   assert.equal(qwenThinkingBody.audio, undefined, 'DashScope chat requests do not send audio output settings before runtime mapping exists')
   assert.equal(qwenThinkingBody.tools[0].function.name, 'read_context', 'DashScope Qwen requests carry OpenAI-format provider tools')
@@ -37606,7 +37647,7 @@ async function assertDashScopeProviderCompatibilityBehavior() {
   assert.equal(qwenConformance.manifest.family, 'dashscope', 'provider conformance classifies Qwen as DashScope')
   assert.equal(qwenConformance.manifest.reasoning.requestShape, 'dashscope-thinking', 'provider conformance exposes Qwen thinking request shape')
   assert.equal(qwenConformance.manifest.payload.streamUsageField, 'stream_options.include_usage', 'provider conformance records DashScope stream usage field')
-  assert.equal(qwenConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records DashScope max_tokens')
+  assert.equal(qwenConformance.manifest.payload.maxTokensField, 'max_completion_tokens', 'provider conformance agrees with the documented DashScope combined-output wire field')
   assert.equal(qwenConformance.manifest.modalities.input.image, true, 'provider conformance records DashScope image input support')
   assert.equal(qwenConformance.manifest.modalities.input.file, false, 'provider conformance avoids generic file_data support for DashScope')
   assert.equal(qwenConformance.manifest.modalities.input.audio, false, 'provider conformance avoids Qwen-Omni audio input before runtime mapping exists')
@@ -38094,7 +38135,7 @@ async function assertMistralProviderCompatibilityBehavior() {
     maxTokens: 1024,
     stream: false,
   })
-  assert.equal(mistralFileBody.messages[0].content[1].type, 'file', 'generic OpenAI-compatible builder still produces a file_data part for document attachments')
+  assert.doesNotMatch(JSON.stringify(mistralFileBody), /"type":"file"|"file_data"/, 'Mistral request shaping removes unapproved generic file_data before serialization')
   const mistralFileConformance = resolveProviderRequestConformanceForTest({
     provider: mistralProvider,
     model: 'mistral-medium-latest',
@@ -38322,6 +38363,7 @@ async function assertGroqProviderCompatibilityBehavior() {
     model: 'llama-3.3-70b-versatile',
     messages: [{ role: 'user', content: 'latest Groq docs?' }],
     webSearchMode: 'native',
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 1024,
     stream: false,
     providerToolDeclarations: [providerToolDeclaration],
@@ -38354,6 +38396,7 @@ async function assertGroqProviderCompatibilityBehavior() {
     provider: groqResponsesProvider,
     model: 'groq-responses-beta',
     messages: [{ role: 'user', content: 'hello responses' }],
+    generationParameterSources: { maxTokens: 'explicit' },
     maxTokens: 1024,
     stream: false,
   })
@@ -39152,6 +39195,8 @@ async function assertPerplexityProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
     `data: ${JSON.stringify({ search_results: [{ title: 'Stream Source', url: 'https://example.com/stream', snippet: 'Stream snippet.' }] })}`,
     '',
+    'data: [DONE]',
+    '',
   ].join('\n'), {
     provider: perplexityProvider,
     model: 'sonar-pro',
@@ -39166,6 +39211,8 @@ async function assertPerplexityProviderCompatibilityBehavior() {
   const customPerplexityStream = parseProviderBufferedStreamResponse([
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'Custom stream.' } }] })}`,
     `data: ${JSON.stringify({ search_results: [{ title: 'Unclaimed Stream Source', url: 'https://example.com/unclaimed-stream', snippet: 'Should stay gated.' }] })}`,
+    '',
+    'data: [DONE]',
     '',
   ].join('\n'), {
     provider: customPerplexityLikeProvider,
@@ -39272,6 +39319,8 @@ async function assertCohereProviderCompatibilityBehavior() {
   const cohereStream = parseProviderBufferedStreamResponse([
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'Cohere ' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+    'data: [DONE]',
     '',
   ].join('\n'), {
     provider: cohereProvider,
@@ -39533,6 +39582,8 @@ async function assertCerebrasProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'Cerebras ' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
     '',
+    'data: [DONE]',
+    '',
   ].join('\n'), {
     provider: cerebrasProvider,
     model: 'gpt-oss-120b',
@@ -39785,6 +39836,8 @@ async function assertSambaNovaProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'SambaNova ' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
     '',
+    'data: [DONE]',
+    '',
   ].join('\n'), {
     provider: sambanovaProvider,
     model: 'gpt-oss-120b',
@@ -39922,6 +39975,8 @@ async function assertNvidiaNimProviderCompatibilityBehavior() {
   const nvidiaStream = parseProviderBufferedStreamResponse([
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'NVIDIA ' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+    'data: [DONE]',
     '',
   ].join('\n'), {
     provider: nvidiaProvider,
@@ -40146,6 +40201,8 @@ async function assertHuggingFaceProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_hf_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
     '',
+    'data: [DONE]',
+    '',
   ].join('\n'), {
     provider: huggingFaceProvider,
     model: gptOssModel,
@@ -40223,22 +40280,27 @@ async function assertGitHubModelsProviderCompatibilityBehavior() {
 
   assert.equal(isGitHubModelsProvider(githubProvider), true, 'GitHub Models identity helper detects hosted inference providers')
   assert.equal(getAPIEndpointForTest(githubProvider), 'https://models.github.ai/inference/chat/completions', 'GitHub Models routes chat through the official inference chat endpoint')
-  assert.equal(githubProvider.capabilities.modelList, true, 'GitHub Models keeps documented /models sync enabled')
+  assert.equal(githubProvider.capabilities.chat, false, 'GitHub Models no longer advertises retired inference')
+  assert.equal(githubProvider.capabilities.streaming, false, 'GitHub Models no longer advertises retired streaming')
+  assert.equal(githubProvider.capabilities.modelList, false, 'GitHub Models disables the retired model catalog')
   assert.equal(githubProvider.capabilities.vision, false, 'GitHub Models waits for model metadata before exposing image_url vision input')
   assert.equal(githubProvider.capabilities.files, false, 'GitHub Models does not claim generic file_data chat attachments')
   assert.equal(githubProvider.capabilities.audioInput, false, 'GitHub Models does not claim chat audio input')
   assert.equal(githubProvider.capabilities.audioTranscription, false, 'GitHub Models does not claim audio transcription endpoints')
   assert.equal(githubProvider.capabilities.speech, false, 'GitHub Models does not claim speech output endpoints')
   assert.equal(githubProvider.capabilities.reasoningEffort, false, 'GitHub Models does not claim reasoning_effort by default')
-  assert.equal(githubProvider.capabilities.nativeTools, true, 'GitHub Models exposes OpenAI-format tool declarations')
+  assert.equal(githubProvider.capabilities.nativeTools, false, 'GitHub Models does not enable tools on retired inference')
   assert.equal(githubProvider.capabilities.responsesApi, false, 'GitHub Models does not claim OpenAI Responses routing')
 
   const chatConfig = getModelConfig(chatModel, 'openai-compatible', githubProvider.modelConfigs)
   const visionConfig = getModelConfig(visionModel, 'openai-compatible', githubProvider.modelConfigs)
   assert.equal(chatConfig.supportsTools, true, 'GitHub Models fixture records tool-capable model metadata')
-  assert.equal(providerSupportsVisionInput(githubProvider, visionConfig), true, 'GitHub Models UI helper exposes vision when model metadata and the provider contract both allow it')
-  assert.equal(getOpenAIChatMaxTokensField({ provider: githubProvider, model: chatModel }), 'max_tokens', 'GitHub Models chat requests use max_tokens')
-  assert.equal(usesOpenAIResponses({ provider: githubProvider, model: chatModel }), false, 'GitHub Models keeps Chat Completions routing')
+  assert.equal(providerSupportsVisionInput(githubProvider, visionConfig), false, 'old model metadata cannot revive retired GitHub Models vision')
+  assert.equal(getProviderConfigIssue(githubProvider)?.code, 'endpoint_unavailable', 'GitHub Models retirement is distinct from credential mismatch')
+  assert.deepEqual(githubProvider.models, [chatModel, visionModel], 'retirement preserves saved models')
+  assert.equal(githubProvider.baseUrl, 'https://models.github.ai/inference', 'retirement preserves the saved endpoint for explicit migration')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: githubProvider, model: chatModel }), 'max_tokens', 'historical GitHub Models field assembly stays stable without authorizing dispatch')
+  assert.equal(usesOpenAIResponses({ provider: githubProvider, model: chatModel }), false, 'retirement does not silently migrate saved models to Responses')
   assert.deepEqual(getReasoningEffortOptions(githubProvider, chatModel), [], 'GitHub Models models do not inherit generic reasoning controls')
   assert.equal(providerSupportsReasoning(githubProvider, chatModel), false, 'GitHub Models disables reasoning controls without source-backed evidence')
   assert.equal(normalizeOpenAIReasoningEffort({ provider: githubProvider, model: chatModel, reasoningEffort: 'high' }), undefined, 'GitHub Models requests omit unsupported reasoning_effort')
@@ -40288,7 +40350,7 @@ async function assertGitHubModelsProviderCompatibilityBehavior() {
   assert.equal(githubBody.max_completion_tokens, undefined, 'GitHub Models request body avoids max_completion_tokens')
   assert.equal(githubBody.reasoning_effort, undefined, 'GitHub Models request body avoids unsupported reasoning_effort')
   assert.equal(githubBody.response_format, undefined, 'GitHub Models request body avoids unclaimed structured-output controls')
-  assert.equal(githubBody.tools[0].function.name, 'read_context', 'GitHub Models request body preserves OpenAI-format tool declarations')
+  assert.equal(githubBody.tools, undefined, 'retired GitHub Models does not emit newly declared native tools')
 
   const githubOverclaimBody = buildOpenAIBodyForTest({
     provider: githubReasoningOverclaimProvider,
@@ -40317,8 +40379,8 @@ async function assertGitHubModelsProviderCompatibilityBehavior() {
     maxTokens: 512,
     stream: false,
   })
-  assert.equal(githubVisionBody.messages[0].content[1].type, 'image_url', 'GitHub Models vision requests keep the OpenAI-compatible image_url content part')
-  assert.equal(githubVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'GitHub Models vision requests send base64 data URLs')
+  assert.equal(githubVisionBody.messages[0].content, 'Describe this image.', 'retired GitHub Models does not admit image payloads from historical metadata')
+  assert.ok(!JSON.stringify(githubVisionBody).includes('image_url'), 'retired GitHub Models does not emit image_url parts')
 
   const githubFileBody = buildOpenAIBodyForTest({
     provider: githubProvider,
@@ -40374,11 +40436,11 @@ async function assertGitHubModelsProviderCompatibilityBehavior() {
   assert.equal(githubConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records GitHub Models max_tokens')
   assert.equal(githubConformance.manifest.reasoning.requestShape, 'none', 'provider conformance records no default GitHub Models reasoning request shape')
   assert.equal(githubConformance.manifest.reasoning.supported, false, 'provider conformance records GitHub Models reasoning as unsupported by default')
-  assert.equal(githubConformance.manifest.tools.supported, true, 'provider conformance records GitHub Models OpenAI-format tools')
-  assert.equal(githubConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records GitHub Models tool declaration shape')
+  assert.equal(githubConformance.manifest.tools.supported, false, 'provider conformance does not advertise tools on a retired service')
+  assert.equal(githubConformance.manifest.tools.requestShape, 'openai-tools', 'historical protocol shape remains separate from retired capability support')
   assert.equal(githubConformance.manifest.modalities.input.image, false, 'provider conformance does not claim GitHub Models image input for non-vision model metadata')
   assert.equal(githubConformance.manifest.modalities.input.file, false, 'provider conformance does not claim GitHub Models generic file input')
-  assert.ok(githubConformance.manifest.source.url?.includes('docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models'), 'provider conformance links GitHub Models to official docs')
+  assert.equal(githubConformance.manifest.source.url, 'https://docs.github.com/en/github-models', 'provider conformance links GitHub Models to the current retirement source')
   assert.equal(githubConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks GitHub Models as source-backed')
 
   const githubVisionConformance = resolveProviderRequestConformanceForTest({
@@ -40388,7 +40450,8 @@ async function assertGitHubModelsProviderCompatibilityBehavior() {
     attachments: [{ id: 'github-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
     maxTokens: 512,
   }, githubVisionBody)
-  assert.equal(githubVisionConformance.manifest.modalities.input.image, true, 'provider conformance records GitHub Models image input when model metadata enables vision')
+  assert.equal(githubVisionConformance.manifest.modalities.input.image, false, 'provider conformance does not revive retired image inference from model metadata')
+  assert.ok(githubVisionConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'image' && issue.severity === 'block'), 'retired image input remains a precise blocked modality')
 
   const githubParsedCompletion = parseProviderChatCompletionJson({
     choices: [{ message: { role: 'assistant', content: 'GitHub Models answer.' } }],
@@ -40406,6 +40469,8 @@ async function assertGitHubModelsProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'Models stream.' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_github_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+    'data: [DONE]',
     '',
   ].join('\n'), {
     provider: githubProvider,
@@ -40434,13 +40499,11 @@ async function assertGitHubModelsProviderCompatibilityBehavior() {
         text: async () => JSON.stringify({ object: 'list', data: [{ id: chatModel, object: 'model', owned_by: 'GitHub', created: 0, context_length: 1047576 }] }),
       }
     }
-    const remoteModels = await discoverProviderModels(githubProvider, 1)
-    assert.equal(modelCalls[0].input, 'https://models.github.ai/catalog/models', 'GitHub Models model discovery uses the documented catalog endpoint')
-    assert.equal(modelCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'GitHub Models model discovery uses bearer auth with the GitHub token')
-    assert.equal(modelCalls[0].accept, 'application/vnd.github+json', 'GitHub Models model discovery uses the documented media type')
-    assert.equal(modelCalls[0].apiVersion, '2022-11-28', 'GitHub Models model discovery uses the documented API version')
-    assert.equal(remoteModels[0].id, chatModel, 'GitHub Models model discovery parses OpenAI-compatible model list items')
-    assert.equal(remoteModels[0].contextWindow, 1047576, 'GitHub Models model discovery preserves context_length metadata')
+    await assert.rejects(discoverProviderModels(githubProvider, 1), /providerIssue\.githubModelsRetired/, 'retired model discovery rejects at configuration preflight')
+    assert.deepEqual(modelCalls, [], 'retired model discovery never dispatches or consumes the configured token')
+    const historicalModels = mapOpenAICompatibleModels({ data: [{ id: chatModel, object: 'model', owned_by: 'GitHub', created: 0, context_length: 1047576 }] }, 'openai-compatible')
+    assert.equal(historicalModels[0].id, chatModel, 'historical cached model JSON remains readable after service retirement')
+    assert.equal(historicalModels[0].contextWindow, 1047576, 'historical cached model JSON retains its recorded metadata')
   } finally {
     global.fetch = originalFetch
   }
@@ -40636,6 +40699,8 @@ async function assertDeepInfraProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_deepinfra_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+    'data: [DONE]',
     '',
   ].join('\n'), {
     provider: deepInfraProvider,
@@ -40873,6 +40938,8 @@ async function assertNovitaProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_novita_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+    'data: [DONE]',
     '',
   ].join('\n'), {
     provider: novitaProvider,
@@ -41142,6 +41209,8 @@ async function assertSiliconFlowProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_siliconflow_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
     '',
+    'data: [DONE]',
+    '',
   ].join('\n'), {
     provider: siliconFlowProvider,
     model: reasoningModel,
@@ -41341,6 +41410,8 @@ async function assertModelScopeProviderCompatibilityBehavior() {
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'ModelScope ' } }] })}`,
     `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
     '',
+    'data: [DONE]',
+    '',
   ].join('\n'), {
     provider: modelScopeProvider,
     model: chatModel,
@@ -41402,7 +41473,8 @@ async function assertModelScopeProviderCompatibilityBehavior() {
   }
 
   const modelScopeInvalidModel = JSON.stringify({ error: { message: 'Invalid model id: test', request_id: 'modelscope-req-1' } })
-  assert.equal(classifyHttpStatus(400, modelScopeInvalidModel), 'model_unavailable', 'ModelScope invalid-model errors classify as model_unavailable')
+  assert.equal(classifyHttpStatus(400, modelScopeInvalidModel), 'invalid_request', 'An invalid model ID without a not-found code is not proof that a valid model was retired')
+  assert.equal(classifyHttpStatus(404, JSON.stringify({ error: { code: 'model_not_found', message: 'model vendor/model-3.2 not found' } })), 'model_unavailable', 'Explicit ModelScope model-not-found evidence still identifies unavailable models')
   assert.ok(extractProviderErrorDetail(modelScopeInvalidModel).includes('modelscope-req-1'), 'ModelScope errors preserve request ids for diagnostics')
   const modelScopeAuthError = JSON.stringify({ errors: { message: 'Authentication failed, please make sure that a valid ModelScope token is supplied.' }, request_id: 'modelscope-auth-1' })
   assert.equal(classifyHttpStatus(401, modelScopeAuthError), 'bad_auth', 'ModelScope auth errors classify as bad_auth')
@@ -42377,7 +42449,7 @@ async function assertProviderStreamParsingMigrationBehavior() {
   assert.equal(providerStreamParsingSource.includes('extractProviderStreamContent'), false, 'dead provider stream text-only facade is not re-exported by the target module')
   assert.ok(providerRuntimeExecutorSource.includes('if (parsed.terminal)'), 'bootstrap provider execution consumes target-owned terminal stream markers')
   assert.ok(providerRuntimeExecutorSource.includes('cancelReaderAfterTerminal()'), 'terminal stream completion releases the reader without waiting for transport EOF')
-  assert.ok(providerRuntimeExecutorSource.includes('if (completionDelivered) return'), 'terminal and EOF completion share an exactly-once guard')
+  assert.ok(providerRuntimeExecutorSource.includes('if (completionStarted) return'), 'terminal and EOF completion share an exactly-once guard before async finalization')
   assert.ok(providerRuntimeExecutorSource.includes('TERMINAL_READER_CLOSE_GRACE_MS'), 'terminal reader cleanup gives a normally closing native stream a bounded close grace period')
   assert.ok(providerRuntimeExecutorSource.includes('const closed = terminalReader.closed'), 'terminal reader cleanup observes normal stream closure before attempting cancellation')
 
@@ -42396,6 +42468,7 @@ async function assertProviderStreamParsingMigrationBehavior() {
     '',
   ].join('\r\n'), 'openai-compatible', { includeReasoning: false })
   assert.equal(reasoningSuppressedStreamChunk.text, 'Visible answer.', 'provider stream parsing tolerates malformed CRLF SSE lines while retaining visible text')
+  assert.equal(reasoningSuppressedStreamChunk.malformedData, true, 'Retaining partial parse output does not promote a malformed stream to a successful response')
   assert.equal(reasoningSuppressedStreamChunk.reasoningContent, undefined, 'provider stream parsing suppresses replayable reasoning content when reasoning is not admitted')
   assert.equal(reasoningSuppressedStreamChunk.traces.some((trace) => trace.type === 'reasoning'), false, 'provider stream parsing suppresses reasoning traces when reasoning is not admitted')
   assert.equal(reasoningSuppressedStreamChunk.usage.reasoningTokens, undefined, 'provider stream parsing suppresses reasoning-token usage when reasoning is not admitted')
@@ -42734,7 +42807,11 @@ async function assertAnthropicSignedBlockStreamReplay() {
     { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: block.signature.slice(-1) } },
     { type: 'content_block_stop', index },
   ] : [{ type: 'content_block_start', index, content_block: block }, { type: 'content_block_stop', index }])
-  events.push({ type: 'content_block_delta', index: 4, delta: { type: 'text_delta', text: 'Answer' } })
+  events.push(
+    { type: 'content_block_delta', index: 4, delta: { type: 'text_delta', text: 'Answer' } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } },
+    { type: 'message_stop' },
+  )
   const raw = events.map((event) => `data: ${JSON.stringify(event)}\r\n\r\n`).join('')
   const req = { provider, model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'Synthetic replay check' }],
     reasoningEffort: 'high', stream: true, settings: { upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false } }
@@ -42753,7 +42830,7 @@ async function assertAnthropicSignedBlockStreamReplay() {
       buildFallbackCandidates: () => ({ candidates: [], evidence: [], rejectedCandidates: [] }),
       fallbackEffects: { logDecision: async () => undefined, recordRouteFailure: async () => undefined, recordRouteSuccess: async () => undefined },
     })
-    assert.equal(completions.length, 1, 'fragmented Anthropic SSE completes exactly once at EOF or terminal')
+    assert.equal(completions.length, 1, 'fragmented Anthropic SSE completes once at message_stop, regardless of an optional DONE trailer')
     assert.equal(completions[0].text, 'Answer', 'signed block assembly does not change visible output')
     assert.deepEqual(completions[0].providerContentBlocks, blocks, 'real SSE executor retains independent signed/omitted/redacted blocks across transport chunks and removes internal indexes')
   }
@@ -42775,7 +42852,7 @@ async function assertGoogleCitationStreamAssociations() {
   const first = { candidates: [{ content: { parts: [{ text: '日本語 😀 First. ' }] }, groundingMetadata: {
     groundingChunks: [{ web: { uri: 'https://example.test/a', title: 'A' } }, { retrievedContext: { uri: 'unsupported' } }],
   } }] }
-  const last = { candidates: [{ content: { parts: [{ text: 'Second.' }] }, groundingMetadata: {
+  const last = { candidates: [{ content: { parts: [{ text: 'Second.' }] }, finishReason: 'STOP', groundingMetadata: {
     groundingChunks: [null, { web: { uri: 'https://example.test/b', title: 'B' } }],
     groundingSupports: [declare('日本語 😀', [0]), declare('Second.', [3]), declare('Missing', [0])],
   } }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4, totalTokenCount: 7 } }
@@ -43394,11 +43471,15 @@ async function runFocused() {
   throw new Error(`Unknown focus: ${focus}`)
 }
 
-runFocused()
-  .then(() => {
-    console.log('provider-intelligence tests passed')
-  })
-  .catch((error) => {
-    console.error(error)
-    process.exit(1)
-  })
+module.exports = { executeHttpSseChatForTest, parseProviderStreamChunkForTest, parseProviderStreamEventForTest, getBodyForTest }
+
+if (require.main === module) {
+  runFocused()
+    .then(() => {
+      console.log('provider-intelligence tests passed')
+    })
+    .catch((error) => {
+      console.error(error)
+      process.exit(1)
+    })
+}

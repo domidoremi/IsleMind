@@ -5,7 +5,11 @@ import { ContentReportScreen } from './ContentReportScreen'
 import { ContentReportError, prepareContentReport, type ContentReporting } from '@/modules/conversations'
 
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: { text: '#fff', textSecondary: '#aaa', textTertiary: '#888' } }) }))
+jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => {
+  const colors = jest.requireActual('@/theme/colors').getColors('dark', 'minimal')
+  return { colors, design: colors.design, canonicalThemeId: 'minimal', isLiquidGlass: false }
+} }))
+jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('@/presentation/app-shell/ThemeDetailFrame', () => ({ ThemeDetailFrame: ({ children }: { children: React.ReactNode }) => children }))
 jest.mock('@/modules/conversations', () => jest.requireActual('@/modules/conversations/application/contentReport'))
 jest.mock('@/components/ui/isle', () => {
