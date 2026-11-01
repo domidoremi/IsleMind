@@ -51,20 +51,17 @@ Network access is limited to:
 
 | Item | Value |
 |---|---|
-| Version | `1.1.2` |
-| Android build | `127` |
-| Channel | Preview |
+| Version | `1.1.6` |
+| Android versionCode | `131` |
+| Channel | Stable |
 
-[Read the release notes and check available downloads](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2).
-APK downloads and their `.sha256` checksums appear as release attachments when available. Preview builds are intended for testing; back up your data before installing.
-
-The current source version is `1.1.5` (Android build `130`), a release candidate in preparation. No new APK has been publicly released; the download listing retains its separate `1.1.2` / `127` identity.
+[Read the 1.1.6 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.6).
 
 ### What’s new
 
-- Clearer activity steps and completion status in replies.
-- Smoother loading on the model-availability page.
-- Refined Android launch colors and liquid-glass input appearance.
+- Lighter page hierarchy, coordinated motion, and contextual action feedback across the app.
+- Accent previews, stable theme changes, and clearer document and usage workspaces.
+- More reliable provider protocols, response completion, model discovery, and usage estimates.
 
 ### APK variants
 
