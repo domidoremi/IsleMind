@@ -1,14 +1,19 @@
+import { recordMainPagerNavigationIntent } from '@/presentation/app-shell/mainPagerNavigationIntent'
+
 export function redirectSystemPath({ path, initial }: { path?: string; initial?: boolean }) {
-  void initial
   const rawPath = typeof path === 'string' ? path.trim() : ''
-  if (!rawPath) return '/'
+  const withIntent = (target: string) => {
+    if (initial === false) recordMainPagerNavigationIntent(target.split('?')[0])
+    return target
+  }
+  if (!rawPath) return withIntent('/')
 
   try {
     const url = new URL(rawPath, 'https://islemind.local')
     const host = url.hostname.toLowerCase()
     const pathname = url.pathname || ''
     const search = url.search || ''
-    const withSearch = (target: string) => `${target}${search}`
+    const withSearch = (target: string) => withIntent(`${target}${search}`)
 
     if (url.protocol === 'islemind:' && !host && (!pathname || pathname === '/')) return withSearch('/')
     if (host === 'home' && (!pathname || pathname === '/')) return withSearch('/')
@@ -21,14 +26,14 @@ export function redirectSystemPath({ path, initial }: { path?: string; initial?:
     if (host === 'settings' && isSettingsChildPath(pathname)) return withSearch(`/settings${pathname}`)
     if (host === 'source' && (!pathname || pathname === '/')) return withSearch('/source')
   } catch {
-    if (rawPath === 'chat') return '/conversations'
-    if (rawPath === 'home') return '/'
-    if (rawPath === 'agent') return '/'
-    if (rawPath === 'companion' || rawPath === 'tavern') return '/'
-    if (rawPath === 'settings') return '/settings'
+    if (rawPath === 'chat') return withIntent('/conversations')
+    if (rawPath === 'home') return withIntent('/')
+    if (rawPath === 'agent') return withIntent('/')
+    if (rawPath === 'companion' || rawPath === 'tavern') return withIntent('/')
+    if (rawPath === 'settings') return withIntent('/settings')
   }
 
-  return rawPath
+  return withIntent(rawPath)
 }
 
 function isSettingsChildPath(pathname: string) {

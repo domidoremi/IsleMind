@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { BackHandler, Platform, StyleSheet, View } from 'react-native'
 import { router, usePathname } from 'expo-router'
 
@@ -6,6 +6,11 @@ import { IsleMotionFrame, IsleScreen, type IsleBackgroundMode, type IsleBackgrou
 import { useAppTheme } from '@/hooks/useAppTheme'
 import type { ThemeMotionDirection } from '@/theme/themeMotion'
 import { createLazyComponent } from '@/utils/lazyLoad'
+import {
+  getInitialMainPagerNavigationIntent,
+  getMainPagerNavigationIntent,
+  subscribeMainPagerNavigationIntent,
+} from '@/presentation/app-shell/mainPagerNavigationIntent'
 
 import { HomeScreenContent } from './HomeScreenContent'
 import { MainPagerGestureLockProvider, useMainPagerGestureLock } from './MainPagerGestureLock'
@@ -56,6 +61,22 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
   const [transitionDirection, setTransitionDirection] = useState<ThemeMotionDirection>('neutral')
   const switchToRef = useRef<(next: MainPagerPage) => void>(() => undefined)
   switchToRef.current = switchTo
+  const nativeIntent = useSyncExternalStore(
+    subscribeMainPagerNavigationIntent,
+    getMainPagerNavigationIntent,
+    getInitialMainPagerNavigationIntent,
+  )
+  const handledIntent = useRef(0)
+  useEffect(() => {
+    if (!nativeIntent.sequence || handledIntent.current === nativeIntent.sequence) return
+    // Only the route that owns this pager may consume the intent. Outgoing
+    // Settings/History shells must not mount a disposable Home composer.
+    if (pathname !== MAIN_PAGER_PATH_BY_PAGE[initialPage] || nativeIntent.pathname !== pathname) return
+    const next = resolveMainPagerPage(pathname)
+    if (!next) return
+    handledIntent.current = nativeIntent.sequence
+    switchToRef.current(next)
+  }, [nativeIntent, pathname, initialPage])
   const showHome = useCallback(() => switchToRef.current('home'), [])
   const showHistory = useCallback(() => switchToRef.current('history'), [])
   const showSettings = useCallback(() => switchToRef.current('settings'), [])
