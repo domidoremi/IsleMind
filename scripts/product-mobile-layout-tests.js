@@ -319,6 +319,7 @@ function assertSourceIntegration() {
   const lazyLoadSource = fs.readFileSync(path.join(root, 'src/utils/lazyLoad.tsx'), 'utf8')
   const apiKeyPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
   const usageStatisticsSource = fs.readFileSync(path.join(root, 'src/components/settings/UsageStatisticsContent.tsx'), 'utf8')
+  const workspaceChoiceSource = fs.readFileSync(path.join(root, 'src/presentation/layout/WorkspaceChoice.tsx'), 'utf8')
   const mcpSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/McpSettingsContent.tsx'), 'utf8')
   const isleKitSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/IsleKit.tsx'), 'utf8')
   assert.equal(appConfig.expo.orientation, 'default', 'Expo enables portrait and landscape instead of locking the product to one orientation')
@@ -359,7 +360,8 @@ function assertSourceIntegration() {
   assert.match(apiKeyPanelSource, /function IconIsleChip[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'provider credential icon actions expose physical 44dp targets')
   assert.match(apiKeyPanelSource, /placeholder=\{t\('apiKeyPanel\.aliasDisplayName'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]{0,800}placeholder=\{t\('apiKeyPanel\.aliasTargetModel'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider alias inputs expose physical 44dp targets')
   assert.doesNotMatch(searchFieldSource, /clearAccessibilityLabel[^>]*hitSlop=/, 'Settings search does not rely on invisible hit slop around a smaller clear node')
-  assert.match(usageStatisticsSource, /tabButton: \{[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'usage tabs expose physical 44dp targets')
+  assert.match(usageStatisticsSource, /function UsageTabButton[\s\S]*<WorkspaceChoice/, 'usage tabs use the shared navigation target')
+  assert.match(workspaceChoiceSource, /choice: \{[^}]*minWidth: 44[^}]*minHeight: 44/, 'shared navigation choices expose physical 44dp targets')
   assert.match(usageStatisticsSource, /function OptionChips[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'usage filter chips expose physical 44dp targets')
   assert.match(mcpSettingsSource, /function McpDisclosureRow[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'MCP disclosure rows expose physical 44dp targets')
   assert.ok(isleKitSource.includes('export const ISLE_MIN_TOUCH_TARGET = 44'), 'shared controls expose one canonical 44dp touch target')
@@ -418,6 +420,7 @@ function assertSourceIntegration() {
   const chatActiveWorkspaceControllersSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceControllers.ts'), 'utf8')
   const chatActiveWorkspaceLayoutSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceLayoutState.ts'), 'utf8')
   const chatSetupWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatSetupWorkspace.tsx'), 'utf8')
+  const chatEntryTasksSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatEntryTasks.tsx'), 'utf8')
   const chatWorkspaceKeyboardSource = fs.readFileSync(path.join(root, 'src/components/chat/chatWorkspaceKeyboard.ts'), 'utf8')
   const chatEmptyStateSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatEmptyState.tsx'), 'utf8')
   const floatingComposerSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingComposer.tsx'), 'utf8')
@@ -461,7 +464,7 @@ function assertSourceIntegration() {
   assert.ok(chatEmptyStateSource.includes("from '@/presentation/layout/productMobileLayout'"), 'Chat empty state imports shared mobile layout metrics')
   assert.ok(floatingComposerSource.includes("from '@/presentation/layout/productMobileLayout'"), 'floating composer imports shared mobile layout metrics')
   assert.match(chatMessageListScrollStateSource, /import \{[^}]*Keyboard[^}]*\} from 'react-native'[\s\S]*const handleListTouchStart = useCallback\(\(\) => \{[\s\S]*Keyboard\.dismiss\(\)[\s\S]*lockPagerGestureForMessageScroll\(\)/, 'touching the active message area blurs a composer input whose Android keyboard was already hidden')
-  assert.match(chatSetupWorkspaceSource, /<ScrollView[\s\S]{0,300}keyboardShouldPersistTaps="handled"[\s\S]{0,300}onTouchStart=\{Keyboard\.dismiss\}/, 'touching the setup content blurs a composer input whose Android keyboard was already hidden')
+  assert.match(chatSetupWorkspaceSource, /<ScrollView[\s\S]{0,500}onTouchStart=\{\(\) => \{ if \(!Keyboard\.isVisible\(\)\) Keyboard\.dismiss\(\) \}\}/, 'setup content clears stale focus only after the keyboard is hidden, not on every touch while writing')
   assert.ok(chatWorkspaceKeyboardSource.includes('resolveProductMobileComposerLayout(windowWidth'), 'chat workspace keyboard helper uses shared composer clearance metrics')
   assert.ok(floatingComposerSource.includes('resolveProductMobileComposerLayout(composerWindowWidth'), 'floating composer resolves its own safe-area layout metrics')
   assert.match(programErrorBannerSource, /programErrorDismissAccessibilityLabel[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'program error dismissal exposes a real 44dp accessibility target')
@@ -555,7 +558,7 @@ function assertSourceIntegration() {
   assert.equal(chatActiveMessageFeedStateSource.includes("from '@/product/modeHandoff'"), false, 'message feed state does not restore product-mode handoff derivation')
   assert.ok(chatWorkspaceSource.includes('composerLayout.messageListBottomPadding'), 'message list bottom padding clears composer through shared metrics')
   assert.ok(floatingComposerSource.includes('composerLayout.innerBottomPadding'), 'floating composer safe-area padding uses shared metrics')
-  assert.ok(chatSetupWorkspaceSource.includes('resolveProductMobileChatSetupLayout') && chatSetupWorkspaceSource.includes("justifyContent: setupLayout.compactLandscape ? 'flex-start' : 'center'") && chatSetupWorkspaceSource.includes('setupHeaderBottom + setupLayout.contentHeaderGap'), 'short landscape Chat setup starts below local header chrome instead of centering its CTA behind Composer')
+  assert.ok(chatSetupWorkspaceSource.includes('resolveProductMobileChatSetupLayout') && chatSetupWorkspaceSource.includes("justifyContent: 'flex-start'") && chatSetupWorkspaceSource.includes('marginBottom: composerBottomInset + keyboardLift') && chatSetupWorkspaceSource.includes('setupHeaderBottom + setupLayout.contentHeaderGap'), 'Chat setup reserves Composer and keyboard space in the viewport and starts below local header chrome in portrait and landscape')
   assert.ok(chatEmptyStateSource.includes('showDecoration={setupLayout.showIntroDecoration}') && chatEmptyStateSource.includes('showDescription={setupLayout.showIntroDescription}'), 'short landscape setup removes visual-only intro density while retaining the full accessible description')
   assert.ok(chatActiveMessageListSource.includes("from './ChatActiveMessageFeed'") && chatActiveMessageFeedSource.includes("from './ChatActiveMessageVirtualList'") && chatActiveMessageVirtualListSource.includes("from './ChatActiveMessageItem'") && chatActiveMessageItemSource.includes("from './MessageBubble'"), 'message bubble actions stay behind the active message feed, virtual list, and item surfaces')
   assert.ok(chatActiveMessageVirtualListSource.includes("from './ChatActiveMessageEmptyState'") && chatActiveMessageEmptyStateSource.includes("from './ChatEmptyState'"), 'empty conversation rendering stays behind the active message virtual-list and Chat empty-state surfaces')
@@ -575,8 +578,11 @@ function assertSourceIntegration() {
   assert.ok(chatEmptyStateSource.includes('maxWidth={starterLayout.emptyContentMaxWidth}'), 'Chat entry actions share the mobile content width budget')
   assert.ok(chatEmptyStateSource.includes('starterLayout.statusPillGlyphSize'), 'Chat readiness action glyph uses the shared mobile size budget')
   assert.ok(chatEmptyStateSource.includes('projection.accessibility.minimumTouchTarget'), 'Chat readiness rendering consumes its tested 44dp touch-target projection')
-  assert.ok(chatSetupWorkspaceSource.includes('multimodalPolicy={setupState.setupMultimodalPolicy}'), 'setup Chat boundary displays provider/media readiness')
-  assert.ok(chatSetupWorkspaceSource.includes('onInspectProvider={openAiConfiguration}') && chatSetupWorkspaceSource.includes('<ChatAiConfigurationSheet') && chatSetupWorkspaceSource.includes("initialView={setupNeedsConfiguration ? 'providers' : 'configuration'}") && chatSetupWorkspaceSource.includes('autoOpenProviderAdd={!setupState.hasEnabledProvider}'), 'setup Chat opens the first useful provider or model view in the unified AI panel')
+  assert.ok(chatSetupWorkspaceSource.includes('multimodalPolicy={setupState.setupMultimodalPolicy}'), 'setup Composer retains provider/media readiness')
+  assert.ok(chatSetupWorkspaceSource.includes('onConfigure={openAiConfiguration}') && chatSetupWorkspaceSource.includes('<ChatAiConfigurationSheet') && chatSetupWorkspaceSource.includes("initialView={setupNeedsConfiguration ? 'providers' : 'configuration'}") && chatSetupWorkspaceSource.includes('autoOpenProviderAdd={!setupState.hasEnabledProvider}'), 'the entry connection opens the first useful provider or model view in the unified AI panel')
+  assert.ok(chatSetupWorkspaceSource.includes('<ChatEntryTasks') && chatEntryTasksSource.includes('useChatEntryTasks(draftPresence, onStarter)') && chatEntryTasksSource.includes('onPress={task.prepare}'), 'new Chat selects tasks separately from preparing the protected draft')
+  assert.match(chatEntryTasksSource, /choice: \{ minHeight: 44/, 'entry task choices retain physical 44dp touch targets')
+  assert.doesNotMatch(chatSetupWorkspaceSource, /<ChatEmptyState/, 'the rebuilt entry does not retain the legacy empty-state configuration inventory')
   assert.ok(
     floatingComposerSource.includes('ModelMenu') &&
       floatingComposerSource.includes('buildModelQuickOptions') &&
@@ -590,9 +596,9 @@ function assertSourceIntegration() {
   assert.ok(chatActiveWorkspaceMessageListPropsSource.includes('multimodalPolicy') && chatActiveMessageFeedSource.includes('multimodalPolicy={multimodalPolicy}') && chatActiveMessageEmptyStateSource.includes('multimodalPolicy={multimodalPolicy}'), 'empty conversation boundary displays provider/media readiness')
   assert.match(chatEmptyStateSource, /context="conversation"[\s\S]*boundary=\{\/\*[^]*?\*\/ null\}/, 'empty conversations do not mount dormant capability scores')
   assert.ok(floatingComposerSource.includes('onOpenConfiguration={() => {'), 'the composer retains a direct configuration action without an empty-state readiness card')
-  assert.ok(chatSetupWorkspaceSource.includes("onOpenTools={() => setComposerPanel('more')}") && chatActiveMessageEmptyStateSource.includes("onOpenTools={() => setComposerPanel('more')}"), 'compact boundary can open composer tools without adding another mobile card')
+  assert.ok(chatSetupWorkspaceSource.includes('onPanelChange={setComposerPanel}') && chatActiveMessageEmptyStateSource.includes("onOpenTools={() => setComposerPanel('more')}"), 'setup and empty-conversation tools remain owned by Composer, not another configuration card')
   assert.ok(chatWorkspaceSource.includes("pushChatSettingsRoute('/settings/memory', { focus: 'review' })"), 'compact boundary can route pending memory to review without adding another mobile card')
-  assert.ok(chatSetupWorkspaceSource.includes('memoryStatus={boundaryMemoryStatus}') && chatActiveWorkspaceMessageListPropsSource.includes('memoryStatus') && chatActiveMessageFeedSource.includes('memoryStatus={memoryStatus}'), 'compact boundary receives source-level memory status without a tall drawer')
+  assert.ok(chatActiveWorkspaceMessageListPropsSource.includes('memoryStatus') && chatActiveMessageFeedSource.includes('memoryStatus={memoryStatus}'), 'the active-conversation boundary retains source-level memory status without a tall drawer')
 
   const composerSource = fs.readFileSync(path.join(root, 'src/components/chat/Composer.tsx'), 'utf8')
   const chatWorkspaceReviewSheetSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspaceReviewSheet.tsx'), 'utf8')
@@ -648,9 +654,17 @@ function assertSourceIntegration() {
   )
   assert.ok(
     floatingComposerSurfacesSource.includes("event.key === 'Escape'") &&
-      floatingComposerSurfacesSource.includes('onRequestClose={onClose}') &&
-      floatingComposerSurfacesSource.includes('onPress={onClose}'),
+      floatingComposerSurfacesSource.includes('onRequestClose={closeMenu}') &&
+      floatingComposerSurfacesSource.includes('onPress={closeMenu}') &&
+      floatingComposerSurfacesSource.includes('if (!visible || closing.current) return'),
     'ModelMenu closes through Escape, native Back, and its outside backdrop',
+  )
+  assert.ok(
+    floatingComposerSurfacesSource.includes('onSelect: (item: ModelMenuItem) => boolean') &&
+      floatingComposerSurfacesSource.includes('if (onSelect(item))') &&
+      floatingComposerSurfacesSource.includes('selectionDisabled || !visible') &&
+      floatingComposerSource.includes('modelSwitchDisabled || streaming'),
+    'ModelMenu acknowledges selection results and disables choices during locked or generating states',
   )
   assert.ok(
     floatingComposerSource.includes('<ProviderBrandIcon') &&

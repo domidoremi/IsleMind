@@ -4827,15 +4827,14 @@ const chatWorkspaceExtractionContracts = [
     ],
   },
   {
-    helperFile: 'src/components/chat/ChatEmptyState.tsx',
-    importSource: './ChatEmptyState',
+    helperFile: 'src/components/chat/ChatEntryTasks.tsx',
+    importSource: './ChatEntryTasks',
     consumerFile: 'src/components/chat/ChatSetupWorkspace.tsx',
     consumerLabel: 'ChatSetupWorkspace',
     localDefinitionFile: 'src/components/chat/ChatWorkspace.tsx',
     localDefinitionLabel: 'ChatWorkspace',
     exportedHelpers: [
-      'ChatBoundaryMemoryStatus',
-      'ChatSetupEmptyState',
+      'ChatEntryTasks',
     ],
   },
   {
@@ -5177,7 +5176,9 @@ function checkProviderPresentationCoupling(projectRoot, sourceFiles) {
   const presentationFiles = sourceFiles.filter((file) => {
     const relativeFile = relative(projectRoot, file)
     // The brand icon is a closed presentation mapping, not provider transport logic.
-    return (/^src\/components\//.test(relativeFile) || /^app\//.test(relativeFile)) && relativeFile !== 'src/components/ui/ProviderBrandIcon.tsx'
+    return (/^src\/components\//.test(relativeFile) || /^app\//.test(relativeFile))
+      && relativeFile !== 'src/components/ui/ProviderBrandIcon.tsx'
+      && !/\.(?:test|spec)\.[jt]sx?$/.test(relativeFile)
   })
   const hits = collectPatternHits(projectRoot, presentationFiles, providerIdentityPattern)
   const summaries = summarizeHitsByFile(hits)
@@ -5451,6 +5452,7 @@ function runArchitectureBoundaryAuditSelfTest() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-architecture-boundary-audit-'))
   try {
     writeArchitectureBoundarySelfTestFixture(tempRoot)
+    fs.writeFileSync(path.join(tempRoot, 'src', 'components', 'settings', 'ProviderFixture.test.tsx'), 'const provider = { type: "openai" }\n')
     const recoveryControllerPath = path.join(tempRoot, 'src', 'presentation', 'features', 'conversations', 'plainChatController.ts')
     const recoveryControllerFixture = fs.readFileSync(recoveryControllerPath, 'utf8')
     assert.match(
@@ -10549,6 +10551,7 @@ function runArchitectureBoundaryAuditSelfTest() {
     const originalChatWorkspace = fs.readFileSync(chatWorkspacePath, 'utf8')
     fs.writeFileSync(chatWorkspacePath, `${originalChatWorkspace}\nfunction useChatComposerSourceState() { return null }\nfunction useChatSetupWorkspaceState() { return null }\nfunction ActiveChatWorkspace() { return null }\nfunction buildChatActiveWorkspaceLayerProps() { return null }\nfunction buildChatActiveComposerDockProps() { return null }\nfunction buildChatActiveChromeLayerProps() { return null }\nfunction buildChatActiveStatusLayerProps() { return null }\nfunction buildChatActiveMessageListProps() { return null }\nfunction buildChatActiveControlsLayerProps() { return null }\nfunction ChatActiveMessageList() { return null }\nfunction ChatActiveMessageFeed() { return null }\nfunction ChatActiveMessageItem() { return null }\nfunction ChatActiveChromeLayer() { return null }\nfunction ChatActiveComposerDock() { return null }\nfunction ChatActiveControlsLayer() { return null }\nfunction useChatActiveWorkspaceActions() { return null }\nfunction useChatActiveWorkspaceLayoutState() { return null }\nfunction useChatFloatingChromeState() { return null }\nfunction useChatWorkspaceAutoScroll() { return null }\nfunction useChatWorkspaceConversationRecovery() { return null }\nfunction useChatWorkspaceOverlayNavigation() { return null }\nfunction resolveWorkspaceOverlayLocked() { return false }\nfunction useChatWorkspaceProviderHealthState() { return null }\nfunction buildProviderHealthCacheKey() { return 'none' }\nfunction buildComposerCommands() { return [] }\nfunction pushChatSettingsRoute() { return null }\nfunction resolveFloatingNoticeTopOffset() { return 0 }\nconst FLOATING_NOTICE_TOP_GAP = 8\nconst AUTO_SCROLL_DELAY_MS = 96\nconst CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS = 1504\nconst CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS = 2200\nconst CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS = 260\nconst DEFAULT_SETUP_REASONING_EFFORT = 'low'\nconst LONG_MESSAGE_LIST_ANIMATION_THRESHOLD = 48\nconst MESSAGE_LIST_ANDROID_DRAW_DISTANCE_MIN = 1600\nconst MESSAGE_LIST_MOMENTUM_ELIGIBILITY_MS = 240\nconst MESSAGE_LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 112\nconst MODEL_VALIDATION_LOOKUP_LIMIT = 64\nconst QUICK_START_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }\nconst USER_SCROLL_PAUSE_THRESHOLD = 72\nfunction ChatScreenFrame() { return null }\nfunction renderConversationHeaderSpacer() { return null }\nfunction buildMessageListAccessibility() { return null }\nfunction buildMessageListExtraData() { return null }\nfunction resolveMessageListDrawDistance() { return null }\nfunction resolveMessageListMotion() { return null }\nfunction cancelProductModeTask() { return null }\nfunction useProductModeTaskStatus() { return null }\nfunction handoffMessageToProductMode() { return null }\nfunction useRuntimeRepairIntentActions() { return null }\nfunction useChatWorkspaceKeyboardState() { return null }\nfunction useChatCompressionToast() { return null }\nfunction useChatMessageSelectionController() { return null }\nfunction useChatMessageListScrollController() { return null }\nfunction copyChatMessageText() { return null }\nfunction deleteChatMessageWithConfirmation() { return null }\nfunction pickModelAccessSettings() { return null }\nfunction testConversationHeaderModel() { return null }\nfunction SkillVariableDialogBody() { return null }\nfunction buildPendingStreamingNotice() { return '' }\nfunction ConversationHealthBanner() { return null }\nfunction CompressionBanner() { return null }\nfunction MessageMultiSelectBar() { return null }\nfunction ConversationNavigationRail() { return null }\nfunction StreamingIntentSheet() { return null }\nfunction applyStreamingIntentDraft() { return true }\nfunction ProductModeTaskStatusCard() { return null }\nfunction ComposerToolButton() { return null }\nfunction ReasoningToolIcon() { return null }\nfunction QuickChoiceButton() { return null }\nfunction FloatingComposer() { return null }\nfunction FloatingChrome() { return null }\nconst FLOATING_CHROME_SAFE_AREA_GAP = 4\nfunction ChatSetupEmptyState() { return null }\n`, 'utf8')
     fs.appendFileSync(chatWorkspacePath, '\nfunction cancelConversationTask() { return null }\nfunction useConversationTaskStatus() { return null }\nfunction ConversationTaskStatusCard() { return null }\n', 'utf8')
+    fs.appendFileSync(chatWorkspacePath, '\nfunction ChatEntryTasks() { return null }\n', 'utf8')
     const duplicateHelperResult = collectArchitectureBoundaryAudit(tempRoot)
     assert.ok(
       duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local useChatComposerSourceState/.test(item.issue)),
@@ -10755,8 +10758,8 @@ function runArchitectureBoundaryAuditSelfTest() {
       'architecture audit self-test blocks ChatWorkspace floating chrome layout constant extraction regression'
     )
     assert.ok(
-      duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local ChatSetupEmptyState/.test(item.issue)),
-      'architecture audit self-test blocks ChatWorkspace Chat setup empty state extraction regression'
+      duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local ChatEntryTasks/.test(item.issue)),
+      'architecture audit self-test blocks ChatWorkspace entry-task extraction regression'
     )
     fs.writeFileSync(chatWorkspacePath, originalChatWorkspace, 'utf8')
 
@@ -11939,13 +11942,12 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         [
           "import { CompressionBanner } from './ChatStatusBanners'",
           "import { QUICK_START_ACTION_HIT_SLOP } from './chatWorkspaceConstants'",
-          "import { ChatSetupEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyState'",
+          "import { ChatEntryTasks } from './ChatEntryTasks'",
           "import type { ChatSetupWorkspaceState } from './chatSetupWorkspaceState'",
         'export function ChatSetupWorkspace() {',
         '  const state = {} as ChatSetupWorkspaceState',
-          '  const memory = {} as ChatBoundaryMemoryStatus',
           '  const banner = <CompressionBanner compression={{}} onOpenDetails={() => undefined} />',
-          '  const empty = <ChatSetupEmptyState title="Chat" multimodalPolicy={policy} memoryStatus={memory} />',
+          '  const empty = <ChatEntryTasks title="Chat" />',
           '  return `${QUICK_START_ACTION_HIT_SLOP.top}${banner}${empty}${state.openSetupFullModelPanel}`',
         '}',
       ].join('\n'),
@@ -12175,16 +12177,19 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
+      'src/components/chat/ChatEntryTasks.tsx',
+      'export function ChatEntryTasks() { return null }',
+    ],
+    [
       'src/components/chat/ChatSetupWorkspace.tsx',
       [
         "import { CompressionBanner } from './ChatStatusBanners'",
         "import { ChatPersistentHeader } from './ChatPersistentHeader'",
         "import { type ChatSetupWorkspaceState } from './chatSetupWorkspaceState'",
-        "import { ChatSetupEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyState'",
+        "import { ChatEntryTasks } from './ChatEntryTasks'",
         'export function ChatSetupWorkspace() {',
         '  const setupState = null as unknown as ChatSetupWorkspaceState',
-        '  const memoryStatus = null as unknown as ChatBoundaryMemoryStatus',
-        '  return setupState ? <><ChatPersistentHeader /><CompressionBanner /><ChatSetupEmptyState memoryStatus={memoryStatus} /></> : null',
+        '  return setupState ? <><ChatPersistentHeader /><CompressionBanner /><ChatEntryTasks /></> : null',
         '}',
       ].join('\n'),
     ],

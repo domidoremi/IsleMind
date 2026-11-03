@@ -10,9 +10,11 @@ const zh = require('../src/i18n/resources/zh-CN.json')
 const root = path.resolve(__dirname, '..')
 const args = process.argv.slice(2)
 const option = (name, fallback) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
-const evidence = fs.readFileSync(path.join(root, 'test-evidence/qa/current-ui-rhythm-feedback-path.txt'), 'utf8').trim()
+const needsDefaultEvidence = !args.includes('--web-root') || !args.includes('--output')
+const evidence = needsDefaultEvidence ? fs.readFileSync(path.join(root, 'test-evidence/qa/current-ui-rhythm-feedback-path.txt'), 'utf8').trim() : ''
 const baseline = args.includes('--baseline')
 const feedbackOnly = args.includes('--feedback-only')
+const navigationOnly = args.includes('--navigation-only')
 const webRoot = path.resolve(root, option('--web-root', path.join(evidence, baseline ? 'web-before' : 'web-after')))
 const output = path.resolve(root, option('--output', path.join(evidence, baseline ? 'visual-before' : 'visual-after')))
 const inside = value => value.startsWith(root + path.sep)
@@ -43,9 +45,9 @@ const server = http.createServer((request, response) => {
   fs.createReadStream(file).pipe(response)
 })
 
-const pages = [['home', '/'], ['settings', '/settings'], ['providers', '/settings/providers'], ['documents', '/documents'], ['usage', '/settings/usage']]
+const pages = navigationOnly ? [['home', '/'], ['settings', '/settings']] : [['home', '/'], ['settings', '/settings'], ['providers', '/settings/providers'], ['documents', '/documents'], ['usage', '/settings/usage']]
 const families = baseline || feedbackOnly ? ['minimal'] : ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui']
-const results = { baseline, nativeAcceptance: false, isolatedBrowserData: true, osClipboardWritten: false, pages: [], feedback: [], errors: [], blockedExternalHosts: [] }
+const results = { baseline, navigationOnly, nativeAcceptance: false, isolatedBrowserData: true, osClipboardWritten: false, pages: [], feedback: [], errors: [], blockedExternalHosts: [] }
 let stage = 'startup'
 
 async function main() {
@@ -95,18 +97,33 @@ async function main() {
           if (name === 'providers') await page.getByTestId(`provider-settings-experience-${family}`).waitFor()
           await page.evaluate(() => document.fonts.ready)
           await page.waitForTimeout(250)
-          const geometry = await page.evaluate(() => ({
+          const geometry = await page.evaluate(name => ({
             width: innerWidth, contentWidth: document.documentElement.scrollWidth,
             buttons: [...document.querySelectorAll('[role="button"]')].filter(node => {
               const bounds = node.getBoundingClientRect()
               return bounds.width > 0 && bounds.height > 0 && !node.closest('[aria-hidden="true"]')
             }).length,
-          }))
+            settingsRows: name === 'settings' ? [...document.querySelectorAll('[data-testid="settings-groups"] [data-testid^="settings-entry-"]')].map(node => ({
+              id: node.dataset.testid,
+              direction: getComputedStyle(node).flexDirection,
+              minHeight: Number.parseFloat(getComputedStyle(node).minHeight),
+              height: node.getBoundingClientRect().height,
+            })) : [],
+          }), name)
           if (!baseline) assert.ok(geometry.contentWidth <= width + 1, `${stage}: horizontal page overflow`)
+          if (!baseline && name === 'settings') {
+            assert.ok(geometry.settingsRows.length > 0, `${stage}: missing navigation rows`)
+            for (const row of geometry.settingsRows) {
+              const tile = family === 'material' && width >= 350 && ['model-availability', 'preferences', 'appearance'].some(id => row.id === `settings-entry-${id}`)
+              const minHeight = tile ? 106 : family === 'minimal' ? 56 : family === 'monet' ? 76 : 68
+              assert.equal(row.direction, tile ? 'column' : 'row', `${stage}: ${row.id} loses its layout style`)
+              assert.ok(row.minHeight >= minHeight && row.height >= minHeight - 1, `${stage}: ${row.id} loses its touch target`)
+            }
+          }
           results.pages.push({ family, width, name, ...geometry })
           await page.screenshot({ path: path.join(output, `${family}-${width}-${name}.jpg`), type: 'jpeg', quality: 65 })
         }
-        if (width === 390 && family === 'minimal') {
+        if (!navigationOnly && width === 390 && family === 'minimal') {
           stage = 'appearance feedback geometry'
           await page.goto(baseUrl + '/settings/system/appearance', { waitUntil: 'domcontentloaded' })
           await page.getByTestId('settings-appearance-status').waitFor()

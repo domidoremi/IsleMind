@@ -66,6 +66,7 @@
     "test:android-display-refresh": "node scripts/android-display-refresh-tests.js",
     "test:android-accessibility-focus": "node scripts/android-accessibility-focus-tests.js",
     "test:android-font-scale": "node scripts/android-font-scale-tests.js",
+    "test:android-border-insets": "node scripts/android-border-insets-tests.js",
     "test:dependency-security": "node scripts/dependency-security-tests.js",
     "test:dependency-advisories": "node scripts/dependency-advisory-audit.js",
     "test:provider-maintenance-contracts": "jest --runInBand --runTestsByPath scripts/provider-maintenance-contracts.test.js",

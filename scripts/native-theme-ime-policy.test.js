@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict')
-const { test } = require('node:test')
+// The same assertions run in the full Jest gate and the direct Node device-policy gate.
+const { test } = typeof jest === 'undefined' ? require('node:test') : require('@jest/globals')
 const { isNativeInputViewShown, validateSystemImeControl } = require('./native-theme-ime-policy')
 
 const now = Date.parse('2026-11-01T12:00:00.000Z')

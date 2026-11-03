@@ -139,7 +139,8 @@ function run() {
   assert.ok(messageBubbleSource.includes('<Modal') && messageBubbleSource.includes('testID="message-action-sheet"') && messageBubbleSource.includes('statusBarTranslucent'), 'message actions render in a screen-level modal outside virtualized-list clipping')
   assert.equal(messageBubbleSource.includes('measureInWindow'), false, 'message actions do not depend on stale or clipped bubble coordinates')
   assert.ok(messageBubbleSource.includes('Gesture.LongPress()') && messageBubbleSource.includes('openActionBarFromLongPress'), 'message actions remain available from a message long press')
-  assert.equal(messageBubbleSource.includes('AppIcon name="more"'), false, 'message bubbles do not expose a persistent top-right overflow button')
+  assert.ok(messageBubbleSource.includes('onActions={canOpenActions') && messageBubbleSource.includes("accessibilityLabel={t('messageBubble.actions')}"),
+    'message footer actions provide an accessible equivalent to long press')
   assert.ok(
     /function AnimatedProcessStatusText\(\{ active, label, tone, icon, motion, grammar, statusMotionPhase, stageStartedAt, previewText \}[\s\S]*?const shimmer = active && motion === 'full' && grammar !== 'precision'[\s\S]*?setInterval\(\(\) =>[\s\S]*?<AppIcon name=\{icon\}[\s\S]*?loop: shimmer/.test(activityTimelineSource) &&
       activityTimelineSource.includes("grammar !== 'precision'") &&
@@ -272,17 +273,21 @@ function assertSourceIntegration() {
 
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
   const settingsNavigationSource = fs.readFileSync(path.join(root, 'src/components/settings/SettingsNavigationContent.tsx'), 'utf8')
+  const workspaceLayoutSource = fs.readFileSync(path.join(root, 'src/presentation/layout/workspaceLayout.ts'), 'utf8')
   const systemSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/SystemSettingsPanelContent.tsx'), 'utf8')
   const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   assert.ok(
     settingsScreenSource.includes('<SettingsNavigationContent') &&
-      ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'].every(theme => settingsNavigationSource.includes(`canonicalThemeId === '${theme}'`)) &&
-      settingsNavigationSource.includes('width / fontScale'),
-    'settings home uses one theme-native directory with font-aware layout rather than separate AI and system catalogs'
+      settingsNavigationSource.includes('<WorkspaceChoice') &&
+      settingsNavigationSource.includes('useWorkspaceLayout()') &&
+      settingsNavigationSource.includes('SETTINGS_TASK_AREAS.map') &&
+      workspaceLayoutSource.includes('width / scale') &&
+      workspaceLayoutSource.includes('fontScale'),
+    'settings home uses retained task navigation with font-aware layout and shared choices'
   )
   assert.equal((settingsNavigationSource.match(/<IsleSearchField /g) ?? []).length, 1, 'settings home exposes one search entry for settings and capabilities')
   assert.match(settingsNavigationSource, /buildSettingsIndex\(key => t\(key\)\)[\s\S]*searchSettingsIndex\(index, settled\)/, 'settings search covers the complete localized registry regardless of category')
-  assert.match(settingsNavigationSource, /settled\.trim\(\) \? <SettingsListSurface[\s\S]*settings-search-results[\s\S]*: children/, 'search results replace the directory without mounting editors')
+  assert.match(settingsNavigationSource, /testID="settings-task-view"[\s\S]*accessibilityElementsHidden=\{searching\}[\s\S]*\{children\}[\s\S]*\{searching \? <ScrollView testID="settings-search-results"/, 'search results reveal the complete registry without unmounting the retained task workspace or mounting editors')
   const legacySearchKeys = [
     'providerSettings.protocol.title',
     'usage.totalTokens',
@@ -396,7 +401,7 @@ function assertSourceIntegration() {
   const providerHealthStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatWorkspaceProviderHealthState.ts'), 'utf8')
   assert.match(providerHealthStateSource, /setProviderHealth\(null\)[\s\S]*resolveConversationHealth\([\s\S]*\.catch\(\(\) => \{[\s\S]*code: 'unknown'/, 'provider health clears stale conversation state and visibly projects resolution failures')
   assert.match(chatSetupWorkspaceSource, /const setupContentTopPadding = setupLayout\.compactLandscape[\s\S]*?setupHeaderBottom \+ setupLayout\.contentHeaderGap[\s\S]*?: Math\.max\(setupHeaderBottom, compactViewport \? 68 : 80\)/, 'setup empty state derives short-landscape clearance from the shared mobile layout policy')
-  assert.match(chatSetupWorkspaceSource, /<ScrollView[\s\S]*?keyboardShouldPersistTaps="handled"[\s\S]*?contentContainerStyle=\{\{[\s\S]*?flexGrow: 1,[\s\S]*?alignItems: 'center',[\s\S]*?justifyContent: setupLayout\.compactLandscape \? 'flex-start' : 'center',[\s\S]*?paddingTop: setupContentTopPadding,[\s\S]*?paddingBottom: composerBottomInset \+ keyboardLift,/, 'setup empty state centers normally, clears themed Composer chrome in short landscape, and retains keyboard-aware scroll fallback')
+  assert.match(chatSetupWorkspaceSource, /<ScrollView[\s\S]*?style=\{\{ flex: 1, marginBottom: composerBottomInset \+ keyboardLift \}\}[\s\S]*?keyboardShouldPersistTaps="handled"[\s\S]*?contentContainerStyle=\{\{[\s\S]*?flexGrow: 1,[\s\S]*?alignItems: 'center',[\s\S]*?justifyContent: 'flex-start',[\s\S]*?paddingTop: setupContentTopPadding,[\s\S]*?paddingBottom: 24,/, 'setup content owns a real viewport above Composer and keyboard, starts below the header, and keeps only reading padding')
   assert.ok(chatActiveComposerDockSource.includes('<StreamingIntentSheet') && chatActiveComposerDockSource.includes('keyboardLift={keyboardLift}'), 'the active composer forwards the current keyboard lift to the streaming-intent sheet')
   assert.match(streamingIntentSheetSource, /const bottomOffset = Math\.max\(0, keyboardLift\) \+ Math\.max\(insets\.bottom, 10\) \+ 106/, 'the streaming-intent sheet remains above the keyboard and bottom safe area')
   assert.match(streamingIntentSheetSource, /function IntentAction\([\s\S]*accessibilityRole="button"[\s\S]*accessibilityHint=\{description\}[\s\S]*numberOfLines=\{2\}/, 'streaming-intent actions expose button semantics, descriptive hints, and bounded two-line copy')
@@ -411,7 +416,7 @@ function assertSourceIntegration() {
   assert.ok(chatEmptyStateSource.includes('getChatMediaGenerationGateMetadata') && chatEmptyStateSource.includes('projection.generationGateIds'), 'Chat readiness details retain named future generation gates')
   assert.ok(chatEmptyStateSource.includes('presentChatEmptyStateBoundaryAction') && chatEmptyStateSource.includes('onInspectProvider') && chatEmptyStateSource.includes('onOpenMemory') && chatEmptyStateSource.includes('onOpenTools'), 'Chat readiness rendering dispatches the executable provider, memory, and tools action contract')
   assert.ok(chatEmptyStateSource.includes('projection.accessibility.role') && chatEmptyStateSource.includes('projection.accessibility.minimumTouchTarget'), 'Chat readiness rendering consumes its projected accessibility contract')
-  assert.ok(chatSetupWorkspaceSource.includes("onOpenTools={() => setComposerPanel('more')}") && chatActiveMessageEmptyStateSource.includes("onOpenTools={() => setComposerPanel('more')}"), 'setup and active Chat surfaces route readiness inspection to composer tools')
+  assert.ok(chatSetupWorkspaceSource.includes('onPanelChange={setComposerPanel}') && chatActiveMessageEmptyStateSource.includes("onOpenTools={() => setComposerPanel('more')}"), 'setup retains Composer-owned tools while the active conversation keeps its readiness shortcut')
   assert.ok(chatWorkspaceSource.includes("pushChatSettingsRoute('/settings/memory', { focus: 'review' })"), 'Chat readiness can route pending context memory to review')
 
   const boundaryStatusSource = fs.readFileSync(path.join(root, 'src/presentation/features/chat/chatBoundaryStatus.ts'), 'utf8')
