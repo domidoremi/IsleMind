@@ -69,6 +69,7 @@ export function SettingsTaskWorkspace({ tasks, value, onTaskChange, overview, in
     {tasks.map((task, index) => {
       const pinned = alwaysVisible.includes(task.id)
       const expanded = pinned || selected === task.id
+      const TaskHeading = pinned ? View : IslePressable
       const open = canonicalThemeId === 'minimal' || canonicalThemeId === 'monet' || canonicalThemeId === 'material'
       const journal = canonicalThemeId === 'animal-island-ui'
       const glass = canonicalThemeId === 'liquid-glass'
@@ -76,9 +77,10 @@ export function SettingsTaskWorkspace({ tasks, value, onTaskChange, overview, in
         padding: open ? 0 : 12, backgroundColor: open ? 'transparent' : glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.raised,
         borderTopWidth: open ? StyleSheet.hairlineWidth : 0, borderTopColor: colors.ui.section.divider,
         borderLeftWidth: journal ? 3 : 0, borderLeftColor: colors.ui.icon.accentForeground }}>
-        <IslePressable testID={`settings-task-${task.id}`} accessibilityRole={pinned ? 'header' : 'button'} accessibilityLabel={task.title}
-          accessibilityState={pinned ? undefined : { expanded }} disabled={pinned}
-          onPress={() => void leave(() => select(expanded ? undefined : task.id, false))}
+        <TaskHeading testID={`settings-task-${task.id}`} accessible={pinned ? true : undefined}
+          accessibilityRole={pinned ? 'header' : 'button'} accessibilityLabel={task.title}
+          accessibilityState={pinned ? undefined : { expanded }}
+          onPress={pinned ? undefined : () => void leave(() => select(expanded ? undefined : task.id, false))}
           style={{ minHeight: 52, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           {canonicalThemeId === 'monet' ? <Text style={{ color: colors.textTertiary }}>{String(index + 1).padStart(2, '0')}</Text> : canonicalThemeId === 'minimal' ? null : <AppIcon name={task.icon} size={18} color={expanded ? colors.ui.icon.accentForeground : colors.textSecondary} />}
           <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
@@ -88,7 +90,7 @@ export function SettingsTaskWorkspace({ tasks, value, onTaskChange, overview, in
           {!pinned ? <MotiView pointerEvents="none" accessible={false} animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={disclosureMotion.intensity === 'full' ? disclosureMotion.transition : { type: 'timing', duration: 0 }}>
             <AppIcon name="collapse" size={18} color={expanded ? colors.ui.icon.accentForeground : colors.textTertiary} />
           </MotiView> : null}
-        </IslePressable>
+        </TaskHeading>
         {expanded ? <IsleMotionFrame role="section" motion={entranceMotion} direction="forward" testID={`settings-task-editor-${task.id}`} style={{ gap: 12, paddingBottom: 12 }}>{task.content}</IsleMotionFrame> : null}
       </IsleMotionFrame>
     })}

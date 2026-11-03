@@ -13,6 +13,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 import { useThemeMotion } from '@/hooks/useThemeMotion'
+import { WorkspaceChoice } from '@/presentation/layout/WorkspaceChoice'
 import { useSettingsDraft } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import type { RedactedUsageRequestDetail, UsageRequestDetailState, UsageRequestStatus } from './usageRequestDetailTypes'
@@ -583,7 +584,7 @@ export function UsageStatisticsContent({
       </View>
 
       <View style={[styles.section, { borderColor }]}>
-        <View accessibilityRole="tablist" style={[styles.tabBar, { backgroundColor: mutedSurface, borderColor, borderWidth: subtleBorderWidth }]}>
+        <View accessibilityRole="tablist" style={styles.tabBar}>
           <UsageTabButton active={activeTab === 'requests'} label={copy.requestsTab} icon="list-check" narrow={narrow} onPress={() => onTabChange('requests')} />
           <UsageTabButton active={activeTab === 'providers'} label={copy.providersTab} icon="provider-key" narrow={narrow} onPress={() => onTabChange('providers')} />
           <UsageTabButton active={activeTab === 'models'} label={copy.modelsTab} icon="model" narrow={narrow} onPress={() => onTabChange('models')} />
@@ -902,19 +903,8 @@ function UsageDisclosure({ label, expanded, onPress, testID }: { label: string; 
 }
 
 function UsageTabButton({ active, label, icon, narrow, onPress }: { active: boolean; label: string; icon: AppIconName; narrow: boolean; onPress: () => void }) {
-  const { colors } = useAppTheme()
-  return (
-    <IslePressable
-      accessibilityRole="tab"
-      accessibilityLabel={label}
-      accessibilityState={{ selected: active }}
-      onPress={onPress}
-      style={[styles.tabButton, active && { backgroundColor: colors.ui.control.primaryBackground }]}
-    >
-      {!narrow ? <AppIcon name={icon} color={active ? colors.ui.control.primaryForeground : colors.textSecondary} size={15} /> : null}
-      <Text style={[styles.tabLabel, { color: active ? colors.ui.control.primaryForeground : colors.textSecondary }]}>{label}</Text>
-    </IslePressable>
-  )
+  return <WorkspaceChoice label={label} icon={narrow ? undefined : icon}
+    selected={active} onPress={onPress} style={styles.tabButton} />
 }
 
 function RequestRow({ item, compact, includeEstimates, accessibilityLabel, onPress }: { item: UsageRequestRow; compact: boolean; includeEstimates: boolean; accessibilityLabel: string; onPress: () => void }) {
@@ -1326,29 +1316,13 @@ const styles = StyleSheet.create({
   tabBar: {
     minHeight: 44,
     flexDirection: 'row',
-    padding: 3,
-    borderRadius: 8,
-    gap: 3,
+    gap: 4,
     marginBottom: 7,
   },
   tabButton: {
     flex: 1,
     minWidth: 0,
-    minHeight: ISLE_MIN_TOUCH_TARGET,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
     paddingHorizontal: 6,
-    borderRadius: 6,
-  },
-  tabLabel: {
-    flexShrink: 1,
-    textAlign: 'center',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '800',
-    includeFontPadding: false,
   },
   listViewport: {
     width: '100%',

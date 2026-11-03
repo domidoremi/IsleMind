@@ -6,34 +6,37 @@ import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 /** A shared navigation treatment, not an editor: values never become controls here. */
-export function SettingsNavigationRow({ title, status, detail, icon, onPress, id, last = false, preview, tile = false }: {
-  title: string; status?: string; detail?: string; icon: AppIconName; onPress: () => void; id: string; last?: boolean; preview?: ReactNode; tile?: boolean
+export function SettingsNavigationRow({ title, status, detail, icon, onPress, id, last = false, preview, tile = false, workspace = false }: {
+  title: string; status?: string; detail?: string; icon: AppIconName; onPress: () => void; id: string; last?: boolean; preview?: ReactNode; tile?: boolean; workspace?: boolean
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
   const minimal = canonicalThemeId === 'minimal'
   const editorial = canonicalThemeId === 'monet'
   const journal = canonicalThemeId === 'animal-island-ui'
   const glass = canonicalThemeId === 'liquid-glass'
-  const stacked = tile && canonicalThemeId === 'material'
-  const open = minimal || editorial
+  const stacked = tile && (workspace || canonicalThemeId === 'material')
+  const open = minimal || editorial || workspace
+  // Resolve press colors before the animated wrapper so layout styles survive.
+  const [pressed, setPressed] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   return <IslePressable testID={id} accessibilityRole="button" accessibilityLabel={[title, status].filter(Boolean).join(', ')} accessibilityHint={detail}
     haptic
     onPress={onPress} onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}
+    onPressIn={() => setPressed(true)} onPressOut={() => setPressed(false)}
     onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-    style={{ minHeight: stacked ? 106 : minimal ? 56 : editorial ? 76 : 68, flexDirection: stacked ? 'column' : 'row', alignItems: stacked ? 'flex-start' : 'center', gap: stacked ? 12 : 12,
-      width: stacked ? '48%' : undefined, flexGrow: stacked ? 1 : 0,
-      paddingHorizontal: open ? 2 : stacked ? 18 : 14, paddingVertical: minimal ? 10 : 14,
-      borderRadius: open ? 0 : journal ? 8 : glass ? 22 : 16,
-      backgroundColor: hovered || focused ? colors.ui.icon.accentBackground : stacked ? colors.design?.semantic.color.surfaceContainer ?? colors.ui.semantic.surface.raised : 'transparent',
+    style={{ minHeight: stacked ? 106 : minimal ? 56 : editorial ? 76 : 68, flexDirection: stacked ? 'column' : 'row', alignItems: stacked ? 'flex-start' : 'center', gap: 12,
+      width: stacked ? workspace ? undefined : '48%' : workspace ? '100%' : undefined,
+      flexBasis: stacked && workspace ? 160 : undefined, flexGrow: stacked ? 1 : 0, flexShrink: 0,
+      paddingHorizontal: stacked ? 18 : open ? 2 : 14, paddingVertical: minimal ? 10 : 14,
+      borderRadius: workspace ? colors.design!.semantic.radius.medium : open ? 0 : journal ? 8 : glass ? 22 : 16,
+      backgroundColor: pressed ? colors.ui.semantic.surface.muted : hovered ? colors.ui.icon.accentBackground : 'transparent',
       borderWidth: 1, borderColor: focused ? colors.ui.semantic.control.focus : 'transparent' }}>
-    {!editorial ? <View pointerEvents="none" style={{ width: minimal ? 22 : stacked ? 28 : 36, height: minimal ? 28 : 36,
-      borderRadius: journal ? 6 : glass ? 18 : 10, borderWidth: journal ? StyleSheet.hairlineWidth : 0, borderColor: colors.ui.section.divider,
-      alignItems: 'center', justifyContent: 'center', backgroundColor: open || stacked || journal ? 'transparent' : colors.ui.icon.accentBackground }}>
+    {!editorial || workspace ? <View pointerEvents="none" style={{ flexShrink: 0, width: workspace ? 24 : minimal ? 22 : stacked ? 28 : 36, height: workspace ? 28 : minimal ? 28 : 36,
+      alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' }}>
       <AppIcon name={icon} color={minimal ? colors.textSecondary : colors.ui.icon.accentForeground} size={stacked ? 26 : journal ? 22 : 19} />
     </View> : null}
-    <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+    <View style={{ flex: stacked ? undefined : 1, alignSelf: stacked ? 'stretch' : undefined, minWidth: 0, gap: 3 }}>
       <Text style={{ ...colors.design?.semantic.typography.body, ...(editorial ? colors.design?.semantic.typography.title : null), fontWeight: colors.design?.semantic.typography.label.fontWeight, color: colors.text }}>{title}</Text>
       {status ? <Text style={{ ...colors.design?.semantic.typography.caption, color: colors.textSecondary }}>{status}</Text> : null}
       {detail && detail !== status ? <Text numberOfLines={2} style={{ ...colors.design?.semantic.typography.caption, color: colors.textSecondary, lineHeight: 19 }}>{detail}</Text> : null}
@@ -42,7 +45,7 @@ export function SettingsNavigationRow({ title, status, detail, icon, onPress, id
     <View pointerEvents="none" style={stacked ? { position: 'absolute', top: 22, right: 18 } : undefined}>
       <AppIcon name={editorial || stacked ? 'arrow-right' : 'back-next'} size={editorial ? 20 : 15} color={focused ? colors.ui.icon.accentForeground : colors.textTertiary} />
     </View>
-    {!last && !stacked ? <View pointerEvents="none" style={{ position: 'absolute', left: open ? 0 : 63, right: open ? 0 : 16, bottom: 0,
+    {!last && !stacked && !workspace ? <View pointerEvents="none" style={{ position: 'absolute', left: open ? 0 : 63, right: open ? 0 : 16, bottom: 0,
       borderBottomWidth: StyleSheet.hairlineWidth, borderStyle: journal ? 'dashed' : 'solid', borderColor: colors.ui.section.divider }} /> : null}
   </IslePressable>
 }

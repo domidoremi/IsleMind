@@ -4,9 +4,8 @@ import { AppIcon, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useThemeMotion } from '@/hooks/useThemeMotion'
-import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
+import { WorkspaceChoice } from '@/presentation/layout/WorkspaceChoice'
 
 export type SettingsControlView = 'ai' | 'system'
 
@@ -28,13 +27,14 @@ export function SettingsControlNavigation({
   onChange: (value: SettingsControlView) => void
 }) {
   const { canonicalThemeId } = useAppTheme()
-  switch (canonicalThemeId) {
-    case 'monet': return <MonetControlNavigation value={value} onChange={onChange} />
-    case 'material': return <MaterialControlNavigation value={value} onChange={onChange} />
-    case 'liquid-glass': return <LiquidGlassControlNavigation value={value} onChange={onChange} />
-    case 'minimal':
-    default: return <MinimalControlNavigation value={value} onChange={onChange} />
-  }
+  const { t } = useTranslation()
+  const family = canonicalThemeId === 'animal-island-ui' ? 'minimal' : canonicalThemeId
+  return <View testID={`settings-control-navigation-${family}`} accessibilityRole="tablist"
+    style={{ flexDirection: 'row', gap: 4 }}>
+    {controlTabs(t).map(tab => <WorkspaceChoice key={tab.value} testID={`settings-control-tab-${tab.value}`}
+      label={tab.label} icon={canonicalThemeId === 'minimal' ? undefined : tab.icon}
+      selected={value === tab.value} onPress={() => onChange(tab.value)} style={{ flex: 1, minWidth: 0 }} />)}
+  </View>
 }
 
 export function SettingsControlCatalog({
@@ -52,103 +52,6 @@ export function SettingsControlCatalog({
     case 'minimal':
     default: return <MinimalControlCatalog entries={entries} />
   }
-}
-
-function MinimalControlNavigation({ value, onChange }: { value: SettingsControlView | null; onChange: (value: SettingsControlView) => void }) {
-  const { colors } = useAppTheme()
-  const accentMotion = useThemeMotion('accent')
-  const { t } = useTranslation()
-  const tabs = controlTabs(t)
-  return (
-    <View testID="settings-control-navigation-minimal" accessibilityRole="tablist" style={{ flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
-      {tabs.map((tab) => {
-        const active = value === tab.value
-        return (
-          <IslePressable
-            key={tab.value}
-            testID={`settings-control-tab-${tab.value}`}
-            haptic
-            accessibilityRole="tab"
-            accessibilityLabel={tab.label}
-            accessibilityState={{ selected: active }}
-            onPress={() => onChange(tab.value)}
-            style={{ minHeight: 44, flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderBottomWidth: active ? 2 : 0, borderBottomColor: colors.text }}
-          >
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: accentMotion.intensity === 'full' && !active ? accentMotion.from.translateY : 0, scale: accentMotion.intensity === 'full' && !active ? accentMotion.from.scale : 1 }} transition={accentMotion.transition}>
-              <Text style={{ color: active ? colors.text : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: active ? '800' : '600' }}>{tab.label}</Text>
-            </MotiView>
-          </IslePressable>
-        )
-      })}
-    </View>
-  )
-}
-
-function MonetControlNavigation({ value, onChange }: { value: SettingsControlView | null; onChange: (value: SettingsControlView) => void }) {
-  const { colors } = useAppTheme()
-  const accentMotion = useThemeMotion('accent')
-  const { t } = useTranslation()
-  const tabs = controlTabs(t)
-  return (
-    <View testID="settings-control-navigation-monet" accessibilityRole="tablist" style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 3 }}>
-      {tabs.map((tab, index) => {
-        const active = value === tab.value
-        return (
-          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ position: 'relative', minHeight: active ? 52 : 46, flex: 1, minWidth: 0, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, overflow: 'hidden', borderTopLeftRadius: index ? 9 : 18, borderTopRightRadius: index ? 18 : 10, borderBottomRightRadius: index ? 11 : 20, borderBottomLeftRadius: index ? 20 : 12, backgroundColor: active ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: StyleSheet.hairlineWidth, borderColor: active ? colors.primary : colors.ui.semantic.chrome.border }}>
-            <View pointerEvents="none" style={{ position: 'absolute', top: -18, right: -16, width: 76, height: 52, borderBottomLeftRadius: 46, backgroundColor: active ? colors.ui.icon.accentBackground : colors.ui.semantic.surface.muted, opacity: active ? 0.28 : 0.14 }} />
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: accentMotion.intensity === 'full' && !active ? accentMotion.from.translateY : 0, scale: accentMotion.intensity === 'full' && !active ? accentMotion.from.scale : 1 }} transition={accentMotion.transition} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <AppIcon name={tab.icon} color={active ? colors.primary : colors.textTertiary} size={16} />
-              <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
-            </MotiView>
-          </IslePressable>
-        )
-      })}
-    </View>
-  )
-}
-
-function MaterialControlNavigation({ value, onChange }: { value: SettingsControlView | null; onChange: (value: SettingsControlView) => void }) {
-  const { colors } = useAppTheme()
-  const accentMotion = useThemeMotion('accent')
-  const { t } = useTranslation()
-  const tabs = controlTabs(t)
-  return (
-    <View testID="settings-control-navigation-material" accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 4, padding: 4, borderRadius: 16, backgroundColor: colors.ui.semantic.surface.muted }}>
-      {tabs.map((tab) => {
-        const active = value === tab.value
-        return (
-          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 58, flex: 1, minWidth: 0, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: active ? colors.ui.control.primaryBackground : 'transparent' }}>
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: accentMotion.intensity === 'full' && !active ? accentMotion.from.translateY : 0, scale: accentMotion.intensity === 'full' && !active ? accentMotion.from.scale : 1 }} transition={accentMotion.transition} style={{ alignItems: 'center', gap: 3 }}>
-              <AppIcon name={tab.icon} color={active ? colors.ui.control.primaryForeground : colors.textSecondary} size={15} />
-              <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
-            </MotiView>
-          </IslePressable>
-        )
-      })}
-    </View>
-  )
-}
-
-function LiquidGlassControlNavigation({ value, onChange }: { value: SettingsControlView | null; onChange: (value: SettingsControlView) => void }) {
-  const { colors } = useAppTheme()
-  const accentMotion = useThemeMotion('accent')
-  const { t } = useTranslation()
-  const tabs = controlTabs(t)
-  return (
-    <GlassSurface colors={colors} variant="navigation" borderRadius={28} testID="settings-control-navigation-liquid-glass" accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 6, padding: 5 }}>
-      {tabs.map((tab) => {
-        const active = value === tab.value
-        return (
-          <IslePressable key={tab.value} testID={`settings-control-tab-${tab.value}`} haptic accessibilityRole="tab" accessibilityLabel={tab.label} accessibilityState={{ selected: active }} onPress={() => onChange(tab.value)} style={{ minHeight: 42, flex: 1, minWidth: 0, borderRadius: 21, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: active ? colors.ui.semantic.surface.raised : 'transparent', borderWidth: active ? 1 : StyleSheet.hairlineWidth, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
-            <MotiView animate={{ opacity: active ? 1 : 0.72, translateY: accentMotion.intensity === 'full' && !active ? accentMotion.from.translateY : 0, scale: accentMotion.intensity === 'full' && !active ? accentMotion.from.scale : 1 }} transition={accentMotion.transition} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-              <AppIcon name={tab.icon} color={active ? colors.ui.control.link : colors.textTertiary} size={15} />
-              <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: active ? '700' : '600' }}>{tab.label}</Text>
-            </MotiView>
-          </IslePressable>
-        )
-      })}
-    </GlassSurface>
-  )
 }
 
 function MinimalControlCatalog({ entries }: { entries: SettingsControlExperienceEntry[] }) {

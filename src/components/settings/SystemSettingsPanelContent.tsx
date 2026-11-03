@@ -1203,7 +1203,13 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               {appearance.dirty || appearance.error ? <IsleButton label={t('settingsWorkspace.reload')} disabled={appearance.busy} onPress={appearance.discard} /> : null}
             </View>
           </SettingsSection>
-          <SettingsSection id="background" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}><SettingsInlineLabel
+          <SettingsSection id="background" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+          {backgroundEnvironment.layerCount === 0 ? (
+            <View testID="settings-background-plain">
+              <SettingsInlineLabel title={t('settings.backgroundPlain')} detail={t('settings.backgroundPlainDetail')} />
+            </View>
+          ) : (
+          <><SettingsInlineLabel
             title={t('settings.backgroundEnvironment')}
             detail={t('settings.backgroundEnvironmentDetail')}
           />
@@ -1246,6 +1252,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               ))}
             </View>
           </RadioGroup>
+          </>
+          )}
           </SettingsSection>
           <SettingsSection id="language" style={{ gap: 12, paddingTop: 20, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}><SettingsInlineLabel
             title={t('settings.language')}

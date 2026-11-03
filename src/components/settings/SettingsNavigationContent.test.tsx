@@ -2,6 +2,7 @@ import { act, fireEvent, render } from '@testing-library/react-native'
 import { router } from 'expo-router'
 import { useSettingsStore } from '@/store/settingsStore'
 import { SettingsNavigationContent } from './SettingsNavigationContent'
+import { SETTINGS_TASK_AREAS, settingsTaskNavigationState } from './settingsTaskNavigationState'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { useWindowDimensions } from 'react-native'
 import { createSettingsSearchPersistence, SETTINGS_SEARCH_SCHEMA } from '@/modules/settings'
@@ -37,6 +38,8 @@ jest.mock('@/components/ui/isle', () => ({
 
 beforeEach(() => {
   mockTheme = 'minimal'
+  settingsTaskNavigationState.select('everyday')
+  jest.mocked(useWindowDimensions).mockReturnValue({ width: 390, height: 844, fontScale: 1, scale: 1 })
   mockState = { providers: [], settings: { language: 'en' } }
   savedQuery = null
   searchPersistence = {
@@ -54,13 +57,19 @@ afterEach(() => {
 })
 it('opens actual settings directly instead of category detours', async () => {
   const screen = await render(<SettingsNavigationContent />)
-  for (const id of ['providers', 'appearance', 'preferences', 'governance', 'mcp', 'data']) expect(screen.getByTestId(`settings-entry-${id}`)).toBeTruthy()
+  for (const id of ['providers', 'appearance', 'preferences']) expect(screen.getByTestId(`settings-entry-${id}`)).toBeTruthy()
   await fireEvent.press(screen.getByTestId('settings-entry-preferences'))
   expect(router.push).toHaveBeenCalledWith({ pathname: '/settings/preferences', params: { returnTo: 'settings' } })
   await fireEvent.press(screen.getByTestId('settings-entry-providers'))
   expect(router.push).toHaveBeenCalledWith({ pathname: '/settings/providers', params: { setup: 'add', returnTo: 'settings' } })
   expect(screen.queryByTestId('settings-quick-start')).toBeNull()
   expect(screen.queryByTestId('settings-category-models')).toBeNull()
+  const destinationsOpened = jest.mocked(router.push).mock.calls.length
+  await fireEvent.press(screen.getByTestId('settings-task-manage'))
+  for (const id of ['governance', 'data']) expect(screen.getByTestId(`settings-entry-${id}`)).toBeTruthy()
+  await fireEvent.press(screen.getByTestId('settings-task-capabilities'))
+  expect(screen.getByTestId('settings-entry-mcp')).toBeTruthy()
+  expect(router.push).toHaveBeenCalledTimes(destinationsOpened)
   await fireEvent.press(screen.getAllByLabelText('settingsWorkspace.manual')[0])
   expect(router.push).toHaveBeenCalledWith({ pathname: '/help', params: { returnTo: 'settings' } })
 })
@@ -123,27 +132,103 @@ it('manages existing connections without forcing import when no default is selec
   expect(router.push).toHaveBeenLastCalledWith({ pathname: '/settings/providers', params: { returnTo: 'settings' } })
 })
 
-it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)('%s changes structure, not destinations or connection setup semantics', async family => {
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)('%s exposes one task area without losing any destination or connection setup semantics', async family => {
   mockTheme = family
   const screen = await render(<SettingsNavigationContent />)
-  expect(screen.getAllByTestId(/^settings-entry-/)).toHaveLength(18)
-  expect(screen.getByTestId('settings-group-everyday')).toHaveStyle({ flexDirection: family === 'material' ? 'row' : 'column' })
-  expect(screen.getByTestId('settings-entry-appearance')).toHaveStyle({ flexDirection: family === 'material' ? 'column' : 'row' })
-  if (family === 'minimal' || family === 'monet') {
-    expect(screen.getByTestId('settings-group-everyday')).toHaveStyle({ backgroundColor: 'transparent', borderRadius: 0 })
+  expect(screen.getAllByTestId(/^settings-entry-/)).toHaveLength(4)
+  expect(screen.queryByTestId('settings-entry-danger')).toBeNull()
+  const all = new Set<string>()
+  for (const area of SETTINGS_TASK_AREAS) {
+    await fireEvent.press(screen.getByTestId(`settings-task-${area}`))
+    expect(screen.getByTestId(`settings-task-${area}`).props.accessibilityState.selected).toBe(true)
+    screen.getAllByTestId(/^settings-entry-/).forEach(row => all.add(row.props.testID))
   }
+  expect(all.size).toBe(18)
+  expect(router.push).not.toHaveBeenCalled()
   await fireEvent.press(screen.getByTestId('settings-entry-providers'))
   expect(router.push).toHaveBeenLastCalledWith({ pathname: '/settings/providers', params: { setup: 'add', returnTo: 'settings' } })
+  await fireEvent.press(screen.getByTestId('settings-task-everyday'))
   await fireEvent.press(screen.getByTestId('settings-entry-appearance'))
   expect(router.push).toHaveBeenLastCalledWith({ pathname: '/settings/system/appearance', params: { returnTo: 'settings' } })
 })
 
-it('reflows Material shortcuts into one column at large font scale', async () => {
+it('reflows desktop shortcuts into one column at large font scale without replacing the search input', async () => {
   mockTheme = 'material'
-  jest.mocked(useWindowDimensions).mockReturnValueOnce({ width: 390, height: 844, fontScale: 1.6, scale: 1 })
+  jest.mocked(useWindowDimensions).mockReturnValue({ width: 1280, height: 900, fontScale: 1, scale: 1 })
   const screen = await render(<SettingsNavigationContent />)
-  expect(screen.getByTestId('settings-group-everyday')).toHaveStyle({ flexDirection: 'column' })
-  expect(screen.getByTestId('settings-entry-appearance')).toHaveStyle({ flexDirection: 'row', width: undefined })
+  const search = screen.getByLabelText('settings.search')
+  expect(screen.getByTestId('settings-task-items')).toHaveStyle({ flexDirection: 'row' })
+  jest.mocked(useWindowDimensions).mockReturnValue({ width: 1280, height: 900, fontScale: 1.6, scale: 1 })
+  await screen.rerender(<SettingsNavigationContent shellNavigation />)
+  expect(screen.getByTestId('settings-task-items')).toHaveStyle({ flexDirection: 'column' })
+  expect(screen.getByTestId('settings-entry-appearance')).toHaveStyle({ flexDirection: 'row', width: '100%' })
+  expect(screen.getByLabelText('settings.search')).toBe(search)
+})
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
+  '%s gives mobile task rows a non-wrapping full-width list',
+  async family => {
+    mockTheme = family
+    const screen = await render(<SettingsNavigationContent />)
+    for (const area of SETTINGS_TASK_AREAS) {
+      await fireEvent.press(screen.getByTestId(`settings-task-${area}`))
+      expect(screen.getByTestId('settings-task-items')).toHaveStyle({
+        width: '100%', flexDirection: 'column', flexWrap: 'nowrap', alignItems: 'stretch',
+      })
+      for (const row of screen.getAllByTestId(/^settings-entry-/).filter(row => row.props.testID !== 'settings-entry-providers')) {
+        expect(row).toHaveStyle({ width: '100%', flexDirection: 'row', flexShrink: 0 })
+      }
+    }
+  },
+)
+
+it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
+  '%s keeps section headings subordinate and removes redundant introduction',
+  async family => {
+    mockTheme = family
+    const screen = await render(<SettingsNavigationContent />)
+    const colors = require('@/theme/colors').getColors('light', family)
+    const type = colors.design.semantic.typography
+    const heading = type.label
+    for (const id of ['everyday', 'capabilities', 'manage', 'support']) {
+      await fireEvent.press(screen.getByTestId(`settings-task-${id}`))
+      expect(screen.getByTestId(`settings-group-heading-${id}`)).toHaveStyle({
+        fontSize: heading.fontSize,
+        color: colors.textSecondary,
+      })
+    }
+    expect(screen.queryByText('livelyUi.settingsIntro')).toBeNull()
+    if (family === 'minimal') expect(screen.queryByText('ISLEMIND')).toBeNull()
+  },
+)
+
+it('retains task selection through search, appearance changes, and a return route without writing settings', async () => {
+  jest.useFakeTimers()
+  const screen = await render(<SettingsNavigationContent />)
+  const search = screen.getByLabelText('settings.search')
+  await fireEvent.press(screen.getByTestId('settings-task-capabilities'))
+  const navigator = screen.getByTestId('settings-task-navigator')
+  await fireEvent.changeText(search, 'temperature')
+  await act(() => jest.advanceTimersByTime(120))
+  expect(screen.getByTestId('settings-result-temperature')).toBeTruthy()
+  expect(screen.queryByTestId('settings-entry-mcp')).toBeNull()
+  await fireEvent.changeText(search, '')
+  await act(() => jest.advanceTimersByTime(120))
+  expect(screen.getByTestId('settings-task-navigator')).toBe(navigator)
+  expect(screen.getByTestId('settings-task-capabilities').props.accessibilityState.selected).toBe(true)
+  for (const family of ['monet', 'material', 'liquid-glass', 'animal-island-ui'] as const) {
+    mockTheme = family
+    await screen.rerender(<SettingsNavigationContent />)
+    expect(screen.getByLabelText('settings.search')).toBe(search)
+    expect(screen.getByTestId('settings-task-capabilities').props.accessibilityState.selected).toBe(true)
+  }
+  await screen.unmount()
+  const returned = await render(<SettingsNavigationContent />)
+  expect(returned.getByTestId('settings-task-capabilities').props.accessibilityState.selected).toBe(true)
+  expect(returned.getByTestId('settings-entry-mcp')).toBeTruthy()
+  expect(searchPersistence.settings.save).not.toHaveBeenCalled()
+  expect(searchPersistence.providers.save).not.toHaveBeenCalled()
+  expect(router.push).not.toHaveBeenCalled()
 })
 
 it('retains exact search across remount, legacy category navigation and a fresh persistence instance', async () => {

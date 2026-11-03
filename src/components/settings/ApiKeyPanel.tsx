@@ -41,6 +41,7 @@ import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompa
 import type { RuntimeDiagnosticsProviderDetail } from '@/bootstrap/runtimeDiagnostics'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
+import { WorkspaceChoice } from '@/presentation/layout/WorkspaceChoice'
 import { ProviderUsageQueryEditor } from '@/components/providers/ProviderUsageQueryEditor'
 import { ProviderTokenField } from '@/components/providers/ProviderTokenField'
 import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
@@ -1214,7 +1215,6 @@ function ProviderWorkspaceTabs({
   value: ProviderWorkspaceView
   onChange: (value: ProviderWorkspaceView) => void
 }) {
-  const { colors } = useAppTheme()
   const { t } = useTranslation()
   const tabs: { value: ProviderWorkspaceView; label: string; icon: Parameters<typeof AppIcon>[0]['name'] }[] = [
     { value: 'models', label: t('apiKeyPanel.workspaceModels'), icon: 'model' },
@@ -1224,44 +1224,10 @@ function ProviderWorkspaceTabs({
   return (
     <View
       accessibilityRole="tablist"
-      style={{
-        flexDirection: 'row',
-        padding: 3,
-        gap: 3,
-        borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
-        backgroundColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.base,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
-      }}
+      style={{ flexDirection: 'row', gap: 4 }}
     >
-      {tabs.map((tab) => {
-        const active = value === tab.value
-        return (
-          <IslePressable
-            key={tab.value}
-            haptic
-            accessibilityRole="tab"
-            accessibilityLabel={tab.label}
-            accessibilityState={{ selected: active }}
-            onPress={() => onChange(tab.value)}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              minHeight: 46,
-              borderRadius: Math.min(colors.ui.radius.controlMiddle, 7),
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 3,
-              backgroundColor: active ? colors.ui.control.primaryBackground : 'transparent',
-            }}
-          >
-            <AppIcon name={tab.icon} color={active ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} />
-            <Text adjustsFontSizeToFit minimumFontScale={0.78} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
-              {tab.label}
-            </Text>
-          </IslePressable>
-        )
-      })}
+      {tabs.map(tab => <WorkspaceChoice key={tab.value} label={tab.label} icon={tab.icon}
+        selected={value === tab.value} onPress={() => onChange(tab.value)} style={{ flex: 1, minWidth: 0 }} />)}
     </View>
   )
 }

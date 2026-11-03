@@ -236,7 +236,7 @@ it.each(CANONICAL_THEME_IDS)('names actual %s APK progress, retires a percentage
 })
 
 it.each([
-  ['minimal', 'Static'], ['monet', 'Subtle'], ['material', 'Static'],
+  ['monet', 'Subtle'],
   ['liquid-glass', 'Subtle'], ['animal-island-ui', 'Static'],
 ])('shows the resolved %s motion default without writing over an explicit choice', async (family, expected) => {
   mockState.settings.themeId = family
@@ -246,6 +246,24 @@ it.each([
   mockState.settings.backgroundMotion = 'immersive'
   await screen.rerender(<SystemSettingsPanelContent key="explicit-choice" panel="appearance" />)
   expect(screen.getByRole('radio', { name: 'settings.backgroundMotionImmersive' })).toBeChecked()
+  expect(mockUpdateSettings).not.toHaveBeenCalled()
+})
+
+it.each(['minimal', 'material'])('explains the %s plain canvas without exposing ineffective background controls', async (family) => {
+  mockState.settings.themeId = family
+  mockState.settings.backgroundMotion = 'immersive'
+  const screen = await render(<SystemSettingsPanelContent panel="appearance" />)
+  expect(screen.getByTestId('settings-background-plain')).toBeOnTheScreen()
+  expect(screen.getByText('settings.backgroundPlainDetail')).toBeOnTheScreen()
+  for (const group of ['variation', 'preset', 'motion', 'intensity']) {
+    expect(screen.queryByTestId(`settings-background-${group}-group`)).toBeNull()
+  }
+  expect(mockUpdateSettings).not.toHaveBeenCalled()
+  mockState.settings.themeId = 'monet'
+  await screen.rerender(<SystemSettingsPanelContent key="decorative-theme" panel="appearance" />)
+  expect(screen.queryByTestId('settings-background-plain')).toBeNull()
+  expect(screen.getByRole('radio', { name: 'settings.backgroundMotionImmersive' })).toBeChecked()
+  expect(mockState.settings.backgroundMotion).toBe('immersive')
   expect(mockUpdateSettings).not.toHaveBeenCalled()
 })
 
@@ -450,7 +468,8 @@ it('shows all five appearance sections on one page without task navigation', asy
   }
   expect(screen.getByTestId('settings-theme-family-group')).toBeTruthy()
   expect(screen.getByTestId('settings-theme-mode-group')).toBeTruthy()
-  expect(screen.getByTestId('settings-background-motion-group')).toBeTruthy()
+  expect(screen.getByTestId('settings-background-plain')).toBeTruthy()
+  expect(screen.queryByTestId('settings-background-motion-group')).toBeNull()
   expect(screen.getByLabelText('English')).toBeTruthy()
   expect(mockUpdateSettings).not.toHaveBeenCalled()
 })

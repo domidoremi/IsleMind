@@ -62,6 +62,10 @@ it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'].fla
   mockMode = mode
   const screen = await render(<SettingsTaskWorkspace inline alwaysVisible={['identity']} tasks={tasks} />)
   expect(screen.getByLabelText('Name editor')).toBeTruthy()
+  const heading = screen.getByRole('header', { name: 'Name' })
+  expect(heading).not.toBeDisabled()
+  expect(heading.props.onPress).toBeUndefined()
+  expect(heading.props.accessibilityState).toBeUndefined()
   expect(screen.queryByLabelText('Token editor')).toBeNull()
   await fireEvent.press(screen.getByTestId('settings-task-generation'))
   expect(screen.getByLabelText('Name editor')).toBeTruthy()
