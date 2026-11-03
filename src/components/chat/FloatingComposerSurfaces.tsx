@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import Animated, {
+  cancelAnimation,
   Easing,
   interpolateColor,
   runOnJS,
@@ -708,7 +709,7 @@ export function SendButton({
 
   const transitionStyle = useAnimatedStyle(() => ({
     opacity: transition.value,
-    transform: [{ scale: 0.94 + transition.value * 0.06 }],
+    transform: [{ scale: motion === 'full' ? 0.94 + transition.value * 0.06 : 1 }],
   }))
   const sizeStyle = useAnimatedStyle(() => {
     const size = 40 + sizeProgress.value * 4
@@ -809,6 +810,8 @@ export function ModelMenu({
   colors,
   isDark,
   motion,
+  selectionDisabled = false,
+  selectionDisabledLabel,
   onSelect,
   onOpenConfiguration,
   onClose,
@@ -820,15 +823,23 @@ export function ModelMenu({
   colors: ThemeColors
   isDark: boolean
   motion: MotionIntensity
-  onSelect: (item: ModelMenuItem) => void
+  selectionDisabled?: boolean
+  selectionDisabledLabel?: string
+  onSelect: (item: ModelMenuItem) => boolean
   onOpenConfiguration: () => void
   onClose: () => void
 }) {
   const { t } = useTranslation()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
   const [mounted, setMounted] = useState(visible)
-  const estimatedMenuHeight = 58 + Math.min(items.length, 4) * 60 + 60
+  const [selectionFailed, setSelectionFailed] = useState(false)
+  const closing = useRef(false)
+  // Reserve a short status line so a rejection never changes the menu's anchor.
+  const estimatedMenuHeight = 80 + Math.min(items.length, 4) * 60 + 60
   const progress = useSharedValue(visible ? 1 : 0)
+  const menuDuration = motion === 'full'
+    ? Math.min(200, colors.design?.semantic.motion.panel ?? 180)
+    : motion === 'reduced' ? 90 : 0
 
   const placement = useMemo(() => resolveModelMenuPlacement({
     anchor,
@@ -841,39 +852,50 @@ export function ModelMenu({
     ? { left: placement.left, bottom: placement.bottom, width: placement.width }
     : { left: placement.left, top: placement.top, width: placement.width }
 
+  const closeMenu = useCallback(() => {
+    if (!visible || closing.current) return
+    closing.current = true
+    onClose()
+  }, [onClose, visible])
+
+  useEffect(() => {
+    if (!visible) return
+    closing.current = false
+    setSelectionFailed(false)
+  }, [visible])
+
   useEffect(() => {
     if (visible) {
       setMounted(true)
       progress.value = withTiming(1, {
-        ...MOTION_CONFIG,
-        duration: geometryDuration(motion),
+        easing: Easing.out(Easing.cubic),
+        duration: menuDuration,
       })
-      return
+    } else {
+      progress.value = withTiming(0, {
+        easing: Easing.out(Easing.cubic),
+        duration: menuDuration,
+      }, (finished) => {
+        if (finished) runOnJS(setMounted)(false)
+      })
     }
-    progress.value = withTiming(0, {
-      ...MOTION_CONFIG,
-      duration: geometryDuration(motion),
-    }, (finished) => {
-      if (finished) runOnJS(setMounted)(false)
-    })
-  }, [motion, progress, visible])
+    return () => cancelAnimation(progress)
+  }, [menuDuration, progress, visible])
 
   useEffect(() => {
     if (Platform.OS !== 'web' || !mounted) return undefined
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') closeMenu()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [mounted, onClose])
+  }, [mounted, closeMenu])
 
   const menuMotionStyle = useAnimatedStyle(() => ({
     opacity: progress.value,
-    transform: [
-      { translateY: (1 - progress.value) * 10 },
-      { scale: 0.98 + progress.value * 0.02 },
-    ],
+    transform: [{ translateY: motion === 'full' ? (1 - progress.value) * (placement.openAbove ? 6 : -6) : 0 }],
   }))
+  const backdropMotionStyle = useAnimatedStyle(() => ({ opacity: progress.value * 0.18 }))
 
   if (!mounted) return null
 
@@ -884,16 +906,20 @@ export function ModelMenu({
       animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={closeMenu}
     >
       <View style={styles.menuRoot} accessibilityViewIsModal>
-        <Pressable
-          accessible={false}
-          onPress={onClose}
-          style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop, opacity: 0.18 }]}
-        />
+        <AnimatedView testID="model-menu-backdrop" style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }, backdropMotionStyle]}>
+          <Pressable
+            testID="model-menu-dismiss"
+            accessible={false}
+            onPress={closeMenu}
+            style={StyleSheet.absoluteFill}
+          />
+        </AnimatedView>
         <AnimatedView
           testID="model-menu"
+          pointerEvents={visible ? 'auto' : 'none'}
           style={[
             styles.modelMenu,
             placementStyle,
@@ -905,12 +931,12 @@ export function ModelMenu({
             colors.ui.liquidGlass ? glassShadowStyle(colors, 'floating') : null,
           ]}
         >
-          <View style={styles.modelMenuHeader}>
+          <View testID="model-menu-header" style={[styles.modelMenuHeader, { borderBottomColor: colors.ui.section.divider }]}>
             <View style={styles.modelMenuTitleRow}>
               <ProviderBrandIcon brand={selectedId ? (items.find((item) => item.id === selectedId)?.brand ?? 'generic') : 'generic'} size={17} variant={isDark ? 'onDark' : 'onLight'} />
               <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 10, fontWeight: '900', letterSpacing: 0.3, textTransform: 'uppercase' }}>{t('chat.model')}</Text>
               <IslePressable
-                onPress={onClose}
+                onPress={closeMenu}
                 accessibilityRole="button"
                 accessibilityLabel={t('dialog.closeLayer')}
                 style={styles.menuIconButton}
@@ -918,12 +944,21 @@ export function ModelMenu({
                 <AppIcon name="close" color={colors.textSecondary} size={14} strokeWidth={appIconStroke.strong} />
               </IslePressable>
             </View>
+            {selectionFailed || selectionDisabled ? (
+              <Text
+                accessibilityRole={selectionFailed ? 'alert' : undefined}
+                accessibilityLiveRegion="polite"
+                style={{ color: selectionFailed ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 12, lineHeight: 18, paddingBottom: 4 }}
+              >
+                {selectionFailed ? t('chat.modelSwitchBlocked') : selectionDisabledLabel ?? t('chat.modelSwitchBlocked')}
+              </Text>
+            ) : null}
           </View>
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             style={{ maxHeight: Math.min(280, windowHeight * 0.42) }}
-            contentContainerStyle={{ padding: 8, gap: 6 }}
+            contentContainerStyle={{ padding: 8, gap: 2 }}
           >
             {items.length ? items.map((item) => {
               const active = item.id === selectedId
@@ -931,13 +966,21 @@ export function ModelMenu({
                 <IslePressable
                   key={item.id}
                   haptic
+                  disabled={selectionDisabled || !visible}
                   onPress={() => {
-                    onSelect(item)
-                    onClose()
+                    if (selectionDisabled || !visible || closing.current) return
+                    try {
+                      if (onSelect(item)) {
+                        setSelectionFailed(false)
+                        closeMenu()
+                      } else setSelectionFailed(true)
+                    } catch {
+                      setSelectionFailed(true)
+                    }
                   }}
-                  accessibilityRole="button"
+                  accessibilityRole="radio"
                   accessibilityLabel={`${item.providerLabel} · ${item.modelLabel}`}
-                  accessibilityState={{ selected: active }}
+                  accessibilityState={{ checked: active, selected: active, disabled: selectionDisabled || !visible }}
                   style={{
                     minHeight: 48,
                     paddingHorizontal: 11,
@@ -945,17 +988,17 @@ export function ModelMenu({
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 9,
-                    backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted,
-                    borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
-                    borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+                    backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : 'transparent',
+                    borderWidth: active ? StyleSheet.hairlineWidth : 0,
+                    borderColor: active ? colors.ui.control.primaryBorder : 'transparent',
                   }}
                 >
-                  <View style={{ width: 26, height: 26, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.icon.accentBackground : colors.ui.semantic.surface.base }}>
+                  <View style={{ width: 26, height: 26, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.icon.accentBackground : 'transparent' }}>
                     <ProviderBrandIcon brand={item.brand} size={16} variant={isDark ? 'onDark' : 'onLight'} />
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text numberOfLines={1} style={{ color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{item.modelLabel}</Text>
-                    <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '700', marginTop: 1 }}>{item.providerLabel}</Text>
+                    <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: active ? '700' : '500' }}>{item.modelLabel}</Text>
+                    <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 1 }}>{item.providerLabel}</Text>
                   </View>
                   <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: active ? colors.ui.control.primaryBackground : colors.ui.semantic.chrome.border, alignItems: 'center', justifyContent: 'center' }}>
                     {active ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.ui.control.primaryBackground }} /> : null}
@@ -968,15 +1011,16 @@ export function ModelMenu({
             <IslePressable
               haptic
               onPress={() => {
-                onClose()
+                if (!visible || closing.current) return
+                closeMenu()
                 onOpenConfiguration()
               }}
               accessibilityRole="button"
               accessibilityLabel={t('chat.aiConfiguration')}
-              style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.control.primaryBackground, borderWidth: colors.ui.monet ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.control.primaryBorder }}
+              style={{ minHeight: 44, marginTop: 6, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.semantic.chrome.border }}
             >
-              <AppIcon name="settings-sliders" color={colors.ui.control.primaryForeground} size={15} strokeWidth={appIconStroke.strong} />
-              <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 11, fontWeight: '900' }}>{t('chat.aiConfiguration')}</Text>
+              <AppIcon name="settings-sliders" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.strong} />
+              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '600' }}>{t('chat.aiConfiguration')}</Text>
             </IslePressable>
           </ScrollView>
         </AnimatedView>

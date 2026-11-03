@@ -82,3 +82,5 @@ export function resolveExternalSubmitKey(input: {
   if (input.consumedExternalSubmitKey === input.externalSubmitKey) return undefined
   return input.canSend ? input.externalSubmitKey : undefined
 }
+
+export type ComposerDraftPresence = 'loading' | 'empty' | 'draft'

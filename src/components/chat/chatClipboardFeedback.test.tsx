@@ -63,6 +63,24 @@ jest.mock('@/bootstrap/builtInWorkspaceFileRuntime', () => ({ builtInWritableWor
 const toast = jest.fn()
 const cases = ['success', 'false', 'rejection', 'throw'] as const
 
+it('reports only draft presence to the entry workspace, not private text or every keystroke', async () => {
+  const presence = jest.fn()
+  const onSend = jest.fn()
+  const view = await render(<Composer onDraftPresenceChange={presence} onSend={onSend}
+    viewportHeight={844} horizontalPadding={12} safeAreaTop={0} safeAreaBottom={0} keyboardLift={0} motion="none" />)
+  const input = view.getByLabelText('chat.inputAccessibility')
+  expect(presence).toHaveBeenLastCalledWith('empty')
+  await fireEvent.changeText(input, 'Private unsent text')
+  expect(presence).toHaveBeenLastCalledWith('draft')
+  const calls = presence.mock.calls.length
+  await fireEvent.changeText(input, 'Private unsent text with an additional thought')
+  expect(presence).toHaveBeenCalledTimes(calls)
+  await fireEvent.changeText(input, '')
+  expect(presence).toHaveBeenLastCalledWith('empty')
+  expect(presence.mock.calls.every(args => args.length === 1 && ['loading', 'empty', 'draft'].includes(args[0]))).toBe(true)
+  expect(onSend).not.toHaveBeenCalled()
+})
+
 it('opens code files only on demand and adds a path without losing the draft or sending', async () => {
   const onSend = jest.fn()
   const view = await render(<Composer initialDraft="Please review this carefully." initialDraftKey="workspace-test"

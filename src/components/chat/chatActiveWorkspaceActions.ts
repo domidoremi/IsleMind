@@ -31,7 +31,7 @@ interface ChatActiveWorkspaceActionOptions {
 
 export interface ChatActiveWorkspaceActions {
   confirmActionFromMessage: (item: Message) => void
-  confirmSwitchModel: (nextProvider: AIProvider, nextModel: string) => void
+  confirmSwitchModel: (nextProvider: AIProvider, nextModel: string) => boolean
   rememberCommandReference: (reference: CommandReference) => void
   repairAgentEvidenceFromMessage: (item: Message) => void
   safeStopMessage: (conversationId: string) => Promise<boolean>
@@ -73,15 +73,14 @@ export function useChatActiveWorkspaceActions({
   }
 
   function confirmSwitchModel(nextProvider: AIProvider, nextModel: string) {
-    confirmConversationModelSwitch({
+    if (lifetime.controller.signal.aborted) return false
+    return confirmConversationModelSwitch({
       activeConversation,
-      dialog,
       modelAccessSettings,
       nextModel,
       nextProvider,
       setShowOptions,
       switchConversationModel,
-      t,
     })
   }
 

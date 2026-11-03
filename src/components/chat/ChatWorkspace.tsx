@@ -383,8 +383,6 @@ function ChatWorkspaceBody({ conversation, active = true, showBack = false, embe
     return (
       <ChatSetupWorkspace
         backgroundState={backgroundState}
-        boundaryMemoryStatus={boundaryMemoryStatus}
-        chromeCollapsed={chromeCollapsed}
         collapseQuickTools={collapseQuickTools}
         compactViewport={compactViewport}
         composerBottomInset={composerBottomInset}
@@ -399,7 +397,6 @@ function ChatWorkspaceBody({ conversation, active = true, showBack = false, embe
         embedded={embedded}
         goHistory={goHistory}
         goKnowledge={goKnowledge}
-        goMemoryReview={goMemoryReview}
         goSettings={goSettings}
         insets={insets}
         keyboardLift={keyboardLift}
@@ -407,7 +404,6 @@ function ChatWorkspaceBody({ conversation, active = true, showBack = false, embe
         keyboardVisible={keyboardVisible}
         latestCompression={latestCompression}
         markChromeActive={markChromeActive}
-        mobileChatViewport={mobileChatViewport}
         modelAccessSettings={modelAccessSettings}
         chatComposerPlaceholder={chatComposerPlaceholder}
         chatEmptyTitle={chatEmptyTitle}
@@ -423,7 +419,6 @@ function ChatWorkspaceBody({ conversation, active = true, showBack = false, embe
         setShowOptions={setShowOptions}
         settingsTransitionActive={settingsTransitionActive}
         setupState={setupState}
-        shellNavigation={shellNavigation}
         showOptions={showOptions}
         showSetupEmptyState={showSetupEmptyState}
         topChromeInset={topChromeInset}

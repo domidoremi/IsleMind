@@ -1,6 +1,7 @@
 import { renderHook } from '@testing-library/react-native'
 import { useChatActiveWorkspaceActions } from './chatActiveWorkspaceActions'
 import { confirmActionForMessage } from './chatMessageBubbleActions'
+import { confirmConversationModelSwitch } from './chatModelActions'
 import type { Message } from '@/types/chatContracts'
 
 const mockStop = jest.fn()
@@ -13,6 +14,13 @@ jest.mock('./chatModelActions', () => ({ confirmConversationModelSwitch: jest.fn
 jest.mock('./chatMessageBubbleActions', () => ({ confirmActionForMessage: jest.fn(), repairAgentEvidenceDraft: jest.fn() }))
 
 beforeEach(() => jest.clearAllMocks())
+
+it.each([true, false])('returns the actual model-selection outcome to callers (%s)', async success => {
+  jest.mocked(confirmConversationModelSwitch).mockReturnValue(success)
+  const options = { activeConversation: { id: 'conversation' }, t: (key: string) => key } as Parameters<typeof useChatActiveWorkspaceActions>[0]
+  const view = await renderHook(() => useChatActiveWorkspaceActions(options))
+  expect(view.result.current.confirmSwitchModel({ id: 'next' } as never, 'model')).toBe(success)
+})
 
 it.each([true, false])('acknowledges asynchronous Stop only after persistence settles (%s)', async success => {
   let finish!: () => void
@@ -60,6 +68,15 @@ it('does not invoke a saved confirmation callback after unmount', async () => {
   await view.unmount()
   callback({ id: 'response' } as Message)
   expect(confirmActionForMessage).not.toHaveBeenCalled()
+})
+
+it('rejects a saved model-selection callback after unmount', async () => {
+  const options = { activeConversation: { id: 'conversation' }, t: (key: string) => key } as Parameters<typeof useChatActiveWorkspaceActions>[0]
+  const view = await renderHook(() => useChatActiveWorkspaceActions(options))
+  const callback = view.result.current.confirmSwitchModel
+  await view.unmount()
+  expect(callback({ id: 'next' } as never, 'model')).toBe(false)
+  expect(confirmConversationModelSwitch).not.toHaveBeenCalled()
 })
 
 it('does not revive an old callback when navigating back to the same conversation', async () => {

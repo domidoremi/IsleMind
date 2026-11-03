@@ -22,6 +22,7 @@ import {
   resolveExternalSubmitKey,
   restoreRejectedComposerAttachments,
   restoreRejectedComposerText,
+  type ComposerDraftPresence,
 } from './composerDraftState'
 import { appendComposerVoiceTranscript, composerVoiceIsBusy, formatComposerVoiceDuration, type ComposerVoiceState } from './composerVoiceState'
 import { useComposerVoiceInput } from './useComposerVoiceInput'
@@ -86,6 +87,7 @@ interface ComposerProps {
   keyboardLift: number
   motion: MotionIntensity
   onComposerPresentationChange?: (state: ComposerPresentationState) => void
+  onDraftPresenceChange?: (presence: ComposerDraftPresence) => void
   onStop?: () => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming?: (content: string, attachments: Attachment[]) => Promise<void> | void
@@ -135,6 +137,7 @@ export function Composer({
   keyboardLift,
   motion,
   onComposerPresentationChange,
+  onDraftPresenceChange,
   onStop,
   onSend,
   onSendWhileStreaming,
@@ -159,6 +162,7 @@ export function Composer({
   const [appliedInitialDraftKey, setAppliedInitialDraftKey] = useState<string | number | undefined>(undefined)
   const consumedExternalSubmitKey = useRef<string | number | undefined>(undefined)
   const {
+    ready: draftReady,
     markChanged: markDraftChanged,
     flush: flushDraft,
     clear: clearDraft,
@@ -302,6 +306,10 @@ export function Composer({
     entryCount: 5 + (onOpenKnowledge ? 1 : 0),
     unavailableEntryCount: (multimodalPolicy?.unavailableCount ?? 0) + (multimodalPolicy?.generationUnavailableCount ?? 0),
   })
+
+  useEffect(() => {
+    onDraftPresenceChange?.(!draftReady ? 'loading' : hasSendableDraft ? 'draft' : 'empty')
+  }, [draftReady, hasSendableDraft, onDraftPresenceChange])
 
   useEffect(() => {
     onComposerPresentationChange?.({

@@ -4,7 +4,6 @@ import type { TFunction } from 'i18next'
 import type { useIsleDialog } from '@/components/ui/isle'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import { sendConversationMessage as sendMessage } from '@/presentation/features/conversations/conversationMessageCommand'
-import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { Attachment, Conversation } from '@/types/chatContracts'
@@ -72,8 +71,8 @@ export interface ChatSetupWorkspaceState {
   setSetupSystemPrompt: Dispatch<SetStateAction<string>>
   submitSetup: (content: string, attachments: Attachment[]) => Promise<void>
   supportsSetupReasoningQuick: boolean
-  switchSetupModel: (nextModel: string) => void
-  switchSetupProviderModel: (nextProvider: AIProvider, nextModel: string) => void
+  switchSetupModel: (nextModel: string) => boolean
+  switchSetupProviderModel: (nextProvider: AIProvider, nextModel: string) => boolean
 }
 
 export function useChatSetupWorkspaceState({
@@ -242,26 +241,18 @@ export function useChatSetupWorkspaceState({
   }
 
   function switchSetupModel(nextModel: string) {
-    if (!homeProvider) return
-    if (!resolveProviderModelAliasAccess({ provider: homeProvider, model: nextModel, settings: modelAccessSettings }).allowed) {
-      return
-    }
-    setSetupSelectedProviderId(homeProvider.id)
-    setSetupSelectedModel(nextModel)
-    setSetupSelectionExplicit(true)
-    rememberExplicitModel(homeProvider.id, nextModel)
-    dialog.toast({ title: t('chat.modelSwitched'), message: `${resolveProviderDisplayName(homeProvider, t('providerSettings.customProvider'))} · ${resolveChatModelDisplayName(homeProvider, nextModel, settings.modelDisplayAliases)}`, tone: 'mint' })
+    return homeProvider ? switchSetupProviderModel(homeProvider, nextModel) : false
   }
 
   function switchSetupProviderModel(nextProvider: AIProvider, nextModel: string) {
     if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings: modelAccessSettings }).allowed) {
-      return
+      return false
     }
     setSetupSelectedProviderId(nextProvider.id)
     setSetupSelectedModel(nextModel)
     setSetupSelectionExplicit(true)
     rememberExplicitModel(nextProvider.id, nextModel)
-    dialog.toast({ title: t('chat.modelSwitched'), message: `${resolveProviderDisplayName(nextProvider, t('providerSettings.customProvider'))} · ${resolveChatModelDisplayName(nextProvider, nextModel, settings.modelDisplayAliases)}`, tone: 'mint' })
+    return true
   }
 
   function rememberExplicitModel(providerId: string, model: string) {

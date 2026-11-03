@@ -1,6 +1,7 @@
 import { Keyboard, ScrollView, View, useWindowDimensions } from 'react-native'
+import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import type { Dispatch, SetStateAction } from 'react'
+import { useState, type Dispatch, type SetStateAction } from 'react'
 import type { EdgeInsets } from 'react-native-safe-area-context'
 
 import type { IsleBackgroundState } from '@/components/ui/isle'
@@ -21,7 +22,8 @@ import { ChatScreenFrame } from './chatScreenFrame'
 import { FloatingComposer, type ComposerPanel } from './FloatingComposer'
 import type { ModelAccessSettings } from './chatModelSelection'
 import type { ChatSetupWorkspaceState } from './chatSetupWorkspaceState'
-import { ChatSetupEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyState'
+import { ChatEntryTasks } from './ChatEntryTasks'
+import type { ComposerDraftPresence } from './composerDraftState'
 import type { CompressionSummary } from './compressionSummary'
 import type { ComposerKeyboardMotion } from './chatWorkspaceKeyboard'
 import { ChatSetupThemeExperience } from './theme-experiences/ChatSetupThemeExperience'
@@ -30,8 +32,6 @@ const CHAT_SETUP_HEADER_HEIGHT = 58
 
 interface ChatSetupWorkspaceProps {
   backgroundState: IsleBackgroundState
-  boundaryMemoryStatus: ChatBoundaryMemoryStatus
-  chromeCollapsed: boolean
   collapseQuickTools: () => void
   compactViewport: boolean
   composerBottomInset: number
@@ -46,7 +46,6 @@ interface ChatSetupWorkspaceProps {
   embedded: boolean
   goHistory: () => void
   goKnowledge: () => void
-  goMemoryReview: () => void
   goSettings: () => void
   insets: EdgeInsets
   keyboardLift: number
@@ -54,7 +53,6 @@ interface ChatSetupWorkspaceProps {
   keyboardVisible: boolean
   latestCompression: CompressionSummary | null
   markChromeActive: () => void
-  mobileChatViewport: boolean
   modelAccessSettings: ModelAccessSettings
   chatComposerPlaceholder: string
   chatEmptyTitle: string
@@ -70,7 +68,6 @@ interface ChatSetupWorkspaceProps {
   setShowOptions: Dispatch<SetStateAction<boolean>>
   settingsTransitionActive: boolean
   setupState: ChatSetupWorkspaceState
-  shellNavigation: boolean
   showOptions: boolean
   showSetupEmptyState: boolean
   topChromeInset: number
@@ -79,7 +76,6 @@ interface ChatSetupWorkspaceProps {
 
 export function ChatSetupWorkspace({
   backgroundState,
-  boundaryMemoryStatus,
   collapseQuickTools,
   compactViewport,
   composerBottomInset,
@@ -94,7 +90,6 @@ export function ChatSetupWorkspace({
   embedded,
   goHistory,
   goKnowledge,
-  goMemoryReview,
   goSettings,
   insets,
   keyboardLift,
@@ -124,6 +119,7 @@ export function ChatSetupWorkspace({
 }: ChatSetupWorkspaceProps) {
   const { colors, canonicalThemeId, isDark } = useAppTheme()
   const { t } = useTranslation()
+  const [draftPresence, setDraftPresence] = useState<ComposerDraftPresence>('loading')
   const { width: setupViewportWidth, height: setupViewportHeight } = useWindowDimensions()
   const setupLayout = resolveProductMobileChatSetupLayout(
     setupViewportWidth,
@@ -140,16 +136,6 @@ export function ChatSetupWorkspace({
     setupState.openSetupAiConfiguration()
   }
   const setupNeedsConfiguration = !setupState.hasAvailableModel
-  const setupDescription = setupState.hasAvailableModel
-    ? t(CHAT_PRESENTATION_CATALOG.setupDescriptionKey)
-    : setupState.hasEnabledProvider
-      ? t('chat.syncModelsBeforeChat')
-      : t('chat.firstRunProviderSetupDescription')
-  const setupActionLabel = setupNeedsConfiguration
-    ? setupState.hasEnabledProvider
-      ? t('chat.configureProviders')
-      : t('chat.connectProvider')
-    : undefined
 
   const setupStatus = latestCompression?.metadata ? (
           <View pointerEvents="box-none" style={{ position: 'absolute', top: visualTopInset + topChromeInset + 38, left: 0, right: 0, zIndex: 44, paddingHorizontal: 14 }}>
@@ -189,32 +175,24 @@ export function ChatSetupWorkspace({
 
   const setupContent = showSetupEmptyState ? (
           <ScrollView
-            style={{ flex: 1 }}
+            testID="chat-entry-scroll"
+            style={{ flex: 1, marginBottom: composerBottomInset + keyboardLift }}
             keyboardShouldPersistTaps="handled"
-            onTouchStart={Keyboard.dismiss}
+            keyboardDismissMode="on-drag"
+            onTouchStart={() => { if (!Keyboard.isVisible()) Keyboard.dismiss() }}
             contentContainerStyle={{
               flexGrow: 1,
               alignItems: 'center',
-              justifyContent: setupLayout.compactLandscape ? 'flex-start' : 'center',
+              justifyContent: 'flex-start',
               paddingHorizontal: 20,
               paddingTop: setupContentTopPadding,
-              paddingBottom: composerBottomInset + keyboardLift,
+              paddingBottom: 24,
             }}
           >
-            <ChatSetupEmptyState
-              title={setupState.hasAvailableModel ? chatEmptyTitle : setupState.emptyHeaderTitle}
-              description={setupDescription}
-              actionLabel={setupActionLabel}
-              actionHint={setupNeedsConfiguration ? t('chat.configureProvidersAccessibilityHint') : undefined}
-              glyph={setupNeedsConfiguration ? 'provider-key' : undefined}
-              multimodalPolicy={setupState.setupMultimodalPolicy}
-              memoryStatus={boundaryMemoryStatus}
-              onInspectProvider={openAiConfiguration}
-              onOpenMemory={goMemoryReview}
-              onOpenTools={() => setComposerPanel('more')}
-              onStarter={setupState.hasAvailableModel ? onStarter : undefined}
-              onAction={setupNeedsConfiguration ? openAiConfiguration : undefined}
-            />
+            <ChatEntryTasks title={chatEmptyTitle} ready={setupState.hasAvailableModel} hasProvider={setupState.hasEnabledProvider}
+              modelTitle={setupModelTitle} providerName={setupState.homeProvider?.name} draftPresence={draftPresence} composing={keyboardVisible}
+              onStarter={onStarter} onConfigure={openAiConfiguration} onHistory={goHistory}
+              onDocuments={() => router.push('/documents')} />
           </ScrollView>
         ) : (
           <View style={{ flex: 1 }} />
@@ -277,6 +255,7 @@ export function ChatSetupWorkspace({
             setChromeCollapsed(true)
           }}
           onInputBlur={() => setComposerFocused(false)}
+          onDraftPresenceChange={setDraftPresence}
           keyboardLift={keyboardLift}
           keyboardMotion={keyboardMotion}
           panel={composerPanel}

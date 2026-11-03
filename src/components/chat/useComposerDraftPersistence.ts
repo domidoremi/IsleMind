@@ -23,6 +23,7 @@ interface UseComposerDraftPersistenceOptions {
 }
 
 interface ComposerDraftPersistenceState {
+  ready: boolean
   markChanged(): void
   flush(content: string, attachments: Attachment[]): Promise<void>
   clear(key?: string): Promise<void>
@@ -243,5 +244,5 @@ export function useComposerDraftPersistence({
     return clearPersistTimer
   }, [attachments, clearPersistTimer, content, hydratedKey, persistenceKey, persistSnapshot, sending])
 
-  return { markChanged, flush, clear }
+  return { ready: !persistenceKey?.trim() || hydratedKey === persistenceKey.trim(), markChanged, flush, clear }
 }

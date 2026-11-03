@@ -31,6 +31,7 @@ import { buildModelQuickOptions, type ModelAccessSettings } from './chatModelSel
 import { ComposerOverlay, ModelMenu, ModelSelector, type ModelMenuItem } from './FloatingComposerSurfaces'
 import { COMPOSER_INPUT_MIN_HEIGHT } from './floatingComposerGeometry'
 import type { ComposerKeyboardMotion } from './chatWorkspaceKeyboard'
+import type { ComposerDraftPresence } from './composerDraftState'
 
 export type ComposerPanel = 'prompt' | 'more' | null
 type ReasoningPickerValue = 'default' | NonNullable<Conversation['reasoningEffort']>
@@ -67,6 +68,7 @@ export function FloatingComposer({
   switchableProviders,
   modelAccessSettings,
   onSwitchModel,
+  modelSwitchDisabled = false,
   onOpenReasoningPicker,
   onOpenKnowledge,
   onOpenWorkspaceReview,
@@ -85,6 +87,7 @@ export function FloatingComposer({
   onInteractEnd,
   onInputFocus,
   onInputBlur,
+  onDraftPresenceChange,
   panel,
   onPanelChange,
   onCollapseTools,
@@ -120,7 +123,8 @@ export function FloatingComposer({
   onOpenModelPicker: () => void
   switchableProviders?: AIProvider[]
   modelAccessSettings?: ModelAccessSettings
-  onSwitchModel?: (provider: AIProvider, model: string) => void
+  onSwitchModel?: (provider: AIProvider, model: string) => boolean
+  modelSwitchDisabled?: boolean
   onOpenReasoningPicker?: () => void
   onOpenKnowledge: () => void
   onOpenWorkspaceReview?: () => void
@@ -139,6 +143,7 @@ export function FloatingComposer({
   onInteractEnd?: () => void
   onInputFocus?: () => void
   onInputBlur?: () => void
+  onDraftPresenceChange?: (presence: ComposerDraftPresence) => void
   panel: ComposerPanel
   onPanelChange: (panel: ComposerPanel) => void
   onCollapseTools: () => void
@@ -527,6 +532,7 @@ export function FloatingComposer({
             onSendWhileStreaming={onSendWhileStreaming}
             onFocus={handleInputFocus}
             onBlur={onInputBlur}
+            onDraftPresenceChange={onDraftPresenceChange}
             viewportHeight={composerWindowHeight}
             horizontalPadding={composerLayout.horizontalPadding}
             safeAreaTop={insets.top}
@@ -559,9 +565,11 @@ export function FloatingComposer({
         colors={colors}
         isDark={isDark}
         motion={motion}
+        selectionDisabled={modelSwitchDisabled || streaming || composerPresentation.activityState === 'sending' || !onSwitchModel}
+        selectionDisabledLabel={streaming ? t('chat.generating') : t('chat.modelSwitchBlocked')}
         onSelect={(item) => {
           const selectedProvider = switchableProviders?.find((candidate) => candidate.id === item.providerId)
-          if (selectedProvider && onSwitchModel) onSwitchModel(selectedProvider, item.model)
+          return selectedProvider && onSwitchModel ? onSwitchModel(selectedProvider, item.model) : false
         }}
         onOpenConfiguration={() => {
           setModelMenuOpen(false)

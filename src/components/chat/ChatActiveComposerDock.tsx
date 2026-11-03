@@ -143,6 +143,7 @@ export function ChatActiveComposerDock({
         switchableProviders={readyProviders}
         modelAccessSettings={modelAccessSettings}
         onSwitchModel={confirmSwitchModel}
+        modelSwitchDisabled={conversationLocked}
         onOpenReasoningPicker={handleOpenModelPicker}
         onOpenKnowledge={goKnowledge}
         onOpenWorkspaceReview={openWorkspaceReview}

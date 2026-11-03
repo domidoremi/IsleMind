@@ -18,99 +18,24 @@ export interface ChatSetupThemeExperienceProps {
   composer: ReactNode
 }
 
-export function ChatSetupThemeExperience(props: ChatSetupThemeExperienceProps) {
-  switch (props.themeId) {
-    case 'monet': return <MonetSetupExperience {...props} />
-    case 'material': return <MaterialSetupExperience {...props} />
-    case 'liquid-glass': return <LiquidGlassSetupExperience {...props} />
-    case 'minimal':
-    default: return <MinimalSetupExperience {...props} />
-  }
-}
-
-function MinimalSetupExperience({ chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
+export function ChatSetupThemeExperience({ themeId, chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
+  // Slot ancestry is stable: changing material cannot replace a live composer.
   return (
-    <View testID="chat-setup-experience-minimal" style={styles.root}>
+    <View testID={`chat-setup-experience-${themeId}`} style={styles.root}>
       {chrome}
-      {status}
-      <View style={styles.contentFirst}>{content}</View>
-      {controls}
-      {composer}
-    </View>
-  )
-}
-
-function MonetSetupExperience({ chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
-  return (
-    <View testID="chat-setup-experience-monet" style={styles.root}>
-      <View style={styles.monetChromeDrift}>{chrome}</View>
-      <View style={styles.monetSetupCanvas}>
-        <View style={styles.monetSetupContent}>
-          <View style={styles.monetStatusDrift}>{status}</View>
-          <View style={styles.contentFirst}>{content}</View>
-        </View>
+      <View pointerEvents="box-none" style={styles.statusLayer}>{status}</View>
+      <View testID="chat-entry-canvas" style={[styles.canvas, { paddingHorizontal: themeId === 'material' ? 14 : themeId === 'liquid-glass' ? 7 : 0 }]}>
+        {content}
       </View>
       {controls}
-      <View style={styles.monetComposerDock}>{composer}</View>
-    </View>
-  )
-}
-
-function MaterialSetupExperience({ colors, chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
-  return (
-    <View testID="chat-setup-experience-material" style={styles.root}>
-      {chrome}
-      <View style={[styles.materialTopAppBar, { backgroundColor: colors.ui.semantic.surface.muted }]}>
-        <View style={styles.materialStatusBand}>{status}</View>
-      </View>
-      <View style={styles.materialSetupCanvas}>
-        <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={styles.materialSetupRail}>
-          <View style={[styles.materialRailMarker, { backgroundColor: colors.ui.actionBar.itemActiveBackground }]} />
-          <View style={[styles.materialRailMarkerShort, { backgroundColor: colors.ui.semantic.chrome.border }]} />
-          <View style={[styles.materialRailMarker, { backgroundColor: colors.ui.semantic.chrome.border }]} />
-        </View>
-        <View style={styles.materialSetupColumn}>{content}</View>
-      </View>
-      {controls}
-      <View style={styles.materialComposerDock}>{composer}</View>
-    </View>
-  )
-}
-
-function LiquidGlassSetupExperience({ chrome, status, content, controls, composer }: ChatSetupThemeExperienceProps) {
-  return (
-    <View testID="chat-setup-experience-liquid-glass" style={styles.root}>
-      <View pointerEvents="box-none" style={styles.glassLayer}>{chrome}</View>
-      <View style={styles.glassStatusLayer}>{status}</View>
-      <View style={styles.glassSetupCanvas}>
-        <View style={styles.glassSetupColumn}>{content}</View>
-      </View>
-      {controls}
-      <View pointerEvents="box-none" style={styles.glassLayer}>{composer}</View>
+      <View pointerEvents="box-none" style={styles.composerLayer}>{composer}</View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  contentFirst: { flex: 1 },
-  monetChromeDrift: { marginHorizontal: 2 },
-  monetSetupCanvas: { flex: 1, position: 'relative', overflow: 'hidden' },
-  monetSetupContent: { flex: 1, marginLeft: 8 },
-  monetStatusDrift: { marginLeft: -6, marginRight: 12 },
-  monetComposerDock: { marginHorizontal: 3 },
-  materialTopAppBar: { zIndex: 2, paddingBottom: 2 },
-  materialStatusBand: { paddingHorizontal: 4 },
-  // Split the rail gutter evenly without narrowing the content column.
-  materialSetupCanvas: { flex: 1, position: 'relative', overflow: 'hidden', paddingHorizontal: 12 },
-  materialSetupRail: { position: 'absolute', top: 12, bottom: 12, left: 5, width: 12, alignItems: 'center', justifyContent: 'space-between', opacity: 0.84 },
-  materialRailMarker: { width: 8, height: 26, borderRadius: 4 },
-  materialRailMarkerShort: { width: 8, height: 8, borderRadius: 4 },
-  materialSetupColumn: { flex: 1, minWidth: 0, paddingHorizontal: 2 },
-  materialComposerDock: { paddingHorizontal: 2 },
-  // Absolute children need a sized native parent for hit and accessibility bounds.
-  glassLayer: { ...StyleSheet.absoluteFill, zIndex: 2 },
-  glassStatusLayer: { zIndex: 1, paddingHorizontal: 4 },
-  glassSetupCanvas: { flex: 1, position: 'relative', overflow: 'hidden', paddingHorizontal: 3 },
-  glassSetupColumn: { flex: 1, minHeight: 0, minWidth: 0, paddingHorizontal: 4 },
+  root: { flex: 1, minHeight: 0 },
+  canvas: { flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' },
+  statusLayer: { ...StyleSheet.absoluteFill, zIndex: 1 },
+  composerLayer: { ...StyleSheet.absoluteFill, zIndex: 2 },
 })

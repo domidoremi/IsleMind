@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react-native'
-import { StyleSheet, View } from 'react-native'
+import { StyleSheet, TextInput, View } from 'react-native'
 
 import { getColors } from '@/theme/colors'
 
@@ -51,6 +51,10 @@ it.each(['setup', 'active'] as const)(
 
     for (const id of ['glass-header', 'glass-composer']) {
       const layer = screen.getByTestId(id).parent
+      if (phase === 'setup' && id === 'glass-header') {
+        expect(layer).toBe(root)
+        continue
+      }
       expect(layer?.parent).toBe(root)
       expect(StyleSheet.flatten(layer?.props.style)).toEqual(expect.objectContaining(StyleSheet.absoluteFill))
       expect(layer?.props.pointerEvents).toBe('box-none')
@@ -89,6 +93,25 @@ it('keeps Material setup content horizontally centered inside every canvas wrapp
 
   expect(ancestor).toBe(root)
   expect(horizontalPadding).toBe(28)
+})
+
+it('keeps setup content and composer inputs at the same ancestry across all five themes', async () => {
+  const onFocus = jest.fn()
+  const props = {
+    compactViewport: false, chrome: null, status: null, controls: null,
+    content: <View><TextInput testID="entry-input" value="An unsent thought" onFocus={onFocus} /></View>,
+    composer: <View><TextInput testID="entry-composer-input" value="A draft with a caret" onFocus={onFocus} /></View>,
+  }
+  const screen = await render(<ChatSetupThemeExperience {...props} themeId="minimal" colors={getColors('light', 'minimal')} />)
+  const content = screen.getByTestId('entry-input')
+  const composer = screen.getByTestId('entry-composer-input')
+  for (const family of ['monet', 'material', 'liquid-glass', 'animal-island-ui', 'minimal'] as const) {
+    await screen.rerender(<ChatSetupThemeExperience {...props} themeId={family} colors={getColors('light', family)} />)
+    expect(screen.getByTestId('entry-input')).toBe(content)
+    expect(screen.getByTestId('entry-composer-input')).toBe(composer)
+    expect(composer.props.value).toBe('A draft with a caret')
+  }
+  expect(onFocus).not.toHaveBeenCalled()
 })
 
 it('centers the Material setup connection action beneath its introduction', async () => {
