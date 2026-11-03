@@ -1,12 +1,14 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { ActivityIndicator, FlatList, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
-import { useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { IsleButton, IsleChip, IsleSection } from '@/components/ui/isle'
+import { IsleButton, IsleChip } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import type { KnowledgeLocalSource, KnowledgeLocalSourceReader, KnowledgeLocalSourceReference } from '@/modules/knowledge'
+import type { KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import type { MessageCitation } from '@/types/contextContracts'
+import { WorkspaceSurface } from '@/presentation/layout/WorkspaceSurface'
+import { useWorkspaceLayout } from '@/presentation/layout/useWorkspaceLayout'
+import { useCanonicalSourceController } from './useCanonicalSourceController'
 
 export interface CanonicalSourceReaderProps {
   conversationId: string
@@ -17,73 +19,49 @@ export interface CanonicalSourceReaderProps {
   header: ReactNode
 }
 
-type ReadState = { key: string } & (
-  | { status: 'loading' | 'missing' | 'unlinked' | 'error' }
-  | { status: 'ready'; source: KnowledgeLocalSource }
-)
-
 /** A disposable, scoped read projection; captured citation text is never rewritten. */
 export function CanonicalSourceReader({ conversationId, messageId, messageTimestamp, citation, readLocalSource, header }: CanonicalSourceReaderProps) {
   const { colors } = useAppTheme()
   const { t, i18n } = useTranslation()
-  const [refresh, setRefresh] = useState(0)
-  const [state, setState] = useState<ReadState>()
-  const [expandedKey, setExpandedKey] = useState<string>()
-  const key = JSON.stringify([conversationId, messageId, citation.type, citation.id, citation.documentId, citation.chunkId, refresh])
-  const current = state?.key === key ? state : undefined
-  const documentId = citation.documentId
-  const sourceId = citation.id
-  const sourceType = citation.type
-
-  useFocusEffect(useCallback(() => {
-    const controller = new AbortController()
-    const reference: KnowledgeLocalSourceReference | undefined = sourceType === 'knowledge' && documentId
-      ? { type: 'knowledge', documentId }
-      : sourceType === 'memory'
-        ? { type: 'memory', memoryId: sourceId, conversationId }
-        : undefined
-    setState({ key, status: reference ? 'loading' : 'unlinked' })
-    if (reference) void (async () => {
-      try {
-        const source = await readLocalSource(reference, { signal: controller.signal })
-        if (!controller.signal.aborted) setState(source ? { key, status: 'ready', source } : { key, status: 'missing' })
-      } catch {
-        if (!controller.signal.aborted) setState({ key, status: 'error' })
-      }
-    })()
-    return () => controller.abort()
-  }, [conversationId, documentId, key, readLocalSource, sourceId, sourceType]))
-
-  const source = current?.status === 'ready' ? current.source : undefined
-  const document = source?.type === 'knowledge' ? source.document : undefined
-  const memory = source?.type === 'memory' ? source.memory : undefined
-  const chunks = source?.type === 'knowledge' ? source.chunks : []
-  const citedChunk = citation.chunkId ? chunks.find((chunk) => chunk.id === citation.chunkId) : undefined
-  const showAll = expandedKey === key || !citedChunk
-  const updatedAt = document?.updatedAt ?? memory?.updatedAt
-  const status = current?.status ?? 'loading'
-  const textStyle = { color: colors.textSecondary, fontSize: 14, lineHeight: 22 }
+  const layout = useWorkspaceLayout()
+  const controller = useCanonicalSourceController({ conversationId, messageId, citation, readLocalSource })
+  const { document, memory, chunks, citedChunk, showAll, updatedAt, status } = controller
+  const typography = colors.design!.semantic.typography
+  const textStyle = { ...typography.body, color: colors.text }
+  const captionStyle = { ...typography.caption, color: colors.textSecondary }
 
   return (
+    <WorkspaceSurface role="reading" testID="source-local-workspace" style={{ flex: 1, minHeight: 0, marginHorizontal: 12, marginTop: 12, marginBottom: 16, padding: 16, gap: 12 }}>
+      <View testID="source-reader-commands" style={{ minWidth: 0, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <Text testID="source-reader-label" style={[typography.label, {
+          color: colors.textSecondary, flexGrow: 1, flexBasis: layout.wide ? 'auto' : '100%',
+        }]}>{t('source.currentSavedSource')}</Text>
+        <View testID="source-reader-actions" style={{ minWidth: 0, maxWidth: '100%', flexShrink: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {citedChunk && chunks.length > 1 ? <IsleButton compact
+            label={t(showAll ? 'source.showCitedSection' : 'source.showAllSavedSections', { count: chunks.length })}
+            onPress={controller.toggleSections} /> : null}
+          {status !== 'unlinked' ? <IsleButton compact label={t('source.refreshSavedSource')} onPress={controller.refreshSource} /> : null}
+        </View>
+      </View>
     <FlatList
       testID="canonical-source-reader"
-      data={showAll ? chunks : citedChunk ? [citedChunk] : []}
+      style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+      data={controller.visibleChunks}
       keyExtractor={(chunk) => chunk.id}
       initialNumToRender={3}
       windowSize={5}
-      contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 42, gap: 12 }}
+      contentContainerStyle={{ paddingTop: 8, paddingBottom: 24, gap: 20 }}
       ListHeaderComponent={
         <View style={{ gap: 12 }}>
-          {header}
-          <IsleSection title={t('source.currentSavedSource')} material="raised" elevated={false}>
-            <Text style={textStyle}>{t('source.currentSavedSourceNotice')}</Text>
-            {source && updatedAt !== undefined ? (
-              <Text style={{ ...textStyle, marginTop: 8 }}>
+          <Text selectable accessibilityRole="header" style={[typography.headline, { color: colors.text }]}>{document?.title ?? citation.title}</Text>
+          <Text style={captionStyle}>{t('source.currentSavedSourceNotice')}</Text>
+            {updatedAt !== undefined ? (
+              <Text style={captionStyle}>
                 {t('source.savedUpdatedAt', { date: new Date(updatedAt).toLocaleString(i18n.language) })}
               </Text>
             ) : null}
             {updatedAt !== undefined && updatedAt > messageTimestamp ? (
-              <Text accessibilityRole="alert" style={{ ...textStyle, marginTop: 8 }}>{t('source.updatedAfterResponse')}</Text>
+              <Text accessibilityRole="alert" style={captionStyle}>{t('source.updatedAfterResponse')}</Text>
             ) : null}
             {status === 'loading' ? <ActivityIndicator accessibilityLabel={t('source.loadingSavedSource')} style={{ marginTop: 12 }} /> : null}
             {status === 'missing' || status === 'unlinked' || status === 'error' ? (
@@ -92,17 +70,10 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
               </Text>
             ) : null}
             {document ? (
-              <View style={{ gap: 8, marginTop: 12 }}>
-                <Text style={{ ...textStyle, color: colors.text, fontWeight: '700' }}>{document.title}</Text>
+              <View style={{ gap: 8 }}>
                 {document.status !== 'ready' ? <Text accessibilityRole="alert" style={textStyle}>{t('source.savedDocumentNotReady')}</Text> : null}
                 {citation.chunkId && !citedChunk ? <Text accessibilityRole="alert" style={textStyle}>{t('source.citedSectionMissing')}</Text> : null}
                 {!chunks.length ? <Text style={textStyle}>{t('source.noSavedText')}</Text> : null}
-                {citedChunk && chunks.length > 1 ? (
-                  <IsleButton
-                    label={t(showAll ? 'source.showCitedSection' : 'source.showAllSavedSections', { count: chunks.length })}
-                    onPress={() => setExpandedKey(showAll ? undefined : key)}
-                  />
-                ) : null}
               </View>
             ) : null}
             {memory ? (
@@ -111,24 +82,19 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
                 <Text selectable style={textStyle}>{memory.content}</Text>
               </View>
             ) : null}
-            {status !== 'unlinked' ? (
-              <View style={{ marginTop: 12 }}>
-                <IsleButton label={t('source.refreshSavedSource')} onPress={() => setRefresh((value) => value + 1)} />
-              </View>
-            ) : null}
-          </IsleSection>
         </View>
       }
+      ListFooterComponent={<View testID="source-captured-context" style={{ paddingTop: 8 }}>{header}</View>}
       renderItem={({ item }) => (
-        <IsleSection
-          title={t(item.id === citation.chunkId ? 'source.savedCitedSection' : 'source.savedSection', { index: (item.chunkIndex ?? item.ordinal) + 1 })}
-          subtitle={item.headingPath?.join(' / ')}
-          material="raised"
-          elevated={false}
-        >
+        <View testID={`source-section-${item.id}`} style={{ gap: 10 }}>
+          <Text accessibilityRole="header" style={[typography.label, { color: colors.textSecondary }]}>
+            {t(item.id === citation.chunkId ? 'source.savedCitedSection' : 'source.savedSection', { index: (item.chunkIndex ?? item.ordinal) + 1 })}
+          </Text>
+          {item.headingPath?.length ? <Text style={captionStyle}>{item.headingPath.join(' / ')}</Text> : null}
           <Text selectable style={textStyle}>{item.content}</Text>
-        </IsleSection>
+        </View>
       )}
     />
+    </WorkspaceSurface>
   )
 }

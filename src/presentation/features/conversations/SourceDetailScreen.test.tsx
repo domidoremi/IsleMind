@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Linking, Platform, Text } from 'react-native'
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native'
 import * as Clipboard from 'expo-clipboard'
 import type { KnowledgeLocalSource, KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import type { MessageCitation } from '@/types/contextContracts'
@@ -29,7 +29,7 @@ jest.mock('@/components/ui/isle', () => {
     <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}><Text>{label}</Text></Pressable>
   )
   return {
-    IsleButton: Button, IsleIconButton: Button, IslePanel: View, IsleChip: Text,
+    IsleButton: Button, IsleIconButton: Button, IslePanel: View, IsleChip: Text, IslePressable: Pressable,
     IsleSection: ({ title, children }: { title: string; children: ReactNode }) => <View><Text>{title}</Text>{children}</View>,
     useIsleDialog: jest.fn(() => ({ toast: jest.fn() })),
   }
@@ -73,6 +73,10 @@ function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((settle) => { resolve = settle })
   return { promise, resolve }
+}
+async function openSourcePicker(view: Awaited<ReturnType<typeof render>>) {
+  const picker = view.getByTestId('source-citation-picker')
+  if (!picker.props.accessibilityState.expanded) await fireEvent.press(picker)
 }
 
 describe('CanonicalSourceReader', () => {
@@ -184,6 +188,40 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     }))
   })
   afterEach(() => jest.restoreAllMocks())
+
+  it('keeps the selected reader and expanded sections across wide, compact and large-text layouts without rereading', async () => {
+    const dimensions = jest.spyOn(require('react-native'), 'useWindowDimensions')
+    dimensions.mockReturnValue({ width: 1280, height: 900, fontScale: 1, scale: 1 })
+    citations = [citation, { id: 'web-b', type: 'web', title: 'Web source', url: 'https://example.test/other' }]
+    const source = documentSource()
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockResolvedValue(source)
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    const column = view.getByTestId('source-reading-column')
+    const label = view.getByTestId('source-reader-label')
+    const actions = view.getByTestId('source-reader-actions')
+    expect(within(actions).queryByText('source.currentSavedSource')).toBeNull()
+    expect(view.getByTestId('source-workspace')).toHaveStyle({ flexDirection: 'row' })
+    await fireEvent.press(view.getByRole('button', { name: 'source.showAllSavedSections' }))
+    const section = view.getByText(source.chunks[0].content)
+    for (const size of [
+      { width: 1280, height: 900, fontScale: 1.6, scale: 1 },
+      { width: 780, height: 900, fontScale: 1, scale: 1 },
+      { width: 1280, height: 900, fontScale: 1, scale: 1 },
+    ]) {
+      dimensions.mockReturnValue(size)
+      await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+      expect(view.getByTestId('source-workspace')).toHaveStyle({ flexDirection: size.width === 1280 && size.fontScale === 1 ? 'row' : 'column' })
+      expect(view.getByTestId('source-reading-column')).toBe(column)
+      expect(view.getByTestId('source-reader-label')).toBe(label)
+      expect(label).toHaveStyle({ flexBasis: size.width === 1280 && size.fontScale === 1 ? 'auto' : '100%' })
+      expect(view.getByTestId('source-reader-actions')).toBe(actions)
+      expect(view.getByText(source.chunks[0].content)).toBe(section)
+      expect(view.getByTestId('source-citation-0', { includeHiddenElements: true }).props.accessibilityState.selected).toBe(true)
+    }
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(router.setParams).not.toHaveBeenCalled()
+    expect(WebView).not.toHaveBeenCalled()
+  })
 
   it.each(['success', 'false', 'rejection'] as const)('reports the actual source clipboard outcome: %s', async (outcome) => {
     const write = jest.mocked(Clipboard.setStringAsync)
@@ -302,6 +340,7 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     })
 
     async function selectSource(view: Awaited<ReturnType<typeof render>>, second: boolean) {
+      await openSourcePicker(view)
       await fireEvent.press(view.getByRole('button', { name: second ? '2. Second source' : '1. First source' }))
       const citationId = second ? 'web-b' : 'web-a'
       expect(router.setParams).toHaveBeenLastCalledWith({ citationId, url: undefined })
@@ -464,6 +503,7 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
     jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true)
     const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    await openSourcePicker(view)
     await fireEvent.press(view.getByRole('button', { name: '2. Second source' }))
     expect(router.setParams).toHaveBeenCalledWith({ citationId: 'web-b', url: undefined })
     useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'web-b' })
@@ -484,6 +524,7 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     citations = [citation, { ...citation, id: 'citation-b', title: 'Another source', documentId: 'document-b', excerpt: 'Another captured excerpt' }]
     const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockResolvedValue(undefined)
     const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    await openSourcePicker(view)
     await fireEvent.press(view.getByRole('button', { name: '2. Another source' }))
     expect(router.setParams).toHaveBeenCalledWith({ citationId: 'citation-b', url: undefined })
     useLocalSearchParams.mockReturnValue({ conversationId: 'conversation-a', messageId: 'message-a', citationId: 'citation-b' })
@@ -491,6 +532,23 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     expect(read.mock.calls.at(-1)?.[0]).toEqual({ type: 'knowledge', documentId: 'document-b' })
     expect(view.getByText('Another captured excerpt')).toBeTruthy()
     expect(view.queryByText('Captured excerpt')).toBeNull()
+  })
+
+  it('keeps local source commands outside the reading list and browses metadata without extra reads', async () => {
+    citations = [citation, { ...citation, id: 'another', documentId: 'document-b', title: 'Another document' }]
+    const source = documentSource()
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockResolvedValue(source)
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    const reader = within(view.getByTestId('canonical-source-reader'))
+    expect(reader.queryByRole('button', { name: 'source.refreshSavedSource' })).toBeNull()
+    expect(view.getByTestId('source-reader-commands')).toBeTruthy()
+    await openSourcePicker(view)
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(router.setParams).not.toHaveBeenCalled()
+    await fireEvent.press(view.getByTestId('source-captured-details'))
+    expect(view.getByText('doc document')).toBeTruthy()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(view.getByText(source.chunks[1].content)).toBeTruthy()
   })
 
   it.each(['ios', 'web'] as const)('shows plain selectable provider passages on %s, not numbered bindings or source-read authority', async (platform) => {

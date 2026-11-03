@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { BackHandler, Linking, Platform, ScrollView, View, useWindowDimensions } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import type { WebViewProps } from 'react-native-webview'
@@ -11,7 +11,7 @@ import { type IsleBackgroundState } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
-import { IsleIconButton, IsleSection } from '@/components/ui/isle'
+import { IsleIconButton, IslePressable, IsleSection } from '@/components/ui/isle'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
@@ -25,16 +25,21 @@ import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 import type { KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import { CanonicalSourceReader } from './CanonicalSourceReader'
 import { resolveCapturedCitation } from './sourceCitationSelection'
+import { SourceCitationNavigation } from './SourceCitationNavigation'
+import { useWorkspaceLayout } from '@/presentation/layout/useWorkspaceLayout'
 import { ProviderCitationPassages } from './ProviderCitationPassages'
 import { useActionFeedback } from '@/hooks/useActionFeedback'
 import { ActionFeedback } from '@/components/ui/ActionFeedback'
 import { PageFeedbackRegion } from '@/components/ui/PageFeedback'
 import { IsleEmptyState } from '@/components/ui/isle/EmptyState'
+import { WorkspaceSurface } from '@/presentation/layout/WorkspaceSurface'
+import { WebSourceSnapshot } from './WebSourceSnapshot'
 
 type ProcessTraceGroupKey = 'agentPlan' | 'context' | 'search' | 'toolActivity' | 'agentSynthesis' | 'agentRecovery' | 'other'
 
 export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSourceReader, 'readLocalSource'>) {
   const { colors } = useAppTheme()
+  const layout = useWorkspaceLayout()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const params = useLocalSearchParams<{ conversationId?: string; messageId?: string; citationId?: string; kind?: string; url?: string; qaErrorBoundary?: string; qaCapture?: string }>()
@@ -73,7 +78,7 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
     : webUrl && webPreviewSupported
       ? readerBackgroundState
       : 'idle'
-  const title = mode === 'process' ? t('source.process') : citation?.title ?? t('source.source')
+  const title = mode === 'process' ? t('source.process') : t('source.source')
   const subtitle = mode === 'process'
     ? [t('source.completed', { count: traces.filter((trace) => trace.status === 'done').length }), t('source.errors', { count: traces.filter((trace) => trace.status === 'error').length }), t('source.cancelled', { count: traces.filter((trace) => trace.status === 'cancelled').length }), t('source.skipped', { count: traces.filter((trace) => trace.status === 'skipped').length })].join(' · ')
     : getSourceSubtitle(citation, webUrl, t)
@@ -138,6 +143,10 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
     dialog.toast({ title: t('source.cannotOpen'), message: t('source.cannotOpenMessage'), tone: 'danger' })
   }
 
+  const providerPassages = mode === 'source' && citation?.type === 'web'
+    ? <ProviderCitationPassages key={citation.id} value={citation.providerSupport} answerText={message?.responseText ?? message?.content ?? ''} />
+    : null
+
   return (
     <ThemeDetailFrame
       kind="source"
@@ -165,28 +174,31 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
         </View>
       }
     >
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: layout.maxWidth, alignSelf: 'center' }}>
         <PageFeedbackRegion style={{ marginHorizontal: 18 }} />
         <ActionFeedback phase={copyFeedback.phase} successLabel={t('common.copied')} errorLabel={t('source.clipboardUnavailable')} style={{ paddingHorizontal: 18 }} testID="source-copy-feedback" />
-        {mode === 'source' && citations.length > 1 ? (
-          <ScrollView horizontal style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 8, gap: 8 }}>
-            {citations.map((item, index) => (
-              <IsleButton key={`${item.id}:${index}`} label={`${index + 1}. ${item.title}`} disabled={!resolveCapturedCitation(citations, item.id)} onPress={() => router.setParams({ citationId: item.id, url: undefined })} />
-            ))}
-          </ScrollView>
-        ) : null}
+        <View testID="source-workspace" style={{ flex: 1, minHeight: 0, minWidth: 0, flexDirection: layout.wide ? 'row' : 'column' }}>
+        {mode === 'source' && citations.length > 1 ? <View testID="source-navigation-column" style={{
+          minWidth: 0, flexBasis: layout.wide ? layout.sidebarWidth : 'auto', flexShrink: layout.wide ? 0 : 1,
+          minHeight: 0, paddingHorizontal: 12, paddingTop: 12, paddingBottom: layout.wide ? 16 : 0,
+        }}>
+          <WorkspaceSurface role="support" style={{ flex: layout.wide ? 1 : undefined, minHeight: 0, padding: 8 }}>
+          <SourceCitationNavigation citations={citations} selectedId={selectedCitationId} wide={layout.wide}
+            onSelect={id => router.setParams({ citationId: id, url: undefined })} />
+          </WorkspaceSurface>
+        </View> : null}
+        <View testID="source-reading-column" style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
         <RenderGuard label={mode === 'process' ? t('source.process') : t('source.source')}>
-          {mode === 'source' && citation?.type === 'web' ? (
-            <ProviderCitationPassages key={citation.id} value={citation.providerSupport} answerText={message?.responseText ?? message?.content ?? ''} />
-          ) : null}
           {mode === 'process' ? (
             <ProcessReader traces={traces} />
           ) : webUrl ? (
-            <WebReader key={webReaderKey} url={webUrl} citation={citation} previewSupported={webPreviewSupported} onOpenExternal={openExternal} onBackgroundStateChange={setReaderBackgroundState} />
+            <WebReader key={webReaderKey} url={webUrl} citation={citation} context={providerPassages} previewSupported={webPreviewSupported} onOpenExternal={openExternal} onBackgroundStateChange={setReaderBackgroundState} />
           ) : (
-            <LocalSourceReader citation={citation} conversationId={conversationId} messageId={messageId} messageTimestamp={message?.timestamp} readLocalSource={readLocalSource} />
+            <LocalSourceReader citation={citation} context={providerPassages} conversationId={conversationId} messageId={messageId} messageTimestamp={message?.timestamp} readLocalSource={readLocalSource} />
           )}
         </RenderGuard>
+        </View>
+        </View>
       </View>
     </ThemeDetailFrame>
   )
@@ -206,17 +218,17 @@ function WebReader({
   previewSupported,
   onOpenExternal,
   onBackgroundStateChange,
+  context,
 }: {
   url: string
   citation?: MessageCitation
   previewSupported: boolean
   onOpenExternal: () => Promise<void>
   onBackgroundStateChange: (state: IsleBackgroundState) => void
+  context?: ReactNode
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const { width } = useWindowDimensions()
-  const compact = width < 430
   const [loading, setLoading] = useState(previewSupported)
   const [failed, setFailed] = useState(false)
   const [WebViewComponent, setWebViewComponent] = useState<React.ComponentType<WebViewProps> | null>(null)
@@ -245,9 +257,12 @@ function WebReader({
     onBackgroundStateChange(!previewSupported ? 'idle' : failed ? 'error' : loading || !WebViewComponent ? 'active' : 'idle')
   }, [failed, loading, onBackgroundStateChange, previewSupported, WebViewComponent])
 
+  if (!previewSupported || failed) return <WebSourceSnapshot url={url} citation={citation}
+    nativeFailure={previewSupported} onOpenExternal={onOpenExternal} context={context} />
+
   return (
     <View style={{ flex: 1 }}>
-      <IslePanel material="raised" elevated={false} style={{ marginHorizontal: compact ? 10 : 12, marginTop: 10, marginBottom: 8 }} radius={colors.ui.radius.panel}>
+      <WorkspaceSurface role="support" style={{ marginHorizontal: 12, marginTop: 10, marginBottom: 8, padding: 0 }}>
         <View style={{ paddingHorizontal: 14, paddingVertical: 11 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
             <View style={{ width: 26, height: 26, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
@@ -262,16 +277,8 @@ function WebReader({
             <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 6 }}>{citation.excerpt}</Text>
           ) : null}
         </View>
-      </IslePanel>
-      {!previewSupported || failed ? (
-        <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
-          <Text style={{ color: colors.text, fontSize: 19, fontWeight: '800' }}>{t('source.previewUnavailable')}</Text>
-          <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>
-            {t(previewSupported ? 'source.previewUnavailableMessage' : 'source.previewUnsupportedWebMessage')}
-          </Text>
-          <IsleButton label={t('source.openInBrowser')} tone="primary" onPress={() => void onOpenExternal()} style={{ marginTop: 16 }} />
-        </View>
-      ) : (
+        {context}
+      </WorkspaceSurface>
         <View style={{ flex: 1 }}>
           {loading || !WebViewComponent ? <ReaderSkeleton label={t('source.loadingPreview')} /> : null}
           {WebViewComponent ? (
@@ -294,56 +301,57 @@ function WebReader({
             />
           ) : null}
         </View>
-      )}
     </View>
   )
 }
 
-function LocalSourceReader({ citation, conversationId, messageId, messageTimestamp, readLocalSource }: {
+function LocalSourceReader({ citation, conversationId, messageId, messageTimestamp, readLocalSource, context }: {
   citation?: MessageCitation; conversationId?: string; messageId?: string; messageTimestamp?: number
   readLocalSource: KnowledgeLocalSourceReader['readLocalSource']
+  context?: ReactNode
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const [metadataKey, setMetadataKey] = useState<string>()
+  const key = JSON.stringify([conversationId, messageId, citation?.type, citation?.id, citation?.documentId, citation?.chunkId])
+  const metadataOpen = metadataKey === key
+  if (citation?.type === 'web') return <WebSourceSnapshot citation={citation} nativeFailure={false} context={context} />
   if (!citation || !conversationId || !messageId || messageTimestamp === undefined) {
     return (
       <IsleEmptyState title={t('source.noSource')} description={t('source.noSourceMessage')} icon="source" />
     )
   }
   return <CanonicalSourceReader citation={citation} conversationId={conversationId} messageId={messageId} messageTimestamp={messageTimestamp} readLocalSource={readLocalSource} header={
-    <View>
-      {[citation].map((source, index) => (
-        <View
-          key={`${source.id}-${index}`}
-          style={{ marginBottom: 10 }}
-        >
-          <IsleSection
-            material="raised"
-            elevated
-            title={t('source.capturedCitation')}
-            subtitle={formatCitationMeta(source, t)}
-            action={<View style={{ width: 30, height: 30, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}><AppIcon name="knowledge" color={colors.ui.icon.accentForeground} size={15} strokeWidth={appIconStroke.strong} /></View>}
-          >
-            {source.excerpt ? <Text selectable style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>{source.excerpt}</Text> : null}
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-              <SourceMetaChip label={source.type === 'memory' ? t('source.memory') : source.type === 'knowledge' ? t('source.knowledge') : t('source.web')} />
-              {source.chunkIndex !== undefined ? <SourceMetaChip label={t('source.citation', { index: source.chunkIndex + 1 })} /> : null}
-              {source.score !== undefined ? <SourceMetaChip label={t('source.score', { score: source.score.toFixed(2) })} /> : null}
-              {source.similarityScore !== undefined ? <SourceMetaChip label={t('source.similarity', { score: source.similarityScore.toFixed(2) })} /> : null}
-              {source.rerankScore !== undefined ? <SourceMetaChip label={t('source.rerank', { score: source.rerankScore.toFixed(2) })} /> : null}
-              {source.compressionRatio !== undefined ? <SourceMetaChip label={t('source.compression', { ratio: Math.round(source.compressionRatio * 100) })} /> : null}
-              {source.qualityScore !== undefined ? <SourceMetaChip label={t('source.quality', { score: source.qualityScore.toFixed(2) })} /> : null}
-              {source.retrievalStage ? <SourceMetaChip label={source.retrievalStage} /> : null}
-              {source.sourceReason ? <SourceMetaChip label={source.sourceReason} /> : null}
-              {source.headingPath?.length ? <SourceMetaChip label={source.headingPath.slice(-2).join(' / ')} /> : null}
-              {source.sourceUri ? <SourceMetaChip label={hostOrFile(source.sourceUri)} /> : null}
-              {source.documentId ? <SourceMetaChip label={`doc ${source.documentId.slice(0, 8)}`} /> : null}
-              {source.chunkId ? <SourceMetaChip label={`chunk ${source.chunkId.slice(0, 8)}`} /> : null}
-            </View>
-          </IsleSection>
+    <WorkspaceSurface role="support" testID="source-captured-evidence" style={{ gap: 12 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        <Text style={[colors.design!.semantic.typography.label, { color: colors.textSecondary, flex: 1 }]}>{t('source.capturedCitation')}</Text>
+        <IslePressable testID="source-captured-details" accessibilityRole="button" accessibilityLabel={t('taskWorkspace.source.details')}
+          accessibilityState={{ expanded: metadataOpen }} onPress={() => setMetadataKey(metadataOpen ? undefined : key)}
+          style={{ minHeight: 44, paddingHorizontal: 8, justifyContent: 'center' }}>
+          <Text style={[colors.design!.semantic.typography.caption, { color: colors.textSecondary }]}>{t('taskWorkspace.source.details')}</Text>
+        </IslePressable>
+      </View>
+      {citation.excerpt ? <Text selectable style={[colors.design!.semantic.typography.body, { color: colors.textSecondary }]}>{citation.excerpt}</Text> : null}
+      {metadataOpen ? <View style={{ gap: 12 }}>
+        <Text style={[colors.design!.semantic.typography.caption, { color: colors.textSecondary }]}>{formatCitationMeta(citation, t)}</Text>
+        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+          <SourceMetaChip label={t(`source.${citation.type}`)} />
+          {citation.chunkIndex !== undefined ? <SourceMetaChip label={t('source.citation', { index: citation.chunkIndex + 1 })} /> : null}
+          {citation.score !== undefined ? <SourceMetaChip label={t('source.score', { score: citation.score.toFixed(2) })} /> : null}
+          {citation.similarityScore !== undefined ? <SourceMetaChip label={t('source.similarity', { score: citation.similarityScore.toFixed(2) })} /> : null}
+          {citation.rerankScore !== undefined ? <SourceMetaChip label={t('source.rerank', { score: citation.rerankScore.toFixed(2) })} /> : null}
+          {citation.compressionRatio !== undefined ? <SourceMetaChip label={t('source.compression', { ratio: Math.round(citation.compressionRatio * 100) })} /> : null}
+          {citation.qualityScore !== undefined ? <SourceMetaChip label={t('source.quality', { score: citation.qualityScore.toFixed(2) })} /> : null}
+          {citation.retrievalStage ? <SourceMetaChip label={citation.retrievalStage} /> : null}
+          {citation.sourceReason ? <SourceMetaChip label={citation.sourceReason} /> : null}
+          {citation.headingPath?.length ? <SourceMetaChip label={citation.headingPath.slice(-2).join(' / ')} /> : null}
+          {citation.sourceUri ? <SourceMetaChip label={hostOrFile(citation.sourceUri)} /> : null}
+          {citation.documentId ? <SourceMetaChip label={`doc ${citation.documentId.slice(0, 8)}`} /> : null}
+          {citation.chunkId ? <SourceMetaChip label={`chunk ${citation.chunkId.slice(0, 8)}`} /> : null}
         </View>
-      ))}
-    </View>
+      </View> : null}
+      {context}
+    </WorkspaceSurface>
   } />
 }
 
