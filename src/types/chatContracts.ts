@@ -85,6 +85,8 @@ export interface Message {
   completedAt?: number
   estimatedTokens?: boolean
   errorCode?: ChatErrorCode
+  /** A failed provider turn produced answer text; render it separately from error guidance. */
+  errorHasPartialResponse?: boolean
   errorProviderId?: string
   responseLifecycle?: MessageResponseLifecycle
 }

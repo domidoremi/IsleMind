@@ -20,6 +20,8 @@ import {
   PENDING_MODEL_OPERATION_SCHEMA,
   cloneAssistantContextPlanReceipt,
   isAssistantContextPlanReceipt,
+  isAssistantRunFailureHttpStatus,
+  isAssistantRunFailureProviderErrorCode,
   type AssistantActivityRequestEvidence,
   type AssistantActivityContinuationIdentity,
   type AssistantContextPlanReceipt,
@@ -1031,7 +1033,9 @@ function parseFailure(value: string | null): AssistantRunFailure | undefined {
   const parsed = parseJson(value)
   if (parsed === undefined) return undefined
   if (!isRecord(parsed) || typeof parsed.code !== 'string' || typeof parsed.message !== 'string' ||
-    !isFailureCode(parsed.code)) {
+    !isFailureCode(parsed.code) ||
+    (parsed.httpStatus !== undefined && !isAssistantRunFailureHttpStatus(parsed.httpStatus)) ||
+    (parsed.providerErrorCode !== undefined && !isAssistantRunFailureProviderErrorCode(parsed.providerErrorCode))) {
     throw new AssistantRunPersistenceDataError('An assistant run failure is invalid.')
   }
   const continuation = parsed.continuation === undefined
@@ -1040,6 +1044,8 @@ function parseFailure(value: string | null): AssistantRunFailure | undefined {
   return {
     code: parsed.code,
     message: parsed.message,
+    ...(parsed.httpStatus !== undefined ? { httpStatus: parsed.httpStatus } : {}),
+    ...(parsed.providerErrorCode !== undefined ? { providerErrorCode: parsed.providerErrorCode } : {}),
     ...(continuation ? { continuation } : {}),
   }
 }

@@ -1,3 +1,5 @@
+import { isUserFacingErrorCode } from '@/core'
+import type { ChatErrorCode } from '@/types/providerContracts'
 import type {
   AssistantRunId,
   ChatRequest,
@@ -81,7 +83,20 @@ export interface AssistantActivityContinuationIdentity {
 export interface AssistantRunFailure {
   code: Exclude<AssistantRuntimeErrorCode, 'run_not_found' | 'run_not_active' | 'run_already_exists' | 'persistence_failed'>
   message: string
+  /** Safe transport evidence only; provider response bodies are never persisted here. */
+  httpStatus?: number
+  /** Validated provider classification, including callback-based runtime adapters. */
+  providerErrorCode?: ChatErrorCode
   continuation?: AssistantActivityContinuationIdentity
+}
+
+export function isAssistantRunFailureHttpStatus(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 400 && value <= 599
+}
+
+export function isAssistantRunFailureProviderErrorCode(value: unknown): value is ChatErrorCode {
+  return value === 'unknown' || (isUserFacingErrorCode(value)
+    && value !== 'models_endpoint_unavailable' && value !== 'empty_models')
 }
 
 export interface AssistantRunResult {

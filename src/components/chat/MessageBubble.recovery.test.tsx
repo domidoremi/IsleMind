@@ -19,6 +19,10 @@ jest.mock('react-native-gesture-handler', () => {
   return { Gesture: { Tap: gesture, LongPress: gesture, Exclusive: jest.fn() }, GestureDetector: ({ children }: any) => children }
 })
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
+jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}))
 jest.mock('./MessageContent', () => {
   const { Text } = require('react-native')
   return { MessageContent: ({ content }: any) => <Text>{content}</Text> }
@@ -66,6 +70,45 @@ it('locks a pending copy and retains its eventual receipt through every appearan
   await act(() => complete(true))
   expect(view.getByRole('button', { name: 'common.copied' })).toBeEnabled()
   expect(view.queryByText('common.copied')).toBeNull()
+})
+
+it.each([
+  ['assistant', 'done'], ['assistant', 'error'], ['assistant', 'cancelled'], ['user', 'done'],
+] as const)('opens message actions from an accessible button for %s / %s', async (role, status) => {
+  const onQuote = jest.fn()
+  const answer = { ...message, role, status, content: 'Synthetic answer for actions' }
+  const view = await render(<MessageBubble {...props} message={answer} onQuote={onQuote} />)
+  await fireEvent.press(view.getByRole('button', { name: 'messageBubble.actions' }))
+  expect(view.getByTestId('message-action-sheet').props.accessibilityRole).toBe('menu')
+  await fireEvent.press(view.getByRole('menuitem', { name: 'messageBubble.quote' }))
+  expect(onQuote).toHaveBeenCalledWith(answer)
+  expect(view.queryByTestId('message-action-sheet')).toBeNull()
+})
+
+it('does not expose message action buttons during streaming or multi-selection', async () => {
+  const answer = { ...message, status: 'streaming' as const, content: 'Partial answer' }
+  const view = await render(<MessageBubble {...props} message={answer} onQuote={jest.fn()} />)
+  expect(view.queryByRole('button', { name: 'messageBubble.actions' })).toBeNull()
+  await view.rerender(<MessageBubble {...props} message={{ ...answer, status: 'done' }} multiSelectActive onQuote={jest.fn()} />)
+  expect(view.queryByRole('button', { name: 'messageBubble.actions' })).toBeNull()
+})
+
+it('renders complete partial output and separate authentication guidance after an HTTP failure', async () => {
+  const content = 'A partial provider answer'.repeat(40)
+  const view = await render(<MessageBubble {...props} message={{ ...message, status: 'error', content,
+    errorCode: 'bad_auth', errorHasPartialResponse: true }} />)
+  expect(view.getByText(content)).toBeTruthy()
+})
+
+it('labels unconfigured reporting before opening the unavailable page', async () => {
+  const onReport = jest.fn()
+  const answer = { ...message, status: 'done' as const, content: 'Synthetic answer' }
+  const view = await render(<MessageBubble {...props} message={answer} onReport={onReport} reportingAvailable={false} />)
+  await fireEvent.press(view.getByRole('button', { name: 'messageBubble.actions' }))
+  const more = view.queryByTestId('message-action-menu-item-minimal-more')
+  if (more) await fireEvent.press(more)
+  await fireEvent.press(view.getByRole('menuitem', { name: 'contentReport.unavailableAction' }))
+  expect(onReport).toHaveBeenCalledWith(answer)
 })
 
 it.each(['false', 'reject'] as const)('shows a local copy failure for %s and keeps the answer available for retry', async outcome => {

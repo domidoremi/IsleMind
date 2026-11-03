@@ -50,4 +50,10 @@ it('still skips unchanged message/source props', () => {
 
 it('refreshes the message menu when reporting becomes available', () => {
   expect(compare(props, { ...props, onReport: () => undefined })).toBe(false)
+  expect(compare(props, { ...props, reportingAvailable: false })).toBe(false)
+})
+
+it('refreshes a changed error classification and partial-response presentation', () => {
+  expect(compare(props, { ...props, message: { ...message, errorCode: 'bad_auth' } })).toBe(false)
+  expect(compare(props, { ...props, message: { ...message, errorHasPartialResponse: true } })).toBe(false)
 })

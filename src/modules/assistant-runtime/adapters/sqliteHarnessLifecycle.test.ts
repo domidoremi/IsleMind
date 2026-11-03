@@ -12,7 +12,7 @@ import { runBudgetTotals } from '../application/runBudget'
 import { DELEGATE_OPERATION } from '../agentCollaboration'
 import { createModelOperationBatch, advanceModelOperationBatch } from '../application/modelOperationBatch'
 import { buildAssistantRequestHash } from '../application/requestIdentity'
-import { checkProviderContextCapacity, ProviderContextCapacityError } from '@/modules/providers'
+import { checkProviderContextCapacity, ProviderContextCapacityError, ProviderHttpError } from '@/modules/providers'
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void
@@ -64,6 +64,40 @@ const continuationRequest = (): ChatRequest => ({ ...request, messages: [...requ
   { id: 'receipt', role: 'tool', toolCallId: 'call', name: 'write', text: 'already completed' }] })
 
 describe('Harness lifecycle (real SQLite)', () => {
+  it('reopens safe HTTP failure evidence and partial text without retaining the provider response body', async () => {
+    const fx = fixture()
+    const runId = asAssistantRunId('http-failure')
+    try {
+      const runtime = fx.runtime({ describe: () => undefined, async *stream() {
+        yield { type: 'text-delta', text: 'Retain this partial response' }
+        throw new ProviderHttpError(401, 'Synthetic private response body')
+      } })
+      await runtime.execute({ runId, request, context })
+      const reopened = createSqliteAssistantRunPersistence(fx.provider)
+      const saved = await reopened.get(runId)
+      const journal = await reopened.list(runId)
+      expect(saved).toMatchObject({ status: 'failed', failure: { code: 'provider_failed', httpStatus: 401 },
+        checkpoint: { outputText: 'Retain this partial response' } })
+      expect(journal.at(-1)).toMatchObject({ type: 'run.failed', data: { httpStatus: 401 } })
+      expect(JSON.stringify({ saved, journal })).not.toContain('Synthetic private response body')
+      const raw = fx.native.query('SELECT failureJson FROM assistant_runs WHERE id = ?').get(runId) as { failureJson: string }
+      const legacy = JSON.parse(raw.failureJson)
+      delete legacy.httpStatus
+      fx.native.query('UPDATE assistant_runs SET failureJson = ? WHERE id = ?').run(JSON.stringify(legacy), runId)
+      expect((await reopened.get(runId))?.failure).toEqual(legacy)
+      for (const httpStatus of [null, '401', 200, 600, 401.5]) {
+        fx.native.query('UPDATE assistant_runs SET failureJson = ? WHERE id = ?').run(JSON.stringify({ ...legacy, httpStatus }), runId)
+        await expect(reopened.get(runId)).rejects.toThrow('failure is invalid')
+      }
+      fx.native.query('UPDATE assistant_runs SET failureJson = ? WHERE id = ?').run(JSON.stringify({ ...legacy, providerErrorCode: 'bad_auth' }), runId)
+      expect((await reopened.get(runId))?.failure?.providerErrorCode).toBe('bad_auth')
+      for (const providerErrorCode of [null, 401, 'upstream-secret', 'models_endpoint_unavailable']) {
+        fx.native.query('UPDATE assistant_runs SET failureJson = ? WHERE id = ?').run(JSON.stringify({ ...legacy, providerErrorCode }), runId)
+        await expect(reopened.get(runId)).rejects.toThrow('failure is invalid')
+      }
+    } finally { fx.native.close() }
+  })
+
   it.each([false, true])('a late operation receipt survives cancellation without changing the terminal fence (commit failure: %s)', async failCommit => {
     const fx = fixture()
     const runId = asAssistantRunId('cancelled-receipt')

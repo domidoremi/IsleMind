@@ -1,5 +1,6 @@
 import type { AssistantRun, PendingModelOperation } from '@/modules/assistant-runtime'
-import { getAssistantRunMessageAttribution, HARNESS_ENGINE_VERSION } from '@/modules/assistant-runtime'
+import { getAssistantRunMessageAttribution, HARNESS_ENGINE_VERSION, isAssistantRunFailureHttpStatus, isAssistantRunFailureProviderErrorCode } from '@/modules/assistant-runtime'
+import { classifyHttpStatus } from '@/modules/providers'
 import type { ConversationRunProjection, ConversationRunProjectionEvent } from '@/modules/conversations'
 import type { ContextCitation } from '@/modules/knowledge'
 import { finishConversationTaskActivityForMessage } from '@/modules/tasks'
@@ -11,6 +12,7 @@ import type { MessageUsage } from '@/types/chatContracts'
 import type { MessageCitation } from '@/types/contextContracts'
 import type { ChatErrorCode } from '@/types/providerContracts'
 import { st } from '@/i18n/service'
+import { toUserFacingError } from '@/services/chatErrorUtils'
 import { modelOperationActivity } from './modelOperationActivity'
 import {
   resolveChatRecoveryMessageId,
@@ -402,14 +404,22 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun, rec
     return
   }
 
-  const errorCode: ChatErrorCode = run.failure?.code === 'output_limit_exceeded' ? 'max_tokens_exceeded' : 'unknown'
-  const failureText = outputText || st('chatRunner.error.sendFailed')
+  const classification = run.failure?.code !== 'provider_failed' ? 'unknown'
+    : isAssistantRunFailureProviderErrorCode(run.failure.providerErrorCode) ? run.failure.providerErrorCode
+    : isAssistantRunFailureHttpStatus(run.failure.httpStatus) ? classifyHttpStatus(run.failure.httpStatus)
+    : 'unknown'
+  const errorCode: ChatErrorCode = run.failure?.code === 'output_limit_exceeded' ? 'max_tokens_exceeded'
+    : classification === 'ok' || classification === 'empty_models' || classification === 'models_endpoint_unavailable' ? 'unknown'
+    : classification
+  const errorMessage = toUserFacingError('', errorCode)
+  const failureText = outputText || errorMessage
   useChatStore.getState().updateMessage(state.conversationId, state.messageId, {
     status: 'error',
     content: failureText,
     ...attribution,
     responseText: failureText,
     errorCode,
+    errorHasPartialResponse: Boolean(outputText),
     errorProviderId: run.providerId,
     completedAt,
     durationMs: current?.startedAt ? completedAt - current.startedAt : current?.durationMs,
@@ -418,7 +428,7 @@ async function finalizeProjection(state: ProjectionState, run: AssistantRun, rec
     tokenCount: estimatedUsage.outputTokens ?? estimateTextTokens(failureText),
   })
   finishConversationTaskActivityForMessage(state.conversationId, state.messageId, 'failed', {
-    error: st('chatRunner.error.sendFailed'),
+    error: errorMessage,
     metadata: { errorCode, providerId: run.providerId, runFailure: run.failure?.code },
   })
   if (recovering) await useChatStore.getState().flushStreamingMessage(state.conversationId, state.messageId)

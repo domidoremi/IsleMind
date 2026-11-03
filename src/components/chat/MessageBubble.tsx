@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native'
 import { Modal } from '@/components/ui/AppModal'
@@ -94,6 +94,7 @@ export interface MessageBubbleProps {
   onBranch?: (message: Message) => void
   onCreateDocument?: (message: Message) => void
   onReport?: (message: Message) => void
+  reportingAvailable?: boolean
   onEdit?: (message: Message) => void
   onStartMultiSelect?: (message: Message) => void
   onToggleSelected?: (message: Message) => void
@@ -132,6 +133,7 @@ function MessageBubbleComponent({
   onBranch,
   onCreateDocument,
   onReport,
+  reportingAvailable = true,
   onEdit,
   onStartMultiSelect,
   onToggleSelected,
@@ -168,7 +170,7 @@ function MessageBubbleComponent({
   // would keep speaking the language selected back then. Its copy is rebuilt from the
   // persisted error code on every render instead.
   const persistedDisplayText = message.responseText ?? message.content
-  const rawDisplayText = liveStreamingText ?? (!isUser && message.status === 'error'
+  const rawDisplayText = liveStreamingText ?? (!isUser && message.status === 'error' && !message.errorHasPartialResponse
     ? relocalizeUserFacingError(persistedDisplayText, message.errorCode, t)
     : persistedDisplayText)
   const displayText = sanitizeInternalChatOutputText(rawDisplayText)
@@ -443,6 +445,7 @@ function MessageBubbleComponent({
             onBranch={canBranchMessage && onBranch ? () => onBranch(message) : undefined}
             onCreateDocument={!isUser && message.status !== 'sending' && message.status !== 'streaming' && displayText.trim() && onCreateDocument ? () => onCreateDocument(message) : undefined}
             onReport={canReportMessage && onReport ? () => onReport(message) : undefined}
+            reportingAvailable={reportingAvailable}
             onEdit={canEditMessage && onEdit ? () => onEdit(message) : undefined}
             onStartMultiSelect={canStartMessageMultiSelect && onStartMultiSelect ? () => onStartMultiSelect(message) : undefined}
             />
@@ -457,13 +460,16 @@ function MessageBubbleComponent({
             {messageTimestamp}
           </Text>
         ) : null}
-        {showCompletedQuickActions ? (
+        {showCompletedQuickActions || canOpenActions ? (
           <MessageCompletedQuickActions
             motion={motion}
-            onCopy={onCopy ? copyWithFeedback : undefined}
+            isUser={isUser}
+            onCopy={showCompletedQuickActions && onCopy ? copyWithFeedback : undefined}
             copyPhase={copyFeedback.phase}
-            onSpeak={onSpeak ? () => onSpeak(message) : undefined}
-            onRegenerate={isLastAssistant ? onRegenerate : undefined}
+            onSpeak={showCompletedQuickActions && onSpeak ? () => onSpeak(message) : undefined}
+            onRegenerate={showCompletedQuickActions && isLastAssistant ? onRegenerate : undefined}
+            onActions={canOpenActions ? () => setActionBarOpen(true) : undefined}
+            actionsOpen={actionBarOpen}
           />
         ) : null}
         {!showCompletedQuickActions ? <ActionFeedback phase={copyFeedback.phase} successLabel={t('common.copied')} errorLabel={t('chat.clipboardUnavailable')} /> : null}
@@ -520,16 +526,22 @@ function useMessageCopyReceipt(identity: unknown, message: Message, onCopy?: (me
 
 function MessageCompletedQuickActions({
   motion,
+  isUser,
   onCopy,
   copyPhase = 'idle',
   onSpeak,
   onRegenerate,
+  onActions,
+  actionsOpen,
 }: {
   motion: MotionIntensity
+  isUser: boolean
   onCopy?: () => void
   copyPhase?: ActionFeedbackPhase
   onSpeak?: () => void
   onRegenerate?: () => void
+  onActions?: () => void
+  actionsOpen: boolean
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -543,7 +555,7 @@ function MessageCompletedQuickActions({
       from={motion === 'full' ? { opacity: 0, translateY: -3 } : undefined}
       animate={{ opacity: 1, translateY: 0 }}
       transition={{ type: 'timing', duration: motion === 'full' ? 176 : 1 }}
-      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, marginLeft: 32, marginTop: 2, flexDirection: 'row', alignItems: 'center' }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, marginLeft: isUser ? 0 : 32, alignSelf: isUser ? 'flex-end' : 'flex-start', marginTop: 2, flexDirection: 'row', alignItems: 'center', maxWidth: '100%', flexWrap: 'wrap' }}
     >
       {actions.map((action) => (
         <IslePressable
@@ -559,6 +571,19 @@ function MessageCompletedQuickActions({
           <AppIcon name={action.icon} color={action.id === 'copy' && copyPhase === 'success' ? colors.ui.tone.success.foreground : colors.textTertiary} size={15} strokeWidth={appIconStroke.regular} />
         </IslePressable>
       ))}
+      {onActions ? (
+        <IslePressable
+          haptic
+          testID={`message-actions-${isUser ? 'user' : 'assistant'}`}
+          accessibilityRole="button"
+          accessibilityLabel={t('messageBubble.actions')}
+          accessibilityState={{ expanded: actionsOpen }}
+          onPress={onActions}
+          style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlSmall }}
+        >
+          <AppIcon name="more" color={colors.textTertiary} size={17} strokeWidth={appIconStroke.regular} />
+        </IslePressable>
+      ) : null}
       <ActionFeedback phase={copyPhase} successLabel={t('common.copied')} errorLabel={t('chat.clipboardUnavailable')} style={{ flexShrink: 1, marginLeft: 6 }} />
     </MotiView>
   )
@@ -839,6 +864,11 @@ function MessageBody({
           <TypingDots motion={motion} />
         ) : null}
       </RenderGuard>
+      {!isUser && message.status === 'error' && message.errorHasPartialResponse ? (
+        <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 13, lineHeight: 20, marginTop: 10 }}>
+          {relocalizeUserFacingError('', message.errorCode, t)}
+        </Text>
+      ) : null}
       {!isUser && message.citations?.length ? (
         <MessageSources key={`${conversationId}:${message.id}`} conversationId={conversationId} messageId={message.id} citations={message.citations} onLayoutChangeRequest={onLayoutChangeRequest} />
       ) : null}
@@ -1037,6 +1067,7 @@ function MessageActionSheet({
   onBranch,
   onCreateDocument,
   onReport,
+  reportingAvailable,
   onEdit,
   onStartMultiSelect,
 }: {
@@ -1073,6 +1104,7 @@ function MessageActionSheet({
   onBranch?: () => void
   onCreateDocument?: () => void
   onReport?: () => void
+  reportingAvailable: boolean
   onEdit?: () => void
   onStartMultiSelect?: () => void
 }) {
@@ -1126,6 +1158,11 @@ function MessageActionSheet({
     ? ({ backdropFilter: 'blur(18px) saturate(1.12)', WebkitBackdropFilter: 'blur(18px) saturate(1.12)' } as unknown as ViewStyle)
     : undefined
   const [showMore, setShowMore] = useState(false)
+  const firstActionRef = useRef<View>(null)
+  function focusFirstAction() {
+    if (Platform.OS === 'web') firstActionRef.current?.focus()
+  }
+  useEffect(() => { focusFirstAction() }, [showMore])
   const actionLockedRef = useRef(false)
   const unlockTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isUser = message.role === 'user'
@@ -1159,7 +1196,7 @@ function MessageActionSheet({
     !isUser && hasText ? action('speak', t('messageBubble.speak'), 'voice', onSpeak) : null,
   ].filter((item): item is MessageActionSheetAction => item !== null)
   const secondaryActions = [
-    action('report', t('contentReport.title'), 'shield', onReport),
+    action('report', t(reportingAvailable ? 'contentReport.title' : 'contentReport.unavailableAction'), 'shield', onReport),
     canCopyProcessTrace ? action('copy-trace', t(copyTracePhase === 'success' ? 'common.copied' : 'messageBubble.copyProcessTrace'), copyTracePhase === 'success' ? 'check' : 'trace', onCopyProcessTrace, { disabled: copyTracePhase === 'pending' }) : null,
     hasText && !isUser ? action('copy-artifact', t(copyArtifactPhase === 'success' ? 'common.copied' : 'messageBubble.copyWorkArtifact'), copyArtifactPhase === 'success' ? 'check' : 'list-check', onCopyWorkArtifact, { disabled: copyArtifactPhase === 'pending' }) : null,
     hasText && !isUser ? action('continue-artifact', t('messageBubble.continueWorkArtifact'), 'spark', onContinueWorkArtifact) : null,
@@ -1194,11 +1231,13 @@ function MessageActionSheet({
       animationType="none"
       statusBarTranslucent
       onRequestClose={onClose}
+      onShow={focusFirstAction}
     >
       <View style={{ flex: 1, justifyContent: 'flex-end', paddingHorizontal: width < 380 ? 10 : 16, paddingBottom: Math.max(insets.bottom, 10) }}>
         <Pressable
           accessible={false}
           accessibilityRole="none"
+          tabIndex={-1}
           onPress={onClose}
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }}
         />
@@ -1265,8 +1304,9 @@ function MessageActionSheet({
             showsVerticalScrollIndicator={visibleActions.length > 6}
             contentContainerStyle={{ padding: menuExpression.density === 'compact' ? 6 : 8, gap: menuExpression.motion === 'precision' ? 0 : menuExpression.motion === 'organic' ? 5 : 2 }}
           >
-            {visibleActions.map((item) => (
-              <MessageActionSheetRow key={item.id} action={item} onPress={() => run(item)} />
+            {visibleActions.map((item, index) => (
+              <MessageActionSheetRow key={item.id} action={item} onPress={() => run(item)}
+                controlRef={index === 0 ? firstActionRef : undefined} />
             ))}
             {!showMore && overflowActions.length ? (
               <MessageActionSheetRow
@@ -1277,6 +1317,7 @@ function MessageActionSheet({
                   onPress: () => setShowMore(true),
                 }}
                 onPress={() => setShowMore(true)}
+                controlRef={primaryActions.length === 0 ? firstActionRef : undefined}
               />
             ) : null}
           </ScrollView>
@@ -1286,7 +1327,11 @@ function MessageActionSheet({
   )
 }
 
-function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheetAction; onPress: () => void }) {
+function MessageActionSheetRow({ action, onPress, controlRef }: {
+  action: MessageActionSheetAction
+  onPress: () => void
+  controlRef?: RefObject<View | null>
+}) {
   const { colors, isLiquidGlass, canonicalThemeId } = useAppTheme()
   const actionChrome = resolveMessageActionChrome(colors, isLiquidGlass)
   const menuExpression = resolveThemeComponentExpression(canonicalThemeId, 'menu')
@@ -1325,6 +1370,7 @@ function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheet
       : 0.9
   return (
     <IslePressable
+      ref={controlRef}
       haptic
       testID={`message-action-menu-item-${canonicalThemeId}-${action.id}`}
       accessibilityRole="menuitem"
@@ -1606,6 +1652,8 @@ const areMessagesEqual = (
   if (prevMsg.role !== nextMsg.role) return false
   if (prevMsg.content !== nextMsg.content) return false
   if (prevMsg.responseText !== nextMsg.responseText) return false
+  if (prevMsg.errorCode !== nextMsg.errorCode) return false
+  if (prevMsg.errorHasPartialResponse !== nextMsg.errorHasPartialResponse) return false
   if (prevMsg.status !== nextMsg.status) return false
   if (prevMsg.timestamp !== nextMsg.timestamp) return false
   if (prevMsg.citations !== nextMsg.citations) return false
@@ -1627,6 +1675,7 @@ const areMessagesEqual = (
   if (Boolean(prevProps.onBranch) !== Boolean(nextProps.onBranch)) return false
   if (Boolean(prevProps.onCreateDocument) !== Boolean(nextProps.onCreateDocument)) return false
   if (Boolean(prevProps.onReport) !== Boolean(nextProps.onReport)) return false
+  if (prevProps.reportingAvailable !== nextProps.reportingAvailable) return false
   if (prevProps.onResumePaused !== nextProps.onResumePaused) return false
 
   return true

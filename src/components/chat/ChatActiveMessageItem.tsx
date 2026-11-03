@@ -17,6 +17,7 @@ import type { Attachment, Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
+import { contentReporting } from '@/bootstrap/contentReporting'
 
 import { MessageBubble } from './MessageBubble'
 import { resolveMessageProviderIdentity } from './messageProviderIdentity'
@@ -155,6 +156,7 @@ export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
         onCopy={(item) => copyChatMessageText({ dialog, message: item, t })}
         onCreateDocument={(item) => router.push({ pathname: '/documents/edit', params: { conversationId, messageId: item.id } })}
         onReport={(item) => router.push({ pathname: '/report', params: { conversationId, messageId: item.id } })}
+        reportingAvailable={Boolean(contentReporting.configuration)}
         onCopyProcessTrace={(item) => copyChatMessageProcessTrace({ dialog, message: item, t })}
         onCopyWorkArtifact={(item) => copyChatMessageWorkArtifact({ dialog, message: item, t })}
         onContinueWorkArtifact={(item) => continueChatMessageWorkArtifact({ dialog, message: item, onApplyStarter, t })}

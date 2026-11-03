@@ -141,6 +141,41 @@ it.each(['failed', 'cancelled'] as const)('reconstructs partial output without f
   expect(mockFlushMessage).toHaveBeenCalledTimes(1)
 })
 
+it.each([
+  [401, 'bad_auth', 'chatRunner.userError.badAuth'],
+  [403, 'access_denied', 'messageBubble.error.access_denied'],
+  [408, 'timeout', 'chatRunner.userError.timeout'],
+  [429, 'rate_limited', 'chatRunner.userError.rateLimited'],
+  [503, 'upstream_error', 'messageBubble.error.upstream_error'],
+] as const)('projects safe HTTP %s guidance into the message and activity', async (httpStatus, errorCode, copy) => {
+  await recoverChatProjection({ ...run, status: 'failed', result: undefined,
+    failure: { code: 'provider_failed', message: 'Unsafe internal failure must stay private', httpStatus } })
+  expect(mockMessage).toMatchObject({ status: 'error', errorCode, content: copy, responseText: copy, errorHasPartialResponse: false })
+  expect(mockFinishTask).toHaveBeenCalledWith('conversation-gap', 'message-gap', 'failed',
+    expect.objectContaining({ error: copy }))
+  expect(JSON.stringify(mockMessage)).not.toContain('Unsafe internal failure')
+})
+
+it('retains the full partial response alongside the safe authentication classification', async () => {
+  await recoverChatProjection({ ...run, status: 'failed', result: undefined,
+    checkpoint: { outputText: output, streamEventCount: 2 },
+    failure: { code: 'provider_failed', message: 'Provider failed', httpStatus: 401 } })
+  expect(mockMessage).toMatchObject({ status: 'error', content: output, responseText: output,
+    errorCode: 'bad_auth', errorHasPartialResponse: true })
+})
+
+it('keeps legacy provider failures readable without guessing authentication from arbitrary error text', async () => {
+  await recoverChatProjection({ ...run, status: 'failed', result: undefined,
+    failure: { code: 'provider_failed', message: 'Provider 401 echoed a private request' } })
+  expect(mockMessage).toMatchObject({ errorCode: 'unknown', content: 'chatRunner.error.sendFailed' })
+})
+
+it('projects a callback runtime adapter authentication code without depending on HTTP exception identity', async () => {
+  await recoverChatProjection({ ...run, status: 'failed', result: undefined,
+    failure: { code: 'provider_failed', message: 'Internal message', providerErrorCode: 'bad_auth' } })
+  expect(mockMessage).toMatchObject({ errorCode: 'bad_auth', content: 'chatRunner.userError.badAuth' })
+})
+
 it('removes a recovered authorization only after authoritative cancellation, including buffered markers', async () => {
   const evidence = { id: 'retained', type: 'system' as const, title: 'Other evidence', status: 'done' as const }
   mockFlushBuffers.mockImplementation(async () => {

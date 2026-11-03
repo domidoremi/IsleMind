@@ -16,6 +16,8 @@ import {
   ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
   cloneAssistantContextPlanReceipt,
   isAssistantContextPlanReceipt,
+  isAssistantRunFailureHttpStatus,
+  isAssistantRunFailureProviderErrorCode,
   isModelOperationConfirmationExpired,
 } from './contracts'
 import { HARNESS_PAUSE_REASONS } from './harnessPauseReason'
@@ -24,8 +26,8 @@ import {
   buildAssistantRequestHash,
   isAssistantRequestHash,
 } from './application/requestIdentity'
-import { ProviderStreamEventBuffer, streamEventCount } from '@/modules/providers'
-import type { ProviderExecutionTarget } from '@/modules/providers'
+import { ProviderHttpError, ProviderStreamEventBuffer, streamEventCount } from '@/modules/providers'
+import type { ProviderExecutionTarget, ProviderRuntimeError } from '@/modules/providers'
 import { createAssistantRunRouteDetails } from './application/actualExecutionAttribution'
 import { HARNESS_ENGINE_VERSION } from './application/runBudget'
 import { freezeAgentDefinition, type FrozenAgentDefinition } from './agentDefinition'
@@ -35,6 +37,7 @@ import type {
   AssistantActivityContinuationIdentity,
   AssistantContextPlanReceipt,
   AssistantRun,
+  AssistantRunFailure,
   AssistantRunCapturedRequestSnapshot,
   AssistantRunProjection,
   AssistantActivityExecutionResult,
@@ -54,6 +57,16 @@ import type {
 const DEFAULT_MAX_OUTPUT_CHARS = 100_000
 const JOURNAL_TEXT_LIMIT = 4_096
 const JOURNAL_LABEL_LIMIT = 512
+
+function providerFailureEvidence(error: unknown): Pick<AssistantRunFailure, 'httpStatus' | 'providerErrorCode'> {
+  const httpStatus = error instanceof ProviderHttpError && isAssistantRunFailureHttpStatus(error.status)
+    ? error.status : undefined
+  const code = error instanceof Error ? (error as ProviderRuntimeError).chatErrorCode : undefined
+  return {
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    ...(isAssistantRunFailureProviderErrorCode(code) ? { providerErrorCode: code } : {}),
+  }
+}
 
 class PersistenceFailure extends Error {
   constructor() {
@@ -288,7 +301,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         }
 
         try {
-          const failed = await finishFailed(active, 'provider_failed', 'The provider stream ended unexpectedly.')
+          const failed = await finishFailed(active, 'provider_failed', 'The provider stream ended unexpectedly.', providerFailureEvidence(error))
           return err('provider_failed', 'The provider stream ended unexpectedly.', {
             retryable: true,
             details: { runId: failed.id },
@@ -776,7 +789,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           }
         }
         try {
-          const failed = await finishFailed(active, 'provider_failed', 'The model operation continuation failed.')
+          const failed = await finishFailed(active, 'provider_failed', 'The model operation continuation failed.', providerFailureEvidence(error))
           return err('provider_failed', failed.failure?.message ?? 'The model operation continuation failed.', {
             retryable: true,
             details: { runId: failed.id },
@@ -1159,7 +1172,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       if (active?.cancellationRequested) return cancelledResult(active)
       const admissionPause = active && await pauseForAdmission(active, error)
       if (admissionPause) return admissionPause
-      if (active) await finishFailed(active, 'provider_failed', 'The provider continuation failed.')
+      if (active) await finishFailed(active, 'provider_failed', 'The provider continuation failed.', providerFailureEvidence(error))
       return err('provider_failed', 'The safe continuation could not be resumed.', { retryable: false })
     } finally {
       active?.releaseExecution?.()
@@ -1587,16 +1600,21 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     active: ActiveRun,
     code: Extract<AssistantRuntimeErrorCode, 'output_limit_exceeded' | 'provider_failed' | 'activity_failed'>,
     message: string,
+    evidence: Pick<AssistantRunFailure, 'httpStatus' | 'providerErrorCode'> = {},
   ): Promise<AssistantRun> {
+    const failure = { code, message,
+      ...(isAssistantRunFailureHttpStatus(evidence.httpStatus) ? { httpStatus: evidence.httpStatus } : {}),
+      ...(isAssistantRunFailureProviderErrorCode(evidence.providerErrorCode) ? { providerErrorCode: evidence.providerErrorCode } : {}),
+    }
     return recordTerminal(active, 'run.failed', {
       status: 'failed',
       completedAt: dependencies.clock.now(),
-      failure: { code, message },
+      failure,
       checkpoint: {
         outputText: active.outputText,
         streamEventCount: active.streamEventCount,
       },
-    }, { code, message })
+    }, failure)
   }
 
   async function finishCancelled(active: ActiveRun): Promise<AssistantRun> {
