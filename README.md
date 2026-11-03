@@ -51,17 +51,21 @@ Network access is limited to:
 
 | Item | Value |
 |---|---|
-| Version | `1.1.6` |
-| Android versionCode | `131` |
-| Channel | Stable |
+| Current source version | `1.1.7` |
+| Source Android versionCode | `132` |
+| APK candidate version | `1.1.2` |
+| APK candidate Android versionCode | `127` |
+| APK candidate channel | Preview |
 
-[Read the 1.1.6 release notes](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.6).
+The source version may lead the APK candidate. The website and update catalog currently record the 1.1.2 preview candidate; the catalog has no published assets or publication date. Available downloads depend on the actual attachments on the [1.1.2 Release page](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.2).
 
-### What’s new
+### What’s new in the source
 
-- Lighter page hierarchy, coordinated motion, and contextual action feedback across the app.
-- Accent previews, stable theme changes, and clearer document and usage workspaces.
-- More reliable provider protocols, response completion, model discovery, and usage estimates.
+- Task-based connection setup, clearer model choices, and steadier chat input feedback.
+- Document sorting, retained drafts and reading position, and adaptive writing and source workspaces.
+- Clear authentication guidance, keyboard-accessible message actions, and readable preference headings.
+
+[Full release notes](docs/release/v1.1.7.md)
 
 ### APK variants
 
@@ -235,7 +239,7 @@ When production signing secrets are unavailable, explicitly use
 `node scripts/build-local-android-apk.js --release --unsigned --variant no-model --release-arch arm64-v8a`.
 This keeps the real production package/version and non-debuggable release behavior;
 it does not substitute a debug certificate, install the APK or publish anything.
-The output is `dist-apk/IsleMind-1.1.2-android-release-unsigned-no-model-arm64-v8a.apk`
+For the current source version, the output is `dist-apk/IsleMind-1.1.7-android-release-unsigned-no-model-arm64-v8a.apk`
 with `.sha256` and `.source-snapshot.json` sidecars. Signed release qualification still
 requires legitimate production signing and exact-artifact installation/runtime checks.
 
