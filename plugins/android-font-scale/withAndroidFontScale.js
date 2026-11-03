@@ -52,6 +52,10 @@ function assertPatchedReactNative(projectRoot) {
       || read('ReactCommon/react/renderer/scheduler/SurfaceHandler.cpp').includes('dirtyMeasurableNodesRecursive')) {
     throw new Error('The reviewed React Native 0.86.3 font-scale patch is required. Run bun install; re-review this plugin when upgrading React Native.')
   }
+  if (!read('ReactAndroid/src/main/java/com/facebook/react/uimanager/style/BorderInsets.kt')
+    .includes('edgeInsets[edge.ordinal] = width?.takeUnless { it.isNaN() }')) {
+    throw new Error('The reviewed React Native 0.86.3 border-inset reset patch is required. Run bun install; theme changes must not retain NaN clipping insets.')
+  }
 }
 
 const sourceBuild = `

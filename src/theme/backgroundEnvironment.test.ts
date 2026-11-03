@@ -7,7 +7,30 @@ describe('background environment', () => {
     const accented = resolveBackgroundEnvironment({ family, mode: 'light', accent: '#4963A6', variation: 'fixed' })
     expect(light.seed).not.toBe(dark.seed)
     expect(light.seed).not.toBe(accented.seed)
-    expect(light.layerCount).toBeGreaterThan(0)
+    if (family === 'minimal' || family === 'material') {
+      expect(light.layerCount).toBe(0)
+    } else {
+      expect(light.layerCount).toBeGreaterThan(0)
+    }
+  })
+
+  test.each(['minimal', 'material'] as const)('%s has no decorative budget regardless of stored background preferences', (family) => {
+    for (const mode of ['light', 'dark'] as const) {
+      for (const motion of ['static', 'subtle', 'dynamic', 'immersive'] as const) {
+        for (const intensity of ['low', 'medium', 'high'] as const) {
+          for (const variation of ['fixed', 'random', 'startup', 'daily', 'preset'] as const) {
+            const environment = resolveBackgroundEnvironment({ family, mode, motion, intensity, variation })
+            expect(environment.layerCount).toBe(0)
+            expect(environment.visualIntensity).toBe(0)
+            expect(environment.amplitude).toBe(0)
+            expect(environment.grainOpacity).toBe(0)
+            expect(environment.motion).toBe(motion)
+            expect(environment.intensity).toBe(intensity)
+            expect(environment.variation).toBe(variation)
+          }
+        }
+      }
+    }
   })
 
   test('variation policies are deterministic within their intended lifetime', () => {

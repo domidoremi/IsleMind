@@ -97,7 +97,8 @@ function surfaceMaterialFor(props: ThemeExpressionSurfaceProps): ThemeSurfaceMat
 /**
  * One renderer contract, five expression grammars. Business children and
  * accessibility state stay outside this layer; only the visual composition is
- * selected here.
+ * selected here. Keep the surface and content hosts native: a theme must not
+ * flatten a live input's parent and recreate it inside a hidden pager page.
  */
 const RENDERERS: Record<CanonicalThemeId, Renderer> = {
   'animal-island-ui': renderAnimalIsland,
@@ -114,13 +115,13 @@ function renderAnimalIsland(props: ThemeExpressionSurfaceProps) {
     borderLeftWidth: props.kind === 'chrome' ? 0 : 3, borderLeftColor: props.colors.ui.section.divider,
     ...(props.kind === 'message' && props.isUser ? { backgroundColor: props.colors.ui.message.userBackground } : null),
     ...(props.selected || props.alertBorder ? { borderWidth: 2, borderColor: props.alertBorder ?? props.colors.primary } : null) }
-  return <GlassSurface colors={props.colors} enabled={false} testID={props.testID} onLayout={props.onLayout}
+  return <GlassSurface colors={props.colors} enabled={false} collapsable={false} testID={props.testID} onLayout={props.onLayout}
     style={[{ minWidth: 0, maxWidth: '100%', alignSelf: props.kind === 'message' && props.isUser ? 'flex-end' : 'stretch' },
       content ? { backgroundColor: 'transparent' } : cardStyle]}>
     {!content ? <View key="material" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill}>
       <NativeCard style={[StyleSheet.absoluteFill, cardStyle]} />
     </View> : null}
-    <View key="content" style={{ minWidth: 0 }}>{props.children}</View>
+    <View key="content" collapsable={false} style={{ minWidth: 0 }}>{props.children}</View>
   </GlassSurface>
 }
 
@@ -147,7 +148,7 @@ function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpr
         : material.background
   const ownsMaterial = isChrome || props.kind === 'composer' || isCodeBlock || userMessage
   return (
-    <GlassSurface colors={props.colors} enabled={false}
+    <GlassSurface colors={props.colors} enabled={false} collapsable={false}
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
@@ -175,7 +176,7 @@ function renderMinimal(props: ThemeExpressionSurfaceProps, expression: ThemeExpr
       {isMessage && props.isUser ? (
         <View accessible={false} pointerEvents="none" importantForAccessibility="no-hide-descendants" style={[styles.minimalMessageIndex, { backgroundColor: props.colors.ui.control.primaryBackground }]} />
       ) : null}
-      <View key="content" style={{ minWidth: 0 }}>{props.children}</View>
+      <View key="content" collapsable={false} style={{ minWidth: 0 }}>{props.children}</View>
     </GlassSurface>
   )
 }
@@ -192,7 +193,7 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
   const isAssistantMessage = isMessage && !props.isUser
   const ownsMaterial = isChrome || props.kind === 'composer' || isCodeBlock || (isMessage && props.isUser)
   const contentFrame = (
-    <View key="content" style={[
+    <View key="content" collapsable={false} style={[
       styles.monetContentFrame,
       props.kind === 'composer' ? styles.monetComposerFrame : null,
       isMessage && !props.isUser ? styles.monetAssistantContentFrame : null,
@@ -202,7 +203,7 @@ function renderMonet(props: ThemeExpressionSurfaceProps, expression: ThemeExpres
     </View>
   )
   return (
-    <GlassSurface colors={props.colors} enabled={false}
+    <GlassSurface colors={props.colors} enabled={false} collapsable={false}
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
@@ -249,7 +250,7 @@ function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExp
   const isNestedRichContent = props.kind === 'code-block'
   const ownsMaterial = isChrome || props.kind === 'composer' || isCodeBlock || (isMessage && props.isUser)
   return (
-    <GlassSurface colors={props.colors} enabled={false}
+    <GlassSurface colors={props.colors} enabled={false} collapsable={false}
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
@@ -281,7 +282,7 @@ function renderMaterial(props: ThemeExpressionSurfaceProps, expression: ThemeExp
         },
       ]}
     >
-      <View key="content" style={[
+      <View key="content" collapsable={false} style={[
         styles.materialContentFrame,
         props.kind === 'composer' ? styles.materialComposerFrame : null,
         isMessage && props.isUser ? styles.materialUserContentFrame : null,
@@ -298,6 +299,7 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
     return (
       <GlassSurface
         colors={props.colors}
+        collapsable={false}
         variant="chrome"
         focused={props.focused}
         testID={props.testID}
@@ -308,7 +310,7 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
           { width: '100%', minWidth: 0, borderWidth: props.alertBorder ? 1 : 0, borderColor: props.alertBorder ?? 'transparent' },
         ]}
       >
-        <View key="content" style={{ minWidth: 0 }}>{props.children}</View>
+        <View key="content" collapsable={false} style={{ minWidth: 0 }}>{props.children}</View>
       </GlassSurface>
     )
   }
@@ -320,7 +322,7 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
   const isNestedRichContent = props.kind === 'code-block'
   const userSurface = rgbaColor(props.colors.ui.message.userBackground, 0.74)
   return (
-    <GlassSurface colors={props.colors} enabled={false}
+    <GlassSurface colors={props.colors} enabled={false} collapsable={false}
       testID={props.testID}
       onLayout={props.onLayout}
       style={[
@@ -338,7 +340,7 @@ function renderLiquidGlass(props: ThemeExpressionSurfaceProps, _expression: Them
         },
       ]}
     >
-      <View key="content" style={[
+      <View key="content" collapsable={false} style={[
         styles.glassContentFrame,
         isMessage && props.isUser ? styles.glassUserContentFrame : null,
         isMessage && !props.isUser ? styles.glassAssistantContentFrame : null,

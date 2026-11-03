@@ -24,6 +24,8 @@ async function run() {
     write(rn + 'package.json', JSON.stringify({ name: 'react-native', version: '0.86.3' }))
     write(rn + 'ReactCommon/react/renderer/core/LayoutMetrics.h', 'Float fontSizeMultiplier{1.0};')
     write(rn + 'ReactCommon/react/renderer/components/root/RootShadowNode.cpp', 'layoutContext.fontSizeMultiplier != previousScale')
+    const borderInsets = write(rn + 'ReactAndroid/src/main/java/com/facebook/react/uimanager/style/BorderInsets.kt',
+      'edgeInsets[edge.ordinal] = width?.takeUnless { it.isNaN() }')
     const surface = write(rn + 'ReactCommon/react/renderer/scheduler/SurfaceHandler.cpp', 'constraintLayout')
     const generate = () => compileModsAsync(withFontScale({ name: 'Settings', slug: 'settings', android: { package: 'com.example.settings' } }), { projectRoot: root, platforms: ['android', 'ios'] })
     await generate()
@@ -47,6 +49,9 @@ async function run() {
     fs.writeFileSync(surface, 'dirtyMeasurableNodesRecursive')
     assert.throws(() => withFontScale.assertPatchedReactNative(root), /font-scale patch is required/)
     fs.writeFileSync(surface, 'constraintLayout')
+    fs.writeFileSync(borderInsets, 'edgeInsets[edge.ordinal] = width')
+    assert.throws(() => withFontScale.assertPatchedReactNative(root), /border-inset reset patch is required/)
+    fs.writeFileSync(borderInsets, 'edgeInsets[edge.ordinal] = width?.takeUnless { it.isNaN() }')
     write(rn + 'package.json', JSON.stringify({ version: '0.87.1' }))
     assert.throws(() => withFontScale.assertPatchedReactNative(root), /re-review this plugin/)
     assert.throws(() => withFontScale.patchActivity(source.replace('super.onCreate(null)', 'super.onCreate(savedInstanceState)')), /Unsupported MainActivity/)

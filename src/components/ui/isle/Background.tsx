@@ -37,6 +37,12 @@ interface AmbientField {
 
 export function IsleBackground({ colors, environment, mode = 'default', state = 'idle', intensity = 1 }: IsleBackgroundProps) {
   const resolvedMode = resolveBackgroundMode(colors, mode)
+  // The screen owns the canvas; absent decoration must not mount scene hooks.
+  if (resolvedMode === 'none' || environment.layerCount <= 0 || intensity <= 0) return null
+  return <DecorativeBackground colors={colors} environment={environment} mode={resolvedMode} state={state} intensity={intensity} />
+}
+
+function DecorativeBackground({ colors, environment, mode, state, intensity }: Omit<Required<IsleBackgroundProps>, 'mode'> & { mode: ThemeBackgroundMode }) {
   const experienceBackground = colors.ui.experience.background
   const motionPreference = useMotionPreference(environment.kind === 'fluid')
   const appActive = useAppActive()
@@ -44,18 +50,18 @@ export function IsleBackground({ colors, environment, mode = 'default', state = 
   const seed = environment.variation === 'random' || environment.variation === 'daily'
     ? hashEnvironmentSeed(`${environment.seed}:${variationEpoch}`)
     : environment.seed
-  const profile = backgroundProfile(colors, resolvedMode === 'none' ? colors.background.defaultMode : resolvedMode, state, intensity, environment.visualIntensity)
-  const animated = resolvedMode !== 'none'
-    && appActive
+  const profile = backgroundProfile(colors, mode, state, intensity, environment.visualIntensity)
+  const animated = appActive
     && motionPreference === 'full'
     && environment.motion !== 'static'
     && (state === 'idle' || state === 'active' || environment.kind === 'fluid' && state === 'input')
   const fields = useMemo(
-    () => buildAmbientFields(colors, environment, seed, profile.environmentOpacity),
+    () => environment.kind === 'atmospheric' && environment.family !== 'animal-island-ui'
+      ? buildAmbientFields(colors, environment, seed, profile.environmentOpacity)
+      : [],
     [colors, environment, profile.environmentOpacity, seed],
   )
 
-  if (resolvedMode === 'none') return null
   if (environment.family === 'animal-island-ui') {
     return <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.backdrop}>
       <NativeBackground type="default" testID="theme-background-animal-island-ui" style={StyleSheet.absoluteFill} />
@@ -67,10 +73,6 @@ export function IsleBackground({ colors, environment, mode = 'default', state = 
       <View style={[StyleSheet.absoluteFill, { backgroundColor: profile.canvas }]} />
       {environment.kind === 'fluid' ? (
         <FluidBackdrop colors={colors} environment={environment} seed={seed} animated={animated} opacity={profile.environmentOpacity} canvasColor={profile.canvas} />
-      ) : environment.kind === 'minimal' ? (
-        <MinimalEnvironment fields={fields} animated={animated} amplitude={environment.amplitude} />
-      ) : environment.kind === 'tonal' ? (
-        <TonalEnvironment fields={fields} animated={animated} amplitude={environment.amplitude} grid={colors.background.grid} />
       ) : (
         <AmbientEnvironment fields={fields} animated={animated} amplitude={environment.amplitude} />
       )}
@@ -78,19 +80,6 @@ export function IsleBackground({ colors, environment, mode = 'default', state = 
         <EnvironmentGrain seed={seed} opacity={environment.grainOpacity * profile.stateScale} color={colors.text} />
       ) : null}
       <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background.scrim, opacity: profile.scrimOpacity }]} />
-    </View>
-  )
-}
-
-function MinimalEnvironment({ fields, animated, amplitude }: { fields: AmbientField[]; animated: boolean; amplitude: number }) {
-  return <View style={styles.fieldLayer}>{fields.slice(0, 1).map((field) => <EnvironmentField key={field.id} field={field} animated={animated} amplitude={amplitude * 0.34} />)}</View>
-}
-
-function TonalEnvironment({ fields, animated, amplitude, grid }: { fields: AmbientField[]; animated: boolean; amplitude: number; grid: string }) {
-  return (
-    <View style={styles.fieldLayer}>
-      {fields.slice(0, 2).map((field) => <EnvironmentField key={field.id} field={field} animated={animated} amplitude={amplitude * 0.45} />)}
-      <View style={[styles.tonalHorizon, { backgroundColor: grid }]} />
     </View>
   )
 }
@@ -160,17 +149,15 @@ export function resolveBackgroundCanvas(colors: AppPalette, mode: IsleBackground
 function buildAmbientFields(colors: AppPalette, environment: BackgroundEnvironmentConfig, seed: number, opacity: number): AmbientField[] {
   const palette = [colors.background.mist.primary, colors.background.mist.secondary, colors.background.mist.warm, colors.background.trace.accent, colors.background.trace.primary, colors.background.trace.secondary]
   return Array.from({ length: environment.layerCount }, (_, index) => {
-    const radiusBase = environment.kind === 'fluid' ? 310 : environment.kind === 'atmospheric' ? 360 : 470
-    const opacityBase = environment.kind === 'minimal' ? 0.055 : environment.kind === 'tonal' ? 0.09 : environment.kind === 'fluid' ? 0.17 : 0.14
     const radiusJitter = seededEnvironmentValue(seed, index * 9 + 3)
     return {
       id: `ambient-${seed}-${index}`,
       color: palette[index % palette.length],
       x: -80 + seededEnvironmentValue(seed, index * 9) * 1160,
       y: -60 + seededEnvironmentValue(seed, index * 9 + 1) * 1120,
-      radiusX: radiusBase + radiusJitter * 180,
-      radiusY: radiusBase * (0.62 + seededEnvironmentValue(seed, index * 9 + 4) * 0.46),
-      opacity: opacityBase * opacity * (0.74 + seededEnvironmentValue(seed, index * 9 + 5) * 0.36),
+      radiusX: 360 + radiusJitter * 180,
+      radiusY: 360 * (0.62 + seededEnvironmentValue(seed, index * 9 + 4) * 0.46),
+      opacity: 0.14 * opacity * (0.74 + seededEnvironmentValue(seed, index * 9 + 5) * 0.36),
       driftX: 18 + seededEnvironmentValue(seed, index * 9 + 6) * 34,
       driftY: 12 + seededEnvironmentValue(seed, index * 9 + 7) * 27,
       scale: 0.014 + seededEnvironmentValue(seed, index * 9 + 8) * 0.032,
@@ -225,5 +212,4 @@ function variationEpoch(variation: BackgroundEnvironmentConfig['variation']): st
 const styles = StyleSheet.create({
   backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, overflow: 'hidden' },
   fieldLayer: { ...StyleSheet.absoluteFill },
-  tonalHorizon: { position: 'absolute', right: '7%', bottom: '19%', left: '7%', height: StyleSheet.hairlineWidth, opacity: 0.22 },
 })

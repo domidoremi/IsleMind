@@ -12,6 +12,7 @@ export interface BackgroundEnvironmentConfig {
   intensity: ThemeBackgroundIntensity
   seed: number
   preset: number
+  /** Zero means the screen canvas only, with no decorative scene or its work. */
   layerCount: number
   visualIntensity: number
   amplitude: number
@@ -53,9 +54,9 @@ const KIND_BY_FAMILY: Readonly<Record<CanonicalThemeId, BackgroundEnvironmentKin
 })
 
 const LAYER_BUDGET: Readonly<Record<BackgroundEnvironmentKind, Readonly<Record<ThemeBackgroundMotion, number>>>> = Object.freeze({
-  minimal: Object.freeze({ static: 1, subtle: 1, dynamic: 2, immersive: 2 }),
+  minimal: Object.freeze({ static: 0, subtle: 0, dynamic: 0, immersive: 0 }),
   atmospheric: Object.freeze({ static: 3, subtle: 3, dynamic: 4, immersive: 5 }),
-  tonal: Object.freeze({ static: 2, subtle: 2, dynamic: 3, immersive: 3 }),
+  tonal: Object.freeze({ static: 0, subtle: 0, dynamic: 0, immersive: 0 }),
   fluid: Object.freeze({ static: 3, subtle: 3, dynamic: 3, immersive: 3 }),
 })
 
@@ -94,6 +95,10 @@ export function resolveBackgroundEnvironment(input: ResolveBackgroundEnvironment
   const variationKey = resolveVariationKey(variation, now, preset, input.startupSeed, input.rotationEpoch)
   const seed = hashEnvironmentSeed(`${input.family}:${input.mode}:${input.accent ?? 'default'}:${variationKey}`)
   const familyAmplitude = kind === 'minimal' ? 0.24 : kind === 'tonal' ? 0.46 : kind === 'atmospheric' ? 0.72 : 1
+  const layerCount = LAYER_BUDGET[kind][motion]
+  const visualIntensity = layerCount === 0
+    ? 0
+    : kind === 'fluid' ? 0.78 + INTENSITY_SCALE[intensity] * 0.22 : familyAmplitude * INTENSITY_SCALE[intensity]
 
   return Object.freeze({
     family: input.family,
@@ -104,9 +109,9 @@ export function resolveBackgroundEnvironment(input: ResolveBackgroundEnvironment
     intensity,
     seed,
     preset,
-    layerCount: LAYER_BUDGET[kind][motion],
-    visualIntensity: kind === 'fluid' ? 0.78 + INTENSITY_SCALE[intensity] * 0.22 : familyAmplitude * INTENSITY_SCALE[intensity],
-    amplitude: (kind === 'fluid' ? 1 : familyAmplitude * INTENSITY_SCALE[intensity]) * MOTION_SCALE[motion],
+    layerCount,
+    visualIntensity,
+    amplitude: (kind === 'fluid' ? 1 : visualIntensity) * MOTION_SCALE[motion],
     cycleMs: kind === 'fluid' && motion === 'subtle' ? 32_000 : kind === 'fluid' && motion === 'immersive' ? 18_000 : CYCLE_MS[kind],
     grainOpacity: 0,
   })

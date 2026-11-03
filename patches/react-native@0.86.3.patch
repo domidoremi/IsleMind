@@ -327,3 +327,16 @@ index 3a1592d..bdbd6ac 100644
  
    testImplementation(libs.junit)
    testImplementation(libs.assertj)
+diff --git a/ReactAndroid/src/main/java/com/facebook/react/uimanager/style/BorderInsets.kt b/ReactAndroid/src/main/java/com/facebook/react/uimanager/style/BorderInsets.kt
+--- a/ReactAndroid/src/main/java/com/facebook/react/uimanager/style/BorderInsets.kt
++++ b/ReactAndroid/src/main/java/com/facebook/react/uimanager/style/BorderInsets.kt
+@@ -29,6 +29,7 @@ internal class BorderInsets {
+    * @param edge The logical edge to set
+-   * @param width The border width in pixels, or null to clear
++   * @param width The border width in pixels, or null/NaN to clear
+    */
+   fun setBorderWidth(edge: LogicalEdge, width: Float?) {
+-    edgeInsets[edge.ordinal] = width
++    // Native prop removal supplies NaN; unset edges must inherit shorthand widths.
++    edgeInsets[edge.ordinal] = width?.takeUnless { it.isNaN() }
+   }

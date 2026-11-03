@@ -4,7 +4,7 @@ import { AppState, type AppStateStatus } from 'react-native'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { getColors } from '@/theme/colors'
 import { resolveBackgroundEnvironment } from '@/theme/backgroundEnvironment'
-import { IsleBackground } from './Background'
+import { IsleBackground, type IsleBackgroundMode, type IsleBackgroundState } from './Background'
 
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: jest.fn(() => 'full') }))
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
@@ -21,6 +21,62 @@ beforeEach(() => {
   Object.defineProperty(AppState, 'currentState', { value: 'active', configurable: true })
 })
 afterEach(() => jest.restoreAllMocks())
+
+it.each([
+  ['minimal', 'light'], ['minimal', 'dark'], ['material', 'light'], ['material', 'dark'],
+] as const)('renders no %s/%s artwork or background work even with immersive preferences', async (family, mode) => {
+  const lifecycle = jest.spyOn(AppState, 'addEventListener')
+  const interval = jest.spyOn(globalThis, 'setInterval')
+  const plainColors = getColors(mode, family)
+  const plainEnvironment = resolveBackgroundEnvironment({
+    family, mode, motion: 'immersive', intensity: 'high', variation: 'random',
+  })
+  const screen = await render(<IsleBackground colors={plainColors} environment={plainEnvironment} />)
+  for (const background of ['default', 'plain', 'ambient', 'focus', 'surface', 'none'] satisfies IsleBackgroundMode[]) {
+    for (const state of ['idle', 'active', 'input', 'modal', 'error'] satisfies IsleBackgroundState[]) {
+      await screen.rerender(<IsleBackground colors={plainColors} environment={plainEnvironment} mode={background} state={state} />)
+      expect(screen.container.queryAll((node) => node.type === 'View')).toHaveLength(0)
+    }
+  }
+  expect(motion).not.toHaveBeenCalled()
+  expect(lifecycle).not.toHaveBeenCalled()
+  expect(interval).not.toHaveBeenCalled()
+})
+
+it.each(['none', 'zero-intensity'] as const)('%s does not instantiate an invisible scene or keep its timers running', async (disabled) => {
+  const lifecycle = jest.spyOn(AppState, 'addEventListener')
+  const interval = jest.spyOn(globalThis, 'setInterval')
+  const screen = await render(<IsleBackground colors={colors} environment={{ ...environment, variation: 'random' }}
+    mode={disabled === 'none' ? 'none' : 'default'} intensity={disabled === 'zero-intensity' ? 0 : 1} />)
+  expect(screen.container.queryAll((node) => node.type === 'View')).toHaveLength(0)
+  expect(motion).not.toHaveBeenCalled()
+  expect(lifecycle).not.toHaveBeenCalled()
+  expect(interval).not.toHaveBeenCalled()
+})
+
+it('disposes scene subscriptions and variation timers when decoration is disabled or changes to a plain family', async () => {
+  const remove = jest.fn()
+  const lifecycle = jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove })
+  const interval = jest.spyOn(globalThis, 'setInterval')
+  const clear = jest.spyOn(globalThis, 'clearInterval')
+  const rotatingEnvironment = { ...environment, variation: 'random' as const }
+  const screen = await render(<IsleBackground colors={colors} environment={rotatingEnvironment} />)
+  expect(lifecycle).toHaveBeenCalledTimes(1)
+  expect(interval).toHaveBeenCalledTimes(1)
+  const firstTimer = interval.mock.results[0].value
+  await screen.rerender(<IsleBackground colors={colors} environment={rotatingEnvironment} mode="none" />)
+  expect(remove).toHaveBeenCalledTimes(1)
+  expect(clear).toHaveBeenCalledWith(firstTimer)
+  await screen.rerender(<IsleBackground colors={colors} environment={rotatingEnvironment} />)
+  expect(lifecycle).toHaveBeenCalledTimes(2)
+  expect(interval).toHaveBeenCalledTimes(2)
+  const secondTimer = interval.mock.results[1].value
+  await screen.rerender(<IsleBackground colors={getColors('dark', 'material')}
+    environment={resolveBackgroundEnvironment({ family: 'material', mode: 'dark', variation: 'random' })} />)
+  expect(remove).toHaveBeenCalledTimes(2)
+  expect(clear).toHaveBeenCalledWith(secondTimer)
+  expect(screen.container.queryAll((node) => node.type === 'View')).toHaveLength(0)
+})
 
 it('keeps flowing light while typing but freezes it for reduced motion and static mode', async () => {
   const screen = await render(<IsleBackground colors={colors} environment={environment} state="input" />)

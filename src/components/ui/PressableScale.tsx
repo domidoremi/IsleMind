@@ -1,11 +1,12 @@
-import { useEffect } from 'react'
-import { Platform, Pressable, type PressableProps, type PressableStateCallbackType } from 'react-native'
+import { useEffect, type Ref } from 'react'
+import { Platform, Pressable, type PressableProps, type PressableStateCallbackType, type View } from 'react-native'
 import * as Haptics from 'expo-haptics'
 import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 
 interface PressableScaleProps extends PressableProps {
+  ref?: Ref<View>
   children?: PressableProps['children']
   scaleTo?: number
   haptic?: boolean
@@ -48,11 +49,11 @@ const PRESSABLE_INTERACTION_TOKENS: Record<PressableInteractionProfile, Pressabl
     focusDuration: 96,
   },
   precision: {
-    scaleTo: 0.996,
-    pressedOpacity: 0.86,
-    hoverScaleTo: 1,
-    hoverOpacity: 0.92,
-    focusScaleTo: 1.002,
+    scaleTo: 0.988,
+    pressedOpacity: 0.92,
+    hoverScaleTo: 1.004,
+    hoverOpacity: 0.98,
+    focusScaleTo: 1,
     focusOpacity: 1,
     disabledOpacity: 0.48,
     pressInDuration: 72,
@@ -61,16 +62,16 @@ const PRESSABLE_INTERACTION_TOKENS: Record<PressableInteractionProfile, Pressabl
     focusDuration: 80,
   },
   organic: {
-    scaleTo: 1.006,
+    scaleTo: 0.992,
     pressedOpacity: 0.98,
-    hoverScaleTo: 1.012,
+    hoverScaleTo: 1.008,
     hoverOpacity: 1,
-    focusScaleTo: 1.006,
+    focusScaleTo: 1,
     focusOpacity: 1,
     disabledOpacity: 0.58,
-    pressInDuration: 220,
-    pressOutDuration: 320,
-    hoverDuration: 280,
+    pressInDuration: 96,
+    pressOutDuration: 240,
+    hoverDuration: 180,
     focusDuration: 260,
   },
   material: {

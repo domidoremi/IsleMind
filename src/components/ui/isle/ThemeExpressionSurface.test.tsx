@@ -1,9 +1,52 @@
 import { render } from '@testing-library/react-native'
-import { StyleSheet, Text } from 'react-native'
+import { useEffect } from 'react'
+import { StyleSheet, Text, TextInput, View } from 'react-native'
 
 import { getColors } from '@/theme/colors'
 import type { CanonicalThemeId } from '@/types/settingsContracts'
+import { GlassSurfaceActivity } from './GlassSurface'
 import { ThemeExpressionSurface } from './ThemeExpressionSurface'
+
+it.each(['chrome', 'composer'] as const)(
+  'retains the native %s content host through hidden-page theme transitions',
+  async kind => {
+    const mounted = jest.fn()
+    const unmounted = jest.fn()
+    function LiveContent() {
+      useEffect(() => {
+        mounted()
+        return unmounted
+      }, [])
+      return <TextInput testID="live-surface-input" value="Unsent draft" selection={{ start: 4, end: 4 }} />
+    }
+    const tree = (family: CanonicalThemeId, mode: 'light' | 'dark', active: boolean) => (
+      <GlassSurfaceActivity active={active}>
+        <View style={{ opacity: active ? 1 : 0 }}>
+          <ThemeExpressionSurface family={family} colors={getColors(mode, family)} kind={kind} testID="live-surface">
+            <LiveContent />
+          </ThemeExpressionSurface>
+        </View>
+      </GlassSurfaceActivity>
+    )
+    const screen = await render(tree('minimal', 'dark', true))
+    const input = screen.getByTestId('live-surface-input')
+    const nativeHost = input.parent
+
+    for (const family of ['material', 'minimal', 'monet', 'liquid-glass', 'animal-island-ui', 'minimal', 'material'] as const) {
+      for (const active of [false, true]) {
+        await screen.rerender(tree(family, active ? 'light' : 'dark', active))
+        expect(screen.getByTestId('live-surface').props.collapsable).toBe(false)
+        expect(nativeHost?.props.collapsable).toBe(false)
+        expect(screen.getByTestId('live-surface-input')).toBe(input)
+        expect(input.parent).toBe(nativeHost)
+        expect(input.props.value).toBe('Unsent draft')
+        expect(input.props.selection).toEqual({ start: 4, end: 4 })
+      }
+    }
+    expect(mounted).toHaveBeenCalledTimes(1)
+    expect(unmounted).not.toHaveBeenCalled()
+  },
+)
 
 describe('ThemeExpressionSurface markdown nesting', () => {
   it.each(['light', 'dark'] as const)(
