@@ -10,14 +10,20 @@ import { DOCUMENT_REVISION_INPUT_LIMIT, DOCUMENT_REVISION_INSTRUCTION_LIMIT, Doc
 
 export interface DocumentRevisionBase { draft: DocumentDraft; saved: SavedDocument | null }
 
-export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }: DocumentRevisionBase & {
+export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept, open: controlledOpen, embedded = false, onInputFocus, onInputBlur, onInputLayout }: DocumentRevisionBase & {
   port: DocumentRevisionPort
   disabled: boolean
   onAccept(base: DocumentRevisionBase, body: string, sources?: readonly DocumentRevisionSource[]): Promise<boolean>
+  open?: boolean
+  embedded?: boolean
+  onInputFocus?: () => void
+  onInputBlur?: () => void
+  onInputLayout?: () => void
 }) {
   const { t } = useTranslation()
   const { colors } = useAppTheme()
-  const [open, setOpen] = useState(false)
+  const [localOpen, setOpen] = useState(false)
+  const open = controlledOpen ?? localOpen
   const [targets, setTargets] = useState<readonly DocumentRevisionTarget[]>([])
   const [targetIndex, setTargetIndex] = useState<string>()
   const [instruction, setInstruction] = useState('')
@@ -42,6 +48,14 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
     sourceRead.current?.abort(); sourceRead.current = null; setReading(undefined)
   }, [])
 
+  const wasOpen = useRef(false)
+  useEffect(() => {
+    if (open === wasOpen.current) return
+    wasOpen.current = open
+    cancel(); setProposal(undefined); setError(undefined)
+    if (open) { setTargets(port.listTargets()); setTargetIndex(undefined) }
+  }, [open, port, cancel])
+
   useEffect(() => {
     cancel(); setProposal(undefined)
     return () => cancel()
@@ -61,7 +75,6 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
   function refreshTargets() { cancel(); setProposal(undefined); setTargets(port.listTargets()); setTargetIndex(undefined) }
   function toggleOpen() {
     cancel(); setProposal(undefined); setError(undefined)
-    if (!open) refreshTargets()
     setOpen(!open)
   }
   function invalidate() { cancel(); setProposal(undefined); setError(undefined) }
@@ -114,9 +127,11 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
   const citations = (draft.origin?.citations ?? []).filter((citation, index, all) => citation.type !== 'web'
     && all.findIndex((item) => item.id === citation.id) === index
     && all.findIndex((item) => item.type === citation.type && (citation.type === 'knowledge' ? item.documentId === citation.documentId : item.id === citation.id)) === index)
-  return <View testID="document-revision" style={{ gap: 12, borderTopWidth: 1, borderTopColor: colors.ui.semantic.chrome.border, paddingTop: 16 }}>
-    <IsleButton label={t(open ? 'documents.revision.close' : 'documents.revision.open')} onPress={toggleOpen} />
-    {open ? <>
+  return <View testID="document-revision" style={{ gap: 12, display: embedded && !open ? 'none' : 'flex' }}
+    accessibilityElementsHidden={embedded && !open} importantForAccessibility={embedded && !open ? 'no-hide-descendants' : 'auto'}>
+    {!embedded ? <IsleButton label={t(open ? 'documents.revision.close' : 'documents.revision.open')} onPress={toggleOpen} /> : null}
+    <View style={{ gap: 12, display: open ? 'flex' : 'none' }}
+      accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}>
       <Text selectable style={{ color: colors.textSecondary }}>{t('documents.revision.notice')}</Text>
       <IsleSelect options={targets.map((item, index) => ({ value: String(index), label: `${item.providerName} · ${item.model}` }))}
         value={targetIndex} placeholder={t('documents.revision.chooseModel')} disabled={disabled || running}
@@ -129,6 +144,7 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
       </Text> : null}
       <IsleInput label={t('documents.revision.instruction')} accessibilityLabel={t('documents.revision.instruction')} testID="document-revision-instruction"
         value={instruction} multiline maxLength={DOCUMENT_REVISION_INSTRUCTION_LIMIT} editable={!disabled && !running}
+        onFocus={onInputFocus} onBlur={onInputBlur} onLayout={onInputLayout}
         onChangeText={(value) => { invalidate(); setInstruction(value) }} />
       <Text selectable style={{ color: colors.textSecondary }}>{t('documents.revision.sourceNotice')}</Text>
       {citations.map((citation) => {
@@ -173,6 +189,6 @@ export function DocumentRevisionPanel({ draft, saved, port, disabled, onAccept }
           <IsleButton label={t('documents.revision.reject')} disabled={disabled} onPress={() => setProposal(undefined)} />
         </View>
       </View> : null}
-    </> : null}
+    </View>
   </View>
 }

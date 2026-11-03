@@ -1,7 +1,8 @@
-import { act, fireEvent, render } from '@testing-library/react-native'
+import { act, fireEvent, render, within } from '@testing-library/react-native'
 import { router } from 'expo-router'
 import type { DocumentRepository, DocumentSummary } from '@/modules/documents'
 import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsContracts'
+import { FlatList } from 'react-native'
 import DocumentLibraryScreen from './DocumentLibraryScreen'
 
 let mockFamily: CanonicalThemeId = 'minimal'
@@ -15,6 +16,8 @@ jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({
   colors: require('@/theme/colors').getColors('light', mockFamily), canonicalThemeId: mockFamily,
 }) }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
+jest.mock('moti', () => ({ MotiView: require('react-native').View }))
+jest.mock('@/hooks/useThemeMotion', () => ({ useThemeMotion: () => ({ transition: {} }) }))
 jest.mock('@/components/ui/FeedbackGlyph', () => ({ FeedbackGlyph: require('react-native').View }))
 jest.mock('@/presentation/app-shell/ThemeDetailFrame', () => ({
   ThemeDetailFrame: ({ actions, children }: { actions: React.ReactNode; children: React.ReactNode }) => <>{actions}{children}</>,
@@ -32,6 +35,11 @@ function summaries(): DocumentSummary[] {
   return [{ id: 'first', title: 'First idea', updatedAt: 10 }, { id: 'second', title: 'Second idea', updatedAt: 20 }] as DocumentSummary[]
 }
 beforeEach(() => { jest.clearAllMocks(); mockFamily = 'minimal'; mockFocused = true })
+
+it('explicitly centers the empty-catalog action across theme button implementations', async () => {
+  const view = await render(<DocumentLibraryScreen repository={repository(jest.fn().mockResolvedValue([]))} />)
+  expect(view.getByTestId('document-library-create')).toHaveStyle({ alignSelf: 'center' })
+})
 
 it('uses a busy list placeholder on the first read instead of claiming the library is empty', async () => {
   let finish!: (rows: DocumentSummary[]) => void
@@ -161,7 +169,11 @@ it('gives an empty local library a clear creation action, without creating or se
   const list = jest.fn().mockResolvedValue([])
   const view = await render(<DocumentLibraryScreen repository={repository(list)} />)
   expect(view.getByText('documents.emptyTitle')).toBeTruthy()
+  expect(view.queryByText('documents.empty')).toBeNull()
+  expect(view.queryByText('documents.libraryNotice')).toBeNull()
+  await fireEvent.press(view.getByTestId('document-library-storage-toggle'))
   expect(view.getByText('documents.libraryNotice')).toBeTruthy()
+  expect(view.getByTestId('document-library-storage-toggle').props.accessibilityState.expanded).toBe(true)
   expect(router.push).not.toHaveBeenCalled()
   await fireEvent.press(view.getByTestId('document-library-create'))
   expect(router.push).toHaveBeenCalledWith('/documents/edit')
@@ -210,4 +222,68 @@ it('aborts the owned read on exit and ignores a late result', async () => {
   expect(signal.aborted).toBe(true)
   await act(() => finish(summaries()))
   expect(router.push).not.toHaveBeenCalled()
+})
+
+it('sorts the existing catalog without re-reading it and retains the chosen sort when returning', async () => {
+  const list = jest.fn().mockResolvedValue(summaries())
+  const repo = repository(list)
+  const view = await render(<DocumentLibraryScreen repository={repo} />)
+  expect(view.getAllByTestId(/^document-row-/).map(row => row.props.testID)).toEqual(['document-row-second', 'document-row-first'])
+  await fireEvent.press(view.getByTestId('document-sort-title'))
+  expect(view.getAllByTestId(/^document-row-/).map(row => row.props.testID)).toEqual(['document-row-first', 'document-row-second'])
+  await fireEvent.press(view.getByTestId('document-row-second'))
+  expect(list).toHaveBeenCalledTimes(1)
+  await view.unmount()
+  const returned = await render(<DocumentLibraryScreen repository={repo} />)
+  expect(returned.getByTestId('document-sort-title').props.accessibilityState.checked).toBe(true)
+  expect(returned.getByTestId('document-row-second').props.accessibilityState.selected).toBe(true)
+  expect(router.push).toHaveBeenCalledWith({ pathname: '/documents/edit', params: { id: 'second' } })
+})
+
+it('pins catalog commands outside the virtualized reading list and adds summary-only group headings', async () => {
+  const list = jest.fn().mockResolvedValue(summaries())
+  const repo = { list, get: jest.fn(), save: jest.fn(), create: jest.fn() } as unknown as DocumentRepository
+  const view = await render(<DocumentLibraryScreen repository={repo} />)
+  const commands = view.getByTestId('document-library-commands')
+  const search = view.getByLabelText('documents.search')
+  const reading = within(view.getByTestId('document-library-list'))
+  expect(reading.queryByLabelText('documents.search')).toBeNull()
+  expect(within(commands).getByLabelText('documents.search')).toBe(search)
+  expect(reading.getAllByTestId(/^document-catalog-group:/)).toHaveLength(1)
+  expect(reading.getAllByTestId(/^document-row-/)).toHaveLength(2)
+  await fireEvent.scroll(view.getByTestId('document-library-list'), { nativeEvent: { contentOffset: { x: 0, y: 400 } } })
+  await fireEvent.press(view.getByTestId('document-sort-title'))
+  expect(view.getByTestId('document-library-commands')).toBe(commands)
+  expect(view.getByLabelText('documents.search')).toBe(search)
+  expect(repo.get).not.toHaveBeenCalled()
+  expect(repo.save).not.toHaveBeenCalled()
+  expect(repo.create).not.toHaveBeenCalled()
+  expect(list).toHaveBeenCalledTimes(1)
+})
+
+it.each(['viewport-first', 'content-first'] as const)('restores cached scroll with %s measurement and resets it on a new query', async (order) => {
+  const scroll = jest.spyOn(FlatList.prototype, 'scrollToOffset').mockImplementation(() => undefined)
+  try {
+    const repo = repository(jest.fn().mockResolvedValue(summaries()))
+    const view = await render(<DocumentLibraryScreen repository={repo} />)
+    const list = view.getByTestId('document-library-list')
+    await fireEvent(list, 'layout', { nativeEvent: { layout: { width: 390, height: 100, x: 0, y: 0 } } })
+    await fireEvent(list, 'contentSizeChange', 390, 600)
+    await fireEvent.scroll(list, { nativeEvent: { contentOffset: { x: 0, y: 240 } } })
+    await view.unmount()
+    scroll.mockClear()
+    const returned = await render(<DocumentLibraryScreen repository={repo} />)
+    const restored = returned.getByTestId('document-library-list')
+    if (order === 'content-first') {
+      await fireEvent(restored, 'contentSizeChange', 390, 600)
+      expect(scroll).not.toHaveBeenCalled()
+      await fireEvent(restored, 'layout', { nativeEvent: { layout: { width: 390, height: 100, x: 0, y: 0 } } })
+    } else {
+      await fireEvent(restored, 'layout', { nativeEvent: { layout: { width: 390, height: 100, x: 0, y: 0 } } })
+      await fireEvent(restored, 'contentSizeChange', 390, 600)
+    }
+    expect(scroll).toHaveBeenLastCalledWith({ offset: 240, animated: false })
+    await fireEvent.changeText(returned.getByLabelText('documents.search'), 'second')
+    expect(scroll).toHaveBeenLastCalledWith({ offset: 0, animated: false })
+  } finally { scroll.mockRestore() }
 })

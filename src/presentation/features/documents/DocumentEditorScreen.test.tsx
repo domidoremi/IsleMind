@@ -6,6 +6,8 @@ import DocumentEditorScreen from './DocumentEditorScreen'
 import * as Clipboard from 'expo-clipboard'
 import type { IsleButtonProps } from '@/components/ui/isle/Controls'
 import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsContracts'
+import { router } from 'expo-router'
+import { usePreventRemove } from 'expo-router/react-navigation'
 
 let mockFamily: CanonicalThemeId = 'minimal'
 
@@ -19,14 +21,17 @@ jest.mock('expo-router', () => ({
   useLocalSearchParams: () => mockRoute,
   useNavigation: () => ({ dispatch: jest.fn() }),
   useFocusEffect: (effect: () => void | (() => void)) => require('react').useEffect(effect, [effect]),
-  router: { setParams: jest.fn(), replace: jest.fn(), push: jest.fn() },
+  router: { setParams: jest.fn(), replace: jest.fn(), push: jest.fn(), canGoBack: jest.fn(() => false), back: jest.fn() },
 }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({
   colors: jest.requireActual('@/theme/colors').getColors('light', mockFamily), canonicalThemeId: mockFamily,
 }) }))
-jest.mock('@/presentation/app-shell/ThemeDetailFrame', () => ({ ThemeDetailFrame: ({ children, actions }: { children: ReactNode; actions: ReactNode }) => <>{actions}{children}</> }))
+jest.mock('@/presentation/app-shell/ThemeDetailFrame', () => ({ ThemeDetailFrame: ({ children, actions, onBack }: { children: ReactNode; actions: ReactNode; onBack: () => void }) => {
+  const Pressable = require('react-native').Pressable
+  return <><Pressable testID="document-back" onPress={onBack} />{actions}{children}</>
+} }))
 jest.mock('react-native-markdown-display', () => ({ children }: { children: ReactNode }) => {
   const Text = require('react-native').Text
   return <Text>{children}</Text>
@@ -83,8 +88,36 @@ async function openRevision(view: View) {
   await fireEvent.press(view.getByRole('button', { name: 'Provider · model' }))
   await fireEvent.changeText(view.getByTestId('document-revision-instruction'), 'Add the permitted alternative.')
 }
-beforeEach(() => { mockFamily = 'minimal'; mockRoute.id = 'saved'; delete mockRoute.conversationId; delete mockRoute.messageId })
+beforeEach(() => { jest.clearAllMocks(); jest.mocked(router.canGoBack).mockReturnValue(false); mockFamily = 'minimal'; mockRoute.id = 'saved'; delete mockRoute.conversationId; delete mockRoute.messageId })
 afterEach(() => jest.restoreAllMocks())
+
+it('lets an untouched empty new draft leave without reporting lost modifications', async () => {
+  delete mockRoute.id
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  expect(view.getByTestId('document-body').props.value).toBe('')
+  expect(jest.mocked(usePreventRemove).mock.lastCall?.[0]).toBe(false)
+  expect(view.getByTestId('document-save-status')).toHaveTextContent('documents.newDraft')
+  expect(view.getByTestId('document-save-action')).toBeDisabled()
+  expect(view.getByTestId('document-copy')).toBeDisabled()
+  expect(f.create).not.toHaveBeenCalled()
+})
+
+it('protects actual new-draft edits and becomes pristine again when they are undone', async () => {
+  delete mockRoute.id
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  const body = view.getByTestId('document-body')
+  await fireEvent.changeText(body, 'Keep this unsaved writing.')
+  expect(jest.mocked(usePreventRemove).mock.lastCall?.[0]).toBe(true)
+  expect(view.getByTestId('document-save-action')).toBeEnabled()
+  await fireEvent.changeText(body, '')
+  expect(jest.mocked(usePreventRemove).mock.lastCall?.[0]).toBe(false)
+  expect(view.getByTestId('document-body')).toBe(body)
+  await fireEvent.changeText(view.getByTestId('document-title'), 'A title I intentionally changed')
+  expect(jest.mocked(usePreventRemove).mock.lastCall?.[0]).toBe(true)
+  expect(f.create).not.toHaveBeenCalled()
+})
 
 it('exposes writing modes and source expansion without saving, generating, or losing the current body', async () => {
   const f = fixture()
@@ -131,6 +164,107 @@ it('keeps body, title, toolbar, and save-state identity while changing theme pre
   expect(f.port.propose).not.toHaveBeenCalled()
 })
 
+it('keeps the editor mounted across preview and restores focus only when explicitly returning to writing', async () => {
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  const body = view.getByTestId('document-body')
+  await fireEvent.changeText(body, 'A draft with a retained caret.')
+  await fireEvent(body, 'selectionChange', { nativeEvent: { selection: { start: 7, end: 12 } } })
+  await fireEvent.press(view.getByTestId('document-mode-preview'))
+  expect(view.getByTestId('document-body', { includeHiddenElements: true })).toBe(body)
+  expect(view.queryByTestId('document-body')).toBeNull()
+  expect(view.getByTestId('document-preview')).toHaveTextContent(/A draft with a retained caret\./)
+  await fireEvent.press(view.getByTestId('document-mode-edit'))
+  expect(view.getByTestId('document-body')).toBe(body)
+  expect(body.props.value).toBe('A draft with a retained caret.')
+  expect(f.save).not.toHaveBeenCalled()
+  expect(f.port.propose).not.toHaveBeenCalled()
+})
+
+it.each(['route', 'unmount'] as const)('cancels pending writing focus on %s before the next frame', async (change) => {
+  const request = jest.spyOn(globalThis, 'requestAnimationFrame').mockReturnValue(73)
+  const cancel = jest.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => {})
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await fireEvent.press(view.getByTestId('document-mode-preview'))
+  await fireEvent.press(view.getByTestId('document-mode-edit'))
+  expect(request).toHaveBeenCalledTimes(1)
+  if (change === 'route') {
+    delete mockRoute.id
+    await view.rerender(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+    expect(view.getByTestId('document-body').props.value).toBe('')
+  } else await view.unmount()
+  expect(cancel).toHaveBeenCalledWith(73)
+  expect(f.save).not.toHaveBeenCalled()
+  expect(f.port.propose).not.toHaveBeenCalled()
+})
+
+it('marks writing focus without changing the writing surface geometry', async () => {
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  const frame = view.getByTestId('document-writing-frame')
+  const { StyleSheet } = require('react-native')
+  const idle = StyleSheet.flatten(frame.props.style)
+  await fireEvent(view.getByTestId('document-body'), 'focus')
+  const focused = StyleSheet.flatten(frame.props.style)
+  expect(focused.borderColor).not.toBe(idle.borderColor)
+  expect(focused.borderWidth).toBe(idle.borderWidth)
+  expect(focused.padding).toBe(idle.padding)
+  await fireEvent(view.getByTestId('document-body'), 'blur')
+  expect(view.getByTestId('document-writing-frame')).toHaveStyle({ borderColor: idle.borderColor })
+})
+
+it('keeps the writing tree while switching between wide and large-text layouts', async () => {
+  const dimensions = jest.spyOn(require('react-native'), 'useWindowDimensions')
+  dimensions.mockReturnValue({ width: 1280, height: 900, fontScale: 1, scale: 1 })
+  const f = fixture()
+  const page = () => <DocumentEditorScreen repository={f.repository} revision={f.port} />
+  const view = await render(page())
+  const body = view.getByTestId('document-body')
+  const title = view.getByTestId('document-title')
+  const toolbar = view.getByTestId('document-editor-toolbar')
+  await fireEvent.changeText(body, 'A wide draft.')
+  expect(view.getByTestId('document-workspace')).toHaveStyle({ flexDirection: 'row' })
+  dimensions.mockReturnValue({ width: 1280, height: 900, fontScale: 1.6, scale: 1 })
+  await view.rerender(page())
+  expect(view.getByTestId('document-workspace')).toHaveStyle({ flexDirection: 'column' })
+  expect(view.getByTestId('document-body')).toBe(body)
+  expect(view.getByTestId('document-title')).toBe(title)
+  expect(view.getByTestId('document-editor-toolbar')).toBe(toolbar)
+  expect(body.props.value).toBe('A wide draft.')
+  expect(f.save).not.toHaveBeenCalled()
+})
+
+it('keeps storage explanations behind an explicit disclosure rather than the writing flow', async () => {
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  const body = view.getByTestId('document-body')
+  expect(view.queryByText('documents.retentionNotice')).toBeNull()
+  await fireEvent.press(view.getByTestId('document-storage-toggle'))
+  expect(view.getByText('documents.retentionNotice')).toBeTruthy()
+  expect(view.getByTestId('document-body')).toBe(body)
+  expect(f.save).not.toHaveBeenCalled()
+})
+
+it('returns to the existing caller rather than replacing its route with a new library', async () => {
+  jest.mocked(router.canGoBack).mockReturnValue(true)
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await fireEvent.press(view.getByTestId('document-back'))
+  expect(router.back).toHaveBeenCalledTimes(1)
+  expect(router.replace).not.toHaveBeenCalled()
+  expect(f.save).not.toHaveBeenCalled()
+})
+
+it('uses the explicit source conversation when a document opened from an answer has no back stack', async () => {
+  mockRoute.conversationId = 'origin-chat'; mockRoute.messageId = 'answer'
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await fireEvent.press(view.getByTestId('document-back'))
+  expect(router.replace).toHaveBeenCalledWith({ pathname: '/chat/[id]', params: { id: 'origin-chat' } })
+  expect(f.save).not.toHaveBeenCalled()
+})
+
 it.each(['success', 'false', 'reject'] as const)('confirms only a real document-copy outcome: %s', async outcome => {
   if (outcome === 'reject') jest.mocked(Clipboard.setStringAsync).mockRejectedValueOnce(new Error('Clipboard unavailable'))
   else jest.mocked(Clipboard.setStringAsync).mockResolvedValueOnce(outcome === 'success')
@@ -143,7 +277,7 @@ it.each(['success', 'false', 'reject'] as const)('confirms only a real document-
   expect(f.save).not.toHaveBeenCalled()
   if (outcome === 'success') {
     expect(view.queryByTestId('document-copy-announcement')).toBeNull()
-    expect(view.getByRole('button', { name: 'documents.copyText. documents.copyNotice' })).toBeTruthy()
+    expect(view.getByRole('button', { name: 'documents.copyText. common.copied' })).toBeTruthy()
     expect(view.queryByTestId('document-copy-feedback')).toBeNull()
   }
   else {
@@ -275,8 +409,11 @@ it('keeps an opted-in review only in the draft when Save fails, then retries wit
   // Ordinary later acceptance does not silently discard or relabel that review.
   const retained = f.durable().reviewContext
   ;(f.port.propose as jest.Mock).mockResolvedValueOnce('Later proposal without retained sources')
+  await fireEvent.press(view.getByTestId('document-revision-toggle'))
+  await fireEvent.press(view.getByRole('button', { name: 'Provider · model' }))
   await fireEvent.press(view.getByRole('button', { name: 'documents.revision.generate' }))
   await fireEvent.press(view.getByRole('button', { name: 'documents.revision.accept' }))
+  await fireEvent.press(view.getByTestId('document-review-toggle'))
   expect(view.getByText('documents.review.changed')).toBeTruthy()
   await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
   expect(f.durable().reviewContext).toEqual(retained)
@@ -294,6 +431,49 @@ it('cancels an old request without accepting late results or letting it overwrit
   await fireEvent.press(view.getByRole('button', { name: 'documents.revision.generate' }))
   await act(async () => gate.resolve('Late old proposal'))
   expect(view.getByTestId('document-revision-proposed').props.children).toBe('New proposal')
+  expect(view.getByTestId('document-body').props.value).toBe('Before body')
+  expect(f.save).not.toHaveBeenCalled()
+})
+
+it('keeps one contextual task open and preserves the revision instruction when changing context', async () => {
+  const f = fixture()
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  const title = view.getByTestId('document-title')
+  const body = view.getByTestId('document-body')
+  await openRevision(view)
+  const instruction = view.getByTestId('document-revision-instruction')
+  const text = instruction.props.value
+  await fireEvent.press(view.getByTestId('document-origin-toggle'))
+  expect(view.getByTestId('document-origin')).toBeTruthy()
+  expect(view.queryByRole('button', { name: 'documents.revision.generate' })).toBeNull()
+  expect(view.getByTestId('document-revision-toggle').props.accessibilityState.expanded).toBe(false)
+  await fireEvent.press(view.getByTestId('document-storage-toggle'))
+  expect(view.queryByTestId('document-origin')).toBeNull()
+  expect(view.getByText('documents.retentionNotice')).toBeTruthy()
+  await fireEvent.press(view.getByTestId('document-revision-toggle'))
+  expect(view.getByTestId('document-revision-instruction')).toBe(instruction)
+  expect(instruction.props.value).toBe(text)
+  expect(view.queryByTestId('document-revision-destination')).toBeNull()
+  expect(view.getByTestId('document-title')).toBe(title)
+  expect(view.getByTestId('document-body')).toBe(body)
+  expect(f.save).not.toHaveBeenCalled()
+  expect(f.port.readSource).not.toHaveBeenCalled()
+  expect(f.port.propose).not.toHaveBeenCalled()
+})
+
+it('cancels a revision when leaving its context and rejects its late result', async () => {
+  const f = fixture()
+  const gate = deferred<string>()
+  ;(f.port.propose as jest.Mock).mockReturnValueOnce(gate.promise)
+  const view = await render(<DocumentEditorScreen repository={f.repository} revision={f.port} />)
+  await openRevision(view)
+  await fireEvent.press(view.getByRole('button', { name: 'documents.revision.generate' }))
+  const signal = (f.port.propose as jest.Mock).mock.calls[0][1] as AbortSignal
+  await fireEvent.press(view.getByTestId('document-storage-toggle'))
+  expect(signal.aborted).toBe(true)
+  await act(() => gate.resolve('A late response must not become a proposal'))
+  await fireEvent.press(view.getByTestId('document-revision-toggle'))
+  expect(view.queryByTestId('document-revision-proposal')).toBeNull()
   expect(view.getByTestId('document-body').props.value).toBe('Before body')
   expect(f.save).not.toHaveBeenCalled()
 })
@@ -362,6 +542,9 @@ it('clears the previous saved identity on a blank-document route change and canc
   expect((f.port.propose as jest.Mock).mock.calls[0][1].aborted).toBe(true)
   await act(async () => gate.resolve('Stale route proposal'))
   expect(view.getByTestId('document-body').props.value).toBe('')
+  expect(view.getByTestId('document-save-action')).toBeDisabled()
+  expect(f.create).not.toHaveBeenCalled()
+  await fireEvent.changeText(view.getByTestId('document-body'), 'A new document from this route.')
   await fireEvent.press(view.getByRole('button', { name: 'common.save' }))
   expect(f.create).toHaveBeenCalled()
   expect(f.save).not.toHaveBeenCalled()
