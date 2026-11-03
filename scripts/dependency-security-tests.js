@@ -196,6 +196,7 @@ async function verifyCurrentSecurityFixes() {
     assert.equal(SourceNode.fromStringWithSourceMap('fixture', valid).toString(), 'fixture');
   `)
   await verifyCompressionAbortCleanup()
+  await require('./dependency-backport-tests').verifyDependencyBackports()
   console.log('Dependency security regressions passed: compatible upgrades, bounded parser inputs, both brace branches, scoped deepmerge/Zod v3 backports, signature/PEM interop, and aborted gzip cleanup. Advisory exceptions remain separately reviewed.')
 }
 

@@ -9,7 +9,7 @@ const benchmark = require('./provider-performance-baseline')
 
 const root = path.resolve(__dirname, '..')
 const ledger = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/provider-maintenance-ledger.json'), 'utf8'))
-const now = Date.parse('2026-10-31T12:00:00+08:00')
+const now = Date.parse('2026-11-03T12:00:00+08:00')
 const directories = []
 const clone = value => JSON.parse(JSON.stringify(value))
 
@@ -134,6 +134,21 @@ describe('exact advisory review and isolation', () => {
     const fixture = reviewFixture(), result = audit.evaluateAdvisories(fixture.raw, fixture)
     expect(result.passed).toBe(true)
     expect(result.reviewed).toMatchObject([{ decision: 'time-bounded-exception', package: 'deepmerge', version: '4.3.1' }])
+  })
+
+  test('verifies a named partial backport while keeping other versions explicitly unpatched', () => {
+    const fixture = reviewFixture()
+    const exception = fixture.ledger.security.exceptions[0]
+    exception.versions.push('4.3.0')
+    exception.scope = 'unpatched-tooling-static-review'
+    exception.patch.version = '4.3.1'
+    fixture.raw.deepmerge[0].vulnerable_versions = '>=4.3.0 <=4.3.1'
+    expect(audit.evaluateAdvisories(fixture.raw, fixture).passed).toBe(true)
+    exception.scope = 'mitigated-tooling-static-review'
+    expect(audit.evaluateAdvisories(fixture.raw, fixture).passed).toBe(false)
+    exception.scope = 'unpatched-tooling-static-review'
+    exception.patch.version = '4.3.0'
+    expect(audit.evaluateAdvisories(fixture.raw, fixture).passed).toBe(false)
   })
 
   test.each(['unknown-id', 'unknown-version', 'severity-drift', 'expired', 'patch-tampered', 'registration-missing',

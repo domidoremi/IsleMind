@@ -129,8 +129,13 @@ function evaluateAdvisories(raw, { ledger, inventory, patches, directImports, no
       issues.push(`Direct production import invalidates tooling-scoped exception: ${key}`)
     }
     if (exception.patch) {
-      const registered = patches[`${exception.package}@${exception.versions[0]}`]
-      if (exception.versions.length !== 1
+      // A multi-version exception may carry a backport for one explicitly named
+      // version, while keeping the remaining unpatched scope and original expiry.
+      const version = exception.patch.version ?? exception.versions[0]
+      const registered = patches[`${exception.package}@${version}`]
+      if (!exception.versions.includes(version)
+        || (exception.versions.length !== 1 && (exception.patch.version === undefined
+          || exception.scope !== 'unpatched-tooling-static-review'))
         || registered?.file !== exception.patch.file || registered?.sha256 !== exception.patch.sha256) {
         issues.push(`Patch registration or SHA-256 mismatch: ${key}`)
       }

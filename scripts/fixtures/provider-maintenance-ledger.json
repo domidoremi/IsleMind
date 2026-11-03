@@ -1595,9 +1595,9 @@
           "13.0.6"
         ],
         "severity": "moderate",
-        "reviewedAt": "2026-10-31T00:00:00+08:00",
+        "reviewedAt": "2026-11-03T00:00:00+08:00",
         "owner": "dependency-security-maintainer",
-        "scope": "unpatched-tooling-static-review",
+        "scope": "mitigated-tooling-static-review",
         "expectedConsumers": [
           "@expo/cli@57.0.27",
           "@expo/config-plugins@57.0.9",
@@ -1609,11 +1609,15 @@
           "jest-runtime@29.7.0",
           "test-exclude@6.0.0"
         ],
-        "mitigation": "No product-source direct import found; known Expo/Jest configuration and build consumers stay pinned.",
-        "limitations": "AbortSignal traversal advisory remains unpatched. Static tooling scope does not certify an APK or exclude hostile workspaces.",
-        "nextAction": "Review a scoped cancellation backport or parent-supported safe glob release; add aborted traversal regression before approval.",
+        "mitigation": "Registered cancellation-return backport from upstream commit 4682e8c9 covers raw and public bundled CJS/ESM entrypoints; bundled minimatch preprocessing is also rebuilt from the bounded backport.",
+        "limitations": "Local compatible backport is not a registry-safe version or exact artifact reachability certification. Original review expiry remains unchanged.",
+        "nextAction": "Review parent-supported glob 14 migration; retain cancellation and paused-stream regressions before removing the backport.",
         "nextReview": "2026-11-07T00:00:00+08:00",
-        "expiresAt": "2026-11-07T00:00:00+08:00"
+        "expiresAt": "2026-11-07T00:00:00+08:00",
+        "patch": {
+          "file": "patches/glob@13.0.6.patch",
+          "sha256": "338c307037224d148702f7e9abe6fb44e39ad1dc7964416e6a4ec80bb9173d1c"
+        }
       },
       {
         "id": "GHSA-g3hv-75wg-m249",
@@ -1623,7 +1627,7 @@
           "10.2.6"
         ],
         "severity": "moderate",
-        "reviewedAt": "2026-10-31T00:00:00+08:00",
+        "reviewedAt": "2026-11-03T00:00:00+08:00",
         "owner": "dependency-security-maintainer",
         "scope": "unpatched-tooling-static-review",
         "expectedConsumers": [
@@ -1637,11 +1641,16 @@
           "glob@7.2.3",
           "test-exclude@6.0.0"
         ],
-        "mitigation": "Both brace-expansion branches are upgraded; known glob/Expo/eslint/Jest consumers remain pinned.",
-        "limitations": "globparts amplification advisory remains unpatched; brace fixes do not fix minimatch. A forced minimatch 11 upgrade can break legacy consumers.",
-        "nextAction": "Review compatible amplification backports or parent/major migrations for both locked branches with glob/Metro/Jest compatibility tests.",
+        "mitigation": "Registered upstream 77a0f5c4 preprocessing limits cover minimatch 10.2.6 CJS/ESM; glob public bundles include the same limits. The locked v3 branch has no firstPhasePreProcess method and retains ordinary matching in regressions.",
+        "limitations": "The registry still flags both versions. Only 10.2.6 has this backport; v3 remains under explicit tooling review. Static regression evidence does not certify every bundled consumer or remove the original expiry.",
+        "nextAction": "Review coordinated minimatch 11 and legacy-consumer migration; keep all remaining unpatched-version scope and expiry visible.",
         "nextReview": "2026-11-07T00:00:00+08:00",
-        "expiresAt": "2026-11-07T00:00:00+08:00"
+        "expiresAt": "2026-11-07T00:00:00+08:00",
+        "patch": {
+          "version": "10.2.6",
+          "file": "patches/minimatch@10.2.6.patch",
+          "sha256": "30ce4fc8296e8d017f546a9407136d20409eaa80f75ad27ac27a03ca2c28814a"
+        }
       }
     ],
     "advisoryDispositions": [
@@ -2049,7 +2058,7 @@
           "13.0.6",
           "7.2.3"
         ],
-        "status": "unpatched-with-expiry",
+        "status": "mitigated-with-expiry",
         "owner": "dependency-security-maintainer",
         "entryPoint": "Expo/Jest build tooling -> glob path matching; public registry still flags glob 13.0.6",
         "lockedConsumers": [
@@ -2070,17 +2079,18 @@
         },
         "regressionFiles": [
           "scripts/dependency-advisory-audit.js",
-          "scripts/provider-maintenance-contracts.test.js"
+          "scripts/provider-maintenance-contracts.test.js",
+          "scripts/dependency-backport-tests.js"
         ],
         "advisoryUrl": "https://github.com/advisories/GHSA-3g3m-2fjr-6pw4",
-        "reviewedAt": "2026-10-31",
+        "reviewedAt": "2026-11-03",
         "nextReview": "2026-11-07T00:00:00+08:00",
         "affectedLockedVersions": [
           "13.0.6"
         ],
-        "scope": "unpatched-tooling-static-review",
+        "scope": "mitigated-tooling-static-review",
         "expiresAt": "2026-11-07T00:00:00+08:00",
-        "limitations": "AbortSignal traversal advisory remains unpatched. Static tooling scope does not certify an APK or exclude hostile workspaces."
+        "limitations": "Local compatible backport is not a registry-safe version or exact artifact reachability certification. Original review expiry remains unchanged."
       },
       {
         "id": "GHSA-g3hv-75wg-m249",
@@ -2113,10 +2123,11 @@
         },
         "regressionFiles": [
           "scripts/dependency-advisory-audit.js",
-          "scripts/provider-maintenance-contracts.test.js"
+          "scripts/provider-maintenance-contracts.test.js",
+          "scripts/dependency-backport-tests.js"
         ],
         "advisoryUrl": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
-        "reviewedAt": "2026-10-31",
+        "reviewedAt": "2026-11-03",
         "nextReview": "2026-11-07T00:00:00+08:00",
         "affectedLockedVersions": [
           "3.1.5",
@@ -2124,7 +2135,7 @@
         ],
         "scope": "unpatched-tooling-static-review",
         "expiresAt": "2026-11-07T00:00:00+08:00",
-        "limitations": "globparts amplification advisory remains unpatched; brace fixes do not fix minimatch. A forced minimatch 11 upgrade can break legacy consumers."
+        "limitations": "The registry still flags both versions. Only 10.2.6 has this backport; v3 remains under explicit tooling review. Static regression evidence does not certify every bundled consumer or remove the original expiry."
       }
     ]
   },
