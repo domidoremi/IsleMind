@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
-import { Pressable, Text, TextInput } from 'react-native'
+import { Pressable as MockPressable, Text, TextInput } from 'react-native'
 import { getColors } from '@/theme/colors'
 import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsContracts'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -34,7 +34,7 @@ it.each(['panel', 'composer', 'message', 'detail'] as const)(
       useEffect(() => () => { unmount() }, [])
       return <>
         <TextInput testID="draft" value={draft} onChangeText={setDraft} />
-        <Pressable testID="run" onPress={() => { setResult('pending'); void operation.then(setResult) }}><Text>{result}</Text></Pressable>
+        <MockPressable testID="run" onPress={() => { setResult('pending'); void operation.then(setResult) }}><Text>{result}</Text></MockPressable>
       </>
     }
     const tree = (family: CanonicalThemeId, mode: 'light' | 'dark') => {

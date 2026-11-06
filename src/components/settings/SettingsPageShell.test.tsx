@@ -1,6 +1,6 @@
 import { useContext, useEffect } from 'react'
 import { act, fireEvent, render } from '@testing-library/react-native'
-import { Pressable, TextInput } from 'react-native'
+import { Keyboard, Platform, Pressable as MockPressable, TextInput } from 'react-native'
 import { SettingsPageShell } from './SettingsPageShell'
 import { SettingsSectionContext, useSettingsUndoAction } from './SettingsSection'
 
@@ -10,6 +10,8 @@ let mockMotion = 'full'
 let mockDimensions = { width: 390, height: 844, scale: 1, fontScale: 1 }
 let mockContentHeight = 2344
 let mockStackIndex = 1
+let mockFamily: 'minimal' | 'monet' = 'minimal'
+let mockMode: 'light' | 'dark' = 'light'
 const mockEvents = new Map<string, () => void>()
 const mockScroll = jest.fn()
 let mockUndoHandler = () => undefined
@@ -20,13 +22,17 @@ jest.mock('expo-router', () => ({ usePathname: () => '/settings/preferences', us
 jest.mock('expo-router/react-navigation', () => ({ useIsFocused: () => mockFocused }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockMotion }))
-jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors('light', 'minimal'), canonicalThemeId: 'minimal' }) }))
+jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors(mockMode, mockFamily), canonicalThemeId: mockFamily, mode: mockMode }) }))
 jest.mock('@/components/navigation/AnimatedNavigationTrigger', () => ({ AnimatedNavigationTrigger: () => null }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 jest.mock('./SettingsHelp', () => ({ SettingsHelpButton: () => null }))
 jest.mock('./SettingsEditBoundary', () => ({ SettingsEditBoundary: ({ children }: any) => children, useSettingsLeave: () => (action: () => void) => action() }))
-jest.mock('./theme-experiences/SettingsPageExperiences', () => ({ MinimalSettingsPageExperience: ({ trailing }: any) => trailing }))
+jest.mock('./theme-experiences/SettingsPageExperiences', () => {
+  const Experience = ({ trailing }: any) => trailing
+  return { MinimalSettingsPageExperience: Experience, MonetSettingsPageExperience: Experience,
+    MaterialSettingsPageExperience: Experience, LiquidGlassSettingsPageExperience: Experience }
+})
 jest.mock('react-native', () => {
   const original = jest.requireActual('react-native')
   const React = require('react')
@@ -40,8 +46,8 @@ jest.mock('@/components/ui/isle', () => ({
   IsleScreen: ({ children }: any) => children,
   IslePressable: (props: any) => {
     if (props.testID === 'settings-undo') mockUndoHandler = props.onPress
-    const Pressable = require('react-native').Pressable
-    return <Pressable {...props} />
+    const MockPressable = require('react-native').Pressable
+    return <MockPressable {...props} />
   },
 }))
 function Target() {
@@ -61,13 +67,93 @@ async function layoutScroll(screen: Awaited<ReturnType<typeof render>>) {
 function TaskScrollControls() {
   const { resetScroll } = useContext(SettingsSectionContext)
   return <>
-    <Pressable testID="open-task" onPress={() => resetScroll?.(false)} />
-    <Pressable testID="return-to-tasks" onPress={() => resetScroll?.(true)} />
+    <MockPressable testID="open-task" onPress={() => resetScroll?.(false)} />
+    <MockPressable testID="return-to-tasks" onPress={() => resetScroll?.(true)} />
     <TextInput testID="task-scroll-owner" defaultValue="Keep this owner" />
   </>
 }
-beforeEach(() => { mockParams = { section: 'target', locate: '1' }; mockFocused = true; mockMotion = 'full'; mockStackIndex = 1; mockContentHeight = 2344; mockDimensions = { width: 390, height: 844, scale: 1, fontScale: 1 }; mockScroll.mockClear(); mockMeasurements.length = 0 })
-afterEach(() => jest.useRealTimers())
+const platformDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+function nativeKeyboard() {
+  Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' })
+  const events = new Map<string, (event?: any) => void>()
+  const frames = new Map<number, FrameRequestCallback>()
+  const measurements: Array<(x: number, y: number, width: number, height: number) => void> = []
+  const input = { measureInWindow: (done: typeof measurements[number]) => measurements.push(done) }
+  let focusedInput: typeof input | undefined = input
+  let nextFrame = 0
+  jest.spyOn(Keyboard, 'addListener').mockImplementation((name, handler) => {
+    events.set(name, handler)
+    return { remove: () => { events.delete(name) } } as ReturnType<typeof Keyboard.addListener>
+  })
+  jest.spyOn(TextInput.State, 'currentlyFocusedInput').mockImplementation(() => focusedInput as any)
+  jest.spyOn(global, 'requestAnimationFrame').mockImplementation(callback => {
+    const id = ++nextFrame
+    frames.set(id, callback)
+    return id
+  })
+  jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(id => { if (id != null) frames.delete(id) })
+  return {
+    measurements,
+    show: () => events.get('keyboardDidShow')?.({ endCoordinates: { screenY: 544, height: 300 } }),
+    hide: () => events.get('keyboardDidHide')?.(),
+    blur: () => { focusedInput = undefined },
+    focus: () => { focusedInput = input },
+    frames: () => { const pending = [...frames.values()]; frames.clear(); pending.forEach(done => done(0)) },
+  }
+}
+beforeEach(() => { mockParams = { section: 'target', locate: '1' }; mockFocused = true; mockMotion = 'full'; mockStackIndex = 1; mockFamily = 'minimal'; mockMode = 'light'; mockContentHeight = 2344; mockDimensions = { width: 390, height: 844, scale: 1, fontScale: 1 }; mockScroll.mockClear(); mockMeasurements.length = 0 })
+afterEach(() => { Object.defineProperty(Platform, 'OS', platformDescriptor); jest.restoreAllMocks(); jest.useRealTimers() })
+
+it('keeps a native input above the keyboard after theme reflow and reserves scroll space', async () => {
+  const keyboard = nativeKeyboard()
+  mockParams = { section: '', locate: '1' }
+  const page = () => <SettingsPageShell title="Settings"><TextInput testID="keyboard-owner" defaultValue="65" /></SettingsPageShell>
+  const screen = await render(page())
+  const owner = screen.getByTestId('keyboard-owner')
+  await act(() => mockEvents.get('transitionEnd')?.())
+  await layoutScroll(screen)
+  await fireEvent(screen.getByTestId('scroll'), 'scroll', { nativeEvent: { contentOffset: { y: 600 } } })
+  await act(keyboard.show)
+  expect(screen.getByTestId('scroll')).toHaveProp('contentContainerStyle', expect.objectContaining({ paddingBottom: 348 }))
+  await act(keyboard.frames)
+  await act(() => keyboard.measurements.shift()?.(0, 620, 100, 48))
+  expect(mockScroll).toHaveBeenLastCalledWith({ y: 748, animated: true })
+  await fireEvent(screen.getByTestId('scroll'), 'scroll', { nativeEvent: { contentOffset: { y: 748 } } })
+  mockFamily = 'monet'; mockMode = 'dark'; mockMotion = 'none'
+  await screen.rerender(page())
+  await act(keyboard.frames)
+  await act(() => keyboard.measurements.shift()?.(0, 600, 100, 48))
+  expect(mockScroll).toHaveBeenLastCalledWith({ y: 876, animated: false })
+  expect(screen.getByTestId('keyboard-owner')).toBe(owner)
+  await act(keyboard.hide)
+  expect(screen.getByTestId('scroll')).toHaveProp('contentContainerStyle', expect.objectContaining({ paddingBottom: 48 }))
+})
+
+it('rejects a pending keyboard measurement after dragging, losing focus or unmounting', async () => {
+  const keyboard = nativeKeyboard()
+  mockParams = { section: '', locate: '1' }
+  const screen = await render(<SettingsPageShell title="Settings"><TextInput /></SettingsPageShell>)
+  await act(() => mockEvents.get('transitionEnd')?.())
+  await layoutScroll(screen)
+  await act(keyboard.show)
+  await act(keyboard.frames)
+  const dragged = keyboard.measurements.shift()
+  await fireEvent(screen.getByTestId('scroll'), 'scrollBeginDrag')
+  await act(() => dragged?.(0, 620, 100, 48))
+  expect(mockScroll).not.toHaveBeenCalled()
+  await act(keyboard.show)
+  await act(keyboard.frames)
+  keyboard.blur()
+  await act(() => keyboard.measurements.shift()?.(0, 620, 100, 48))
+  expect(mockScroll).not.toHaveBeenCalled()
+  keyboard.focus()
+  await act(keyboard.show)
+  await act(keyboard.frames)
+  const unmounted = keyboard.measurements.shift()
+  await screen.unmount()
+  await act(() => unmounted?.(0, 620, 100, 48))
+  expect(mockScroll).not.toHaveBeenCalled()
+})
 
 it('restores the task list offset after its native content height is available', async () => {
   mockParams = { section: '', locate: '1' }

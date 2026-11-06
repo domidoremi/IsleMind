@@ -792,13 +792,15 @@ export interface IsleSelectOption {
   disabled?: boolean
 }
 
-export function IsleSelect({ options, value, placeholder = 'Select', disabled = false, onChange, style }: {
+export function IsleSelect({ options, value, placeholder = 'Select', disabled = false, onChange, style, accessibilityLabel, testID }: {
   options: IsleSelectOption[]
   value?: string
   placeholder?: string
   disabled?: boolean
   onChange?: (value: string) => void
   style?: StyleProp<ViewStyle>
+  accessibilityLabel?: string
+  testID?: string
 }) {
   const palette = useIslePalette()
   const menuMotion = useThemeMotion('overlay', { readable: true })
@@ -829,7 +831,8 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
   if (palette.themeId === 'animal-island-ui') {
     // The fork owns its menu state; remount it to retire an open menu on disable.
     return <NativeSelect key={disabled ? 'disabled' : 'enabled'} options={options.map((option) => ({ key: option.value, label: option.label, disabled: option.disabled }))}
-      value={value ?? ''} placeholder={placeholder} disabled={disabled} onChange={select} style={style} />
+      value={value ?? ''} placeholder={placeholder} disabled={disabled} onChange={select} style={style}
+      aria-label={accessibilityLabel} testID={testID} />
   }
   const selectExpression = palette.colors.design ? resolveThemeComponentExpression(palette.colors.design.family, 'dropdown') : null
   const activeOptionBackground = palette.ui.tone.success.background
@@ -837,9 +840,10 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
   const activeOptionBorder = palette.ui.tone.success.border
   const disabledStyle = disabledContentStyle(palette)
   return (
-    <View style={style}>
+    <View style={style} testID={testID}>
       <IsleButton
         label={selected?.label ?? placeholder}
+        accessibilityLabel={accessibilityLabel ? `${accessibilityLabel} · ${selected?.label ?? placeholder}` : undefined}
         type="default"
         disabled={disabled}
         accessibilityState={{ expanded: open && !disabled }}

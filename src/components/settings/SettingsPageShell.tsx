@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { BackHandler, findNodeHandle, Keyboard, Platform, ScrollView, View, useWindowDimensions } from 'react-native'
+import { BackHandler, Keyboard, Platform, ScrollView, View, useWindowDimensions } from 'react-native'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { router, useLocalSearchParams, useNavigation, usePathname } from 'expo-router'
 import { useIsFocused } from 'expo-router/react-navigation'
@@ -27,7 +27,7 @@ export function SettingsPageShell(props: Props) {
   return <PageFeedbackBoundary scopeKey={pathname}><SettingsEditBoundary><SettingsPageFrame {...props} /></SettingsEditBoundary></PageFeedbackBoundary>
 }
 function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Props) {
-  const { colors, canonicalThemeId } = useAppTheme()
+  const { colors, canonicalThemeId, mode } = useAppTheme()
   const { t } = useTranslation()
   const pathname = usePathname()
   const params = useLocalSearchParams<{ returnTo?: string | string[]; section?: string; locate?: string }>()
@@ -61,6 +61,7 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   }, [width, fontScale])
   const consumed = useRef<string | undefined>(undefined)
   const keyboardFrame = useRef<number | null>(null)
+  const keyboardViewport = useRef<{ screenY: number; height: number } | null>(null)
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [taskNavigation, setTaskNavigation] = useState<SettingsTaskNavigation>()
   const [undoAction, setUndoAction] = useState<SettingsUndoAction>()
@@ -73,6 +74,9 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   }, [taskNavigation?.title])
   const [highlight, setHighlight] = useState<string>()
   const [keyboardHeight, setKeyboardHeight] = useState(0)
+  const contentPaddingBottom = CONTENT_PADDING_BOTTOM + (Platform.OS === 'android' ? keyboardHeight : 0)
+  const contentPaddingBottomRef = useRef(contentPaddingBottom)
+  contentPaddingBottomRef.current = contentPaddingBottom
   // Native initial routes also emit transitionEnd from onAppear. Their index
   // does not establish that the native scroll container has finished mounting.
   const [transitioning, setTransitioning] = useState(Platform.OS !== 'web')
@@ -81,6 +85,26 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   const target = typeof params.section === 'string' ? params.section : undefined
   const targetRef = useRef(target)
   targetRef.current = target
+  const revealKeyboardInput = useCallback(() => {
+    if (Platform.OS === 'web' || !keyboardViewport.current || !ready.current
+      || (targetRef.current && consumed.current !== targetRef.current)) return
+    if (keyboardFrame.current !== null) cancelAnimationFrame(keyboardFrame.current)
+    const request = epoch.current
+    keyboardFrame.current = requestAnimationFrame(() => {
+      keyboardFrame.current = null
+      const input = TextInput.State.currentlyFocusedInput()
+      const keyboard = keyboardViewport.current
+      if (!input || !keyboard || !ready.current || request !== epoch.current) return
+      const revision = scrollLayout.current.revision
+      input.measureInWindow((_x, y, _width, height) => {
+        if (!ready.current || request !== epoch.current || revision !== scrollLayout.current.revision
+          || keyboardViewport.current !== keyboard || TextInput.State.currentlyFocusedInput() !== input || height <= 0) return
+        const overflow = y + height + 24 - keyboard.screenY
+        if (overflow > 0) scrollRef.current?.scrollTo({ y: Math.max(0, scrollOffset.current + overflow), animated: motionRef.current === 'full' })
+      })
+    })
+  }, [])
+  useLayoutEffect(() => { revealKeyboardInput() }, [canonicalThemeId, mode, revealKeyboardInput])
   const locate = useCallback(() => {
     const searching = Boolean(targetRef.current && consumed.current !== targetRef.current)
     const restoration = searching ? null : restore.current
@@ -99,7 +123,7 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
       if (!current() || contentHeight <= 0) return
       // Child measurements may already reflect an expansion while native
       // scrollTo still clamps against the previous scroll-content height.
-      const expectedHeight = contentHeight + CONTENT_PADDING_TOP + CONTENT_PADDING_BOTTOM
+      const expectedHeight = contentHeight + CONTENT_PADDING_TOP + contentPaddingBottomRef.current
       if (Math.abs(expectedHeight - scrollLayout.current.contentHeight) > 1) return
       node.measureLayout(content, (_x, y, _width, height) => {
         if (!current() || height <= 0 || y + height > contentHeight) return
@@ -142,7 +166,8 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   useEffect(() => {
     if (!focused) { cancel(); return }
     locate()
-  }, [focused, transitioning, locate, cancel])
+    revealKeyboardInput()
+  }, [focused, transitioning, locate, cancel, revealKeyboardInput])
   useEffect(() => {
     const nav = navigation as unknown as { addListener: (name: string, listener: () => void) => () => void }
     const start = nav.addListener('transitionStart', () => { epoch.current += 1; ready.current = false; setTransitioning(true) })
@@ -164,23 +189,17 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
   }, [params.returnTo, leave, taskNavigation, target])
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', event => {
+      keyboardViewport.current = event.endCoordinates
       setKeyboardHeight(event.endCoordinates.height)
-      if (keyboardFrame.current !== null) cancelAnimationFrame(keyboardFrame.current)
-      keyboardFrame.current = requestAnimationFrame(() => {
-        keyboardFrame.current = null
-        if (!ready.current || (targetRef.current && consumed.current !== targetRef.current)) return
-        const input = TextInput.State.currentlyFocusedInput()
-        if (!input) return
-        const responder = scrollRef.current?.getScrollResponder()
-        responder?.scrollResponderScrollNativeHandleToKeyboard(findNodeHandle(input as unknown as Parameters<typeof findNodeHandle>[0]), 96, true)
-      })
+      revealKeyboardInput()
     })
     const hide = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardViewport.current = null
       setKeyboardHeight(0)
-      if (keyboardFrame.current !== null) cancelAnimationFrame(keyboardFrame.current)
+      if (keyboardFrame.current !== null) { cancelAnimationFrame(keyboardFrame.current); keyboardFrame.current = null }
     })
     return () => { show.remove(); hide.remove(); if (keyboardFrame.current !== null) cancelAnimationFrame(keyboardFrame.current) }
-  }, [])
+  }, [revealKeyboardInput])
   useEffect(() => {
     if (!focused || Platform.OS !== 'android') return
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -215,6 +234,7 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
       {scrollable ? <ScrollView ref={scrollRef} onLayout={event => {
         scrollLayout.current = { ...scrollLayout.current, height: event.nativeEvent.layout.height, revision: scrollLayout.current.revision + 1 }
         locate()
+        revealKeyboardInput()
       }} {...(Platform.OS === 'web' ? { onWheel: cancel, onTouchMove: cancel } : {})} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets removeClippedSubviews={false} onScrollBeginDrag={cancel} scrollEventThrottle={64} onScroll={event => {
         const offset = event.nativeEvent.contentOffset.y
         if (pendingTaskRestore.current === null) scrollOffset.current = offset
@@ -228,8 +248,8 @@ function SettingsPageFrame({ title, subtitle, children, scrollable = true }: Pro
           scrollOffset.current = y
           scrollRef.current?.scrollTo({ y, animated: false })
         }
-        nodes.current.forEach((node, id) => register(id, node)); locate()
-      }} contentContainerStyle={{ alignItems: 'center', paddingHorizontal: compact ? 14 : 18, paddingTop: CONTENT_PADDING_TOP, paddingBottom: CONTENT_PADDING_BOTTOM }}>{content}</ScrollView> : content}
+        nodes.current.forEach((node, id) => register(id, node)); locate(); revealKeyboardInput()
+      }} contentContainerStyle={{ alignItems: 'center', paddingHorizontal: compact ? 14 : 18, paddingTop: CONTENT_PADDING_TOP, paddingBottom: contentPaddingBottom }}>{content}</ScrollView> : content}
     </SettingsSectionContext.Provider>
   </IsleScreen>
 }

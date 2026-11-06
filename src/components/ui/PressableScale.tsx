@@ -140,6 +140,12 @@ export function PressableScale({
   const pressProgress = useSharedValue(0)
   const hoverProgress = useSharedValue(0)
   const focusProgress = useSharedValue(0)
+  useEffect(() => () => {
+    // Navigation can unmount a pressed control before its release animation ends.
+    cancelAnimation(pressProgress)
+    cancelAnimation(hoverProgress)
+    cancelAnimation(focusProgress)
+  }, [pressProgress, hoverProgress, focusProgress])
   useEffect(() => {
     if (!disabled && motion === 'full') return
     // A loading/disabled transition or OS preference change can interrupt a

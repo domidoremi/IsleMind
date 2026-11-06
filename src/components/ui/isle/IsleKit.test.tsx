@@ -1,5 +1,5 @@
 import { act, fireEvent, render } from '@testing-library/react-native'
-import { StyleSheet, Text, View } from 'react-native'
+import { Platform, StyleSheet, Text, View } from 'react-native'
 import { Collapse, Image, Modal, Tag, useTheme } from 'animal-island-ui-rn'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -311,6 +311,29 @@ it('maps app option values to the fork and cannot select disabled choices', asyn
   expect(onChange).not.toHaveBeenCalled()
   await fireEvent.press(screen.getByText('Available'))
   expect(onChange).toHaveBeenCalledWith('on')
+})
+
+it('keeps the unselected native scene target accessible through the built fork', async () => {
+  const original = Platform.OS
+  Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' })
+  try {
+    const onChange = jest.fn()
+    const screen = await render(<IsleThemeProvider><IsleSelect testID="scene-target" value="existing"
+      options={[{ label: 'New draft', value: 'new' }, { label: 'Existing', value: 'existing' },
+        { label: 'Unavailable', value: 'off', disabled: true }]} onChange={onChange} /></IsleThemeProvider>)
+    await fireEvent.press(screen.getByText('Existing'))
+    const target = screen.getByTestId('scene-target-option-new')
+    expect(target.props.focusable).toBe(true)
+    expect(target.props.tabIndex).toBeUndefined()
+    expect(screen.getByTestId('scene-target-option-off').props.focusable).toBe(false)
+    await fireEvent.press(screen.getByTestId('scene-target-option-off'))
+    expect(onChange).not.toHaveBeenCalled()
+    await fireEvent.press(target)
+    expect(onChange).toHaveBeenCalledWith('new')
+    expect(screen.queryByTestId('scene-target-option-new')).toBeNull()
+  } finally {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: original })
+  }
 })
 
 it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(

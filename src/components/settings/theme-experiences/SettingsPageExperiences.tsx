@@ -1,9 +1,8 @@
 import type { ReactNode, Ref } from 'react'
-import { StyleSheet, View, useWindowDimensions } from 'react-native'
-import { Text } from '@/components/ui/AppText'
+import { StyleSheet, View } from 'react-native'
 
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { GlassSurface } from '@/components/ui/isle/GlassSurface'
+import { WorkspaceHeader } from '@/presentation/layout/WorkspaceHeader'
 
 export interface SettingsPageExperienceProps {
   title: string
@@ -28,19 +27,10 @@ export function MinimalSettingsPageExperience({
   titleRef,
   children,
 }: SettingsPageExperienceProps) {
-  const { colors } = useAppTheme()
-  const { width, fontScale } = useWindowDimensions()
   return (
     <View testID="settings-page-experience-minimal" style={styles.minimalRoot}>
-      <View style={[styles.header, { minHeight: compact ? 76 : 86 }]}>
-        <View style={{ minWidth: 44, minHeight: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted }}>{leading}</View>
-        <View style={styles.titleBlock}>
-          {title !== rootTitle ? <Text style={{ fontSize: 11, lineHeight: 18, color: colors.textSecondary, marginBottom: 2 }}>{rootTitle}</Text> : null}
-          <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.minimalTitle, { color: colors.text, fontSize: width / fontScale < 360 ? 18 : 22 }]}>{title}</Text></View>
-          {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textTertiary }]}>{subtitle}</Text> : null}
-        </View>
-        {trailing}
-      </View>
+      <WorkspaceHeader title={title} subtitle={subtitle} contextLabel={title !== rootTitle ? rootTitle : undefined}
+        compact={compact} leading={leading} trailing={trailing} titleRef={titleRef} />
       <View testID="settings-detail-surface-minimal" style={[styles.content, { paddingTop: compact ? 10 : 12 }]}>{children}</View>
     </View>
   )
@@ -49,7 +39,7 @@ export function MinimalSettingsPageExperience({
 export function LiquidGlassSettingsPageExperience({
   title,
   subtitle,
-  rootTitle: _rootTitle,
+  rootTitle,
   routeKey: _routeKey,
   compact,
   leading,
@@ -60,14 +50,8 @@ export function LiquidGlassSettingsPageExperience({
   const { colors } = useAppTheme()
   return (
     <View testID="settings-page-experience-liquid-glass" style={styles.glassRoot}>
-      <GlassSurface colors={colors} style={styles.glassHeader}>
-        {leading}
-        <View style={styles.titleBlock}>
-          <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.glassTitle, { color: colors.text }]}>{title}</Text></View>
-          {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
-        </View>
-        {trailing}
-      </GlassSurface>
+      <WorkspaceHeader title={title} subtitle={subtitle} contextLabel={title !== rootTitle ? rootTitle : undefined}
+        compact={compact} leading={leading} trailing={trailing} titleRef={titleRef} />
       <View testID="settings-detail-surface-liquid-glass" style={[styles.glassContent, { borderColor: colors.ui.actionBar.itemBorder }]}>
         {children}
       </View>
@@ -78,7 +62,7 @@ export function LiquidGlassSettingsPageExperience({
 export function MonetSettingsPageExperience({
   title,
   subtitle,
-  rootTitle: _rootTitle,
+  rootTitle,
   routeKey: _routeKey,
   compact,
   leading,
@@ -89,19 +73,8 @@ export function MonetSettingsPageExperience({
   const { colors } = useAppTheme()
   return (
     <View testID="settings-page-experience-monet" style={styles.monetRoot}>
-      <View style={[styles.monetHeader, { minHeight: compact ? 58 : 64 }]}>
-        <View pointerEvents="none" style={[styles.monetHeaderWash, { backgroundColor: colors.ui.icon.accentBackground }]} />
-        {leading}
-        <View style={styles.titleBlock}>
-          <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.monetTitle, { color: colors.text }]}>{title}</Text></View>
-          {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
-          <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.monetBrushRow}>
-            <View style={[styles.monetBrushLong, { backgroundColor: colors.primary }]} />
-            <View style={[styles.monetBrushShort, { backgroundColor: colors.tertiary }]} />
-          </View>
-        </View>
-        {trailing}
-      </View>
+      <WorkspaceHeader title={title} subtitle={subtitle} contextLabel={title !== rootTitle ? rootTitle : undefined}
+        compact={compact} leading={leading} trailing={trailing} titleRef={titleRef} />
       <View testID="settings-detail-surface-monet" style={[styles.monetContent, { paddingTop: compact ? 12 : 16 }]}>
         <View pointerEvents="none" style={[styles.monetContentSpine, { backgroundColor: colors.primary }]} />
         <View pointerEvents="none" style={[styles.monetContentWash, { backgroundColor: colors.ui.semantic.surface.muted }]} />
@@ -122,19 +95,10 @@ export function MaterialSettingsPageExperience({
   titleRef,
   children,
 }: SettingsPageExperienceProps) {
-  const { colors } = useAppTheme()
   return (
     <View testID="settings-page-experience-material" style={styles.materialRoot}>
-      <View style={[styles.materialHeader, { minHeight: compact ? 72 : 80, borderBottomColor: colors.ui.section.divider }]}>
-        <View style={styles.materialLeadingSlot}>{leading}</View>
-        <View style={styles.titleBlock}>
-          {title !== rootTitle ? <Text style={{ ...colors.design?.semantic.typography.caption, color: colors.textTertiary, marginBottom: 3 }}>{rootTitle}</Text> : null}
-          <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}><Text style={[styles.materialTitle, { color: colors.text }]}>{title}</Text></View>
-          {subtitle ? <Text numberOfLines={compact ? 2 : 1} style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
-        </View>
-        {trailing}
-        <View accessible={false} importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.materialHeaderIndicator, { backgroundColor: colors.primary }]} />
-      </View>
+      <WorkspaceHeader title={title} subtitle={subtitle} contextLabel={title !== rootTitle ? rootTitle : undefined}
+        compact={compact} leading={leading} trailing={trailing} titleRef={titleRef} />
       <View testID="settings-detail-surface-material" style={[styles.materialContent, { paddingTop: compact ? 12 : 16 }]}>
         {children}
       </View>
@@ -147,28 +111,11 @@ const styles = StyleSheet.create({
   glassRoot: { width: '100%', maxWidth: 900 },
   monetRoot: { width: '100%', maxWidth: 900 },
   materialRoot: { width: '100%', maxWidth: 900 },
-  header: { paddingHorizontal: 2, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 14 },
-  titleBlock: { flex: 1, minWidth: 0 },
-  minimalTitle: { fontSize: 22, lineHeight: 30, fontWeight: '700', includeFontPadding: false },
-  subtitle: { marginTop: 1, fontSize: 14, lineHeight: 20, fontWeight: '500', includeFontPadding: false },
   content: { minWidth: 0, gap: 9 },
-  glassHeader: { position: 'relative', minHeight: 58, paddingHorizontal: 7, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  glassTitle: { fontSize: 18, lineHeight: 24, fontWeight: '700', includeFontPadding: false },
   glassContent: { position: 'relative', marginTop: 12, minWidth: 0, gap: 10, paddingHorizontal: 8, paddingTop: 8 },
-  monetHeader: { position: 'relative', paddingHorizontal: 5, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 10, overflow: 'hidden' },
-  monetHeaderWash: { position: 'absolute', top: -20, right: -18, width: 176, height: 76, borderBottomLeftRadius: 62, opacity: 0.2, transform: [{ rotate: '-3deg' }] },
-  monetTitle: { fontSize: 21, lineHeight: 28, fontWeight: '600', includeFontPadding: false },
-  monetBrushRow: { flexDirection: 'row', gap: 5, height: 3, marginTop: 5, maxWidth: 112 },
-  monetBrushLong: { flex: 1.1, borderRadius: 2 },
-  monetBrushShort: { flex: 0.42, borderRadius: 2 },
   monetContent: { position: 'relative', width: '96%', marginTop: 10, marginLeft: 6, paddingLeft: 16, paddingRight: 3, minWidth: 0, gap: 11 },
   monetContentSpine: { position: 'absolute', top: 10, bottom: 14, left: 2, width: 3, borderRadius: 2, opacity: 0.58 },
   // Reserve inline space for rotation without clipping the settings content.
   monetContentWash: { position: 'absolute', top: 26, right: 4, width: 132, height: 42, borderTopLeftRadius: 34, borderBottomLeftRadius: 12, opacity: 0.12, transform: [{ rotate: '4deg' }] },
-  materialHeader: { position: 'relative', paddingHorizontal: 6, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  materialLeadingSlot: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  materialHeaderIndicator: { position: 'absolute', bottom: 0, left: 62, width: 28, height: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, opacity: 0.78 },
-  materialTitle: { fontSize: 22, lineHeight: 29, fontWeight: '500', includeFontPadding: false },
   materialContent: { position: 'relative', minWidth: 0, gap: 16 },
-  materialContentRail: { position: 'absolute', top: 14, bottom: 8, left: 0, width: 6, borderRadius: 3 },
 })
