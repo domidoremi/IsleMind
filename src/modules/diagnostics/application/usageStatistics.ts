@@ -10,19 +10,26 @@ import type {
   UsagePricingEntry,
 } from '../contracts'
 import { calculateUsageCost, resolveUsagePricingEntry } from './usagePricing'
+import { deduplicateUsageAttempts, knownUsageTotal, summarizeUsageRecords } from './usageSummary'
+import { projectUsageConversations, projectUsageRequests } from './usageRequests'
 
 export const DEFAULT_USAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000
 
 export function createUsageStatisticsService(
   repository: Parameters<typeof repositoryIdentity>[0],
-  options: { retentionMs?: number; builtInPricing?: readonly UsagePricingEntry[] } = {},
+  options: { retentionMs?: number; builtInPricing?: readonly UsagePricingEntry[]; recorded?: (record: UsageRecord) => void } = {},
 ): UsageStatisticsService {
   const retentionMs = options.retentionMs ?? DEFAULT_USAGE_RETENTION_MS
   const builtInPricing = options.builtInPricing ?? []
+  async function append(record: UsageRecord): Promise<boolean> {
+    const inserted = await repository.append(record)
+    if (inserted) options.recorded?.(record)
+    return inserted
+  }
   return {
     async record(record, pricingPolicy = {}) {
       if (record.costProvenance !== 'unavailable' || record.dataSource === 'legacy-message') {
-        return repository.append(record)
+        return append(record)
       }
       const manualPricing = await repository.listPricingEntries()
       const pricing = resolveUsagePricingEntry(
@@ -33,7 +40,7 @@ export function createUsageStatisticsService(
         record.providerType,
       )
       const cost = calculateUsageCost(record.tokens, pricing)
-      return repository.append({
+      return append({
         ...record,
         ...(cost.totalCostNanodollars === undefined ? {} : { totalCostNanodollars: cost.totalCostNanodollars }),
         costProvenance: cost.provenance,
@@ -42,29 +49,76 @@ export function createUsageStatisticsService(
     },
     async snapshot(request = {}) {
       const filter = request.filter
-      const [records, rollups, page] = await Promise.all([
+      const [rawRecords, rollups, page] = await Promise.all([
         repository.listAll(filter),
         repository.listRollups(filter),
         repository.list(request),
       ])
+      const records = deduplicateUsageAttempts(rawRecords)
+      const requests = projectUsageRequests(records)
+      const allRequestIds = requests.flatMap(value => value.reference.kind === 'request' ? [value.reference.id] : [])
+      const latest: UsageRecord[] = []
+      for (let index = 0; index < allRequestIds.length; index += 100) {
+        latest.push(...await repository.latestByRequest(allRequestIds.slice(index, index + 100)))
+      }
+      const limit = Math.max(1, Math.min(100, Math.floor(request.limit ?? 50)))
+      const offset = Math.max(0, Math.floor(request.offset ?? 0))
+      const requestPage = requests.slice(offset, offset + limit)
+      // The row retains costs from the matching attempts but reports the complete route/outcome.
+      const requestIds = requestPage.flatMap(value => value.reference.kind === 'request' ? [value.reference.id] : [])
+      const complete = requestIds.length
+        ? new Map(projectUsageRequests(await repository.listAll({ logicalRequestIds: requestIds, includeEstimated: true }))
+          .map(value => [value.reference.id, value]))
+        : new Map()
       return {
         summary: summarizeUsageRecords(records, rollups),
+        requestOutcomes: {
+          requestCount: latest.length,
+          successCount: latest.filter(value => value.status === 'success').length,
+          failedCount: latest.filter(value => value.status === 'failed').length,
+          cancelledCount: latest.filter(value => value.status === 'cancelled').length,
+          limitedCount: latest.filter(value => value.status === 'limited').length,
+          partialCount: latest.filter(value => value.status === 'partial').length,
+        },
         trends: groupUsageTrends(records, rollups, filter),
         providers: groupUsageRecords(records, rollups, (value) => [value.providerId, value.providerName]),
         models: groupUsageRecords(records, rollups, (value) => [value.upstreamModel, value.upstreamModel]),
         records: page,
+        requests: {
+          requests: requestPage.map(value => {
+            const full = complete.get(value.reference.id)
+            return full ? { ...full, summary: value.summary } : value
+          }),
+          total: requests.length,
+          hasMore: offset + requestPage.length < requests.length,
+        },
+        conversations: projectUsageConversations(records),
       }
     },
+    async detail(reference) {
+      const result = await repository.findExecution(reference)
+      if (!result.records.length) return undefined
+      return {
+        reference,
+        requests: projectUsageRequests(result.records),
+        attempts: deduplicateUsageAttempts(result.records),
+        summary: summarizeUsageRecords(result.records),
+        truncated: result.truncated,
+      }
+    },
+    runAttempts: (runId, providerId) => repository.findRunAttempts(runId, providerId),
+    recentProviders: ids => repository.latestByProvider(ids),
     async listPricingEntries() {
       return [...builtInPricing, ...await repository.listPricingEntries()]
     },
     savePricingEntry: (entry, expectedRevision) => repository.savePricingEntry(entry, expectedRevision),
     deletePricingEntry: (id) => repository.deletePricingEntry(id),
     async export(filter, format) {
-      const [records, rollups] = await Promise.all([
+      const [rawRecords, rollups] = await Promise.all([
         repository.listAll(filter),
         repository.listRollups(filter),
       ])
+      const records = deduplicateUsageAttempts(rawRecords)
       return format === 'json'
         ? JSON.stringify({
             schema: 'islemind.usage-statistics-export.v1',
@@ -82,111 +136,7 @@ function repositoryIdentity(repository: import('../contracts').UsageRecordReposi
   return repository
 }
 
-export function summarizeUsageRecords(
-  records: readonly UsageRecord[],
-  rollups: readonly UsageDailyRollup[] = [],
-): UsageStatisticsSummary {
-  let inputTokens = 0
-  let outputTokens = 0
-  let totalTokens = 0
-  let cacheCreationInputTokens = 0
-  let cacheReadInputTokens = 0
-  let cachedInputTokens = 0
-  let reasoningTokens = 0
-  let totalCostNanodollars = 0
-  let costCount = 0
-  let durationTotal = 0
-  let durationCount = 0
-  let firstTokenTotal = 0
-  let firstTokenCount = 0
-  let successCount = 0
-  let failedCount = 0
-  let estimatedCount = 0
-  let retryCount = 0
-  let failoverCount = 0
-
-  for (const record of records) {
-    if (record.status === 'success') successCount += 1
-    if (record.status === 'failed') failedCount += 1
-    if (record.measurementSource === 'estimated') estimatedCount += 1
-    retryCount += record.attemptReason === 'retry' || record.attemptReason === 'rectification'
-      ? 1
-      : Math.min(1, count(record.retryCount))
-    failoverCount += record.failoverCount ?? (record.attemptReason === 'fallback' ? 1 : 0)
-    inputTokens += count(record.tokens.inputTokens)
-    outputTokens += count(record.tokens.outputTokens)
-    totalTokens += count(record.tokens.totalTokens ?? inferredTotal(record))
-    const cacheCreation = count(record.tokens.cacheCreationInputTokens)
-    const compatibilityCached = count(record.tokens.cachedInputTokens)
-    const cacheRead = record.tokens.cacheReadInputTokens === undefined
-      ? Math.max(0, compatibilityCached - cacheCreation)
-      : count(record.tokens.cacheReadInputTokens)
-    cacheCreationInputTokens += cacheCreation
-    cacheReadInputTokens += cacheRead
-    cachedInputTokens += record.tokens.cachedInputTokens === undefined
-      ? cacheCreation + cacheRead
-      : compatibilityCached
-    reasoningTokens += count(record.tokens.reasoningTokens)
-    if (typeof record.totalCostNanodollars === 'number') {
-      totalCostNanodollars += record.totalCostNanodollars
-      costCount += 1
-    }
-    if (Number.isFinite(record.durationMs)) {
-      durationTotal += record.durationMs
-      durationCount += 1
-    }
-    if (typeof record.firstTokenMs === 'number' && Number.isFinite(record.firstTokenMs)) {
-      firstTokenTotal += record.firstTokenMs
-      firstTokenCount += 1
-    }
-  }
-
-  let rollupRequestCount = 0
-  for (const rollup of rollups) {
-    rollupRequestCount += count(rollup.requestCount)
-    retryCount += count(rollup.retryCount)
-    failoverCount += count(rollup.failoverCount)
-    successCount += count(rollup.successCount)
-    failedCount += count(rollup.failedCount)
-    if (rollup.measurementSource === 'estimated') estimatedCount += count(rollup.requestCount)
-    inputTokens += count(rollup.inputTokens)
-    outputTokens += count(rollup.outputTokens)
-    totalTokens += count(rollup.totalTokens)
-    cacheCreationInputTokens += count(rollup.cacheCreationInputTokens)
-    cacheReadInputTokens += count(rollup.cacheReadInputTokens)
-    cachedInputTokens += count(rollup.cachedInputTokens)
-    reasoningTokens += count(rollup.reasoningTokens)
-    if (rollup.costSampleCount > 0) {
-      totalCostNanodollars += count(rollup.totalCostNanodollars)
-      costCount += count(rollup.costSampleCount)
-    }
-    durationTotal += count(rollup.durationMsTotal)
-    durationCount += count(rollup.durationSampleCount)
-    firstTokenTotal += count(rollup.firstTokenMsTotal)
-    firstTokenCount += count(rollup.firstTokenSampleCount)
-  }
-
-  const cacheableInput = Math.max(0, inputTokens)
-  return {
-    requestCount: records.length + rollupRequestCount,
-    successCount,
-    failedCount,
-    estimatedCount,
-    retryCount,
-    failoverCount,
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    cacheCreationInputTokens,
-    cacheReadInputTokens,
-    cachedInputTokens,
-    reasoningTokens,
-    ...(costCount ? { totalCostNanodollars } : {}),
-    ...(durationCount ? { averageDurationMs: durationTotal / durationCount } : {}),
-    ...(firstTokenCount ? { averageFirstTokenMs: firstTokenTotal / firstTokenCount } : {}),
-    ...(cacheableInput ? { cacheHitRate: cacheReadInputTokens / cacheableInput } : {}),
-  }
-}
+export { summarizeUsageRecords } from './usageSummary'
 
 function groupUsageRecords(
   records: readonly UsageRecord[],
@@ -222,7 +172,7 @@ function groupUsageTrends(
     : 60 * 60 * 1000
   const grouped = new Map<number, { records: UsageRecord[]; rollups: UsageDailyRollup[] }>()
   for (const record of records) {
-    const bucketStart = Math.floor(record.occurredAt / bucketMs) * bucketMs
+    const bucketStart = Math.floor((record.execution?.requestStartedAt ?? record.occurredAt) / bucketMs) * bucketMs
     const group = grouped.get(bucketStart) ?? { records: [], rollups: [] }
     group.records.push(record)
     grouped.set(bucketStart, group)
@@ -244,9 +194,13 @@ function usageRecordsToCsv(records: readonly UsageRecord[], rollups: readonly Us
     'cache_read_tokens', 'reasoning_tokens', 'duration_ms', 'first_token_ms', 'cost_usd',
     'status', 'status_code', 'source', 'data_source', 'original_provider', 'original_model',
     'actual_provider', 'actual_model', 'retry_count', 'failover_count', 'attempt_identity', 'attempt_reason',
+    'logical_request_id', 'response_execution_id', 'parent_request_id', 'conversation_id', 'message_id',
+    'reported_model', 'reported_model_source', 'cost_provenance', 'pricing_version',
+    'total_tokens', 'measurement_source', 'token_samples', 'cost_samples', 'unknown_cost_count',
+    'supplier_cost_usd', 'price_table_cost_usd', 'unclassified_cost_usd',
   ]
   const rows = records.map((record) => [
-    'request',
+    'attempt',
     1,
     new Date(record.occurredAt).toISOString(),
     record.providerName,
@@ -271,6 +225,23 @@ function usageRecordsToCsv(records: readonly UsageRecord[], rollups: readonly Us
     record.failoverCount ?? (record.attemptReason === 'fallback' ? 1 : 0),
     record.attemptIdentity,
     record.attemptReason,
+    record.execution?.logicalRequestId,
+    record.execution?.responseExecutionId,
+    record.execution?.parentRequestId,
+    record.conversationId,
+    record.execution?.messageId,
+    record.reportedExecution?.model,
+    record.reportedExecution?.source,
+    record.costProvenance,
+    record.pricing?.version,
+    knownUsageTotal(record.tokens),
+    record.measurementSource,
+    Number(knownUsageTotal(record.tokens) !== undefined),
+    Number(record.totalCostNanodollars !== undefined),
+    Number(record.totalCostNanodollars === undefined),
+    record.costProvenance === 'supplier-known' && record.totalCostNanodollars !== undefined ? record.totalCostNanodollars / 1_000_000_000 : undefined,
+    record.costProvenance === 'price-table-estimate' && record.totalCostNanodollars !== undefined ? record.totalCostNanodollars / 1_000_000_000 : undefined,
+    record.costProvenance === 'unavailable' && record.totalCostNanodollars !== undefined ? record.totalCostNanodollars / 1_000_000_000 : undefined,
   ].map(csvCell).join(','))
   const rollupRows = rollups.map((rollup) => [
     'daily_rollup',
@@ -278,11 +249,11 @@ function usageRecordsToCsv(records: readonly UsageRecord[], rollups: readonly Us
     new Date(rollup.dayStart).toISOString(),
     rollup.providerName,
     rollup.upstreamModel,
-    rollup.inputTokens,
-    rollup.outputTokens,
-    rollup.cacheCreationInputTokens,
-    rollup.cacheReadInputTokens ?? rollup.cachedInputTokens,
-    rollup.reasoningTokens,
+    rollup.measurements?.tokens.inputTokens,
+    rollup.measurements?.tokens.outputTokens,
+    rollup.measurements?.tokens.cacheCreationInputTokens,
+    rollup.measurements?.tokens.cacheReadInputTokens,
+    rollup.measurements?.tokens.reasoningTokens,
     rollup.durationSampleCount ? rollup.durationMsTotal / rollup.durationSampleCount : undefined,
     rollup.firstTokenSampleCount ? rollup.firstTokenMsTotal / rollup.firstTokenSampleCount : undefined,
     rollup.costSampleCount ? rollup.totalCostNanodollars / 1_000_000_000 : undefined,
@@ -298,6 +269,16 @@ function usageRecordsToCsv(records: readonly UsageRecord[], rollups: readonly Us
     rollup.failoverCount,
     undefined,
     undefined,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    rollup.measurements?.tokens.totalTokens,
+    rollup.measurementSource,
+    rollup.measurements?.tokenSampleCounts.totalTokens,
+    rollup.costSampleCount,
+    Math.max(0, rollup.requestCount - rollup.costSampleCount),
+    rollup.measurements?.supplierCostNanodollars === undefined ? undefined : rollup.measurements.supplierCostNanodollars / 1_000_000_000,
+    rollup.measurements?.estimatedCostNanodollars === undefined ? undefined : rollup.measurements.estimatedCostNanodollars / 1_000_000_000,
+    rollup.measurements ? rollup.measurements.unclassifiedCostNanodollars === undefined ? undefined : rollup.measurements.unclassifiedCostNanodollars / 1_000_000_000
+      : rollup.costSampleCount ? rollup.totalCostNanodollars / 1_000_000_000 : undefined,
   ].map(csvCell).join(','))
   return [headers.join(','), ...rows, ...rollupRows].join('\n')
 }
@@ -313,14 +294,8 @@ function cacheReadTokens(record: UsageRecord): number | undefined {
 
 function csvCell(value: unknown): string {
   if (value === undefined || value === null) return ''
-  const text = String(value)
+  // A spreadsheet must treat provider/model names as text, including formula-like names.
+  const raw = String(value)
+  const text = typeof value === 'string' && /^[\s]*[=+\-@]/u.test(raw) ? `'${raw}` : raw
   return /[",\r\n]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text
-}
-
-function count(value: number | undefined): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
-}
-
-function inferredTotal(record: UsageRecord): number {
-  return count(record.tokens.inputTokens) + count(record.tokens.outputTokens)
 }

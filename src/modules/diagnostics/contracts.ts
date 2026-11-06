@@ -1,3 +1,5 @@
+import type { ReportedProviderExecution, UsageExecutionReference } from '@/core'
+
 export const USAGE_RECORD_SCHEMA = 'islemind.usage-record.v1' as const
 export const USAGE_PORTABLE_SNAPSHOT_SCHEMA = 'islemind.usage-portable-snapshot.v1' as const
 
@@ -82,6 +84,8 @@ export interface UsageRecord {
   retryCount?: number
   failoverCount?: number
   attemptIdentity?: string
+  execution?: UsageExecutionReference
+  reportedExecution?: ReportedProviderExecution
   pricingModel?: string
   operationSource: UsageOperationSource
   dataSource: UsageDataSource
@@ -108,6 +112,9 @@ export interface UsageRecordFilter {
   endAt?: number
   providerIds?: readonly string[]
   models?: readonly string[]
+  conversationIds?: readonly string[]
+  logicalRequestIds?: readonly string[]
+  /** Latest recorded result of the complete logical call; historical attempts use their own result. */
   statuses?: readonly UsageRecordStatus[]
   operationSources?: readonly UsageOperationSource[]
   dataSources?: readonly UsageDataSource[]
@@ -157,10 +164,37 @@ export interface UsageDailyRollup {
   durationSampleCount: number
   firstTokenMsTotal: number
   firstTokenSampleCount: number
+  measurements?: UsageRollupMeasurements
+}
+
+export interface UsageRollupMeasurements {
+  schema: 'islemind.usage-rollup-measurements.v1'
+  /** Known portions only. Old rollups cannot recover which token fields were missing. */
+  tokens: UsageTokenCounts
+  tokenSampleCounts: UsageTokenCounts
+  supplierCostNanodollars?: number
+  estimatedCostNanodollars?: number
+  unclassifiedCostNanodollars?: number
+  supplierCostSampleCount: number
+  estimatedCostSampleCount: number
+  unclassifiedCostSampleCount: number
 }
 
 export interface UsageStatisticsSummary extends UsageTokenCounts {
+  /** Compatibility field: network attempts, including archived rollups. */
   requestCount: number
+  logicalRequestCount: number
+  legacyAttemptCount: number
+  costSampleCount: number
+  unknownCostCount: number
+  tokenSampleCount: number
+  firstTokenSampleCount: number
+  totalsOverflowed?: boolean
+  costTotalOverflowed?: boolean
+  archivedAttemptCount?: number
+  supplierCostNanodollars?: number
+  estimatedCostNanodollars?: number
+  unclassifiedCostNanodollars?: number
   successCount: number
   failedCount: number
   estimatedCount: number
@@ -184,10 +218,70 @@ export interface UsageGroupSummary extends UsageStatisticsSummary {
 
 export interface UsageStatisticsSnapshot {
   summary: UsageStatisticsSummary
+  requestOutcomes?: UsageRequestOutcomes
   trends: readonly UsageTrendPoint[]
   providers: readonly UsageGroupSummary[]
   models: readonly UsageGroupSummary[]
   records: UsageRecordPage
+  requests: UsageRequestPage
+  conversations: readonly UsageConversationSummary[]
+}
+
+export interface UsageRequestOutcomes {
+  requestCount: number
+  successCount: number
+  failedCount: number
+  cancelledCount: number
+  limitedCount: number
+  partialCount: number
+}
+
+export type UsageDetailReference = Readonly<{ kind: 'request' | 'attempt' | 'response'; id: string }>
+
+export interface UsageRequestSummary {
+  reference: UsageDetailReference
+  occurredAt: number
+  completedAt: number
+  conversationId?: string
+  messageId?: string
+  responseExecutionId?: string
+  parentRequestId?: string
+  originalProviderId: string
+  originalModel: string
+  providerId: string
+  providerName: string
+  requestedModel: string
+  reportedExecution?: ReportedProviderExecution
+  status: UsageRecordStatus
+  operationSource: UsageOperationSource
+  attemptCount: number
+  retryCount: number
+  failoverCount: number
+  /** Whole logical request; absent for historical attempts. */
+  durationMs?: number
+  /** Logical request start to the first visible text observed by the application. */
+  firstVisibleTextMs?: number
+  summary: UsageStatisticsSummary
+}
+
+export interface UsageRequestPage {
+  requests: readonly UsageRequestSummary[]
+  total: number
+  hasMore: boolean
+}
+
+export interface UsageConversationSummary extends UsageStatisticsSummary {
+  conversationId: string
+  lastOccurredAt: number
+}
+
+export interface UsageExecutionDetail {
+  reference: UsageDetailReference
+  requests: readonly UsageRequestSummary[]
+  /** Redacted structured ledger, never raw transport data. */
+  attempts: readonly UsageRecord[]
+  summary: UsageStatisticsSummary
+  truncated: boolean
 }
 
 export const USAGE_PRICING_CONFLICT = 'usage_pricing_conflict'
@@ -198,6 +292,11 @@ export interface UsageRecordRepository {
   list(request?: UsageRecordPageRequest): Promise<UsageRecordPage>
   listAll(filter?: UsageRecordFilter): Promise<readonly UsageRecord[]>
   listRollups(filter?: UsageRecordFilter): Promise<readonly UsageDailyRollup[]>
+  findExecution(reference: UsageDetailReference): Promise<{ records: readonly UsageRecord[]; truncated: boolean }>
+  /** Bounded diagnostic records for one exact run and connection; never a latest-record guess. */
+  findRunAttempts(runId: string, providerId: string): Promise<{ records: readonly UsageRecord[]; truncated: boolean }>
+  latestByProvider(providerIds: readonly string[]): Promise<readonly UsageRecord[]>
+  latestByRequest(logicalRequestIds: readonly string[]): Promise<readonly UsageRecord[]>
   listPricingEntries(): Promise<readonly UsagePricingEntry[]>
   savePricingEntry(entry: UsagePricingEntry, expectedRevision?: string): Promise<void>
   deletePricingEntry(id: string): Promise<void>
@@ -223,6 +322,9 @@ export interface UsagePortableSnapshotRepository {
 export interface UsageStatisticsService {
   record(record: UsageRecord, pricingPolicy?: { allowBuiltInPricing?: boolean }): Promise<boolean>
   snapshot(request?: UsageRecordPageRequest): Promise<UsageStatisticsSnapshot>
+  detail(reference: UsageDetailReference): Promise<UsageExecutionDetail | undefined>
+  runAttempts(runId: string, providerId: string): Promise<{ records: readonly UsageRecord[]; truncated: boolean }>
+  recentProviders(providerIds: readonly string[]): Promise<readonly UsageRecord[]>
   listPricingEntries(): Promise<readonly UsagePricingEntry[]>
   savePricingEntry(entry: UsagePricingEntry, expectedRevision?: string): Promise<void>
   deletePricingEntry(id: string): Promise<void>

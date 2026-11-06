@@ -14,12 +14,15 @@ import {
   type UsageRecord,
   type UsageRecordStatus,
   type UsageStatisticsSnapshot,
+  type UsageDetailReference,
 } from '@/modules/diagnostics'
+import type { ReportedProviderExecution, UsageExecutionReference } from '@/core'
 import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
 import type { MessageUsage } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { getProviderEffectiveBaseUrl } from '@/types/providerBaseUrls'
 import { conversationPersistence } from '@/bootstrap/conversationPersistence'
+import { responseUsageReceipts } from './responseUsageReceipts'
 
 const usageRecordRepository = createSqliteUsageRecordRepository(createExpoSqliteDatabaseProvider())
 export const usagePortableSnapshotRepository = createSqliteUsagePortableSnapshotRepository(
@@ -27,11 +30,13 @@ export const usagePortableSnapshotRepository = createSqliteUsagePortableSnapshot
 )
 export const usageStatisticsService = createUsageStatisticsService(usageRecordRepository, {
   builtInPricing: DEFAULT_USAGE_PRICING_ENTRIES,
+  recorded: responseUsageReceipts.record,
 })
 
 let recordSequence = 0
 let legacyImportPromise: Promise<void> | undefined
 let lastRetentionAt = 0
+const pendingUsageWrites = new Set<Promise<boolean>>()
 
 export interface ProviderUsageAttemptInput {
   provider: Pick<AIProvider, 'id' | 'name' | 'type' | 'baseUrl' | 'credentialMode' | 'tokenPlanRegion' | 'wireProtocol'>
@@ -59,24 +64,35 @@ export interface ProviderUsageAttemptInput {
   retryCount?: number
   failoverCount?: number
   attemptIdentity?: string
+  execution?: UsageExecutionReference
+  reportedExecution?: ReportedProviderExecution
 }
 
-export async function recordProviderUsageAttempt(input: ProviderUsageAttemptInput): Promise<boolean> {
+export function recordProviderUsageAttempt(input: ProviderUsageAttemptInput): Promise<boolean> {
+  const write = persistProviderUsageAttempt(input)
+  pendingUsageWrites.add(write)
+  void write.finally(() => pendingUsageWrites.delete(write))
+  return write
+}
+
+async function persistProviderUsageAttempt(input: ProviderUsageAttemptInput): Promise<boolean> {
   const completedAt = input.completedAt ?? Date.now()
   const usage = input.usage
   try {
     const recordId = nextUsageRecordId(input.provider.id, input.startedAt)
     const providerId = bounded(input.provider.id, 120) || 'unknown-provider'
     const upstreamModel = bounded(input.upstreamModel, 240) || 'unknown-model'
+    const plan = input.execution?.routingPlan
+    const usedBackup = plan && (plan.primaryProviderId !== providerId || plan.primaryModel !== (input.requestedModel ?? upstreamModel))
     const attribution = resolveUsageRouteAttribution({
       actualProviderId: providerId,
       actualModel: upstreamModel,
-      originalProviderId: input.originalProviderId,
-      originalModel: input.originalModel,
+      originalProviderId: plan?.primaryProviderId ?? input.originalProviderId,
+      originalModel: plan?.primaryModel ?? input.originalModel,
       attempt: input.attempt,
       attemptReason: input.attemptReason,
       retryCount: input.retryCount,
-      failoverCount: input.failoverCount,
+      failoverCount: input.failoverCount ?? (usedBackup ? 1 : undefined),
       attemptIdentity: input.attemptIdentity ?? recordId,
     })
     return await usageStatisticsService.record({
@@ -97,6 +113,8 @@ export async function recordProviderUsageAttempt(input: ProviderUsageAttemptInpu
       retryCount: attribution.retryCount,
       failoverCount: attribution.failoverCount,
       attemptIdentity: attribution.attemptIdentity,
+      ...(input.execution ? { execution: input.execution } : {}),
+      ...(input.reportedExecution ? { reportedExecution: input.reportedExecution } : {}),
       ...(input.pricingModel ? { pricingModel: bounded(input.pricingModel, 240) } : {}),
       operationSource: input.operationSource,
       dataSource: usage?.source === 'estimated' ? 'estimated' : 'live-provider',
@@ -134,8 +152,29 @@ export async function loadUsageStatistics(
   request: UsageRecordPageRequest = {},
 ): Promise<UsageStatisticsSnapshot> {
   await ensureLegacyUsageImported()
+  await Promise.allSettled([...pendingUsageWrites])
   await runUsageRetentionIfDue()
   return usageStatisticsService.snapshot(request)
+}
+
+export async function loadUsageExecutionDetail(reference: UsageDetailReference) {
+  await ensureLegacyUsageImported()
+  await Promise.allSettled([...pendingUsageWrites])
+  return usageStatisticsService.detail(reference)
+}
+
+export async function loadAssistantRunUsageAttempts(runId: string, providerId: string) {
+  await Promise.allSettled([...pendingUsageWrites])
+  return usageStatisticsService.runAttempts(runId, providerId)
+}
+
+export async function loadRecentProviderUsage(providerIds: readonly string[]): Promise<readonly UsageRecord[]> {
+  await Promise.allSettled([...pendingUsageWrites])
+  const records: UsageRecord[] = []
+  for (let offset = 0; offset < providerIds.length; offset += 100) {
+    records.push(...await usageStatisticsService.recentProviders(providerIds.slice(offset, offset + 100)))
+  }
+  return records
 }
 
 export function exportUsageStatistics(filter: UsageRecordFilter | undefined, format: 'csv' | 'json'): Promise<string> {
@@ -154,9 +193,11 @@ export function deleteUsagePricingEntry(id: string): Promise<void> {
   return usageStatisticsService.deletePricingEntry(id)
 }
 
-export function clearUsageStatistics(): Promise<void> {
+export async function clearUsageStatistics(): Promise<void> {
   legacyImportPromise = Promise.resolve()
-  return usageStatisticsService.clear()
+  await Promise.allSettled([...pendingUsageWrites])
+  await usageStatisticsService.clear()
+  responseUsageReceipts.clear()
 }
 
 async function ensureLegacyUsageImported(): Promise<void> {
@@ -169,7 +210,7 @@ async function importLegacyUsage(): Promise<void> {
   const records: UsageRecord[] = []
   for (const conversation of conversations) {
     for (const message of conversation.messages ?? []) {
-      if (message.role !== 'assistant' || (!message.usage && message.durationMs === undefined)) continue
+      if (message.role !== 'assistant' || message.usageExecution || (!message.usage && message.durationMs === undefined)) continue
       const completedAt = message.completedAt ?? message.timestamp
       const startedAt = message.startedAt ?? Math.max(message.timestamp, completedAt - (message.durationMs ?? 0))
       const status: UsageRecordStatus = message.status === 'done'

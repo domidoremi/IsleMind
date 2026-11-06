@@ -5,6 +5,7 @@ import {
   type SqliteValue,
 } from '@/platform/storage'
 import * as v from 'valibot'
+import { isUsageExecutionReference, USAGE_EXECUTION_SCHEMA } from '@/core'
 import {
   USAGE_PORTABLE_SNAPSHOT_SCHEMA,
   USAGE_RECORD_SCHEMA,
@@ -20,13 +21,17 @@ import {
   type UsageRecordFilter,
   type UsageRecordRepository,
   type UsageRecordStatus,
+  type UsageDetailReference,
+  type UsageRollupMeasurements,
 } from '../contracts'
+import { deduplicateUsageAttempts, knownUsageTotal, usageRouteSwitchAttempts } from '../application/usageSummary'
 
 const MIGRATION_SCOPE = 'diagnostics'
 const DEFAULT_PAGE_LIMIT = 100
 const MAX_PAGE_LIMIT = 500
 const MAX_FILTER_VALUES = 100
 const MAX_SEARCH_LENGTH = 256
+const MAX_DETAIL_RECORDS = 500
 const DAY_MS = 24 * 60 * 60 * 1000
 
 interface UsageRecordRow {
@@ -43,6 +48,10 @@ interface UsageRecordRow {
   measurementSource: string
   status: string
   recordJson: string
+  logicalRequestId?: string | null
+  responseExecutionId?: string | null
+  conversationId?: string | null
+  requestStartedAt?: number | null
 }
 
 interface UsagePricingEntryRow {
@@ -73,7 +82,7 @@ const measurementSourceSchema = v.picklist(['provider', 'estimated', 'unavailabl
 const statusSchema = v.picklist(['success', 'failed', 'cancelled', 'limited', 'partial'])
 const boundedIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256))
 const boundedNameSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(512))
-const nonNegativeIntegerSchema = v.pipe(v.number(), v.finite(), v.integer(), v.minValue(0))
+const nonNegativeIntegerSchema = v.pipe(v.number(), v.finite(), v.integer(), v.minValue(0), v.maxValue(Number.MAX_SAFE_INTEGER))
 const nonNegativeNumberSchema = v.pipe(v.number(), v.finite(), v.minValue(0))
 const pricingRatesSchema = v.strictObject({
   inputNanodollarsPerMillionTokens: nonNegativeIntegerSchema,
@@ -98,6 +107,24 @@ const tokenCountsSchema = v.strictObject({
   cachedInputTokens: v.optional(nonNegativeIntegerSchema),
   reasoningTokens: v.optional(nonNegativeIntegerSchema),
 })
+const executionSchema = v.strictObject({
+  schema: v.literal(USAGE_EXECUTION_SCHEMA),
+  logicalRequestId: boundedIdSchema,
+  requestStartedAt: nonNegativeIntegerSchema,
+  responseExecutionId: v.optional(boundedIdSchema),
+  parentRequestId: v.optional(boundedIdSchema),
+  messageId: v.optional(boundedIdSchema),
+  routingPlan: v.optional(v.strictObject({
+    id: boundedIdSchema,
+    name: v.pipe(v.string(), v.minLength(1), v.maxLength(80)),
+    primaryProviderId: boundedIdSchema,
+    primaryModel: v.pipe(v.string(), v.minLength(1), v.maxLength(240)),
+  })),
+})
+const reportedExecutionSchema = v.strictObject({
+  model: v.pipe(v.string(), v.minLength(1), v.maxLength(240), v.regex(/^[^\u0000-\u001f\u007f]+$/u)),
+  source: v.picklist(['response.model', 'response.modelVersion', 'response.message.model']),
+})
 const usageRecordSchema = v.strictObject({
   schema: v.literal(USAGE_RECORD_SCHEMA),
   id: boundedIdSchema,
@@ -116,6 +143,8 @@ const usageRecordSchema = v.strictObject({
   retryCount: v.optional(nonNegativeIntegerSchema),
   failoverCount: v.optional(nonNegativeIntegerSchema),
   attemptIdentity: v.optional(boundedIdSchema),
+  execution: v.optional(executionSchema),
+  reportedExecution: v.optional(reportedExecutionSchema),
   pricingModel: v.optional(boundedIdSchema),
   operationSource: operationSourceSchema,
   dataSource: dataSourceSchema,
@@ -180,6 +209,17 @@ const usageDailyRollupSchema = v.strictObject({
   durationSampleCount: nonNegativeIntegerSchema,
   firstTokenMsTotal: nonNegativeNumberSchema,
   firstTokenSampleCount: nonNegativeIntegerSchema,
+  measurements: v.optional(v.strictObject({
+    schema: v.literal('islemind.usage-rollup-measurements.v1'),
+    tokens: tokenCountsSchema,
+    tokenSampleCounts: tokenCountsSchema,
+    supplierCostNanodollars: v.optional(nonNegativeIntegerSchema),
+    estimatedCostNanodollars: v.optional(nonNegativeIntegerSchema),
+    unclassifiedCostNanodollars: v.optional(nonNegativeIntegerSchema),
+    supplierCostSampleCount: nonNegativeIntegerSchema,
+    estimatedCostSampleCount: nonNegativeIntegerSchema,
+    unclassifiedCostSampleCount: nonNegativeIntegerSchema,
+  })),
 })
 const usagePortableSnapshotSchema = v.strictObject({
   schema: v.literal(USAGE_PORTABLE_SNAPSHOT_SCHEMA),
@@ -330,6 +370,64 @@ export function createSqliteUsageRecordRepository(
           }
         },
       },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 4,
+        name: 'usage-execution-identity-and-conversation-indexes',
+        async up(transaction) {
+          const columns = new Set((await transaction.getAll<{ name: string }>('PRAGMA table_info(usage_records)')).map(column => column.name))
+          for (const column of ['logicalRequestId', 'responseExecutionId', 'conversationId']) {
+            if (!columns.has(column)) await transaction.exec(`ALTER TABLE usage_records ADD COLUMN ${column} TEXT`)
+          }
+          const rows = await transaction.getAll<Pick<UsageRecordRow, 'id' | 'recordJson'>>('SELECT id, recordJson FROM usage_records')
+          for (const row of rows) {
+            let record: UsageRecord
+            try { record = parseUsageRecord(JSON.parse(row.recordJson)) } catch { continue }
+            await transaction.run(
+              'UPDATE usage_records SET logicalRequestId = ?, responseExecutionId = ?, conversationId = ? WHERE id = ?',
+              [record.execution?.logicalRequestId ?? null, record.execution?.responseExecutionId ?? null, record.conversationId ?? null, record.id],
+            )
+          }
+          await transaction.exec(`
+            CREATE INDEX IF NOT EXISTS usage_records_request_idx ON usage_records (logicalRequestId, occurredAt, id);
+            CREATE INDEX IF NOT EXISTS usage_records_response_idx ON usage_records (responseExecutionId, occurredAt, id);
+            CREATE INDEX IF NOT EXISTS usage_records_conversation_idx ON usage_records (conversationId, occurredAt DESC, id DESC);
+          `)
+        },
+      },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 5,
+        name: 'logical-request-time-and-latest-result',
+        async up(transaction) {
+          const columns = new Set((await transaction.getAll<{ name: string }>('PRAGMA table_info(usage_records)')).map(column => column.name))
+          if (!columns.has('requestStartedAt')) await transaction.exec('ALTER TABLE usage_records ADD COLUMN requestStartedAt INTEGER')
+          const rows = await transaction.getAll<Pick<UsageRecordRow, 'id' | 'recordJson'>>('SELECT id, recordJson FROM usage_records')
+          for (const row of rows) {
+            let record: UsageRecord
+            try { record = parseUsageRecord(JSON.parse(row.recordJson)) } catch { continue }
+            await transaction.run('UPDATE usage_records SET requestStartedAt = ? WHERE id = ?',
+              [record.execution?.requestStartedAt ?? null, record.id])
+          }
+          await transaction.exec(`
+            CREATE INDEX IF NOT EXISTS usage_records_request_time_idx
+              ON usage_records (COALESCE(requestStartedAt, occurredAt) DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS usage_records_request_result_idx
+              ON usage_records (logicalRequestId, occurredAt DESC, completedAt DESC, id DESC);
+          `)
+        },
+      },
+      {
+        scope: MIGRATION_SCOPE,
+        version: 6,
+        name: 'archived-measurement-coverage-and-cost-sources',
+        async up(transaction) {
+          const columns = await transaction.getAll<{ name: string }>('PRAGMA table_info(usage_daily_rollups)')
+          if (!columns.some(column => column.name === 'measurementsJson')) {
+            await transaction.exec('ALTER TABLE usage_daily_rollups ADD COLUMN measurementsJson TEXT')
+          }
+        },
+      },
     ]).catch((error) => {
       initialized = undefined
       throw error
@@ -386,6 +484,70 @@ export function createSqliteUsageRecordRepository(
 
     async listRollups(filter) {
       return readFilteredRollups(await database(), filter)
+    },
+    async findExecution(reference: UsageDetailReference) {
+      const id = normalizeId(reference.id)
+      const column = reference.kind === 'request' ? 'logicalRequestId' : reference.kind === 'response' ? 'responseExecutionId'
+        : reference.kind === 'attempt' ? 'id' : undefined
+      if (!column) throw new UsageRecordRepositoryDataError('Usage detail reference is invalid.')
+      const rows = await (await database()).getAll<UsageRecordRow>(
+        `${usageRecordSelect()} WHERE ${column} = ? ORDER BY occurredAt ASC, completedAt ASC, id ASC LIMIT ?`,
+        [id, MAX_DETAIL_RECORDS + 1],
+      )
+      return {
+        records: rows.slice(0, MAX_DETAIL_RECORDS).flatMap(row => {
+          const record = parsePersistedUsageRecord(row)
+          return record ? [record] : []
+        }),
+        truncated: rows.length > MAX_DETAIL_RECORDS,
+      }
+    },
+    async findRunAttempts(runId, providerId) {
+      const rows = await (await database()).getAll<UsageRecordRow>(
+        `${usageRecordSelect()} WHERE providerId = ? AND json_extract(recordJson, '$.runId') = ?
+         ORDER BY occurredAt ASC, completedAt ASC, id ASC LIMIT ?`,
+        [normalizeId(providerId), normalizeId(runId), MAX_DETAIL_RECORDS + 1],
+      )
+      const records = rows.slice(0, MAX_DETAIL_RECORDS).map(row => {
+        const record = parsePersistedUsageRecord(row)
+        if (!record) throw new UsageRecordRepositoryDataError('Usage run attempt cannot be decoded.')
+        return record
+      })
+      return { records, truncated: rows.length > MAX_DETAIL_RECORDS }
+    },
+    async latestByProvider(providerIds) {
+      if (!providerIds.length) return []
+      if (providerIds.length > MAX_FILTER_VALUES || !providerIds.every(isBoundedId)) {
+        throw new UsageRecordRepositoryDataError('Usage provider IDs are invalid.')
+      }
+      const ids = [...new Set(providerIds)]
+      const rows = await (await database()).getAll<UsageRecordRow>(
+        `${usageRecordSelect()} WHERE providerId IN (${ids.map(() => '?').join(', ')})
+         AND id = (SELECT recent.id FROM usage_records recent WHERE recent.providerId = usage_records.providerId
+           ORDER BY recent.occurredAt DESC, recent.id DESC LIMIT 1)`,
+        ids,
+      )
+      return rows.flatMap(row => {
+        const record = parsePersistedUsageRecord(row)
+        return record ? [record] : []
+      })
+    },
+    async latestByRequest(logicalRequestIds) {
+      if (!logicalRequestIds.length) return []
+      if (logicalRequestIds.length > MAX_FILTER_VALUES || !logicalRequestIds.every(isBoundedId)) {
+        throw new UsageRecordRepositoryDataError('Usage request IDs are invalid.')
+      }
+      const ids = [...new Set(logicalRequestIds)]
+      const rows = await (await database()).getAll<UsageRecordRow>(
+        `${usageRecordSelect()} WHERE logicalRequestId IN (${ids.map(() => '?').join(', ')})
+         AND id = (SELECT recent.id FROM usage_records recent WHERE recent.logicalRequestId = usage_records.logicalRequestId
+           ORDER BY recent.occurredAt DESC, recent.completedAt DESC, recent.id DESC LIMIT 1)`,
+        ids,
+      )
+      return rows.flatMap(row => {
+        const record = parsePersistedUsageRecord(row)
+        return record ? [record] : []
+      })
     },
 
     async listPricingEntries() {
@@ -446,14 +608,17 @@ export function createSqliteUsageRecordRepository(
       const value = await database()
       await value.transaction(async (transaction) => {
         const rows = await transaction.getAll<UsageRecordRow>(
-          `${usageRecordSelect()} WHERE occurredAt < ? ORDER BY occurredAt ASC, id ASC`,
-          [normalizedCutoff],
+          `${usageRecordSelect()} WHERE occurredAt < ?
+           AND (logicalRequestId IS NULL OR NOT EXISTS (
+             SELECT 1 FROM usage_records recent WHERE recent.logicalRequestId = usage_records.logicalRequestId AND recent.occurredAt >= ?
+           )) ORDER BY occurredAt ASC, id ASC`,
+          [normalizedCutoff, normalizedCutoff],
         )
         const records = rows.flatMap((row) => {
           const record = parsePersistedUsageRecord(row)
           return record ? [record] : []
         })
-        const rollups = aggregateDailyRollups(records)
+        const rollups = aggregateDailyRollups(deduplicateUsageAttempts(records))
         for (const rollup of rollups) await upsertDailyRollup(transaction, rollup)
         for (const record of records) {
           await transaction.run(
@@ -628,13 +793,15 @@ async function readFilteredRollups(
   database: SqliteExecutor,
   filter: UsageRecordFilter | undefined,
 ): Promise<UsageDailyRollup[]> {
+  // Compaction intentionally removes request/conversation identities. Never attribute a rollup to a scoped conversation.
+  if (filter?.conversationIds !== undefined || filter?.logicalRequestIds !== undefined) return []
   const query = buildUsageRollupQuery(filter)
   const rows = await database.getAll<Record<string, unknown>>(
     `${usageDailyRollupSelect()}${query.where} ORDER BY dayStart DESC, providerId ASC, upstreamModel ASC`,
     query.parameters,
   )
   return rows.flatMap((row) => {
-    const rollup = parseUsageDailyRollup(row)
+    const rollup = parseUsageDailyRollupRow(row)
     return rollup ? [rollup] : []
   })
 }
@@ -644,8 +811,8 @@ async function insertUsageRecord(database: SqliteExecutor, record: UsageRecord) 
     `INSERT OR IGNORE INTO usage_records (
        id, occurredAt, completedAt, providerId, providerName, requestedModel,
        upstreamModel, pricingModel, operationSource, dataSource,
-       measurementSource, status, recordJson
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       measurementSource, status, recordJson, logicalRequestId, responseExecutionId, conversationId, requestStartedAt
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     usageRecordParameters(record),
   )
 }
@@ -653,7 +820,7 @@ async function insertUsageRecord(database: SqliteExecutor, record: UsageRecord) 
 function usageRecordSelect(): string {
   return `SELECT id, occurredAt, completedAt, providerId, providerName,
     requestedModel, upstreamModel, pricingModel, operationSource, dataSource,
-    measurementSource, status, recordJson FROM usage_records`
+    measurementSource, status, recordJson, logicalRequestId, responseExecutionId, conversationId, requestStartedAt FROM usage_records`
 }
 
 function usageDailyRollupSelect(): string {
@@ -663,7 +830,7 @@ function usageDailyRollupSelect(): string {
     inputTokens, outputTokens, totalTokens, cacheCreationInputTokens,
     cacheReadInputTokens, cachedInputTokens, reasoningTokens,
     totalCostNanodollars, costSampleCount, durationMsTotal,
-    durationSampleCount, firstTokenMsTotal, firstTokenSampleCount
+    durationSampleCount, firstTokenMsTotal, firstTokenSampleCount, measurementsJson
     FROM usage_daily_rollups`
 }
 
@@ -677,16 +844,22 @@ function buildUsageRecordQuery(filter: UsageRecordFilter | undefined): {
 
   if (value.includeEstimated !== true) clauses.push("dataSource <> 'estimated'")
   if (value.startAt !== undefined) {
-    clauses.push('occurredAt >= ?')
+    clauses.push('COALESCE(requestStartedAt, occurredAt) >= ?')
     parameters.push(normalizeTimestamp(value.startAt, 'usage filter start'))
   }
   if (value.endAt !== undefined) {
-    clauses.push('occurredAt <= ?')
+    clauses.push('COALESCE(requestStartedAt, occurredAt) < ?')
     parameters.push(normalizeTimestamp(value.endAt, 'usage filter end'))
   }
   addListFilter(clauses, parameters, 'providerId', value.providerIds, isBoundedId)
   addListFilter(clauses, parameters, 'upstreamModel', value.models, isBoundedId)
-  addListFilter(clauses, parameters, 'status', value.statuses, isUsageStatus)
+  addListFilter(clauses, parameters, 'conversationId', value.conversationIds, isBoundedId)
+  addListFilter(clauses, parameters, 'logicalRequestId', value.logicalRequestIds, isBoundedId)
+  addListFilter(clauses, parameters, `COALESCE(
+    (SELECT recent.status FROM usage_records recent
+      WHERE recent.logicalRequestId = usage_records.logicalRequestId
+      ORDER BY recent.occurredAt DESC, recent.completedAt DESC, recent.id DESC LIMIT 1),
+    status)`, value.statuses, isUsageStatus)
   addListFilter(clauses, parameters, 'operationSource', value.operationSources, isOperationSource)
   addListFilter(clauses, parameters, 'dataSource', value.dataSources, isDataSource)
 
@@ -725,8 +898,8 @@ function buildUsageRollupQuery(filter: UsageRecordFilter | undefined): {
     parameters.push(startOfUsageDay(normalizeTimestamp(value.startAt, 'usage filter start')))
   }
   if (value.endAt !== undefined) {
-    clauses.push('dayStart <= ?')
-    parameters.push(startOfUsageDay(normalizeTimestamp(value.endAt, 'usage filter end')))
+    clauses.push('dayStart < ?')
+    parameters.push(normalizeTimestamp(value.endAt, 'usage filter end'))
   }
   addListFilter(clauses, parameters, 'providerId', value.providerIds, isBoundedId)
   addListFilter(clauses, parameters, 'upstreamModel', value.models, isBoundedId)
@@ -785,6 +958,10 @@ function parseUsageRecord(value: unknown): UsageRecord {
   ) {
     throw new UsageRecordRepositoryDataError('Usage record route attribution is inconsistent.')
   }
+  if (parsed.output.execution && (!isUsageExecutionReference(parsed.output.execution)
+    || parsed.output.execution.requestStartedAt > parsed.output.occurredAt)) {
+    throw new UsageRecordRepositoryDataError('Usage execution reference is invalid.')
+  }
   return parsed.output
 }
 
@@ -799,7 +976,30 @@ function parsePersistedUsageRecord(row: UsageRecordRow): UsageRecord | undefined
 
 function parseUsageDailyRollup(value: unknown): UsageDailyRollup | undefined {
   const parsed = v.safeParse(usageDailyRollupSchema, value)
-  return parsed.success ? parsed.output : undefined
+  if (!parsed.success) return undefined
+  const result = parsed.output
+  const measurements = result.measurements
+  if (measurements) {
+    for (const key of ['inputTokens', 'outputTokens', 'totalTokens', 'cacheCreationInputTokens', 'cacheReadInputTokens', 'cachedInputTokens', 'reasoningTokens'] as const) {
+      const samples = measurements.tokenSampleCounts[key] ?? 0
+      if (samples > result.requestCount || (measurements.tokens[key] !== undefined) !== (samples > 0)) return undefined
+    }
+    const costCount = measurements.supplierCostSampleCount + measurements.estimatedCostSampleCount + measurements.unclassifiedCostSampleCount
+    const costTotal = (measurements.supplierCostNanodollars ?? 0) + (measurements.estimatedCostNanodollars ?? 0) + (measurements.unclassifiedCostNanodollars ?? 0)
+    if (!Number.isSafeInteger(costCount) || costCount !== result.costSampleCount
+      || !Number.isSafeInteger(costTotal) || costTotal !== result.totalCostNanodollars) return undefined
+  }
+  return result
+}
+
+function parseUsageDailyRollupRow(row: Record<string, unknown>): UsageDailyRollup | undefined {
+  const { measurementsJson, ...fields } = row
+  if (measurementsJson !== null && measurementsJson !== undefined && typeof measurementsJson !== 'string') return undefined
+  try {
+    return parseUsageDailyRollup({
+      ...fields, ...(typeof measurementsJson === 'string' ? { measurements: JSON.parse(measurementsJson) } : {}),
+    })
+  } catch { return undefined }
 }
 
 function usageRecordMatchesRow(record: UsageRecord, row: UsageRecordRow): boolean {
@@ -814,7 +1014,11 @@ function usageRecordMatchesRow(record: UsageRecord, row: UsageRecordRow): boolea
     record.operationSource === row.operationSource &&
     record.dataSource === row.dataSource &&
     record.measurementSource === row.measurementSource &&
-    record.status === row.status
+    record.status === row.status &&
+    (record.execution?.logicalRequestId ?? null) === (row.logicalRequestId ?? null) &&
+    (record.execution?.responseExecutionId ?? null) === (row.responseExecutionId ?? null) &&
+    (record.conversationId ?? null) === (row.conversationId ?? null) &&
+    (record.execution?.requestStartedAt ?? null) === (row.requestStartedAt ?? null)
 }
 
 function usageRecordParameters(record: UsageRecord): SqliteValue[] {
@@ -832,6 +1036,10 @@ function usageRecordParameters(record: UsageRecord): SqliteValue[] {
     record.measurementSource,
     record.status,
     JSON.stringify(record),
+    record.execution?.logicalRequestId ?? null,
+    record.execution?.responseExecutionId ?? null,
+    record.conversationId ?? null,
+    record.execution?.requestStartedAt ?? null,
   ]
 }
 
@@ -859,9 +1067,10 @@ function parsePersistedPricingEntry(row: UsagePricingEntryRow): UsagePricingEntr
 
 function aggregateDailyRollups(records: readonly UsageRecord[]): UsageDailyRollup[] {
   const grouped = new Map<string, UsageDailyRollup>()
+  const switches = new Set(usageRouteSwitchAttempts(records).map(record => record.id))
   for (const record of records) {
     const dimensions = [
-      Math.floor(record.occurredAt / DAY_MS) * DAY_MS,
+      Math.floor((record.execution?.requestStartedAt ?? record.occurredAt) / DAY_MS) * DAY_MS,
       record.providerId,
       record.providerName,
       record.upstreamModel,
@@ -871,14 +1080,14 @@ function aggregateDailyRollups(records: readonly UsageRecord[]): UsageDailyRollu
       record.status,
     ] as const
     const key = JSON.stringify(dimensions)
-    const rollup = grouped.get(key) ?? createDailyRollup(record, dimensions[0])
-    if (grouped.has(key)) addRecordToRollup(rollup, record)
+    const rollup = grouped.get(key) ?? createDailyRollup(record, dimensions[0], switches.has(record.id))
+    if (grouped.has(key)) addRecordToRollup(rollup, record, switches.has(record.id))
     grouped.set(key, rollup)
   }
   return [...grouped.values()]
 }
 
-function createDailyRollup(record: UsageRecord, dayStart: number): UsageDailyRollup {
+function createDailyRollup(record: UsageRecord, dayStart: number, switched: boolean): UsageDailyRollup {
   const rollup: UsageDailyRollup = {
     dayStart,
     providerId: record.providerId,
@@ -909,22 +1118,26 @@ function createDailyRollup(record: UsageRecord, dayStart: number): UsageDailyRol
     durationSampleCount: 0,
     firstTokenMsTotal: 0,
     firstTokenSampleCount: 0,
+    measurements: {
+      schema: 'islemind.usage-rollup-measurements.v1', tokens: {}, tokenSampleCounts: {},
+      supplierCostSampleCount: 0, estimatedCostSampleCount: 0, unclassifiedCostSampleCount: 0,
+    },
   }
-  addRecordToRollup(rollup, record)
+  addRecordToRollup(rollup, record, switched)
   return rollup
 }
 
-function addRecordToRollup(rollup: UsageDailyRollup, record: UsageRecord): void {
+function addRecordToRollup(rollup: UsageDailyRollup, record: UsageRecord, switched: boolean): void {
   rollup.requestCount = safeAdd(rollup.requestCount, 1)
   rollup.retryCount = safeAdd(
     rollup.retryCount ?? 0,
     record.attemptReason === 'retry' || record.attemptReason === 'rectification'
       ? 1
-      : Math.min(1, record.retryCount ?? 0),
+      : 0,
   )
   rollup.failoverCount = safeAdd(
     rollup.failoverCount ?? 0,
-    record.failoverCount ?? (record.attemptReason === 'fallback' ? 1 : 0),
+    Number(switched),
   )
   rollup.successCount = safeAdd(rollup.successCount, Number(record.status === 'success'))
   rollup.failedCount = safeAdd(rollup.failedCount, Number(record.status === 'failed'))
@@ -935,7 +1148,7 @@ function addRecordToRollup(rollup: UsageDailyRollup, record: UsageRecord): void 
   rollup.outputTokens = safeAdd(rollup.outputTokens, record.tokens.outputTokens ?? 0)
   rollup.totalTokens = safeAdd(
     rollup.totalTokens,
-    record.tokens.totalTokens ?? safeAdd(record.tokens.inputTokens ?? 0, record.tokens.outputTokens ?? 0),
+    knownUsageTotal(record.tokens) ?? 0,
   )
   rollup.cacheCreationInputTokens = safeAdd(
     rollup.cacheCreationInputTokens,
@@ -960,76 +1173,86 @@ function addRecordToRollup(rollup: UsageDailyRollup, record: UsageRecord): void 
     rollup.firstTokenMsTotal = finiteAdd(rollup.firstTokenMsTotal, record.firstTokenMs)
     rollup.firstTokenSampleCount = safeAdd(rollup.firstTokenSampleCount, 1)
   }
+  const measurements = rollup.measurements!
+  for (const key of ['inputTokens', 'outputTokens', 'totalTokens', 'cacheCreationInputTokens', 'cacheReadInputTokens', 'cachedInputTokens', 'reasoningTokens'] as const) {
+    const value = key === 'totalTokens' ? knownUsageTotal(record.tokens)
+      : key === 'cacheReadInputTokens' ? record.tokens.cacheReadInputTokens ?? (record.tokens.cachedInputTokens === undefined ? undefined : cacheRead)
+        : key === 'cachedInputTokens' ? record.tokens.cachedInputTokens
+          ?? (record.tokens.cacheReadInputTokens === undefined && record.tokens.cacheCreationInputTokens === undefined ? undefined : safeAdd(cacheRead, cacheCreation))
+          : record.tokens[key]
+    if (value === undefined) continue
+    measurements.tokens[key] = safeAdd(measurements.tokens[key] ?? 0, value)
+    measurements.tokenSampleCounts[key] = safeAdd(measurements.tokenSampleCounts[key] ?? 0, 1)
+  }
+  if (record.totalCostNanodollars !== undefined) {
+    const [amount, samples] = record.costProvenance === 'supplier-known'
+      ? ['supplierCostNanodollars', 'supplierCostSampleCount'] as const
+      : record.costProvenance === 'price-table-estimate' ? ['estimatedCostNanodollars', 'estimatedCostSampleCount'] as const
+        : ['unclassifiedCostNanodollars', 'unclassifiedCostSampleCount'] as const
+    measurements[amount] = safeAdd(measurements[amount] ?? 0, record.totalCostNanodollars)
+    measurements[samples] = safeAdd(measurements[samples], 1)
+  }
 }
 
 async function upsertDailyRollup(database: SqliteExecutor, rollup: UsageDailyRollup): Promise<void> {
-  await database.run(
-    `INSERT INTO usage_daily_rollups (
-       dayStart, providerId, providerName, upstreamModel, operationSource, dataSource,
-       measurementSource, status, requestCount, retryCount, failoverCount,
-       successCount, failedCount,
-       cancelledCount, limitedCount, partialCount, inputTokens, outputTokens,
-       totalTokens, cacheCreationInputTokens, cacheReadInputTokens, cachedInputTokens,
-       reasoningTokens, totalCostNanodollars, costSampleCount, durationMsTotal,
-       durationSampleCount, firstTokenMsTotal, firstTokenSampleCount
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (
-       dayStart, providerId, providerName, upstreamModel, operationSource,
-       dataSource, measurementSource, status
-     ) DO UPDATE SET
-       requestCount = requestCount + excluded.requestCount,
-       retryCount = retryCount + excluded.retryCount,
-       failoverCount = failoverCount + excluded.failoverCount,
-       successCount = successCount + excluded.successCount,
-       failedCount = failedCount + excluded.failedCount,
-       cancelledCount = cancelledCount + excluded.cancelledCount,
-       limitedCount = limitedCount + excluded.limitedCount,
-       partialCount = partialCount + excluded.partialCount,
-       inputTokens = inputTokens + excluded.inputTokens,
-       outputTokens = outputTokens + excluded.outputTokens,
-       totalTokens = totalTokens + excluded.totalTokens,
-       cacheCreationInputTokens = cacheCreationInputTokens + excluded.cacheCreationInputTokens,
-       cacheReadInputTokens = cacheReadInputTokens + excluded.cacheReadInputTokens,
-       cachedInputTokens = cachedInputTokens + excluded.cachedInputTokens,
-       reasoningTokens = reasoningTokens + excluded.reasoningTokens,
-       totalCostNanodollars = totalCostNanodollars + excluded.totalCostNanodollars,
-       costSampleCount = costSampleCount + excluded.costSampleCount,
-       durationMsTotal = durationMsTotal + excluded.durationMsTotal,
-       durationSampleCount = durationSampleCount + excluded.durationSampleCount,
-       firstTokenMsTotal = firstTokenMsTotal + excluded.firstTokenMsTotal,
-       firstTokenSampleCount = firstTokenSampleCount + excluded.firstTokenSampleCount`,
-    [
-      rollup.dayStart,
-      rollup.providerId,
-      rollup.providerName,
-      rollup.upstreamModel,
-      rollup.operationSource,
-      rollup.dataSource,
-      rollup.measurementSource,
-      rollup.status,
-      rollup.requestCount,
-      rollup.retryCount ?? 0,
-      rollup.failoverCount ?? 0,
-      rollup.successCount,
-      rollup.failedCount,
-      rollup.cancelledCount,
-      rollup.limitedCount,
-      rollup.partialCount,
-      rollup.inputTokens,
-      rollup.outputTokens,
-      rollup.totalTokens,
-      rollup.cacheCreationInputTokens,
-      rollup.cacheReadInputTokens,
-      rollup.cachedInputTokens,
-      rollup.reasoningTokens,
-      rollup.totalCostNanodollars,
-      rollup.costSampleCount,
-      rollup.durationMsTotal,
-      rollup.durationSampleCount,
-      rollup.firstTokenMsTotal,
-      rollup.firstTokenSampleCount,
-    ],
+  const dimensions = ['dayStart', 'providerId', 'providerName', 'upstreamModel', 'operationSource', 'dataSource', 'measurementSource', 'status'] as const
+  const integerKeys = ['requestCount', 'retryCount', 'failoverCount', 'successCount', 'failedCount', 'cancelledCount', 'limitedCount', 'partialCount',
+    'inputTokens', 'outputTokens', 'totalTokens', 'cacheCreationInputTokens', 'cacheReadInputTokens', 'cachedInputTokens', 'reasoningTokens',
+    'totalCostNanodollars', 'costSampleCount', 'durationSampleCount', 'firstTokenSampleCount'] as const
+  const timingKeys = ['durationMsTotal', 'firstTokenMsTotal'] as const
+  const previousRow = await database.getFirst<Record<string, unknown>>(
+    `${usageDailyRollupSelect()} WHERE ${dimensions.map(key => `${key} = ?`).join(' AND ')}`,
+    dimensions.map(key => rollup[key]),
   )
+  const previous = previousRow ? parseUsageDailyRollupRow(previousRow) : undefined
+  if (previousRow && !previous) throw new UsageRecordRepositoryDataError('The archived usage measurement is invalid.')
+  const combined: UsageDailyRollup = { ...rollup, retryCount: rollup.retryCount ?? 0, failoverCount: rollup.failoverCount ?? 0 }
+  if (previous) {
+    for (const key of integerKeys) combined[key] = safeAdd(previous[key] ?? 0, rollup[key] ?? 0)
+    for (const key of timingKeys) combined[key] = finiteAdd(previous[key], rollup[key])
+    const measurements = mergeRollupMeasurements(previous, rollup)
+    if (measurements) combined.measurements = measurements
+    else delete combined.measurements
+  }
+  if (!parseUsageDailyRollup(combined)) throw new UsageRecordRepositoryDataError('The archived usage measurement is inconsistent.')
+  const columns = [...dimensions, ...integerKeys, ...timingKeys, 'measurementsJson']
+  const updated = [...integerKeys, ...timingKeys, 'measurementsJson']
+  await database.run(
+    `INSERT INTO usage_daily_rollups (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})
+     ON CONFLICT (${dimensions.join(', ')}) DO UPDATE SET ${updated.map(key => `${key} = excluded.${key}`).join(', ')}`,
+    [...dimensions.map(key => combined[key]), ...integerKeys.map(key => combined[key] ?? 0), ...timingKeys.map(key => combined[key]),
+      combined.measurements ? JSON.stringify(combined.measurements) : null],
+  )
+}
+
+function mergeRollupMeasurements(left: UsageDailyRollup, right: UsageDailyRollup): UsageRollupMeasurements | undefined {
+  if (!left.measurements && !right.measurements) return undefined
+  const before = rollupMeasurements(left)
+  const incoming = rollupMeasurements(right)
+  const result: UsageRollupMeasurements = {
+    schema: 'islemind.usage-rollup-measurements.v1', tokens: {}, tokenSampleCounts: {},
+    supplierCostSampleCount: safeAdd(before.supplierCostSampleCount, incoming.supplierCostSampleCount),
+    estimatedCostSampleCount: safeAdd(before.estimatedCostSampleCount, incoming.estimatedCostSampleCount),
+    unclassifiedCostSampleCount: safeAdd(before.unclassifiedCostSampleCount, incoming.unclassifiedCostSampleCount),
+  }
+  for (const key of ['inputTokens', 'outputTokens', 'totalTokens', 'cacheCreationInputTokens', 'cacheReadInputTokens', 'cachedInputTokens', 'reasoningTokens'] as const) {
+    if (before.tokens[key] === undefined && incoming.tokens[key] === undefined) continue
+    result.tokens[key] = safeAdd(before.tokens[key] ?? 0, incoming.tokens[key] ?? 0)
+    result.tokenSampleCounts[key] = safeAdd(before.tokenSampleCounts[key] ?? 0, incoming.tokenSampleCounts[key] ?? 0)
+  }
+  for (const key of ['supplierCostNanodollars', 'estimatedCostNanodollars', 'unclassifiedCostNanodollars'] as const) {
+    if (before[key] !== undefined || incoming[key] !== undefined) result[key] = safeAdd(before[key] ?? 0, incoming[key] ?? 0)
+  }
+  return result
+}
+
+function rollupMeasurements(rollup: UsageDailyRollup): UsageRollupMeasurements {
+  return rollup.measurements ?? {
+    schema: 'islemind.usage-rollup-measurements.v1', tokens: {}, tokenSampleCounts: {},
+    supplierCostSampleCount: 0, estimatedCostSampleCount: 0,
+    unclassifiedCostSampleCount: rollup.costSampleCount,
+    ...(rollup.costSampleCount ? { unclassifiedCostNanodollars: rollup.totalCostNanodollars } : {}),
+  }
 }
 
 function normalizeLimit(value: number | undefined): number {
