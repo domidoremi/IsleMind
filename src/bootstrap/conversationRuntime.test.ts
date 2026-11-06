@@ -6,6 +6,7 @@ import type { Settings } from '@/types/settingsContracts'
 const mockCreateRun = jest.fn(), mockCreateAdapter = jest.fn(), mockContextPort = jest.fn()
 const mockRetrieve = jest.fn(), mockModelSession = jest.fn(), mockPlan = jest.fn()
 const mockResumePaused = jest.fn(), mockPrepareUserResume = jest.fn()
+const mockResolveParameters = jest.fn()
 jest.mock('@/platform/storage', () => ({ createExpoSqliteDatabaseProvider: () => ({}) }))
 jest.mock('@/modules/conversations', () => ({
   createSqliteConversationRepository: () => ({}),
@@ -20,6 +21,7 @@ jest.mock('@/modules/knowledge', () => ({
 }))
 jest.mock('@/modules/providers', () => ({
   ...jest.requireActual('@/modules/providers/providerConfigurationMutation'),
+  ...jest.requireActual('@/modules/providers/providerModelParameterOverrides'),
   createProviderGateway: (adapters: unknown) => adapters,
   createSameProviderFallbackResolver: jest.fn(),
 }))
@@ -35,6 +37,9 @@ jest.mock('./providerRuntime', () => ({ createProviderRuntimeAdapter: (input: un
 jest.mock('./knowledgeContextRuntime', () => ({ retrieveConversationKnowledgeContext: (...args: unknown[]) => mockRetrieve(...args) }))
 jest.mock('./conversationModelOperationRuntime', () => ({ createConversationModelOperationSession: (input: unknown) => mockModelSession(input) }))
 jest.mock('./contextPlanning', () => ({ planChatContext: (...args: unknown[]) => mockPlan(...args) }))
+jest.mock('./providerRequestPolicies', () => ({
+  resolveProviderRequestParameters: (...args: unknown[]) => mockResolveParameters(...args),
+}))
 jest.mock('./contextContributionRuntime', () => ({
   buildChatContextRuntime: () => ({ counts: { memory: 0, knowledge: 0 }, retrievalSources: [], contextSources: [] }),
 }))
@@ -56,6 +61,7 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockRetrieve.mockResolvedValue({ sources: [], prompt: '' })
   mockPlan.mockReturnValue({ packed: { estimatedInputTokens: 1, budgetTokens: 4096 }, messages: [], contextPrompt: '' })
+  mockResolveParameters.mockImplementation(request => ({ maxTokens: request.maxTokens }))
   mockResumePaused.mockResolvedValue({ ok: true, value: { status: 'running' } })
 })
 
@@ -105,6 +111,31 @@ it('uses captured settings during delayed canonical conversation request prepara
   expect(result.request.providerId).toBe('reviewed-provider')
   expect(result.request.model).toBe('reviewed-model')
   expect(mockPlan.mock.calls[0][0].settings.language).toBe('en')
+})
+
+it('reserves the captured model output override and retains caller values for later target changes', async () => {
+  const admitted = input()
+  admitted.provider.modelParameterOverrides = {
+    schema: 'islemind.provider-model-parameters.v1',
+    models: { 'reviewed-model': { maxTokens: 768 } },
+  }
+  createPlainChatRuntime(admitted)
+  admitted.provider.modelParameterOverrides.models['reviewed-model'].maxTokens = 2048
+  const result = await mockCreateRun.mock.calls[0][0].requestPreparation.prepare({
+    cancellationSignal: new AbortController().signal, conversation: { systemPrompt: '' },
+    request: {
+      conversationId: 'reviewed-chat', providerId: 'stored-provider', model: 'stored-model',
+      messages: [{ id: 'draft', role: 'user', text: 'Question' }], maxTokens: 512,
+      generationParameterSources: { maxTokens: 'provider-default' },
+    },
+  })
+  expect(mockPlan.mock.calls[0][0].maxOutputTokens).toBe(768)
+  expect(result.request).toMatchObject({
+    maxTokens: 768, generationParameterSources: { maxTokens: 'explicit' },
+    modelParameterBaseline: {
+      values: { maxTokens: 512 }, sources: { maxTokens: 'provider-default' },
+    },
+  })
 })
 
 it('prepares the visible execution host and forwards admission and settlement as separate resume lifetimes', async () => {

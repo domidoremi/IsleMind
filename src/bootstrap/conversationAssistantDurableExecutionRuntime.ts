@@ -1,3 +1,4 @@
+import { attributeConversationUsageRequest } from './conversationUsageRuntime'
 import {
   createAssistantRunId,
   freezeChatRequest,
@@ -153,6 +154,10 @@ export function createConversationAssistantDurableExecutionRuntime(
           ? input.modelOperationSession.prepareRequest(canonicalRequest)
           : canonicalRequest,
       )
+      const toolDeclarations = input.modelOperationSession?.describeDeclarations?.(canonicalRequest)
+      if (toolDeclarations && input.contextReceipt) {
+        input = { ...input, contextReceipt: { ...input.contextReceipt, toolDeclarations } }
+      }
       preparedDispatch = bindCanonicalRichToolDeclarations(
         input,
         preparedDispatch,
@@ -674,6 +679,7 @@ function createCanonicalRichRequest(
     maxTokens: request.maxTokens,
     generationParameterSources: { ...request.generationParameterSources,
       maxTokens: request.generationParameterSources?.maxTokens === 'explicit' ? 'explicit' : 'internal-policy' },
+    ...(request.modelParameterBaseline ? { modelParameterBaseline: request.modelParameterBaseline } : {}),
     requestedCapabilities: requestedCapabilities.length
       ? Object.freeze(requestedCapabilities)
       : undefined,
@@ -767,7 +773,11 @@ function createRichContinuationStream(
       remoteCompactFallback: undefined,
       previousResponseId: undefined,
     }
-    return streamProviderChat(binding ? await binding.bind(continuationRequest) : continuationRequest, onChunk, (result) => {
+    const attributedRequest = attributeConversationUsageRequest(
+      binding ? await binding.bind(continuationRequest) : continuationRequest,
+      input.conversationId, input.assistantMessageId, 'tool-continuation',
+    )
+    return streamProviderChat(attributedRequest, onChunk, (result) => {
       results.push(result)
       onDone(result)
     }, onError, onCitations, onTrace).then((handle) => {

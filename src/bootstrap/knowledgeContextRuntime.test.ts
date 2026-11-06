@@ -27,6 +27,7 @@ jest.mock('@/types/modelCatalog', () => ({ getModelConfig: () => ({ contextWindo
 jest.mock('@/utils/providerModels', () => ({ resolveProviderModelAlias: (_provider: unknown, model: string) => model }))
 jest.mock('@/modules/providers', () => jest.requireActual('@/modules/providers/providerConfigurationMutation'))
 jest.mock('@/modules/knowledge', () => ({
+  ...jest.requireActual('@/modules/knowledge/domain/knowledgeScope'),
   LOCAL_USER_MEMORY_SCOPE_ID: 'local-user',
   buildCompressedContextPrompt: () => '',
   buildFlareContextPrompt: () => '',
@@ -204,4 +205,40 @@ it('retains the original FLARE cancellation signal when a caller replaces it dur
   input.signal = new AbortController().signal; controller.abort()
   gate.resolve([])
   await check
+})
+
+it.each(['main', 'flare'] as const)('resolves selected knowledge to exact document IDs in the %s path', async path => {
+  const selected = { ...conversation(), knowledgeSources: ['Exact legacy title'],
+    resourceScopeOverride: { schema: 'islemind.conversation-resource-scope.v1' as const, knowledge: 'selected' as const } }
+  mockListDocuments.mockResolvedValue([{ id: 'document-exact', title: 'Exact legacy title' },
+    { id: 'document-other', title: 'Prefix Exact legacy title appendix' }])
+  if (path === 'main') await retrieveConversationKnowledgeContext(selected, message(), undefined, { provider: null })
+  else await retrieveConversationFlareContext({ conversation: selected, query: 'Query', followupQuery: 'Followup' })
+  expect(mockSearchKnowledge.mock.calls[0][0].knowledgeScope).toEqual({ ids: new Set(['document-exact']), terms: [] })
+})
+
+it.each(['main', 'flare'] as const)('keeps explicit knowledge-none closed in the %s path without credential admission', async path => {
+  const selected = { ...conversation(), resourceScopeOverride: {
+    schema: 'islemind.conversation-resource-scope.v1' as const, knowledge: 'none' as const } }
+  if (path === 'main') await retrieveConversationKnowledgeContext(selected, message())
+  else await retrieveConversationFlareContext({ conversation: selected, query: 'Query', followupQuery: 'Followup' })
+  expect(mockSearchKnowledge).not.toHaveBeenCalled()
+  expect(mockHydrate).not.toHaveBeenCalled()
+  expect(mockRag).not.toHaveBeenCalled()
+})
+
+it.each(['main', 'flare'] as const)('rejects cancellation during exact metadata resolution before admitting the %s search', async path => {
+  const selected = { ...conversation(), resourceScopeOverride: {
+    schema: 'islemind.conversation-resource-scope.v1' as const, knowledge: 'selected' as const } }
+  const gate = deferred<{ id: string; title: string }[]>(), controller = new AbortController()
+  if (path === 'main') mockListDocuments.mockResolvedValueOnce([])
+  mockListDocuments.mockImplementationOnce(async () => { controller.abort(); return gate.promise })
+  const pending = path === 'main'
+    ? retrieveConversationKnowledgeContext(selected, message(), controller.signal)
+    : retrieveConversationFlareContext({ conversation: selected, query: 'Query', followupQuery: 'Followup', signal: controller.signal })
+  const check = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  gate.resolve([{ id: 'reviewed-document', title: 'Reviewed document' }])
+  await check
+  expect(mockSearchKnowledge).not.toHaveBeenCalled()
+  expect(mockHydrate).not.toHaveBeenCalled()
 })

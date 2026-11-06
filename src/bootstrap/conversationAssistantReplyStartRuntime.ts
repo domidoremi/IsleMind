@@ -1,5 +1,5 @@
 import { createAssistantConversationReplyStartRuntime } from '@/modules/assistant-runtime'
-import { filterSendableAttachments } from '@/modules/conversations'
+import { filterSendableAttachments, resolveConversationContextSettings, resolveConversationSceneSettings } from '@/modules/conversations'
 import { conversationAssistantContextAcquisitionRuntime } from '@/bootstrap/conversationAssistantContextAcquisitionRuntime'
 import { projectConversationAssistantFailure } from '@/bootstrap/conversationAssistantMessageProjection'
 import { conversationAssistantPlainChatHandoffRuntime } from '@/bootstrap/conversationAssistantPlainChatHandoffRuntime'
@@ -109,11 +109,12 @@ export const conversationAssistantReplyStartRuntime =
         )
       },
     },
-    getProviderSettingsState() {
+    getProviderSettingsState(conversationId) {
       const state = useSettingsStore.getState()
+      const conversation = useChatStore.getState().conversations.find(item => item.id === conversationId)
       return {
         providers: state.providers,
-        settings: state.settings,
+        settings: resolveConversationSceneSettings(resolveConversationContextSettings(state.settings, conversation), conversation),
       }
     },
     getLatestConversation(conversationId) {

@@ -317,6 +317,33 @@ it('uses one consented full-pipeline failure fallback and keeps original metadat
   expect(f.input.onDone).toHaveBeenCalledTimes(1)
 })
 
+it.each(['ask', 'allow'] as const)('executes only the named plan backup with %s consent and never serializes the plan upstream', async (crossProvider) => {
+  const f = fixture()
+  const resolution = bindRealResolution(f)
+  f.req.executionConstraint!.routingPlan = { schema: 'islemind.model-routing-plan.v1', id: 'stable', name: 'Stable', mode: 'fallback',
+    primary: { providerId: 'a', model: 'gpt-4o' }, backup: { providerId: 'b', model: 'gpt-4o' }, crossProvider }
+  f.wire.mockResolvedValueOnce(new Response('temporarily unavailable', { status: 503 }))
+  await executeHttpSseChat(f.input)
+  expect(f.onExecutionTarget.mock.calls.map(([target]) => target.providerId)).toEqual(['a', 'b'])
+  expect(f.fallbackWire).toHaveBeenCalledTimes(1)
+  expect(resolution.confirm).toHaveBeenCalledTimes(crossProvider === 'ask' ? 1 : 0)
+  const wireCalls = f.fallbackWire.mock.calls as unknown as [string, RequestInit][]
+  expect(wireCalls[0][1].body).not.toContain('routingPlan')
+  expect((mockRevalidate.mock.calls[1][0] as ProviderChatExecutionConstraint).routingPlan?.id).toBe('stable')
+})
+
+it('a fixed plan never dispatches a backup after a provider error', async () => {
+  const f = fixture()
+  const resolution = bindRealResolution(f)
+  f.req.executionConstraint!.routingPlan = { schema: 'islemind.model-routing-plan.v1', id: 'fixed', name: 'Fixed', mode: 'fixed',
+    primary: { providerId: 'a', model: 'gpt-4o' }, crossProvider: 'ask' }
+  f.wire.mockResolvedValueOnce(new Response('temporarily unavailable', { status: 503 }))
+  await executeHttpSseChat(f.input).catch(() => undefined)
+  expect(f.wire).toHaveBeenCalledTimes(1)
+  expect(f.fallbackWire).not.toHaveBeenCalled()
+  expect(resolution.confirm).not.toHaveBeenCalled()
+})
+
 it.each(['metadata', 'credential', 'access', 'caller-access', 'policy', 'scope'] as const)(
   'live %s revocation after fallback planning prevents any selected wire attempt',
   async (kind) => {

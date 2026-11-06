@@ -1,4 +1,4 @@
-import type { ProcessTrace } from '@/core'
+import { resolveGenerationParameterSources, type ProcessTrace } from '@/core'
 import {
   createAssistantConversationRequestPlanningRuntime,
   planUnifiedConversationCapabilities,
@@ -41,6 +41,7 @@ import type { AIModel, AIProvider } from '@/types/providerContracts'
 import type { RemoteCompactMode, SearchProviderId, Settings } from '@/types/settingsContracts'
 import type { TavernContextPack } from '@/modules/workspaces'
 import type { RetrievedConversationKnowledgeContext } from '@/bootstrap/knowledgeContextRuntime'
+import { resolveProviderModelParametersForDispatch } from './providerModelParameterRuntime'
 
 export const conversationAssistantRequestPlanningRuntime =
   createAssistantConversationRequestPlanningRuntime<
@@ -90,6 +91,15 @@ export const conversationAssistantRequestPlanningRuntime =
       })
     },
     buildSystemPrompt,
+    resolveOutputReservation(input) {
+      return resolveProviderModelParametersForDispatch({
+        provider: input.provider, model: input.model, requestedModel: input.conversation.model,
+        maxTokens: input.conversation.maxTokens,
+        generationParameterSources: resolveGenerationParameterSources({
+          values: input.conversation, overrides: input.conversation.generationParameterOverrides,
+        }),
+      }).maxTokens
+    },
     resolvePreviousCompactState(input) {
       const contextManagement = resolveProviderContextManagement({
         provider: input.provider,

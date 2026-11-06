@@ -1,4 +1,4 @@
-import { asTaskId, measureJsonCharacters, clampTraceText, sanitizeTraceMetadataValue, freezeChatRequest, snapshotPlainData, type ChatReasoningReplayPart, type ChatRequest, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
+import { asTaskId, measureJsonCharacters, clampTraceText, sanitizeTraceMetadataValue, freezeChatRequest, snapshotPlainData, type ChatReasoningReplayPart, type ChatRequest, type ChatToolDefinition, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
 import {
   createFrozenModelOperationCatalog,
   createModelOperationTurnRuntime,
@@ -24,6 +24,17 @@ import {
   validateToolInputSchema,
   createModelOperationCatalogSnapshot,
   formatTaggedModelOperationPrompt,
+  planModelOperationDeclarations,
+  discoverModelOperations,
+  readModelOperationPublication,
+  resolveToolReference,
+  modelOperationDiscoveryDescriptor,
+  MODEL_OPERATION_DISCOVERY_ID,
+  MODEL_OPERATION_DISCOVERY_NAME,
+  MODEL_OPERATION_DISCOVERY_DEFINITION,
+  MODEL_OPERATION_DISCOVERY_INPUT_SCHEMA,
+  MODEL_OPERATION_DISCOVERY_PAGE_SIZE,
+  type ModelOperationDeclarationPlan,
   type ConversationToolCatalogManifest,
   type ModelOperationCatalogSnapshot,
   type ModelOperationDescriptor,
@@ -47,6 +58,7 @@ import { resolveProviderModelAlias } from '@/utils/providerModels'
 import type { Settings } from '@/types/settingsContracts'
 import { assertAgentModelBinding } from './agentModelBinding'
 import { KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST } from '@/modules/knowledge'
+import { resolveConversationSceneSettings } from '@/modules/conversations'
 
 export interface ConversationModelOperationRuntimeInput {
   readonly conversation: Conversation
@@ -71,6 +83,7 @@ interface CurrentTurn {
   readonly nativeCallIds: ReadonlySet<string>
   readonly reasoningReplay: readonly ChatReasoningReplayPart[]
   readonly onOperationStarted?: Parameters<AssistantModelOperationSession['evaluateTurn']>[0]['onOperationStarted']
+  publishedIds?: readonly string[]
 }
 
 interface IndependentParentAuthority {
@@ -117,9 +130,10 @@ export async function createConversationModelOperationSession(
 ): Promise<AssistantModelOperationSession | undefined> {
   if (input.signal?.aborted) return undefined
   input = { ...input, conversation: snapshotPlainData(input.conversation),
-    provider: snapshotPlainData(input.provider), settings: snapshotPlainData(input.settings),
+    provider: snapshotPlainData(input.provider), settings: snapshotPlainData(resolveConversationSceneSettings(input.settings, input.conversation)),
     agentScope: snapshotPlainData(input.agentScope) }
   if (!input.conversation.providerId?.trim() || !input.conversation.model?.trim()) return undefined
+  if (input.conversation.resourceScopeOverride?.tools === 'none') return undefined
   let created: Awaited<ReturnType<typeof dependencies.createCatalog>>
   try {
     created = await dependencies.createCatalog(input.settings)
@@ -136,8 +150,15 @@ export async function createConversationModelOperationSession(
   if (scope) assertAgentModelBinding(input.provider, scope)
   if (scope && (scope.modelBinding.providerId !== input.provider.id || scope.modelBinding.modelId !== input.conversation.model)) throw new Error('Agent model binding does not match its operation session')
   const createdSnapshot = created.catalog.snapshot
+  const selectedOperationIds = input.conversation.resourceScopeOverride?.tools === 'selected'
+    ? new Set((input.conversation.enabledTools ?? []).flatMap(reference => {
+      const manifest = resolveToolReference(reference, created.catalog.manifests)
+      return manifest ? [manifest.id] : []
+    })) : undefined
   const scoped = createModelOperationCatalogSnapshot(createdSnapshot.operations.filter((operation) =>
     (input.allowConfirmation !== false || operation.permission === 'read-only' && !operation.requiresConfirmation)
+      && (!selectedOperationIds || selectedOperationIds.has(operation.id))
+      && (operation.executor.kind !== 'rag' || input.conversation.resourceScopeOverride?.knowledge !== 'none')
       && (!input.independentReadOnly || operation.id === KNOWLEDGE_RAG_CONTEXT_PACK_MANIFEST.id
         && operation.executor.kind === 'rag' && operation.permission === 'read-only' && !operation.requiresConfirmation)
       && (!scope || scope.modelBinding.actionCapability !== 'text_only' && scope.allowedToolIds.includes(operation.id))
@@ -160,26 +181,90 @@ export async function createConversationModelOperationSession(
     [...providerNameByOperationId].map(([operationId, providerName]) => [providerName, operationId]),
   )
   const nativeProtocol = supportsNativeModelOperationProtocol(input.provider, input.conversation.model)
-  const prepareRequest = (request: ChatRequest): ChatRequest => ({
-    ...request,
-    systemPrompt: [request.systemPrompt, nativeProtocol ? undefined : taggedPrompt].filter(Boolean).join('\n\n'),
-    toolDefinitions: snapshot.operations.map((operation) => ({
-      operationId: operation.id,
-      name: providerNameByOperationId.get(operation.id) as string,
-      description: operation.description,
-      inputSchema: operation.inputSchema,
-      permission: operation.permission,
-    })),
-  })
+  const declarationInput = {
+    snapshot, mode: input.settings.toolDeclarationMode, native: nativeProtocol,
+    operationName: (id: string) => providerNameByOperationId.get(id) as string,
+  }
+  const initialDeclarationPlan = planModelOperationDeclarations(declarationInput)
+  const completeDeclarationPlan = initialDeclarationPlan.mode === 'full' ? initialDeclarationPlan
+    : planModelOperationDeclarations({ ...declarationInput, mode: 'full' })
+  const usesDiscovery = initialDeclarationPlan.mode === 'discovery'
+  // A recovered request owns its declaration mode even if global preferences
+  // changed. The virtual identity is available only through a valid saved page.
+  providerNameByOperationId.set(MODEL_OPERATION_DISCOVERY_ID, MODEL_OPERATION_DISCOVERY_NAME)
+  operationIdByProviderName.set(MODEL_OPERATION_DISCOVERY_NAME, MODEL_OPERATION_DISCOVERY_ID)
+  const definitionById = new Map<string, ChatToolDefinition>([
+    ...snapshot.operations.map(operation => [operation.id, {
+      operationId: operation.id, name: providerNameByOperationId.get(operation.id) as string,
+      description: operation.description, inputSchema: operation.inputSchema, permission: operation.permission,
+    }] as const),
+    [MODEL_OPERATION_DISCOVERY_ID, MODEL_OPERATION_DISCOVERY_DEFINITION],
+  ])
+  function requestUsesDiscovery(request: ChatRequest): boolean {
+    return Boolean(request.toolDefinitions?.some(tool => tool.operationId === MODEL_OPERATION_DISCOVERY_ID)
+      || request.systemPrompt?.includes(`This is a declaration projection of frozen catalog ${snapshot.revision}.`))
+  }
+  function requestMatchesFullDeclarations(request: ChatRequest): boolean {
+    return Boolean(request.toolDefinitions
+      && stableIdentityHash(request.toolDefinitions) === stableIdentityHash(completeDeclarationPlan.declarations)
+      && (!completeDeclarationPlan.prompt || request.systemPrompt?.endsWith(completeDeclarationPlan.prompt)))
+  }
+  function requestPublication(request: ChatRequest): readonly string[] | undefined {
+    const declarations = request.toolDefinitions
+    if (!declarations?.some(tool => tool.operationId === MODEL_OPERATION_DISCOVERY_ID)) return undefined
+    if (declarations.length > MODEL_OPERATION_DISCOVERY_PAGE_SIZE + 1
+      || new Set(declarations.map(tool => tool.operationId)).size !== declarations.length
+      || declarations.some(tool => {
+        const expected = definitionById.get(tool.operationId)
+        return !expected || stableIdentityHash(expected) !== stableIdentityHash(tool)
+          || tool.operationId !== MODEL_OPERATION_DISCOVERY_ID && !snapshot.operations.some(operation =>
+            operation.id === tool.operationId && operation.availability.status === 'available')
+      })) return undefined
+    return declarations.filter(tool => tool.operationId !== MODEL_OPERATION_DISCOVERY_ID).map(tool => tool.operationId)
+  }
+  function declarationPlan(request?: ChatRequest, publishedIds?: readonly string[]): ModelOperationDeclarationPlan {
+    return planModelOperationDeclarations({ ...declarationInput,
+      ...(request && requestUsesDiscovery(request) ? { mode: 'auto' as const }
+        : request && requestMatchesFullDeclarations(request) ? { mode: 'full' as const } : {}),
+      publishedIds: publishedIds ?? (request ? requestPublication(request) : undefined) ?? [] })
+  }
+  function applyDeclarationPlan(request: ChatRequest, next: ModelOperationDeclarationPlan): ChatRequest {
+    let systemPrompt = request.systemPrompt ?? ''
+    const priorPrompt = requestPublication(request) !== undefined ? declarationPlan(request).prompt : taggedPrompt
+    if (priorPrompt && systemPrompt.endsWith(priorPrompt)) {
+      systemPrompt = systemPrompt.slice(0, -priorPrompt.length).replace(/\n\n$/, '')
+    }
+    return {
+      ...request,
+      systemPrompt: [systemPrompt, next.prompt].filter(Boolean).join('\n\n'),
+      toolDefinitions: next.declarations,
+    }
+  }
+  const prepareRequest = (request: ChatRequest): ChatRequest => {
+    if (requestUsesDiscovery(request)) {
+      if (requestPublication(request) === undefined || !request.systemPrompt?.endsWith(declarationPlan(request).prompt)) {
+        throw new Error('The saved tool declaration page does not match the frozen catalog.')
+      }
+      return applyDeclarationPlan(request, declarationPlan(request))
+    }
+    if (requestMatchesFullDeclarations(request)) return applyDeclarationPlan(request, completeDeclarationPlan)
+    return applyDeclarationPlan(request, initialDeclarationPlan)
+  }
+  const catalogOperations = [...snapshot.operations, modelOperationDiscoveryDescriptor()]
   const frozenCatalog = createFrozenModelOperationCatalog({
     revision: snapshot.revision,
-    entries: snapshot.operations.map((operation) => ({
+    entries: catalogOperations.map((operation) => ({
       operationId: operation.id,
       declaredName: providerNameByOperationId.get(operation.id) as string,
       schemaRevision: stableIdentityHash(operation.inputSchema),
       available: operation.availability.status === 'available',
       definition: operation,
       validateArguments(argumentsValue) {
+        if (operation.id === MODEL_OPERATION_DISCOVERY_ID) {
+          const checked = validateToolInputSchema(MODEL_OPERATION_DISCOVERY_INPUT_SCHEMA as Record<string, unknown>,
+            argumentsValue as Record<string, unknown>)
+          return { ok: checked.ok, ...(!checked.ok ? { message: checked.errors.slice(0, 8).join(' ') } : {}) }
+        }
         const admitted = admitModelOperationCall(snapshot, {
           schema: 'islemind.model-tool-call.v1',
           catalogRevision: snapshot.revision,
@@ -192,6 +277,21 @@ export async function createConversationModelOperationSession(
       },
     })),
   })
+  function turnCatalog(request: ChatRequest) {
+    if (requestMatchesFullDeclarations(request) || !usesDiscovery && !requestUsesDiscovery(request)) return createFrozenModelOperationCatalog({
+      revision: frozenCatalog.revision,
+      entries: frozenCatalog.entries.filter(entry => entry.operationId !== MODEL_OPERATION_DISCOVERY_ID),
+    })
+    // Request data can narrow admission only after its complete page matches
+    // the exact frozen definitions and revision. It cannot supply a new schema.
+    const publication = requestPublication(request)
+    const valid = publication !== undefined && request.systemPrompt?.endsWith(declarationPlan(request).prompt)
+    const declared = new Set(valid ? [MODEL_OPERATION_DISCOVERY_ID, ...publication] : [])
+    return createFrozenModelOperationCatalog({
+      revision: frozenCatalog.revision,
+      entries: frozenCatalog.entries.map(entry => ({ ...entry, available: entry.available && declared.has(entry.operationId) })),
+    })
+  }
   const limits = snapshotPlainData(resolveWorkflowRunLimitsFromSettings(input.settings))
   const permissionCeiling = resolvePermissionCeiling(limits)
   let currentTurn: CurrentTurn | undefined
@@ -253,6 +353,19 @@ export async function createConversationModelOperationSession(
       return dependencies.declinePendingTask(state, signal)
     },
     async dispatch(dispatchInput) {
+      if (dispatchInput.call.operationId === MODEL_OPERATION_DISCOVERY_ID) {
+        await currentTurn?.onOperationStarted?.({
+          callId: dispatchInput.call.callId, operationId: MODEL_OPERATION_DISCOVERY_ID,
+          inputSummary: clampTraceText(JSON.stringify(sanitizeTraceMetadataValue(dispatchInput.call.arguments)), 1600),
+        })
+        if (dispatchInput.signal.aborted) throw new DOMException('Operation cancelled.', 'AbortError')
+        // Pure transformation of this already-frozen scope: no Tasks executor,
+        // storage, provider, current MCP catalog, or user-state port is touched.
+        const publication = discoverModelOperations({ snapshot,
+          arguments: dispatchInput.call.arguments, operationName: declarationInput.operationName, native: nativeProtocol })
+        if (currentTurn) currentTurn.publishedIds = publication.operationIds
+        return { status: 'succeeded', output: JSON.stringify(publication) }
+      }
       const manifest = manifestById.get(dispatchInput.call.operationId)
       if (!manifest) {
         return { status: 'failed', output: 'The selected operation has no bound executor.' }
@@ -388,6 +501,16 @@ export async function createConversationModelOperationSession(
     prepareRequest(request) {
       return prepareRequest(request)
     },
+    describeDeclarations(request) {
+      const plan = declarationPlan(request)
+      return {
+        schema: 'islemind.tool-declaration-receipt.v1',
+        mode: plan.mode, catalogRevision: snapshot.revision,
+        totalCount: plan.totalCount, declaredCount: plan.declaredCount, deferredCount: plan.deferredCount,
+        declarationChars: plan.declarationChars, fullDeclarationChars: plan.fullDeclarationChars,
+        summaryChars: plan.summaryChars, budgetChars: plan.budgetChars,
+      }
+    },
 
     async evaluateTurn(turnInput) {
       return serializeTurn(async () => {
@@ -402,6 +525,7 @@ export async function createConversationModelOperationSession(
           nativeCallIds: new Set((queued?.calls ?? turnInput.calls).map((call) => call.callId)),
           reasoningReplay: queued?.reasoningReplay ?? turnInput.reasoningReplay,
           onOperationStarted: turnInput.onOperationStarted,
+          ...(queued ? { publishedIds: lastPublication(queued.receipts) } : {}),
         }
         const normalized = queued ? { kind: 'calls' as const, calls: queued.calls } : normalizeTurnCalls(
           snapshot,
@@ -430,22 +554,23 @@ export async function createConversationModelOperationSession(
         if (batch && call && batch.receipts.some(receipt => receipt.status !== 'succeeded')) {
           // No implicit dependency assumption: after failure/decline, return one explicit
           // not-executed receipt per remaining call before asking the LLM to re-plan.
-          return mapTurnOutcome({ kind: 'terminal', continuation: turnInput.request,
+          return publishForNextTurn(mapTurnOutcome({ kind: 'terminal', continuation: turnInput.request,
             receipt: { schema: 'islemind.model-operation-receipt.v1', turnId: turnInput.run.id,
               stepIndex: turnInput.stepIndex, status: 'rejected', code: 'batch_stopped', terminal: true,
               catalogRevision: snapshot.revision, callId: call.callId, operationId: call.operationId,
               output: 'Not executed: an earlier operation in this batch failed or was declined. Re-plan from the recorded results.' },
-          }, turnInput.run.id, dependencies.now(), currentTurn)
+          }, turnInput.run.id, dependencies.now(), currentTurn))
         }
-        return mapTurnOutcome(await turnRuntime.run({
+        const outcome = mapTurnOutcome(await turnRuntime.run({
           turnId: turnInput.run.id,
           stepIndex: turnInput.stepIndex,
           completedSteps: turnInput.stepIndex,
           maxSteps: limits.maxSteps,
           calls: call ? [call] : normalized.calls,
-          catalog: frozenCatalog,
+          catalog: turnCatalog(currentTurn.request),
           signal: turnInput.signal,
         }), turnInput.run.id, dependencies.now(), currentTurn)
+        return publishForNextTurn(outcome)
       })
     },
 
@@ -459,7 +584,7 @@ export async function createConversationModelOperationSession(
         }
       } catch { return false }
       const entry = state
-        ? frozenCatalog.entries.find((candidate) => candidate.operationId === state.call.operationId)
+        ? turnCatalog(pending.continuationRequest).entries.find((candidate) => candidate.operationId === state.call.operationId)
         : undefined
       const argumentDigest = state ? stableIdentityHash(state.call.arguments) : undefined
       const idempotencyKey = state && argumentDigest
@@ -484,7 +609,7 @@ export async function createConversationModelOperationSession(
         pending.stepIndex !== state.stepIndex || pending.maxSteps !== state.maxSteps ||
         state.turnId !== pending.runId || state.call.catalogRevision !== state.catalogRevision ||
         argumentDigest !== state.argumentDigest || idempotencyKey !== state.idempotencyKey ||
-        !entry || entry.declaredName !== state.call.declaredName ||
+        !entry?.available || state.call.operationId === MODEL_OPERATION_DISCOVERY_ID || entry.declaredName !== state.call.declaredName ||
         entry.schemaRevision !== state.call.schemaRevision || !validateConfirmationState(state)) {
         return false
       }
@@ -499,6 +624,7 @@ export async function createConversationModelOperationSession(
           : validateBatch(batchValue, resumeInput.run.id, resumeInput.pending.continuationRequest, resumeInput.pending.stepIndex)
         currentTurn = {
           ...(batch ? { operationBatch: batch } : {}),
+          ...(batch ? { publishedIds: lastPublication(batch.receipts) } : {}),
           request: cloneChatRequest(resumeInput.pending.continuationRequest),
           outputText: resumeInput.pending.continuationOutputText,
           nativeCallIds: resumeInput.pending.continuationMode === 'native'
@@ -509,15 +635,31 @@ export async function createConversationModelOperationSession(
         }
         const state = resumeInput.pending.continuationState as unknown as
           ModelOperationPendingConfirmationState<PendingTaskReference>
-        return mapTurnOutcome(await turnRuntime.resume({
+        return publishForNextTurn(mapTurnOutcome(await turnRuntime.resume({
           state,
-          catalog: frozenCatalog,
+          catalog: turnCatalog(currentTurn.request),
           approved: resumeInput.approved,
           ...(resumeInput.authorizationExpired ? { authorizationExpired: true } : {}),
           signal: resumeInput.signal,
-        }), resumeInput.run.id, dependencies.now(), currentTurn)
+        }), resumeInput.run.id, dependencies.now(), currentTurn))
       })
     },
+  }
+  function lastPublication(receipts: readonly ModelOperationReceipt[]): readonly string[] | undefined {
+    for (const receipt of [...receipts].reverse()) {
+      if (receipt.operationId === MODEL_OPERATION_DISCOVERY_ID && receipt.status === 'succeeded'
+        && receipt.catalogRevision === snapshot.revision) {
+        const publication = readModelOperationPublication(receipt.output, snapshot)
+        if (publication === undefined) throw new Error('The saved tool publication is invalid.')
+        return publication
+      }
+    }
+    return undefined
+  }
+  function publishForNextTurn(outcome: Awaited<ReturnType<AssistantModelOperationSession['evaluateTurn']>>) {
+    if (outcome.kind !== 'continue' || outcome.operationBatch || currentTurn?.publishedIds === undefined) return outcome
+    return { ...outcome, request: applyDeclarationPlan(outcome.request,
+      declarationPlan(currentTurn.request, currentTurn.publishedIds)) }
   }
   function validateBatch(value: unknown, runId: string, request: ChatRequest, stepIndex: number): ModelOperationBatch {
     const batch = decodeModelOperationBatch(value)
@@ -597,6 +739,7 @@ function toRuntimeCall(
   providerMetadata?: ChatToolCallProviderMetadata,
 ): RuntimeModelOperationCall {
   const operation = snapshot.operations.find((candidate) => candidate.id === operationId)
+    ?? (operationId === MODEL_OPERATION_DISCOVERY_ID ? modelOperationDiscoveryDescriptor() : undefined)
   return Object.freeze({
     callId,
     operationId,
@@ -893,22 +1036,28 @@ function boundedObservationOutput(observation: {
 }
 
 async function createModelOperationConversationRagRuntime(input: ConversationModelOperationRuntimeInput) {
-  const [{ createConversationRagRuntime: createKnowledgeConversationRagRuntime, buildKnowledgeScope }, {
+  const [{ createConversationRagRuntime: createKnowledgeConversationRagRuntime, buildKnowledgeScope, buildExactKnowledgeScope, resolveKnowledgeScopeReferences }, {
     searchKnowledgeWithFallback,
-  }] = await Promise.all([
+  }, { knowledgeRepository }] = await Promise.all([
     import('@/modules/knowledge'),
     import('@/bootstrap/knowledgeRetrievalRuntime'),
+    import('./knowledgeRepository'),
   ])
+  const selectedKnowledge = !input.agentScope && input.settings.knowledgeEnabled && input.settings.ragMode !== 'off'
+    && input.conversation.resourceScopeOverride?.knowledge === 'selected'
+    ? resolveKnowledgeScopeReferences(input.conversation.knowledgeSources ?? [], await knowledgeRepository.listDocuments({ signal: input.signal })).ids : undefined
   const knowledgeScope = input.agentScope
     ? { ids: new Set(input.agentScope.knowledgeIds.map((id) => id.toLowerCase())), terms: [] }
-    : buildKnowledgeScope(input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources)
+    : selectedKnowledge
+      ? buildExactKnowledgeScope(selectedKnowledge)
+      : buildKnowledgeScope(input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources)
   return createKnowledgeConversationRagRuntime({
     settings: input.settings,
     conversationTitle: input.conversation.title,
     systemPrompt: input.conversation.systemPrompt,
     memorySources: [],
     retrieveKnowledge: (query, limit, options) => {
-      if (options?.signal?.aborted || !input.settings.knowledgeEnabled || input.settings.ragMode === 'off') {
+      if (options?.signal?.aborted || !input.settings.knowledgeEnabled || input.settings.ragMode === 'off' || selectedKnowledge?.length === 0) {
         return Promise.resolve([])
       }
       return searchKnowledgeWithFallback({

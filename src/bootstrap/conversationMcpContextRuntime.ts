@@ -32,7 +32,7 @@ export async function resolveConversationMcpContext(input: {
   readonly traceId: (prefix: string) => string
 }): Promise<ConversationMcpContextResolution> {
   const outcome = await conversationMcpContextPolicy.resolve({
-    mcpEnabled: input.mcpEnabled,
+    mcpEnabled: input.mcpEnabled && input.conversation.resourceScopeOverride?.tools !== 'none',
     enabledTools: input.conversation.enabledTools,
     skillSnapshot: input.conversation.skillSnapshot,
     toolCallTag: input.toolCallTag,

@@ -1,3 +1,4 @@
+import { routingPlanPolicy } from '@/modules/providers'
 import type {
   ProviderRuntimeAudioTranscriptionInput,
   ProviderRuntimeChatMessage,
@@ -18,15 +19,19 @@ import type {
   ProviderModelAvailabilityEvidence,
   ProviderModelListOptions,
   ProviderModelTestOptions,
+  ProviderRuntimeUsageContext,
 } from '@/modules/providers'
 import type { MessageCitation } from '@/types/contextContracts'
 import { toProviderContinuationReplay, toProviderToolCallMetadata } from './providerContinuationReplay'
 import type {
   ChatReasoningReplayPart,
   ChatRequest as CanonicalChatRequest,
+  ModelRoutingPlan,
   StreamEvent,
 } from '@/core'
 import { snapshotPlainData } from '@/core'
+import { nextUsageExecutionId } from './usageExecutionIdentity'
+import { resolveProviderModelParametersForDispatch } from './providerModelParameterRuntime'
 import {
   createProviderCredentialSynchronization,
   createProviderEmbeddingAdapter,
@@ -82,7 +87,7 @@ bindProviderModelAvailabilityOperations({
     ])
     const checkConfiguration = providerModelAvailabilityRuntime.captureConfiguration()
     checkConfiguration()
-    const provider = await useSettingsStore.getState().hydrateProviderKey(input.providerId)
+    const provider = await useSettingsStore.getState().hydrateProviderKey(input.providerId, { signal: input.signal })
     checkConfiguration()
     if (!provider) throw new Error('Provider no longer exists')
     const sources = input.credentialSource ? [input.credentialSource] : provider.credentialGroups?.length
@@ -106,12 +111,13 @@ bindProviderModelAvailabilityOperations({
     ])
     const checkConfiguration = providerModelAvailabilityRuntime.captureConfiguration()
     checkConfiguration()
-    const provider = await useSettingsStore.getState().hydrateProviderKey(input.providerId)
+    const provider = await useSettingsStore.getState().hydrateProviderKey(input.providerId, { signal: input.signal })
     checkConfiguration()
     if (!provider) throw new Error('Provider no longer exists')
     const source = input.credentialSource ?? chooseCredentialForModel(provider, input.model).source
     const scoped = providerForRuntimeFallback({ provider, model: input.model }, { providerId: provider.id, model: input.model, credentialSource: source })
-    await testProviderModelRuntime(scoped, input.model, scoped.apiKey, { signal: input.signal, credentialSource: source })
+    const result = await testProviderModelRuntime(scoped, input.model, scoped.apiKey, { signal: input.signal, credentialSource: source })
+    return result.ok ? { ok: true as const } : { ok: false as const, code: result.code }
   },
 })
 
@@ -325,6 +331,27 @@ function providerAdapterCapabilities(provider: AIProvider): ProviderAdapter['cap
   return capabilities
 }
 
+function providerRuntimeUsageContext(
+  request: ProviderRuntimeChatRequest,
+  plan: ModelRoutingPlan | undefined = request.executionConstraint?.routingPlan,
+): ProviderRuntimeUsageContext {
+  return {
+    source: request.conversationId ? 'chat' : 'other',
+    ...request.usageContext,
+    execution: {
+      ...(request.usageContext?.execution ?? {
+        schema: 'islemind.request-execution.v1',
+        logicalRequestId: nextUsageExecutionId('request'),
+        requestStartedAt: Date.now(),
+      }),
+      ...(plan ? { routingPlan: {
+        id: plan.id, name: plan.name,
+        primaryProviderId: plan.primary.providerId, primaryModel: plan.primary.model,
+      } } : {}),
+    },
+  }
+}
+
 export async function streamProviderChat(
   request: ProviderRuntimeChatRequest,
   onChunk: ProviderRuntimeChunkCallback,
@@ -335,6 +362,10 @@ export async function streamProviderChat(
 ): Promise<ProviderRuntimeStreamHandle> {
   const cancelled = (): ProviderRuntimeStreamHandle => ({ controller: new AbortController(), done: Promise.resolve() })
   if (request.signal?.aborted) return cancelled()
+  request = {
+    ...request,
+    usageContext: providerRuntimeUsageContext(request),
+  }
   request = snapshotProviderRuntimeRequest(request)
   // The request fence is set by Chat admission; generic non-Chat consumers keep
   // their existing contract and do not accidentally acquire another route loop.
@@ -382,7 +413,7 @@ export async function streamProviderChat(
   }
   const observedRequest: ProviderRuntimeChatRequest = {
     ...request, provider: selection.provider,
-    failoverPolicy: { mode: 'ask-before-cross-provider', ...request.failoverPolicy },
+    failoverPolicy: { mode: 'ask-before-cross-provider', ...(constraint.routingPlan ? routingPlanPolicy(constraint.routingPlan, request.failoverPolicy) : request.failoverPolicy) },
     confirmFallback: request.confirmFallback ?? chatFallbackConfirmation(request),
     // An admission fallback already consumed the one route-fallback attempt.
     ...(constraint.fallbackUsed ? { allowFallback: false, settings: { ...request.settings, upstreamMaxRetries: 0 } } : {}),
@@ -1052,7 +1083,7 @@ export function toRuntimeChatRequest(
     }
   }
   const providerToolDeclarations = buildModelOperationDeclarations(options.provider, request)
-  return {
+  const runtimeRequest: ProviderRuntimeChatRequest = {
     provider: options.provider,
     model: request.model,
     requestedModel: request.model,
@@ -1063,12 +1094,11 @@ export function toRuntimeChatRequest(
     ...(request.topK === undefined ? {} : { topK: request.topK }),
     ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
     ...(request.maxTokens === undefined ? {} : { maxTokens: request.maxTokens }),
-    // Harness requests need a wire output bound. Provider defaults intentionally
-    // omit it in the general serializer, which is not safe for run reservations.
-    generationParameterSources: { ...request.generationParameterSources,
-      maxTokens: request.generationParameterSources?.maxTokens === 'explicit' ? 'explicit' : 'internal-policy' },
+    generationParameterSources: request.generationParameterSources,
+    ...(request.modelParameterBaseline ? { modelParameterBaseline: request.modelParameterBaseline } : {}),
+    requireOutputTokenBound: true,
     ...(options.executionConstraint && !request.providerStateBinding ? { executionConstraint: options.executionConstraint } : {}),
-    failoverPolicy: { mode: 'ask-before-cross-provider' },
+    failoverPolicy: options.executionConstraint?.routingPlan ? routingPlanPolicy(options.executionConstraint.routingPlan) : { mode: 'ask-before-cross-provider' },
     ...(request.providerStateBinding ? { allowFallback: false } : {}),
     stream: true,
     conversationId: request.conversationId,
@@ -1077,6 +1107,14 @@ export function toRuntimeChatRequest(
     ...(providerToolDeclarations.length ? { providerToolDeclarations } : {}),
     ...(request.requestedCapabilities?.includes('native-search') ? { webSearchMode: 'native' as const } : {}),
   }
+  const effective = resolveProviderModelParametersForDispatch(runtimeRequest)
+  // Source-bound continuations drop the original admission constraint. Keep
+  // its plan receipt separately without granting another fallback opportunity.
+  if (options.executionConstraint?.routingPlan) {
+    effective.usageContext = providerRuntimeUsageContext(effective, options.executionConstraint.routingPlan)
+  }
+  return { ...effective, generationParameterSources: { ...effective.generationParameterSources,
+    maxTokens: effective.generationParameterSources.maxTokens === 'explicit' ? 'explicit' : 'internal-policy' } }
 }
 
 function toProviderRuntimeMessages(

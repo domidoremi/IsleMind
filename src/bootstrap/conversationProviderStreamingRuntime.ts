@@ -26,6 +26,7 @@ import {
 import { clampTraceContent, sanitizeTrace } from '@/services/chatTraceUtils'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
+import { attributeConversationUsageRequest } from './conversationUsageRuntime'
 
 const streamProjectionPolicy = createAssistantStreamProjectionPolicy({
   schedule(callback, delayMs) {
@@ -123,7 +124,7 @@ export const conversationProviderStreamingRuntime = {
     return providerStreamingRuntime.start({
       ...streamInput,
       request: {
-        ...streamInput.request,
+        ...attributeConversationUsageRequest(streamInput.request, input.conversationId, input.assistantMessageId),
         onExecutionTarget: async (target) => {
           await streamInput.request.onExecutionTarget?.(target)
           durableEvents.setBinding({ providerId: target.providerId, model: target.model })

@@ -4,6 +4,7 @@ import { checkFinalProviderRequestCapacity, prepareFinalProviderRequestCapacity 
 export { checkFinalProviderRequestCapacity } from './providerContextCapacity'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
 import { chooseCredentialForModel, updateCredentialGroupHealth, providerForRuntimeFallback } from '@/modules/providers'
+import { applyProviderModelParameterOverrides } from '@/modules/providers'
 import {
   buildSessionAffinityBinding,
   deriveSessionAffinityKey,
@@ -331,12 +332,15 @@ export async function prepareProviderRuntimePipeline(input: ProviderRuntimePipel
   }
 
   const runtimeReq: ProviderRuntimeChatRequest = {
-    ...effectiveReq,
+    ...applyProviderModelParameterOverrides(effectiveReq),
     provider: {
       ...effectiveReq.provider,
       apiKey: credential.apiKey,
       apiKeySource: credential.source,
     },
+  }
+  if (runtimeReq.requireOutputTokenBound && runtimeReq.generationParameterSources.maxTokens !== 'explicit') {
+    runtimeReq.generationParameterSources = { ...runtimeReq.generationParameterSources, maxTokens: 'internal-policy' }
   }
   const issue = getProviderConfigIssue(runtimeReq.provider, runtimeReq.provider.apiKey)
   if (issue) {

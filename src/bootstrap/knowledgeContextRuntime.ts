@@ -7,6 +7,8 @@ import {
   buildCompressedContextPrompt,
   buildFlareContextPrompt,
   buildKnowledgeScope,
+  buildExactKnowledgeScope,
+  resolveKnowledgeScopeReferences,
   LOCAL_USER_MEMORY_SCOPE_ID,
   runAgenticRag,
 } from '@/modules/knowledge'
@@ -14,6 +16,7 @@ import { st } from '@/i18n/service'
 import { logContextOperation } from '@/services/runtimeHealthLog'
 import { useSettingsStore } from '@/store/settingsStore'
 import { snapshotProviderConfiguration } from '@/modules/providers'
+import { resolveConversationSceneSettings } from '@/modules/conversations'
 import type { Conversation, Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
@@ -71,7 +74,7 @@ function captureConversationKnowledgeContext(
   return {
     conversation: snapshotProviderConfiguration(conversation),
     draftMessage: snapshotProviderConfiguration(draftMessage),
-    settings: snapshotProviderConfiguration(options.settings ?? state.settings),
+    settings: snapshotProviderConfiguration(resolveConversationSceneSettings(options.settings ?? state.settings, conversation)),
     provider: snapshotProviderConfiguration(options.provider),
     providers: snapshotProviderConfiguration(state.providers),
   }
@@ -153,10 +156,13 @@ async function retrieveCapturedConversationKnowledgeContext(
   }
   throwIfCancelled(signal)
 
-  const knowledgeScope = buildKnowledgeScope(
-    conversation.knowledgeSources ?? conversation.skillSnapshot?.knowledgeSources,
-  )
-  if (!settings.knowledgeEnabled || settings.ragMode === 'off') {
+  const selectedKnowledge = settings.knowledgeEnabled && settings.ragMode !== 'off' && conversation.resourceScopeOverride?.knowledge === 'selected'
+    ? resolveKnowledgeScopeReferences(conversation.knowledgeSources ?? [], await knowledgeRepository.listDocuments({ signal })).ids : undefined
+  throwIfCancelled(signal)
+  const knowledgeScope = selectedKnowledge
+    ? buildExactKnowledgeScope(selectedKnowledge)
+    : buildKnowledgeScope(conversation.knowledgeSources ?? conversation.skillSnapshot?.knowledgeSources)
+  if (!settings.knowledgeEnabled || settings.ragMode === 'off' || selectedKnowledge?.length === 0) {
     const sources = memorySources.slice(0, MAX_CONTEXT_ITEMS)
     return {
       sources,
@@ -248,7 +254,7 @@ export async function retrieveConversationFlareContext(input: {
   signal?: AbortSignal
   settings?: Settings
 }): Promise<RetrievedConversationFlareContext> {
-  const settings = snapshotProviderConfiguration(input.settings ?? useSettingsStore.getState().settings)
+  const settings = snapshotProviderConfiguration(resolveConversationSceneSettings(input.settings ?? useSettingsStore.getState().settings, input.conversation))
   input = {
     ...input,
     conversation: snapshotProviderConfiguration(input.conversation),
@@ -263,9 +269,13 @@ export async function retrieveConversationFlareContext(input: {
   const startedAt = Date.now()
   const query = input.followupQuery || input.query
   const limit = input.limit ?? 4
-  const knowledgeScope = buildKnowledgeScope(
-    input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources,
-  )
+  const selectedKnowledge = input.conversation.resourceScopeOverride?.knowledge === 'selected'
+    ? resolveKnowledgeScopeReferences(input.conversation.knowledgeSources ?? [], await knowledgeRepository.listDocuments({ signal: input.signal })).ids : undefined
+  throwIfCancelled(input.signal)
+  if (selectedKnowledge?.length === 0) return { sources: [], prompt: '', trace: [] }
+  const knowledgeScope = selectedKnowledge
+    ? buildExactKnowledgeScope(selectedKnowledge)
+    : buildKnowledgeScope(input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources)
 
   try {
     const hits = await executionResources.runLocal(input.signal ?? new AbortController().signal, () => searchKnowledgeWithFallback({

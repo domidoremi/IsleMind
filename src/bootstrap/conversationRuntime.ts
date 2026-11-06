@@ -46,6 +46,7 @@ import { createConversationModelOperationSession } from './conversationModelOper
 import { preserveMessageIdentity } from './plainChatMessageIdentity'
 import { buildSystemPrompt } from '@/services/promptEngineering'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { resolveProviderModelParametersForDispatch } from './providerModelParameterRuntime'
 
 const databaseProvider = createExpoSqliteDatabaseProvider()
 const conversations = createSqliteConversationRepository(databaseProvider)
@@ -182,6 +183,13 @@ function createPlainChatRequestPreparation(input: {
       // Apply only the admitted request-local route, never to that stored source.
       preparation = { ...preparation, request: { ...preparation.request,
         providerId: input.provider.id, model: input.executionModel ?? preparation.request.model } }
+      const effectiveParameters = resolveProviderModelParametersForDispatch({ ...preparation.request, provider: input.provider })
+      preparation = { ...preparation, request: {
+        ...preparation.request,
+        temperature: effectiveParameters.temperature, topP: effectiveParameters.topP, topK: effectiveParameters.topK,
+        maxTokens: effectiveParameters.maxTokens, generationParameterSources: effectiveParameters.generationParameterSources,
+        ...(effectiveParameters.modelParameterBaseline ? { modelParameterBaseline: effectiveParameters.modelParameterBaseline } : {}),
+      } }
 
       // The Rich path already plans against the admission-normalized upstream
       // model. Keep the Plain request's requested model intact, but use that
@@ -286,6 +294,8 @@ function createPlainChatRequestPreparation(input: {
           capabilityPlan,
           plan,
           activePrompt: plan.packed,
+          settings: input.settings,
+          conversation: preparation.conversation,
         }),
       }
     },

@@ -51,6 +51,7 @@ export async function captureProviderRichContinuationBinding(
     ? originalRequestedModel : identity.model
   const constraint = snapshotPlainData({
     identity, scope: target.scope, providerCatalog: catalog,
+    ...(request.executionConstraint?.routingPlan ? { routingPlan: request.executionConstraint.routingPlan } : {}),
     fallbackUsed: request.executionConstraint!.fallbackUsed
       || providerExecutionIdentityKey(identity) !== providerExecutionIdentityKey(request.executionConstraint!.identity),
   })

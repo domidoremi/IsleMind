@@ -119,6 +119,7 @@ interface SuccessfulProviderUsageAttempt {
   reason: ProviderUsageAttemptReason
   retryCount: number
   firstTokenAt?: number
+  reportedExecution?: Parameters<ProviderRuntimeDoneCallback>[0]['reportedExecution']
 }
 
 const successfulProviderUsageAttempts = new WeakMap<Response, SuccessfulProviderUsageAttempt>()
@@ -324,6 +325,9 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput,
         ...(firstTokenAt === undefined ? {} : { firstTokenAt }),
         attempt: capacityRecovery ? 1 : 0,
         attemptReason: capacityRecovery ? 'rectification' : 'initial',
+        ...(executionTarget ? { attemptIdentity: executionTarget.attemptId } : {}),
+        ...(completedResult?.reportedExecution ? { reportedExecution: completedResult.reportedExecution } : {}),
+        ...(runtimeReq.usageContext?.execution ? { execution: runtimeReq.usageContext.execution } : {}),
         ...(runtimeReq.usageContext?.correlationId ? { correlationId: runtimeReq.usageContext.correlationId } : {}),
         ...(runtimeReq.conversationId ? { conversationId: runtimeReq.conversationId } : {}),
         ...(runtimeReq.usageContext?.runId ? { runId: runtimeReq.usageContext.runId } : {}),
@@ -624,6 +628,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       throw error
     })
     observedUsage = result.usage
+    markProviderReportedExecution(response, result.reportedExecution)
     throwIfProviderRuntimeAborted(input.controller.signal)
     if (!hasDeliverableProviderOutput(result)) {
       await recordSuccessfulProviderUsageAttempt(response, input, result.usage, 'failed', 'empty_response')
@@ -648,6 +653,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       return
     }
     if (result.text) {
+      markProviderUsageFirstToken(response)
       input.onChunk(result.text)
       throwIfProviderRuntimeAborted(input.controller.signal)
     }
@@ -690,6 +696,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     try {
       result = parseProviderBufferedStreamResponse(raw, input.req, getWireProviderType(input.req.provider))
       observedUsage = result.usage
+    markProviderReportedExecution(response, result.reportedExecution)
     } catch (error) {
       const partial = error instanceof ProviderStreamLifecycleError ? error.partialResult : undefined
       observedUsage = partial?.usage
@@ -703,6 +710,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       throw error
     }
     if (result.text || result.providerToolCalls?.length) {
+      if (result.text) markProviderUsageFirstToken(response)
       input.onChunk(result.text)
       throwIfProviderRuntimeAborted(input.controller.signal)
       if (result.citations?.length) {
@@ -816,6 +824,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
     providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(finalParsed.providerContentBlocks ?? [])])
     googleContentParts.push(...(finalParsed.googleContentParts ?? []))
     providerResponseId = finalParsed.responseId ?? providerResponseId
+    markProviderReportedExecution(response, finalParsed.reportedExecution)
     providerStreamOutcome = mergeProviderStreamOutcome(providerStreamOutcome, finalParsed.streamOutcome)
     protocolTerminal = protocolTerminal || finalParsed.terminal === true
     for (const trace of finalParsed.traces) {
@@ -830,6 +839,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       traces: providerTraces,
       usage: providerUsage,
       responseId: providerResponseId,
+      reportedExecution: successfulProviderUsageAttempts.get(response)?.reportedExecution,
       providerToolCalls: finalizeProviderToolCalls(filterProviderStructuredOutputToolCalls(providerToolCalls, input.req.structuredOutput)),
       ...(providerReasoningContent ? { reasoningContent: providerReasoningContent } : {}),
       ...(providerResponseItems.length ? { responseItems: providerResponseItems } : {}),
@@ -987,6 +997,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
           providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(parsed.providerContentBlocks ?? [])])
           googleContentParts.push(...(parsed.googleContentParts ?? []))
           providerResponseId = parsed.responseId ?? providerResponseId
+    markProviderReportedExecution(response, parsed.reportedExecution)
           providerStreamOutcome = mergeProviderStreamOutcome(providerStreamOutcome, parsed.streamOutcome)
           protocolTerminal = protocolTerminal || parsed.terminal === true
           for (const trace of parsed.traces) {
@@ -1565,6 +1576,8 @@ async function observeFailedProviderUsageAttempt(
     attempt: attempt.attempt,
     attemptReason: attempt.reason,
     retryCount: attempt.retryCount,
+    attemptIdentity: attempt.target.attemptId,
+    ...(input.req.usageContext?.execution ? { execution: input.req.usageContext.execution } : {}),
     ...(input.req.usageContext?.correlationId ? { correlationId: input.req.usageContext.correlationId } : {}),
     ...(input.req.conversationId ? { conversationId: input.req.conversationId } : {}),
     ...(input.req.usageContext?.runId ? { runId: input.req.usageContext.runId } : {}),
@@ -1598,6 +1611,9 @@ async function recordSuccessfulProviderUsageAttempt(
     attempt: attempt.attempt,
     attemptReason: attempt.reason,
     retryCount: attempt.retryCount,
+    attemptIdentity: attempt.target.attemptId,
+    ...(attempt.reportedExecution ? { reportedExecution: attempt.reportedExecution } : {}),
+    ...(input.req.usageContext?.execution ? { execution: input.req.usageContext.execution } : {}),
     ...(input.req.usageContext?.correlationId ? { correlationId: input.req.usageContext.correlationId } : {}),
     ...(input.req.conversationId ? { conversationId: input.req.conversationId } : {}),
     ...(input.req.usageContext?.runId ? { runId: input.req.usageContext.runId } : {}),
@@ -1627,6 +1643,14 @@ async function settleHarnessProviderUsage(req: ProviderRuntimeChatRequest, targe
 function markProviderUsageFirstToken(response: Response): void {
   const attempt = successfulProviderUsageAttempts.get(response)
   if (attempt && attempt.firstTokenAt === undefined) attempt.firstTokenAt = Date.now()
+}
+
+function markProviderReportedExecution(
+  response: Response,
+  report: Parameters<ProviderRuntimeDoneCallback>[0]['reportedExecution'],
+): void {
+  const attempt = successfulProviderUsageAttempts.get(response)
+  if (attempt && report) attempt.reportedExecution = report
 }
 
 function providerUsageOperationSource(req: ProviderRuntimeChatRequest) {
@@ -1918,6 +1942,7 @@ export async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput
       original: { ...original, ...input.req.executionConstraint.identity }, trigger: classification.trigger,
       requiredCapabilities: requiredFallbackCapabilities(input.req), signal,
       settings: input.req.settings, policy: input.req.failoverPolicy, allowFallback: input.req.allowFallback,
+      routingPlan: input.req.executionConstraint.routingPlan,
       providers: input.req.executionConstraint.providerCatalog,
       readCurrentAccessSettings: input.req.readCurrentAccessSettings,
       isSelectionPolicyCurrent: input.req.isSelectionPolicyCurrent,
@@ -2089,6 +2114,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
+      attemptIdentity: selectedTarget.attemptId,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -2100,7 +2126,8 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
       attempt: selectedAttempt,
-      attemptReason: 'fallback',
+      attemptReason: selectedAttempt === 0 ? 'fallback' : 'rectification',
+      ...(selectedReq.usageContext?.execution ? { execution: selectedReq.usageContext.execution } : {}),
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
       ...(selectedReq.usageContext?.runId ? { runId: selectedReq.usageContext.runId } : {}),
@@ -2115,6 +2142,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
+      attemptIdentity: selectedTarget.attemptId,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -2125,7 +2153,8 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
       attempt: selectedAttempt,
-      attemptReason: 'fallback',
+      attemptReason: selectedAttempt === 0 ? 'fallback' : 'rectification',
+      ...(selectedReq.usageContext?.execution ? { execution: selectedReq.usageContext.execution } : {}),
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
       ...(selectedReq.usageContext?.runId ? { runId: selectedReq.usageContext.runId } : {}),
@@ -2137,6 +2166,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
+      attemptIdentity: selectedTarget.attemptId,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -2147,7 +2177,8 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
       attempt: selectedAttempt,
-      attemptReason: 'fallback',
+      attemptReason: selectedAttempt === 0 ? 'fallback' : 'rectification',
+      ...(selectedReq.usageContext?.execution ? { execution: selectedReq.usageContext.execution } : {}),
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
       ...(selectedReq.usageContext?.runId ? { runId: selectedReq.usageContext.runId } : {}),
@@ -2186,6 +2217,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
+      attemptIdentity: selectedTarget.attemptId,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -2198,7 +2230,8 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
       attempt: selectedAttempt,
-      attemptReason: 'fallback',
+      attemptReason: selectedAttempt === 0 ? 'fallback' : 'rectification',
+      ...(selectedReq.usageContext?.execution ? { execution: selectedReq.usageContext.execution } : {}),
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
       ...(selectedReq.usageContext?.runId ? { runId: selectedReq.usageContext.runId } : {}),
@@ -2214,6 +2247,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     void recordProviderUsageAttempt({
       provider: selectedReq.provider,
       ...fallbackUsageAttribution,
+      attemptIdentity: selectedTarget.attemptId,
       credentialGroupId: selectedRoute.credentialGroupId,
       requestedModel: selectedReq.requestedModel,
       upstreamModel: selectedReq.model,
@@ -2224,11 +2258,13 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       isStreaming: false,
       startedAt: selectedAttemptStartedAt,
       attempt: selectedAttempt,
-      attemptReason: 'fallback',
+      attemptReason: selectedAttempt === 0 ? 'fallback' : 'rectification',
+      ...(selectedReq.usageContext?.execution ? { execution: selectedReq.usageContext.execution } : {}),
       ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
       ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
       ...(selectedReq.usageContext?.runId ? { runId: selectedReq.usageContext.runId } : {}),
       ...(selectedResult.usage ? { usage: selectedResult.usage } : {}),
+      ...(selectedResult.reportedExecution ? { reportedExecution: selectedResult.reportedExecution } : {}),
     })
     selectedReq.onExecutionFailure?.('unknown')
     await input.fallbackEffects.recordRouteFailure(
@@ -2244,6 +2280,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
   void recordProviderUsageAttempt({
     provider: selectedReq.provider,
     ...fallbackUsageAttribution,
+      attemptIdentity: selectedTarget.attemptId,
     credentialGroupId: selectedRoute.credentialGroupId,
     requestedModel: selectedReq.requestedModel,
     upstreamModel: selectedReq.model,
@@ -2253,11 +2290,13 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     isStreaming: false,
     startedAt: selectedAttemptStartedAt,
     attempt: selectedAttempt,
-    attemptReason: 'fallback',
-    ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
+    attemptReason: selectedAttempt === 0 ? 'fallback' : 'rectification',
+    ...(selectedReq.usageContext?.execution ? { execution: selectedReq.usageContext.execution } : {}),
+      ...(selectedReq.usageContext?.correlationId ? { correlationId: selectedReq.usageContext.correlationId } : {}),
     ...(selectedReq.conversationId ? { conversationId: selectedReq.conversationId } : {}),
     ...(selectedReq.usageContext?.runId ? { runId: selectedReq.usageContext.runId } : {}),
     ...(selectedResult.usage ? { usage: selectedResult.usage } : {}),
+      ...(selectedResult.reportedExecution ? { reportedExecution: selectedResult.reportedExecution } : {}),
   })
   throwIfProviderRetryAborted(input.controller.signal)
   input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'done'))
@@ -2643,6 +2682,7 @@ async function retryWithoutStreaming(
       throw error
     })
     observedUsage = result.usage
+    markProviderReportedExecution(response, result.reportedExecution)
     throwIfProviderRetryAborted(controller.signal)
     if (!hasDeliverableProviderOutput(result)) {
       await recordSuccessfulProviderUsageAttempt(response, {

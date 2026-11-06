@@ -12,6 +12,7 @@ import { sanitizeTrace } from '@/services/chatTraceUtils'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import { st } from '@/i18n/service'
+import { resolveProviderModelParametersForDispatch } from './providerModelParameterRuntime'
 
 type ProviderStreamingInput = Parameters<
   typeof conversationProviderStreamingRuntime.start
@@ -50,6 +51,9 @@ export const conversationAssistantProviderDispatchRuntime =
     now: Date.now,
     modelRequestTitle() {
       return st('chatRunner.trace.modelRequestTitle')
+    },
+    resolveRequestParameters(request) {
+      return { ...resolveProviderModelParametersForDispatch(request), requireOutputTokenBound: true }
     },
     recordTrace({ conversationId, assistantMessageId, trace }) {
       const safeTrace = sanitizeTrace(trace as ProcessTrace)

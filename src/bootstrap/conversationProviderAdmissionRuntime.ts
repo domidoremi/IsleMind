@@ -17,6 +17,7 @@ export const conversationProviderAdmissionRuntime = createProviderConversationAd
       attachments: latestUser?.attachments, reasoningEffort: input.conversation.reasoningEffort,
       webSearchMode: input.settings.webSearchEnabled && input.settings.webSearchMode === 'native' ? 'native' : undefined }) : ['text']
     return providerChatResolutionRuntime.resolvePreferred({ preferred, providers: input.providers, signal: input.signal, settings: input.settings, requiredCapabilities,
+      routingPlan: input.conversation.routingPlan,
       confirmFallback: (candidate, signal) => requestProviderFallbackConfirmation({ conversationId: input.conversation.id, preferred, candidate, signal }) })
   },
   providerHasModel: providerHasPolicyModel,
