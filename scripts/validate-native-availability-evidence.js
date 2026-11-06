@@ -122,6 +122,8 @@ check('maximum-length Unicode workload', maximum.spec.payload === 'maximum' && m
   && maximum.maxNormalizedBytes <= 8192 && metrics.maximumPayload.query.n === 30, metrics.maximumPayload)
 const result = { schema: 'islemind.native-availability-verdict.v1', at: new Date().toISOString(), passed: checks.every(c => c.passed),
   checks, metrics, profile: load('selected-profile.json'), limitations: [
+    ...(final.protocol.uiScope === 'isolated-model-evidence-inspector'
+      ? ['Rendered page measurements cover the qualification-only SQL inspector; the production model availability page has been removed.'] : []),
     'One Android 12 ARM64 M2007J3SC; not cross-OEM/API/ABI or 16-KiB-page certification.',
     'Optimized bundled JS with native debuggability for evidence, not the production signed APK.',
     'Startup compares retained versus empty data in the same implementation; update checks disabled only in fixture settings.',

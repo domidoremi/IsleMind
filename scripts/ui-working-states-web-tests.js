@@ -224,15 +224,18 @@ async function main() {
         stage = `${family}/${width}/usage`
         await page.goto(baseUrl + '/settings/usage', { waitUntil: 'domcontentloaded' })
         await page.getByTestId('usage-primary-metric').waitFor()
-        await page.getByTestId('usage-primary-metric').getByText(String(fixture.requestCount), { exact: true }).waitFor()
+        await page.getByTestId('usage-primary-metric').getByText(baseline ? String(fixture.requestCount) : '0', { exact: true }).waitFor()
+        if (!baseline) await page.getByRole('tab', { name: zh.usage.requestLog, exact: true }).click()
         await snapshot(page, 'usage-requests', family, width)
         await page.getByRole('list', { name: zh.usage.requestLog, exact: true }).scrollIntoViewIfNeeded()
         await snapshot(page, 'usage-request-list', family, width)
         if (!baseline) {
-          await page.getByTestId('usage-request-fixture-request-1').click()
+          await page.getByTestId('usage-request-attempt:fixture-request-1').click()
           await page.getByText(zh.usage.requestDetail, { exact: true }).first().waitFor()
           await snapshot(page, 'usage-request-detail', family, width)
-          await page.getByRole('button', { name: zh.common.close, exact: true }).click()
+          await page.getByRole('button', { name: zh.common.back, exact: true }).click()
+          assert.equal(await page.getByRole('tab', { name: zh.usage.requestLog, exact: true }).getAttribute('aria-selected'), 'true')
+          await page.getByRole('tab', { name: zh.usage.overviewTab, exact: true }).click()
           results.checks.push(`${family}/${width}: request detail remains available`)
         }
         await page.getByRole('tab', { name: zh.usage.providerStatistics, exact: true }).click()

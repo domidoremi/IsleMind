@@ -122,8 +122,8 @@ async function openProvider(page, baseUrl) {
   await page.getByRole('tab', { name: zh.apiKeyPanel.workspaceConnection, exact: true }).waitFor()
 }
 async function openUsage(page, baseUrl, requestId = 'fixture-request-1') {
-  await page.goto(baseUrl + '/settings/usage', { waitUntil: 'domcontentloaded' })
-  const row = page.getByTestId(`usage-request-${requestId}`)
+  await page.goto(baseUrl + '/settings/usage' + (baseline ? '' : '?view=requests&range=all'), { waitUntil: 'domcontentloaded' })
+  const row = page.getByTestId(`usage-request-${baseline ? '' : 'attempt:'}${requestId}`)
   await row.scrollIntoViewIfNeeded()
   await row.click()
   if (!baseline) await page.getByTestId('usage-request-detail').waitFor()
@@ -226,8 +226,10 @@ async function main() {
           const total = await page.getByTestId('usage-detail-cell-total').boundingBox()
           const latency = await page.getByTestId('usage-detail-cell-latency').boundingBox()
           assert.ok(total.x + total.width <= latency.x + 1 || total.y + total.height <= latency.y + 1, 'Key readings must not overlap')
-          await page.getByRole('button', { name: zh.common.close, exact: true }).click()
+          await page.getByRole('button', { name: zh.common.back, exact: true }).click()
+          await page.getByRole('tab', { name: zh.usage.requestLog, exact: true }).waitFor()
           await openUsage(page, baseUrl, 'fixture-request-3')
+          await page.getByTestId('usage-attempt-1').click()
           await page.getByTestId('usage-detail-value-error').waitFor()
           assert.equal(await page.getByTestId('usage-detail-value-error').textContent(), 'upstream_error')
           await snapshot(page, 'usage-error-detail', family, width)

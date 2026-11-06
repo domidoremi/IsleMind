@@ -51,7 +51,7 @@ function copy(relative) {
     return !parts.some(p => ['build', '.gradle', '.cxx', 'node_modules'].includes(p))
   } })
 }
-for (const item of ['app', 'src', 'assets', 'plugins', 'patches', 'public', 'scripts',
+for (const item of ['app', 'src', 'assets', 'plugins', 'patches', 'public', 'scripts', 'docs/user-guide',
   'package.json', 'bun.lock', 'mise.toml', 'app.json', 'babel.config.js', 'metro.config.js', 'tsconfig.json', 'react-native.config.js', 'index.ts', 'App.tsx']) copy(item)
 const dependencies = path.join(stage, 'node_modules')
 if (!fs.existsSync(dependencies)) fs.symlinkSync(path.join(root, 'node_modules'), dependencies, process.platform === 'win32' ? 'junction' : 'dir')
@@ -182,21 +182,10 @@ class Stage9Module(context: ReactApplicationContext) : ReactContextBaseJavaModul
   }
 }
 `)
-// Source-copy callbacks measure production bootstrap and the real availability UI.
+// Source-copy callbacks measure production bootstrap; the isolated SQL inspector owns its UI callbacks.
 edit('src/hooks/useBootstrap.ts', text => replaceOnce(text,
   "        void safeBootstrap(st('bootstrap.stagedApkCleanup'), async () => {",
   "        ;(globalThis as any).__stage9BootstrapReady?.({ initialErrors })\n        void safeBootstrap(st('bootstrap.stagedApkCleanup'), async () => {"))
-edit('src/presentation/features/settings/ModelAvailabilityScreen.tsx', text => replaceOnce(text,
-  '  const page = useModelAvailabilityPage(availability, pageSize, filter, revision)',
-  '  const page = useModelAvailabilityPage(availability, pageSize, filter, revision)\n  useEffect(() => { if (!page.loading && page.history) (globalThis as any).__stage9PageCommitted?.({ count: page.history.items.length, current: page.current.length, failed: page.failed }) }, [page.loading, page.history])'))
-edit('src/presentation/features/settings/ModelAvailabilityScreen.tsx', text => {
-  text = replaceOnce(text, '  const { t } = useTranslation()', "  ;(globalThis as any).__stage9PagePhase?.('render-start')\n  const { t } = useTranslation()")
-  return replaceOnce(text, '  return <FlatList', "  ;(globalThis as any).__stage9PagePhase?.('render-elements', { loading: page.loading, rows: rows.length })\n  return <FlatList")
-})
-edit('src/presentation/features/settings/useModelAvailabilityPage.ts', text => {
-  text = replaceOnce(text, '    let cancelled = false', "    ;(globalThis as any).__stage9PagePhase?.('data-effect')\n    let cancelled = false")
-  return replaceOnce(text, '      if (cancelled) return', "      ;(globalThis as any).__stage9PagePhase?.('data-ready')\n      if (cancelled) return")
-})
 edit('src/platform/storage/expoSqliteDatabase.ts', text => replaceOnce(text,
   '      return database.getAllAsync<Row>(source, ...(parameters as SQLite.SQLiteVariadicBindParams))',
   '      ;(globalThis as any).__stage9SqlRead?.(source)\n      return database.getAllAsync<Row>(source, ...(parameters as SQLite.SQLiteVariadicBindParams))'))
@@ -213,11 +202,12 @@ edit('src/bootstrap/knowledgeEmbeddingProvider.ts', text => {
   return text + measure
 })
 
-for (const file of ['scripts/native-availability-entry.tsx', 'scripts/native-embedding-evidence.ts', 'scripts/native-lifecycle-evidence.ts',
+for (const file of ['scripts/native-availability-entry.tsx', 'scripts/native-tool-discovery-evidence.ts', 'scripts/tool-discovery-fixture.ts',
+  'scripts/NativeModelEvidenceScreen.tsx', 'scripts/useNativeModelEvidencePage.ts',
+  'scripts/native-embedding-evidence.ts', 'scripts/native-lifecycle-evidence.ts',
   'src/bootstrap/knowledgeEmbeddingProvider.ts', 'src/bootstrap/providerModelAvailabilityRuntime.ts',
   'src/modules/providers/adapters/sqliteModelAvailabilityRepository.ts', 'src/platform/storage/expoSqliteDatabase.ts',
-  'src/hooks/useBootstrap.ts', 'src/presentation/features/settings/ModelAvailabilityScreen.tsx',
-  'src/presentation/features/settings/useModelAvailabilityPage.ts',
+  'src/hooks/useBootstrap.ts',
   'android/app/build.gradle', 'android/app/src/main/AndroidManifest.xml', `${javaDir}/Stage9Module.kt`]) {
   receipt.files[file] = { stagedSha256: hash(path.join(stage, file)), ...(fs.existsSync(path.join(root, file)) ? { sourceSha256: hash(path.join(root, file)) } : {}) }
 }

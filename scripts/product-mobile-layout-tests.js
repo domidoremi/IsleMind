@@ -360,7 +360,7 @@ function assertSourceIntegration() {
   assert.match(apiKeyPanelSource, /function IconIsleChip[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'provider credential icon actions expose physical 44dp targets')
   assert.match(apiKeyPanelSource, /placeholder=\{t\('apiKeyPanel\.aliasDisplayName'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]{0,800}placeholder=\{t\('apiKeyPanel\.aliasTargetModel'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider alias inputs expose physical 44dp targets')
   assert.doesNotMatch(searchFieldSource, /clearAccessibilityLabel[^>]*hitSlop=/, 'Settings search does not rely on invisible hit slop around a smaller clear node')
-  assert.match(usageStatisticsSource, /function UsageTabButton[\s\S]*<WorkspaceChoice/, 'usage tabs use the shared navigation target')
+  assert.match(usageStatisticsSource, /<WorkspaceTabs testID="usage-view-tabs"[\s\S]*<WorkspaceTabs testID="usage-overview-tabs"/, 'usage views and overview groups both use the shared keyboard navigation and physical targets')
   assert.match(workspaceChoiceSource, /choice: \{[^}]*minWidth: 44[^}]*minHeight: 44/, 'shared navigation choices expose physical 44dp targets')
   assert.match(usageStatisticsSource, /function OptionChips[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'usage filter chips expose physical 44dp targets')
   assert.match(mcpSettingsSource, /function McpDisclosureRow[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'MCP disclosure rows expose physical 44dp targets')
@@ -477,7 +477,7 @@ function assertSourceIntegration() {
       floatingComposerGeometrySource.includes("activityState !== 'idle'"),
     'Composer width follows independent size and activity axes',
   )
-  assert.match(floatingComposerSource, /const modelStatusLabel = provider[\s\S]*resolveChatModelDisplayName[\s\S]*t\('chat\.configure'\)[\s\S]*const modelStatusAccessibilityLabel = provider[\s\S]*t\('chat\.configureProviders'\)/, 'setup Composer uses a compact localized action while preserving a descriptive accessibility label')
+  assert.match(floatingComposerSource, /const modelStatusLabel = conversation\.routingPlan\?\.name \?\? \(provider[\s\S]*resolveChatModelDisplayName[\s\S]*t\('chat\.configure'\)[\s\S]*const modelStatusAccessibilityLabel = provider[\s\S]*\? modelStatusLabel[\s\S]*t\('chat\.configureProviders'\)/, 'Composer uses the selected routing plan or a compact model label while preserving descriptive setup accessibility')
   assert.ok(chatOptionsSource.includes('SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH') && chatOptionsSource.includes('numberOfLines={1}'), 'model alias editing stays bounded and canonical identity text truncates on narrow screens')
   assert.match(chatOptionsSource, /selectProviderAccessibilityHint[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]*selectModelAccessibilityHint[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'AI configuration provider and model chips expose physical 44dp targets')
   assert.match(runtimeRepairIntentSource, /function RuntimeRepairIntentButton[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'runtime repair actions expose physical 44dp targets')

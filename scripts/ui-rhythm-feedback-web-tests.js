@@ -114,7 +114,7 @@ async function main() {
           if (!baseline && name === 'settings') {
             assert.ok(geometry.settingsRows.length > 0, `${stage}: missing navigation rows`)
             for (const row of geometry.settingsRows) {
-              const tile = family === 'material' && width >= 350 && ['model-availability', 'preferences', 'appearance'].some(id => row.id === `settings-entry-${id}`)
+              const tile = family === 'material' && width >= 350 && ['preferences', 'appearance'].some(id => row.id === `settings-entry-${id}`)
               const minHeight = tile ? 106 : family === 'minimal' ? 56 : family === 'monet' ? 76 : 68
               assert.equal(row.direction, tile ? 'column' : 'row', `${stage}: ${row.id} loses its layout style`)
               assert.ok(row.minHeight >= minHeight && row.height >= minHeight - 1, `${stage}: ${row.id} loses its touch target`)

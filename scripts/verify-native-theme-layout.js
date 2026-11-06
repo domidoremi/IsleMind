@@ -17,7 +17,7 @@ const familyKeys = {
 const testFamilies = ['liquid-glass', 'animal-island-ui', 'minimal', 'monet', 'material']
 const routes = [
   '/', 'settings', 'conversations', 'chat/native-theme-layout-missing', 'documents', 'settings/preferences',
-  'settings/providers', 'settings/model-availability', 'settings/context',
+  'settings/providers', 'settings/context',
   'settings/knowledge', 'settings/memory', 'settings/skills', 'settings/mcp',
   'settings/agents', 'settings/usage',
 ]
@@ -28,7 +28,7 @@ const routeIds = {
 const routeTitleKeys = {
   'chat/native-theme-layout-missing': 'conversation.unavailable',
   documents: 'documents.title', 'settings/preferences': 'settings.preferences',
-  'settings/model-availability': 'modelAvailability.details', 'settings/context': 'settings.context',
+  'settings/context': 'settings.context',
   'settings/knowledge': 'settings.knowledge', 'settings/memory': 'settings.memory',
   'settings/skills': 'settings.skills', 'settings/mcp': 'settings.mcp',
   'settings/agents': 'agents.title', 'settings/usage': 'usage.title',

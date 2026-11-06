@@ -342,7 +342,7 @@ async function show(input: Input) {
   pageStarted = start
   pageTrace = []
   const rendered = new Promise<Input>((resolve, reject) => {
-    const timeout = setTimeout(() => { pageCommitted = undefined; reject(new Error('Real availability screen did not commit its page')) }, 15000)
+    const timeout = setTimeout(() => { pageCommitted = undefined; reject(new Error('Isolated model evidence inspector did not commit its page')) }, 15000)
     pageCommitted = value => { clearTimeout(timeout); resolve(value) }
   })
   const availability: ProviderModelAvailabilityPort = { ...runtime.port,
@@ -353,7 +353,7 @@ async function show(input: Input) {
   const result = await rendered
   const elapsedMs = performance.now() - start
   const phases = pageTrace; pageTrace = undefined
-  assert(!result.failed && result.count > 0, 'Rendered availability page was empty or failed')
+  assert(!result.failed && result.count > 0, 'Rendered model evidence fixture was empty or failed')
   return { elapsedMs, ...result, phases, memory: memory() }
 }
 
@@ -388,6 +388,9 @@ async function prepareStartup() {
 }
 
 async function command(name: string, input: Input) {
+  if (name.startsWith('references-')) return require('./native-connection-references-evidence').nativeConnectionReferencesEvidence(name, input)
+  if (name.startsWith('scene-')) return require('./native-scene-plans-evidence').nativeScenePlansEvidence(name, input)
+  if (name.startsWith('tool-discovery-')) return require('./native-tool-discovery-evidence').nativeToolDiscoveryEvidence(name, input)
   if (name.startsWith('lifecycle-')) return require('./native-lifecycle-evidence').nativeLifecycleEvidence(name, input)
   if (name === 'cold-admission-profile') return require('./native-embedding-evidence').collectNativeColdAdmissionProfile(input)
   switch (name) {
@@ -438,11 +441,11 @@ function TestRoot() {
   const { SafeAreaProvider } = require('react-native-safe-area-context')
   const { GestureHandlerRootView } = require('react-native-gesture-handler')
   const { IsleDialogProvider } = require('../src/components/ui/isle')
-  const { ModelAvailabilityScreen } = require('../src/presentation/features/settings/ModelAvailabilityScreen')
+  const { NativeModelEvidenceScreen } = require('./NativeModelEvidenceScreen')
   return <GestureHandlerRootView style={{ flex: 1 }}><SafeAreaProvider><IsleDialogProvider>
     <View style={{ flex: 1, backgroundColor: '#f8fafc', paddingTop: 32 }}>
       <Text style={{ color: '#111827', padding: 12 }}>IsleMind Stage 9 · isolated · offline fixtures</Text>
-      {screen ? <ModelAvailabilityScreen key={screen.key} {...screen} getProviderTestModel={() => 'refresh-model-1'} />
+      {screen ? <NativeModelEvidenceScreen key={screen.key} {...screen} />
         : <Text style={{ color: '#111827', padding: 12 }}>Controlled native qualification. No provider traffic.</Text>}
     </View>
   </IsleDialogProvider></SafeAreaProvider></GestureHandlerRootView>

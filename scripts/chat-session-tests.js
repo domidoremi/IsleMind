@@ -25,6 +25,7 @@ const {
   releaseConversationStorePersistence,
   replaceConversationRecords,
   saveConversationRecord,
+  deleteConversationRecord,
   writeActiveConversationSelection,
 } = require('../src/presentation/features/conversations/conversationStorePersistenceCommand.ts')
 const {
@@ -53,7 +54,7 @@ function registerTypeScriptSupport() {
 }
 
 function read(relativePath) {
-  return fs.readFileSync(path.join(root, relativePath), 'utf8')
+  return fs.readFileSync(path.join(root, relativePath), 'utf8').replace(/\r\n/g, '\n')
 }
 
 async function run() {
@@ -87,6 +88,16 @@ async function run() {
   assert.equal(chatStoreSource.includes('modeCurrentIds'), false, 'chat state exposes no per-mode active ids')
   assert.equal(chatStoreSource.includes('selectForMode'), false, 'chat state exposes no per-mode selector')
   const chatStoreImplementationSource = chatStoreSource.slice(chatStoreSource.indexOf('export const useChatStore'))
+  for (const [methodName, nextMethodName] of [['create', 'createDraft'], ['createLocalSetupConversation', 'select']]) {
+    const methodSource = chatStoreImplementationSource.match(new RegExp(`${methodName}: \\([\\s\\S]*?\\n  \\},\\n\\n  ${nextMethodName}:`))?.[0] ?? ''
+    assert.ok(methodSource.includes('persistConversationRecord(updated, id)'), `${methodName} saves only its new record`)
+    assert.equal(methodSource.includes('persistConversations('), false, `${methodName} preserves unloaded history`)
+  }
+  const deleteSource = chatStoreImplementationSource.match(/delete: \(id: string\) => \{[\s\S]*?\n  \},\n\n  rename:/)?.[0] ?? ''
+  assert.ok(deleteSource.includes('deleteConversationRecord(id)'), 'single deletion addresses only its own record')
+  assert.equal(deleteSource.includes('persistConversations('), false, 'single deletion cannot replace unloaded history')
+  assert.ok(deleteSource.includes('conversationReadRevision += 1'), 'single deletion invalidates earlier reads')
+  assert.match(deleteSource, /!state\.draftConversationIds\.has\(id\)[^\n]*deleteConversationRecord/, 'draft deletion does not mutate persistence')
   const updateConversationSource = chatStoreImplementationSource.match(/updateConversation: \(id: string, updates: Partial<Conversation>\) => \{[\s\S]*?\n  \},\n\n  switchConversationModel:/)?.[0] ?? ''
   assert.ok(updateConversationSource.includes('persistConversationRecord(updated, id)'), 'single-conversation settings persist through the record upsert path')
   assert.equal(updateConversationSource.includes('persistConversations(updated)'), false, 'single-conversation settings do not replace the complete conversation table')
@@ -465,6 +476,9 @@ async function testConversationStorePersistenceBinding() {
     async saveRecord(conversation) {
       calls.push(['saveRecord', conversation])
     },
+    async deleteRecord(id) {
+      calls.push(['deleteRecord', id])
+    },
     async replaceRecords(conversations) {
       calls.push(['replaceRecords', conversations])
     },
@@ -488,6 +502,7 @@ async function testConversationStorePersistenceBinding() {
 
     assert.strictEqual(await loadConversationRecords(), records, 'record loading preserves the adapter result identity')
     await saveConversationRecord(records[0])
+    await deleteConversationRecord(records[0].id)
     await replaceConversationRecords(replacement)
     assert.equal(await readActiveConversationSelection(), 'conversation-1', 'active selection is read through the bound adapter')
     await writeActiveConversationSelection(null)
@@ -495,6 +510,7 @@ async function testConversationStorePersistenceBinding() {
     assert.deepEqual(calls, [
       ['loadRecords'],
       ['saveRecord', records[0]],
+      ['deleteRecord', records[0].id],
       ['replaceRecords', replacement],
       ['readActiveSelection'],
       ['writeActiveSelection', null],
@@ -540,6 +556,12 @@ async function testConversationStorePersistenceSerialization() {
       calls.push(['save:end', conversation.id])
       activeMutations -= 1
     },
+    async deleteRecord(id) {
+      activeMutations += 1
+      maxActiveMutations = Math.max(maxActiveMutations, activeMutations)
+      calls.push(['delete', id])
+      activeMutations -= 1
+    },
     async replaceRecords(conversations) {
       activeMutations += 1
       maxActiveMutations = Math.max(maxActiveMutations, activeMutations)
@@ -569,6 +591,7 @@ async function testConversationStorePersistenceSerialization() {
   bindConversationStorePersistence(persistence)
   try {
     const save = saveConversationRecord({ id: 'conversation-queued-save' })
+    const deletion = deleteConversationRecord('conversation-queued-save')
     const replace = replaceConversationRecords([{ id: 'conversation-queued-replace' }])
     await Promise.resolve()
     await Promise.resolve()
@@ -577,11 +600,12 @@ async function testConversationStorePersistenceSerialization() {
     ], 'a full replacement waits for an in-flight record save')
 
     releaseFirstMutation()
-    await Promise.all([save, replace])
+    await Promise.all([save, deletion, replace])
     assert.equal(maxActiveMutations, 1, 'conversation record and full-table mutations never overlap')
     assert.deepEqual(calls, [
       ['save:start', 'conversation-queued-save'],
       ['save:end', 'conversation-queued-save'],
+      ['delete', 'conversation-queued-save'],
       ['replace', ['conversation-queued-replace']],
     ], 'conversation mutations preserve invocation order')
 

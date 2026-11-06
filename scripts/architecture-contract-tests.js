@@ -162,6 +162,9 @@ async function testConversationStorePersistencePort(commandModule) {
     async saveRecord(value) {
       calls.push(['save-record', value])
     },
+    async deleteRecord(value) {
+      calls.push(['delete-record', value])
+    },
     async replaceRecords(value) {
       calls.push(['replace-records', value])
     },
@@ -186,6 +189,7 @@ async function testConversationStorePersistencePort(commandModule) {
   assert.equal(await commandModule.loadConversationRecord(conversation.id), conversation, 'conversation-store binding loads an addressed record')
   assert.equal(await commandModule.readActiveConversationSelection(), conversation.id, 'conversation-store binding preserves active selection')
   await commandModule.saveConversationRecord(conversation)
+  await commandModule.deleteConversationRecord(conversation.id)
   await commandModule.replaceConversationRecords(records)
   await commandModule.writeActiveConversationSelection(null)
   assert.deepEqual(calls, [
@@ -194,6 +198,7 @@ async function testConversationStorePersistencePort(commandModule) {
     ['load-record', conversation.id],
     ['read-active-selection'],
     ['save-record', conversation],
+    ['delete-record', conversation.id],
     ['replace-records', records],
     ['write-active-selection', null],
   ], 'conversation-store commands delegate exact values without hidden projection')

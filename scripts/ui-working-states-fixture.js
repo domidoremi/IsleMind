@@ -92,6 +92,36 @@ async function main() {
     ...(index < 2 ? { totalCostNanodollars: 14500000 + index * 5000000 } : {}),
     costProvenance: index < 2 ? 'supplier-known' : 'unavailable',
   }))
+  const execution = process.argv.includes('--execution-receipts') ? {
+    requestId: 'upgrade-request', continuationId: 'upgrade-continuation', responseId: 'upgrade-response',
+    primaryProviderId: providers[0].id, backupProviderId: providers[1].id,
+    primaryModel: providers[0].models[0], backupModel: providers[1].models[0],
+    reportedModel: 'reported/research-model-2026-11-06', planName: '研究备用',
+  } : undefined
+  if (execution) {
+    const startedAt = now - 30_000
+    const reference = { schema: 'islemind.request-execution.v1', logicalRequestId: execution.requestId,
+      responseExecutionId: execution.responseId, requestStartedAt: startedAt,
+      routingPlan: { id: 'upgrade-route', name: execution.planName, primaryProviderId: execution.primaryProviderId, primaryModel: execution.primaryModel } }
+    records.push(
+      { ...records[0], id: 'upgrade-primary-attempt', occurredAt: startedAt + 100, completedAt: startedAt + 400,
+        durationMs: 300, firstTokenMs: undefined, status: 'failed', statusCode: 503, errorCode: 'upstream_error',
+        tokens: {}, totalCostNanodollars: undefined, costProvenance: 'unavailable', measurementSource: 'unavailable', execution: reference },
+      { ...records[0], id: 'upgrade-backup-attempt', providerId: execution.backupProviderId, providerName: providers[1].name,
+        requestedModel: execution.backupModel, upstreamModel: execution.backupModel,
+        originalProviderId: execution.primaryProviderId, originalModel: execution.primaryModel,
+        occurredAt: startedAt + 500, completedAt: startedAt + 1600, durationMs: 1100, firstTokenMs: 350,
+        attempt: 2, attemptReason: 'fallback', failoverCount: 1, tokens: { inputTokens: 120, outputTokens: 30, totalTokens: 150 },
+        totalCostNanodollars: 100_000, execution: reference,
+        reportedExecution: { model: execution.reportedModel, source: 'response.model' } },
+      { ...records[0], id: 'upgrade-continuation-attempt', providerId: execution.backupProviderId, providerName: providers[1].name,
+        requestedModel: execution.backupModel, upstreamModel: execution.backupModel, operationSource: 'tool-continuation',
+        occurredAt: startedAt + 1800, completedAt: startedAt + 2500, durationMs: 700, firstTokenMs: 200,
+        tokens: { inputTokens: 50, outputTokens: 20, totalTokens: 70 }, totalCostNanodollars: 50_000,
+        execution: { ...reference, logicalRequestId: execution.continuationId, parentRequestId: execution.requestId, requestStartedAt: startedAt + 1700 },
+        reportedExecution: { model: execution.reportedModel, source: 'response.model' } },
+    )
+  }
   for (const record of records) assert.equal(await usage.append(record), true)
   assert.equal((await documents.list()).length, titles.length)
   const requestCount = (await usage.list()).total
@@ -101,6 +131,7 @@ async function main() {
   fs.writeFileSync(path.join(output, 'manifest.json'), JSON.stringify({
     synthetic: true, externalServicesUsed: false, credentials: false, createdAt: now,
     providers, documentTitles: titles, documentCount: titles.length, requestCount, requestsWithEstimates: records.length,
+    ...(execution ? { execution } : {}),
   }, null, 2) + '\n')
   console.log(JSON.stringify({ documents: titles.length, usageRecords: records.length, providers: providers.length, output }))
 }

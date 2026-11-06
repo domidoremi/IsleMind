@@ -185,7 +185,10 @@ async function runUiUxRemainingWebChecks({ webRoot, output, fixturesRoot, probe 
         const scrollBefore = await page.getByTestId('document-library-list').evaluate(node => node.scrollTop)
         assert.ok(scrollBefore > 500)
         const openedId = await page.locator('[data-testid^="document-row-"]').evaluateAll(nodes => {
-          const visible = nodes.filter(node => { const box = node.getBoundingClientRect(); return box.top > 80 && box.bottom < innerHeight - 40 })
+          const viewport = document.querySelector('[data-testid="document-library-list"]').getBoundingClientRect()
+          const top = Math.max(0, viewport.top) + 2
+          const bottom = Math.min(innerHeight, viewport.bottom) - 2
+          const visible = nodes.filter(node => { const box = node.getBoundingClientRect(); return box.top > top && box.bottom < bottom })
           return visible[1]?.dataset.testid
         })
         assert.ok(openedId, 'A visible catalog row is required for the return check')
@@ -201,6 +204,9 @@ async function runUiUxRemainingWebChecks({ webRoot, output, fixturesRoot, probe 
 
         stage = `${family}/${width}/${mode}/source`
         await page.goto(`${baseUrl}/source?conversationId=${fixture.conversationId}&messageId=${fixture.messageId}&citationId=${fixture.citations.at(-1).id}`, { waitUntil: 'domcontentloaded' })
+        const picker = page.getByTestId('source-citation-picker')
+        await picker.waitFor()
+        if (await picker.getAttribute('aria-expanded') === 'false') await picker.click()
         const last = page.getByTestId(`source-citation-${fixture.citations.length - 1}`)
         await last.waitFor()
         await page.waitForFunction(index => document.querySelector(`[data-testid="source-citation-${index}"]`)?.getAttribute('aria-selected') === 'true', fixture.citations.length - 1)
@@ -211,6 +217,7 @@ async function runUiUxRemainingWebChecks({ webRoot, output, fixturesRoot, probe 
         await snapshot('source', family, width, mode)
         await page.getByTestId('source-citation-0').click()
         await page.waitForFunction(() => document.querySelector('[data-testid="source-citation-0"]')?.getAttribute('aria-selected') === 'true')
+        if (width < 1000) assert.equal(await picker.getAttribute('aria-expanded'), 'false', 'Selecting a source closes the compact picker without changing its identity')
         assert.equal(new URL(page.url()).searchParams.get('citationId'), fixture.citations[0].id)
         if (width === 390 && mode === 'light') {
           await page.goto(baseUrl, { waitUntil: 'domcontentloaded' })
