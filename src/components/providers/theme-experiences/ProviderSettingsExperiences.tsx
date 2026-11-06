@@ -6,6 +6,7 @@ import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
 import { PageFeedbackIndicator } from '@/components/ui/PageFeedback'
+import { WorkspaceHeader } from '@/presentation/layout/WorkspaceHeader'
 
 export interface ProviderSettingsExperienceProps {
   title: string
@@ -25,25 +26,21 @@ function ProviderSettingsExperience({ family, props }: { family: string; props: 
   const { colors } = useAppTheme()
   const glass = family === 'liquid-glass'
   const open = family === 'minimal' || family === 'monet' || family === 'material'
-  const typography = colors.design!.semantic.typography
   const radius = colors.design?.semantic.radius.extraLarge ?? colors.ui.radius.panel
   return <View testID={`provider-settings-experience-${family}`} style={{ width: '100%', maxWidth: 860, alignSelf: 'center', gap: 18 }}>
-    <GlassSurface colors={colors} enabled={glass} style={{ borderRadius: glass ? radius : 0, flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 78, paddingVertical: 12 }}>
+    <WorkspaceHeader title={props.title} subtitle={props.subtitle} compact={props.compact} leading={
       <IslePressable accessibilityRole="button" accessibilityLabel={props.backLabel} onPress={props.onBack}
         style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}>
         <AppIcon name="back-previous" color={colors.text} size={20} />
       </IslePressable>
-      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-        <Text accessibilityRole="header" style={{ ...typography.headline, color: colors.text }}>{props.title}</Text>
-        {props.subtitle ? <Text style={{ ...typography.caption, color: colors.textSecondary }}>{props.subtitle}</Text> : null}
-      </View>
+    } trailing={<>
       <PageFeedbackIndicator />
       <IslePressable testID="provider-add" accessibilityRole="button" accessibilityLabel={props.addLabel} onPress={props.onAdd}
         style={{ minWidth: ISLE_MIN_TOUCH_TARGET, minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, borderRadius: 14, backgroundColor: colors.ui.control.primaryBackground, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
         <AppIcon name="add" color={colors.ui.control.primaryForeground} size={20} />
         {!props.compact ? <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '600' }}>{props.addLabel}</Text> : null}
       </IslePressable>
-    </GlassSurface>
+    </>} />
     {props.attention}
     {props.activation}
     {props.tools}

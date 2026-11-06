@@ -26,8 +26,11 @@ import { IsleButton } from '@/components/ui/isle'
 import { IsleField, IsleSearchField, IsleToggle } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
 import { parseModelEntries } from '@/utils/text'
-import { getProviderManualModels, summarizeProviderModelInventory } from '@/utils/providerModels'
+import { getProviderDisplayModel, getProviderManualModels, summarizeProviderModelInventory } from '@/utils/providerModels'
+import { groupProviderModelsBySource } from '@/utils/providerModelSources'
+import { ProviderModelSourceFilter, ProviderModelPagination, PROVIDER_MODEL_PAGE_SIZE } from '@/components/providers/ProviderModelSourceFilter'
 import { getPolicyAllowedProviderModels, getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
+import { getProviderGatewayInfo } from '@/utils/providerGateway'
 import {
   buildProviderCapabilityMatrix,
   buildProviderModelCapabilityMatrix,
@@ -42,9 +45,14 @@ import type { RuntimeDiagnosticsProviderDetail } from '@/bootstrap/runtimeDiagno
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { WorkspaceChoice } from '@/presentation/layout/WorkspaceChoice'
+import { WorkspaceTabs } from '@/presentation/layout/WorkspaceTabs'
 import { ProviderUsageQueryEditor } from '@/components/providers/ProviderUsageQueryEditor'
 import { ProviderTokenField } from '@/components/providers/ProviderTokenField'
 import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
+import { ProviderLocalUsage } from '@/components/providers/ProviderLocalUsage'
+import { ProviderConnectionReferences } from '@/components/providers/ProviderConnectionReferences'
+import type { ProviderConnectionReferencePort } from '@/presentation/features/settings/providerConnectionReferencePort'
+import { ProviderModelParameterEditor, modelParameterDrafts, parseModelParameterDrafts, type ProviderModelParameterDrafts } from '@/components/providers/ProviderModelParameterEditor'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
@@ -54,14 +62,16 @@ interface ApiKeyPanelProps {
   onExpandedChange?: (expanded: boolean) => void
   hideHeader?: boolean
   initialView?: ProviderWorkspaceView
+  onViewChange?: (view: ProviderWorkspaceView) => void
   onUse?: () => void
   sortControl?: ReactNode
+  connectionReferencesPort?: ProviderConnectionReferencePort
   style?: StyleProp<ViewStyle>
 }
 
 type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing' | 'clipboard'
 type TokenModelGroupTone = 'success' | 'warning' | 'danger' | 'muted'
-type ProviderWorkspaceView = 'connection' | 'models' | 'advanced'
+type ProviderWorkspaceView = 'connection' | 'models' | 'usage' | 'advanced'
 
 const API_KEY_PANEL_MODEL_SAMPLE_LIMIT = 96
 const API_KEY_PANEL_CREDENTIAL_GROUP_INLINE_LIMIT = 3
@@ -159,8 +169,10 @@ export function ApiKeyPanel({
   onExpandedChange,
   hideHeader = false,
   initialView = 'models',
+  onViewChange,
   onUse,
   sortControl,
+  connectionReferencesPort,
   style,
 }: ApiKeyPanelProps) {
   const { colors } = useAppTheme()
@@ -186,9 +198,16 @@ export function ApiKeyPanel({
   const [modelsText, setModelsText] = useState(formatModelEntries(provider))
   const [aliasDrafts, setAliasDrafts] = useState<ModelAlias[]>(provider.modelAliases ?? [])
   const [draftGroups, setDraftGroups] = useState<ProviderCredentialGroup[]>(provider.credentialGroups ?? [])
+  const [parameterDrafts, setParameterDrafts] = useState<ProviderModelParameterDrafts>(() => modelParameterDrafts(provider.modelParameterOverrides))
+  const [parameterModel, setParameterModel] = useState<string>()
+  const [parameterSearch, setParameterSearch] = useState('')
+  const [capabilitiesDraft, setCapabilitiesDraft] = useState(provider.capabilities)
+  const [compatibilityDraft, setCompatibilityDraft] = useState<ProviderClientCompatibilityMode>(() => normalizeProviderClientCompatibilityMode(provider.clientCompatibilityProfile))
   const [modelEditing, setModelEditing] = useState(false)
   const [workspaceView, setWorkspaceView] = useState<ProviderWorkspaceView>(initialView)
   const [modelQuery, setModelQuery] = useState('')
+  const [modelSourceId, setModelSourceId] = useState<string | null>(null)
+  const [modelPage, setModelPage] = useState(0)
   const [selectionIssue, setSelectionIssue] = useState<string | null>(null)
   const [modelFetchFailed, setModelFetchFailed] = useState(false)
   const [modelEvidenceOpen, setModelEvidenceOpen] = useState(false)
@@ -209,17 +228,32 @@ export function ApiKeyPanel({
     () => getCompatibleProviderClientCompatibilityModes({ ...provider, wireProtocol: providerConfigDraft.wireProtocol }),
     [provider, providerConfigDraft.wireProtocol],
   )
-  const normalizedClientCompatibilityMode = normalizeProviderClientCompatibilityMode(provider.clientCompatibilityProfile)
+  const normalizedClientCompatibilityMode = compatibilityDraft
   const selectedClientCompatibilityMode = clientCompatibilityModes.includes(normalizedClientCompatibilityMode)
     ? normalizedClientCompatibilityMode
     : 'islemind'
+  const parameterPreviewProvider = useMemo(() => applyProviderPreset({
+    ...provider,
+    baseUrl: providerConfigDraft.baseUrl, credentialMode: providerConfigDraft.credentialMode,
+    tokenPlanRegion: providerConfigDraft.tokenPlanRegion, wireProtocol: providerConfigDraft.wireProtocol,
+    capabilities: capabilitiesDraft, clientCompatibilityProfile: selectedClientCompatibilityMode,
+  }, presetId), [provider, providerConfigDraft, capabilitiesDraft, selectedClientCompatibilityMode, presetId])
   const modelEntries = useMemo(() => parseModelEntries(modelsText), [modelsText])
   const currentModels = modelEntries.models
   const customModels = useMemo(() => getProviderManualModels(provider), [provider])
-  const availableModels = useMemo(() => getPolicyAllowedProviderModels(provider, settings, { limit: API_KEY_PANEL_MODEL_SAMPLE_LIMIT }), [provider, settings])
+  const allAvailableModels = useMemo(() => getPolicyAllowedProviderModels(provider, settings), [provider, settings])
+  const parameterModels = useMemo(() => [...new Set([...allAvailableModels, ...currentModels])], [allAvailableModels, currentModels])
+  const availableModels = useMemo(() => allAvailableModels.slice(0, API_KEY_PANEL_MODEL_SAMPLE_LIMIT), [allAvailableModels])
+  const modelSources = useMemo(() => groupProviderModelsBySource(provider, allAvailableModels), [allAvailableModels, provider])
+  const scopedModels = modelSourceId === null ? allAvailableModels : modelSources.find(source => source.id === modelSourceId)?.models ?? allAvailableModels
+  const modelSearchLabels = useMemo(() => new Map(allAvailableModels.map(model =>
+    [model, `${model} ${getProviderDisplayModel(provider, model)}`.toLowerCase()])), [allAvailableModels, provider])
   const matchingModels = useMemo(() => modelQuery.trim()
-    ? getPolicyAllowedProviderModels(provider, settings).filter(model => model.toLowerCase().includes(modelQuery.trim().toLowerCase()))
-    : availableModels, [availableModels, modelQuery, provider, settings])
+    ? scopedModels.filter(model => modelSearchLabels.get(model)?.includes(modelQuery.trim().toLowerCase()))
+    : scopedModels, [scopedModels, modelQuery, modelSearchLabels])
+  const currentModelPage = Math.min(modelPage, Math.max(0, Math.ceil(matchingModels.length / PROVIDER_MODEL_PAGE_SIZE) - 1))
+  const visibleModels = matchingModels.slice(currentModelPage * PROVIDER_MODEL_PAGE_SIZE, (currentModelPage + 1) * PROVIDER_MODEL_PAGE_SIZE)
+  useEffect(() => { setModelPage(0) }, [modelQuery, modelSourceId, provider.id])
   const remoteModels = useMemo(() => getRemoteModelIds(provider, availableModels), [availableModels, provider])
   const remoteModelGroups = useMemo(() => buildRemoteModelGroups(provider, availableModels, t), [availableModels, provider, t])
   const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
@@ -233,7 +267,7 @@ export function ApiKeyPanel({
     || (credentialReadState === 'idle' && hydratedGroups.some((group) => group.enabled))
   const credentialEditorExpanded = credentialEditorOpen || credentialText.trim().length > 0
   const isDefault = defaultProvider === provider.id
-  const capabilitySummary = buildCapabilitySummary(provider, selectedPreset, t)
+  const capabilitySummary = useMemo(() => hideHeader ? '' : buildCapabilitySummary(provider, selectedPreset, t), [hideHeader, provider, selectedPreset, t])
   const isBusy = task !== 'idle'
   const enabledGroupCount = hydratedGroups.filter((group) => group.enabled).length
   const problemGroupCount = hydratedGroups.filter((group) => group.lastModelSyncStatus === 'bad' || (group.failureCount ?? 0) > 0).length
@@ -247,7 +281,7 @@ export function ApiKeyPanel({
   const protocolLabel = t(`providerSettings.protocol.${wireProtocol}`)
   const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
   const selectedPresetLabel = presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProvider') : selectedPreset.name
-  const draftSnapshot = JSON.stringify({ name, baseUrl, presetId, wireProtocol, modelsText, aliasDrafts, draftGroups, credentialText })
+  const draftSnapshot = JSON.stringify({ name, baseUrl, presetId, wireProtocol, modelsText, aliasDrafts, draftGroups, credentialText, parameterDrafts, capabilitiesDraft, compatibilityDraft })
   const baseline = useRef(draftSnapshot)
   const serverBaseline = useRef(providerEditVersion(provider))
   const dirty = draftSnapshot !== baseline.current
@@ -256,7 +290,7 @@ export function ApiKeyPanel({
   const saveLock = useRef(false)
   const lifetime = useSettingsLifetime()
   function resetEditor(next = provider) {
-    baseline.current = JSON.stringify({ name: next.name, baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialText: '' })
+    baseline.current = JSON.stringify({ name: next.name, baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialText: '', parameterDrafts: modelParameterDrafts(next.modelParameterOverrides), capabilitiesDraft: next.capabilities, compatibilityDraft: normalizeProviderClientCompatibilityMode(next.clientCompatibilityProfile) })
     serverBaseline.current = providerEditVersion(next)
     dirtyRef.current = false
     setName(next.name)
@@ -267,6 +301,9 @@ export function ApiKeyPanel({
     setAliasDrafts(next.modelAliases ?? [])
     setDraftGroups(next.credentialGroups ?? [])
     setCredentialText('')
+    setParameterDrafts(modelParameterDrafts(next.modelParameterOverrides))
+    setCapabilitiesDraft(next.capabilities)
+    setCompatibilityDraft(normalizeProviderClientCompatibilityMode(next.clientCompatibilityProfile))
   }
   const requestEditorDiscard = useSettingsDraft(expanded && dirty, task !== 'idle', () => resetEditor(), JSON.stringify([provider.id, expanded, draftSnapshot]))
   const detectedPreset = getProviderPreset(detection.presetId)
@@ -286,7 +323,7 @@ export function ApiKeyPanel({
     setCapabilityOverridesOpen(false)
     setCredentialGroupsOpen(false)
     setCredentialText('')
-  }, [provider.name, provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol])
+  }, [provider.name, provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol, provider.modelParameterOverrides, provider.capabilities, provider.clientCompatibilityProfile])
 
   useEffect(() => { setWorkspaceView(initialView); setModelQuery(''); setModelFetchFailed(false) }, [initialView, provider.id])
 
@@ -345,6 +382,12 @@ export function ApiKeyPanel({
       return false
     }
     setSelectionIssue(null)
+    let modelParameterOverrides: AIProvider['modelParameterOverrides']
+    try { modelParameterOverrides = parseModelParameterDrafts(parameterDrafts) } catch {
+      setSelectionIssue(t('usage.parameterInvalid'))
+      setWorkspaceView('advanced')
+      return false
+    }
     const credentialGroups = mergeGroups(draftGroups, pastedGroups, t)
     const models = parseModelEntries(modelsText).models
     const modelAliases = normalizeAliasDrafts(aliasDrafts)
@@ -362,6 +405,8 @@ export function ApiKeyPanel({
       models,
       manualModels: models,
       modelAliases,
+      modelParameterOverrides,
+      capabilities: capabilitiesDraft,
       enabled: latest.enabled,
       detectionStatus: latest.detectionStatus ?? 'detected',
     }, presetId)
@@ -392,7 +437,7 @@ export function ApiKeyPanel({
 
   async function selectClientCompatibilityMode(mode: ProviderClientCompatibilityMode) {
     if (mode === selectedClientCompatibilityMode) return
-    await applyLocalProviderChange({ clientCompatibilityProfile: mode })
+    setCompatibilityDraft(mode)
   }
 
   async function applyLocalProviderChange(updates: Partial<AIProvider>, success?: { title: string; message?: string; tone: 'mint' }, expectedProvider = provider): Promise<void> {
@@ -733,7 +778,7 @@ export function ApiKeyPanel({
   }
 
   async function toggleCapability(key: keyof ProviderCapabilities) {
-    const current = provider.capabilities ?? selectedPreset.capabilities
+    const current = capabilitiesDraft ?? selectedPreset.capabilities
     const next = { ...current, [key]: current[key] !== true }
     if (key === 'responsesApi' && next.responsesApi !== true) {
       next.responsesWebSocket = false
@@ -742,7 +787,7 @@ export function ApiKeyPanel({
     if ((key === 'responsesWebSocket' || key === 'remoteCompact') && next[key] === true) {
       next.responsesApi = true
     }
-    await applyLocalProviderChange({ capabilities: next }, { title: t('apiKeyPanel.capabilityUpdated'), message: t(`apiKeyPanel.capability.${key}`), tone: 'mint' })
+    setCapabilitiesDraft(next)
   }
 
   function applyPresetDraft(nextPresetId: ProviderPresetId, nextWireProtocol: ProviderWireProtocol) {
@@ -791,7 +836,7 @@ export function ApiKeyPanel({
               {provider.lastModelSyncStatus === 'bad' ? <MiniBadge label={t('apiKeyPanel.syncFailed')} tone="warning" /> : null}
             </View>
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 2, includeFontPadding: false }}>
-              {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: availableModels.length })} · {t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })}
+              {getProviderDisplayModel(provider, primaryModel)} · {t('apiKeyPanel.modelCount', { count: allAvailableModels.length })} · {t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })}
             </Text>
             <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '800', includeFontPadding: false }}>
               {capabilitySummary}
@@ -806,13 +851,21 @@ export function ApiKeyPanel({
 
       {expanded ? (
         <MotiView from={motion === 'full' ? { opacity: 0, translateY: -8 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ marginTop: hideHeader ? 0 : 10, gap: 10 }}>
-          <ProviderWorkspaceTabs value={workspaceView} onChange={setWorkspaceView} />
+          <ProviderWorkspaceTabs value={workspaceView} onChange={view => { setWorkspaceView(view); onViewChange?.(view) }} />
           {workspaceView === 'connection' ? <IsleToggle title={t('settingsUx.useConnection')} description={t('settingsUx.localOnly')}
             active={provider.enabled} onPress={() => void toggleProviderEnabled()} /> : null}
+          {workspaceView === 'connection' && connectionReferencesPort ? <ProviderConnectionReferences
+            providerId={provider.id} port={connectionReferencesPort} /> : null}
           <View accessibilityLiveRegion="polite" style={{ gap: 4 }}>
             <Text accessibilityRole={credentialReadState === 'failed' ? 'alert' : undefined} style={{ color: colors.text, fontSize: 14, lineHeight: 22 }}>{t(dirty ? 'settingsWorkspace.unsaved' : credentialReadState === 'loading' ? 'common.loading' : credentialReadState === 'failed' ? 'settingsSubsystem.loadFailed' : credentialReadState === 'ready' ? 'settingsSubsystem.connectionReady' : credentialReadState === 'missing' ? 'settingsSubsystem.connectionMissing' : 'settingsSubsystem.savedNotVerified')} · {t(provider.enabled ? 'settings.enabled' : 'settings.disabled')}{isDefault ? ` · ${t('providerSettings.defaultConnection')}` : ''}</Text>
             {credentialReadState === 'failed' ? <MiniAction label={t('common.retry')} onPress={() => { setWorkspaceView('connection'); setCredentialReadRequest(value => value + 1) }} /> : null}
             <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('settingsSubsystem.modelCount', { count: modelInventory.selectableModels })}</Text>
+            {getProviderGatewayInfo(provider) ? <Text testID="provider-gateway-summary" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }}>
+              {t(getProviderGatewayInfo(provider)?.kind === 'magpie' ? 'gateway.magpieSummary' : 'gateway.lanSummary')}
+            </Text> : null}
+            {getProviderGatewayInfo(provider)?.loopback ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 21 }}>
+              {t('gateway.loopbackHint')}
+            </Text> : null}
           </View>
           {selectionIssue ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 21 }}>{selectionIssue}</Text> : null}
           {provider.lastTestStatus === 'bad' ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 21 }}>{t('providerSettings.previousRequestFailed')}</Text> : null}
@@ -864,6 +917,10 @@ export function ApiKeyPanel({
 
           {workspaceView === 'advanced' ? (
             <View style={{ gap: 10 }}>
+              <ProviderModelParameterEditor key={provider.id} provider={parameterPreviewProvider} models={parameterModels}
+                initialModel={capabilityModel} selectedModel={parameterModel} onSelectedModelChange={setParameterModel}
+                search={parameterSearch} onSearchChange={setParameterSearch} disabled={isBusy}
+                drafts={parameterDrafts} onChange={setParameterDrafts} />
               {runtimeDetail ? <ProviderRuntimeDiagnosticsPanel detail={runtimeDetail} /> : null}
               <View style={{ gap: 8 }}>
                 <SectionHeader
@@ -932,7 +989,7 @@ export function ApiKeyPanel({
                       <CapabilityToggle
                         key={key}
                         label={t(`apiKeyPanel.capability.${key}`)}
-                        active={(provider.capabilities ?? selectedPreset.capabilities)[key] === true}
+                        active={(capabilitiesDraft ?? selectedPreset.capabilities)[key] === true}
                         onPress={() => void toggleCapability(key)}
                       />
                     ))}
@@ -1047,25 +1104,29 @@ export function ApiKeyPanel({
                 </View>
               )}
               {!modelEditing ? <View testID="provider-model-choices" style={{ gap: 8 }}>
-                {availableModels.length > 5 ? <IsleSearchField accessibilityLabel={t('providerSettings.searchModels')}
+                <ProviderModelSourceFilter sources={modelSources} selectedSourceId={modelSourceId} onSelect={setModelSourceId} colors={colors} />
+                {allAvailableModels.length > 5 ? <IsleSearchField accessibilityLabel={t('providerSettings.searchModels')}
                   value={modelQuery} onChangeText={setModelQuery} autoCapitalize="none" autoCorrect={false}
                   placeholder={t('providerSettings.searchModels')} clearAccessibilityLabel={t('common.clearSearch')}
                   onClear={() => setModelQuery('')} /> : null}
-                {matchingModels.slice(0, API_KEY_PANEL_MODEL_SAMPLE_LIMIT).map(model => {
+                {visibleModels.map(model => {
                   const selected = isDefault && provider.enabled && settings.lastPreferredModel?.providerId === provider.id && settings.lastPreferredModel.model === model
                   return <IslePressable key={model} testID={`provider-use-model-${model}`} accessibilityRole="button"
-                    accessibilityLabel={`${t(dirty ? 'providerSettings.saveAndUseModel' : 'providerSettings.useModel')} ${model}`}
+                    accessibilityLabel={`${t(dirty ? 'providerSettings.saveAndUseModel' : 'providerSettings.useModel')} ${getProviderDisplayModel(provider, model)} · ${model}`}
                     accessibilityState={{ selected, disabled: isBusy }} disabled={isBusy} onPress={() => void useModel(model)}
                     style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8,
                       borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
-                    <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 15, lineHeight: 22 }}>{getModelName(model)}</Text>
+                    <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                      <Text style={{ color: colors.text, fontSize: 15, lineHeight: 22 }}>{getProviderDisplayModel(provider, model)}</Text>
+                      <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{model}</Text>
+                    </View>
                     <Text style={{ flexShrink: 1, color: colors.primary, fontSize: 14, fontWeight: '700' }}>{t(selected ? 'settings.default' : 'settingsUx.use')}</Text>
                     <AppIcon name={selected ? 'check' : 'back-next'} color={colors.textSecondary} size={16} />
                   </IslePressable>
                 })}
                 {!availableModels.length ? <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('providerSettings.addModelHint')}</Text> : null}
                 {availableModels.length > 0 && !matchingModels.length ? <Text style={{ color: colors.textSecondary }}>{t('providerSettings.noMatchingModels')}</Text> : null}
-                {availableModels.length >= API_KEY_PANEL_MODEL_SAMPLE_LIMIT ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20 }}>{t('providerSettings.modelSearchLimit', { count: API_KEY_PANEL_MODEL_SAMPLE_LIMIT })}</Text> : null}
+                <ProviderModelPagination total={matchingModels.length} page={currentModelPage} onChange={setModelPage} colors={colors} />
               </View> : null}
               <View style={{ gap: 10 }}>
                 {modelEditing ? (
@@ -1130,9 +1191,12 @@ export function ApiKeyPanel({
               </View>
           </View> : null}
 
-          {workspaceView === 'advanced' ? <ProviderUsageQueryEditor key={provider.id} provider={provider} /> : null}
+          {workspaceView === 'connection' || workspaceView === 'usage' ? <ProviderLocalUsage providerId={provider.id} active /> : null}
+          <View style={{ display: workspaceView === 'usage' ? 'flex' : 'none' }}>
+            <ProviderUsageQueryEditor key={provider.id} provider={provider} />
+          </View>
           {dirty ? <View style={{ gap: 8 }}><Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('settingsWorkspace.unsaved')}</Text><IsleButton label={t('settingsWorkspace.reset')} disabled={isBusy} onPress={() => void requestEditorDiscard(() => undefined)} /></View> : null}
-          {workspaceView === 'connection' ? (
+          {dirty || workspaceView === 'connection' ? (
             <ActionButton label={t('settingsSubsystem.saveChoose')} busy={task === 'saving'} disabled={isBusy} onPress={() => void save().then(saved => { if (saved) setWorkspaceView('models') })} />
           ) : null}
           {dirty ? <ActionButton label={t('settingsWorkspace.reload')} secondary disabled={isBusy} onPress={() => void requestEditorDiscard(() => resetEditor(useSettingsStore.getState().providers.find(item => item.id === provider.id) ?? provider))} /> : null}
@@ -1217,19 +1281,12 @@ function ProviderWorkspaceTabs({
 }) {
   const { t } = useTranslation()
   const tabs: { value: ProviderWorkspaceView; label: string; icon: Parameters<typeof AppIcon>[0]['name'] }[] = [
-    { value: 'models', label: t('apiKeyPanel.workspaceModels'), icon: 'model' },
     { value: 'connection', label: t('apiKeyPanel.workspaceConnection'), icon: 'network' },
+    { value: 'models', label: t('apiKeyPanel.workspaceModels'), icon: 'model' },
+    { value: 'usage', label: t('usage.usageAndQuota'), icon: 'chart' },
     { value: 'advanced', label: t('apiKeyPanel.workspaceAdvanced'), icon: 'settings-sliders' },
   ]
-  return (
-    <View
-      accessibilityRole="tablist"
-      style={{ flexDirection: 'row', gap: 4 }}
-    >
-      {tabs.map(tab => <WorkspaceChoice key={tab.value} label={tab.label} icon={tab.icon}
-        selected={value === tab.value} onPress={() => onChange(tab.value)} style={{ flex: 1, minWidth: 0 }} />)}
-    </View>
-  )
+  return <WorkspaceTabs testID="provider-detail-tabs" value={value} tabs={tabs} onChange={onChange} />
 }
 
 function ChoiceButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
@@ -1818,5 +1875,5 @@ function ActionButton({ label, busy = false, secondary = false, disabled = false
 }
 
 function providerEditVersion(provider: AIProvider): string {
-  return JSON.stringify([provider.name, provider.baseUrl, initialProviderPresetId(provider), initialProviderWireProtocol(provider), formatModelEntries(provider), provider.modelAliases ?? [], provider.credentialGroups ?? []])
+  return JSON.stringify([provider.name, provider.baseUrl, initialProviderPresetId(provider), initialProviderWireProtocol(provider), formatModelEntries(provider), provider.modelAliases ?? [], provider.credentialGroups ?? [], provider.modelParameterOverrides, provider.capabilities, provider.clientCompatibilityProfile])
 }

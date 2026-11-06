@@ -8,7 +8,10 @@ import { Text, TextInput } from '@/components/ui/AppText'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated'
 import { MotiView } from 'moti'
-import { router } from 'expo-router'
+import { router, useNavigation } from 'expo-router'
+import type { ProviderDetailTab } from '@/presentation/features/settings/usageNavigation'
+import type { UsageRecord } from '@/modules/diagnostics'
+import { usageResultLabel } from '@/presentation/features/settings/usageExecutionPresentation'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { GlassSurface } from '@/components/ui/isle/GlassSurface'
@@ -42,6 +45,7 @@ import { activationItemProgress } from '@/services/providerActivationJob'
 import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/platform/native/boundedImportFile'
 import { parseModels } from '@/utils/text'
 import { summarizeProviderModelInventory } from '@/utils/providerModels'
+import { getProviderGatewayInfo } from '@/utils/providerGateway'
 import { hasProviderModelAccessRules } from '@/bootstrap/providerModelAccess'
 import { buildProviderSettingsPolicyModelCache, buildProviderSettingsSearchIndex, filterAndSortProviders } from '@/bootstrap/providerSettingsList'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -58,6 +62,9 @@ import type { RuntimeDiagnosticsProviderDetail, RuntimeDiagnosticsSummary } from
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { invalidateProviderUsage } from '@/bootstrap/providerUsageRuntime'
+import { providerConnectionReferenceRuntime } from '@/bootstrap/providerConnectionReferences'
+import { providerConnectionDeletionImpact } from '@/presentation/features/settings/providerConnectionReferencePresentation'
+import type { ProviderConnectionReferences } from '@/core'
 
 type ClipboardReadState = 'idle' | 'requesting'
 type AppThemeColors = ReturnType<typeof useAppTheme>['colors']
@@ -131,6 +138,9 @@ interface ProviderSettingsContentProps {
   embedded?: boolean
   autoOpenAdd?: boolean
   onAutoOpenAddConsumed?: () => void
+  autoOpenProviderId?: string
+  autoOpenProviderTab?: ProviderDetailTab
+  onAutoOpenProviderConsumed?: () => void
   onClose?: () => void
   onProviderConnected?: () => void
   onBackgroundStateChange?: (state: IsleBackgroundState) => void
@@ -140,7 +150,7 @@ export function ProviderSettingsContent(props: ProviderSettingsContentProps) {
   return <PageFeedbackBoundary><SettingsEditBoundary><ProviderSettingsBody {...props} /></SettingsEditBoundary></PageFeedbackBoundary>
 }
 
-function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpenAddConsumed, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
+function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpenAddConsumed, autoOpenProviderId, autoOpenProviderTab, onAutoOpenProviderConsumed, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -165,7 +175,17 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     [draftConversationIds, storedConversations]
   )
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
-  const [providerView, setProviderView] = useState<'connection' | 'models'>('models')
+  const [providerView, setProviderView] = useState<ProviderDetailTab>('connection')
+  const [recentUsage, setRecentUsage] = useState<Map<string, UsageRecord>>(() => new Map())
+  const providerIdsSignature = JSON.stringify(providers.map(provider => provider.id))
+  useEffect(() => {
+    if (!providers.length) { setRecentUsage(new Map()); return }
+    let current = true
+    void import('@/bootstrap/usageStatisticsRuntime').then(runtime => runtime.loadRecentProviderUsage(providers.map(provider => provider.id)))
+      .then(records => { if (current) setRecentUsage(new Map(records.map(record => [record.providerId, record]))) }, () => undefined)
+    return () => { current = false }
+  }, [providerIdsSignature])
+  const openedProviderIntentRef = useRef<string | undefined>(undefined)
   const [deletingSupplierId, setDeletingSupplierId] = useState<string | null>(null)
   const selectedProvider = expandedProviderId ? providers.find((provider) => provider.id === expandedProviderId) : undefined
   const [sortMode, setSortMode] = useState<ProviderSortMode>('manual')
@@ -240,6 +260,18 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     setImportOpen(true)
     onAutoOpenAddConsumed?.()
   }, [autoOpenAdd, onAutoOpenAddConsumed])
+
+  useEffect(() => {
+    if (!autoOpenProviderId) {
+      openedProviderIntentRef.current = undefined
+      return
+    }
+    if (openedProviderIntentRef.current === autoOpenProviderId || !providers.some(provider => provider.id === autoOpenProviderId)) return
+    openedProviderIntentRef.current = autoOpenProviderId
+    setExpandedProviderId(autoOpenProviderId)
+    setProviderView(autoOpenProviderTab ?? 'connection')
+    onAutoOpenProviderConsumed?.()
+  }, [autoOpenProviderId, autoOpenProviderTab, onAutoOpenProviderConsumed, providers])
 
   useEffect(() => {
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
@@ -461,9 +493,11 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
   async function confirmClearAllProviders() {
     const expectedProviders = snapshotProviderConfiguration(providers)
     await runDangerousProviderOperation(async signal => {
+    const references = await readDeletionReferences(expectedProviders.map(provider => provider.id), signal)
+    if (!references || signal.aborted) return
     const confirmed = await dialog.confirm({
       title: t('providerSettings.clearAllTitle'),
-      message: t('providerSettings.clearAllMessage', { count: expectedProviders.length }),
+      message: [t('providerSettings.clearAllMessage', { count: expectedProviders.length }), providerConnectionDeletionImpact(references, t)].join('\n\n'),
       confirmLabel: t('providerSettings.clearAllConfirm'),
       cancelLabel: t('common.cancel'),
       tone: 'danger',
@@ -494,12 +528,15 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       dialog.toast({ title: t('providerSettings.clearInvalidNone'), tone: 'amber' })
       return
     }
+    const references = await readDeletionReferences(invalidProviders.map(provider => provider.id), signal)
+    if (!references || signal.aborted) return
     const confirmed = await dialog.confirm({
       title: t('providerSettings.clearInvalidTitle'),
       message: [
         t('providerSettings.clearInvalidMessage'),
         t('providerSettings.clearInvalidPendingList', { count: invalidProviders.length }),
         formatClearInvalidProviderList(invalidProviders, t),
+        providerConnectionDeletionImpact(references, t),
       ].join('\n\n'),
       confirmLabel: t('providerSettings.clearInvalidConfirm'),
       cancelLabel: t('common.cancel'),
@@ -530,11 +567,13 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     const groupLabel = group.id.startsWith('preset:')
       ? getProviderPreset(group.id.slice('preset:'.length) as ProviderPresetId).name
       : group.label
+    const references = await readDeletionReferences(group.providers.map(provider => provider.id), signal)
+    if (!references || signal.aborted) return
     const confirmed = await dialog.confirm({
       title: t('providerSettings.deleteSupplierTitle', { name: groupLabel }),
-      message: count === 1
+      message: [(count === 1
         ? t('providerSettings.deleteSupplierSingleMessage')
-        : t('providerSettings.deleteSupplierGroupMessage', { count }),
+        : t('providerSettings.deleteSupplierGroupMessage', { count })), providerConnectionDeletionImpact(references, t)].join('\n\n'),
       confirmLabel: t('providerSettings.deleteSupplierConfirm', { count }),
       cancelLabel: t('common.cancel'),
       tone: 'danger',
@@ -608,6 +647,14 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     }
   }
 
+  async function readDeletionReferences(ids: readonly string[], signal: AbortSignal): Promise<ProviderConnectionReferences | undefined> {
+    try { return await providerConnectionReferenceRuntime.load(ids, signal) }
+    catch {
+      if (!signal.aborted) dialog.notice({ title: t('connectionReferences.loadFailed'), message: t('connectionReferences.retryDelete'), tone: 'amber' })
+      return undefined
+    }
+  }
+
   function toggleSelection(id: string) {
     setSelectedIds((current) => {
       const next = new Set(current)
@@ -647,7 +694,8 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
         batchMode={batchMode}
         expanded={expandedProviderId === provider.id}
         onToggleSelected={() => toggleSelection(provider.id)}
-        onExpandedChange={(next) => { setProviderView('models'); setExpandedProviderId(next ? provider.id : null) }}
+        recentRecord={recentUsage.get(provider.id)}
+        onExpandedChange={(next) => { setProviderView('connection'); setExpandedProviderId(next ? provider.id : null) }}
         onEdit={() => { setProviderView('connection'); setExpandedProviderId(provider.id) }}
       />
     )
@@ -658,6 +706,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     ? <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />
     : undefined
   const providerTools = <View style={{ gap: 10 }}>
+    <IsleButton label={t('routing.manage')} onPress={() => router.push('/settings/routing')} />
     {providers.length ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
       <TextInput testID="provider-search" accessibilityLabel={t('providerSettings.searchConnections')}
         value={modelFilter} onChangeText={setModelFilter} autoCapitalize="none" autoCorrect={false}
@@ -686,7 +735,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
               void confirmRemoveSupplierGroup(group)
             }} />
         </> : null}
-        <IsleButton compact label={t('modelAvailability.details')} onPress={() => router.push('/settings/model-availability')} />
         <IsleButton compact tone="amber" label={t('providerSettings.clearInvalid')} disabled={dangerousOperationPending || importProgress !== null || activationBusy} onPress={() => void confirmClearInvalidProviders()} />
         <IsleButton compact tone="danger" label={t('providerSettings.clearAll')} disabled={dangerousOperationPending || importProgress !== null || activationBusy} onPress={() => void confirmClearAllProviders()} />
       </View>
@@ -753,6 +801,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       {selectedProvider ? <ProviderConfigurationSheet
         visible
         initialView={providerView}
+        onViewChange={setProviderView}
         onUse={() => { setExpandedProviderId(null); onProviderConnected?.() }}
         provider={selectedProvider}
         runtimeDetail={selectedProvider ? runtimeDetailByProviderId.get(selectedProvider.id) : undefined}
@@ -785,6 +834,7 @@ function ProviderConfigurationSheet({
   runtimeDetail,
   deferMount,
   initialView,
+  onViewChange,
   onUse,
   sortControl,
   onClose,
@@ -793,7 +843,8 @@ function ProviderConfigurationSheet({
   provider?: AIProvider
   runtimeDetail?: RuntimeDiagnosticsProviderDetail
   deferMount: boolean
-  initialView: 'connection' | 'models'
+  initialView: ProviderDetailTab
+  onViewChange: (tab: ProviderDetailTab) => void
   onUse: () => void
   sortControl?: ReactNode
   onClose: () => void
@@ -804,6 +855,13 @@ function ProviderConfigurationSheet({
   const { height } = useWindowDimensions()
   const motion = useMotionPreference(true)
   const leave = useSettingsLeave()
+  const navigation = useNavigation()
+  const [routeFocused, setRouteFocused] = useState(() => navigation?.isFocused?.() ?? true)
+  useEffect(() => {
+    const focus = navigation?.addListener?.('focus', () => setRouteFocused(true))
+    const blur = navigation?.addListener?.('blur', () => setRouteFocused(false))
+    return () => { focus?.(); blur?.() }
+  }, [navigation])
   const { handleRequestClose } = useKeyboardAwareModalRequestClose(() => {
     void requestSheetClose()
   })
@@ -815,7 +873,7 @@ function ProviderConfigurationSheet({
 
   return (
     <PageFeedbackBoundary scopeKey={provider?.id}>
-    <Modal transparent visible={visible && Boolean(provider)} animationType={motion === 'full' ? 'slide' : 'none'} statusBarTranslucent navigationBarTranslucent onRequestClose={handleRequestClose}>
+    <Modal transparent visible={visible && Boolean(provider) && routeFocused} animationType={motion === 'full' ? 'slide' : 'none'} statusBarTranslucent navigationBarTranslucent onRequestClose={handleRequestClose}>
       <View accessibilityViewIsModal style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Pressable accessible={false} accessibilityRole="none" onPress={() => void requestSheetClose()} style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -840,6 +898,7 @@ function ProviderConfigurationSheet({
                     runtimeDetail={runtimeDetail}
                     expanded
                     initialView={initialView}
+                    onViewChange={onViewChange}
                     onUse={onUse}
                     sortControl={sortControl}
                     onExpandedChange={(next) => {
@@ -1092,8 +1151,9 @@ function useWebVisualKeyboardInset(active: boolean): number {
   return inset
 }
 
-function ProviderListRow({ provider, position, featured, selected, batchMode, expanded, onToggleSelected, onExpandedChange, onEdit }: {
+function ProviderListRow({ provider, position, featured, selected, batchMode, expanded, recentRecord, onToggleSelected, onExpandedChange, onEdit }: {
   provider: AIProvider; position: number; featured: boolean; selected: boolean; batchMode: boolean; expanded: boolean
+  recentRecord?: UsageRecord
   onToggleSelected: () => void; onExpandedChange: (next: boolean) => void; onEdit: () => void
 }) {
   const { t } = useTranslation()
@@ -1102,6 +1162,7 @@ function ProviderListRow({ provider, position, featured, selected, batchMode, ex
   const providerUrl = provider.baseUrl?.trim() || t('providerSettings.baseUrl')
   const providerStateLabel = featured && provider.enabled ? t('providerSettings.defaultConnection') : t(provider.enabled ? 'settings.enabled' : 'settings.disabled')
   return <ProviderConnectionRow id={provider.id} position={position} name={providerDisplayName} endpoint={providerUrl}
+    recentLabel={recentRecord ? `${t('usage.recentRequest')} · ${usageResultLabel(recentRecord.status, t)}${recentRecord.statusCode ? ` · ${recentRecord.statusCode}` : ''} · ${new Date(recentRecord.occurredAt).toLocaleString()}` : undefined}
     stateLabel={providerStateLabel} modelsLabel={t('settingsSubsystem.modelCount', { count: modelInventory.selectableModels })}
     selectLabel={`${t('providerSettings.selectProvider')} ${providerDisplayName}`} editLabel={`${t('common.edit')} ${providerDisplayName}`}
     enabled={provider.enabled} featured={featured} selected={selected} batchMode={batchMode} expanded={expanded}
@@ -1115,6 +1176,7 @@ function DeferredProviderDetails({
   onExpandedChange,
   deferMount,
   initialView,
+  onViewChange,
   onUse,
   sortControl,
 }: {
@@ -1123,7 +1185,8 @@ function DeferredProviderDetails({
   expanded: boolean
   onExpandedChange: (next: boolean) => void
   deferMount: boolean
-  initialView: 'connection' | 'models'
+  initialView: ProviderDetailTab
+  onViewChange: (tab: ProviderDetailTab) => void
   onUse: () => void
   sortControl?: ReactNode
 }) {
@@ -1164,7 +1227,8 @@ function DeferredProviderDetails({
   return (
     <View style={{ minWidth: 0, minHeight: PROVIDER_ROW_HEIGHT - 10, marginTop: 3 }}>
       {ready ? (
-        <ApiKeyPanel initialView={initialView} onUse={onUse}
+        <ApiKeyPanel initialView={initialView} onViewChange={onViewChange} onUse={onUse}
+          connectionReferencesPort={providerConnectionReferenceRuntime}
           sortControl={sortControl}
           provider={provider}
           runtimeDetail={runtimeDetail}
@@ -1585,6 +1649,7 @@ export function ProviderFormModal({
   const [step, setStep] = useState<'connection' | 'models'>('connection')
   const [presetPickerOpen, setPresetPickerOpen] = useState(false)
   const [presetQuery, setPresetQuery] = useState('')
+  const [lanSetup, setLanSetup] = useState(false)
   const [protocolOpen, setProtocolOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
@@ -1648,6 +1713,7 @@ export function ProviderFormModal({
     setStep('connection')
     setPresetPickerOpen(false)
     setPresetQuery('')
+    setLanSetup(false)
     setProtocolOpen(false)
     setAdvancedOpen(false)
     setClipboardState('idle')
@@ -1768,6 +1834,7 @@ export function ProviderFormModal({
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
+    setLanSetup(false)
     setPresetPickerOpen(false)
     const currentPreset = getProviderPreset(presetId)
     const nextPreset = getProviderPreset(nextPresetId)
@@ -1862,10 +1929,18 @@ export function ProviderFormModal({
               contentContainerStyle={{ gap: 8, paddingHorizontal: modalPadding, paddingBottom: 10, backgroundColor: sheetMaterial.body }}
             >
               {step === 'connection' ? <>
+              <IsleButton compact label={t('gateway.addLocal')} onPress={() => {
+                selectPreset('custom-endpoint')
+                setLanSetup(true)
+                if (!nameDirty) setName(t('gateway.connectionName'))
+              }} />
+              {lanSetup ? <Text testID="provider-lan-setup-hint" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }}>
+                {t('gateway.setupHint')}
+              </Text> : null}
               <IslePressable testID="provider-preset-picker" accessibilityRole="button" accessibilityState={{ expanded: presetPickerOpen }}
                 onPress={() => setPresetPickerOpen(value => !value)} style={{ minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ flex: 1 }}><Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('settingsWorkspace.stepProvider')}</Text>
-                  <Text style={{ color: colors.text, fontSize: 16, lineHeight: 24 }}>{preset.name}</Text></View>
+                  <Text style={{ color: colors.text, fontSize: 16, lineHeight: 24 }}>{lanSetup ? t('gateway.connectionName') : preset.name}</Text></View>
                 <AppIcon name={presetPickerOpen ? 'collapse' : 'back-next'} color={colors.textSecondary} size={18} />
               </IslePressable>
               {presetPickerOpen ? <View testID="provider-preset-list" style={{ flexDirection: 'column', gap: 4 }}>
@@ -1884,13 +1959,17 @@ export function ProviderFormModal({
                     value: baseUrl,
                     onFocus: () => markInputFocused('baseUrl'),
                     onChangeText: handleBaseUrlText,
-                    placeholder: preset.baseUrl ?? 'https://example.com/v1',
+                    placeholder: lanSetup ? 'http://192.168.1.100:3425/v1' : preset.baseUrl ?? 'https://example.com/v1',
                     keyboardType: 'url',
                     autoCapitalize: 'none',
                     autoCorrect: false,
                     accessibilityHint: providerConfigIssueMessage,
                   }}
                 />
+                {getProviderGatewayInfo({ baseUrl })?.loopback ? <Text accessibilityRole="alert"
+                  style={{ marginTop: 6, color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 21 }}>
+                  {t('gateway.loopbackHint')}
+                </Text> : null}
                 {providerConfigIssueMessage ? (
                   <Text
                     testID="provider-form-base-url-error"

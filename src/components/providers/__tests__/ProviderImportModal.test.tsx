@@ -41,6 +41,18 @@ function deferred<T>() {
 }
 beforeEach(() => { jest.clearAllMocks(); mockTheme = 'minimal'; mockConfirm.mockResolvedValue(true) })
 
+it('guides local gateway setup and warns only when the address points to this device', async () => {
+  const screen = await render(<ProviderFormModal visible onClose={jest.fn()} onSubmit={jest.fn()} />)
+  await fireEvent.press(screen.getByRole('button', { name: 'gateway.addLocal' }))
+  expect(screen.getByTestId('provider-lan-setup-hint')).toHaveTextContent('gateway.setupHint')
+  expect(screen.getByLabelText('providerSettings.baseUrl').props.placeholder).toBe('http://192.168.1.100:3425/v1')
+  await fireEvent.changeText(screen.getByLabelText('providerSettings.baseUrl'), 'http://127.0.0.1:3425/v1')
+  expect(screen.getByText('gateway.loopbackHint')).toBeTruthy()
+  await fireEvent.changeText(screen.getByLabelText('providerSettings.baseUrl'), 'http://192.168.1.100:3425/v1')
+  expect(screen.queryByText('gateway.loopbackHint')).toBeNull()
+  await screen.unmount()
+})
+
 it.each(CANONICAL_THEME_IDS)('names actual %s import progress and replaces unknown/stale values through each stage', async family => {
   mockTheme = family
   const close = jest.fn()

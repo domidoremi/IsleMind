@@ -18,6 +18,9 @@ const mockClearInvalid = jest.fn()
 const mockListInvalid = jest.fn()
 const mockFlush = jest.fn()
 const mockFlushSettings = jest.fn()
+const mockPanel = jest.fn()
+const mockReferencesLoad = jest.fn()
+jest.mock('@/bootstrap/providerConnectionReferences', () => ({ providerConnectionReferenceRuntime: { load: (...args: unknown[]) => mockReferencesLoad(...args) } }))
 jest.mock('expo-router', () => ({ useNavigation: jest.fn(), router: { back: jest.fn(), canGoBack: () => true } }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }))
@@ -26,6 +29,12 @@ jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require(
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
 jest.mock('@/components/settings/SettingsHelp', () => ({ SettingsHelpButton: () => null }))
+jest.mock('@/components/settings/ApiKeyPanel', () => ({
+  ApiKeyPanel: (props: unknown) => {
+    mockPanel(props)
+    return <></>
+  },
+}))
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
 jest.mock('@/components/providers/useProviderActivationJob', () => ({
   useProviderActivationJob: () => ({ activationBusy: mockActivationJob?.status === 'running', activationJob: mockActivationJob, clearActivationJob: jest.fn(), isActivationRunning: mockActivationJob?.status === 'running' }),
@@ -58,6 +67,10 @@ beforeEach(() => {
   mockRemove.mockResolvedValue(undefined)
   mockFlush.mockResolvedValue(undefined)
   mockFlushSettings.mockResolvedValue(undefined)
+  mockReferencesLoad.mockReset().mockResolvedValue({
+    providerIds: ['shown'], groups: [{ kind: 'routing', total: 2, items: [], truncated: false }],
+    conversations: { savedInspected: 80, savedRemaining: 0, unreadable: 0, localDrafts: 1 }, capturedAt: 1,
+  })
   useSettingsStore.setState({ ...initialState, providers: [provider()], settings: { ...initialState.settings, defaultProvider: 'shown' },
     removeProvider: mockRemove, clearAllProviders: mockClearAll, clearInvalidProviders: mockClearInvalid, listInvalidProviders: mockListInvalid,
     flushProviderPersistence: mockFlush, compactProviderStorage: jest.fn(() => false) })
@@ -109,6 +122,29 @@ async function managementScreen() {
   return screen
 }
 
+it('waits for the requested connection to load, opens its connection tab once, and stays closed after consuming the intent', async () => {
+  const consumed = jest.fn()
+  const tree = (providerId?: string) => <ProviderSettingsContent embedded
+    autoOpenProviderId={providerId} onAutoOpenProviderConsumed={consumed} />
+  const screen = await render(tree('late-gateway'))
+  expect(consumed).not.toHaveBeenCalled()
+  expect(mockPanel).not.toHaveBeenCalled()
+  await act(() => useSettingsStore.setState({ providers: [provider(), provider('late-gateway')] }))
+  expect(consumed).toHaveBeenCalledTimes(1)
+  const panelProps = mockPanel.mock.calls.at(-1)![0]
+  expect(panelProps).toEqual(expect.objectContaining({
+    provider: expect.objectContaining({ id: 'late-gateway' }), initialView: 'connection',
+  }))
+  await act(() => useSettingsStore.setState({ providers: [...useSettingsStore.getState().providers] }))
+  expect(consumed).toHaveBeenCalledTimes(1)
+  await screen.rerender(tree())
+  await act(async () => panelProps.onExpandedChange(false))
+  mockPanel.mockClear()
+  await act(() => useSettingsStore.setState({ providers: [provider(), provider('late-gateway')] }))
+  expect(mockPanel).not.toHaveBeenCalled()
+  await screen.unmount()
+})
+
 it('binds broad-clear approval to the shown catalog and reports completion only after durability', async () => {
   const expected = useSettingsStore.getState().providers
   const confirmation = deferred<boolean>()
@@ -117,12 +153,42 @@ it('binds broad-clear approval to the shown catalog and reports completion only 
   mockFlush.mockReturnValueOnce(durability.promise)
   const screen = await managementScreen()
   await fireEvent.press(screen.getByLabelText('providerSettings.clearAll'))
+  expect(mockReferencesLoad).toHaveBeenCalledWith(['shown'], expect.any(AbortSignal))
+  expect(mockConfirm.mock.calls.at(-1)![0].message).toContain('connectionReferences.count.routing')
   await act(() => useSettingsStore.setState({ providers: [...expected, provider('new-concurrent')] }))
   await act(() => confirmation.resolve(true))
   expect(mockClearAll).toHaveBeenCalledWith({ expectedProviders: expected, signal: expect.any(AbortSignal) })
   expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'providerSettings.clearAllDone' }))
   await act(() => durability.resolve())
   expect(mockFlushSettings).toHaveBeenCalled()
+})
+
+it.each(['providerSettings.clearAll', 'providerSettings.clearInvalid'])('keeps %s intact when reference reading fails and allows a fresh retry', async label => {
+  mockReferencesLoad.mockRejectedValueOnce(Error('metadata unavailable'))
+  const screen = await managementScreen()
+  await fireEvent.press(screen.getByLabelText(label))
+  expect(mockConfirm).not.toHaveBeenCalled()
+  expect(mockClearAll).not.toHaveBeenCalled()
+  expect(mockClearInvalid).not.toHaveBeenCalled()
+  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'connectionReferences.loadFailed' }))
+  await fireEvent.press(screen.getByLabelText(label))
+  expect(mockReferencesLoad).toHaveBeenCalledTimes(2)
+  expect(mockConfirm).toHaveBeenCalledTimes(1)
+})
+
+it('does not open deletion confirmation after a reference read completes on an unmounted page', async () => {
+  const pending = deferred<any>()
+  mockReferencesLoad.mockReturnValueOnce(pending.promise)
+  const screen = await managementScreen()
+  await fireEvent.press(screen.getByLabelText('providerSettings.clearAll'))
+  const signal = mockReferencesLoad.mock.calls.at(-1)![1] as AbortSignal
+  await screen.unmount()
+  await act(() => pending.resolve({
+    providerIds: ['shown'], groups: [], conversations: { savedInspected: 0, savedRemaining: 0, unreadable: 0, localDrafts: 0 }, capturedAt: 1,
+  }))
+  expect(signal.aborted).toBe(true)
+  expect(mockConfirm).not.toHaveBeenCalled()
+  expect(mockClearAll).not.toHaveBeenCalled()
 })
 
 it.each(['providerSettings.clearAll', 'providerSettings.clearInvalid'])('does not apply a late %s confirmation after unmount', async label => {

@@ -11,6 +11,7 @@ export interface ProviderConnectionRowProps {
   endpoint: string
   stateLabel: string
   modelsLabel: string
+  recentLabel?: string
   selectLabel: string
   editLabel: string
   enabled: boolean
@@ -55,6 +56,8 @@ export function ProviderConnectionRow(props: ProviderConnectionRowProps) {
           </View>
           <Text style={[typography.caption, { maxWidth: '100%', color: colors.textSecondary }]}>{props.modelsLabel}</Text>
         </View>
+        {props.recentLabel ? <Text testID={`provider-recent-${props.id}`} numberOfLines={2}
+          style={[typography.caption, { color: colors.textSecondary }]}>{props.recentLabel}</Text> : null}
       </View>
       <View accessible={false} importantForAccessibility="no-hide-descendants">
         <AppIcon name="back-next" color={colors.textTertiary} size={16} />

@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import type { AIProvider } from '@/types/providerContracts'
 import { DEFAULT_PROVIDER_PRESET_ID } from '@/modules/providers'
 import { getProviderPreset } from '@/bootstrap/providerRegistry'
+import { getModelConfig } from '@/types/modelCatalog'
 
 const mockSync = jest.fn()
 const mockToast = jest.fn()
@@ -119,5 +120,29 @@ it('filters configured models locally and provides an accessible clear action', 
   expect(screen.queryByTestId('provider-use-model-saved-model-0')).toBeNull()
   await fireEvent.press(screen.getByLabelText('common.clearSearch'))
   expect(screen.getByTestId('provider-use-model-saved-model-0')).toBeTruthy()
+  expect(mockSync).not.toHaveBeenCalled()
+})
+
+it('browses a gateway catalog in bounded pages and finds a supplier beyond the initial sample', async () => {
+  const models = Array.from({ length: 213 }, (_, index) => `${index === 212 ? 'workbuddy-ai' : 'source-a'}/model-${index}`)
+  const modelConfigs = models.map((id, index) => ({
+    ...getModelConfig(id, fixture.type), name: `Model ${index}`,
+    upstreamProvider: index === 212 ? { id: 'workbuddy-ai', name: 'WorkBuddy AI' } : { id: 'source-a', name: 'Source A' },
+  }))
+  useSettingsStore.setState({ providers: [{ ...fixture, models, manualModels: models, modelConfigs }] })
+  const screen = await render(<Panel />)
+  expect(screen.getAllByTestId(/^provider-use-model-/)).toHaveLength(24)
+  expect(screen.queryByTestId('provider-use-model-workbuddy-ai/model-212')).toBeNull()
+  await fireEvent.press(screen.getByLabelText('providerSettings.nextModelPage'))
+  expect(screen.getByTestId('provider-use-model-source-a/model-24')).toBeTruthy()
+  expect(screen.getAllByTestId(/^provider-use-model-/)).toHaveLength(24)
+  await fireEvent.changeText(screen.getByLabelText('providerSettings.searchModels'), 'workbuddy')
+  expect(screen.getByText('WorkBuddy AI / Model 212')).toBeTruthy()
+  expect(screen.getAllByTestId(/^provider-use-model-/)).toHaveLength(1)
+  await fireEvent.press(screen.getByLabelText('common.clearSearch'))
+  await fireEvent.press(screen.getByTestId('provider-model-source-filter'))
+  await fireEvent.press(screen.getByLabelText('WorkBuddy AI'))
+  expect(screen.getByTestId('provider-use-model-workbuddy-ai/model-212')).toBeTruthy()
+  expect(screen.getAllByTestId(/^provider-use-model-/)).toHaveLength(1)
   expect(mockSync).not.toHaveBeenCalled()
 })

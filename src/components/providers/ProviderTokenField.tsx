@@ -23,7 +23,7 @@ export function ProviderTokenField({ value, onChangeText, onFocus, editable = tr
     <View>
       <IsleField label={t('providerSettings.tokens')}
         note={t(multiline ? 'providerSettings.batchTokensVisible' : 'providerSettings.singleTokenHint')}
-        inputProps={{ editable, value, onChangeText, onFocus, placeholder: multiline ? 'sk-...\nsk-...' : 'sk-...',
+        inputProps={{ editable, value, onChangeText, onFocus, placeholder: t(multiline ? 'providerSettings.batchKeyPlaceholder' : 'providerSettings.keyPlaceholder'),
           autoCapitalize: 'none', autoCorrect: false, autoComplete: 'off',
           multiline, secureTextEntry: !multiline && !revealed }} />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
