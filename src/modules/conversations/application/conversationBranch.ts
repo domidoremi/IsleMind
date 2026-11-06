@@ -42,12 +42,18 @@ export function createConversationBranchDraft(
     providerId: source.providerId,
     model: source.model,
     providerModelMode: source.providerModelMode,
+    ...(source.routingPlan ? { routingPlan: { ...source.routingPlan, primary: { ...source.routingPlan.primary },
+      ...(source.routingPlan.backup ? { backup: { ...source.routingPlan.backup } } : {}) } } : {}),
     systemPrompt: source.systemPrompt,
     temperature: source.temperature,
     topP: source.topP,
     topK: source.topK,
     reasoningEffort: source.reasoningEffort,
     maxTokens: source.maxTokens,
+    ...(source.contextPolicyOverride ? { contextPolicyOverride: { ...source.contextPolicyOverride } } : {}),
+    ...(source.toolDeclarationModeOverride ? { toolDeclarationModeOverride: source.toolDeclarationModeOverride } : {}),
+    ...(source.scenePlanSource ? { scenePlanSource: { ...source.scenePlanSource } } : {}),
+    ...(source.resourceScopeOverride ? { resourceScopeOverride: { ...source.resourceScopeOverride } } : {}),
     ...(source.generationParameterOverrides !== undefined
       ? { generationParameterOverrides: { ...source.generationParameterOverrides } }
       : {}),

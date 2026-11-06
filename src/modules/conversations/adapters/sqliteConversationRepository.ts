@@ -4,8 +4,9 @@ import {
   type SqliteExecutor,
 } from '@/platform/storage'
 import type { Conversation } from '@/types/chatContracts'
-import type { ConversationPageInput, ConversationRepository } from '../contracts'
+import type { ConversationPageInput, ConversationRepository, ConversationRecordRemoval } from '../contracts'
 import { parseConversationSnapshot, type ConversationSnapshot } from '../domain/conversationSnapshot'
+import { projectConversationProviderReference, type ConversationProviderReferenceReader } from '../application/conversationProviderReferences'
 
 interface ConversationRecordRow {
   id?: string
@@ -104,7 +105,7 @@ class ConversationPayloadMirrorPendingError extends Error {
 
 export function createSqliteConversationRepository(
   databaseProvider: SqliteDatabaseProvider,
-): ConversationRepository {
+): ConversationRepository & ConversationProviderReferenceReader & ConversationRecordRemoval {
   let initialization: Promise<void> | undefined
   let legacyPayloadRequiredOnInsert = false
 
@@ -121,6 +122,63 @@ export function createSqliteConversationRepository(
   }
 
   return {
+    async remove(conversationId) {
+      const value = await database()
+      await value.transaction(async transaction => {
+        await transaction.run('DELETE FROM conversation_message_records WHERE conversationId = ?', [conversationId])
+        await transaction.run('DELETE FROM conversation_record_state WHERE conversationId = ?', [conversationId])
+        await transaction.run('DELETE FROM conversation_records WHERE id = ?', [conversationId])
+      })
+    },
+    async readProviderReferences(input) {
+      const ids = [...new Set(input.providerIds)]
+      const excluded = [...new Set(input.excludeConversationIds ?? [])]
+      if ([ids, excluded].some(values => values.length > 10000
+        || values.some(id => typeof id !== 'string' || !id.length || id.length > 256))) {
+        throw new TypeError('Invalid connection reference scope.')
+      }
+      const limit = input.limit ?? 2000
+      if (!Number.isInteger(limit) || limit < 1 || limit > 2000) throw new TypeError('Invalid metadata scan budget.')
+      const value = await database()
+      return value.transaction(async transaction => {
+        const exclusion = JSON.stringify(excluded)
+        const total = await transaction.getFirst<{ count: number }>(
+          'SELECT COUNT(*) AS count FROM conversation_records WHERE id NOT IN (SELECT value FROM json_each(?))', [exclusion],
+        )
+        // Select only configuration identities and the display title. Neither
+        // message records, prompts, variables nor historical execution are read.
+        const rows = await transaction.getAll<{ id: string; referenceJson: string | null }>(
+          `SELECT record.id, CASE WHEN json_valid(state.stateJson) THEN json_object(
+             'id', json_extract(state.stateJson, '$.id'),
+             'title', json_extract(state.stateJson, '$.title'),
+             'providerId', json_extract(state.stateJson, '$.providerId'),
+             'model', json_extract(state.stateJson, '$.model'),
+             'routingPlan', json_extract(state.stateJson, '$.routingPlan')
+           ) ELSE NULL END AS referenceJson
+           FROM conversation_records AS record
+           LEFT JOIN conversation_record_state AS state ON state.conversationId = record.id
+           WHERE record.id NOT IN (SELECT value FROM json_each(?))
+           ORDER BY record.updatedAt DESC, record.id ASC LIMIT ?`, [exclusion, limit],
+        )
+        const orphaned = await transaction.getFirst<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM conversation_record_state AS state
+           LEFT JOIN conversation_records AS record ON record.id = state.conversationId
+           WHERE record.id IS NULL AND state.conversationId NOT IN (SELECT value FROM json_each(?))`, [exclusion],
+        )
+        const references: Awaited<ReturnType<ConversationProviderReferenceReader['readProviderReferences']>>['references'] = []
+        let unreadable = orphaned?.count ?? 0
+        for (const row of rows) {
+          try {
+            const metadata: unknown = row.referenceJson ? JSON.parse(row.referenceJson) : undefined
+            if (!metadata || (metadata as { id?: unknown }).id !== row.id) { unreadable++; continue }
+            const projected = projectConversationProviderReference(metadata, ids)
+            if (projected.unreadable) unreadable++
+            if (projected.reference) references.push(projected.reference)
+          } catch { unreadable++ }
+        }
+        return { references, inspected: rows.length, remaining: Math.max(0, (total?.count ?? 0) - rows.length), unreadable }
+      })
+    },
     async get(conversationId) {
       const value = await database()
       const record = await value.getFirst<{ id: string }>(

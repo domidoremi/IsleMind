@@ -34,6 +34,11 @@ export interface ConversationRepository {
   clear(): Promise<void>
 }
 
+/** Remove only the explicitly selected record and its owned state/messages. */
+export interface ConversationRecordRemoval {
+  remove(conversationId: string): Promise<void>
+}
+
 export interface ConversationPageInput {
   cursor?: string
   limit?: number

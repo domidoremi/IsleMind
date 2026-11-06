@@ -49,7 +49,7 @@ beforeEach(() => {
     loadRecords: jest.fn().mockResolvedValue([]),
     loadPage, loadRecord, readActiveSelection, writeActiveSelection,
     saveRecord: jest.fn().mockResolvedValue(undefined),
-    replaceRecords: jest.fn().mockResolvedValue(undefined),
+    deleteRecord: jest.fn(async () => undefined), replaceRecords: jest.fn().mockResolvedValue(undefined),
   }
   bindConversationStorePersistence(persistence)
   useChatStore.setState({
@@ -127,4 +127,59 @@ it('still represents a successfully read empty database as empty, not as a start
   expect(useChatStore.getState()).toMatchObject({ conversations: [], currentId: null, isLoading: false, error: null })
   expect(writeActiveSelection).toHaveBeenCalledWith(null)
   expect(persistence.replaceRecords).not.toHaveBeenCalled()
+})
+
+it('loads only an addressed older conversation without selecting, writing or expanding the history page', async () => {
+  const older = conversation('older')
+  loadRecord.mockResolvedValue(older)
+  useChatStore.setState({ conversations: [retained], currentId: retained.id, historyCursor: 'cursor', historyHasMore: true })
+  expect(await useChatStore.getState().ensureLoaded(older.id)).toBe(true)
+  expect(loadRecord).toHaveBeenCalledWith(older.id)
+  expect(loadPage).not.toHaveBeenCalled()
+  expect(useChatStore.getState()).toMatchObject({ currentId: retained.id, historyCursor: 'cursor', historyHasMore: true })
+  expect(useChatStore.getState().conversations.map(value => value.id)).toEqual([retained.id, older.id])
+  expect(writeActiveSelection).not.toHaveBeenCalled()
+  expect(persistence.saveRecord).not.toHaveBeenCalled()
+  expect(persistence.replaceRecords).not.toHaveBeenCalled()
+})
+
+it('retains a loaded draft and rejects a missing or mismatched addressed record', async () => {
+  useChatStore.setState({ conversations: [retained], draftConversationIds: new Set([retained.id]) })
+  expect(await useChatStore.getState().ensureLoaded(retained.id)).toBe(true)
+  expect(loadRecord).not.toHaveBeenCalled()
+  expect(await useChatStore.getState().ensureLoaded('missing')).toBe(false)
+  loadRecord.mockResolvedValueOnce(conversation('different'))
+  expect(await useChatStore.getState().ensureLoaded('addressed')).toBe(false)
+  expect(useChatStore.getState().conversations).toEqual([retained])
+})
+
+it.each(['cancel', 'delete', 'clear-all'] as const)('does not publish an older read after %s', async action => {
+  const pending = deferred<Conversation | undefined>()
+  loadRecord.mockReturnValue(pending.promise)
+  const controller = new AbortController()
+  const read = useChatStore.getState().ensureLoaded('older', controller.signal)
+  if (action === 'cancel') controller.abort()
+  else if (action === 'delete') useChatStore.getState().delete('older')
+  else await useChatStore.getState().clearAll()
+  pending.resolve(conversation('older'))
+  expect(await read).toBe(false)
+  expect(useChatStore.getState().conversations).toEqual([])
+})
+
+it('retains a newer local version that appears while its addressed read is pending', async () => {
+  const pending = deferred<Conversation | undefined>()
+  loadRecord.mockReturnValue(pending.promise)
+  const read = useChatStore.getState().ensureLoaded('older')
+  const newer = { ...conversation('older'), title: 'Local edit' }
+  useChatStore.setState({ conversations: [newer] })
+  pending.resolve(conversation('older'))
+  expect(await read).toBe(true)
+  expect(useChatStore.getState().conversations).toEqual([newer])
+})
+
+it('reports an addressed read failure to the caller and permits retry without erasing state', async () => {
+  loadRecord.mockRejectedValueOnce(new Error('read unavailable'))
+  await expect(useChatStore.getState().ensureLoaded('older')).rejects.toThrow('read unavailable')
+  loadRecord.mockResolvedValueOnce(conversation('older'))
+  expect(await useChatStore.getState().ensureLoaded('older')).toBe(true)
 })

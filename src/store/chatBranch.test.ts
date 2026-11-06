@@ -59,7 +59,7 @@ describe('non-destructive Chat branch drafts', () => {
       loadPage: async () => ({ conversations: [...records.values()], hasMore: false }),
       loadRecord: async id => records.get(id),
       saveRecord,
-      replaceRecords: jest.fn(async () => undefined),
+      deleteRecord: jest.fn(async () => undefined), replaceRecords: jest.fn(async () => undefined),
       readActiveSelection: async () => source.id,
       writeActiveSelection: jest.fn(async () => undefined),
     }

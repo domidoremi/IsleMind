@@ -28,7 +28,7 @@ describe('explicit Chat model preference saves', () => {
       messages: [{ id: 'a', role: 'assistant', content: 'Unknown historical identity', status: 'done', timestamp: 1 }] }
     saveRecord = jest.fn(async () => undefined)
     persistence = { loadRecords: async () => [source], loadPage: async () => ({ conversations: [source], hasMore: false }), loadRecord: async () => source,
-      saveRecord, replaceRecords: jest.fn(), readActiveSelection: async () => null, writeActiveSelection: jest.fn(async () => undefined) }
+      saveRecord, deleteRecord: jest.fn(async () => undefined), replaceRecords: jest.fn(), readActiveSelection: async () => null, writeActiveSelection: jest.fn(async () => undefined) }
     bindConversationStorePersistence(persistence)
     useChatStore.setState({ conversations: [source], currentId: 'c', draftConversationIds: new Set(), error: null })
   })

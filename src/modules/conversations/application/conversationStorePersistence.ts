@@ -6,6 +6,7 @@ export interface ConversationStorePersistencePort {
   loadPage(input?: ConversationPageInput): Promise<ConversationPage>
   loadRecord(conversationId: string): Promise<Conversation | undefined>
   saveRecord(conversation: Conversation): Promise<void>
+  deleteRecord(conversationId: string): Promise<void>
   replaceRecords(conversations: readonly Conversation[]): Promise<void>
   readActiveSelection(): Promise<string | null>
   writeActiveSelection(conversationId: string | null): Promise<void>

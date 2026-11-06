@@ -2,8 +2,15 @@ import type {
   ChatMessageInput,
   GenerationParameterKey,
   ReasoningEffort,
+  ConversationContextPolicyOverride,
+  ConversationScenePlanSource,
+  ConversationResourceScopeOverride,
+  ToolDeclarationMode,
 } from '@/core'
 import * as v from 'valibot'
+import { normalizeConversationContextPolicy } from './conversationContextPolicy'
+import { normalizeConversationResourceScope, normalizeConversationScenePlanSource } from './conversationScenePlan'
+import { normalizeModelRoutingPlan, sameModelRoute, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
 
 export const CONVERSATION_SNAPSHOT_SCHEMA = 'islemind.conversation-snapshot.v3'
 const PREVIOUS_CONVERSATION_SNAPSHOT_SCHEMA = 'islemind.conversation-snapshot.v2'
@@ -19,6 +26,7 @@ export interface ConversationSnapshot {
   providerId: string | null
   model: string | null
   providerModelMode?: 'inherited' | 'manual'
+  routingPlan?: ModelRoutingPlan
   systemPrompt?: string
   temperature?: number
   topP?: number
@@ -26,10 +34,14 @@ export interface ConversationSnapshot {
   reasoningEffort?: ReasoningEffort
   maxTokens?: number
   generationParameterOverrides?: ConversationGenerationParameterOverrides
+  contextPolicyOverride?: ConversationContextPolicyOverride
+  toolDeclarationModeOverride?: ToolDeclarationMode
+  scenePlanSource?: ConversationScenePlanSource
+  resourceScopeOverride?: ConversationResourceScopeOverride
   messages: readonly ChatMessageInput[]
 }
 
-const reasoningEffortSchema = v.picklist(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const reasoningEffortSchema = v.picklist(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 
 const generationParameterOverridesSchema = v.object({
   temperature: v.optional(v.boolean()),
@@ -66,6 +78,21 @@ export function parseConversationSnapshot(value: unknown): ConversationSnapshot 
   const parsed = v.safeParse(legacyConversationSchema, value)
   if (!parsed.success) return undefined
   if (!parsed.output.id.trim()) return undefined
+  const contextPolicyValue = (value as Record<string, unknown>).contextPolicyOverride
+  const contextPolicyOverride = normalizeConversationContextPolicy(contextPolicyValue)
+  if (contextPolicyValue !== undefined && !contextPolicyOverride) return undefined
+  const toolDeclarationModeOverride = (value as Record<string, unknown>).toolDeclarationModeOverride
+  if (toolDeclarationModeOverride !== undefined && toolDeclarationModeOverride !== 'full' && toolDeclarationModeOverride !== 'auto') return undefined
+  const sourceValue = (value as Record<string, unknown>).scenePlanSource
+  const scenePlanSource = normalizeConversationScenePlanSource(sourceValue)
+  if (sourceValue !== undefined && !scenePlanSource) return undefined
+  const scopeValue = (value as Record<string, unknown>).resourceScopeOverride
+  const resourceScopeOverride = normalizeConversationResourceScope(scopeValue)
+  if (scopeValue !== undefined && !resourceScopeOverride) return undefined
+  const routingValue = (value as Record<string, unknown>).routingPlan
+  const routingPlan = normalizeModelRoutingPlan(routingValue)
+  if (routingValue !== undefined && (!routingPlan || !sameModelRoute(routingPlan.primary,
+    { providerId: parsed.output.providerId ?? '', model: parsed.output.model ?? '' }))) return undefined
 
   const messages = parsed.output.messages.flatMap<ChatMessageInput>((message) => {
     const text = message.responseText ?? message.text ?? message.content ?? ''
@@ -76,6 +103,11 @@ export function parseConversationSnapshot(value: unknown): ConversationSnapshot 
   return {
     schema: CONVERSATION_SNAPSHOT_SCHEMA,
     id: parsed.output.id,
+    ...(routingPlan ? { routingPlan } : {}),
+    ...(contextPolicyOverride ? { contextPolicyOverride } : {}),
+    ...(toolDeclarationModeOverride ? { toolDeclarationModeOverride } : {}),
+    ...(scenePlanSource ? { scenePlanSource } : {}),
+    ...(resourceScopeOverride ? { resourceScopeOverride } : {}),
     providerId: parsed.output.providerId ?? null,
     model: parsed.output.model ?? null,
     ...(parsed.output.providerModelMode ? { providerModelMode: parsed.output.providerModelMode } : {}),

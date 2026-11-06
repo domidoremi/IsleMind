@@ -17,6 +17,7 @@ export const conversationStorePersistence: ConversationStorePersistencePort =
     loadPage: (input) => conversationPersistence.loadPage(input),
     loadRecord: (conversationId) => conversationPersistence.loadRecord(conversationId),
     saveRecord: (conversation) => conversationPersistence.save(conversation),
+    deleteRecord: (conversationId) => conversationPersistence.remove(conversationId),
     replaceRecords: (conversations) => conversationPersistence.replaceAll(conversations),
     readActiveSelection: () =>
       readApplicationDataRecord<string | null>('ACTIVE_CONVERSATION'),

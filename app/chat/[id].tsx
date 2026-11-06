@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { BackHandler, Platform, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router'
@@ -28,7 +28,10 @@ export default function ConversationDeepLinkScreen() {
     (state) => state.conversations.find((item) => item.id === id) ?? null,
   )
   const select = useChatStore((state) => state.select)
+  const ensureLoaded = useChatStore((state) => state.ensureLoaded)
   const conversationId = conversation?.id
+  const [readState, setReadState] = useState<{ id?: string; status: 'loading' | 'missing' | 'failed' }>({ status: 'loading' })
+  const [retry, setRetry] = useState(0)
 
   const returnToPreviousSurface = useCallback(() => {
     const action = resolveConversationReturnAction(params.returnTo, router.canGoBack())
@@ -44,6 +47,18 @@ export default function ConversationDeepLinkScreen() {
   useFocusEffect(useCallback(() => {
     if (conversationId) select(conversationId)
   }, [conversationId, select]))
+
+  useFocusEffect(useCallback(() => {
+    if (!id || conversationId) return
+    const controller = new AbortController()
+    setReadState({ id, status: 'loading' })
+    void ensureLoaded(id, controller.signal).then(() => {
+      if (!controller.signal.aborted) setReadState({ id, status: 'missing' })
+    }).catch(() => {
+      if (!controller.signal.aborted) setReadState({ id, status: 'failed' })
+    })
+    return () => controller.abort()
+  }, [id, conversationId, ensureLoaded, retry]))
 
   useEffect(() => {
     if (Platform.OS !== 'android' || conversation) return undefined
@@ -73,6 +88,19 @@ export default function ConversationDeepLinkScreen() {
       />
     )
   }
+
+  const status = !id ? 'missing' : readState.id === id ? readState.status : 'loading'
+  if (status !== 'missing') return (
+    <ThemeDetailFrame kind="missing-chat" title={t(status === 'loading' ? 'common.loading' : 'conversation.loadFailed')}
+      subtitle={id} onBack={returnToPreviousSurface} backLabel={t('common.back')}>
+      <View style={{ padding: 24, gap: 16 }}>
+        <Text accessibilityRole={status === 'failed' ? 'alert' : undefined} accessibilityLiveRegion="polite" style={{ color: colors.text }}>
+          {t(status === 'loading' ? 'common.loading' : 'conversation.loadFailed')}
+        </Text>
+        {status === 'failed' ? <IsleButton label={t('common.retry')} onPress={() => setRetry(value => value + 1)} /> : null}
+      </View>
+    </ThemeDetailFrame>
+  )
 
   return (
     <ThemeDetailFrame

@@ -6,6 +6,7 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleHeader, IslePressable, IsleSearchField, useIsleDialog } from '@/components/ui/isle'
 import { ConversationRow } from '@/components/conversations/ConversationRow'
+import { DeleteAllConversationsButton } from '@/components/conversations/DeleteAllConversationsButton'
 import { useMainPagerGestureLock } from './MainPagerGestureLock'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
@@ -1092,6 +1093,7 @@ function ConversationsScreenBody({ active = true, shellNavigation = false, onHom
           {conversations.length ? t('conversation.historyCount', { count: conversations.length }) : t('conversation.emptyHistory')}
         </Text>
       </View>
+      <DeleteAllConversationsButton compact />
       <AnimatedNavigationTrigger
         variant="iconButton"
          label={newConversationLabel}
@@ -1124,6 +1126,8 @@ function ConversationsScreenBody({ active = true, shellNavigation = false, onHom
         />
       }
       trailing={
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <DeleteAllConversationsButton compact />
         <AnimatedNavigationTrigger
           variant="iconButton"
            label={newConversationLabel}
@@ -1146,6 +1150,7 @@ function ConversationsScreenBody({ active = true, shellNavigation = false, onHom
             elevation: colors.ui.monet ? 1 : 0,
           }}
         />
+        </View>
       }
     />
   )

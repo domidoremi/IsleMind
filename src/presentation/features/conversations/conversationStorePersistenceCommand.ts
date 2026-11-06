@@ -4,6 +4,7 @@ import type {
   ConversationStorePersistencePort,
 } from '@/modules/conversations'
 import type { Conversation } from '@/types/chatContracts'
+import { conversationScenePlanRevision, copyConversationScenePlanPreferences, CONVERSATION_SCENE_PLAN_CONFLICT, CONVERSATION_SCENE_PLAN_MISSING } from '@/modules/conversations'
 
 export const CONVERSATION_STORE_PERSISTENCE_UNINITIALIZED_ERROR =
   'conversation_store_persistence_uninitialized'
@@ -41,12 +42,32 @@ export function loadConversationPage(input?: ConversationPageInput): Promise<Con
 }
 
 export function loadConversationRecord(conversationId: string): Promise<Conversation | undefined> {
-  return requirePersistence().loadRecord(conversationId)
+  const boundPersistence = requirePersistence()
+  // An addressed read requested after deletion must observe that queued write.
+  return mutationTail.then(() => boundPersistence.loadRecord(conversationId))
 }
 
 export function saveConversationRecord(conversation: Conversation): Promise<void> {
   const boundPersistence = requirePersistence()
   return enqueueConversationMutation(() => boundPersistence.saveRecord(conversation))
+}
+
+export function deleteConversationRecord(conversationId: string): Promise<void> {
+  const boundPersistence = requirePersistence()
+  return enqueueConversationMutation(() => boundPersistence.deleteRecord(conversationId))
+}
+
+/** Compare after earlier queued saves/deletes, immediately before the canonical save. */
+export function saveConversationScenePlanRecord(
+  conversation: Conversation, expectedRevision: string, validate: () => Promise<boolean>,
+): Promise<void> {
+  const boundPersistence = requirePersistence()
+  return enqueueConversationMutation(async () => {
+    const current = await boundPersistence.loadRecord(conversation.id)
+    if (!current) throw new Error(CONVERSATION_SCENE_PLAN_MISSING)
+    if (conversationScenePlanRevision(current) !== expectedRevision || !await validate()) throw new Error(CONVERSATION_SCENE_PLAN_CONFLICT)
+    await boundPersistence.saveRecord(copyConversationScenePlanPreferences(current, conversation))
+  })
 }
 
 export function replaceConversationRecords(

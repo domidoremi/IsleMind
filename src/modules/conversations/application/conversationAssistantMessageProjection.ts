@@ -114,7 +114,8 @@ export function createConversationAssistantMessageProjectionPolicy(
         ? {
             ...input.providerUsage,
             totalTokens: input.providerUsage.totalTokens
-              ?? (input.providerUsage.inputTokens ?? 0) + (input.providerUsage.outputTokens ?? 0),
+              ?? (input.providerUsage.inputTokens !== undefined && input.providerUsage.outputTokens !== undefined
+                ? input.providerUsage.inputTokens + input.providerUsage.outputTokens : undefined),
           }
         : dependencies.buildEstimatedUsage(inputMessages, input.outputText)
 

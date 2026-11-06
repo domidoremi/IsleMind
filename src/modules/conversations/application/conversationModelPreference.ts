@@ -1,4 +1,5 @@
 import type { Conversation } from '@/types/chatContracts'
+import { normalizeModelRoutingPlan, sameModelRoute, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
 
 /** Blank/partial legacy pairs are readable, but cannot be dispatched. */
 export function hasConversationModelPreference<T extends { providerId?: string | null; model?: string | null }>(
@@ -11,9 +12,14 @@ export function hasConversationModelPreference<T extends { providerId?: string |
 /** Explicit user selection only. Runtime fallback must never call this reducer. */
 export function applyConversationModelPreference(
   conversation: Conversation,
-  preference: { providerId: string; model: string },
+  preference: { providerId: string; model: string; routingPlan?: ModelRoutingPlan },
   now: number,
 ): Conversation {
   if (!hasConversationModelPreference(preference)) throw new TypeError('A complete provider/model preference is required.')
-  return { ...conversation, providerId: preference.providerId.trim(), model: preference.model.trim(), providerModelMode: 'manual', updatedAt: now }
+  const routingPlan = normalizeModelRoutingPlan(preference.routingPlan)
+  if (preference.routingPlan !== undefined && (!routingPlan || !sameModelRoute(routingPlan.primary, preference))) throw new TypeError('Routing plan does not match the selected model.')
+  const next = { ...conversation, providerId: preference.providerId.trim(), model: preference.model.trim(), providerModelMode: 'manual' as const, updatedAt: now }
+  if (routingPlan) next.routingPlan = routingPlan
+  else delete next.routingPlan
+  return next
 }

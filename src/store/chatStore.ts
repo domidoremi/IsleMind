@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { normalizeModelRoutingPlan, sameModelRoute, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
+import { applyConversationResourceSelectionUpdates, normalizeConversationGenerationPreferences } from '@/modules/conversations'
 import type { Conversation, ConversationGenerationParameterKey, ConversationGenerationParameterOverrides, Message, ResponseLifecycleStage } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
 import { getModelConfig } from '@/types/modelCatalog'
@@ -6,6 +8,7 @@ import {
   loadConversationPage,
   loadConversationRecord,
   loadConversationRecords,
+  deleteConversationRecord,
   readActiveConversationSelection,
   replaceConversationRecords,
   saveConversationRecord,
@@ -44,6 +47,7 @@ import {
   lifecycleStageForMessageStatus,
   lifecycleStageForTrace,
   normalizeResponseLifecycle,
+  normalizeMessageUsageExecution,
   responseLifecycleTraceTimestamp,
   safeResponseLifecycleSummary,
   safeResponseLifecycleTraceSummary,
@@ -178,7 +182,7 @@ function updateContainsGenerationParameterPatch(updates: Partial<Conversation>):
     GENERATION_PARAMETER_KEYS.some((key) => hasOwnProperty(updates, key))
 }
 
-function buildConversationRecord(providerId: string, model: string): Conversation {
+export function buildConversationRecord(providerId: string, model: string): Conversation {
   const { settings, providers } = useSettingsStore.getState()
   const provider = providers.find((item) => item.id === providerId)
   const upstreamModel = provider ? resolveProviderModelAlias(provider, model) : model
@@ -222,6 +226,7 @@ interface ChatState {
   load: () => Promise<void>
   loadMore: () => Promise<boolean>
   loadAll: () => Promise<void>
+  ensureLoaded: (id: string, signal?: AbortSignal) => Promise<boolean>
   create: (providerId: string, model: string) => string
   createDraft: (providerId: string, model: string) => string
   createBranchDraft: (conversationId: string, throughMessageId: string) => string | null
@@ -230,7 +235,7 @@ interface ChatState {
   delete: (id: string) => void
   rename: (id: string, title: string) => void
   updateConversation: (id: string, updates: Partial<Conversation>) => void
-  switchConversationModel: (id: string, providerId: string, model: string, options?: { rememberPreference?: boolean }) => boolean
+  switchConversationModel: (id: string, providerId: string, model: string, options?: { rememberPreference?: boolean; routingPlan?: ModelRoutingPlan }) => boolean
   removeMessage: (convId: string, msgId: string) => void
   trimAfterMessage: (convId: string, msgId: string) => void
   addMessage: (
@@ -256,7 +261,7 @@ interface ChatState {
   persistStreamingContentSnapshot: (convId: string, msgId: string, content: string) => void
   flushStreamingMessage: (convId: string, msgId: string) => Promise<void>
   setError: (error: string | null) => void
-  clearAll: () => void
+  clearAll: () => Promise<void>
   importData: (conversations: Conversation[]) => void
   getCurrent: () => Conversation | null
 }
@@ -266,6 +271,7 @@ const DEFAULT_CONVERSATION_REASONING_EFFORT: Conversation['reasoningEffort'] = '
 const HISTORY_PAGE_SIZE = 40
 const GENERATION_PARAMETER_KEYS = ['temperature', 'topP', 'topK', 'maxTokens'] as const satisfies readonly ConversationGenerationParameterKey[]
 let pendingChatHydration: Promise<void> | undefined
+let conversationReadRevision = 0
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
@@ -279,9 +285,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   load: () => {
     if (pendingChatHydration) return pendingChatHydration
+    const readRevision = conversationReadRevision
     set({ isLoading: true })
     pendingChatHydration = (async () => {
       const page = await loadConversationPage({ limit: HISTORY_PAGE_SIZE })
+      if (readRevision !== conversationReadRevision) return
       if (page.conversations.length) {
         let conversations = prepareConversationsForStore([...page.conversations])
         const currentId = await readActiveConversationSelection()
@@ -292,6 +300,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...conversations,
           ]
         }
+        if (readRevision !== conversationReadRevision) return
         const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
         set({
           conversations,
@@ -313,7 +322,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         historyLoadingMore: false,
       })
       await writeActiveConversationSelection(null)
-      void hydrateSqliteConversationsInBackground()
+      void hydrateSqliteConversationsInBackground(readRevision)
     })().finally(() => {
       // Share only the active attempt, not a rejected promise. Callers still
       // receive the failure; no records or unrelated error are cleared here.
@@ -326,12 +335,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadMore: async () => {
     const state = get()
     if (!state.historyHasMore || state.historyLoadingMore) return false
+    const readRevision = conversationReadRevision
     set({ historyLoadingMore: true })
     try {
       const page = await loadConversationPage({
         ...(state.historyCursor ? { cursor: state.historyCursor } : {}),
         limit: HISTORY_PAGE_SIZE,
       })
+      if (readRevision !== conversationReadRevision) return false
       const incoming = prepareConversationsForStore([...page.conversations])
       set((current) => {
         const existingIds = new Set(current.conversations.map((conversation) => conversation.id))
@@ -345,6 +356,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
       return true
     } catch (error) {
+      if (readRevision !== conversationReadRevision) return false
       const message = extractUserFacingErrorDetail(error) || st('error.unknownError')
       set({ historyLoadingMore: false, historyHasMore: false })
       set({ error: st('storage.sqliteRestoreFailed', { message }) })
@@ -358,12 +370,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  ensureLoaded: async (id, signal) => {
+    if (!id || signal?.aborted) return false
+    if (pendingChatHydration) await pendingChatHydration
+    if (signal?.aborted) return false
+    if (get().conversations.some(conversation => conversation.id === id)) return true
+    const readRevision = conversationReadRevision
+    const record = await loadConversationRecord(id)
+    if (signal?.aborted || readRevision !== conversationReadRevision) return false
+    if (get().conversations.some(conversation => conversation.id === id)) return true
+    if (!record || record.id !== id) return false
+    const [conversation] = prepareConversationsForStore([record])
+    set(state => ({ conversations: [...state.conversations, conversation] }))
+    return true
+  },
+
   create: (providerId: string, model: string) => {
     const conversation = buildConversationRecord(providerId, model)
     const id = conversation.id
     set((state) => {
       const updated = [conversation, ...state.conversations]
-      void persistConversations(updated, state.draftConversationIds)
+      void persistConversationRecord(updated, id)
       void writeActiveConversationSelection(id)
       return { conversations: updated, currentId: id }
     })
@@ -423,7 +450,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     set((state) => {
       const updated = [conversation, ...state.conversations]
-      void persistConversations(updated, state.draftConversationIds)
+      void persistConversationRecord(updated, id)
       void writeActiveConversationSelection(id)
       return { conversations: updated, currentId: id }
     })
@@ -447,19 +474,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   delete: (id: string) => {
     if (isConversationLocked(id)) return
+    conversationReadRevision += 1
     cancelConversationAssistantDetachedWork(id)
     abortStream(id)
     set((state) => {
       const updated = state.conversations.filter((c) => c.id !== id)
       const draftConversationIds = new Set(state.draftConversationIds)
       draftConversationIds.delete(id)
-      void persistConversations(updated, draftConversationIds)
+      if (!state.draftConversationIds.has(id)) void trackConversationPersistence(deleteConversationRecord(id))
       const nextCurrentId = state.currentId === id ? updated[0]?.id ?? null : state.currentId
-      void writeActiveConversationSelection(nextCurrentId)
+      if (nextCurrentId === null || !draftConversationIds.has(nextCurrentId)) void writeActiveConversationSelection(nextCurrentId)
       return {
         conversations: updated,
         draftConversationIds,
         currentId: nextCurrentId,
+        isLoading: false,
+        historyLoadingMore: false,
       }
     })
   },
@@ -481,7 +511,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const updated = state.conversations.map((c) => {
         if (c.id !== id) return c
-        const next: Conversation = { ...c, ...updates, updatedAt: Date.now() }
+        const next: Conversation = { ...c, ...applyConversationResourceSelectionUpdates(c, updates), updatedAt: Date.now() }
         if (shouldMergeParameterOverrides) {
           const generationParameterOverrides = mergeGenerationParameterOverrides(c, updates)
           if (generationParameterOverrides) {
@@ -497,11 +527,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  switchConversationModel: (id: string, providerId: string, model: string, options?: { rememberPreference?: boolean }) => {
+  switchConversationModel: (id: string, providerId: string, model: string, options?: { rememberPreference?: boolean; routingPlan?: ModelRoutingPlan }) => {
     if (isConversationLocked(id) || hasActiveStream(id)) return false
     if (!get().conversations.some((conversation) => conversation.id === id)) return false
     const nextModel = model.trim()
     if (!nextModel) return false
+    const routingPlan = normalizeModelRoutingPlan(options?.routingPlan)
+    if (options?.routingPlan && (!routingPlan || !sameModelRoute(routingPlan.primary, { providerId, model: nextModel }))) return false
     const { providers, settings } = useSettingsStore.getState()
     const provider = providers.find((item) => item.id === providerId)
     if (!provider) {
@@ -562,7 +594,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           maxTokens: currentOverrides?.maxTokens === true,
         }, true)
         const nextConversation: Conversation = {
-          ...applyConversationModelPreference(c, { providerId, model: nextModel }, Date.now()),
+          ...applyConversationModelPreference(c, { providerId, model: nextModel, routingPlan }, Date.now()),
           maxTokens: nextMaxTokens || resolveConversationDefaultMaxTokens(settings, nextRanges),
           temperature: nextTemperature,
           topP: nextTopP,
@@ -801,23 +833,53 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ error })
   },
 
-  clearAll: () => {
+  clearAll: async () => {
+    const previous = get()
+    conversationReadRevision++
     cancelAllConversationAssistantDetachedWork()
     abortAllStreams()
+    for (const timer of streamingPersistTimers.values()) clearTimeout(timer)
+    streamingPersistTimers.clear()
+    const empty: Conversation[] = []
     set({
-      conversations: [],
+      conversations: empty,
       draftConversationIds: new Set<string>(),
       currentId: null,
+      isLoading: false,
       error: null,
       historyCursor: null,
       historyHasMore: false,
       historyLoadingMore: false,
     })
-    void writeActiveConversationSelection(null)
-    void persistConversations([], new Set<string>())
+    const [records, selection] = await Promise.allSettled([
+      persistConversations(empty, new Set<string>()),
+      writeActiveConversationSelection(null),
+    ])
+    if (records.status === 'rejected') {
+      // A failed transaction retains the database. Restore the visible snapshot
+      // only if the user has not started a new conversation in the meantime.
+      if (get().conversations === empty) {
+        set({
+          conversations: previous.conversations,
+          draftConversationIds: previous.draftConversationIds,
+          currentId: previous.currentId,
+          historyCursor: previous.historyCursor,
+          historyHasMore: previous.historyHasMore,
+          historyLoadingMore: false,
+        })
+        void writeActiveConversationSelection(previous.currentId).catch(() => undefined)
+      }
+      throw records.reason
+    }
+    if (selection.status === 'rejected') {
+      const detail = extractUserFacingErrorDetail(selection.reason) || st('error.unknownError')
+      get().setError(st('storage.sqliteSyncFailed', { message: clampTraceText(redactSensitiveText(detail), 240) }))
+      throw selection.reason
+    }
   },
 
   importData: (conversations: Conversation[]) => {
+    conversationReadRevision++
     cancelAllConversationAssistantDetachedWork()
     abortAllStreams()
     const cleaned = prepareConversationsForStore(conversations)
@@ -991,21 +1053,24 @@ function prepareConversationsForStore(conversations: Conversation[]): Conversati
   return sanitizeConversationGenerationParameterOverridesForStore(sanitizeConversationInternalOutputsForStore(sanitizeConversationAttachmentsForStore(sanitizeConversationTracesForStore(conversations))))
 }
 
-async function hydrateSqliteConversationsInBackground(): Promise<void> {
+async function hydrateSqliteConversationsInBackground(readRevision: number): Promise<void> {
   try {
     const sqliteData = await loadConversationRecords()
+    if (readRevision !== conversationReadRevision) return
     if (!sqliteData.length) {
       await writeActiveConversationSelection(null)
       return
     }
     const conversations = prepareConversationsForStore([...sqliteData])
     const currentId = await readActiveConversationSelection()
+    if (readRevision !== conversationReadRevision) return
     const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
     const currentState = useChatStore.getState()
     if (currentState.conversations.length > 0 || currentState.draftConversationIds.size > 0) return
     useChatStore.setState({ conversations, draftConversationIds: new Set<string>(), currentId: selectedId })
     void writeActiveConversationSelection(selectedId)
   } catch (error) {
+    if (readRevision !== conversationReadRevision) return
     const message = extractUserFacingErrorDetail(error) || st('error.unknownError')
     useChatStore.getState().setError(st('storage.sqliteRestoreFailed', { message }))
   }
@@ -1025,18 +1090,8 @@ function resolveLoadedActiveConversationId(
 }
 
 function sanitizeConversationGenerationParameterOverridesForStore(conversations: Conversation[]): Conversation[] {
-  return conversations.map((conversation) => {
-    if (!hasOwnProperty(conversation, 'generationParameterOverrides')) {
-      return {
-        ...conversation,
-        generationParameterOverrides: inferGenerationParameterOverrides(conversation) ?? {},
-      }
-    }
-    return {
-      ...conversation,
-      generationParameterOverrides: compactGenerationParameterOverrides(conversation.generationParameterOverrides, true) ?? {},
-    }
-  })
+  return conversations.map(conversation => ({ ...conversation,
+    generationParameterOverrides: normalizeConversationGenerationPreferences(conversation) }))
 }
 
 function sanitizeConversationInternalOutputsForStore(conversations: Conversation[]): Conversation[] {
@@ -1074,6 +1129,7 @@ function sanitizeMessageTracesForStore(message: Message): Message {
     : undefined
   return {
     ...message,
+    usageExecution: message.role === 'assistant' ? normalizeMessageUsageExecution(message.usageExecution) : undefined,
     reasoning: sanitizeProcessTracesForBoundary(message.reasoning),
     toolCalls: sanitizeProcessTracesForBoundary(message.toolCalls),
     retrievalTrace: sanitizeProcessTracesForBoundary(message.retrievalTrace),
@@ -1083,6 +1139,7 @@ function sanitizeMessageTracesForStore(message: Message): Message {
 
 function sanitizeMessageTraceUpdates(updates: Partial<Message>): Partial<Message> {
   const safe = { ...updates }
+  if ('usageExecution' in safe) safe.usageExecution = normalizeMessageUsageExecution(safe.usageExecution)
   if ('reasoning' in safe) safe.reasoning = sanitizeProcessTracesForBoundary(safe.reasoning)
   if ('toolCalls' in safe) safe.toolCalls = sanitizeProcessTracesForBoundary(safe.toolCalls)
   if ('retrievalTrace' in safe) safe.retrievalTrace = sanitizeProcessTracesForBoundary(safe.retrievalTrace)

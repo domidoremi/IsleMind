@@ -29,6 +29,36 @@ const conversation: Conversation = {
 }
 
 describe('nullable Conversation preference migration (real SQLite)', () => {
+  it('round-trips scene provenance and explicit none scopes without changing historical message bytes', async () => {
+    const { native, provider } = fixture()
+    try {
+      const repo = createSqliteConversationRepository(provider)
+      await repo.save(conversation)
+      const before = native.query("SELECT messageJson FROM conversation_message_records WHERE id='m'").get().messageJson
+      const applied: Conversation = { ...conversation, toolDeclarationModeOverride: 'auto',
+        contextPolicyOverride: { schema: 'islemind.conversation-context-policy.v1', remoteCompactThreshold: 0.65 },
+        enabledTools: [], knowledgeSources: [], resourceScopeOverride: { schema: 'islemind.conversation-resource-scope.v1', tools: 'none', knowledge: 'none' },
+        scenePlanSource: { schema: 'islemind.conversation-scene-plan.v1', id: 'research', name: 'Research', revision: 2, appliedAt: 3 } }
+      await repo.save(applied)
+      const reopened = createSqliteConversationRepository(provider)
+      expect(await reopened.loadRecord('c')).toEqual(applied)
+      expect(native.query("SELECT messageJson FROM conversation_message_records WHERE id='m'").get().messageJson).toBe(before)
+      const replacement = await reopened.loadReplacementSnapshot()
+      await reopened.replaceAll(replacement)
+      expect((await reopened.loadAll())[0]).toEqual(applied)
+    } finally { native.close() }
+  })
+  it('round-trips routing plan snapshots in real conversation storage', async () => {
+    const { native, provider } = fixture()
+    try {
+      const plan = { schema: 'islemind.model-routing-plan.v1' as const, id: 'stable', name: 'Stable', mode: 'fallback' as const,
+        primary: { providerId: 'p', model: 'alias' }, backup: { providerId: 'b', model: 'alias' }, crossProvider: 'ask' as const }
+      const repo = createSqliteConversationRepository(provider)
+      await repo.save({ ...conversation, routingPlan: plan })
+      expect((await createSqliteConversationRepository(provider).loadRecord('c'))?.routingPlan).toEqual(plan)
+      expect((await repo.loadAll())[0].routingPlan).toEqual(plan)
+    } finally { native.close() }
+  })
   it('migrates v2, preserves message bytes, and round-trips unbound and partial legacy values after restart', async () => {
     const { native, provider } = fixture()
     try {
