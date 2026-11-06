@@ -1,5 +1,8 @@
 import type { Settings } from '@/types/settingsContracts'
+import { normalizeModelRoutingPlans } from '@/core/modelRoutingPlan'
 import { normalizeSettingsLastPreferredModel } from '../identity'
+import { normalizeSettingsToolDeclarationMode, normalizeSettingsToolDeclarations } from '../toolDeclarations'
+import { normalizeScenePlans, normalizeSettingsScenePlans } from '../scenePlans'
 
 export class SettingsPersistenceValidationError extends Error {
   constructor() {
@@ -29,13 +32,17 @@ export function createSettingsPersistence(
       try {
         // Unsupported saved identity versions must not become optional startup errors.
         normalizeSettingsLastPreferredModel(record.lastPreferredModel)
+        normalizeModelRoutingPlans(record.modelRoutingPlans)
+        normalizeScenePlans(record.scenePlans)
       } catch {
         throw new SettingsPersistenceValidationError()
       }
-      return record as Partial<Settings>
+      return Object.hasOwn(record, 'toolDeclarationMode')
+        ? { ...record, toolDeclarationMode: normalizeSettingsToolDeclarationMode(record.toolDeclarationMode) } as Partial<Settings>
+        : record as Partial<Settings>
     },
     save(settings: Settings) {
-      return records.write(settings)
+      return records.write(normalizeSettingsScenePlans(normalizeSettingsToolDeclarations(settings)))
     },
   })
 }

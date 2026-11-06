@@ -1,4 +1,5 @@
 import { parseAgentDefinitions, type AgentDefinition } from '@/modules/assistant-runtime'
+import { normalizeModelRoutingPlan, sameModelRoute } from '@/core/modelRoutingPlan'
 import {
   PROVIDER_PLATFORM_DEFAULT_TEMPERATURE,
   defaultProviderCredentialMode,
@@ -28,7 +29,8 @@ import {
 } from '@/modules/workspaces'
 import type { PortableKnowledgeSnapshot } from '@/modules/knowledge'
 import { parseSavedDocuments, type SavedDocument, type DocumentRepository } from '@/modules/documents'
-import { normalizeResponseLifecycle } from '@/modules/conversations'
+import { normalizeConversationContextPolicy, normalizeConversationResourceScope, normalizeConversationScenePlanSource, normalizeMessageUsageExecution, normalizeResponseLifecycle } from '@/modules/conversations'
+import { parseProviderModelParameterConfiguration } from '@/modules/providers'
 import {
   redactSensitiveText,
   sanitizeTraceMetadata,
@@ -624,6 +626,7 @@ function preserveProviderModels(imported: AIProvider, existing?: AIProvider): AI
       ? [...existing.modelAvailability]
       : undefined,
     modelConfigs: existing?.modelConfigs ? [...existing.modelConfigs] : undefined,
+    modelParameterOverrides: parseProviderModelParameterConfiguration(existing?.modelParameterOverrides),
     credentialGroups: imported.credentialGroups?.map((group) => ({
       ...group,
       availableModels: existingGroups.get(group.id)?.availableModels
@@ -643,6 +646,7 @@ function replaceProviderModels(existing: AIProvider, imported: AIProvider): AIPr
       ? [...imported.modelAvailability]
       : undefined,
     modelConfigs: imported.modelConfigs ? [...imported.modelConfigs] : undefined,
+    modelParameterOverrides: parseProviderModelParameterConfiguration(imported.modelParameterOverrides),
   }
 }
 
@@ -730,6 +734,12 @@ function isLanguagePreferenceSource(
 
 function isConversationLike(value: unknown): value is Conversation {
   if (!isRecord(value)) return false
+  if (value.routingPlan !== undefined && (!normalizeModelRoutingPlan(value.routingPlan)
+    || !sameModelRoute(normalizeModelRoutingPlan(value.routingPlan)!.primary, { providerId: String(value.providerId ?? ''), model: String(value.model ?? '') }))) return false
+  if (value.contextPolicyOverride !== undefined && !normalizeConversationContextPolicy(value.contextPolicyOverride)) return false
+  if (value.toolDeclarationModeOverride !== undefined && value.toolDeclarationModeOverride !== 'full' && value.toolDeclarationModeOverride !== 'auto') return false
+  if (value.scenePlanSource !== undefined && !normalizeConversationScenePlanSource(value.scenePlanSource)) return false
+  if (value.resourceScopeOverride !== undefined && !normalizeConversationResourceScope(value.resourceScopeOverride)) return false
   return typeof value.id === 'string' &&
     typeof value.title === 'string' &&
     (value.providerId == null || typeof value.providerId === 'string') &&
@@ -741,6 +751,7 @@ function isConversationLike(value: unknown): value is Conversation {
 function isMessageLike(value: unknown): value is Conversation['messages'][number] {
   if (!isRecord(value)) return false
   if (value.generationProtocol !== undefined && !isMessageProtocol(value.generationProtocol)) return false
+  if (value.usageExecution !== undefined && !normalizeMessageUsageExecution(value.usageExecution)) return false
   return typeof value.id === 'string' &&
     (value.role === 'user' || value.role === 'assistant') &&
     typeof value.content === 'string' &&
@@ -770,11 +781,22 @@ function isProviderLike(value: unknown): value is AIProvider {
 }
 
 function normalizeConversation(conversation: Conversation): Conversation {
+  const contextPolicyOverride = normalizeConversationContextPolicy(conversation.contextPolicyOverride)
+  if (conversation.contextPolicyOverride !== undefined && !contextPolicyOverride) throw new Error('Invalid conversation context policy.')
+  const scenePlanSource = normalizeConversationScenePlanSource(conversation.scenePlanSource)
+  if (conversation.scenePlanSource !== undefined && !scenePlanSource) throw new Error('Invalid conversation scene plan source.')
+  const resourceScopeOverride = normalizeConversationResourceScope(conversation.resourceScopeOverride)
+  if (conversation.resourceScopeOverride !== undefined && !resourceScopeOverride) throw new Error('Invalid conversation resource scope.')
+  if (conversation.toolDeclarationModeOverride !== undefined && conversation.toolDeclarationModeOverride !== 'full' && conversation.toolDeclarationModeOverride !== 'auto') throw new Error('Invalid conversation tool declaration mode.')
   const normalized: Conversation = {
     ...conversation,
+    routingPlan: normalizeModelRoutingPlan(conversation.routingPlan),
     providerId: conversation.providerId ?? null,
     model: conversation.model ?? null,
     providerModelMode: conversation.providerModelMode ?? 'inherited',
+    contextPolicyOverride,
+    scenePlanSource,
+    resourceScopeOverride,
     skillIds: stringArray(conversation.skillIds),
     skillSnapshot: isRecord(conversation.skillSnapshot)
       ? conversation.skillSnapshot
@@ -795,6 +817,9 @@ function normalizeConversation(conversation: Conversation): Conversation {
       if (message.generationProtocol !== undefined && !isMessageProtocol(message.generationProtocol)) {
         throw new Error('Unsupported or invalid message protocol metadata.')
       }
+      if (message.usageExecution !== undefined && !normalizeMessageUsageExecution(message.usageExecution)) {
+        throw new Error('Invalid message usage reference.')
+      }
       const status = normalizeMessageStatus(message.status)
       const startedAt = finiteNumber(message.startedAt)
       const completedAt = finiteNumber(message.completedAt)
@@ -808,6 +833,7 @@ function normalizeConversation(conversation: Conversation): Conversation {
         : undefined
       return {
         ...message,
+        usageExecution: message.role === 'assistant' ? normalizeMessageUsageExecution(message.usageExecution) : undefined,
         generationProtocol: isMessageProtocol(message.generationProtocol)
           ? { schema: 'islemind.message-protocol.v1' as const, adapterId: message.generationProtocol.adapterId }
           : undefined,
@@ -1107,6 +1133,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     usageQueryConfiguration: sanitizeProviderUsageQueryConfiguration(
       provider.usageQueryConfiguration,
     ),
+    modelParameterOverrides: parseProviderModelParameterConfiguration(provider.modelParameterOverrides),
     modelConfigs: buildProviderModelConfigsForStorage(
       provider,
       models,

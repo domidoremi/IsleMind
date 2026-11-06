@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals'
 import type { UsagePortableSnapshotRepository } from '@/modules/diagnostics'
 import { SAVED_DOCUMENT_SCHEMA, type SavedDocument } from '@/modules/documents'
 import type { AIProvider } from '@/types/providerContracts'
+import type { Settings } from '@/types/settingsContracts'
 import {
   createPortableDataPayloadRuntime,
   type PortableDataApplicationImportPlan,
@@ -11,6 +12,26 @@ import { createPortableBackupEnvelope } from './portableBackupPolicy'
 
 const retiredOpenAICompatiblePresetId = ['custom', 'openai', 'compatible'].join('-')
 const retiredAnthropicCompatiblePresetId = ['custom', 'anthropic', 'compatible'].join('-')
+
+it('round-trips scene templates, provenance and explicit scopes through a complete portable import', async () => {
+  const scene = { schema: 'islemind.scene-plan.v1' as const, id: 'scene', name: 'Research', revision: 2,
+    configuration: { enabledTools: [], knowledgeSources: [], contextPolicy: null, toolDeclarationMode: 'auto' as const } }
+  const source = runtime([], [], { scenePlans: [scene], theme: 'light', language: 'en', defaultProvider: null, fontSize: 14, hapticsEnabled: false })
+  const exported = await source.payloadRuntime.exportPayload()
+  exported.conversations = [{ id: 'conversation', title: 'History', providerId: 'p', model: 'm',
+    systemPrompt: '', temperature: 0.6, maxTokens: 10, createdAt: 1, updatedAt: 2, messages: [],
+    enabledTools: [], knowledgeSources: [], toolDeclarationModeOverride: 'auto',
+    resourceScopeOverride: { schema: 'islemind.conversation-resource-scope.v1', tools: 'none', knowledge: 'none' },
+    scenePlanSource: { schema: 'islemind.conversation-scene-plan.v1', id: scene.id, name: scene.name, revision: 2, appliedAt: 2 } }]
+  const target = runtime()
+  const result = await target.payloadRuntime.importJson(JSON.stringify(exported))
+  expect(result.ok).toBe(true)
+  expect(target.importedPlans[0].settings?.scenePlans).toEqual([scene])
+  expect(target.importedPlans[0].conversations[0]).toMatchObject({ toolDeclarationModeOverride: 'auto',
+    resourceScopeOverride: { tools: 'none', knowledge: 'none' }, scenePlanSource: { id: 'scene', revision: 2 } })
+  const invalid = { ...exported, conversations: [{ ...exported.conversations[0], resourceScopeOverride: { schema: 'future', tools: 'all' } }] }
+  expect((await runtime().payloadRuntime.importJson(JSON.stringify(invalid))).ok).toBe(false)
+})
 
 const emptyUsageSnapshot = {
   schema: 'islemind.usage-portable-snapshot.v1',
@@ -71,11 +92,11 @@ function payload(providerMetadata: unknown): string {
   })
 }
 
-function runtime(documents: SavedDocument[] = [], agents: import('@/modules/assistant-runtime/agentDefinition').AgentDefinition[] = []) {
+function runtime(documents: SavedDocument[] = [], agents: import('@/modules/assistant-runtime/agentDefinition').AgentDefinition[] = [], settings: Settings | null = null) {
   const importedPlans: PortableDataApplicationImportPlan[] = []
   const dependencies: PortableDataPayloadRuntimeDependencies = {
     records: {
-      loadSettings: async () => null,
+      loadSettings: async () => settings,
       loadProviders: async () => [],
       loadSkills: async () => [],
       loadAgentDefinitions: async () => agents,
@@ -206,6 +227,82 @@ describe('portable saved documents', () => {
       selection: { mode: 'selective', categories: ['documents'] }, payload: old, createdAt: 1 })))
       .toMatchObject({ ok: false, reason: 'invalid_structure' })
     expect(importedPlans).toHaveLength(count)
+  })
+})
+
+describe('portable model favorites', () => {
+  const favorites = [
+    { providerId: 'connection-a', modelId: 'requested-alias' },
+    { providerId: 'connection-b', modelId: 'requested-alias' },
+  ]
+  const settings = {
+    defaultProvider: 'different-default',
+    lastPreferredModel: { schema: 'islemind.global-model-preference.v1', providerId: 'preferred', model: 'different-model' },
+    modelDisplayAliases: [{ ...favorites[0], displayName: 'Friendly name' }],
+    modelFavorites: favorites,
+  } as unknown as Settings
+
+  it('round-trips connection/requested identities with settings in full and selective backups', async () => {
+    const source = runtime([], [], settings)
+    expect((await source.payloadRuntime.exportPayload()).settings?.modelFavorites).toEqual(favorites)
+    expect((await source.payloadRuntime.exportPayload({ selection: { mode: 'selective', categories: ['models'] } })).settings).toBeNull()
+    const json = (await source.payloadRuntime.exportJson({ selection: { mode: 'selective', categories: ['settings'] } })).json
+    const target = runtime()
+    expect((await target.payloadRuntime.importJson(json)).ok).toBe(true)
+    expect(target.importedPlans[0].settings).toMatchObject({ ...settings })
+    expect(target.importedPlans[0].providerMetadata).toEqual([])
+  })
+
+  it('restores an explicitly empty favorite list while preserving omitted legacy fields during selective import', async () => {
+    const source = runtime([], [], { defaultProvider: 'restored-default', modelFavorites: [] } as unknown as Settings)
+    const exported = JSON.parse((await source.payloadRuntime.exportJson({ selection: { mode: 'selective', categories: ['settings'] } })).json)
+    const target = runtime([], [], settings)
+    expect((await target.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+    expect(target.importedPlans[0].settings).toMatchObject({ defaultProvider: 'restored-default', modelFavorites: [] })
+    delete exported.payload.settings.modelFavorites
+    exported.payload.version = 1
+    expect((await target.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+    expect(target.importedPlans[1].settings?.modelFavorites).toEqual(favorites)
+  })
+
+  it.each([1, 2])('normalizes favorite entries in payload v%s without changing historical model attribution', async (version) => {
+    const target = runtime()
+    const result = await target.payloadRuntime.importJson(JSON.stringify({
+      app: 'islemind', version, exportedAt: 1, providers: [],
+      settings: { ...settings, modelFavorites: [...favorites, favorites[0], null, { providerId: 'bad', modelId: '' }] },
+      conversations: [{ id: 'history', title: 'Archive', providerId: 'historical-connection', model: 'historical-model',
+        messages: [{ id: 'reply', role: 'assistant', content: 'Saved answer', timestamp: 1, status: 'done',
+          providerId: 'actual-connection', model: 'actual-model' }] }],
+    }))
+    expect(result.ok).toBe(true)
+    expect(target.importedPlans[0].settings?.modelFavorites).toEqual(favorites)
+    expect(target.importedPlans[0].conversations[0]).toMatchObject({ providerId: 'historical-connection', model: 'historical-model' })
+    expect(target.importedPlans[0].conversations[0].messages[0]).toMatchObject({ providerId: 'actual-connection', model: 'actual-model' })
+  })
+})
+
+describe('portable tool declaration settings', () => {
+  it.each(['full', 'auto'] as const)('round-trips explicit %s settings in a selective backup', async mode => {
+    const source = runtime([], [], { toolDeclarationMode: mode } as Settings)
+    const json = (await source.payloadRuntime.exportJson({ selection: { mode: 'selective', categories: ['settings'] } })).json
+    const target = runtime([], [], { toolDeclarationMode: mode === 'full' ? 'auto' : 'full' } as Settings)
+    expect((await target.payloadRuntime.importJson(json)).ok).toBe(true)
+    expect(target.importedPlans[0].settings?.toolDeclarationMode).toBe(mode)
+  })
+
+  it('preserves an existing mode when a legacy selective backup omits it and normalizes an explicit bad value', async () => {
+    const source = runtime([], [], {} as Settings)
+    const exported = JSON.parse((await source.payloadRuntime.exportJson({ selection: { mode: 'selective', categories: ['settings'] } })).json)
+    const target = runtime([], [], { toolDeclarationMode: 'auto' } as Settings)
+    expect((await target.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+    expect(target.importedPlans[0].settings?.toolDeclarationMode).toBe('auto')
+    exported.payload.settings.toolDeclarationMode = 'unknown'
+    expect((await target.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+    expect(target.importedPlans[1].settings?.toolDeclarationMode).toBe('full')
+    const fresh = runtime()
+    delete exported.payload.settings.toolDeclarationMode
+    expect((await fresh.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+    expect(fresh.importedPlans[0].settings).not.toHaveProperty('toolDeclarationMode')
   })
 })
 

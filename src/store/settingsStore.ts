@@ -1,4 +1,7 @@
 import { create } from 'zustand'
+import { normalizeModelRoutingPlans, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
+import type { ScenePlan } from '@/core/scenePlan'
+import { createScenePlanManagement } from '@/modules/settings'
 import { AppState } from 'react-native'
 import { getModelConfig } from '@/types/modelCatalog'
 import { getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl, sanitizeProviderBaseUrl } from '@/types/providerBaseUrls'
@@ -26,7 +29,7 @@ import { st } from '@/i18n/service'
 import { getSystemLanguage, setServiceLanguage } from '@/i18n/service'
 import { clearLanguagePreferenceSource, loadLanguagePreferenceSource, resolveEffectiveLanguage, saveLanguagePreferenceSource } from '@/i18n/languagePreference'
 import { normalizeThemeId } from '@/theme/colors'
-import { normalizeSettingsBackgroundIntensity, normalizeSettingsBackgroundMotion, normalizeSettingsBackgroundVariation, normalizeSettingsIdentityPreferences, normalizeSettingsLastPreferredModel, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, normalizeSettingsUpdateReminders, sanitizeSettingsUrlFields } from '@/modules/settings'
+import { normalizeSettingsBackgroundIntensity, normalizeSettingsBackgroundMotion, normalizeSettingsBackgroundVariation, normalizeSettingsIdentityPreferences, normalizeSettingsLastPreferredModel, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, normalizeSettingsUpdateReminders, removeSettingsModelFavoritesForProviders, sanitizeSettingsUrlFields, setSettingsModelFavorite } from '@/modules/settings'
 import { removeProviderHealthRecordsByProviderId, clearProviderHealthSnapshot } from '@/bootstrap/providerHealthRepository'
 import { invalidateAllCompactStates, invalidateCompactStatesByProvider } from '@/bootstrap/providerCompactStateRepository'
 import { providerModelScopeConfigurationChanged } from '@/modules/providers'
@@ -39,6 +42,11 @@ interface SettingsState {
   load: () => Promise<void>
   updateSettings: (updates: Partial<Settings>) => void
   rememberPreferredModel: (providerId: string, model: string) => Promise<void>
+  setModelFavorite: (providerId: string, modelId: string, favorite: boolean) => Promise<void>
+  saveRoutingPlan: (plan: ModelRoutingPlan) => Promise<void>
+  removeRoutingPlan: (id: string) => Promise<void>
+  saveScenePlan: (plan: ScenePlan, expectedRevision: number | null) => Promise<ScenePlan>
+  removeScenePlan: (id: string, expectedRevision: number) => Promise<void>
   setTheme: (theme: ThemeMode) => void
   setThemeId: (themeId: ThemeId) => void
   setThemeAccent: (themeAccent: string | undefined) => void
@@ -126,6 +134,9 @@ const defaultSettings: Settings = {
   backgroundPreset: undefined,
   assistantDisplayName: undefined,
   modelDisplayAliases: undefined,
+  modelFavorites: [],
+  modelRoutingPlans: [],
+  scenePlans: [],
   language: 'zh-CN',
   defaultProvider: null,
   fontSize: 16,
@@ -176,6 +187,7 @@ const defaultSettings: Settings = {
   agentWorkflowAllowReadWriteTools: 'visible',
   agentWorkflowAllowDestructiveTools: 'confirm',
   agentWorkflowOutputCharLimit: 4800,
+  toolDeclarationMode: 'full',
   transportMode: 'auto',
   remoteCompactMode: 'auto',
   remoteCompactThreshold: 0.8,
@@ -450,6 +462,40 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await savePersistedSettings(settings)
   },
 
+  setModelFavorite: async (providerId: string, modelId: string, favorite: boolean) => {
+    const modelFavorites = setSettingsModelFavorite(get().settings.modelFavorites, { providerId, modelId, favorite })
+    // A delayed UI retry cannot recreate a favorite for a deleted connection.
+    // Portable restore can still retain references to temporarily absent IDs.
+    if (favorite && !get().providers.some((provider) => provider.id === providerId.trim())) throw new ProviderConfigurationConflictError()
+    const settings = {
+      ...get().settings,
+      modelFavorites,
+    }
+    set({ settings })
+    // A retry writes the latest settings snapshot even when the optimistic
+    // favorite already has the requested value.
+    await savePersistedSettings(settings)
+  },
+
+  saveRoutingPlan: async (plan) => {
+    const plans = get().settings.modelRoutingPlans ?? []
+    const modelRoutingPlans = normalizeModelRoutingPlans([...plans.filter(item => item.id !== plan.id), plan])!
+    const selected = modelRoutingPlans.find(item => item.id === plan.id)!
+    if ([selected.primary, selected.backup].some(target => target && !get().providers.some(provider => provider.id === target.providerId))) throw new ProviderConfigurationConflictError()
+    const settings = { ...get().settings, modelRoutingPlans }
+    set({ settings })
+    await savePersistedSettings(settings)
+  },
+
+  removeRoutingPlan: async (id) => {
+    const settings = { ...get().settings, modelRoutingPlans: (get().settings.modelRoutingPlans ?? []).filter(plan => plan.id !== id) }
+    set({ settings })
+    await savePersistedSettings(settings)
+  },
+
+  saveScenePlan: (plan, expectedRevision) => scenePlanManagement.save(plan, expectedRevision),
+  removeScenePlan: (id, expectedRevision) => scenePlanManagement.remove(id, expectedRevision),
+
   updateSettings: (updates: Partial<Settings>) => {
     set((state) => {
       const hasThemeAccentUpdate = Object.prototype.hasOwnProperty.call(updates, 'themeAccent')
@@ -710,9 +756,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const updated = state.providers.filter((p) => p.id !== id)
       const defaultProvider = state.settings.defaultProvider === id
         ? updated[0]?.id ?? null : state.settings.defaultProvider
-      const settings = sanitizeSettingsUrlFields(defaultProvider === state.settings.defaultProvider
-        ? state.settings
-        : { ...state.settings, defaultProvider })
+      const settings = sanitizeSettingsUrlFields({
+        ...state.settings,
+        defaultProvider,
+        modelFavorites: removeSettingsModelFavoritesForProviders(state.settings.modelFavorites, [id]),
+      })
       persistProvidersSnapshot(updated)
       persistSettingsSnapshot(settings)
       return {
@@ -745,7 +793,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set((state) => {
       const ids = new Set(allProviders.map(provider => provider.id))
       const providers = state.providers.filter(provider => !ids.has(provider.id))
-      const settings = sanitizeSettingsUrlFields({ ...state.settings, defaultProvider: state.settings.defaultProvider && ids.has(state.settings.defaultProvider) ? null : state.settings.defaultProvider })
+      const settings = sanitizeSettingsUrlFields({
+        ...state.settings,
+        defaultProvider: state.settings.defaultProvider && ids.has(state.settings.defaultProvider) ? null : state.settings.defaultProvider,
+        modelFavorites: removeSettingsModelFavoritesForProviders(state.settings.modelFavorites, [...ids]),
+      })
       persistProvidersSnapshot(providers)
       persistSettingsSnapshot(settings)
       return {
@@ -789,9 +841,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const updated = state.providers.filter((provider) => !invalidIds.has(provider.id))
       const defaultProvider = state.settings.defaultProvider && invalidIds.has(state.settings.defaultProvider)
         ? updated[0]?.id ?? null : state.settings.defaultProvider
-      const settings = sanitizeSettingsUrlFields(defaultProvider === state.settings.defaultProvider
-        ? state.settings
-        : { ...state.settings, defaultProvider })
+      const settings = sanitizeSettingsUrlFields({
+        ...state.settings,
+        defaultProvider,
+        modelFavorites: removeSettingsModelFavoritesForProviders(state.settings.modelFavorites, [...invalidIds]),
+      })
       persistProvidersSnapshot(updated)
       persistSettingsSnapshot(settings)
       return { providers: updated, settings }
@@ -970,6 +1024,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     ])
   },
 }))
+
+const scenePlanManagement = createScenePlanManagement({
+  read: () => useSettingsStore.getState().settings.scenePlans ?? [],
+  publish: scenePlans => useSettingsStore.setState(state => ({ settings: { ...state.settings, scenePlans } })),
+  persist: () => savePersistedSettings(useSettingsStore.getState().settings),
+})
 
 function mergeProviders(saved: readonly AIProvider[]): AIProvider[] {
   return saved.map((provider) => normalizeProvider({ ...provider, apiKey: '' } as AIProvider))
