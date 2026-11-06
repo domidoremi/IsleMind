@@ -3,6 +3,7 @@ import {
   snapshotPlainData,
   type GenerationParameterKey,
   type GenerationParameterSources,
+  type ModelParameterBaseline,
   type StreamEvent,
 } from '@/core'
 import type { ProviderExecutionTargetObserver, ProviderChatExecutionConstraint } from '@/modules/providers'
@@ -62,6 +63,8 @@ export interface AssistantConversationProviderDispatchRequest<
   readonly reasoningEffort: TReasoningEffort | undefined
   readonly maxTokens: number
   readonly generationParameterSources: GenerationParameterSources
+  readonly modelParameterBaseline?: ModelParameterBaseline
+  readonly requireOutputTokenBound?: boolean
   readonly attachments: TAttachment[]
   readonly messages: TMessage[]
   readonly contextPrompt: string
@@ -149,6 +152,13 @@ export interface AssistantConversationProviderDispatchRuntimeDependencies<
   generateTraceId(prefix: 'model'): string
   now(): number
   modelRequestTitle(): string
+  resolveRequestParameters?(request: AssistantConversationProviderDispatchRequest<
+    TProvider, TSettings, TAttachment, TMessage, TRetrievalSource, TWebSearchMode, TFallbackProviders,
+    TRemoteCompactFallback, TProviderToolDeclarations, TReasoningEffort
+  >): AssistantConversationProviderDispatchRequest<
+    TProvider, TSettings, TAttachment, TMessage, TRetrievalSource, TWebSearchMode, TFallbackProviders,
+    TRemoteCompactFallback, TProviderToolDeclarations, TReasoningEffort
+  >
   recordTrace(input: {
     readonly conversationId: string
     readonly assistantMessageId: string
@@ -289,7 +299,8 @@ export function createAssistantConversationProviderDispatchRuntime<
         snapshots,
       ),
     })
-    return Object.freeze({ request })
+    const resolvedRequest = dependencies.resolveRequestParameters?.(request) ?? request
+    return Object.freeze({ request: Object.freeze(resolvedRequest) })
   }
 
   async function dispatchPrepared(

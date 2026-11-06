@@ -35,3 +35,12 @@ export function formatToolRequestIdentity(request: ToolRequestIdentity | undefin
   if (request.serverId && request.name) return `${request.serverId}:${request.name}`
   return request.name ?? ''
 }
+
+/** Local reference selection accepts exact IDs/qualified names, then an unambiguous bare name. */
+export function resolveToolReference<T extends ToolManifestIdentity>(reference: string, manifests: readonly T[]): T | null {
+  const exact = manifests.filter(tool => tool.id === reference)
+  if (exact.length) return exact.length === 1 ? exact[0] : null
+  const qualified = manifests.filter(tool => tool.serverId && (reference === `${tool.serverId}:${tool.name}` || reference === `${tool.serverId}/${tool.name}`))
+  if (qualified.length) return qualified.length === 1 ? qualified[0] : null
+  return resolveUniqueToolManifest({ name: reference }, manifests)
+}

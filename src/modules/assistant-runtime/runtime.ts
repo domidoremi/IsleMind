@@ -220,8 +220,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             ? operationSession.prepareRequest(sourceRequest)
             : sourceRequest,
         )
+        const toolDeclarations = operationSession?.describeDeclarations?.(request)
         contextReceipt = input.contextReceipt
-          ? freezeContextPlanReceipt(input.contextReceipt)
+          ? freezeContextPlanReceipt({ ...input.contextReceipt, ...(toolDeclarations ? { toolDeclarations } : {}) })
           : undefined
       } catch {
         text.close()

@@ -376,6 +376,7 @@ export interface AssistantConversationRequestPlanningRuntimeDependencies<
     readonly webSearchMode: TWebSearchMode
     readonly attachments: readonly TAttachment[]
   }): boolean
+  resolveOutputReservation?(input: { readonly provider: TProvider; readonly conversation: TConversation; readonly model: string }): number
   buildSystemPrompt(input: {
     readonly baseSystemPrompt: string
     readonly expectedReplyFormat?: string
@@ -698,6 +699,9 @@ export function createAssistantConversationRequestPlanningRuntime<
       settings: input.settings,
     })
     const compactionGuardState = dependencies.getCompactionGuardState?.(input.conversationId)
+    const maxOutputTokens = dependencies.resolveOutputReservation?.({
+      provider: input.provider, conversation: input.runtimeConversation, model: input.upstreamModel,
+    }) ?? input.runtimeConversation.maxTokens
     const contextPlan = dependencies.planContext({
       messages: input.sourceMessages,
       contextSources: contextRuntime.contextSources,
@@ -706,7 +710,7 @@ export function createAssistantConversationRequestPlanningRuntime<
         requestedOutput: input.runtimeConversation.skillSnapshot?.expectedReplyFormat,
       },
       modelContextWindow: input.modelConfig.contextWindow,
-      maxOutputTokens: input.runtimeConversation.maxTokens,
+      maxOutputTokens,
       modelManifest: input.modelConfig,
       systemPrompt,
       reasoningEffort: input.runtimeConversation.reasoningEffort,
@@ -770,7 +774,7 @@ export function createAssistantConversationRequestPlanningRuntime<
           signal: input.signal,
           conversationId: input.conversationId,
           modelContextWindow: input.modelConfig.contextWindow,
-          maxOutputTokens: input.runtimeConversation.maxTokens,
+          maxOutputTokens,
           systemPrompt,
         })
       applicationSummaryDurationMs = summaryResult.durationMs
@@ -788,7 +792,7 @@ export function createAssistantConversationRequestPlanningRuntime<
           messages: summaryResult.recentMessages as unknown as TSourceMessage[],
           contextPrompt: summaryResult.contextPrompt,
           modelContextWindow: input.modelConfig.contextWindow,
-          maxOutputTokens: input.runtimeConversation.maxTokens,
+          maxOutputTokens,
           systemPrompt,
           reasoningEffort: input.runtimeConversation.reasoningEffort,
           provider: input.provider,

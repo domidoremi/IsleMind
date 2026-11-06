@@ -20,6 +20,26 @@ export function buildKnowledgeScope(values?: readonly string[]): KnowledgeScope 
   }
 }
 
+/** Explicit document identities never match a coincidental title substring. */
+export function buildExactKnowledgeScope(values: readonly string[]): KnowledgeScope {
+  return { ids: new Set(values.map(normalizeScopeValue).filter(Boolean)), terms: [] }
+}
+
+/** Resolve a legacy exact title only when unique; missing/ambiguous references never broaden a scope. */
+export function resolveKnowledgeScopeReferences(
+  values: readonly string[], catalog: readonly { id: string; title: string }[],
+): { ids: string[]; missing: string[] } {
+  const ids = new Set<string>()
+  const missing: string[] = []
+  for (const value of values) {
+    const exact = catalog.filter(item => item.id === value)
+    const matches = exact.length ? exact : catalog.filter(item => item.title === value)
+    if (matches.length === 1) ids.add(matches[0].id)
+    else missing.push(value)
+  }
+  return { ids: [...ids], missing }
+}
+
 /** Retains a result when its document ID or title belongs to the requested scope. */
 export function filterKnowledgeSources<Source extends KnowledgeScopedSource>(
   sources: readonly Source[],

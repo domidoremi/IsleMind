@@ -13,6 +13,7 @@ import { DELEGATE_OPERATION } from '../agentCollaboration'
 import { createModelOperationBatch, advanceModelOperationBatch } from '../application/modelOperationBatch'
 import { buildAssistantRequestHash } from '../application/requestIdentity'
 import { checkProviderContextCapacity, ProviderContextCapacityError, ProviderHttpError } from '@/modules/providers'
+import { buildAssistantContextPlanReceipt } from '../application/contextPlanReceipt'
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void
@@ -64,6 +65,32 @@ const continuationRequest = (): ChatRequest => ({ ...request, messages: [...requ
   { id: 'receipt', role: 'tool', toolCallId: 'call', name: 'write', text: 'already completed' }] })
 
 describe('Harness lifecycle (real SQLite)', () => {
+  it.each(['full', 'discovery'] as const)('round-trips %s declaration diagnostics, accepts old receipts, and refuses malformed stored counts', async mode => {
+    const fx = fixture()
+    const runId = asAssistantRunId(`tool-declarations-${mode}`)
+    const toolDeclarations = { schema: 'islemind.tool-declaration-receipt.v1' as const, mode,
+      catalogRevision: 'islemind.model.operation.catalog.v1:abc123', totalCount: 12,
+      declaredCount: mode === 'full' ? 12 : 1, deferredCount: mode === 'full' ? 0 : 11,
+      declarationChars: mode === 'full' ? 20_000 : 3_000, fullDeclarationChars: 20_000,
+      summaryChars: mode === 'full' ? 0 : 1_500, budgetChars: 12_000 }
+    const contextReceipt = { ...buildAssistantContextPlanReceipt({ providerId: 'provider', model: 'model' }), toolDeclarations }
+    try {
+      expect((await fx.runtime(finalGateway()).execute({ runId, request, context, contextReceipt })).ok).toBe(true)
+      const reopened = createSqliteAssistantRunPersistence(fx.provider)
+      const captured = await reopened.getRequestSnapshot(runId)
+      expect(captured?.schema === 'islemind.assistant-run-request-snapshot.v1' && captured.contextReceipt?.toolDeclarations).toEqual(toolDeclarations)
+      expect((await reopened.getLatestContextReceipt('conversation'))?.receipt.toolDeclarations).toEqual(toolDeclarations)
+      fx.native.query('UPDATE assistant_run_request_snapshots SET contextReceiptJson = ? WHERE runId = ?')
+        .run(JSON.stringify({ ...contextReceipt, toolDeclarations: { ...toolDeclarations, totalCount: 65 } }), runId)
+      await expect(reopened.getRequestSnapshot(runId)).rejects.toThrow('receipt')
+      await expect(reopened.getLatestContextReceipt('conversation')).rejects.toThrow('receipt')
+      const { toolDeclarations: _tools, ...old } = contextReceipt
+      fx.native.query('UPDATE assistant_run_request_snapshots SET contextReceiptJson = ? WHERE runId = ?').run(JSON.stringify(old), runId)
+      expect((await reopened.getLatestContextReceipt('conversation'))?.receipt).toEqual(old)
+      expect((await reopened.getLatestContextReceipt('conversation'))?.receipt).not.toHaveProperty('toolDeclarations')
+    } finally { fx.native.close() }
+  })
+
   it('reopens safe HTTP failure evidence and partial text without retaining the provider response body', async () => {
     const fx = fixture()
     const runId = asAssistantRunId('http-failure')

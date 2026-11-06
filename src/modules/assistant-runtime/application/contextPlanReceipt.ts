@@ -2,6 +2,7 @@ import {
   ASSISTANT_CONTEXT_PLAN_RECEIPT_SCHEMA,
   type AssistantContextPlanReceipt,
   type AssistantContextPlanReceiptSource,
+  type AssistantContextPolicyReceipt,
 } from '../contracts'
 import {
   CONTEXT_ARTIFACT_POINTER_SCHEMA,
@@ -26,6 +27,8 @@ export function buildAssistantContextPlanReceipt(input: {
   readonly plan?: unknown
   readonly activePrompt?: unknown
   readonly failureCodes?: readonly string[]
+  readonly settings?: unknown
+  readonly conversation?: unknown
 }): AssistantContextPlanReceipt {
   const plan = asRecord(input.plan)
   const manifest = asRecord(plan?.manifest)
@@ -35,6 +38,7 @@ export function buildAssistantContextPlanReceipt(input: {
   const compression = asRecord(activePrompt?.compressionMetadata)
   const cacheDiagnostics = Array.isArray(plan?.cacheDiagnostics) ? plan.cacheDiagnostics : []
   const capabilityPlan = readCapabilityPlan(input.capabilityPlan)
+  const contextPolicy = readContextPolicy(plan, activePrompt, input.settings, input.conversation)
 
   const sourceManifest = readSources(manifest?.fragments ?? plan?.fragments)
   const failureCodes = uniqueStrings([
@@ -91,6 +95,7 @@ export function buildAssistantContextPlanReceipt(input: {
       summarySectionCount: integer(compression?.summarySectionCount),
     },
     sourceManifest,
+    ...(contextPolicy ? { contextPolicy } : {}),
     failureCodes,
     ...(stringValue(input.conversationId)
       ? { conversationId: bounded(stringValue(input.conversationId)!, 512) }
@@ -136,6 +141,28 @@ export function buildAssistantContextPlanReceipt(input: {
         }
       : {}),
     ...(capabilityPlan ? { capabilityPlan } : {}),
+  }
+}
+
+function readContextPolicy(plan: Record<string, unknown> | undefined, activePrompt: Record<string, unknown> | undefined, settingsValue: unknown, conversationValue: unknown): AssistantContextPolicyReceipt | undefined {
+  const decision = asRecord(plan?.compactDecision)
+  if (!decision || (decision.mode !== 'off' && decision.mode !== 'auto' && decision.mode !== 'required')
+    || typeof decision.threshold !== 'number' || !Number.isFinite(decision.threshold)
+    || decision.threshold < 0.1 || decision.threshold > 2 || typeof decision.enabled !== 'boolean'
+    || typeof decision.strategy !== 'string') return undefined
+  const settings = asRecord(settingsValue)
+  const override = asRecord(asRecord(conversationValue)?.contextPolicyOverride)
+  const source = override?.schema === 'islemind.conversation-context-policy.v1' ? 'conversation'
+    : typeof settings?.remoteCompactThreshold === 'number' && Number.isFinite(settings.remoteCompactThreshold) ? 'global' : 'default'
+  return {
+    schema: 'islemind.context-policy-receipt.v1',
+    mode: decision.mode,
+    threshold: decision.threshold,
+    source,
+    requestBudgetTokens: integer(asRecord(plan?.remoteCompactProbe)?.budgetTokens, activePrompt?.budgetTokens),
+    enabled: decision.enabled,
+    strategy: bounded(decision.strategy, 160),
+    modelSummaryEnabled: settings?.modelContextCompressionEnabled === true,
   }
 }
 

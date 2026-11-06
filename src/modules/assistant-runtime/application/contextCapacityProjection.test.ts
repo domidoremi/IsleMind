@@ -3,7 +3,7 @@ import {
   type AssistantContextPlanReceipt,
   type AssistantContextPlanReceiptSource,
 } from '../contracts'
-import { projectContextCapacity } from './contextCapacityProjection'
+import { previewContextCompactionThreshold, projectContextCapacity } from './contextCapacityProjection'
 
 function source(
   overrides: Partial<AssistantContextPlanReceiptSource> & Pick<AssistantContextPlanReceiptSource, 'type'>,
@@ -71,6 +71,34 @@ function project(value: AssistantContextPlanReceipt) {
 }
 
 describe('context capacity projection', () => {
+  it('preserves captured identities and decisions without sharing mutable arrays or exposing source bodies', () => {
+    const included = ['kept-source']
+    const excluded = ['excluded-source']
+    const sourceMessageIds = ['old-message']
+    const stored = {
+      ...receipt({ sourceManifest: [{
+        fragmentId: 'captured-fragment', type: 'retrieved_context', priority: 'high', sourceId: 'captured-source',
+        decision: 'capped', tokenCap: 100, estimatedTokens: 80, originalEstimatedTokens: 200,
+        includedSourceIds: included, excludedSourceIds: excluded, authority: 'user-private', reason: 'token_cap_exceeded',
+        text: 'This source body must not be projected.',
+      } as AssistantContextPlanReceiptSource] }),
+      sourceMessageIds,
+      manifestId: 'captured-manifest',
+    }
+    const result = project(stored)
+    included.push('later-included')
+    excluded.push('later-excluded')
+    sourceMessageIds.push('later-message')
+    expect(result.sources?.[0]).toMatchObject({
+      fragmentId: 'captured-fragment', sourceId: 'captured-source', decision: 'capped',
+      includedSourceIds: ['kept-source'], excludedSourceIds: ['excluded-source'],
+    })
+    expect(result.sourceMessageIds).toEqual(['old-message'])
+    expect(result.manifestId).toBe('captured-manifest')
+    expect(JSON.stringify(result)).not.toContain('This source body')
+    expect(result.usedTokens).toBe(80)
+  })
+
   it('rebuilds the planner input ceiling instead of comparing against the model window', () => {
     const view = project(receipt())
 
@@ -78,6 +106,31 @@ describe('context capacity projection', () => {
     expect(view.inputBudgetTokens).toBe(82_000)
     expect(view.reservedTokens).toBe(46_000)
     expect(view.status).toBe('measured')
+  })
+
+  it('previews a conversation threshold against the recorded compaction budget and message estimate', () => {
+    const view = project({
+      ...receipt({ budget: { estimatedInputTokens: 34_000, messageTokens: 34_000 } }),
+      contextPolicy: {
+        schema: 'islemind.context-policy-receipt.v1',
+        mode: 'auto', threshold: 0.8, source: 'global',
+        requestBudgetTokens: 50_000, enabled: true,
+        strategy: 'native-openai-responses', modelSummaryEnabled: false,
+      },
+    })
+    expect(view.requestBudgetTokens).toBe(80_000)
+    expect(previewContextCompactionThreshold(view, 0.65)).toEqual({
+      thresholdTokens: 32_500, estimatedMessageTokens: 34_000, reached: true,
+    })
+    expect(view.contextPolicy?.threshold).toBe(0.8)
+  })
+
+  it('withholds a trigger estimate when the recorded budget or requested threshold is unusable', () => {
+    expect(previewContextCompactionThreshold(project(receipt({ budget: { modelContextWindow: 0 } })), 0.65)).toBeUndefined()
+    expect(previewContextCompactionThreshold(project(receipt({ budget: { requestBudgetTokens: 0 } })), 0.65)).toBeUndefined()
+    for (const threshold of [NaN, Infinity, 0.09, 2.01]) {
+      expect(previewContextCompactionThreshold(project(receipt()), threshold)).toBeUndefined()
+    }
   })
 
   it('totals used tokens from the fragment manifest so the gauge and the breakdown agree', () => {

@@ -597,7 +597,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       AssistantConversationReplyStartStreamingOutcome
     >>
   }
-  getProviderSettingsState(): {
+  getProviderSettingsState(conversationId?: string): {
     readonly providers: TProviders
     readonly settings: TSettings
   }
@@ -707,7 +707,7 @@ export function createAssistantConversationReplyStartRuntime<
     const assistantMessage = snapshotPlainData(sessionMessage)
     // Admission is still local preparation, not a sent request or a response.
     // Keep the session's preparing stage until actual work/dispatch begins.
-    const settingsState = snapshotPlainData(dependencies.getProviderSettingsState())
+    const settingsState = snapshotPlainData(dependencies.getProviderSettingsState(input.conversationId))
     const settings = settingsState.settings
     const admission = await dependencies.providerAdmissionRuntime.admit({
       conversationId: input.conversationId,
@@ -1044,6 +1044,8 @@ export function createAssistantConversationReplyStartRuntime<
       capabilityPlan: requestPlanningOutcome.capabilityPlan,
       plan: contextPlan,
       activePrompt,
+      settings,
+      conversation,
     })
     dependencies.projectLifecycleStage?.({
       conversationId: input.conversationId,

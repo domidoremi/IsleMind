@@ -366,6 +366,7 @@ function matchesExplicitMcpConversationToolRef<
 >(item: TTool, ref: string): boolean {
   return ref === `${item.server.id}:${item.tool.name}`
     || ref === `${item.server.id}/${item.tool.name}`
+    || ref === `mcp:${item.server.id}:${item.tool.name}`
 }
 
 function countMcpConversationToolNames<

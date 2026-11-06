@@ -314,8 +314,52 @@ export interface AssistantContextPlanReceipt {
   readonly prefixHash?: string
   readonly cacheDiagnostics?: AssistantContextCacheDiagnosticsReceipt
   readonly capabilityPlan?: AssistantContextCapabilityPlanReceipt
+  readonly contextPolicy?: AssistantContextPolicyReceipt
+  readonly toolDeclarations?: AssistantToolDeclarationReceipt
 }
 
+/** Prepared declaration characters, not provider token counts or execution authority. */
+export interface AssistantToolDeclarationReceipt {
+  readonly schema: 'islemind.tool-declaration-receipt.v1'
+  readonly mode: 'full' | 'discovery'
+  readonly catalogRevision: string
+  readonly totalCount: number
+  readonly declaredCount: number
+  readonly deferredCount: number
+  readonly declarationChars: number
+  readonly fullDeclarationChars: number
+  readonly summaryChars: number
+  readonly budgetChars: number
+}
+
+export function isAssistantToolDeclarationReceipt(value: unknown): value is AssistantToolDeclarationReceipt {
+  if (!isRecord(value) || !hasReceiptKeys(value, [
+    'schema', 'mode', 'catalogRevision', 'totalCount', 'declaredCount', 'deferredCount',
+    'declarationChars', 'fullDeclarationChars', 'summaryChars', 'budgetChars',
+  ], []) || value.schema !== 'islemind.tool-declaration-receipt.v1'
+    || (value.mode !== 'full' && value.mode !== 'discovery')
+    || !isBoundedReceiptString(value.catalogRevision, 128)
+    || !/^islemind\.model\.operation\.catalog\.v1:[a-z0-9]+$/u.test(value.catalogRevision as string)) return false
+  if (!['totalCount', 'declaredCount', 'deferredCount'].every(key => isBoundedReceiptNumber(value[key], 64))
+    || (value.declaredCount as number) + (value.deferredCount as number) !== value.totalCount
+    || !['declarationChars', 'fullDeclarationChars', 'summaryChars'].every(key => isBoundedReceiptNumber(value[key], 4_194_304))
+    || value.budgetChars !== 12_000) return false
+  return value.mode === 'full'
+    ? value.deferredCount === 0 && value.summaryChars === 0 && value.declarationChars === value.fullDeclarationChars
+    : (value.declaredCount as number) <= 8 && (value.summaryChars as number) > 0
+      && (value.summaryChars as number) <= (value.declarationChars as number)
+}
+
+export interface AssistantContextPolicyReceipt {
+  readonly schema: 'islemind.context-policy-receipt.v1'
+  readonly mode: 'off' | 'auto' | 'required'
+  readonly threshold: number
+  readonly source: 'conversation' | 'global' | 'default'
+  readonly requestBudgetTokens: number
+  readonly enabled: boolean
+  readonly strategy: string
+  readonly modelSummaryEnabled: boolean
+}
 /**
  * Runtime/persistence boundary validation for the diagnostic-only context
  * receipt. Keeping this here avoids adapters importing application policy.
@@ -342,6 +386,8 @@ export function isAssistantContextPlanReceipt(
     'prefixHash',
     'cacheDiagnostics',
     'capabilityPlan',
+    'contextPolicy',
+    'toolDeclarations',
   ]) || value.schema !== ASSISTANT_CONTEXT_PLAN_RECEIPT_SCHEMA) return false
   if (!isBoundedReceiptString(value.providerId, 320) || !isBoundedReceiptString(value.model, 320)) return false
   if (value.manifestId !== undefined && !isBoundedReceiptString(value.manifestId, 512)) return false
@@ -363,6 +409,8 @@ export function isAssistantContextPlanReceipt(
   if (value.prefixHash !== undefined && !isBoundedReceiptString(value.prefixHash, 512)) return false
   if (value.cacheDiagnostics !== undefined && !isReceiptCacheDiagnostics(value.cacheDiagnostics)) return false
   if (value.capabilityPlan !== undefined && !isReceiptCapabilityPlan(value.capabilityPlan)) return false
+  if (value.contextPolicy !== undefined && !isReceiptContextPolicy(value.contextPolicy)) return false
+  if (value.toolDeclarations !== undefined && !isAssistantToolDeclarationReceipt(value.toolDeclarations)) return false
   try {
     return JSON.stringify(value).length <= 512 * 1024
   } catch {
@@ -538,6 +586,8 @@ export interface AssistantModelOperationSession {
   /** Host-only intersection with this invocation's effective frozen authority, not a requested allowlist. */
   forIndependentChild?(definition: FrozenAgentDefinition, candidate: AssistantModelOperationSession | undefined): Promise<AssistantModelOperationSession | undefined>
   prepareRequest(request: ChatRequest): ChatRequest
+  /** Metadata describing this exact prepared request; no catalog bodies or execution authority. */
+  describeDeclarations?(request: ChatRequest): AssistantToolDeclarationReceipt
   evaluateTurn(input: AssistantModelOperationTurnInput): Promise<AssistantModelOperationTurnOutcome>
   validatePending(input: {
     readonly run: AssistantRun
@@ -742,6 +792,18 @@ function isReceiptBudget(value: unknown): boolean {
     'tokensUntilCompaction',
   ] as const
   return keys.every((key) => isBoundedReceiptNumber(value[key], 10_000_000))
+}
+
+function isReceiptContextPolicy(value: unknown): value is AssistantContextPolicyReceipt {
+  return isRecord(value) && hasReceiptKeys(value, [
+    'schema', 'mode', 'threshold', 'source', 'requestBudgetTokens', 'enabled', 'strategy', 'modelSummaryEnabled',
+  ]) && value.schema === 'islemind.context-policy-receipt.v1'
+    && (value.mode === 'off' || value.mode === 'auto' || value.mode === 'required')
+    && typeof value.threshold === 'number' && Number.isFinite(value.threshold) && value.threshold >= 0.1 && value.threshold <= 2
+    && (value.source === 'conversation' || value.source === 'global' || value.source === 'default')
+    && isBoundedReceiptNumber(value.requestBudgetTokens, 10_000_000)
+    && typeof value.enabled === 'boolean' && typeof value.modelSummaryEnabled === 'boolean'
+    && isBoundedReceiptString(value.strategy, 160)
 }
 
 function isReceiptCompression(value: unknown): boolean {

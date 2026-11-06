@@ -51,6 +51,9 @@ export interface ContextCapacityView {
   readonly contextWindowTokens: number
   /** Planner ceiling for input: window ratio minus the output and reasoning reserve. */
   readonly inputBudgetTokens: number
+  /** History budget used by the planner's pressure comparison, already net of fixed prompts. */
+  readonly requestBudgetTokens: number
+  readonly estimatedMessageTokens: number
   /** Window tokens the planner never spends on input. */
   readonly reservedTokens: number
   readonly usedTokens: number
@@ -66,8 +69,14 @@ export interface ContextCapacityView {
     readonly sourceMessageCount: number
   }
   readonly segments: readonly ContextCapacitySegment[]
+  /** Captured diagnostic metadata only; carries no source body or read authority. */
+  readonly sources?: readonly AssistantContextPlanReceiptSource[]
+  readonly sourceMessageIds?: readonly string[]
+  readonly manifestId?: string
   readonly notices: readonly ContextCapacityNotice[]
   readonly failureCodes: readonly string[]
+  readonly contextPolicy?: AssistantContextPlanReceipt['contextPolicy']
+  readonly toolDeclarations?: AssistantContextPlanReceipt['toolDeclarations']
 }
 
 export interface ContextCapacityProjectionInput {
@@ -117,6 +126,8 @@ export function projectContextCapacity(
     model: input.receipt.model,
     contextWindowTokens,
     inputBudgetTokens,
+    requestBudgetTokens: nonNegative(budget.requestBudgetTokens),
+    estimatedMessageTokens: nonNegative(budget.estimatedInputTokens),
     reservedTokens: Math.max(0, contextWindowTokens - inputBudgetTokens),
     usedTokens,
     remainingTokens: Math.max(0, inputBudgetTokens - usedTokens),
@@ -131,9 +142,35 @@ export function projectContextCapacity(
       sourceMessageCount: nonNegative(input.receipt.compression.sourceMessageCount),
     },
     segments,
+    sources: input.receipt.sourceManifest.map((source) => ({
+      fragmentId: source.fragmentId, type: source.type, priority: source.priority, sourceId: source.sourceId,
+      decision: source.decision, tokenCap: source.tokenCap, estimatedTokens: source.estimatedTokens,
+      originalEstimatedTokens: source.originalEstimatedTokens,
+      ...(source.sourceCount !== undefined ? { sourceCount: source.sourceCount } : {}),
+      ...(source.authority ? { authority: source.authority } : {}),
+      ...(source.reliability ? { reliability: source.reliability } : {}),
+      ...(source.budgetShare !== undefined ? { budgetShare: source.budgetShare } : {}),
+      ...(source.reason ? { reason: source.reason } : {}),
+      ...(source.includedSourceIds ? { includedSourceIds: [...source.includedSourceIds] } : {}),
+      ...(source.excludedSourceIds ? { excludedSourceIds: [...source.excludedSourceIds] } : {}),
+    })),
+    ...(input.receipt.sourceMessageIds ? { sourceMessageIds: [...input.receipt.sourceMessageIds] } : {}),
+    ...(input.receipt.manifestId ? { manifestId: input.receipt.manifestId } : {}),
     notices,
-    failureCodes: input.receipt.failureCodes,
+    failureCodes: [...input.receipt.failureCodes],
+    ...(input.receipt.contextPolicy ? { contextPolicy: { ...input.receipt.contextPolicy } } : {}),
+    ...(input.receipt.toolDeclarations ? { toolDeclarations: { ...input.receipt.toolDeclarations } } : {}),
   }
+}
+
+/** Preview only the recorded planner budget. A future request still computes its own budget. */
+export function previewContextCompactionThreshold(view: ContextCapacityView, threshold: number): {
+  thresholdTokens: number; estimatedMessageTokens: number; reached: boolean
+} | undefined {
+  const budget = view.contextPolicy?.requestBudgetTokens ?? view.requestBudgetTokens
+  if (view.status !== 'measured' || budget <= 0 || !Number.isFinite(threshold) || threshold < 0.1 || threshold > 2) return undefined
+  const thresholdTokens = Math.floor(budget * threshold)
+  return { thresholdTokens, estimatedMessageTokens: view.estimatedMessageTokens, reached: view.estimatedMessageTokens >= thresholdTokens }
 }
 
 interface MutableSegment {
