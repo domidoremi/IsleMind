@@ -18,7 +18,7 @@
     "guide:generate": "node scripts/user-guide.js",
     "guide:check": "node scripts/user-guide.js --check && node --test scripts/user-guide-tests.js",
     "start": "node node_modules/expo/bin/cli start",
-    "postinstall": "node scripts/prepare-animal-island-ui.js --link-runtimes && bun run build:ui && node scripts/patch-onnxruntime-16kb.js",
+    "postinstall": "node scripts/prepare-animal-island-ui.js --link-runtimes && bun run build:ui && node scripts/patch-onnxruntime-16kb.js && node scripts/patch-reanimated-mounting-guard.js",
     "build:ui": "bun run --cwd ../animal-island-ui build",
     "eas-build-pre-install": "node scripts/prepare-animal-island-ui.js",
     "android": "node node_modules/expo/bin/cli run:android",
