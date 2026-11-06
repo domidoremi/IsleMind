@@ -33,6 +33,7 @@ const conversation = { id: 'chat', messages: [message] } as Conversation
 const props: ChatActiveStatusLayerProps = {
   conversation, providerHealth: null, latestCompression: null, compactViewport: true,
   visualTopInset: 0, topChromeInset: 0, chromeHeight: 0, providerHealthTopOffset: 0,
+  onProviderHealthHeight: jest.fn(),
   activeConversationTaskCount: 0, primaryConversationTask: undefined, primaryConversationTaskMessage: undefined,
   goSettings: jest.fn(), markChromeActive: jest.fn(), setShowOptions: jest.fn(), setComposerPanel: jest.fn(),
   confirmActionFromMessage: jest.fn(), repairAgentEvidenceFromMessage: jest.fn(), safeStopMessage: jest.fn(),
@@ -41,6 +42,15 @@ const props: ChatActiveStatusLayerProps = {
 beforeEach(() => {
   useChatStore.setState({ error: null })
   jest.clearAllMocks()
+})
+
+it('reports the actual connection warning height and releases the reserved space when hidden', async () => {
+  const health = { code: 'provider_missing' } as NonNullable<ChatActiveStatusLayerProps['providerHealth']>
+  const view = await render(<ChatActiveStatusLayer {...props} providerHealth={health} />)
+  await fireEvent(view.getByTestId('chat-provider-health-banner'), 'layout', { nativeEvent: { layout: { height: 83.5 } } })
+  expect(props.onProviderHealthHeight).toHaveBeenLastCalledWith(84)
+  await view.rerender(<ChatActiveStatusLayer {...props} providerHealth={null} />)
+  expect(props.onProviderHealthHeight).toHaveBeenLastCalledWith(0)
 })
 
 it.each(['error', 'cancelled'] as const)('does not resurrect a projected %s when retry removes its message', async status => {

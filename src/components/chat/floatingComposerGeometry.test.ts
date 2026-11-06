@@ -164,6 +164,27 @@ describe('resolveFloatingComposerWidth', () => {
 })
 
 describe('resolveModelMenuPlacement', () => {
+  it('keeps configuration reachable above a raised long-draft composer in a short window', () => {
+    const placement = resolveModelMenuPlacement({
+      anchor: { x: 24, y: 327, width: 44, height: 44 },
+      windowWidth: 800, windowHeight: 480, estimatedMenuHeight: 320,
+    })
+    expect(placement.openAbove).toBe(true)
+    expect(placement.maxHeight).toBeGreaterThan(240)
+    expect(placement.bottom! + placement.maxHeight).toBeLessThanOrEqual(480 - 12)
+  })
+
+  it.each([40, 205, 327, 450])('bounds an oversized menu within the viewport for anchor y=%s', y => {
+    const placement = resolveModelMenuPlacement({
+      anchor: { x: 24, y, width: 44, height: 44 },
+      windowWidth: 800, windowHeight: 480, estimatedMenuHeight: 1000,
+    })
+    const top = placement.top ?? 480 - placement.bottom! - placement.maxHeight
+    expect(top).toBeGreaterThanOrEqual(12)
+    expect(top + placement.maxHeight).toBeLessThanOrEqual(480 - 12)
+    expect(placement.maxHeight).toBeGreaterThan(0)
+  })
+
   it('anchors an upward menu by its bottom edge independent of measured height', () => {
     const anchor = { x: 20, y: 700, width: 44, height: 44 }
     const short = resolveModelMenuPlacement({

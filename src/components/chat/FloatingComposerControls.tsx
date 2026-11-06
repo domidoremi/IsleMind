@@ -140,6 +140,7 @@ export function ReasoningToolIcon({ effort, active, available }: { effort: NonNu
 
 function getReasoningVisualLevel(effort: NonNullable<Conversation['reasoningEffort']>) {
   switch (effort) {
+    case 'ultra':
     case 'max':
     case 'xhigh':
       return 5

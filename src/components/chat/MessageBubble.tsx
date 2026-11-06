@@ -45,6 +45,11 @@ import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
 import { createProcessTraceSignature } from './messageTraceSignature'
 import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
+import { createLazyComponent } from '@/utils/lazyLoad'
+
+const MessageUsageReceipt = createLazyComponent(
+  () => import('./MessageUsageReceipt').then(module => ({ default: module.MessageUsageReceipt })),
+)
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
 const STREAMING_RENDER_TEXT_STEP = 32
@@ -460,6 +465,7 @@ function MessageBubbleComponent({
             {messageTimestamp}
           </Text>
         ) : null}
+        {!isUser && message.usageExecution ? <MessageUsageReceipt conversationId={conversationId} message={message} /> : null}
         {showCompletedQuickActions || canOpenActions ? (
           <MessageCompletedQuickActions
             motion={motion}
@@ -842,6 +848,11 @@ function MessageBody({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const userMessage = colors.ui.message
+  const paused = message.responseLifecycle?.stage === 'paused'
+  const pauseReason = paused ? message.responseLifecycle?.history?.slice().reverse().find(entry => entry.stage === 'paused')?.summary : undefined
+  const pausedLabel = pauseReason
+    ? t('messageBubble.pausedResponseReason', { reason: pauseReason })
+    : t('messageBubble.pausedResponse')
 
   return (
     <>
@@ -856,14 +867,19 @@ function MessageBody({
             <MessageContent content={displayText} isUser={isUser} isStreaming={isStreamingContent} onLayoutChangeRequest={onLayoutChangeRequest} selectionEnabled={false} />
             {!isUser && isStreamingContent ? <StreamingCursor motion={motion} /> : null}
           </MessageBodyReveal>
-        ) : !isUser && !isStreamingContent && message.status !== 'cancelled' ? (
+        ) : !isUser && !isStreamingContent && message.status !== 'cancelled' && !paused ? (
           <Text style={{ color: isUser ? userMessage.userForeground : colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
-            {t(message.responseLifecycle?.stage === 'paused' ? 'messageBubble.pausedResponse' : 'messageBubble.emptyResponse')}
+            {t('messageBubble.emptyResponse')}
           </Text>
         ) : isUser ? (
           <TypingDots motion={motion} />
         ) : null}
       </RenderGuard>
+      {!isUser && paused ? (
+        <Text testID="message-paused-reason" accessibilityLiveRegion="polite" style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20, marginTop: displayText ? 10 : 0 }}>
+          {pausedLabel}
+        </Text>
+      ) : null}
       {!isUser && message.status === 'error' && message.errorHasPartialResponse ? (
         <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 13, lineHeight: 20, marginTop: 10 }}>
           {relocalizeUserFacingError('', message.errorCode, t)}
@@ -1657,6 +1673,10 @@ const areMessagesEqual = (
   if (prevMsg.status !== nextMsg.status) return false
   if (prevMsg.timestamp !== nextMsg.timestamp) return false
   if (prevMsg.citations !== nextMsg.citations) return false
+  if (prevMsg.usageExecution !== nextMsg.usageExecution) return false
+  if (prevMsg.usage !== nextMsg.usage) return false
+  if (prevMsg.durationMs !== nextMsg.durationMs) return false
+  if (prevMsg.estimatedTokens !== nextMsg.estimatedTokens) return false
   if (responseLifecycleSignature(prevMsg.responseLifecycle) !== responseLifecycleSignature(nextMsg.responseLifecycle)) return false
 
   // 附件和 traces 长度比较

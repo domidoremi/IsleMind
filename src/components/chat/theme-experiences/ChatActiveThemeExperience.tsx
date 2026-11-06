@@ -79,7 +79,7 @@ function LiquidGlassActiveExperience({ chrome, status, messageList, controls, co
   return (
     <View testID="chat-active-experience-liquid-glass" style={styles.root}>
       <View pointerEvents="box-none" style={styles.glassChromeLayer}>{chrome}</View>
-      <View style={styles.glassStatusLayer}>{status}</View>
+      <View pointerEvents="box-none" style={styles.glassStatusLayer}>{status}</View>
       <View style={styles.glassCanvas}>
         <View style={styles.glassMessageColumnWrap}>
           <View style={styles.glassMessageColumn}>{messageList}</View>
@@ -122,7 +122,9 @@ const styles = {
   materialComposerDock: {} as const,
   // Preserve the floating layout while giving Android a real control viewport.
   glassChromeLayer: { ...StyleSheet.absoluteFill, zIndex: 2 } as const,
-  glassStatusLayer: { zIndex: 1, paddingHorizontal: 4 } as const,
+  // Absolute banners need a real viewport for Android accessibility bounds.
+  // Only their controls receive input; the reading canvas remains interactive.
+  glassStatusLayer: { ...StyleSheet.absoluteFill, zIndex: 3, paddingHorizontal: 4 } as const,
   glassCanvas: { flex: 1, minHeight: 0, position: 'relative' } as const,
   glassMessageColumnWrap: { flex: 1, minHeight: 0 } as const,
   glassMessageColumn: { flex: 1, minWidth: 0, marginHorizontal: 4 } as const,

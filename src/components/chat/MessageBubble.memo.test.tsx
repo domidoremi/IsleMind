@@ -57,3 +57,15 @@ it('refreshes a changed error classification and partial-response presentation',
   expect(compare(props, { ...props, message: { ...message, errorCode: 'bad_auth' } })).toBe(false)
   expect(compare(props, { ...props, message: { ...message, errorHasPartialResponse: true } })).toBe(false)
 })
+
+it('renders a receipt when the execution reference arrives after the answer text', () => {
+  expect(compare(props, { ...props, message: { ...message, usageExecution: {
+    schema: 'islemind.message-usage-reference.v1', responseExecutionId: 'response-a', requestIds: ['request-a'],
+  } } })).toBe(false)
+})
+
+it('refreshes receipt measurements without a content change', () => {
+  expect(compare(props, { ...props, message: { ...message, usage: { source: 'provider', totalTokens: 21 } } })).toBe(false)
+  expect(compare(props, { ...props, message: { ...message, durationMs: 300 } })).toBe(false)
+  expect(compare(props, { ...props, message: { ...message, estimatedTokens: true } })).toBe(false)
+})

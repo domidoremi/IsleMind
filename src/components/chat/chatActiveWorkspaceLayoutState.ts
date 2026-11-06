@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction } from 'react'
+import { useState, type Dispatch, type SetStateAction } from 'react'
 
 import { resolveProductMobileMessageListLayout } from '@/presentation/layout/productMobileLayout'
 
@@ -34,6 +34,7 @@ export function useChatActiveWorkspaceLayoutState({
   topChromeInset,
   visualTopInset,
 }: ChatActiveWorkspaceLayoutStateOptions) {
+  const [providerHealthHeight, setProviderHealthHeight] = useState(0)
   const providerHealthTopOffset = Math.max(
     resolveFloatingNoticeTopOffset({
       visualTopInset,
@@ -44,10 +45,18 @@ export function useChatActiveWorkspaceLayoutState({
     chromeHeight + FLOATING_NOTICE_TOP_GAP,
   )
   const chromeCollapseLocked = showOptions || !!providerHealth?.code
-  const messageListLayout = resolveProductMobileMessageListLayout(activeWindowWidth, {
+  const baseMessageListLayout = resolveProductMobileMessageListLayout(activeWindowWidth, {
     topChromeInset: Math.max(topChromeInset, visualTopInset),
     chromeHeight,
   })
+  const healthClearance = providerHealth?.code && providerHealthHeight > 0
+    ? providerHealthTopOffset + providerHealthHeight + FLOATING_NOTICE_TOP_GAP : 0
+  const messageListLayout = {
+    ...baseMessageListLayout,
+    topInset: Math.max(baseMessageListLayout.topInset, healthClearance),
+    conversationHeaderTopPadding: Math.max(baseMessageListLayout.conversationHeaderTopPadding, healthClearance),
+    emptyConversationTopPadding: Math.max(baseMessageListLayout.emptyConversationTopPadding, healthClearance),
+  }
   function collapseChrome() {
     if (chromeCollapseLocked || providerHealth?.code) return
     setShowOptions(false)
@@ -67,5 +76,6 @@ export function useChatActiveWorkspaceLayoutState({
     messageListLayout,
     messageListTopInset: messageListLayout.topInset,
     providerHealthTopOffset,
+    setProviderHealthHeight,
   }
 }

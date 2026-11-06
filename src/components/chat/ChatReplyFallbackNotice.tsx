@@ -33,13 +33,14 @@ export function ChatReplyFallbackNotice({ conversation }: { conversation: Conver
     return `${provider ? resolveProviderDisplayName(provider, t('providerSettings.customProvider')) : target.providerId} · ${target.model}`
   }
   return <View testID="chat-reply-fallback" accessibilityLiveRegion="polite" style={{ padding: 12, gap: 6, borderRadius: colors.ui.radius.panel, backgroundColor: colors.ui.semantic.surface.muted }}>
-    <Text style={{ color: colors.text, fontWeight: '700' }}>{t('modelAvailability.usingFallback')}</Text>
-    <Text style={{ color: colors.textSecondary }}>{t('modelAvailability.preferredTarget', { target: label(fallback.preferred) })}</Text>
-    <Text style={{ color: colors.textSecondary }}>{t('modelAvailability.actualTarget', { target: label(fallback.actual) })}</Text>
-    <Text style={{ color: colors.textTertiary }}>{t('modelAvailability.temporaryFallbackReason')}</Text>
-    {!fallback.streaming ? <IsleButton compact label={t('modelAvailability.adoptFallback')} onPress={() => {
+    <Text style={{ color: colors.text, fontWeight: '700' }}>{t('modelStatus.usingFallback')}</Text>
+    {conversation.routingPlan ? <Text style={{ color: colors.textSecondary }}>{t('routing.active', { name: conversation.routingPlan.name })}</Text> : null}
+    <Text style={{ color: colors.textSecondary }}>{t('modelStatus.preferredTarget', { target: label(fallback.preferred) })}</Text>
+    <Text style={{ color: colors.textSecondary }}>{t('modelStatus.actualTarget', { target: label(fallback.actual) })}</Text>
+    <Text style={{ color: colors.textTertiary }}>{t('modelStatus.temporaryFallbackReason')}</Text>
+    {!fallback.streaming ? <IsleButton compact label={t('modelStatus.adoptFallback')} onPress={() => {
       if (!useChatStore.getState().switchConversationModel(conversation.id, fallback.actual.providerId, fallback.actual.model)) {
-        dialog.toast({ title: t('modelAvailability.selectionFailed'), tone: 'amber' })
+        dialog.toast({ title: t('modelStatus.selectionFailed'), tone: 'amber' })
       }
     }} /> : null}
   </View>

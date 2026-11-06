@@ -1,16 +1,23 @@
-import { useEffect, useState } from 'react'
-import { ActivityIndicator, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { useEffect, useMemo, useState } from 'react'
+import { ActivityIndicator, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { router } from 'expo-router'
 
-import { loadContextCapacity, type ContextCapacityLoadResult } from '@/bootstrap/contextCapacityRuntime'
+import { loadContextCapacity, type ContextCapacityLoadResult, type ContextReportedInput } from '@/bootstrap/contextCapacityRuntime'
+import { previewDraftContextCapacity, type DraftContextCapacityResult } from '@/bootstrap/contextCapacityDraftRuntime'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useChatStore } from '@/store/chatStore'
+import { useSettingsStore } from '@/store/settingsStore'
+import { ContextCapacitySources } from './ContextCapacitySources'
+import { ToolDeclarationReport } from './ToolDeclarationReport'
+import { useReadChatContextDraft, type ChatContextDraft } from './chatContextDraft'
 import type {
   ContextCapacityNotice,
   ContextCapacitySegment,
@@ -31,7 +38,7 @@ const KNOWN_SEGMENT_TYPES = new Set([
 const WARNING_RATIO = 0.7
 const DANGER_RATIO = 0.9
 
-type SheetState = { kind: 'loading' } | ContextCapacityLoadResult
+type SheetState = { kind: 'loading' } | ContextCapacityLoadResult | Exclude<DraftContextCapacityResult, { kind: 'ready' }>
 
 export function ContextCapacitySheet({
   visible,
@@ -47,19 +54,56 @@ export function ContextCapacitySheet({
   const motion = useMotionPreference(true)
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
-  const [state, setState] = useState<SheetState>({ kind: 'loading' })
+  const [loaded, setLoaded] = useState<{ conversationId: string; state: SheetState }>()
+  const [refresh, setRefresh] = useState(0)
+  const [mode, setMode] = useState<'recorded' | 'draft'>('recorded')
+  const [selectedType, setSelectedType] = useState<string>()
+  const [draftSnapshot, setDraftSnapshot] = useState<{ conversationId: string; draft: ChatContextDraft | undefined; capturedAt: number }>()
+  const readDraft = useReadChatContextDraft()
+  const conversation = useChatStore(state => state.conversations.find(item => item.id === conversationId))
+  const providers = useSettingsStore(state => state.providers)
+  const settings = useSettingsStore(state => state.settings)
+  const draftPreview = useMemo(() => {
+    if (!visible || mode !== 'draft' || !conversation || draftSnapshot?.conversationId !== conversationId) return undefined
+    return previewDraftContextCapacity({
+      conversation, provider: providers.find(provider => provider.id === conversation.providerId),
+      settings, draft: draftSnapshot.draft, capturedAt: draftSnapshot.capturedAt,
+    })
+  }, [visible, mode, conversationId, conversation, providers, settings, draftSnapshot])
+  const state: SheetState = mode === 'draft'
+    ? draftPreview ?? { kind: 'draft-unavailable' }
+    : loaded?.conversationId === conversationId ? loaded.state : { kind: 'loading' }
 
   useEffect(() => {
     if (!visible) return undefined
     let cancelled = false
-    setState({ kind: 'loading' })
+    setLoaded({ conversationId, state: { kind: 'loading' } })
     void loadContextCapacity(conversationId).then((result) => {
-      if (!cancelled) setState(result)
+      if (!cancelled) setLoaded({ conversationId, state: result })
+    }, () => {
+      if (!cancelled) setLoaded({ conversationId, state: { kind: 'unreadable' } })
     })
     return () => {
       cancelled = true
     }
+  }, [conversationId, visible, refresh])
+
+  useEffect(() => {
+    setMode('recorded')
+    setSelectedType(undefined)
+    setDraftSnapshot(undefined)
   }, [conversationId, visible])
+
+  function closeCurrentView() {
+    if (selectedType) setSelectedType(undefined)
+    else onClose()
+  }
+
+  function showDraft() {
+    setDraftSnapshot({ conversationId, draft: readDraft?.(), capturedAt: Date.now() })
+    setSelectedType(undefined)
+    setMode('draft')
+  }
 
   if (!visible) return null
 
@@ -73,7 +117,7 @@ export function ContextCapacitySheet({
       animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={closeCurrentView}
     >
       <View style={styles.modalRoot}>
         <IsleOverlayPressable
@@ -90,7 +134,7 @@ export function ContextCapacitySheet({
           testID="chat-context-capacity-sheet"
           style={{
             width: Math.min(640, width),
-            maxHeight: Math.max(360, height - Math.max(insets.top, 16) - 16),
+            maxHeight: Math.max(120, height - Math.max(insets.top, 16) - 16),
             alignSelf: 'center',
             borderTopLeftRadius: Math.min(colors.ui.radius.modal, 8),
             borderTopRightRadius: Math.min(colors.ui.radius.modal, 8),
@@ -107,7 +151,7 @@ export function ContextCapacitySheet({
                 {t('chat.contextCapacity.title')}
               </Text>
               <Text numberOfLines={2} style={[styles.subtitle, { color: colors.textSecondary }]}>
-                {t('chat.contextCapacity.lastRequest')}
+                {t(mode === 'draft' ? 'chat.contextCapacity.draftPreviewHint' : 'chat.contextCapacity.lastRequest')}
               </Text>
             </View>
             <IslePressable
@@ -120,18 +164,71 @@ export function ContextCapacitySheet({
               <AppIcon name="close" color={colors.textSecondary} size={18} strokeWidth={appIconStroke.regular} />
             </IslePressable>
           </View>
+          <View style={[styles.tabs, { backgroundColor: sheetMaterial.chrome }]}>
+            {(['recorded', 'draft'] as const).map(value => <IslePressable key={value}
+              testID={`chat-context-tab-${value}`} accessibilityRole="button"
+              accessibilityLabel={t(value === 'draft' ? 'chat.contextCapacity.draftPreview' : 'chat.contextCapacity.lastRequest')}
+              accessibilityState={{ selected: mode === value }}
+              {...(Platform.OS === 'web' ? { 'aria-pressed': mode === value } : {})}
+              onPress={() => { if (value === 'draft') showDraft(); else { setMode('recorded'); setSelectedType(undefined) } }}
+              style={[styles.tab, { borderBottomColor: mode === value ? colors.ui.icon.accentForeground : 'transparent' }]}>
+              <Text style={{ color: mode === value ? colors.text : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
+                {t(value === 'draft' ? 'chat.contextCapacity.draftPreview' : 'chat.contextCapacity.lastRequest')}
+              </Text>
+            </IslePressable>)}
+          </View>
           <ScrollView
-            style={{ backgroundColor: sheetMaterial.body }}
+            style={{ backgroundColor: sheetMaterial.body, flexShrink: 1 }}
             contentContainerStyle={[styles.body, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}
+            keyboardShouldPersistTaps="handled"
           >
-            <SheetBody state={state} />
+            {mode === 'draft' ? <Text testID="chat-context-draft-scope" style={[styles.previewHint, { color: colors.textSecondary }]}>
+              {t('chat.contextCapacity.draftScopeHint')}
+            </Text> : null}
+            {mode === 'draft' && draftPreview?.kind === 'ready' ? <Text style={[styles.previewHint, { color: colors.textTertiary }]}>
+              {t('chat.contextCapacity.draftIdentity', { model: draftPreview.requestedModel, count: draftPreview.draftCharacters })}
+            </Text> : null}
+            <ContextCapacityContent state={state} preview={mode === 'draft'} selectedType={selectedType} onSelectSource={setSelectedType} />
+            {mode === 'recorded' && state.kind !== 'loading' ? <IslePressable accessibilityRole="button"
+              accessibilityLabel={t('chat.contextCapacity.refreshRecorded')} onPress={() => { setSelectedType(undefined); setRefresh(value => value + 1) }}
+              style={styles.tab}>
+              <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 13 }}>{t('chat.contextCapacity.refreshRecorded')}</Text>
+            </IslePressable> : null}
+            {mode === 'draft' ? <IslePressable accessibilityRole="button" accessibilityLabel={t('chat.contextCapacity.refreshDraft')}
+              onPress={showDraft} style={styles.tab}>
+              <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 13 }}>{t('chat.contextCapacity.refreshDraft')}</Text>
+            </IslePressable> : null}
+            <IslePressable accessibilityRole="button" accessibilityLabel={t('usage.contextSettings')}
+              onPress={() => { onClose(); router.push({ pathname: '/settings/context', params: { conversationId, returnTo: 'chat' } }) }}
+              style={{ minHeight: 44, paddingVertical: 12 }}>
+              <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 14, lineHeight: 22 }}>{t('usage.contextSettings')}</Text>
+            </IslePressable>
           </ScrollView>
         </MotiView>
       </View>
     </Modal>
   )
 }
-function SheetBody({ state }: { state: SheetState }) {
+export function ContextCapacityContent({ state, preview = false, selectedType, onSelectSource }: {
+  state: SheetState
+  preview?: boolean
+  selectedType?: string
+  onSelectSource?: (type: string | undefined) => void
+}) {
+  const identity = state.kind === 'ready'
+    ? JSON.stringify([state.view.runId, state.view.capturedAt, state.view.providerId, state.view.model, state.view.manifestId])
+    : state.kind
+  const [selection, setSelection] = useState<{ identity: string; type?: string }>()
+  const type = onSelectSource ? selectedType : selection?.identity === identity ? selection.type : undefined
+  return <SheetBody state={state} preview={preview} selectedType={type}
+    onSelectSource={onSelectSource ?? (type => setSelection({ identity, type }))} />
+}
+function SheetBody({ state, preview, selectedType, onSelectSource }: {
+  state: SheetState
+  preview: boolean
+  selectedType?: string
+  onSelectSource: (type: string | undefined) => void
+}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
 
@@ -163,19 +260,54 @@ function SheetBody({ state }: { state: SheetState }) {
       />
     )
   }
-  return <CapacityReport view={state.view} />
+  if (state.kind !== 'ready') {
+    return <Notice tone="neutral" title={t('chat.contextCapacity.draftUnavailableTitle')}
+      message={t(state.kind === 'draft-busy' ? 'chat.contextCapacity.draftBusy'
+        : state.kind === 'draft-unbound' ? 'chat.contextCapacity.draftUnbound' : 'chat.contextCapacity.draftUnavailable')} />
+  }
+  return <CapacityReport view={state.view} preview={preview} reportedInput={state.reportedInput} selectedType={selectedType} onSelectSource={onSelectSource} />
 }
 
-function CapacityReport({ view }: { view: ContextCapacityView }) {
+function CapacityReport({ view, preview, reportedInput, selectedType, onSelectSource }: {
+  view: ContextCapacityView
+  preview: boolean
+  reportedInput?: ContextReportedInput
+  selectedType?: string
+  onSelectSource: (type: string | undefined) => void
+}) {
   const { colors } = useAppTheme()
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const measured = view.status === 'measured'
+  if (selectedType && view.segments.some(segment => segment.type === selectedType)) {
+    return <View style={styles.report}>
+      <IslePressable accessibilityRole="button" accessibilityLabel={t('chat.contextCapacity.backToComposition')}
+        onPress={() => onSelectSource(undefined)} style={styles.tab}>
+        <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 13 }}>{t('chat.contextCapacity.backToComposition')}</Text>
+      </IslePressable>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>
+        {KNOWN_SEGMENT_TYPES.has(selectedType) ? t(`chat.contextCapacity.segment.${selectedType}`) : t('chat.contextCapacity.segment.unknown')}
+      </Text>
+      <ContextCapacitySources key={JSON.stringify([view.runId, view.capturedAt, view.manifestId, view.providerId, view.model, selectedType])} view={view} type={selectedType} />
+    </View>
+  }
 
   return (
-    <View style={styles.report}>
+    <View style={styles.report} testID={preview ? 'chat-context-draft-report' : 'chat-context-recorded-report'}>
       <Text style={[styles.measurementHint, { color: colors.textTertiary }]}>
-        {`${view.model} · ${t('chat.contextCapacity.estimatedOnly')}`}
+        {`${view.providerId} · ${view.model} · ${t('chat.contextCapacity.estimatedOnly')}`}
       </Text>
+      {!preview ? <Text testID="chat-context-recorded-identity" style={[styles.measurementHint, { color: colors.textTertiary }]}>
+        {t('chat.contextCapacity.recordedIdentity', { time: new Date(view.capturedAt).toLocaleString(i18n.language), id: view.runId })}
+      </Text> : null}
+      {!preview ? <View testID="chat-context-reported-input" style={styles.reported}>
+        <Text style={[styles.previewHint, { color: colors.textSecondary }]}>{t('chat.contextCapacity.reportedInput', {
+          count: reportedInput ? formatTokens(reportedInput.tokens, t) : '—',
+        })}</Text>
+        <Text style={[styles.measurementHint, { color: colors.textTertiary }]}>
+          {t(reportedInput ? 'chat.contextCapacity.reportedInputHint' : 'chat.contextCapacity.reportedInputUnavailable')}
+        </Text>
+      </View> : null}
+      {!preview && view.toolDeclarations ? <ToolDeclarationReport receipt={view.toolDeclarations} /> : null}
 
       {measured ? (
         <CapacityGauge view={view} />
@@ -190,16 +322,16 @@ function CapacityReport({ view }: { view: ContextCapacityView }) {
       <View style={styles.metricRow}>
         <Metric label={t('chat.contextCapacity.used')} value={formatTokens(view.usedTokens, t)} />
         <Metric label={t('chat.contextCapacity.remaining')} value={measured ? formatTokens(view.remainingTokens, t) : '—'} />
-        <Metric label={t('chat.contextCapacity.untilCompaction')} value={view.tokensUntilCompaction > 0 ? formatTokens(view.tokensUntilCompaction, t) : '—'} />
+        <Metric label={t('chat.contextCapacity.untilCompaction')} value={measured && view.tokensUntilCompaction > 0 ? formatTokens(view.tokensUntilCompaction, t) : '—'} />
       </View>
 
-      {view.compression.triggered ? <CompressionRow view={view} /> : null}
+      {view.compression.triggered && (!preview || measured) ? <CompressionRow view={view} /> : null}
 
       <Text style={[styles.sectionTitle, { color: colors.text }]}>
         {t('chat.contextCapacity.composition')}
       </Text>
       {view.segments.map((segment) => (
-        <SegmentRow key={segment.type} segment={segment} measured={measured} />
+        <SegmentRow key={segment.type} segment={segment} measured={measured} onPress={() => onSelectSource(segment.type)} />
       ))}
 
       {view.notices
@@ -230,9 +362,15 @@ function CapacityGauge({ view }: { view: ContextCapacityView }) {
 
   return (
     <View
+      accessible
       accessibilityRole="progressbar"
-      accessibilityValue={{ min: 0, max: view.inputBudgetTokens, now: view.usedTokens }}
+      accessibilityValue={{ min: 0, max: view.inputBudgetTokens, now: Math.min(view.usedTokens, view.inputBudgetTokens) }}
       accessibilityLabel={`${t('chat.contextCapacity.used')} ${view.usedTokens} / ${view.inputBudgetTokens}`}
+      {...(Platform.OS === 'web' ? {
+        'aria-valuemin': 0,
+        'aria-valuemax': view.inputBudgetTokens,
+        'aria-valuenow': Math.min(view.usedTokens, view.inputBudgetTokens),
+      } : {})}
       style={styles.gauge}
     >
       <View style={[styles.gaugeTrack, { backgroundColor: colors.ui.semantic.surface.muted, borderColor: colors.material.stroke }]}>
@@ -255,7 +393,7 @@ function CapacityGauge({ view }: { view: ContextCapacityView }) {
   )
 }
 
-function SegmentRow({ segment, measured }: { segment: ContextCapacitySegment; measured: boolean }) {
+function SegmentRow({ segment, measured, onPress }: { segment: ContextCapacitySegment; measured: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const label = KNOWN_SEGMENT_TYPES.has(segment.type)
@@ -271,7 +409,9 @@ function SegmentRow({ segment, measured }: { segment: ContextCapacitySegment; me
   ].filter(Boolean)
 
   return (
-    <View style={styles.segment} testID={`chat-context-capacity-segment-${segment.type}`}>
+    <IslePressable accessibilityRole="button" accessibilityLabel={t('chat.contextCapacity.openSources', { source: label })}
+      accessibilityHint={t('chat.contextCapacity.sourceMetadataHint')} onPress={onPress}
+      style={styles.segment} testID={`chat-context-capacity-segment-${segment.type}`}>
       <View style={styles.segmentHeader}>
         <Text numberOfLines={1} style={[styles.segmentLabel, { color: colors.text }]}>{label}</Text>
         <Text style={[styles.segmentTokens, { color: colors.textSecondary }]}>
@@ -280,14 +420,15 @@ function SegmentRow({ segment, measured }: { segment: ContextCapacitySegment; me
         <Text style={[styles.segmentShare, { color: colors.textTertiary }]}>
           {measured ? `${Math.round(segment.ratio * 100)}%` : '—'}
         </Text>
+        <AppIcon name="back-next" color={colors.textTertiary} size={14} />
       </View>
-      <View style={[styles.segmentTrack, { backgroundColor: colors.ui.semantic.surface.muted }]}>
+      {measured ? <View testID={`chat-context-capacity-track-${segment.type}`} style={[styles.segmentTrack, { backgroundColor: colors.ui.semantic.surface.muted }]}>
         <View style={[styles.segmentFill, { width: `${Math.round(segment.ratio * 100)}%`, backgroundColor: colors.ui.tone.info.foreground }]} />
-      </View>
+      </View> : null}
       {badges.length ? (
         <Text style={[styles.segmentBadges, { color: colors.textTertiary }]}>{badges.join(' · ')}</Text>
       ) : null}
-    </View>
+    </IslePressable>
   )
 }
 function CompressionRow({ view }: { view: ContextCapacityView }) {
@@ -385,6 +526,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   body: { paddingHorizontal: 16, paddingTop: 12, gap: 10 },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 12 },
+  tab: { minHeight: 44, justifyContent: 'center', paddingVertical: 8, borderBottomWidth: 2 },
+  previewHint: { fontSize: 12, lineHeight: 18 },
+  reported: { gap: 4 },
   placeholder: { paddingVertical: 36, alignItems: 'center', gap: 10 },
   placeholderMessage: { fontSize: 12, lineHeight: 17, fontWeight: '600', textAlign: 'center' },
   report: { gap: 12 },
@@ -408,7 +553,7 @@ const styles = StyleSheet.create({
   metricValue: { fontSize: 13, lineHeight: 18, fontWeight: '800', includeFontPadding: false },
   metricLabel: { fontSize: 9.5, lineHeight: 13, fontWeight: '600', includeFontPadding: false },
   sectionTitle: { marginTop: 2, fontSize: 12, lineHeight: 16, fontWeight: '800' },
-  segment: { gap: 4 },
+  segment: { gap: 4, minHeight: 44, paddingVertical: 6 },
   segmentHeader: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   segmentLabel: { flex: 1, minWidth: 0, fontSize: 12, lineHeight: 16, fontWeight: '700' },
   segmentTokens: { fontSize: 11, lineHeight: 15, fontWeight: '700' },

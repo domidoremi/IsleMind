@@ -12,19 +12,20 @@ import { ISLE_MIN_TOUCH_TARGET, IsleChip, IslePanel, IslePressable } from '@/com
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { getSettingsModelDisplayAlias, SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH, upsertSettingsModelDisplayAlias } from '@/modules/settings'
+import { getSettingsModelDisplayAlias, getSettingsModelIdentityKey, SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH, SETTINGS_MODEL_FAVORITE_LIMIT, SettingsModelFavoriteLimitError, upsertSettingsModelDisplayAlias } from '@/modules/settings'
 import { getModelConfig } from '@/types/modelCatalog'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIModel, AIProvider } from '@/types/providerContracts'
-import type { CanonicalThemeId, SettingsModelDisplayAlias } from '@/types/settingsContracts'
+import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { normalizeSearchText } from '@/utils/text'
 import { getReasoningControlOptions, getReasoningControlValue, modelSupportsSamplingControls, resolveReasoningControlValue } from '@/utils/modelReasoning'
-import { getProviderDisplayModel, resolveProviderModelAlias } from '@/utils/providerModels'
-import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/bootstrap/providerModelAccess'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { isProviderNetworkBlocked } from '@/utils/providerGateway'
+import { getProviderModelDisplayCandidates, resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/bootstrap/providerModelAccess'
 import { providerModelAvailabilityPort, providerModelAvailabilityIntegrationProfile } from '@/bootstrap/providerModelAvailabilityRuntime'
 import { resolveProviderProtocolAdapter } from '@/bootstrap/providerRequestBinding'
 import { resolveProviderEndpointVariant, type ProviderModelCurrent } from '@/modules/providers'
-import { credentialSourceLabel, hasCredentialBlockEvidence, projectModelAvailability, selectModelAvailabilityEvidence } from '@/presentation/features/settings/modelAvailabilityPresentation'
+import { credentialSourceLabel, hasCredentialBlockEvidence, projectModelAvailability, selectModelAvailabilityEvidence } from '@/presentation/features/conversations/modelStatusPresentation'
 import { resolveProviderRequestParameters } from '@/bootstrap/providerRequestPolicies'
 import { getProviderParameterEntry } from '@/bootstrap/providerParameterMatrix'
 import { resolveConversationGenerationParameterRanges } from '@/bootstrap/providerConversationGeneration'
@@ -33,9 +34,16 @@ import { providerSupportsVisionInput, resolveProviderNativeToolSupport } from '@
 import { resolveGenerationParameterSources, type GenerationParameterKey } from '@/core'
 import { getChatModelCanonicalDisplayName, resolveChatModelDisplayName } from './chatIdentityPresentation'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
+import { groupProviderModelsBySource } from '@/utils/providerModelSources'
+import { ProviderModelSourceFilter, ProviderModelPagination, PROVIDER_MODEL_PAGE_SIZE } from '@/components/providers/ProviderModelSourceFilter'
+import { buildChatModelPickerCandidates, filterChatModelPickerCandidates, sortChatModelPickerProviders, type ChatModelPickerScope } from './chatModelPickerPresentation'
+import { ChatRoutingPlanPicker } from './ChatRoutingPlanPicker'
 
 interface ModelPickerItem {
+  key: string
+  provider: AIProvider
   id: string
+  favorite: boolean
   name: string
   subtitle?: string
   badges: ModelCapabilityBadge[]
@@ -47,11 +55,12 @@ interface ModelPickerItem {
 interface ModelPickerGroup {
   id: string
   label: string
+  connectionLabel?: string
+  connectionId?: string
   models: ModelPickerItem[]
 }
 
-const MODEL_PICKER_PROVIDER_MODEL_LIMIT = 96
-const MODEL_PICKER_QUERY_MODEL_LIMIT = 160
+type FavoriteChange = { providerId: string; modelId: string; favorite: boolean }
 
 export function ChatOptionsPanel({
   conversation,
@@ -74,7 +83,7 @@ export function ChatOptionsPanel({
   switchableProviders: AIProvider[]
   colors: ReturnType<typeof useAppTheme>['colors']
   maxHeight: number
-  onSwitchModel: (provider: AIProvider, model: string) => void
+  onSwitchModel: (provider: AIProvider, model: string, routingPlan?: Conversation['routingPlan']) => void
   onCopyLink?: () => void
   onManageProviders?: () => void
   onClose: () => void
@@ -89,14 +98,20 @@ export function ChatOptionsPanel({
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
   const updateConversation = useChatStore((state) => state.updateConversation)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
+  const modelFavorites = useSettingsStore((state) => state.settings.modelFavorites)
+  const setModelFavorite = useSettingsStore((state) => state.setModelFavorite)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const configuredProviders = useSettingsStore((state) => state.providers)
   const network = useNetworkState()
-  const offline = network.isConnected === false || network.isInternetReachable === false
-  const [availabilityRows, setAvailabilityRows] = useState<readonly ProviderModelCurrent[]>([])
-  const [availabilityReadFailed, setAvailabilityReadFailed] = useState(false)
-  const [selectedProviderId, setSelectedProviderId] = useState(provider?.id ?? conversation.providerId)
+  const [availabilitySnapshot, setAvailabilitySnapshot] = useState<{ request: object | null; rows: readonly ProviderModelCurrent[]; failedKeys: ReadonlySet<string> }>(() => ({ request: null, rows: [], failedKeys: new Set() }))
+  const [modelPickerScope, setModelPickerScope] = useState<ChatModelPickerScope>({ kind: 'all' })
+  const [favoriteSavePending, setFavoriteSavePending] = useState(false)
+  const [favoriteSaveError, setFavoriteSaveError] = useState<{ change: FavoriteChange; kind: 'storage' | 'limit' | 'connection' } | null>(null)
+  const favoriteSaveSequence = useRef(0)
+  const favoriteSaveInFlight = useRef(false)
   const [modelPickerQuery, setModelPickerQuery] = useState('')
+  const [modelSourceId, setModelSourceId] = useState<string | null>(null)
+  const [modelPage, setModelPage] = useState(0)
   const currentProvider = provider
   const currentModelAlias = currentProvider
     ? getSettingsModelDisplayAlias(modelDisplayAliases, currentProvider.id, conversation.model)
@@ -119,70 +134,117 @@ export function ChatOptionsPanel({
     [configuredProviders, provider, switchableProviders]
   )
   const orderedProviders = useMemo(
-    () => sortSwitchableProviders(policySwitchableProviders, conversation.providerId ?? '', normalizedQuery, undefined, modelDisplayAliases),
-    [conversation.providerId, modelDisplayAliases, normalizedQuery, policySwitchableProviders]
+    () => sortChatModelPickerProviders(policySwitchableProviders, conversation.providerId),
+    [conversation.providerId, policySwitchableProviders]
   )
-  const selectedProvider =
-    orderedProviders.find((item) => item.id === selectedProviderId) ??
-    orderedProviders[0]
-  const visibleProviders = normalizedQuery
-    ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery, undefined, modelDisplayAliases))
-    : orderedProviders
+  const selectedProvider = modelPickerScope.kind === 'provider'
+    ? orderedProviders.find((item) => item.id === modelPickerScope.providerId)
+    : undefined
+  const allModelCandidates = useMemo(() => buildChatModelPickerCandidates({
+    providers: orderedProviders, currentProviderId: conversation.providerId, currentModel: conversation.model,
+    displayAliases: modelDisplayAliases, providerFallbackName,
+  }), [orderedProviders, conversation.providerId, conversation.model, modelDisplayAliases, providerFallbackName])
+  const allQueryMatches = useMemo(() => filterChatModelPickerCandidates({
+    candidates: allModelCandidates, scope: { kind: 'all' }, query: normalizedQuery,
+  }), [allModelCandidates, normalizedQuery])
+  const favoriteQueryMatches = useMemo(() => filterChatModelPickerCandidates({
+    candidates: allQueryMatches, scope: { kind: 'favorites' }, query: '', favorites: modelFavorites,
+  }), [allQueryMatches, modelFavorites])
+  const visibleProviderIds = new Set(allQueryMatches.map((item) => item.provider.id))
+  const visibleProviders = orderedProviders.filter((item) => visibleProviderIds.has(item.id) || item.id === selectedProvider?.id)
+  const allSelectedModelIds = useMemo(() => selectedProvider
+    ? allModelCandidates.filter((item) => item.provider.id === selectedProvider.id).map((item) => item.id)
+    : [], [allModelCandidates, selectedProvider])
+  const modelSources = useMemo(() => selectedProvider ? groupProviderModelsBySource(selectedProvider, allSelectedModelIds) : [], [selectedProvider, allSelectedModelIds])
+  const matchingModelCandidates = useMemo(() => filterChatModelPickerCandidates({
+    candidates: allQueryMatches, scope: modelPickerScope, query: '', favorites: modelFavorites, sourceId: modelSourceId,
+  }), [allQueryMatches, modelPickerScope, modelFavorites, modelSourceId])
+  const currentModelPage = Math.min(modelPage, Math.max(0, Math.ceil(matchingModelCandidates.length / PROVIDER_MODEL_PAGE_SIZE) - 1))
+  const pageModelCandidates = useMemo(() => matchingModelCandidates.slice(currentModelPage * PROVIDER_MODEL_PAGE_SIZE, (currentModelPage + 1) * PROVIDER_MODEL_PAGE_SIZE), [matchingModelCandidates, currentModelPage])
+  const availabilityTargetsKey = JSON.stringify([...new Map(pageModelCandidates.map((item) => [
+    getSettingsModelIdentityKey(item.provider.id, item.upstreamModel), [item.provider.id, item.upstreamModel],
+  ])).values()])
+  const availabilityRequest = useMemo(() => ({
+    targets: JSON.parse(availabilityTargetsKey) as [string, string][],
+  }), [availabilityTargetsKey, configuredProviders, switchableProviders, provider])
   useEffect(() => {
     let cancelled = false
-    setAvailabilityRows([]); setAvailabilityReadFailed(false)
-    if (selectedProvider) void providerModelAvailabilityPort.listCurrentModels({ providerId: selectedProvider.id, limit: providerModelAvailabilityIntegrationProfile.pageSize })
-      .then((rows) => { if (!cancelled) setAvailabilityRows(rows) })
-      .catch(() => { if (!cancelled) setAvailabilityReadFailed(true) })
+    void (async () => {
+      const rows: ProviderModelCurrent[] = []
+      const failedKeys = new Set<string>()
+      // Read only visible targets, in small local-storage batches. Aliases of
+      // the same upstream target share evidence, but retain separate identities.
+      for (let offset = 0; offset < availabilityRequest.targets.length && !cancelled; offset += 4) {
+        const targets = availabilityRequest.targets.slice(offset, offset + 4)
+        const results = await Promise.allSettled(targets.map(([providerId, modelId]) => providerModelAvailabilityPort.listCurrentModels({
+          providerId, modelId, limit: providerModelAvailabilityIntegrationProfile.pageSize,
+        })))
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') rows.push(...result.value)
+          else failedKeys.add(getSettingsModelIdentityKey(...targets[index]))
+        })
+      }
+      if (!cancelled) setAvailabilitySnapshot({ request: availabilityRequest, rows, failedKeys })
+    })()
     return () => { cancelled = true }
-  }, [selectedProvider])
-  const selectedModelIds = selectedProvider ? getSwitchableProviderModels(selectedProvider, normalizedQuery, undefined, modelDisplayAliases) : []
-  if (selectedProvider?.id === conversation.providerId && conversation.model && !selectedModelIds.includes(conversation.model)) selectedModelIds.unshift(conversation.model)
-  const selectedModels = selectedProvider
-    ? disambiguateModelPickerItems(selectedModelIds
-      .map((id) => {
-        const upstreamModel = resolveProviderModelAlias(selectedProvider, id)
-        const config = getModelConfig(upstreamModel, selectedProvider.type, selectedProvider.modelConfigs)
-        const canonicalName = getChatModelCanonicalDisplayName(selectedProvider, id)
-        const displayName = resolveChatModelDisplayName(selectedProvider, id, modelDisplayAliases)
-        const adapter = resolveProviderProtocolAdapter({ provider: selectedProvider, model: upstreamModel, requestedModel: id, messages: [], generationParameterSources: {} })
-        const endpointVariant = resolveProviderEndpointVariant(selectedProvider)
-        const current = selectModelAvailabilityEvidence({ provider: selectedProvider, modelId: upstreamModel,
+  }, [availabilityRequest])
+  const availabilityRows = availabilitySnapshot.request === availabilityRequest ? availabilitySnapshot.rows : []
+  const favoriteKeys = useMemo(() => new Set(modelFavorites?.map((item) => getSettingsModelIdentityKey(item.providerId, item.modelId))), [modelFavorites])
+  const selectedModels = useMemo(() => disambiguateModelPickerItems(pageModelCandidates
+      .map(({ key, provider: modelProvider, id, upstreamModel }) => {
+        const config = getModelConfig(upstreamModel, modelProvider.type, modelProvider.modelConfigs)
+        const canonicalName = getChatModelCanonicalDisplayName(modelProvider, id)
+        const displayName = resolveChatModelDisplayName(modelProvider, id, modelDisplayAliases)
+        const adapter = resolveProviderProtocolAdapter({ provider: modelProvider, model: upstreamModel, requestedModel: id, messages: [], generationParameterSources: {} })
+        const endpointVariant = resolveProviderEndpointVariant(modelProvider)
+        const current = selectModelAvailabilityEvidence({ provider: modelProvider, modelId: upstreamModel,
           protocolAdapterId: adapter.id, endpointVariant, rows: availabilityRows })
-        const projection = projectModelAvailability({ current, offline,
-          credentialBlocked: hasCredentialBlockEvidence(selectedProvider), providerDisabled: !selectedProvider.enabled,
-          policyBlocked: !resolveProviderModelAliasAccess({ provider: selectedProvider, model: id, settings }).allowed,
+        const projection = projectModelAvailability({ current, offline: isProviderNetworkBlocked(modelProvider, network),
+          credentialBlocked: hasCredentialBlockEvidence(modelProvider), providerDisabled: !modelProvider.enabled,
+          policyBlocked: !resolveProviderModelAliasAccess({ provider: modelProvider, model: id, settings }).allowed,
           incompatible: config.chatCompatible === false,
           activeReply: conversation.messages.some((message) => message.status === 'streaming'),
         })
         return {
-          id,
+          key, provider: modelProvider, id, favorite: favoriteKeys.has(key),
           name: displayName,
           subtitle: displayName === canonicalName ? undefined : canonicalName,
-          badges: getModelCapabilityBadges(selectedProvider, upstreamModel, config, t),
-          availabilityLabel: [selectedProvider.id === conversation.providerId && id === conversation.model ? t('modelAvailability.preferred') : '',
-            adapter.id, t(`modelAvailability.${projection.availability}`),
-            projection.advertisement === 'not-advertised' ? t('modelAvailability.notAdvertised') : '',
-            ...projection.labels.map((label) => t(`modelAvailability.${label}`))].filter(Boolean).join(' · '),
-          evidenceLabel: current && !current.invalidated ? [credentialSourceLabel(current.credentialSource, selectedProvider, t),
-            current.evidence ? t(`modelAvailability.source.${current.evidence.source}`) : '',
+          badges: getModelCapabilityBadges(modelProvider, upstreamModel, config, t),
+          availabilityLabel: [modelProvider.id === conversation.providerId && id === conversation.model ? t('modelStatus.preferred') : '',
+            t(`modelStatus.${projection.availability}`),
+            projection.advertisement === 'not-advertised' ? t('modelStatus.notAdvertised') : '',
+            ...projection.labels.map((label) => t(`modelStatus.${label}`))].filter(Boolean).join(' · '),
+          evidenceLabel: current && !current.invalidated ? [credentialSourceLabel(current.credentialSource, modelProvider, t),
+            current.evidence ? t(`modelStatus.source.${current.evidence.source}`) : '',
             new Date(current.evidence?.observedAt ?? current.updatedAt).toLocaleString()].filter(Boolean).join(' · ')
-            : t(availabilityReadFailed ? 'modelAvailability.readFailed' : 'modelAvailability.noEvidence'),
-          blockedReason: projection.blockedReason ? t(`modelAvailability.${projection.blockedReason}`) : undefined,
+            : t(availabilitySnapshot.request === availabilityRequest && availabilitySnapshot.failedKeys.has(getSettingsModelIdentityKey(modelProvider.id, upstreamModel)) ? 'modelStatus.readFailed' : 'modelStatus.noEvidence'),
+          blockedReason: projection.blockedReason ? t(`modelStatus.${projection.blockedReason}`) : undefined,
         }
-      }))
-    : []
-  const selectedModelGroups = selectedProvider ? groupModelPickerItemsByToken(selectedProvider, selectedModels, t) : []
+      })), [pageModelCandidates, modelDisplayAliases, favoriteKeys, availabilityRows, availabilitySnapshot, availabilityRequest, network.isConnected, network.isInternetReachable, settings, conversation.providerId, conversation.model, conversation.messages, t])
+  const selectedModelGroups = useMemo(() => orderedProviders.flatMap((item) => {
+    const groups = groupModelPickerItemsByToken(item, selectedModels.filter((model) => model.provider.id === item.id), t)
+    const isCurrent = (model: ModelPickerItem) => model.provider.id === conversation.providerId && model.id === conversation.model
+    groups.sort((left, right) => Number(right.models.some(isCurrent)) - Number(left.models.some(isCurrent)))
+    return groups.map((group) => ({
+      ...group, id: getSettingsModelIdentityKey(item.id, group.id),
+      ...(selectedProvider ? {} : { connectionLabel: resolveProviderDisplayName(item, providerFallbackName), connectionId: item.id }),
+      models: [...group.models].sort((left, right) => Number(isCurrent(right)) - Number(isCurrent(left))),
+    }))
+  }), [orderedProviders, selectedModels, selectedProvider, providerFallbackName, conversation.providerId, conversation.model, t])
   const noSwitchableProviderCandidates = policySwitchableProviders.length === 0
-  const showPickerEmptyState = noSwitchableProviderCandidates || (normalizedQuery.length > 0 && visibleProviders.length === 0 && selectedModels.length === 0)
   const pickerEmptyTitle = noSwitchableProviderCandidates
     ? switchableProviders.length ? t('chat.noAvailableModels') : t('chat.noProviderConnected')
     : t('chat.noProviderModelMatches')
   const pickerEmptyDescription = noSwitchableProviderCandidates
     ? switchableProviders.length ? t('chat.syncModelsBeforeChat') : t('chat.configureProviderBeforeChat')
     : t('chat.noProviderModelMatchesDescription')
-  const modelEmptyTitle = selectedProvider ? t('chat.noModelsForSelectedProvider', { provider: resolveProviderDisplayName(selectedProvider, providerFallbackName) }) : t('chat.noAvailableModels')
-  const selectedProviderIsCurrent = selectedProvider?.id === conversation.providerId
+  const modelEmptyTitle = noSwitchableProviderCandidates ? pickerEmptyTitle : normalizedQuery || modelSourceId !== null
+    ? t('chat.noProviderModelMatches') : modelPickerScope.kind === 'favorites' ? t('chat.noFavoriteModels')
+    : selectedProvider ? t('chat.noModelsForSelectedProvider', { provider: resolveProviderDisplayName(selectedProvider, providerFallbackName) }) : t('chat.noAvailableModels')
+  const modelEmptyDescription = noSwitchableProviderCandidates ? pickerEmptyDescription : normalizedQuery || modelSourceId !== null
+    ? t('chat.noProviderModelMatchesDescription') : modelPickerScope.kind === 'favorites' ? t('chat.noFavoriteModelsDescription') : t('chat.providerNoModelsSyncHint')
+  const resultScopeLabel = selectedProvider ? resolveProviderDisplayName(selectedProvider, providerFallbackName)
+    : t(modelPickerScope.kind === 'favorites' ? 'chat.favoriteModels' : 'chat.allModels')
   const reasoningModel = currentProvider ? resolveProviderModelAlias(currentProvider, conversation.model ?? '') : conversation.model ?? ''
   const reasoningOptions = getReasoningEffortOptions(currentProvider, conversation.model ?? '')
   const selectedReasoningControlValue = getReasoningControlValue(conversation.reasoningEffort)
@@ -264,7 +326,6 @@ export function ChatOptionsPanel({
   )
   const pickerFloor = visibleProviders.length || selectedModels.length ? Math.min(156, pickerRowMaxHeight) : 132
   const pickerMinHeight = compactPicker ? undefined : Math.max(pickerFloor, Math.min(pickerRowMaxHeight, Math.max(providerListHeight, modelListHeight) + pickerHeaderReserve))
-  const pickerEmptyMinHeight = compactPicker ? 108 : Math.max(116, pickerMinHeight ?? 116)
   const panelRadius = sheetMode ? colors.ui.radius.modal : colors.ui.radius.panel
   const fieldRadius = colors.ui.radius.field
   const controlRadius = colors.ui.radius.controlLarge
@@ -279,23 +340,44 @@ export function ChatOptionsPanel({
   const subtleBorderWidth = isMonet ? 1 : StyleSheet.hairlineWidth
 
   useEffect(() => {
-    setSelectedProviderId(provider?.id ?? conversation.providerId)
-  }, [conversation.providerId, provider?.id])
-
-  useEffect(() => {
     setModelAliasDraft(currentModelAlias ?? '')
   }, [conversation.model, currentModelAlias, currentProvider?.id])
 
   useEffect(() => {
-    if (visibleProviders.some((item) => item.id === selectedProviderId)) return
-    if (currentProvider && visibleProviders.some((item) => item.id === currentProvider.id)) {
-      setSelectedProviderId(currentProvider.id)
-      return
+    if (modelPickerScope.kind === 'provider' && !selectedProvider) selectPickerScope({ kind: 'all' })
+  }, [modelPickerScope, selectedProvider])
+
+  useEffect(() => () => { favoriteSaveSequence.current += 1 }, [])
+
+  function selectPickerScope(nextScope: ChatModelPickerScope) {
+    setModelPickerScope(nextScope)
+    setModelSourceId(null)
+    setModelPage(0)
+  }
+
+  function changeModelQuery(query: string) {
+    setModelPickerQuery(query)
+    setModelPage(0)
+  }
+
+  async function saveFavorite(change: FavoriteChange) {
+    if (favoriteSaveInFlight.current) return
+    favoriteSaveInFlight.current = true
+    const sequence = ++favoriteSaveSequence.current
+    setFavoriteSavePending(true)
+    setFavoriteSaveError(null)
+    try {
+      await setModelFavorite(change.providerId, change.modelId, change.favorite)
+    } catch (error) {
+      if (sequence === favoriteSaveSequence.current) setFavoriteSaveError({
+        change, kind: error instanceof SettingsModelFavoriteLimitError ? 'limit'
+          : !useSettingsStore.getState().providers.some((item) => item.id === change.providerId) ? 'connection' : 'storage',
+      })
+    } finally {
+      favoriteSaveInFlight.current = false
+      if (sequence === favoriteSaveSequence.current) setFavoriteSavePending(false)
     }
-    if (visibleProviders.length) {
-      setSelectedProviderId(visibleProviders[0].id)
-    }
-  }, [currentProvider, selectedProviderId, visibleProviders])
+  }
 
   function patchConversation(updates: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'reasoningEffort' | 'maxTokens' | 'generationParameterOverrides'>>) {
     if (onDraftChange) {
@@ -353,7 +435,8 @@ export function ChatOptionsPanel({
           <AppIcon name="search" color={colors.textTertiary} size={15} />
           <TextInput
             value={modelPickerQuery}
-            onChangeText={setModelPickerQuery}
+            onChangeText={changeModelQuery}
+            maxLength={200}
             autoCapitalize="none"
             autoCorrect={false}
             placeholder={t('chat.searchProviderOrModel')}
@@ -364,7 +447,7 @@ export function ChatOptionsPanel({
           />
           {modelPickerQuery.trim() ? (
             <IslePressable
-              onPress={() => setModelPickerQuery('')}
+              onPress={() => changeModelQuery('')}
               accessibilityRole="button"
               accessibilityLabel={t('chat.clearModelSearch')}
               accessibilityHint={t('chat.clearModelSearchHint')}
@@ -416,10 +499,21 @@ export function ChatOptionsPanel({
           style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center', padding: 12, marginBottom: 12 }}>
           <Text style={{ color: colors.text, fontWeight: '700' }}>{t('agentTasks.title')}</Text>
         </IslePressable> : null}
+        {scope === 'full' ? <View testID="chat-scene-actions" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          {conversation.scenePlanSource ? <Text testID="chat-scene-source" style={{ width: '100%', color: colors.textSecondary }}>
+            {t('scenes.lastApplied', { name: conversation.scenePlanSource.name, revision: conversation.scenePlanSource.revision })}
+          </Text> : null}
+          {(['choose', 'capture'] as const).map(action => <IslePressable key={action} testID={`chat-scene-${action}`}
+            accessibilityRole="button" accessibilityLabel={t(action === 'capture' ? 'scenes.capture' : 'scenes.choose')}
+            onPress={() => { onClose(); router.push({ pathname: '/settings/scenes', params: { conversationId: conversation.id, ...(action === 'capture' ? { action: 'capture' } : {}) } }) }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, padding: 12, justifyContent: 'center' }}>
+            <Text style={{ color: colors.text, fontWeight: '700' }}>{t(action === 'capture' ? 'scenes.capture' : 'scenes.choose')}</Text>
+          </IslePressable>)}
+        </View> : null}
         <View testID="chat-ai-model-selection-section">
-        {showPickerEmptyState ? (
-          <PickerEmptyState title={pickerEmptyTitle} description={pickerEmptyDescription} minHeight={pickerEmptyMinHeight} />
-        ) : (
+        <ChatRoutingPlanPicker conversation={conversation} providers={orderedProviders} query={modelPickerQuery} settings={settings}
+          onSelect={onSwitchModel} onManage={() => { onClose(); router.push('/settings/routing') }} />
+        {selectedProvider ? <ProviderModelSourceFilter sources={modelSources} selectedSourceId={modelSourceId} onSelect={(sourceId) => { setModelSourceId(sourceId); setModelPage(0) }} colors={colors} /> : null}
           <ThemeModelPicker
             family={canonicalThemeId}
             colors={colors}
@@ -429,28 +523,47 @@ export function ChatOptionsPanel({
             visibleProviders={visibleProviders}
             providerCount={policySwitchableProviders.length}
             normalizedQuery={normalizedQuery}
+            pickerScope={modelPickerScope}
+            allModelCount={allQueryMatches.length}
+            favoriteModelCount={favoriteQueryMatches.length}
+            resultTotalCount={matchingModelCandidates.length}
+            resultScopeLabel={resultScopeLabel}
             selectedProvider={selectedProvider}
-            selectedProviderIsCurrent={selectedProviderIsCurrent}
             selectedModels={selectedModels}
             selectedModelGroups={selectedModelGroups}
-            conversationModel={conversation.model ?? ''}
+            conversationProviderId={conversation.providerId}
+            conversationModel={conversation.routingPlan ? '' : conversation.model ?? ''}
             modelEmptyTitle={modelEmptyTitle}
-            modelEmptyDescription={t('chat.providerNoModelsSyncHint')}
+            modelEmptyDescription={modelEmptyDescription}
             modelListHeight={modelListHeight}
             pickerMinHeight={pickerMinHeight}
-            onSelectProvider={setSelectedProviderId}
-            onSwitchModel={(model) => selectedProvider && !selectedModels.find((item) => item.id === model)?.blockedReason && onSwitchModel(selectedProvider, model)}
+            onSelectScope={selectPickerScope}
+            onSwitchModel={(model) => {
+              const selected = selectedModels.find((item) => item.key === model.key)
+              if (selected && !selected.blockedReason) onSwitchModel(selected.provider, selected.id)
+            }}
+            favoriteSavePending={favoriteSavePending}
+            onToggleFavorite={(model) => { void saveFavorite({ providerId: model.provider.id, modelId: model.id, favorite: !model.favorite }) }}
             t={t}
           />
-        )}
-        <Text style={{ color: colors.textTertiary, fontSize: 11, marginTop: 8 }}>{t('modelAvailability.selectorScopeHint')}</Text>
-        {selectedModels.length > 0 && selectedModels.every((model) => !!model.blockedReason) ? <Text style={{ color: colors.textSecondary, marginTop: 6 }}>{t('modelAvailability.noSelectableModel')}</Text> : null}
-        <IslePressable accessibilityRole="button" accessibilityLabel={t('modelAvailability.details')} onPress={() => {
-          onClose()
-          router.push({ pathname: '/settings/model-availability', params: selectedProvider ? { providerId: selectedProvider.id } : {} })
-        }} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}>
-          <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>{t('modelAvailability.details')}</Text>
-        </IslePressable>
+        <ProviderModelPagination total={matchingModelCandidates.length} page={currentModelPage} onChange={setModelPage} colors={colors} />
+        {favoriteSaveError ? (
+          <View testID="chat-model-favorite-save-error" style={{ marginTop: 8, gap: 4 }}>
+            <Text accessibilityRole="alert" style={{ color: colors.textSecondary, fontSize: 12 }}>
+              {t(favoriteSaveError.kind === 'limit' ? 'chat.modelFavoriteLimit' : favoriteSaveError.kind === 'connection' ? 'chat.modelFavoriteConnectionRemoved' : 'chat.modelFavoriteSaveFailed', { count: SETTINGS_MODEL_FAVORITE_LIMIT, model: favoriteSaveError.change.modelId })}
+            </Text>
+            {favoriteSaveError.kind === 'storage' ? <IslePressable
+              accessibilityRole="button" accessibilityLabel={t('chat.retryModelFavoriteSave')}
+              disabled={favoriteSavePending} accessibilityState={{ disabled: favoriteSavePending }}
+              onPress={() => { void saveFavorite(favoriteSaveError.change) }}
+              style={{ minHeight: ISLE_MIN_TOUCH_TARGET, alignSelf: 'flex-start', justifyContent: 'center', paddingHorizontal: 8 }}
+            >
+              <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '700' }}>{t('chat.retryModelFavoriteSave')}</Text>
+            </IslePressable> : null}
+          </View>
+        ) : null}
+        <Text style={{ color: colors.textTertiary, fontSize: 11, marginTop: 8 }}>{t('modelStatus.selectorScopeHint')}</Text>
+        {selectedModels.length > 0 && selectedModels.every((model) => !!model.blockedReason) ? <Text style={{ color: colors.textSecondary, marginTop: 6 }}>{t('modelStatus.noSelectableModel')}</Text> : null}
         </View>
         {currentCapabilityBadges.length ? (
           <ModelCapabilityStrip badges={currentCapabilityBadges} />
@@ -619,17 +732,24 @@ type ThemeModelPickerProps = {
   visibleProviders: AIProvider[]
   providerCount: number
   normalizedQuery: string
+  pickerScope: ChatModelPickerScope
+  allModelCount: number
+  favoriteModelCount: number
+  resultTotalCount: number
+  resultScopeLabel: string
   selectedProvider?: AIProvider
-  selectedProviderIsCurrent: boolean
   selectedModels: ModelPickerItem[]
   selectedModelGroups: ModelPickerGroup[]
+  conversationProviderId: string | null
   conversationModel: string
   modelEmptyTitle: string
   modelEmptyDescription: string
   modelListHeight: number
   pickerMinHeight?: number
-  onSelectProvider: (providerId: string) => void
-  onSwitchModel: (modelId: string) => void
+  onSelectScope: (scope: ChatModelPickerScope) => void
+  onSwitchModel: (model: ModelPickerItem) => void
+  favoriteSavePending: boolean
+  onToggleFavorite: (model: ModelPickerItem) => void
   t: TFunction
 }
 
@@ -639,96 +759,130 @@ function ThemeModelPicker(props: ThemeModelPickerProps) {
     case 'monet': return <MonetModelPicker {...props} />
     case 'material': return <MaterialModelPicker {...props} />
     case 'liquid-glass': return <LiquidGlassModelPicker {...props} />
+    case 'animal-island-ui': return <IsleModelPicker {...props} />
   }
 }
 
 function PickerSectionHeading({ label, detail, colors, accent = false }: { label: string; detail?: string; colors: ThemeModelPickerProps['colors']; accent?: boolean }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-      <Text style={{ color: accent ? colors.text : colors.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: accent ? 0.2 : 0 }}>{label}</Text>
+      <Text numberOfLines={2} style={{ flex: 1, minWidth: 0, color: accent ? colors.text : colors.textSecondary, fontSize: 11, fontWeight: '800', letterSpacing: accent ? 0.2 : 0 }}>{label}</Text>
       {detail ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', flexShrink: 1 }}>{detail}</Text> : null}
     </View>
   )
 }
 
 function ProviderOption({ item, active, family, maxWidth, colors, providerFallbackName, t, onPress }: { item: AIProvider; active: boolean; family: CanonicalThemeId; maxWidth: number; colors: ThemeModelPickerProps['colors']; providerFallbackName: string; t: TFunction; onPress: () => void }) {
-  const label = `${resolveProviderDisplayName(item, providerFallbackName)}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`
+  const name = resolveProviderDisplayName(item, providerFallbackName)
+  const label = `${name}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`
+  return <PickerCategoryOption label={label} subtitle={item.id} accessibilityLabel={`${label} · ${item.id}`}
+    accessibilityHint={t('chat.selectProviderAccessibilityHint', { provider: name })}
+    active={active} family={family} maxWidth={maxWidth} colors={colors} onPress={onPress} />
+}
+
+function PickerCategoryOption({ label, subtitle, detail, active, family, maxWidth, colors, accessibilityLabel = label, accessibilityHint, testID, onPress }: {
+  label: string; subtitle?: string; detail?: string; active: boolean; family: CanonicalThemeId; maxWidth: number;
+  colors: ThemeModelPickerProps['colors']; accessibilityLabel?: string; accessibilityHint: string; testID?: string; onPress: () => void
+}) {
+  const foreground = active && family === 'monet' ? colors.ui.control.primaryForeground
+    : active && family !== 'minimal' ? colors.ui.icon.accentForeground : active ? colors.text : colors.textSecondary
   return (
-    <IslePressable
-      haptic
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityHint={t('chat.selectProviderAccessibilityHint', { provider: resolveProviderDisplayName(item, providerFallbackName) })}
+    <IslePressable haptic onPress={onPress} testID={testID}
+      accessibilityRole="button" accessibilityLabel={accessibilityLabel} accessibilityHint={accessibilityHint}
       accessibilityState={{ selected: active }}
+      {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
       hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
       style={{ minHeight: ISLE_MIN_TOUCH_TARGET, minWidth: 0, maxWidth, flexShrink: 1, justifyContent: 'center' }}
     >
-      {family === 'minimal' ? (
-        <View style={{ minHeight: 42, paddingHorizontal: 4, justifyContent: 'center', borderBottomWidth: active ? 2 : StyleSheet.hairlineWidth, borderBottomColor: active ? colors.text : colors.ui.semantic.chrome.border }}>
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: active ? '900' : '700' }}>{label}</Text>
+      <View style={{ minHeight: 44, minWidth: 0, maxWidth, paddingVertical: 8, paddingHorizontal: family === 'minimal' ? 4 : 12, justifyContent: 'center',
+        ...(family === 'minimal' ? { borderBottomWidth: active ? 2 : StyleSheet.hairlineWidth, borderBottomColor: active ? colors.text : colors.ui.semantic.chrome.border }
+          : { borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+            backgroundColor: family === 'monet' ? active ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base
+              : family === 'material' ? active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted
+              : active ? colors.ui.semantic.surface.overlay : colors.ui.actionBar.itemBackground,
+            ...(family === 'monet' ? { borderTopLeftRadius: 14, borderBottomRightRadius: 16 } : { borderRadius: family === 'material' ? 12 : colors.ui.radius.controlLarge }) }),
+      }}>
+        {active && family === 'material' ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, borderRadius: 2, backgroundColor: colors.primary }} /> : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0, gap: 6 }}>
+          <Text numberOfLines={1} style={{ flexShrink: 1, minWidth: 0, color: foreground, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+          {detail ? <Text style={{ color: foreground, fontSize: 10 }}>{detail}</Text> : null}
         </View>
-      ) : family === 'monet' ? (
-        <View style={{ minHeight: 44, minWidth: 0, maxWidth, paddingHorizontal: 12, borderTopLeftRadius: 14, borderBottomRightRadius: 16, justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
-        </View>
-      ) : family === 'material' ? (
-        <View style={{ minHeight: 48, minWidth: 0, maxWidth, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center', backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
-          {active ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, borderRadius: 2, backgroundColor: colors.primary }} /> : null}
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
-        </View>
-      ) : (
-        <View style={{ minHeight: 48, minWidth: 0, maxWidth, paddingHorizontal: 12, borderRadius: 18, justifyContent: 'center', backgroundColor: active ? colors.ui.semantic.surface.overlay : colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
-        </View>
-      )}
+        {subtitle ? <Text numberOfLines={1} style={{ color: active && family === 'monet' ? foreground : colors.textTertiary, fontSize: 10, marginTop: 2 }}>{subtitle}</Text> : null}
+      </View>
     </IslePressable>
   )
 }
 
-function ModelOption({ model, groupLabel, active, family, maxWidth, colors, selectedProvider, providerFallbackName, t, onPress }: { model: ModelPickerItem; groupLabel: string; active: boolean; family: CanonicalThemeId; maxWidth: number; colors: ThemeModelPickerProps['colors']; selectedProvider?: AIProvider; providerFallbackName: string; t: TFunction; onPress: () => void }) {
+function PickerCategories({ props, family, maxWidth }: { props: ThemeModelPickerProps; family: CanonicalThemeId; maxWidth: number }) {
   return (
-    <IslePressable
-      haptic
-      onPress={onPress}
-      disabled={!!model.blockedReason}
-      accessibilityRole="button"
-      accessibilityLabel={`${groupLabel} · ${model.name} · ${model.id}`}
-      accessibilityHint={[model.blockedReason, model.availabilityLabel, model.evidenceLabel, t('chat.selectModelAccessibilityHint', { provider: selectedProvider ? resolveProviderDisplayName(selectedProvider, providerFallbackName) : t('chat.notSelected'), model: `${model.name} · ${model.id}` })].filter(Boolean).join('. ')}
-      accessibilityState={{ selected: active, disabled: !!model.blockedReason }}
-      hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
-      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, minWidth: 0, maxWidth, flexShrink: 1, justifyContent: 'center' }}
-    >
-      {family === 'minimal' ? (
-        <View style={{ minHeight: 42, maxWidth, paddingHorizontal: 4, justifyContent: 'center', borderBottomWidth: active ? 2 : StyleSheet.hairlineWidth, borderBottomColor: active ? colors.text : colors.ui.semantic.chrome.border }}>
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: active ? '900' : '700' }}>{model.name}</Text>
-          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 9, marginTop: 1 }}>{model.subtitle}</Text> : null}
-          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 8.5, marginTop: 1 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
+    <>
+      {(['all', 'favorites'] as const).map((kind) => {
+        const label = props.t(kind === 'all' ? 'chat.allModels' : 'chat.favoriteModels')
+        return <PickerCategoryOption key={kind} testID={`chat-model-scope-${kind}`} label={label}
+          detail={String(kind === 'all' ? props.allModelCount : props.favoriteModelCount)}
+          accessibilityHint={props.t('chat.modelPickerScopeHint', { scope: label })}
+          active={props.pickerScope.kind === kind} family={family} maxWidth={maxWidth} colors={props.colors}
+          onPress={() => props.onSelectScope({ kind })} />
+      })}
+      {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item}
+        active={props.pickerScope.kind === 'provider' && props.pickerScope.providerId === item.id}
+        family={family} maxWidth={maxWidth} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t}
+        onPress={() => props.onSelectScope({ kind: 'provider', providerId: item.id })} />)}
+    </>
+  )
+}
+
+function ModelOption({ model, groupLabel, active, family, maxWidth, colors, providerFallbackName, t, favoriteSavePending, onPress, onToggleFavorite }: { model: ModelPickerItem; groupLabel: string; active: boolean; family: CanonicalThemeId; maxWidth: number; colors: ThemeModelPickerProps['colors']; providerFallbackName: string; t: TFunction; favoriteSavePending: boolean; onPress: () => void; onToggleFavorite: () => void }) {
+  const providerName = resolveProviderDisplayName(model.provider, providerFallbackName)
+  const foreground = active && family === 'monet' ? colors.ui.control.primaryForeground
+    : active && family !== 'minimal' ? colors.ui.icon.accentForeground : active ? colors.text : colors.textSecondary
+  const secondary = active && family === 'monet' ? colors.ui.control.primaryForeground : colors.textTertiary
+  const surface = family === 'minimal' ? 'transparent' : family === 'monet'
+    ? active ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base
+    : family === 'material' ? active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted
+    : active ? colors.ui.semantic.surface.overlay : colors.ui.actionBar.itemBackground
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 4, width: maxWidth, maxWidth: '100%', minWidth: 0 }}>
+      <IslePressable
+        testID={`chat-model-option-${model.key}`}
+        haptic
+        onPress={onPress}
+        disabled={!!model.blockedReason}
+        accessibilityRole="button"
+        accessibilityLabel={`${providerName} · ${model.provider.id} · ${groupLabel} · ${model.name} · ${model.id}`}
+        accessibilityHint={[model.blockedReason, model.availabilityLabel, model.evidenceLabel, t('chat.selectModelAccessibilityHint', { provider: providerName, model: `${model.name} · ${model.id}` })].filter(Boolean).join('. ')}
+        accessibilityState={{ selected: active, disabled: !!model.blockedReason }}
+        {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
+        style={{ flex: 1, minHeight: ISLE_MIN_TOUCH_TARGET, minWidth: 0, justifyContent: 'center' }}
+      >
+        <View style={{ minHeight: 48, minWidth: 0, paddingVertical: 8, paddingHorizontal: family === 'minimal' ? 4 : 12, justifyContent: 'center', backgroundColor: surface,
+          ...(family === 'minimal' ? { borderBottomWidth: active ? 2 : StyleSheet.hairlineWidth, borderBottomColor: active ? colors.text : colors.ui.semantic.chrome.border }
+            : { borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+              ...(family === 'monet' ? { borderTopLeftRadius: 14, borderBottomRightRadius: 16 } : { borderRadius: family === 'material' ? 12 : colors.ui.radius.controlLarge }) }),
+        }}>
+          {active && family === 'material' ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, borderRadius: 2, backgroundColor: colors.primary }} /> : null}
+          <Text numberOfLines={1} style={{ minWidth: 0, color: foreground, fontSize: 12, fontWeight: '800' }}>{model.name}</Text>
+          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, color: secondary, fontSize: 10, marginTop: 2 }}>{model.subtitle}</Text> : null}
+          {model.id !== model.name && model.id !== model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, color: secondary, fontSize: 10, marginTop: 2 }}>{model.id}</Text> : null}
+          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, color: secondary, fontSize: 9, marginTop: 2 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
         </View>
-      ) : family === 'monet' ? (
-        <View style={{ minHeight: model.subtitle ? 54 : 46, maxWidth, minWidth: 0, paddingHorizontal: 12, borderTopLeftRadius: 14, borderBottomRightRadius: 16, justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{model.name}</Text>
-          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: 9, marginTop: 2 }}>{model.subtitle}</Text> : null}
-          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: 8.5, marginTop: 1 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
-        </View>
-      ) : family === 'material' ? (
-        <View style={{ minHeight: model.subtitle ? 56 : 48, maxWidth, minWidth: 0, paddingHorizontal: 12, borderRadius: 12, justifyContent: 'center', backgroundColor: active ? colors.ui.actionBar.itemActiveBackground : colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}>
-          {active ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, borderRadius: 2, backgroundColor: colors.primary }} /> : null}
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{model.name}</Text>
-          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textTertiary, fontSize: 9, marginTop: 2 }}>{model.subtitle}</Text> : null}
-          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 9, marginTop: 2 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
-        </View>
-      ) : (
-        <View style={{ minHeight: model.subtitle ? 56 : 48, maxWidth, minWidth: 0, paddingHorizontal: 12, borderRadius: 18, justifyContent: 'center', backgroundColor: active ? colors.ui.semantic.surface.overlay : colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.ui.actionBar.itemBorder }}>
-          <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: active ? colors.ui.icon.accentForeground : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{model.name}</Text>
-          {model.subtitle ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 9, marginTop: 2 }}>{model.subtitle}</Text> : null}
-          {model.badges.length ? <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 8.5, marginTop: 1 }}>{model.badges.map((badge) => badge.label).join(' · ')}</Text> : null}
-        </View>
-      )}
-      {model.availabilityLabel ? <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 10, marginTop: 4 }}>{model.availabilityLabel}</Text> : null}
-      {model.evidenceLabel ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10 }}>{model.evidenceLabel}</Text> : null}
-      {model.blockedReason ? <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700' }}>{model.blockedReason}</Text> : null}
-    </IslePressable>
+        {model.availabilityLabel ? <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 10, marginTop: 4 }}>{model.availabilityLabel}</Text> : null}
+        {model.evidenceLabel ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10 }}>{model.evidenceLabel}</Text> : null}
+        {model.blockedReason ? <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700' }}>{model.blockedReason}</Text> : null}
+      </IslePressable>
+      <IslePressable
+        testID={`chat-model-favorite-${model.key}`}
+        haptic onPress={onToggleFavorite} disabled={favoriteSavePending}
+        accessibilityRole="button"
+        accessibilityLabel={t(model.favorite ? 'chat.removeModelFavorite' : 'chat.addModelFavorite', { provider: `${providerName} · ${model.provider.id}`, model: model.id })}
+        accessibilityHint={t('chat.modelFavoriteAccessibilityHint')}
+        accessibilityState={{ selected: model.favorite, disabled: favoriteSavePending, busy: favoriteSavePending }}
+        {...(Platform.OS === 'web' ? { 'aria-pressed': model.favorite } : {})}
+        style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, flexShrink: 0, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlLarge }}
+      >
+        <AppIcon name="star" color={model.favorite ? colors.ui.icon.accentForeground : colors.textTertiary} fill={model.favorite ? colors.ui.icon.accentForeground : 'none'} size={18} />
+      </IslePressable>
+    </View>
   )
 }
 
@@ -736,11 +890,12 @@ function ModelGroups({ props, family, modelMaxWidth, groupStyle }: { props: Them
   return (
     <View style={[{ gap: family === 'minimal' ? 8 : 12 }, groupStyle]} pointerEvents="box-none">
       {props.selectedModelGroups.map((group) => (
-        <View key={group.id} style={{ gap: family === 'material' ? 7 : 8 }}>
-          <PickerSectionHeading label={group.label} detail={props.t('chat.countItems', { count: group.models.length })} colors={props.colors} accent={family === 'material'} />
-          <View style={{ flexDirection: 'row', gap: family === 'minimal' ? 10 : 8, flexWrap: 'wrap' }}>
+        <View key={group.id} style={{ minWidth: 0, gap: family === 'material' ? 7 : 8 }}>
+          <PickerSectionHeading label={group.connectionLabel ?? group.label} detail={props.t('chat.countItems', { count: group.models.length })} colors={props.colors} accent={family === 'material'} />
+          {group.connectionLabel ? <Text numberOfLines={2} style={{ color: props.colors.textTertiary, fontSize: 10 }}>{group.connectionId} · {group.label}</Text> : null}
+          <View style={{ flexDirection: 'row', gap: family === 'minimal' ? 10 : 8, flexWrap: 'wrap', minWidth: 0 }}>
             {group.models.map((model) => (
-              <ModelOption key={`${group.id}:${model.id}`} model={model} groupLabel={group.label} active={props.selectedProviderIsCurrent && props.conversationModel === model.id} family={family} maxWidth={modelMaxWidth} colors={props.colors} selectedProvider={props.selectedProvider} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSwitchModel(model.id)} />
+              <ModelOption key={model.key} model={model} groupLabel={group.label} active={props.conversationProviderId === model.provider.id && props.conversationModel === model.id} family={family} maxWidth={modelMaxWidth} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} favoriteSavePending={props.favoriteSavePending} onPress={() => props.onSwitchModel(model)} onToggleFavorite={() => props.onToggleFavorite(model)} />
             ))}
           </View>
         </View>
@@ -754,12 +909,12 @@ function MinimalModelPicker(props: ThemeModelPickerProps) {
     <View testID="chat-model-picker-minimal" style={{ flexDirection: props.compactPicker ? 'column' : 'row', gap: 18, minHeight: props.pickerMinHeight }}>
       <View style={{ flex: props.compactPicker ? undefined : 0.36, gap: 8 }}>
         <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
-        <View style={{ gap: 2 }} pointerEvents="box-none">
-          {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item} active={props.selectedProvider?.id === item.id} family="minimal" maxWidth={props.compactPicker ? props.panelWidth - 48 : props.panelWidth * 0.34} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSelectProvider(item.id)} />)}
+        <View style={{ gap: props.compactPicker ? 8 : 2, flexDirection: props.compactPicker ? 'row' : 'column', flexWrap: props.compactPicker ? 'wrap' : 'nowrap' }} pointerEvents="box-none">
+          <PickerCategories props={props} family="minimal" maxWidth={props.compactPicker ? Math.min(160, props.panelWidth - 48) : props.panelWidth * 0.34} />
         </View>
       </View>
       <View style={{ flex: 1, minWidth: 0, gap: 8 }}>
-        <PickerSectionHeading label={props.t('chat.model')} detail={`${props.selectedProvider ? resolveProviderDisplayName(props.selectedProvider, props.providerFallbackName) : props.t('chat.notSelected')} · ${props.selectedModels.length || props.t('chat.none')}`} colors={props.colors} />
+        <PickerSectionHeading label={props.resultScopeLabel} detail={props.t('chat.countItems', { count: props.resultTotalCount })} colors={props.colors} />
         {props.selectedModels.length ? <ModelGroups props={props} family="minimal" modelMaxWidth={props.compactPicker ? props.panelWidth - 48 : props.panelWidth * 0.42} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}
       </View>
     </View>
@@ -772,11 +927,11 @@ function MonetModelPicker(props: ThemeModelPickerProps) {
       <View style={{ gap: 9 }}>
         <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }} pointerEvents="box-none">
-          {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item} active={props.selectedProvider?.id === item.id} family="monet" maxWidth={props.compactPicker ? props.panelWidth - 52 : props.panelWidth * 0.36} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSelectProvider(item.id)} />)}
+          <PickerCategories props={props} family="monet" maxWidth={props.compactPicker ? Math.min(160, props.panelWidth - 52) : props.panelWidth * 0.36} />
         </View>
       </View>
       <View style={{ marginLeft: props.compactPicker ? 0 : 12, paddingTop: 2 }}>
-        <PickerSectionHeading label={props.t('chat.model')} detail={`${props.selectedProvider ? resolveProviderDisplayName(props.selectedProvider, props.providerFallbackName) : props.t('chat.notSelected')} · ${props.selectedModels.length || props.t('chat.none')}`} colors={props.colors} />
+        <PickerSectionHeading label={props.resultScopeLabel} detail={props.t('chat.countItems', { count: props.resultTotalCount })} colors={props.colors} />
         <View style={{ marginTop: 10 }}>{props.selectedModels.length ? <ModelGroups props={props} family="monet" modelMaxWidth={props.compactPicker ? props.panelWidth - 52 : props.panelWidth * 0.44} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}</View>
       </View>
     </View>
@@ -788,12 +943,12 @@ function MaterialModelPicker(props: ThemeModelPickerProps) {
     <View testID="chat-model-picker-material" style={{ flexDirection: props.compactPicker ? 'column' : 'row', gap: 10, minHeight: props.pickerMinHeight }}>
       <View style={{ flex: props.compactPicker ? undefined : 0.4, padding: 10, borderRadius: 14, backgroundColor: props.colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: props.colors.ui.semantic.chrome.border, gap: 8 }}>
         <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} accent />
-        <View style={{ gap: 7 }} pointerEvents="box-none">
-          {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item} active={props.selectedProvider?.id === item.id} family="material" maxWidth={props.compactPicker ? props.panelWidth - 44 : props.panelWidth * 0.34} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSelectProvider(item.id)} />)}
+        <View style={{ gap: 7, flexDirection: props.compactPicker ? 'row' : 'column', flexWrap: props.compactPicker ? 'wrap' : 'nowrap' }} pointerEvents="box-none">
+          <PickerCategories props={props} family="material" maxWidth={props.compactPicker ? Math.min(160, props.panelWidth - 44) : props.panelWidth * 0.34} />
         </View>
       </View>
       <View style={{ flex: 1, minWidth: 0, padding: 10, borderRadius: 14, backgroundColor: props.colors.ui.semantic.surface.raised, borderWidth: 1, borderColor: props.colors.ui.semantic.chrome.border, gap: 8 }}>
-        <PickerSectionHeading label={props.t('chat.model')} detail={`${props.selectedProvider ? resolveProviderDisplayName(props.selectedProvider, props.providerFallbackName) : props.t('chat.notSelected')} · ${props.selectedModels.length || props.t('chat.none')}`} colors={props.colors} accent />
+        <PickerSectionHeading label={props.resultScopeLabel} detail={props.t('chat.countItems', { count: props.resultTotalCount })} colors={props.colors} accent />
         {props.selectedModels.length ? <ModelGroups props={props} family="material" modelMaxWidth={props.compactPicker ? props.panelWidth - 44 : props.panelWidth * 0.44} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}
       </View>
     </View>
@@ -806,12 +961,29 @@ function LiquidGlassModelPicker(props: ThemeModelPickerProps) {
       <View style={{ padding: 8 }}>
         <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }} pointerEvents="box-none">
-          {props.visibleProviders.map((item) => <ProviderOption key={item.id} item={item} active={props.selectedProvider?.id === item.id} family="liquid-glass" maxWidth={props.compactPicker ? props.panelWidth - 52 : props.panelWidth * 0.36} colors={props.colors} providerFallbackName={props.providerFallbackName} t={props.t} onPress={() => props.onSelectProvider(item.id)} />)}
+          <PickerCategories props={props} family="liquid-glass" maxWidth={props.compactPicker ? Math.min(160, props.panelWidth - 52) : props.panelWidth * 0.36} />
         </View>
       </View>
       <View style={{ marginLeft: props.compactPicker ? 0 : 10, padding: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: props.colors.ui.actionBar.itemBorder }}>
-        <PickerSectionHeading label={props.t('chat.model')} detail={`${props.selectedProvider ? resolveProviderDisplayName(props.selectedProvider, props.providerFallbackName) : props.t('chat.notSelected')} · ${props.selectedModels.length || props.t('chat.none')}`} colors={props.colors} />
+        <PickerSectionHeading label={props.resultScopeLabel} detail={props.t('chat.countItems', { count: props.resultTotalCount })} colors={props.colors} />
         <View style={{ marginTop: 8 }}>{props.selectedModels.length ? <ModelGroups props={props} family="liquid-glass" modelMaxWidth={props.compactPicker ? props.panelWidth - 52 : props.panelWidth * 0.44} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}</View>
+      </View>
+    </View>
+  )
+}
+
+function IsleModelPicker(props: ThemeModelPickerProps) {
+  return (
+    <View testID="chat-model-picker-animal-island-ui" style={{ gap: 12, minHeight: props.pickerMinHeight }}>
+      <IslePanel radius={props.colors.ui.radius.panel} contentStyle={{ padding: 10, gap: 8 }}>
+        <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <PickerCategories props={props} family="animal-island-ui" maxWidth={props.compactPicker ? Math.min(160, props.panelWidth - 44) : props.panelWidth * 0.36} />
+        </View>
+      </IslePanel>
+      <View style={{ minWidth: 0, gap: 10, padding: 10 }}>
+        <PickerSectionHeading label={props.resultScopeLabel} detail={props.t('chat.countItems', { count: props.resultTotalCount })} colors={props.colors} />
+        {props.selectedModels.length ? <ModelGroups props={props} family="animal-island-ui" modelMaxWidth={props.compactPicker ? props.panelWidth - 44 : props.panelWidth * 0.44} /> : <PickerEmptyState title={props.modelEmptyTitle} description={props.modelEmptyDescription} minHeight={props.modelListHeight} />}
       </View>
     </View>
   )
@@ -887,13 +1059,6 @@ function getModelCapabilityBadges(provider: AIProvider, model: string, config: A
   return badges
 }
 
-function getSwitchableProviderModels(provider: AIProvider, query = '', settings?: ProviderModelAccessInput['settings'], aliases?: readonly SettingsModelDisplayAlias[]): string[] {
-  const models = getPolicyAllowedProviderModels(provider, settings, { limit: query ? MODEL_PICKER_QUERY_MODEL_LIMIT : MODEL_PICKER_PROVIDER_MODEL_LIMIT })
-    .filter((id) => getModelConfig(resolveProviderModelAlias(provider, id), provider.type, provider.modelConfigs).chatCompatible !== false)
-  if (!query) return models
-  return models.filter((id) => normalizeSearchText(`${id} ${getProviderDisplayModel(provider, id)} ${resolveChatModelDisplayName(provider, id, aliases)} ${resolveProviderModelAlias(provider, id)}`).includes(query))
-}
-
 function disambiguateModelPickerItems(models: ModelPickerItem[]): ModelPickerItem[] {
   const nameCounts = new Map<string, number>()
   for (const model of models) {
@@ -902,7 +1067,7 @@ function disambiguateModelPickerItems(models: ModelPickerItem[]): ModelPickerIte
   }
   return models.map((model) => {
     const key = model.name.trim().toLowerCase()
-    return (nameCounts.get(key) ?? 0) > 1
+    return (nameCounts.get(key) ?? 0) > 1 && !model.subtitle
       ? { ...model, subtitle: model.id }
       : model
   })
@@ -911,6 +1076,13 @@ function disambiguateModelPickerItems(models: ModelPickerItem[]): ModelPickerIte
 function groupModelPickerItemsByToken(provider: AIProvider, models: ModelPickerItem[], t: TFunction): ModelPickerGroup[] {
   if (!models.length) return []
   const byId = new Map(models.map((model) => [model.id, model]))
+  if (provider.modelConfigs?.some(model => model.upstreamProvider)) {
+    return groupProviderModelsBySource(provider, models.map(model => model.id)).map(source => ({
+      id: source.id || 'provider',
+      label: source.automatic ? t('providerSettings.automaticRouting') : source.name,
+      models: source.models.map(id => byId.get(id)!),
+    }))
+  }
   const used = new Set<string>()
   const groups: ModelPickerGroup[] = []
   for (const [index, group] of (provider.credentialGroups ?? []).entries()) {
@@ -937,34 +1109,6 @@ function groupModelPickerItemsByToken(provider: AIProvider, models: ModelPickerI
     })
   }
   return groups
-}
-
-function sortSwitchableProviders(providers: AIProvider[], currentProviderId: string, query: string, settings?: ProviderModelAccessInput['settings'], aliases?: readonly SettingsModelDisplayAlias[]): AIProvider[] {
-  return [...providers].sort((a, b) => {
-    const aScore = getProviderPickerScore(a, currentProviderId, query, settings, aliases)
-    const bScore = getProviderPickerScore(b, currentProviderId, query, settings, aliases)
-    if (aScore !== bScore) return bScore - aScore
-    return a.name.localeCompare(b.name)
-  })
-}
-
-function getProviderPickerScore(provider: AIProvider, currentProviderId: string, query: string, settings?: ProviderModelAccessInput['settings'], aliases?: readonly SettingsModelDisplayAlias[]): number {
-  let score = 0
-  if (provider.id === currentProviderId) score += 120
-  if (provider.enabled) score += 32
-  const modelCount = getSwitchableProviderModels(provider, '', settings, aliases).length
-  score += Math.min(modelCount, 24)
-  if (query) {
-    if (normalizeSearchText(`${provider.name} ${provider.id} ${provider.baseUrl ?? ''}`).includes(query)) score += 80
-    if (getSwitchableProviderModels(provider, query, settings, aliases).length) score += 48
-  }
-  return score
-}
-
-function providerMatchesQuery(provider: AIProvider, query: string, settings?: ProviderModelAccessInput['settings'], aliases?: readonly SettingsModelDisplayAlias[]): boolean {
-  if (!query) return true
-  if (normalizeSearchText(`${provider.name} ${provider.id} ${provider.baseUrl ?? ''}`).includes(query)) return true
-  return getSwitchableProviderModels(provider, query, settings, aliases).length > 0
 }
 
 function ParamInput({

@@ -130,7 +130,7 @@ export function ChatSetupWorkspace({
     ? setupHeaderBottom + setupLayout.contentHeaderGap
     : Math.max(setupHeaderBottom, compactViewport ? 68 : 80)
   const chatSystemPromptPlaceholder = t(CHAT_PRESENTATION_CATALOG.systemPromptPlaceholderKey)
-  const setupModelTitle = getProviderDisplayModel(setupState.homeProvider, setupState.setupConversation.model)
+  const setupModelTitle = setupState.setupConversation.routingPlan?.name ?? getProviderDisplayModel(setupState.homeProvider, setupState.setupConversation.model)
   const openAiConfiguration = () => {
     collapseQuickTools()
     setupState.openSetupAiConfiguration()

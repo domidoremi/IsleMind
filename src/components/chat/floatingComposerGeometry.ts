@@ -180,6 +180,7 @@ interface ModelMenuPlacementInput {
 export interface ModelMenuPlacement {
   left: number
   width: number
+  maxHeight: number
   openAbove: boolean
   top?: number
   bottom?: number
@@ -195,19 +196,26 @@ export function resolveModelMenuPlacement({
   const left = anchor
     ? clamp(anchor.x + anchor.width / 2 - width / 2, 12, windowWidth - width - 12)
     : Math.max(12, (windowWidth - width) / 2)
-  const openAbove = !!anchor && anchor.y >= estimatedMenuHeight + 24
-  if (openAbove && anchor) {
+  const maximumOffset = Math.max(12, windowHeight - 12)
+  const top = anchor ? clamp(anchor.y + anchor.height + 10, 12, maximumOffset) : 24
+  const bottom = anchor ? clamp(windowHeight - anchor.y + 10, 12, maximumOffset) : 12
+  const roomAbove = Math.max(0, windowHeight - bottom - 12)
+  const roomBelow = Math.max(0, windowHeight - top - 12)
+  const openAbove = !!anchor && (roomAbove >= estimatedMenuHeight || roomAbove >= roomBelow)
+  if (openAbove) {
     return {
       left,
       width,
+      maxHeight: roomAbove,
       openAbove: true,
-      bottom: Math.max(12, windowHeight - anchor.y + 10),
+      bottom,
     }
   }
   return {
     left,
     width,
+    maxHeight: roomBelow,
     openAbove: false,
-    top: anchor ? Math.max(12, anchor.y + anchor.height + 10) : 24,
+    top,
   }
 }

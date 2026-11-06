@@ -8,6 +8,7 @@ import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { Attachment, Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
+import { normalizeModelRoutingPlan, sameModelRoute, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
 import { resolveChatMultimodalPolicy, type ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
 import { getProviderModelDisplayCandidates, hasProviderModelAccessRules, resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
 import { resolveEffectiveProviderCapabilityManifest as resolveProviderCapabilityManifest } from '@/bootstrap/providerModelExecutionProfile'
@@ -17,7 +18,6 @@ import type { ComposerPanel } from './FloatingComposer'
 import { resolveChatModelDisplayName } from './chatIdentityPresentation'
 import {
   DEFAULT_SETUP_REASONING_EFFORT,
-  MODEL_VALIDATION_LOOKUP_LIMIT,
 } from './chatWorkspaceConstants'
 import { resolveBlockedComposerDraftRecovery } from './composerDraftState'
 import {
@@ -29,6 +29,7 @@ import {
   pickModelAccessSettings,
   pickReadyProviderForNewConversation,
   providerHasPolicyAllowedModel,
+  providerHasSpecificPolicyModel,
   type ModelAccessSettings,
 } from './chatModelSelection'
 
@@ -72,7 +73,7 @@ export interface ChatSetupWorkspaceState {
   submitSetup: (content: string, attachments: Attachment[]) => Promise<void>
   supportsSetupReasoningQuick: boolean
   switchSetupModel: (nextModel: string) => boolean
-  switchSetupProviderModel: (nextProvider: AIProvider, nextModel: string) => boolean
+  switchSetupProviderModel: (nextProvider: AIProvider, nextModel: string, routingPlan?: ModelRoutingPlan) => boolean
 }
 
 export function useChatSetupWorkspaceState({
@@ -97,6 +98,7 @@ export function useChatSetupWorkspaceState({
   const [setupSelectedProviderId, setSetupSelectedProviderId] = useState<string | null>(null)
   const [setupSelectedModel, setSetupSelectedModel] = useState<string | null>(null)
   const [setupSelectionExplicit, setSetupSelectionExplicit] = useState(false)
+  const [setupRoutingPlan, setSetupRoutingPlan] = useState<ModelRoutingPlan>()
   const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
   const hasEnabledProvider = enabledProviders.length > 0
   const modelAccessHasRules = useMemo(
@@ -126,7 +128,7 @@ export function useChatSetupWorkspaceState({
     : preferredSetupModel ?? 'setup-model'
   const setupTemperature = settings.defaultTemperature
   const setupMaxTokens = settings.defaultMaxTokens
-  const setupConversation = useMemo<Conversation>(() => ({ ...createSetupConversationShell(homeProvider ?? null, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), providerModelMode: setupSelectionExplicit ? 'manual' : 'inherited' }), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides, setupSelectionExplicit])
+  const setupConversation = useMemo<Conversation>(() => ({ ...createSetupConversationShell(homeProvider ?? null, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), routingPlan: setupRoutingPlan, providerModelMode: setupSelectionExplicit ? 'manual' : 'inherited' }), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides, setupSelectionExplicit, setupRoutingPlan])
   const supportsSetupReasoningQuick = getConversationReasoningEffortOptions(homeProvider, setupModel).length > 0
   const setupMultimodalPolicy = useMemo(
     () => resolveChatMultimodalPolicy({
@@ -155,9 +157,9 @@ export function useChatSetupWorkspaceState({
     if (!setupSelectedProviderId || !quickModelProviders.some((item) => item.id === setupSelectedProviderId)) {
       setSetupSelectedProviderId(homeProvider.id)
     }
-    if (setupSelectedModel && homeProviderModels.includes(setupSelectedModel)) return
+    if (setupSelectedModel && providerHasSpecificPolicyModel(homeProvider, setupSelectedModel, modelAccessSettings)) return
     setSetupSelectedModel(getPolicyPreferredProviderModel(homeProvider, modelAccessSettings) ?? homeProviderModels[0] ?? null)
-  }, [active, homeProvider?.id, homeProviderModels.join('|'), modelAccessSettings, quickModelProviders, setupSelectedModel, setupSelectedProviderId])
+  }, [active, homeProvider, homeProviderModels.join('|'), modelAccessSettings, quickModelProviders, setupSelectedModel, setupSelectedProviderId])
 
   const showNoAvailableModelsFeedback = () => dialog.toast({
     title: t('chat.noAvailableModels'),
@@ -200,16 +202,22 @@ export function useChatSetupWorkspaceState({
       showNoProviderFeedback()
       return
     }
-    const providerModels = getPolicyAllowedProviderModels(readyProvider, currentAccessSettings, { limit: MODEL_VALIDATION_LOOKUP_LIMIT })
-    const model = providerModels.includes(setupModel) ? setupModel : getPolicyPreferredProviderModel(readyProvider, currentAccessSettings)
+    const model = providerHasSpecificPolicyModel(readyProvider, setupModel, currentAccessSettings)
+      ? setupModel : getPolicyPreferredProviderModel(readyProvider, currentAccessSettings)
     if (!model) {
       restoreBlockedDraft()
       showNoAvailableModelsFeedback()
       return
     }
-    const nextSetupConversation = { ...createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), providerModelMode: setupSelectionExplicit ? 'manual' as const : 'inherited' as const }
+    if (setupRoutingPlan && !sameModelRoute(setupRoutingPlan.primary, { providerId: readyProvider.id, model })) {
+      restoreBlockedDraft()
+      showNoAvailableModelsFeedback()
+      return
+    }
+    const nextSetupConversation = { ...createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupMaxTokens, setupParameterOverrides), routingPlan: setupRoutingPlan, providerModelMode: setupSelectionExplicit ? 'manual' as const : 'inherited' as const }
     const id = createConversation(readyProvider.id, model)
     updateConversation(id, {
+      routingPlan: setupRoutingPlan,
       providerModelMode: nextSetupConversation.providerModelMode,
       systemPrompt: setupSystemPrompt,
       reasoningEffort: nextSetupConversation.reasoningEffort,
@@ -232,6 +240,7 @@ export function useChatSetupWorkspaceState({
       currentState.select(null)
     }
     setSetupSelectionExplicit(false)
+    setSetupRoutingPlan(undefined)
   }
 
   function openSetupAiConfiguration() {
@@ -244,11 +253,14 @@ export function useChatSetupWorkspaceState({
     return homeProvider ? switchSetupProviderModel(homeProvider, nextModel) : false
   }
 
-  function switchSetupProviderModel(nextProvider: AIProvider, nextModel: string) {
+  function switchSetupProviderModel(nextProvider: AIProvider, nextModel: string, routingPlan?: ModelRoutingPlan) {
+    const plan = normalizeModelRoutingPlan(routingPlan)
+    if (routingPlan && (!plan || !sameModelRoute(plan.primary, { providerId: nextProvider.id, model: nextModel }))) return false
     if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings: modelAccessSettings }).allowed) {
       return false
     }
     setSetupSelectedProviderId(nextProvider.id)
+    setSetupRoutingPlan(plan)
     setSetupSelectedModel(nextModel)
     setSetupSelectionExplicit(true)
     rememberExplicitModel(nextProvider.id, nextModel)

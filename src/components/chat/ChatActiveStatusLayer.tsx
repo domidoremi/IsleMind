@@ -30,6 +30,7 @@ export type ChatActiveStatusLayerProps = Pick<
   primaryConversationTask: ConversationTaskStatusState['primaryConversationTask']
   primaryConversationTaskMessage: ConversationTaskStatusState['primaryConversationTaskMessage']
   providerHealthTopOffset: number
+  onProviderHealthHeight: (height: number) => void
   confirmActionFromMessage: ChatActiveWorkspaceActions['confirmActionFromMessage']
   repairAgentEvidenceFromMessage: ChatActiveWorkspaceActions['repairAgentEvidenceFromMessage']
   safeStopMessage: ChatActiveWorkspaceActions['safeStopMessage']
@@ -51,6 +52,7 @@ export function ChatActiveStatusLayer({
   primaryConversationTask,
   primaryConversationTaskMessage,
   providerHealthTopOffset,
+  onProviderHealthHeight,
   confirmActionFromMessage,
   repairAgentEvidenceFromMessage,
   safeStopMessage,
@@ -68,6 +70,10 @@ export function ChatActiveStatusLayer({
   const [programError, setProgramError] = useState<string | null>(incomingProgramError)
   const chromeAwareTopOffset = visualTopInset + topChromeInset + chromeHeight + 8
   const showCompressionBanner = Boolean(latestCompression?.metadata) && !programError && !primaryConversationTask && !providerHealth?.code
+
+  useEffect(() => {
+    if (!providerHealth?.code || programError) onProviderHealthHeight(0)
+  }, [providerHealth?.code, programError, onProviderHealthHeight])
 
   useEffect(() => {
     if (conversationError && isProjectedError) {
@@ -166,6 +172,8 @@ export function ChatActiveStatusLayer({
 
       {providerHealth?.code && !programError ? (
         <View
+          testID="chat-provider-health-banner"
+          onLayout={event => onProviderHealthHeight(Math.ceil(event.nativeEvent.layout.height))}
           pointerEvents="box-none"
           style={{
             position: 'absolute',

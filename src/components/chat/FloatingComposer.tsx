@@ -1,10 +1,8 @@
-import { getConversationReasoningEffortOptions as getReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
-import { Modal } from '@/components/ui/AppModal'
+import { KeyboardAvoidingView, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
-import { useSafeAreaInsets, type EdgeInsets } from 'react-native-safe-area-context'
+import type { EdgeInsets } from 'react-native-safe-area-context'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ProviderBrandIcon, resolveProviderBrand } from '@/components/ui/ProviderBrandIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
@@ -14,27 +12,28 @@ import {
   type ComposerPresentationState,
 } from '@/components/chat/Composer'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { Attachment, Conversation, CommandReference } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
-import { getReasoningControlOptions, getReasoningControlValue, resolveReasoningControlValue } from '@/utils/modelReasoning'
+import { getProviderModelSource } from '@/utils/providerModelSources'
 import { PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, resolveProductMobileComposerLayout } from '@/presentation/layout/productMobileLayout'
 import type { ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
-import { ComposerToolButton, ReasoningToolIcon } from './FloatingComposerControls'
+import { ComposerToolButton } from './FloatingComposerControls'
+import { useComposerReasoningControl } from './useComposerReasoningControl'
+import { ComposerReasoningBar } from './ComposerReasoningBar'
 import { RuntimeRepairIntentCard, type RuntimeRepairIntent } from './RuntimeRepairIntentCard'
 import { resolveChatModelDisplayName } from './chatIdentityPresentation'
 import { buildModelQuickOptions, type ModelAccessSettings } from './chatModelSelection'
 import { ComposerOverlay, ModelMenu, ModelSelector, type ModelMenuItem } from './FloatingComposerSurfaces'
+import { resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
 import { COMPOSER_INPUT_MIN_HEIGHT } from './floatingComposerGeometry'
 import type { ComposerKeyboardMotion } from './chatWorkspaceKeyboard'
 import type { ComposerDraftPresence } from './composerDraftState'
 
-export type ComposerPanel = 'prompt' | 'more' | null
-type ReasoningPickerValue = 'default' | NonNullable<Conversation['reasoningEffort']>
+export type ComposerPanel = 'prompt' | 'more' | 'reasoning' | null
 
 const QUICK_TOOL_HIT_SLOP = { top: 8, right: 6, bottom: 8, left: 6 }
 export function FloatingComposer({
@@ -69,7 +68,6 @@ export function FloatingComposer({
   modelAccessSettings,
   onSwitchModel,
   modelSwitchDisabled = false,
-  onOpenReasoningPicker,
   onOpenKnowledge,
   onOpenWorkspaceReview,
   onToggleRequestedOutput,
@@ -123,7 +121,7 @@ export function FloatingComposer({
   onOpenModelPicker: () => void
   switchableProviders?: AIProvider[]
   modelAccessSettings?: ModelAccessSettings
-  onSwitchModel?: (provider: AIProvider, model: string) => boolean
+  onSwitchModel?: (provider: AIProvider, model: string, routingPlan?: Conversation['routingPlan']) => boolean
   modelSwitchDisabled?: boolean
   onOpenReasoningPicker?: () => void
   onOpenKnowledge: () => void
@@ -153,7 +151,6 @@ export function FloatingComposer({
 }) {
   const { colors, isLiquidGlass, canonicalThemeId, isDark } = useAppTheme()
   const { t } = useTranslation()
-  const [reasoningPickerOpen, setReasoningPickerOpen] = useState(false)
   const [composerPresentation, setComposerPresentation] =
     useState<ComposerPresentationState>({
       sizeMode: 'compact',
@@ -164,6 +161,7 @@ export function FloatingComposer({
   const [modelSelectorAnchor, setModelSelectorAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const modelSelectorRef = useRef<View>(null)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
+  const routingPlans = useSettingsStore((state) => state.settings.modelRoutingPlans)
   const transientConversation = useChatStore((state) => state.draftConversationIds.has(conversation.id))
   const {
     width: composerWindowWidth,
@@ -178,9 +176,13 @@ export function FloatingComposer({
   })
   const promptOpen = panel === 'prompt'
   const toolsOpen = panel === 'more'
-  const reasoningOptions = useMemo(() => getReasoningEffortOptions(provider, conversation.model ?? ''), [conversation.model, provider])
+  const reasoningOpen = panel === 'reasoning'
+  const reasoningControlDisabled = disabled || streaming || composerPresentation.activityState === 'sending'
+  const { options: reasoningOptions, value: availableReasoningEffort } = useComposerReasoningControl({
+    provider, model: conversation.model ?? '', value: reasoningEffort,
+    disabled: reasoningControlDisabled, onChange: onReasoningChange,
+  })
   const reasoningAvailable = showReasoning && reasoningOptions.length > 0
-  const reasoningControlOptions = useMemo(() => getReasoningControlOptions(reasoningOptions), [reasoningOptions])
   const promptStatusLabel = systemPrompt.trim() ? t('chat.quickPromptActive') : t('chat.quickPromptEmpty')
   const outputStatusLabel = requestedOutput === 'work-artifact'
     ? t('chat.quickOutputWorkArtifact')
@@ -219,9 +221,9 @@ export function FloatingComposer({
         ? colors.ui.radius.controlMiddle
         : colors.ui.radius.controlLarge
   const outputModeFixed = outputModeLocked === true
-  const modelStatusLabel = provider
+  const modelStatusLabel = conversation.routingPlan?.name ?? (provider
     ? resolveChatModelDisplayName(provider, conversation.model, modelDisplayAliases)
-    : t('chat.configure')
+    : t('chat.configure'))
   const modelStatusAccessibilityLabel = provider
     ? modelStatusLabel
     : t('chat.configureProviders')
@@ -241,16 +243,29 @@ export function FloatingComposer({
 
   const modelMenuItems = useMemo<ModelMenuItem[]>(() => {
     const options = buildModelQuickOptions(switchableProviders ?? [], modelAccessSettings)
-    return options.map((option) => ({
-      id: option.id,
-      providerId: option.provider.id,
-      providerLabel: option.provider.name || option.provider.id,
-      model: option.model,
-      modelLabel: resolveChatModelDisplayName(option.provider, option.model, modelDisplayAliases),
-      brand: resolveProviderBrand(option.provider, option.model),
-    }))
-  }, [modelAccessSettings, modelDisplayAliases, switchableProviders])
-  const selectedModelMenuId = provider ? `${provider.id}:${conversation.model}` : undefined
+    const regular = options.map((option) => {
+      const source = getProviderModelSource(option.provider, option.model)
+      const sourceLabel = source?.automatic ? t('providerSettings.automaticRouting') : source?.name
+      return {
+        id: option.id,
+        providerId: option.provider.id,
+        providerLabel: [option.provider.name || option.provider.id, sourceLabel].filter(Boolean).join(' · '),
+        model: option.model,
+        modelLabel: resolveChatModelDisplayName(option.provider, option.model, modelDisplayAliases),
+        brand: resolveProviderBrand(option.provider, option.model),
+      }
+    })
+    const current = conversation.routingPlan
+    const plans = current ? [current, ...(routingPlans ?? []).filter(plan => JSON.stringify(plan) !== JSON.stringify(current))] : routingPlans ?? []
+    const planned: ModelMenuItem[] = plans.flatMap((plan, index) => {
+      const primary = switchableProviders?.find(item => item.id === plan.primary.providerId)
+      if (!primary?.enabled || !resolveProviderModelAliasAccess({ provider: primary, model: plan.primary.model, settings: modelAccessSettings }).allowed) return []
+      return [{ id: `routing:${plan.id}:${index}`, providerId: primary.id, providerLabel: `${t('routing.title')} · ${primary.name}`,
+        model: plan.primary.model, modelLabel: plan.name, brand: resolveProviderBrand(primary, plan.primary.model), routingPlan: plan }]
+    })
+    return [...planned, ...regular]
+  }, [modelAccessSettings, modelDisplayAliases, switchableProviders, t, routingPlans, conversation.routingPlan])
+  const selectedModelMenuId = conversation.routingPlan ? `routing:${conversation.routingPlan.id}:0` : provider ? `${provider.id}:${conversation.model}` : undefined
 
   function measureModelSelector(afterMeasure?: () => void) {
     modelSelectorRef.current?.measureInWindow((x, y, width, height) => {
@@ -289,15 +304,6 @@ export function FloatingComposer({
     // stable while the keyboard is open so the composer can animate freely.
     const measuredHeight = Math.ceil(event.nativeEvent.layout.height)
     onLayoutHeight(measuredHeight)
-  }
-
-  function openReasoningPicker() {
-    if (!reasoningAvailable) {
-      onOpenReasoningPicker?.()
-      return
-    }
-    onCollapseTools()
-    setReasoningPickerOpen(true)
   }
 
   function handleOpenKnowledgeFromComposer() {
@@ -389,7 +395,7 @@ export function FloatingComposer({
         flexShrink: 0,
       }}
     >
-      <View ref={modelSelectorRef} style={{ minWidth: 0, flexShrink: 1 }}>
+      <View ref={modelSelectorRef} style={{ height: ISLE_MIN_TOUCH_TARGET, minWidth: 0, flexShrink: 1 }}>
         <ModelSelector
           testID="chat-model-selector"
           family={canonicalThemeId}
@@ -523,6 +529,16 @@ export function FloatingComposer({
             showInlineVoice={false}
             showCommandAction={false}
             leadingAccessory={renderComposerContextRail()}
+            middleAccessory={showReasoningControl ? <ComposerReasoningBar
+              modelKey={`${provider?.id}:${conversation.model}`}
+              options={reasoningAvailable ? reasoningOptions : []}
+              value={availableReasoningEffort}
+              disabled={reasoningControlDisabled}
+              onChange={onReasoningChange}
+              onExpand={() => onPanelChange('reasoning')}
+              compact={composerPresentation.sizeMode === 'compact' && composerPresentation.activityState === 'idle'}
+            /> : null}
+            controlActive={reasoningOpen}
             trailingAccessory={renderComposerToolsTrigger()}
             onStop={onStop}
             placeholder={inputPlaceholder}
@@ -545,18 +561,6 @@ export function FloatingComposer({
           />
         </View>
       </KeyboardAvoidingView>
-      <ReasoningPickerPopover
-        visible={reasoningPickerOpen}
-        values={reasoningControlOptions}
-        selectedValue={getReasoningControlValue(reasoningEffort)}
-        bottomOffset={composerLayout.floatingBottomOffset + 122}
-        motion={motion}
-        onClose={() => setReasoningPickerOpen(false)}
-        onSelect={(value) => {
-          onReasoningChange(resolveReasoningControlValue(value))
-          setReasoningPickerOpen(false)
-        }}
-      />
       <ModelMenu
         visible={modelMenuOpen}
         anchor={modelSelectorAnchor}
@@ -569,7 +573,7 @@ export function FloatingComposer({
         selectionDisabledLabel={streaming ? t('chat.generating') : t('chat.modelSwitchBlocked')}
         onSelect={(item) => {
           const selectedProvider = switchableProviders?.find((candidate) => candidate.id === item.providerId)
-          return selectedProvider && onSwitchModel ? onSwitchModel(selectedProvider, item.model) : false
+          return selectedProvider && onSwitchModel ? onSwitchModel(selectedProvider, item.model, item.routingPlan) : false
         }}
         onOpenConfiguration={() => {
           setModelMenuOpen(false)
@@ -578,74 +582,5 @@ export function FloatingComposer({
         onClose={handleCloseModelMenu}
       />
     </ComposerOverlay>
-  )
-}
-
-function ReasoningPickerPopover({
-  visible,
-  values,
-  selectedValue,
-  bottomOffset,
-  motion,
-  onClose,
-  onSelect,
-}: {
-  visible: boolean
-  values: ReasoningPickerValue[]
-  selectedValue: ReasoningPickerValue
-  bottomOffset: number
-  motion: MotionIntensity
-  onClose: () => void
-  onSelect: (value: ReasoningPickerValue) => void
-}) {
-  const { colors, canonicalThemeId } = useAppTheme()
-  const { t } = useTranslation()
-  const insets = useSafeAreaInsets()
-
-  const popoverSurface = canonicalThemeId === 'minimal' ? colors.ui.semantic.surface.base : colors.material.sheet.surface
-  const popoverBorderWidth = canonicalThemeId === 'minimal' ? StyleSheet.hairlineWidth : canonicalThemeId === 'monet' ? 1 : StyleSheet.hairlineWidth
-  const popoverRadius = canonicalThemeId === 'minimal' ? 4 : canonicalThemeId === 'monet' ? colors.ui.radius.controlMiddle : canonicalThemeId === 'material' ? colors.ui.radius.panel : colors.ui.radius.modal
-  const popoverShadowOpacity = canonicalThemeId === 'liquid-glass' ? 0.08 : canonicalThemeId === 'material' ? 0.06 : 0
-
-  return (
-    <Modal transparent visible={visible} animationType={motion === 'full' ? 'fade' : 'none'} statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
-      <Pressable accessible={false} accessibilityRole="none" onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]} />
-      <View pointerEvents="box-none" style={{ position: 'absolute', top: Math.max(insets.top, 8) + 8, left: 12, right: 12, bottom: bottomOffset, alignItems: 'center', justifyContent: 'flex-end' }}>
-        <View accessibilityViewIsModal style={{ width: '100%', maxWidth: 420, maxHeight: '100%', overflow: 'hidden', borderRadius: popoverRadius, backgroundColor: popoverSurface, borderWidth: popoverBorderWidth, borderColor: colors.material.sheet.border, shadowColor: colors.ui.control.shadow, shadowOpacity: popoverShadowOpacity, shadowRadius: popoverShadowOpacity ? 10 : 0, shadowOffset: { width: 0, height: popoverShadowOpacity ? 3 : 0 }, elevation: popoverShadowOpacity ? 2 : 0, ...(colors.ui.liquidGlass ? glassShadowStyle(colors, 'floating') : {}) }}>
-          <View style={{ minHeight: 48, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.material.sheet.border }}>
-            <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800', includeFontPadding: false }}>
-              {t('chat.quickReasoning')}
-            </Text>
-            <IslePressable accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={onClose} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>
-              <AppIcon name="close" color={colors.textSecondary} size={16} />
-            </IslePressable>
-          </View>
-          <ScrollView nestedScrollEnabled bounces={false} contentContainerStyle={{ padding: 6 }}>
-            {values.map((value, index) => {
-              const selected = value === selectedValue
-              const label = t(`chat.reasoningEffort.${value}`)
-              const effort = value === 'default' ? 'medium' : value
-              return (
-                <IslePressable
-                  key={value}
-                  haptic
-                  accessibilityRole="radio"
-                  accessibilityLabel={label}
-                  accessibilityState={{ selected, checked: selected }}
-                  onPress={() => onSelect(value)}
-                  style={{ minHeight: 46, borderRadius: 6, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: selected ? colors.ui.actionBar.itemActiveBackground : 'transparent', borderTopWidth: index > 0 && !selected ? StyleSheet.hairlineWidth : 0, borderTopColor: colors.ui.semantic.chrome.border }}
-                >
-                  <ReasoningToolIcon effort={effort} active={selected} available />
-                  <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: selected ? colors.ui.icon.accentForeground : colors.text, fontSize: 13, lineHeight: 18, fontWeight: selected ? '800' : '700', includeFontPadding: false }}>
-                    {label}
-                  </Text>
-                  {selected ? <AppIcon name="check" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.bold} /> : null}
-                </IslePressable>
-              )
-            })}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
   )
 }

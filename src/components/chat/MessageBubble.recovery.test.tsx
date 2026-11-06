@@ -6,7 +6,10 @@ import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsCont
 let mockFamily: CanonicalThemeId = 'minimal'
 let mockMode: 'light' | 'dark' = 'light'
 
-jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }))
+jest.mock('react-i18next', () => ({ useTranslation: () => ({
+  t: (key: string, values?: { reason?: string }) => key === 'messageBubble.pausedResponseReason' ? `Paused: ${values?.reason}` : key,
+  i18n: { language: 'en' },
+}) }))
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors(mockMode, mockFamily), canonicalThemeId: mockFamily }) }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => 'none' }))
 jest.mock('@/store/settingsStore', () => ({ useSettingsStore: (select: any) => select({ settings: { hapticsEnabled: false } }) }))
@@ -212,6 +215,19 @@ function resumableMessage(): Message {
     },
   }
 }
+
+it.each(['', 'Partial reply'])('shows the pause reason beside unfinished content %j without automatically resuming', async content => {
+  const paused = resumableMessage()
+  paused.content = content
+  paused.responseLifecycle!.history[0].summary = 'The token budget cannot admit this request.'
+  const onResumePaused = jest.fn()
+  const view = await render(<MessageBubble {...props} message={paused} onResumePaused={onResumePaused} />)
+  expect(view.getByTestId('message-paused-reason')).toHaveTextContent('Paused: The token budget cannot admit this request.')
+  if (content) expect(view.getByText(content)).toBeTruthy()
+  expect(view.queryByText('messageBubble.emptyResponse')).toBeNull()
+  expect(onResumePaused).not.toHaveBeenCalled()
+  expect(paused.status).toBe('streaming')
+})
 
 it('offers explicit safe continuation without invoking it on render or calling failed-response retry', async () => {
   const paused = resumableMessage(), onResumePaused = jest.fn(async () => undefined), onRetry = jest.fn()

@@ -20,13 +20,13 @@ export function useChatFallbackConfirmation(input: {
         return `${provider ? resolveProviderDisplayName(provider, t('providerSettings.customProvider')) : target.providerId} · ${target.model}`
       }
       return dialog.confirm({
-        title: t('modelAvailability.confirmFallbackTitle'), signal: request.signal, tone: 'amber',
-        message: [t('modelAvailability.preferredTarget', { target: label(request.preferred) }),
-          t('modelAvailability.candidateTarget', { target: label(request.candidate) }),
+        title: t('modelStatus.confirmFallbackTitle'), signal: request.signal, tone: 'amber',
+        message: [t('modelStatus.preferredTarget', { target: label(request.preferred) }),
+          t('modelStatus.candidateTarget', { target: label(request.candidate) }),
           request.candidate.protocolAdapterId, request.candidate.region,
-          request.candidate.costTier ? t('modelAvailability.costTier', { tier: request.candidate.costTier }) : undefined,
-          t('modelAvailability.confirmFallbackMessage')].filter(Boolean).join('\n'),
-        confirmLabel: t('modelAvailability.allowThisRequest'), cancelLabel: t('common.cancel'),
+          request.candidate.costTier ? t('modelStatus.costTier', { tier: request.candidate.costTier }) : undefined,
+          t('modelStatus.confirmFallbackMessage')].filter(Boolean).join('\n'),
+        confirmLabel: t('modelStatus.allowThisRequest'), cancelLabel: t('common.cancel'),
       })
     })
   }, [active, conversationId, dialog, t])

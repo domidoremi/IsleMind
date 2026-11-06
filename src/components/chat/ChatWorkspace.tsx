@@ -54,6 +54,7 @@ import { useChatWorkspaceKeyboardState } from './chatWorkspaceKeyboard'
 import { useChatWorkspaceAutoScroll, useChatWorkspaceConversationRecovery, useChatWorkspaceOverlayNavigation } from './chatWorkspaceLifecycleState'
 import { useChatWorkspaceProviderHealthState } from './chatWorkspaceProviderHealthState'
 import { useChatFallbackConfirmation } from './useChatFallbackConfirmation'
+import { ChatContextDraftProvider } from './chatContextDraft'
 
 export type { RuntimeRepairIntent } from './RuntimeRepairIntentCard'
 
@@ -83,7 +84,11 @@ interface ChatWorkspaceProps {
 }
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
-  return <PageFeedbackBoundary scopeKey={props.conversation?.id}><ChatWorkspaceBody {...props} /></PageFeedbackBoundary>
+  return <PageFeedbackBoundary scopeKey={props.conversation?.id}>
+    <ChatContextDraftProvider scopeKey={props.conversation?.id ?? '__setup__'}>
+      <ChatWorkspaceBody {...props} />
+    </ChatContextDraftProvider>
+  </PageFeedbackBoundary>
 }
 
 function ChatWorkspaceBody({ conversation, active = true, showBack = false, embedded = false, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty, initialRequestedOutputMode = 'auto', shellNavigation = false, topChromeInset = 0, showSetupEmptyState = true, runtimeRepairIntent, settingsTransitionActive = false, onHistory, onSettings }: ChatWorkspaceProps) {

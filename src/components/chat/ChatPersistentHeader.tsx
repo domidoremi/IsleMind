@@ -119,6 +119,8 @@ export function ChatPersistentHeader({
     <IsleOverlayPressable
       testID="chat-model-control"
       onPress={onModelPress}
+      // Title animations can replace their nodes while a press is held.
+      pointerEvents="box-only"
       accessibilityRole="button"
       accessibilityLabel={title.trim() && modelAccessibilityLabel ? modelAccessibilityLabel : `${t('chat.model')}: ${displayTitle}`}
       accessibilityHint={modelAccessibilityHint ?? t('chat.quickModelAccessibilityHint')}

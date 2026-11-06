@@ -16,7 +16,7 @@ it('binds only the visible conversation and cancels pending UI consent when it l
   const request = { conversationId: 'c', preferred: { providerId: 'a', model: 'A' }, candidate: { providerId: 'b', model: 'B' }, signal: new AbortController().signal }
   let result: Promise<boolean> | undefined
   await act(async () => { result = requestProviderFallbackConfirmation(request); await Promise.resolve() })
-  expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'modelAvailability.confirmFallbackTitle' }))
+  expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'modelStatus.confirmFallbackTitle' }))
   const uiSignal = confirm.mock.calls[0][0].signal as AbortSignal
   await view.rerender(<Harness active={false} />)
   expect(await result).toBe(false)

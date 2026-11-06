@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react-native'
+import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { AIProvider } from '@/types/providerContracts'
 import { useChatSetupWorkspaceState } from './chatSetupWorkspaceState'
@@ -12,7 +13,8 @@ jest.mock('@/bootstrap/providerModelAccess', () => ({
 jest.mock('./chatModelSelection', () => ({
   ...jest.requireActual('./chatModelSelection'),
   pickReadyProviderForNewConversation: (providers: AIProvider[]) => providers[0],
-  getPolicyAllowedProviderModels: (provider: AIProvider) => provider.models ?? [],
+  getPolicyAllowedProviderModels: (provider: AIProvider, _settings: unknown, options?: { limit?: number }) =>
+    (provider.models ?? []).slice(0, options?.limit),
   getPolicyPreferredProviderModel: (provider: AIProvider) => provider.models?.[0],
 }))
 
@@ -22,6 +24,7 @@ const provider = {
   type: 'openai',
   baseUrl: 'https://unused.invalid/v1',
   enabled: true,
+  lastModelSyncStatus: 'ok',
   models: ['model-a', 'model-b'],
 } as AIProvider
 
@@ -53,6 +56,21 @@ function options(providers: AIProvider[] = [provider]) {
 }
 
 afterEach(() => jest.restoreAllMocks())
+
+it('carries the selected plan to a newly created conversation and clears it for a regular model', async () => {
+  jest.spyOn(useChatStore.getState(), 'select').mockImplementation(() => undefined)
+  jest.spyOn(useSettingsStore.getState(), 'rememberPreferredModel').mockResolvedValue(undefined)
+  const plan = { schema: 'islemind.model-routing-plan.v1' as const, id: 'stable', name: 'Stable', mode: 'fixed' as const,
+    primary: { providerId: provider.id, model: 'model-b' }, crossProvider: 'ask' as const }
+  const input = options(); input.createConversation.mockReturnValue('new-plan-chat')
+  const screen = await renderHook(() => useChatSetupWorkspaceState(input))
+  await act(() => { expect(screen.result.current.switchSetupProviderModel(provider, 'model-b', plan)).toBe(true) })
+  expect(screen.result.current.setupConversation.routingPlan).toEqual(plan)
+  await act(async () => { await screen.result.current.submitSetup('hello', []) })
+  expect(input.updateConversation).toHaveBeenCalledWith('new-plan-chat', expect.objectContaining({ routingPlan: plan }))
+  await act(() => { screen.result.current.switchSetupProviderModel(provider, 'model-a') })
+  expect(screen.result.current.setupConversation.routingPlan).toBeUndefined()
+})
 
 it('returns setup selection success without creating a conversation or emitting a success toast', async () => {
   const remember = jest.spyOn(useSettingsStore.getState(), 'rememberPreferredModel').mockResolvedValue(undefined)
@@ -98,4 +116,27 @@ it('cannot select a setup model without an available provider', async () => {
   const screen = await renderHook(() => useChatSetupWorkspaceState(input))
   expect(screen.result.current.switchSetupModel('model-b')).toBe(false)
   expect(input.dialog.toast).not.toHaveBeenCalled()
+})
+
+it('preserves a model beyond both samples when creating a new chat', async () => {
+  jest.spyOn(useSettingsStore.getState(), 'rememberPreferredModel').mockResolvedValue(undefined)
+  jest.spyOn(useChatStore.getState(), 'select').mockImplementation(() => undefined)
+  const gateway = {
+    ...provider,
+    models: Array.from({ length: 213 }, (_, index) => `supplier/model-${index}`),
+  }
+  const selectedModel = gateway.models[200]!
+  const input = options([gateway])
+  input.createConversation.mockReturnValue('large-catalog-selection')
+  const screen = await renderHook(() => useChatSetupWorkspaceState(input))
+
+  await act(() => {
+    expect(screen.result.current.switchSetupProviderModel(gateway, selectedModel)).toBe(true)
+  })
+  expect(screen.result.current.setupConversation.model).toBe(selectedModel)
+
+  await act(async () => {
+    await screen.result.current.submitSetup('hello', [])
+  })
+  expect(input.createConversation).toHaveBeenCalledWith(gateway.id, selectedModel)
 })

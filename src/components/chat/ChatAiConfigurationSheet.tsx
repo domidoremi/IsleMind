@@ -37,7 +37,7 @@ interface ChatAiConfigurationSheetProps {
   switchableProviders: AIProvider[]
   settings: ModelAccessSettings
   scope?: 'essential' | 'full'
-  onSwitchModel: (provider: AIProvider, model: string) => void
+  onSwitchModel: (provider: AIProvider, model: string, routingPlan?: Conversation['routingPlan']) => void
   onDraftChange?: (updates: ConversationDraftPatch) => void
   onCopyLink?: () => void
   onClose: () => void

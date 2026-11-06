@@ -27,6 +27,7 @@ import {
 import { appendComposerVoiceTranscript, composerVoiceIsBusy, formatComposerVoiceDuration, type ComposerVoiceState } from './composerVoiceState'
 import { useComposerVoiceInput } from './useComposerVoiceInput'
 import { useComposerDraftPersistence } from './useComposerDraftPersistence'
+import { usePublishChatContextDraft } from './chatContextDraft'
 import { MessageInput, SendButton } from './FloatingComposerSurfaces'
 import { ChatComposerThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 import { CodeWorkspaceSheet } from './CodeWorkspaceSheet'
@@ -71,9 +72,11 @@ interface ComposerProps {
   showCommandAction?: boolean
   placeholder?: string
   leadingAccessory?: ReactNode
+  middleAccessory?: ReactNode
   trailingAccessory?: ReactNode
   floatingAccessory?: ReactNode
   bottomAccessory?: ReactNode
+  controlActive?: boolean
   onClearPending?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
   onFocus?: () => void
@@ -121,9 +124,11 @@ export function Composer({
   showCommandAction = true,
   placeholder,
   leadingAccessory,
+  middleAccessory,
   trailingAccessory,
   floatingAccessory,
   bottomAccessory,
+  controlActive = false,
   onClearPending,
   onReferenceSelected,
   onFocus,
@@ -175,6 +180,7 @@ export function Composer({
     setContent,
     setAttachments,
   })
+  usePublishChatContextDraft({ ready: draftReady, text: content, attachmentCount: attachments.length })
   const editor = useComposerLongDraftEditor({
     value: content,
     onValueChange: setContent,
@@ -253,12 +259,12 @@ export function Composer({
     trigger.query.length === 0 ||
     trigger.type === 'command'
   )
-  useAppUpdateBlocker(hasSendableDraft || focused || sending || streaming || recording || voiceBusy
+  useAppUpdateBlocker(hasSendableDraft || focused || controlActive || sending || streaming || recording || voiceBusy
     || workspaceOpen || attachmentsOpen || utilitiesOpen || showCommandPanel, 'composer')
   const activityState: ComposerActivityState =
     sending || (streaming && !hasSendableDraft)
       ? 'sending'
-      : focused
+      : focused || controlActive
         ? hasSendableDraft
           ? 'typing'
           : 'focused'
@@ -819,7 +825,8 @@ export function Composer({
               <AppIcon name="slash-command" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
             </IslePressable>
           ) : null}
-          {composerGeometry.controlsStacked || showInlineUtilities || showCommandAction ? <View style={{ flex: 1, minWidth: 0 }} /> : null}
+          {middleAccessory ? <View testID="composer-middle-accessory" style={{ flex: 1, minWidth: 0 }}>{middleAccessory}</View>
+            : composerGeometry.controlsStacked || showInlineUtilities || showCommandAction ? <View style={{ flex: 1, minWidth: 0 }} /> : null}
           {showInlineVoice ? <IslePressable
             haptic
             onPress={() => void (recording ? voiceInput.stop() : voiceInput.begin())}

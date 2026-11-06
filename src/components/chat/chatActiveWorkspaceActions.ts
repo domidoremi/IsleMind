@@ -24,14 +24,14 @@ interface ChatActiveWorkspaceActionOptions {
   modelAccessSettings: ModelAccessSettings
   onApplyStarter: ApplyStarterDraft
   setShowOptions: Dispatch<SetStateAction<boolean>>
-  switchConversationModel: (id: string, providerId: string, model: string) => boolean
+  switchConversationModel: (id: string, providerId: string, model: string, options?: { routingPlan?: Conversation['routingPlan'] }) => boolean
   t: TFunction
   updateConversation: (id: string, updates: Partial<Conversation>) => void
 }
 
 export interface ChatActiveWorkspaceActions {
   confirmActionFromMessage: (item: Message) => void
-  confirmSwitchModel: (nextProvider: AIProvider, nextModel: string) => boolean
+  confirmSwitchModel: (nextProvider: AIProvider, nextModel: string, routingPlan?: Conversation['routingPlan']) => boolean
   rememberCommandReference: (reference: CommandReference) => void
   repairAgentEvidenceFromMessage: (item: Message) => void
   safeStopMessage: (conversationId: string) => Promise<boolean>
@@ -72,13 +72,14 @@ export function useChatActiveWorkspaceActions({
     updateConversation(activeConversation.id, { commandRefs: [reference, ...existing].slice(0, 12) })
   }
 
-  function confirmSwitchModel(nextProvider: AIProvider, nextModel: string) {
+  function confirmSwitchModel(nextProvider: AIProvider, nextModel: string, routingPlan?: Conversation['routingPlan']) {
     if (lifetime.controller.signal.aborted) return false
     return confirmConversationModelSwitch({
       activeConversation,
       modelAccessSettings,
       nextModel,
       nextProvider,
+      routingPlan,
       setShowOptions,
       switchConversationModel,
     })

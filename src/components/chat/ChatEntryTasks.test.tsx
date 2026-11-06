@@ -13,8 +13,8 @@ jest.mock('@/components/ui/isle', () => ({
   IsleMotionFrame: require('react-native').View,
   IslePressable: require('react-native').Pressable,
   IsleButton: ({ label, ...props }: any) => {
-    const { Pressable, Text } = require('react-native')
-    return <Pressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></Pressable>
+    const { Pressable: MockPressable, Text } = require('react-native')
+    return <MockPressable accessibilityRole="button" accessibilityLabel={label} {...props}><Text>{label}</Text></MockPressable>
   },
 }))
 

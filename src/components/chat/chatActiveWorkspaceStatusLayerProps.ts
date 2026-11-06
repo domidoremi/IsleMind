@@ -21,6 +21,7 @@ export function buildChatActiveStatusLayerProps({
   chromeHeight,
   layoutState: {
     providerHealthTopOffset,
+    setProviderHealthHeight,
   },
   primaryConversationTask,
   primaryConversationTaskMessage,
@@ -41,6 +42,7 @@ export function buildChatActiveStatusLayerProps({
     primaryConversationTask,
     primaryConversationTaskMessage,
     providerHealthTopOffset,
+    onProviderHealthHeight: setProviderHealthHeight,
     confirmActionFromMessage,
     repairAgentEvidenceFromMessage,
     safeStopMessage,

@@ -75,7 +75,7 @@ export function FloatingChrome({
   onCloseOptions: () => void
   onCopyLink: () => void
   onDraftChange?: (updates: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'reasoningEffort' | 'maxTokens' | 'generationParameterOverrides'>>) => void
-  onSwitchModel: (provider: AIProvider, model: string) => void
+  onSwitchModel: (provider: AIProvider, model: string, routingPlan?: Conversation['routingPlan']) => void
   switchableProviders: AIProvider[]
   onLayoutHeight: (height: number) => void
   motion: MotionIntensity
@@ -90,7 +90,7 @@ export function FloatingChrome({
   const [headerHeight, setHeaderHeight] = useState(0)
   const [contextCapacityOpen, setContextCapacityOpen] = useState(false)
   const header = getProviderHeaderState(conversation, t)
-  const modelTitle = getProviderCompactModel(provider, conversation.model ?? '')
+  const modelTitle = conversation.routingPlan?.name ?? getProviderCompactModel(provider, conversation.model ?? '')
   const modelIdentity = `${provider?.name ?? ''} · ${getProviderDisplayModel(provider, conversation.model)} · ${provider ? resolveProviderModelAlias(provider, conversation.model ?? '') : conversation.model}`
   const chromeTopPadding = visualTopInset + topChromeInset + FLOATING_CHROME_SAFE_AREA_GAP
   const providerHealthTone = providerHealth?.inheritedExpired || providerHealth?.code === 'provider_missing'
@@ -147,7 +147,7 @@ export function FloatingChrome({
             leadingLabel={leadingChromeIsBack ? t('common.back') : t('conversation.title')}
             onLeadingPress={onBack}
             onModelPress={onOpenModelPicker}
-            modelAccessibilityLabel={`${t('chat.model')}: ${modelIdentity}. ${providerHealth?.code ? providerHealth.description : t('modelAvailability.unknown')}`}
+            modelAccessibilityLabel={`${t('chat.model')}: ${modelIdentity}. ${providerHealth?.code ? providerHealth.description : t('modelStatus.unknown')}`}
             modelAccessibilityHint={t('chat.quickModelAccessibilityHint')}
             onNewConversation={onNewConversation}
             onSettings={onSettings}

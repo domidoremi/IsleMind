@@ -794,6 +794,7 @@ export function SendButton({
 }
 
 export interface ModelMenuItem {
+  routingPlan?: import('@/core/modelRoutingPlan').ModelRoutingPlan
   id: string
   providerId: string
   providerLabel: string
@@ -849,8 +850,8 @@ export function ModelMenu({
   }), [anchor, estimatedMenuHeight, windowHeight, windowWidth])
 
   const placementStyle = placement.top === undefined
-    ? { left: placement.left, bottom: placement.bottom, width: placement.width }
-    : { left: placement.left, top: placement.top, width: placement.width }
+    ? { left: placement.left, bottom: placement.bottom, width: placement.width, maxHeight: placement.maxHeight }
+    : { left: placement.left, top: placement.top, width: placement.width, maxHeight: placement.maxHeight }
 
   const closeMenu = useCallback(() => {
     if (!visible || closing.current) return
@@ -957,7 +958,7 @@ export function ModelMenu({
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            style={{ maxHeight: Math.min(280, windowHeight * 0.42) }}
+            style={{ maxHeight: Math.min(280, windowHeight * 0.42), flexShrink: 1 }}
             contentContainerStyle={{ padding: 8, gap: 2 }}
           >
             {items.length ? items.map((item) => {
