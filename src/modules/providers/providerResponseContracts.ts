@@ -1,5 +1,5 @@
 import type { MessageUsage } from '@/types/chatContracts'
-import type { ProcessTrace } from '@/core'
+import type { ProcessTrace, ReportedProviderExecution } from '@/core'
 import type { ChatErrorCode } from '@/types/providerContracts'
 import type { ProviderCitation } from './providerCitations'
 import type { ProviderToolCall } from './providerToolCalls'
@@ -18,6 +18,7 @@ export interface ProviderStreamOutcome {
 
 export interface ProviderResponseParsingResult {
   text: string
+  reportedExecution?: ReportedProviderExecution
   usage?: MessageUsage
   citations?: ProviderCitation[]
   traces?: ProcessTrace[]

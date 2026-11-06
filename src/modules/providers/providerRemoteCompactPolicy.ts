@@ -61,6 +61,7 @@ export interface RemoteCompactDecision {
     | 'native_openai_responses'
     | 'native_anthropic_messages'
   pressureRatio: number
+  threshold?: number
   /** Diagnostic-only guard state; does not create a new user-facing mode. */
   guardBlocked?: boolean
 }
@@ -193,7 +194,7 @@ export function createProviderRemoteCompactPolicy(
     // Auto keeps remote-first ordering: do nothing below pressure, then use
     // native compaction when available, otherwise admit local packing only
     // after the explicit remote-unavailable classification above.
-    const threshold = normalizeThreshold(input.settings?.remoteCompactThreshold)
+    const threshold = resolveProviderRemoteCompactThreshold(input.settings?.remoteCompactThreshold)
     if (pressureRatio < threshold) {
       return {
         mode,
@@ -283,7 +284,11 @@ export function createProviderRemoteCompactPolicy(
     return dependencies.estimateTextTokens([contextPrompt, messageText].filter(Boolean).join('\n\n'))
   }
 
-  return { decideRemoteCompact }
+  return {
+    decideRemoteCompact(input) {
+      return { ...decideRemoteCompact(input), threshold: resolveProviderRemoteCompactThreshold(input.settings?.remoteCompactThreshold) }
+    },
+  }
 }
 
 function mapResolutionReason(
@@ -328,6 +333,6 @@ export function estimateRemoteCompactSavedTokens(
   return Math.max(0, Math.floor(inputTokens! * 0.55 - outputTokens!))
 }
 
-function normalizeThreshold(value: number | undefined): number {
+export function resolveProviderRemoteCompactThreshold(value: number | undefined): number {
   return Number.isFinite(value) ? Math.max(0.1, Math.min(2, value!)) : 0.8
 }

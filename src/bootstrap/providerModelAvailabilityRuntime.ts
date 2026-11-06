@@ -51,7 +51,7 @@ export const providerModelAvailabilityRuntime = createProviderModelAvailabilityR
   },
   async retest(input) {
     if (!operations) throw new Error('Provider retest has not been bound')
-    await operations.retest(input)
+    return operations.retest(input)
   },
 })
 

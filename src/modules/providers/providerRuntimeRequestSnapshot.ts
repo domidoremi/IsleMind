@@ -27,6 +27,7 @@ export function snapshotProviderRuntimeRequest(
   const policy = JSON.stringify(request.failoverPolicy)
   const continuationBound = providerRequestHasRouteBoundContinuation(request)
   const fallbackUsed = request.executionConstraint?.fallbackUsed
+  const routingPlan = JSON.stringify(request.executionConstraint?.routingPlan)
   const allowFallback = request.allowFallback
   const targetCredentialGroupId = request.targetCredentialGroupId
   const earlierPolicyCheck = source.isSelectionPolicyCurrent
@@ -38,6 +39,7 @@ export function snapshotProviderRuntimeRequest(
         && source.allowFallback === allowFallback
         && source.targetCredentialGroupId === targetCredentialGroupId
         && source.executionConstraint?.fallbackUsed === fallbackUsed
+        && JSON.stringify(source.executionConstraint?.routingPlan) === routingPlan
         && providerRequestHasRouteBoundContinuation(source) === continuationBound
     } catch {
       return false

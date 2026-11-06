@@ -31,6 +31,7 @@ export function buildProviderModelConfigsForStorage(
   const ids = limitModelIdsForStorage(
     [
       ...models,
+      ...(provider.credentialGroups ?? []).flatMap(group => group.availableModels ?? []),
       ...manualModels,
       ...modelAliases.map((item) => item.model),
     ],

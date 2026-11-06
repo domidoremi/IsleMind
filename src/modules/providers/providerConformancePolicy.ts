@@ -223,6 +223,7 @@ export interface ProviderCapabilityManifest {
     supported: boolean
     requestShape: ProviderReasoningRequestShape
     selectableEfforts: ReasoningEffort[]
+    effortWireValues?: AIModel['reasoningEffortWireValues']
     disablesSamplingWhenEnabled: boolean
     minBudgetTokens?: number
   }
@@ -389,6 +390,8 @@ export function createProviderConformancePolicy(
       supported: requestShape !== 'none' && selectableEfforts.length > 0,
       requestShape,
       selectableEfforts,
+      ...(['openai-reasoning-effort', 'openai-responses-reasoning'].includes(requestShape) && modelConfig.reasoningEffortWireValues
+        ? { effortWireValues: modelConfig.reasoningEffortWireValues } : {}),
       disablesSamplingWhenEnabled: reasoningDisablesSampling(requestShape),
       minBudgetTokens: requestShape === 'anthropic-budget' ? 1024 : undefined,
     },
@@ -439,9 +442,14 @@ function resolveAndHardenProviderRequest(input: ProviderConformanceRequest, body
   const parameterDiagnostics = input.generationParameterPlan
     ? buildGenerationParameterDiagnostics(input.generationParameterPlan, hardened.body)
     : undefined
+  const wireBody = applyReasoningEffortWireValues(hardened.body, manifest, reasoning)
+  const adjustedParams = wireBody === hardened.body ? hardened.adjustedParams : {
+    ...hardened.adjustedParams,
+    [manifest.reasoning.requestShape === 'openai-reasoning-effort' ? 'reasoning_effort' : 'reasoning.effort']: reasoning.providerValue,
+  }
 
   return {
-    body: hardened.body,
+    body: wireBody,
     conformance: {
       manifest,
       reasoning,
@@ -449,11 +457,29 @@ function resolveAndHardenProviderRequest(input: ProviderConformanceRequest, body
       requestedModalities: requestModalities,
       issues,
       removedParams: hardened.removedParams,
-      adjustedParams: hardened.adjustedParams,
-      bodyKeys: Object.keys(hardened.body).sort(),
+      adjustedParams,
+      bodyKeys: Object.keys(wireBody).sort(),
       ...(parameterDiagnostics ? { parameterDiagnostics } : {}),
     },
   }
+}
+
+function applyReasoningEffortWireValues(body: Record<string, unknown>, manifest: ProviderCapabilityManifest, reasoning: ProviderReasoningResolution): Record<string, unknown> {
+  if (!reasoning.enabled || !reasoning.effective) return body
+  const wire = manifest.reasoning.effortWireValues?.[reasoning.effective]
+  if (typeof wire !== 'string' || !wire) return body
+  // Translate only fields admitted by hardening; an alias cannot restore a removed control.
+  if (manifest.reasoning.requestShape === 'openai-reasoning-effort' &&
+    Object.prototype.hasOwnProperty.call(body, 'reasoning_effort') && body.reasoning_effort !== wire) {
+    return { ...body, reasoning_effort: wire }
+  }
+  const nested = body.reasoning
+  if (manifest.reasoning.requestShape === 'openai-responses-reasoning' && nested &&
+    typeof nested === 'object' && !Array.isArray(nested) && Object.prototype.hasOwnProperty.call(nested, 'effort') &&
+    (nested as Record<string, unknown>).effort !== wire) {
+    return { ...body, reasoning: { ...nested, effort: wire } }
+  }
+  return body
 }
 
 function buildGenerationParameterDiagnostics(
@@ -706,6 +732,10 @@ function inferReasoningRequestShape(input: ProviderConformanceRequest, family: P
   const config = dependencies.getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
   if (!providerReasoningCanBeSent(input.provider, config)) return 'none'
   if (providerProtocolReferenceDisablesCapability(input.provider, config, 'reasoningEffort')) return 'none'
+  if (family === 'openai-compatible' && config.source === 'remote' && config.reasoningMode === 'openai-effort') {
+    if (protocol === 'openai-responses') return 'openai-responses-reasoning'
+    if (protocol === 'openai-compatible') return 'openai-reasoning-effort'
+  }
   if (family === 'openai' && dependencies.isOpenAIReasoningModel(input.provider, input.model)) {
     return protocol === 'openai-responses' ? 'openai-responses-reasoning' : 'openai-reasoning-effort'
   }
@@ -935,7 +965,9 @@ function resolveReasoning(input: ProviderConformanceRequest, manifest: ProviderC
     requested,
     enabled: true,
     effective,
-    providerValue: providerReasoningValue(manifest.reasoning.requestShape, effective, manifest.model),
+    providerValue: effective
+      ? manifest.reasoning.effortWireValues?.[effective] ?? providerReasoningValue(manifest.reasoning.requestShape, effective, manifest.model)
+      : undefined,
     requestShape: manifest.reasoning.requestShape,
     downgradeReason: effective !== requested ? 'unsupported_effort' : undefined,
   }

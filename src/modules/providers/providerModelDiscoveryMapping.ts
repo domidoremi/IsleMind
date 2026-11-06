@@ -7,6 +7,11 @@ export type OpenAIModelListItem = {
   object?: string
   name?: string
   display_name?: string
+  magpie_label?: string
+  reasoning?: boolean
+  reasoning_levels?: unknown
+  supported_reasoning_levels?: unknown
+  owned_by?: string
   context_length?: number
   contextWindow?: number
   context_window?: number
@@ -90,10 +95,18 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
   return sortModelConfigs(
     Array.from(itemsById.entries()).map(([id, remote]) => {
       const reasoningMode = openAICompatibleReasoningModeFromModel(remote, options, id)
+      const advertisedEfforts = reasoningEffortsFromOpenAIModel(remote)
+      const reasoningEfforts = reasoningMode
+        ? advertisedEfforts ?? openAICompatibleReasoningEffortsFromMode(reasoningMode, id)
+        : []
+      const reasoningEffortWireValues = reasoningMode === 'openai-effort'
+        ? reasoningWireValuesFromOpenAIModel(remote)
+        : undefined
       const supportsVision = supportsVisionFromOpenAIModel(remote)
       const supportsFiles = supportsFilesFromOpenAIModel(remote)
       const supportsTools = supportsToolsFromOpenAIModel(remote)
       const supportedParameters = supportedParametersFromOpenAIModel(remote)
+      const upstreamProvider = magpieUpstreamProvider(id, remote)
       const preferredEndpoint = preferredEndpointFromOpenAIModel(remote)
       const outputTokenLimit = providerOutputTokenLimit(
         remote.max_output_length,
@@ -109,7 +122,9 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
         remote.metadata?.output_token_limit,
       )
       const merged = mergeModelConfig(id, providerType, {
-        name: normalizeRemoteModelDisplayName(remote?.id ?? id, id, remote, providerType),
+        name: upstreamProvider && isString(remote.display_name)
+          ? canonicalizeRemoteModelDisplayName(remote.display_name)
+          : normalizeRemoteModelDisplayName(remote?.id ?? id, id, remote, providerType),
         contextWindow: firstNumber(
           remote?.context_length,
           remote?.contextWindow,
@@ -128,11 +143,13 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
         supportsFiles,
         supportsTools,
         supportedParameters,
+        ...(upstreamProvider ? { upstreamProvider } : {}),
         preferredEndpoint,
         ...(reasoningMode || providerType === 'openai-compatible' ? {
           reasoningMode,
           // Persist an empty list so a reload cannot restore another supplier's controls.
-          reasoningEfforts: reasoningMode ? openAICompatibleReasoningEffortsFromMode(reasoningMode, id) : [],
+          reasoningEfforts,
+          ...(reasoningEffortWireValues ? { reasoningEffortWireValues } : {}),
         } : {}),
         source: 'remote',
       })
@@ -146,7 +163,7 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
         supportsTools: supportsTools ?? null,
         preferredEndpoint: preferredEndpoint ?? 'chat-completions',
         reasoningMode,
-        reasoningEfforts: reasoningMode ? openAICompatibleReasoningEffortsFromMode(reasoningMode, id) : [],
+        reasoningEfforts,
       }
     }),
     providerType
@@ -368,15 +385,35 @@ export function supportsToolsFromOpenAIModel(model?: OpenAIModelListItem): boole
 }
 
 function supportedParametersFromOpenAIModel(model?: OpenAIModelListItem): string[] | undefined {
-  if (!Array.isArray(model?.supported_parameters)) return undefined
-  const values = model.supported_parameters
+  const values = (Array.isArray(model?.supported_parameters) ? model.supported_parameters : [])
     .map((value) => typeof value === 'string' ? normalizeSupportedParameter(value) : '')
     .filter(Boolean)
+  // Magpie advertises optional capabilities here, while its Chat Completions
+  // gateway also accepts max_tokens. Losing the wire cap would reserve the
+  // model's entire output maximum and block even a first ordinary chat.
+  if (isString(model?.magpie_label)) {
+    values.push('max_tokens')
+    if (model?.reasoning !== false && reasoningEffortsFromOpenAIModel(model)?.length) values.push('reasoning_effort')
+  }
   return values.length ? [...new Set(values)] : undefined
+}
+
+function magpieUpstreamProvider(modelId: string, model: OpenAIModelListItem): AIModel['upstreamProvider'] {
+  if (!isString(model.magpie_label)) return undefined
+  const separator = modelId.indexOf('/')
+  if (separator <= 0) return undefined
+  const id = modelId.slice(0, separator)
+  const label = model.magpie_label.trim()
+  const labelSeparator = label.lastIndexOf(' · ')
+  const name = (labelSeparator >= 0 ? label.slice(labelSeparator + 3).trim() : model.owned_by?.trim()) || id
+  return { id, name, ...(id === 'auto' ? { automatic: true } : {}) }
 }
 
 function openAICompatibleReasoningModeFromModel(model: OpenAIModelListItem | undefined, options: OpenAIModelMappingOptions, modelId: string): ModelReasoningMode | undefined {
   const supportedParameters = openAIModelSupportedParameterSet(model)
+  // Magpie translates the upstream's thinking controls into its shared effort field.
+  // Advertised levels are required; a model name or reasoning=true alone is insufficient.
+  if (isString(model?.magpie_label) && model?.reasoning !== false && reasoningEffortsFromOpenAIModel(model)?.length) return 'openai-effort'
   if (options.providerPresetId === 'deepinfra') {
     const tags = openAIModelTags(model)
     if (tags.has('reasoning_effort') || tags.has('reasoning') || supportedParameters.has('reasoning_effort')) return 'deepinfra-reasoning-effort'
@@ -386,6 +423,42 @@ function openAICompatibleReasoningModeFromModel(model: OpenAIModelListItem | und
   if (supportedParameters.has('enable_thinking') || supportedParameters.has('thinking_budget')) return 'dashscope-thinking'
   if (supportedParameters.has('reasoning_effort')) return 'openai-effort'
   return undefined
+}
+
+function reasoningEffortsFromOpenAIModel(model: OpenAIModelListItem | undefined): ReasoningEffort[] | undefined {
+  const entries = advertisedReasoningEntries(model)
+  if (!entries) return undefined
+  const ordered: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+  const values = new Set(entries.map(entry => entry.effort))
+  return ordered.filter(value => values.has(value))
+}
+
+function advertisedReasoningEntries(model: OpenAIModelListItem | undefined): { effort: ReasoningEffort; wire: string }[] | undefined {
+  const raw = model?.supported_reasoning_levels ?? model?.reasoning_levels
+    ?? model?.metadata?.supported_reasoning_levels ?? model?.metadata?.reasoning_levels
+  if (!Array.isArray(raw)) return undefined
+  const ordered: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+  return raw.flatMap(value => {
+    const wire = typeof value === 'string' ? value
+      : value && typeof value === 'object' && 'effort' in value ? value.effort : undefined
+    if (typeof wire !== 'string') return []
+    const effort = isString(model?.magpie_label)
+      ? wire === 'light' ? 'low' : wire === 'balanced' ? 'medium' : wire === 'deep' ? 'high' : wire
+      : wire
+    return ordered.includes(effort as ReasoningEffort) ? [{ effort: effort as ReasoningEffort, wire }] : []
+  })
+}
+
+function reasoningWireValuesFromOpenAIModel(model: OpenAIModelListItem | undefined): AIModel['reasoningEffortWireValues'] {
+  const entries = advertisedReasoningEntries(model) ?? []
+  const canonical = new Set(entries.filter(entry => entry.wire === entry.effort).map(entry => entry.effort))
+  const values: NonNullable<AIModel['reasoningEffortWireValues']> = {}
+  for (const entry of entries) {
+    if (!canonical.has(entry.effort) && entry.wire !== entry.effort && !values[entry.effort]) {
+      values[entry.effort] = entry.wire
+    }
+  }
+  return Object.keys(values).length ? values : undefined
 }
 
 function openAICompatibleReasoningEffortsFromMode(mode: ModelReasoningMode, modelId: string): ReasoningEffort[] {

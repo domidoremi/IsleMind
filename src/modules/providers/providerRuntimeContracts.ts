@@ -2,7 +2,7 @@ import type { Attachment, MessageUsage } from '@/types/chatContracts'
 import type { MessageCitation, RetrievalSource } from '@/types/contextContracts'
 import type { AIProvider, ProviderOperationCode } from '@/types/providerContracts'
 import type { WebSearchMode } from '@/types/settingsContracts'
-import type { GenerationParameterSources, ProcessTrace, ReasoningEffort } from '@/core'
+import type { GenerationParameterSources, ModelParameterBaseline, ProcessTrace, ReasoningEffort, UsageExecutionReference } from '@/core'
 
 import type { ProviderContentPart } from './providerContentParts'
 import type { ProviderExecutionTargetObserver } from './providerExecutionTarget'
@@ -17,6 +17,8 @@ import type { ProviderToolCall } from './providerToolCalls'
 import type { ProviderChatExecutionConstraint } from './providerChatResolution'
 import type { ProviderLocalCompressionPrivacySettings } from './providerContextManagementPolicy'
 import type { ProviderModelAccessSettings } from './providerModelAccessPolicy'
+
+export type ProviderModelParameterBaseline = ModelParameterBaseline
 
 export interface ProviderRuntimeChatMessage {
   role: 'user' | 'assistant' | 'tool'
@@ -87,6 +89,7 @@ export interface ProviderRuntimeUsageContext {
   source: ProviderRuntimeUsageSource
   correlationId?: string
   runId?: string
+  execution?: UsageExecutionReference
 }
 
 export interface ProviderRuntimeChatRequest {
@@ -101,6 +104,10 @@ export interface ProviderRuntimeChatRequest {
   maxTokens?: number
   generationParameterSources: GenerationParameterSources
   generationParameterPlan?: ProviderRequestParameterPlan
+  /** Host-only baseline; restoring it prevents a fallback from inheriting another model's overrides. */
+  modelParameterBaseline?: ProviderModelParameterBaseline
+  /** Harness requests must retain a finite output reservation after fallback/default resolution. */
+  requireOutputTokenBound?: boolean
   attachments?: Attachment[]
   contextPrompt?: string
   retrievalSources?: RetrievalSource[]

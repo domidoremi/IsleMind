@@ -103,7 +103,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   preset('custom-endpoint', 'Custom endpoint', 'openai-compatible', undefined, ['custom endpoint', 'custom gateway'], [], {
     vision: false,
     files: false,
-    reasoningEffort: false,
+    // The connection permits effort controls; each model still needs an
+    // explicit supported request shape and advertised reasoning levels.
+    reasoningEffort: true,
   }),
   preset('openai', 'OpenAI', 'openai', 'https://api.openai.com/v1', ['openai'], [/api\.openai\.com/i], {
     vision: true,
@@ -648,6 +650,7 @@ function extractLabeledCredentialEntries(input: string): CredentialEntry[] {
       entries.push(...splitExplicitCredentialText(explicit[2]).map(apiKey => ({ apiKey })))
       continue
     }
+    if (explicit && isNonCredentialImportLabel(explicit[1])) continue
     const matches = Array.from(segment.matchAll(/(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/gi))
     if (!matches.length) continue
     const rawLabel = segment.slice(0, matches[0].index ?? 0)
@@ -1242,7 +1245,7 @@ function looksLikeApiKey(value: string): boolean {
 function parseModelList(value: string | undefined): string[] {
   const seen = new Set<string>()
   return (value ?? '')
-    .split(/[\n,，|/]+/)
+    .split(/[\n,，|]+/)
     .map((item) => item.trim())
     .filter((item) => {
       if (!item || seen.has(item)) return false

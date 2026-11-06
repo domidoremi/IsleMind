@@ -1,5 +1,6 @@
 import type { MessageUsage } from '@/types/chatContracts'
-import type { ProcessTrace } from '@/core'
+import type { ProcessTrace, ReportedProviderExecution } from '@/core'
+import { extractReportedProviderExecution } from './providerReportedExecution'
 import type { AIProvider, ProviderType } from '@/types/providerContracts'
 import { MAX_PROVIDER_RESPONSE_CHARACTERS, ProviderResponseLimitError } from './providerTransportUtils'
 import { assertProviderResponseContextCapacity, ProviderContextCapacityError } from './providerContextCapacity'
@@ -57,6 +58,7 @@ export interface ProviderResponseParsingRequest {
 
 export interface ProviderParsedStreamChunk {
   text: string
+  reportedExecution?: ReportedProviderExecution
   traces: ProcessTrace[]
   usage?: MessageUsage
   responseId?: string
@@ -224,6 +226,7 @@ export function createProviderResponseParsingPolicy(
       traces: parsed.traces,
       usage: parsed.usage,
       responseId: parsed.responseId,
+      ...(parsed.reportedExecution ? { reportedExecution: parsed.reportedExecution } : {}),
       providerToolCalls: finalizeProviderToolCalls(parsed.providerToolCalls),
       reasoningContent: parsed.reasoningContent,
       responseItems: parsed.responseItems,
@@ -246,6 +249,15 @@ export function createProviderResponseParsingPolicy(
   }
 
   function parseProviderChatCompletionJson(
+    json: any,
+    request: ProviderResponseParsingRequest,
+  ): ProviderResponseParsingResult {
+    const result = parseProviderCompletionBody(json, request)
+    const reportedExecution = extractReportedProviderExecution(json)
+    return { ...result, ...(reportedExecution ? { reportedExecution } : {}) }
+  }
+
+  function parseProviderCompletionBody(
     json: any,
     request: ProviderResponseParsingRequest,
   ): ProviderResponseParsingResult {

@@ -1,4 +1,4 @@
-import type { AIProvider, ProviderCredentialSource } from '@/types/providerContracts'
+import type { AIProvider, ProviderCredentialSource, ProviderOperationCode } from '@/types/providerContracts'
 import type { ProviderExecutionIdentity } from './providerExecutionTarget'
 import type { ProviderModelAvailabilityEvidence } from './providerModelAvailability'
 import type { ProviderModelAvailabilityRepository, ProviderModelHistoryCursor, ProviderModelHistoryFilter, ProviderModelHistoryPage, ProviderModelCurrent, ProviderModelOperation, ProviderModelRefreshSummary, ProviderModelScopeIdentity, ProviderModelObservationInput } from './providerModelAvailabilityContracts'
@@ -9,7 +9,8 @@ export interface ProviderModelAvailabilityPort {
   listCurrentModels(input: { providerId?: string; scopeId?: string; credentialSource?: ProviderCredentialSource; modelId?: string; limit: number; after?: { scopeId: string; modelId: string } }): Promise<readonly ProviderModelCurrent[]>
   queryHistory(input: { filter: ProviderModelHistoryFilter; limit: number; cursor?: ProviderModelHistoryCursor }): Promise<ProviderModelHistoryPage>
   refresh(input: { providerId: string; credentialSource?: ProviderCredentialSource; signal?: AbortSignal }): Promise<void>
-  retest(input: { providerId: string; model: string; credentialSource?: ProviderCredentialSource; signal?: AbortSignal }): Promise<void>
+  retest(input: { providerId: string; model: string; credentialSource?: ProviderCredentialSource; signal?: AbortSignal }):
+    Promise<void | { ok: true } | { ok: false; code: ProviderOperationCode }>
 }
 
 export interface ProviderModelAvailabilityRuntimeDependencies {

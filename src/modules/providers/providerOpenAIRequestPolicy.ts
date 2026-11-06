@@ -133,6 +133,9 @@ export function createOpenAIRequestPolicy(dependencies: OpenAIRequestPolicyDepen
 
     const supported = () => dependencies.getReasoningEffortOptions(req.provider, req.model)
     const effort = req.reasoningEffort
+    if (modelConfig.upstreamProvider && modelConfig.source === 'remote' && modelConfig.reasoningMode === 'openai-effort') {
+      return supported().includes(effort) ? effort : undefined
+    }
     if (modelConfig.reasoningMode === 'xai-reasoning-effort' || isReasoningModel('xai', req.provider, req.model)) {
       const options = supported()
       if (options.includes(effort)) return effort

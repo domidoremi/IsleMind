@@ -12,6 +12,7 @@ import { captureProviderRuntimeHealthDispatch, resolveProviderRuntimeHealthView 
 import { getHostedProviderSupportIssue } from './providerPolicies'
 import type { Settings } from '@/types/settingsContracts'
 import type { AIProvider } from '@/types/providerContracts'
+import { isProviderNetworkBlocked } from '@/utils/providerGateway'
 
 let readCurrentSettings: () => Settings | undefined = () => undefined
 let readCurrentProviders: () => readonly AIProvider[] | undefined = () => undefined
@@ -35,12 +36,12 @@ export const providerChatResolutionRuntime = createProviderChatResolutionRuntime
     }
     return providers
   },
-  async isOnline() {
+  async isOnline(provider) {
     const { getNetworkStateAsync } = await import('expo-network')
     const state = await getNetworkStateAsync()
     // Unknown reachability isn't proof of offline, just as unknown model evidence
     // isn't proof of support. Normal transport/governance still applies.
-    return state.isConnected !== false && state.isInternetReachable !== false
+    return !isProviderNetworkBlocked(provider, state)
   },
   buildCandidates: buildProviderFallbackCandidates,
   async loadHealthRecords() { return indexProviderHealthRecords((await loadProviderHealthSnapshot()).records) },

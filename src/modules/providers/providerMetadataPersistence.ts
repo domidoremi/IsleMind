@@ -1,6 +1,7 @@
 import type { AIProvider } from '@/types/providerContracts'
 import { isProviderWireProtocol } from './providerConfigPolicy'
 import { isProviderPresetId } from './providerRegistry'
+import { parseProviderModelParameterConfiguration } from './providerModelParameterOverrides'
 
 export class ProviderMetadataPersistenceValidationError extends Error {
   constructor() {
@@ -40,6 +41,7 @@ export function createProviderMetadataPersistence(
       return providers
     },
     save(providers: readonly AIProvider[]) {
+      for (const provider of providers) parseProviderModelParameterConfiguration(provider.modelParameterOverrides)
       return records.write(providers)
     },
   })
@@ -53,6 +55,7 @@ function migrateProviderMetadata(value: unknown): AIProvider | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const provider = value as Record<string, unknown>
   if (typeof provider.id !== 'string') return null
+  try { parseProviderModelParameterConfiguration(provider.modelParameterOverrides) } catch { return null }
 
   const presetId = migrateLegacyPresetId(provider.presetId)
   const detectedPresetId = migrateLegacyPresetId(provider.detectedPresetId)

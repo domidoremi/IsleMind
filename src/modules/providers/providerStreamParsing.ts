@@ -1,6 +1,7 @@
 import type { MessageUsage } from '@/types/chatContracts'
 import type { ProviderType } from '@/types/providerContracts'
-import type { ProcessTrace } from '@/core'
+import type { ProcessTrace, ReportedProviderExecution } from '@/core'
+import { extractReportedProviderExecution } from './providerReportedExecution'
 
 import { asRecord, stringValue, stringifyReasoningDetails } from './providerJsonPolicy'
 import {
@@ -26,6 +27,7 @@ import { mergeProviderStreamOutcome, observeProviderStreamLifecycle, type Provid
 
 export interface ParsedProviderStreamChunk {
   text: string
+  reportedExecution?: ReportedProviderExecution
   traces: ProcessTrace[]
   terminal?: boolean
   malformedData?: boolean
@@ -114,6 +116,7 @@ export function createProviderStreamParsingPolicy(
     let text = ''
     let usage: MessageUsage | undefined
     let responseId: string | undefined
+    let reportedExecution: ReportedProviderExecution | undefined
     let reasoningContent = ''
     let responseItems: Record<string, unknown>[] = []
     let providerContentBlocks: Record<string, unknown>[] = []
@@ -134,6 +137,7 @@ export function createProviderStreamParsingPolicy(
       ])
       usage = parsed.usage ?? usage
       responseId = parsed.responseId ?? responseId
+      reportedExecution = parsed.reportedExecution ?? reportedExecution
       reasoningContent += parsed.reasoningContent ?? ''
       responseItems = mergeOpenAIResponseReplayItems([
         ...responseItems,
@@ -163,6 +167,7 @@ export function createProviderStreamParsingPolicy(
         traces: dedupeTraces(parsed.traces),
         usage: parsed.usage,
         responseId: parsed.responseId,
+        ...(parsed.reportedExecution ? { reportedExecution: parsed.reportedExecution } : {}),
         providerToolCalls: mergeProviderToolCallParts(parsed.providerToolCalls ?? []),
         reasoningContent: parsed.reasoningContent,
         responseItems: parsed.responseItems,
@@ -182,6 +187,7 @@ export function createProviderStreamParsingPolicy(
       streamOutcome,
       usage,
       responseId,
+      ...(reportedExecution ? { reportedExecution } : {}),
       providerToolCalls,
       ...(reasoningContent ? { reasoningContent } : {}),
       ...(responseItems.length ? { responseItems } : {}),
@@ -202,7 +208,9 @@ export function createProviderStreamParsingPolicy(
     options: ProviderStreamParseOptions = {},
   ): ParsedProviderStreamChunk {
     const parsed = parseProviderStreamEventContent(json, providerType, options)
-    return { ...parsed, ...observeProviderStreamLifecycle(json, options.protocol ?? protocolForType(providerType)) }
+    const reportedExecution = extractReportedProviderExecution(json)
+    return { ...parsed, ...(reportedExecution ? { reportedExecution } : {}),
+      ...observeProviderStreamLifecycle(json, options.protocol ?? protocolForType(providerType)) }
   }
 
   function parseProviderStreamEventContent(

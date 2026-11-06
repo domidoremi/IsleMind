@@ -1,6 +1,7 @@
 import {
   createProviderProtocolAdapterPolicy,
   providerCompatibilityCapabilityCanBeSentForProvider as canSend,
+  providerCompatibilityReasoningExplicitlyDeclaredForModel,
   type ProviderFallbackModelProjection,
   type ProviderRuntimeChatRequest,
 } from '@/modules/providers'
@@ -31,7 +32,8 @@ export function resolveProviderModelExecutionProfile(input: ProfileRequest) {
   if (raw.modalities.input.file && canSend(provider, 'files', provider.capabilities?.files === true)) capabilities.push('file')
   if (raw.modalities.input.audio && canSend(provider, 'audio', provider.capabilities?.audioInput === true)) capabilities.push('audio')
   if (raw.modalities.input.video) capabilities.push('video')
-  if (raw.reasoning.supported && canSend(provider, 'reasoning', provider.capabilities?.reasoningEffort === true)) capabilities.push('reasoning')
+  if (raw.reasoning.supported && canSend(provider, 'reasoning',
+    providerCompatibilityReasoningExplicitlyDeclaredForModel(provider, modelConfig))) capabilities.push('reasoning')
   if (raw.transport.streaming && canSend(provider, 'streaming', provider.capabilities?.streaming === true)) capabilities.push('streaming')
   if (raw.tools.supported && canSend(provider, 'tools', provider.capabilities?.nativeTools === true)) capabilities.push('tools')
   if (raw.structuredOutput.appRequestControl) capabilities.push('structured_output')

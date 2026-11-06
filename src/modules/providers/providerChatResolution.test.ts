@@ -1,6 +1,7 @@
 import type { AIProvider } from '@/types/providerContracts'
 import { createProviderChatResolutionRuntime } from './providerChatResolution'
 import { createProviderFallbackCandidateBuilder } from './providerFallbackCandidates'
+import { isProviderNetworkBlocked, type ProviderNetworkState } from '@/utils/providerGateway'
 
 describe('preferred Chat route resolution', () => {
   function fixture() {
@@ -9,11 +10,12 @@ describe('preferred Chat route resolution', () => {
     }))
     let epoch = 'epoch-1'
     let offline = false
+    let network: ProviderNetworkState | undefined
     const unavailable = new Set<string>()
     const coolingDown = new Set<string>()
     const runtime = createProviderChatResolutionRuntime({
       readProviders: async () => providers,
-      isOnline: async () => !offline,
+      isOnline: async provider => network ? !isProviderNetworkBlocked(provider, network) : !offline,
       buildCandidates: createProviderFallbackCandidateBuilder({ projectModel: (_provider, model) => ({ deprecated: false, upstreamModel: model, capabilities: ['text'] }) }),
       loadHealthRecords: async () => ({}),
       configurationValid: (provider) => Boolean(provider.apiKey),
@@ -22,10 +24,34 @@ describe('preferred Chat route resolution', () => {
       getAvailability: async (identity) => ({ scope: { scopeId: `${identity.providerId}:primary`, epoch }, availability: unavailable.has(`${identity.providerId}:${identity.model}`) ? 'unavailable' : 'unknown' }),
       healthAllows: async (identity) => !coolingDown.has(`${identity.providerId}:${identity.model}`),
     })
-    return { runtime, providers, unavailable, coolingDown, setEpoch: (value: string) => { epoch = value }, setOffline: () => { offline = true } }
+    return { runtime, providers, unavailable, coolingDown, setEpoch: (value: string) => { epoch = value },
+      setOffline: () => { offline = true }, setNetwork: (value: ProviderNetworkState) => { network = value } }
   }
   const preferred = { providerId: 'a', model: 'one' }
   const request = () => ({ preferred, signal: new AbortController().signal, requiredCapabilities: ['text'] })
+
+  it('admits and revalidates a LAN model without internet, then blocks it when the network disconnects', async () => {
+    const f = fixture()
+    f.providers[0].baseUrl = 'http://192.168.1.2:3425/v1'
+    f.setNetwork({ isConnected: true, isInternetReachable: false })
+    const first = await f.runtime.resolvePreferred(request())
+    expect(first.kind).toBe('ready')
+    if (first.kind !== 'ready') throw Error('LAN selection was blocked')
+    expect(await f.runtime.revalidate(first.selection.constraint, request())).toBeDefined()
+    f.setNetwork({ isConnected: false, isInternetReachable: false })
+    expect(await f.runtime.revalidate(first.selection.constraint, request())).toBeUndefined()
+  })
+
+  it('filters unreachable cloud fallback candidates before selecting a reachable LAN connection', async () => {
+    const f = fixture()
+    f.providers[0].enabled = false
+    f.providers[1].baseUrl = 'https://api.example.com/v1'
+    f.providers.push({ ...f.providers[1], id: 'lan', name: 'LAN', baseUrl: 'http://10.0.0.2:3425/v1' })
+    f.setNetwork({ isConnected: true, isInternetReachable: false })
+    const result = await f.runtime.resolveFallback({ ...request(), original: preferred, trigger: 'model_unavailable',
+      confirmFallback: async () => true })
+    expect(result.selection?.provider.id).toBe('lan')
+  })
 
   it('admits unknown under existing policy and reconsiders preferred every independent turn', async () => {
     const f = fixture()

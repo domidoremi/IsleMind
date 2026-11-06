@@ -282,7 +282,29 @@ function getProviderParameterEntry(
   modelId: string,
   capability: ProviderParameterCapability,
 ): ProviderParameterMatrixEntry | undefined {
-  return buildProviderParameterMatrix(provider, modelId).entries.find((entry) => entry.capability === capability)
+  const resolvedModelId = dependencies.resolveProviderModelAlias(provider, modelId)
+  const modelConfig = dependencies.getModelConfig(resolvedModelId, provider.type, provider.modelConfigs)
+  const family = inferParameterFamily(provider)
+  // A picker or request binding needs this entry, not every capability's probes.
+  switch (capability) {
+    case 'reasoning': return buildReasoningEntry(provider, modelConfig, family)
+    case 'reasoning-summary': return buildReasoningSummaryEntry(provider, modelConfig, family)
+    case 'context-continuity': return buildContextContinuityEntry(provider, modelConfig, family)
+    case 'remote-compact': return buildRemoteCompactEntry(provider, modelConfig, family)
+    case 'streaming': return buildStreamingEntry(provider, modelConfig, family)
+    case 'tool-calling': return buildToolCallingEntry(provider, modelConfig, family)
+    case 'structured-output': return buildStructuredOutputEntry(provider, modelConfig, family)
+    case 'multimodal-input': return buildMultimodalInputEntry(provider, modelConfig, family)
+    case 'audio-input': return buildAudioInputEntry(provider, modelConfig, family)
+    case 'audio-transcription': return buildAudioTranscriptionEntry(provider, modelConfig, family)
+    case 'speech-output': return buildSpeechOutputEntry(provider, modelConfig, family)
+    case 'embeddings': return buildEmbeddingsEntry(provider, modelConfig, family)
+    case 'rerank': return buildRerankEntry(provider, family)
+    case 'sampling': return buildSamplingEntry(provider, modelConfig, family)
+    case 'token-budget': return buildTokenBudgetEntry(provider, modelConfig, family)
+    case 'native-search': return buildNativeSearchEntry(provider, modelConfig, family)
+    default: return undefined
+  }
 }
 
 function providerParameterCanBeSent(

@@ -198,6 +198,16 @@ export function getProviderDisplayModel(provider: Pick<AIProvider, 'modelAliases
   if (match) return `${match.alias} (${match.model})`
   const exactConfig = provider?.modelConfigs?.find((item) => sameProviderModelId(item.id, normalized))
   const displayName = exactConfig?.name?.trim() || getModelConfig(model, provider?.type, provider?.modelConfigs).name
+  if (exactConfig?.upstreamProvider) {
+    const source = exactConfig.upstreamProvider
+    const sourceName = source.automatic ? 'Auto' : source.name
+    const separator = displayName.indexOf(' / ')
+    const normalizeSource = (value: string) => value.toLowerCase().replace(/[\s_-]+/g, '')
+    const prefix = separator >= 0 ? normalizeSource(displayName.slice(0, separator)) : ''
+    const name = prefix && [sourceName, source.id].some(value => normalizeSource(value) === prefix)
+      ? displayName.slice(separator + 3) : displayName
+    return `${sourceName} / ${name}`
+  }
   if (!provider?.modelConfigs?.length) return displayName
   const normalizedDisplayName = displayName.trim().toLowerCase()
   const duplicates = provider.modelConfigs.filter((item) =>

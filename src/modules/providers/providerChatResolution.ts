@@ -1,4 +1,6 @@
 import { snapshotPlainData } from '@/core'
+import { normalizeModelRoutingPlan, sameModelRoute, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
+import { routingPlanPolicy } from './providerRoutingPlan'
 import type { AIProvider, ProviderCredentialSource } from '@/types/providerContracts'
 import { chooseCredentialForModel } from './providerCredentialGroups'
 import { providerExecutionIdentityKey, type ProviderExecutionIdentity } from './providerExecutionTarget'
@@ -15,6 +17,7 @@ export interface ProviderChatExecutionConstraint {
   identity: ProviderExecutionIdentity
   scope: { scopeId: string; epoch: string }
   fallbackUsed: boolean
+  routingPlan?: ModelRoutingPlan
   /** Original metadata only; secure hydration and live revocation remain separate. */
   providerCatalog?: readonly AIProvider[]
 }
@@ -30,6 +33,7 @@ export interface ProviderChatSelection {
 
 export interface ProviderChatResolutionInput {
   preferred: { providerId: string; model: string }
+  routingPlan?: ModelRoutingPlan
   signal: AbortSignal
   providers?: readonly AIProvider[]
   settings?: ProviderModelAccessSettings
@@ -56,7 +60,7 @@ export type ProviderChatResolutionReason = 'offline' | 'disabled_provider' | 'mi
 
 export interface ProviderChatResolutionDependencies {
   readProviders(signal: AbortSignal, options?: { readonly providers?: readonly AIProvider[] }): Promise<readonly AIProvider[]>
-  isOnline(): Promise<boolean>
+  isOnline(provider?: AIProvider): Promise<boolean>
   buildCandidates: ProviderFallbackCandidateBuilder
   loadHealthRecords(): Promise<Record<string, ProviderHealthRecord>>
   configurationValid(provider: AIProvider): boolean
@@ -87,8 +91,10 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       settings: snapshotPlainData(source.settings),
       requiredCapabilities: snapshotPlainData(source.requiredCapabilities),
       policy: snapshotPlainData(source.policy),
+      routingPlan: snapshotPlainData(source.routingPlan),
     }
     const policy = JSON.stringify(input.policy)
+    const routingPlan = JSON.stringify(input.routingPlan)
     const fallback = source as ProviderChatResolutionInput & Partial<ProviderChatFallbackInput>
     const fallbackUsed = fallback.fallbackUsed
     const continuationBound = fallback.continuationBound
@@ -101,6 +107,7 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       fallbackPolicyUnchanged: () => {
         try {
           return JSON.stringify(source.policy) === policy
+            && JSON.stringify(source.routingPlan) === routingPlan
             && source.allowFallback === input.allowFallback
             && source.targetCredentialGroupId === input.targetCredentialGroupId
             && fallback.fallbackUsed === fallbackUsed
@@ -176,6 +183,7 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
     if (!accessAllowed(provider, model, input, safety)) return { reason: 'policy_blocked' }
     throwIfCancelled(input.signal)
     return { selection: { provider: hydrated, model, constraint: { identity, scope: current.scope, fallbackUsed: false,
+      ...(input.routingPlan ? { routingPlan: input.routingPlan } : {}),
       ...(input.providers === undefined ? {} : { providerCatalog: input.providers }) } } }
   }
 
@@ -201,17 +209,31 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
     throwIfCancelled(input.signal)
     const healthRecords = snapshotPlainData(await dependencies.loadHealthRecords())
     throwIfCancelled(input.signal)
-    const built = snapshotPlainData(dependencies.buildCandidates({ providers: [...providers], original: input.original,
-      requiredCapabilities: [...(input.requiredCapabilities ?? ['text'])], healthRecords }))
+    const plan = input.routingPlan
+    if (plan && (!normalizeModelRoutingPlan(plan) || plan.mode === 'fixed')) return { ...emptyFallback(input), policyChanged: false }
+    // Build the exact requested backup first, including aliases beyond catalog
+    // pagination. Other models on the same connection never become candidates.
+    const backupProviders = plan ? providers.filter(provider => provider.id === plan.backup!.providerId)
+      .map(provider => ({ ...provider, models: [plan.backup!.model] })) : [...providers]
+    const built = snapshotPlainData(dependencies.buildCandidates({ providers: backupProviders, original: input.original,
+      requiredCapabilities: [...(input.requiredCapabilities ?? ['text'])], healthRecords,
+      ...(plan ? { maxModelsPerProvider: 1 } : {}) }))
     const candidates: ProviderFallbackCandidateBuildResult = { ...built, candidates: [] }
     const selections = new Map<string, ProviderChatSelection>()
     // Preserve Chat's existing candidate ceiling. No second pass can replenish it.
-    const bounded = [...built.candidates].sort((a, b) => compareProviderFailoverCandidates(input.original, a, b)).slice(0, 8)
+    const bounded = built.candidates.filter(candidate => !plan || sameModelRoute(candidate, plan.backup!))
+      .sort((a, b) => compareProviderFailoverCandidates(input.original, a, b)).slice(0, 8)
+    const onlineProviders = new Map<string, boolean>()
     for (const candidate of bounded) {
       throwIfCancelled(input.signal)
       if (input.targetCredentialGroupId !== undefined && (candidate.providerId !== input.preferred.providerId
         || candidate.credentialSource?.kind !== 'group' || candidate.credentialSource.groupId !== input.targetCredentialGroupId)) continue
-      const checked = await inspect(providers.find((provider) => provider.id === candidate.providerId), candidate.model, input, safety, candidate.credentialSource)
+      const provider = providers.find((item) => item.id === candidate.providerId)
+      if (!provider) continue
+      if (!onlineProviders.has(provider.id)) onlineProviders.set(provider.id, await dependencies.isOnline(provider))
+      throwIfCancelled(input.signal)
+      if (!onlineProviders.get(provider.id)) continue
+      const checked = await inspect(provider, candidate.model, input, safety, candidate.credentialSource)
       if (!('selection' in checked)) continue
       if (input.requiredProtocolAdapterId && checked.selection.constraint.identity.protocolAdapterId !== input.requiredProtocolAdapterId) continue
       const route = { ...candidate, ...checked.selection.constraint.identity }
@@ -219,7 +241,7 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       selections.set(providerFailoverRouteIdentityKey(route), checked.selection)
     }
     const policy = {
-      mode: 'ask-before-cross-provider' as const, ...input.policy,
+      mode: 'ask-before-cross-provider' as const, ...(plan ? routingPlanPolicy(plan, input.policy) : input.policy),
       // A caller cannot enlarge the Chat operation budget or bypass continuation safety.
       allowAfterStreamStart: false, maxCandidates: 8, maxFailovers: input.fallbackUsed ? 0 : 1,
       ...(input.allowFallback === false || input.continuationBound ? { mode: 'off' as const } : {}),
@@ -261,10 +283,10 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       } else reason = 'confirmation_declined'
     }
     throwIfCancelled(input.signal)
-    if (!await dependencies.isOnline()) reason = 'offline'
-    throwIfCancelled(input.signal)
     const selected = result.decision.selected
     const candidate = selected ? result.selections.get(providerFailoverRouteIdentityKey(selected)) : undefined
+    if (!await dependencies.isOnline(candidate?.provider)) reason = 'offline'
+    throwIfCancelled(input.signal)
     if (!safety.fallbackPolicyUnchanged()
       || candidate && !accessAllowed(candidate.provider, candidate.model, input, safety)) reason = 'policy_blocked'
     throwIfCancelled(input.signal)
@@ -289,12 +311,10 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
 
   async function resolvePreferred(source: ProviderChatResolutionInput) {
     const { input, safety } = captureInput(source)
+    if (input.routingPlan && (!normalizeModelRoutingPlan(input.routingPlan) || !sameModelRoute(input.routingPlan.primary, input.preferred))) return { kind: 'blocked' as const, reason: 'policy_blocked' as const }
     if (input.signal.aborted) return { kind: 'cancelled' as const }
     if (!safety.fallbackPolicyUnchanged()) return { kind: 'blocked' as const, reason: 'policy_blocked' as const }
     try {
-      const online = await dependencies.isOnline()
-      throwIfCancelled(input.signal)
-      if (!online) return { kind: 'blocked' as const, reason: 'offline' as const }
       if (!safety.fallbackPolicyUnchanged()) return { kind: 'blocked' as const, reason: 'policy_blocked' as const }
       const checkConfiguration = dependencies.captureConfiguration?.()
       checkConfiguration?.()
@@ -303,6 +323,9 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
         input.providers === undefined ? undefined : { providers: input.providers }))
       throwIfCancelled(input.signal)
       const provider = providers.find((item) => item.id === input.preferred.providerId)
+      const online = await dependencies.isOnline(provider)
+      throwIfCancelled(input.signal)
+      if (!online) return { kind: 'blocked' as const, reason: 'offline' as const }
       const checked = await inspect(provider, input.preferred.model, input, safety)
       checkConfiguration?.()
       if (input.signal.aborted) return { kind: 'cancelled' as const }
@@ -331,22 +354,22 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
   async function revalidate(constraint: ProviderChatExecutionConstraint, source: ProviderChatResolutionInput) {
     constraint = snapshotPlainData(constraint)
     const captured = captureInput(source)
-    const input = { ...captured.input, providers: constraint.providerCatalog ?? captured.input.providers }
+    const input = { ...captured.input, routingPlan: constraint.routingPlan ?? captured.input.routingPlan, providers: constraint.providerCatalog ?? captured.input.providers }
     const { safety } = captured
     if (input.signal.aborted || !safety.fallbackPolicyUnchanged()) return undefined
     try {
-      const online = await dependencies.isOnline()
-      throwIfCancelled(input.signal)
-      if (!online) return undefined
       const checkConfiguration = dependencies.captureConfiguration?.()
       checkConfiguration?.()
       throwIfCancelled(input.signal)
       const providers = snapshotPlainData(await dependencies.readProviders(input.signal,
         input.providers === undefined ? undefined : { providers: input.providers }))
       throwIfCancelled(input.signal)
+      const provider = providers.find((item) => item.id === constraint.identity.providerId)
+      if (!await dependencies.isOnline(provider)) return undefined
+      throwIfCancelled(input.signal)
       const checkCurrentAdmission = dependencies.captureDispatchValidation?.(constraint, input)
       checkCurrentAdmission?.()
-      const checked = await inspect(providers.find((provider) => provider.id === constraint.identity.providerId), input.preferred.model, input, safety, constraint.identity.credentialSource)
+      const checked = await inspect(provider, input.preferred.model, input, safety, constraint.identity.credentialSource)
       checkConfiguration?.()
       if (!('selection' in checked) || input.signal.aborted || !safety.fallbackPolicyUnchanged()
         || !accessAllowed(checked.selection.provider, checked.selection.model, input, safety)) return undefined

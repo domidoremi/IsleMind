@@ -1,6 +1,8 @@
 import { resolveProviderModelExecutionProfile } from './providerModelExecutionProfile'
 import { resolveProviderProtocolAdapter } from './providerRequestBinding'
 import { getConversationReasoningEffortOptions } from './providerConversationGeneration'
+import { mapOpenAICompatibleModels } from '@/modules/providers'
+import { getProviderPreset } from './providerRegistry'
 import { buildProviderFallbackCandidates } from './providerFallbackCandidates'
 import type { AIProvider } from '@/types/providerContracts'
 import type { ProviderRuntimeChatRequest } from '@/modules/providers'
@@ -54,6 +56,41 @@ it('keeps explicit provider restrictions consistent across controls and admissio
   expect(getConversationReasoningEffortOptions(restricted, 'reasoner')).toEqual([])
   const candidates = buildProviderFallbackCandidates({ providers: [restricted], original: { providerId: restricted.id, model: 'reasoner' }, requiredCapabilities: ['reasoning'] })
   expect(candidates.candidates).toHaveLength(0)
+})
+
+it.each([false, true])('uses a Magpie model’s advertised reasoning levels in chat controls and admission (preset defaults: %s)', usePresetDefaults => {
+  const model = 'workbuddy-ai/kimi-k3'
+  const gateway: AIProvider = {
+    ...provider, type: 'openai-compatible', presetId: 'custom-endpoint',
+    baseUrl: 'http://192.168.1.2:3425/v1', models: [model, 'gpt-5.2'], modelAliases: [],
+    capabilities: usePresetDefaults ? getProviderPreset('custom-endpoint').capabilities : undefined,
+    modelConfigs: mapOpenAICompatibleModels({ data: [{
+      id: model, magpie_label: 'Kimi-K3 · WorkBuddy AI', reasoning: true,
+      reasoning_levels: ['low', 'medium', 'high', 'max'], supported_parameters: ['reasoning'],
+    }, {
+      id: 'gpt-5.2', reasoning: false,
+    }] }, 'openai-compatible', { providerPresetId: 'custom-endpoint' }),
+  }
+  const expected = ['low', 'medium', 'high', 'max']
+  expect(getReasoningEffortOptions(gateway, model)).toEqual(expected)
+  expect(getConversationReasoningEffortOptions(gateway, model)).toEqual(expected)
+  expect(getConversationReasoningEffortOptions(gateway, 'gpt-5.2')).toEqual([])
+  const profile = resolveProviderModelExecutionProfile({ provider: gateway, model })
+  expect(profile.capabilities).toContain('reasoning')
+  expect(profile.manifest.reasoning.selectableEfforts).toEqual(expected)
+  const serialized = providerRequestSerializer.serialize({
+    provider: gateway, model, messages: [{ role: 'user', content: 'Check the selected level' }],
+    reasoningEffort: 'max', generationParameterSources: {},
+  })
+  expect(serialized.body.reasoning_effort).toBe('max')
+  expect(serialized.conformance.manifest.reasoning.requestShape).toBe('openai-reasoning-effort')
+  const candidates = buildProviderFallbackCandidates({
+    providers: [gateway], original: { providerId: gateway.id, model }, requiredCapabilities: ['reasoning'],
+  })
+  expect(candidates.candidates).toHaveLength(1)
+  expect(getConversationReasoningEffortOptions({
+    ...gateway, capabilities: { ...provider.capabilities!, reasoningEffort: false },
+  }, model)).toEqual([])
 })
 
 it('does not inherit another supplier reasoning controls for Fireworks GLM-5.2', () => {
