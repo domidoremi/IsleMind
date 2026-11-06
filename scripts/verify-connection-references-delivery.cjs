@@ -5,7 +5,9 @@ const crypto = require('node:crypto')
 const root = path.resolve(__dirname, '..')
 const evidence = path.resolve(root, process.argv[2] || 'test-evidence/qa/islemind-connection-references-20261106')
 assert(evidence.startsWith(root + path.sep))
-const out = path.join(evidence, 'delivery-verification.json')
+const outName = process.argv[3] || 'delivery-verification.json'
+assert(/^delivery-verification(?:-[a-z0-9-]+)?\.json$/.test(outName))
+const out = path.join(evidence, outName)
 assert(!fs.existsSync(out), 'Preserve previous delivery verification')
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 const json = file => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
@@ -38,13 +40,32 @@ function exportHash(base) {
 }
 try {
   const build = json(local('native-refresh-i5/build-after.json'))
-  const native = json(local('native-i5-r2/results.json')), web = json(local('views-i5/results.json'))
+  const native = json(local('native-i5-r3/results.json')), web = json(local('views-i5/results.json'))
   const gates = json(local('gates-i5/results.json')), focused = json(local('final-tests-i5.json'))
   const atlas = json(local('atlas-manifest.json')), visual = json(local('atlas-verification.json'))
   assert(native.pass && native.errors.length === 0 && web.passed && web.errors.length === 0)
   assert(native.liveProviderRequests === 0 && web.liveProviderRequests === 0 && native.realCapabilityExecutions === 0)
   assert.equal(build.package, 'com.islemind.stage9'); assert.equal(build.profile, 'offline'); assert.equal(path.resolve(build.source), root)
   assert.equal(hash(build.apk), build.apkSha256); assert.equal(native.apkSha256, build.apkSha256)
+  const resumed = json(local('resume-no-build-i5-r3.json'))
+  assert.equal(resumed.apkSha256, build.apkSha256)
+  assert.equal(resumed.buildRun, false); assert.equal(resumed.installRequired, false)
+  assert(!native.installedIsolatedPackage && !native.updatedIsolatedPackage)
+  const currentPackage = json(path.join(root, 'package.json'))
+  const currentApp = json(path.join(root, 'app.json'))
+  const qualificationApp = json(path.join(build.stage, 'app.json'))
+  assert.equal(hash(local(resumed.existingApkManifest.file)), resumed.existingApkManifest.sha256)
+  const apkManifest = fs.readFileSync(local(resumed.existingApkManifest.file), 'utf8')
+  assert(apkManifest.includes(`android:versionName(0x0101021c)="${resumed.appVersionInExistingBuild}"`))
+  assert.equal(currentPackage.version, currentApp.expo.version)
+  assert.equal(currentPackage.version, resumed.currentSourceVersion)
+  assert.equal(qualificationApp.expo.version, resumed.appVersionInExistingBuild)
+  receipt.qualification = {
+    currentSourceVersion: currentPackage.version, existingPackageVersion: qualificationApp.expo.version,
+    newBuildOrInstall: false, productionRelease: false,
+    scope: resumed.qualificationScope,
+    resumeSourceBinding: { file: 'resume-no-build-i5-r3.json', sha256: hash(local('resume-no-build-i5-r3.json')) },
+  }
   assert.deepEqual(native.productionBefore, native.productionAfter); assert.deepEqual(native.osBefore, native.osAfter)
   assert(native.guide.models.length === 3 && native.guide.models.every(chapter => chapter.references))
   assert(gates.pass && gates.gates.every(entry => entry.exitCode === 0) && focused.success)
@@ -103,6 +124,8 @@ try {
   assert.equal(web.fixtureSha256, hash(fixtureFile))
   receipt.fixture = { file: 'fixture-i1/manifest.json', sha256: hash(fixtureFile), conversations: 81 }
   const reviewed = json(local('visual-review-i5.json'))
+  assert(reviewed.screenshots.length > 0 && reviewed.nativeReview.status === 'complete' && reviewed.nativeReview.screenshots.length > 0,
+    'Both representative Web and actual native screenshot review must be complete')
   for (const entry of reviewed.screenshots) assert.equal(hash(local(entry.file)), entry.sha256)
   for (const entry of reviewed.nativeReview.screenshots) assert.equal(hash(local(entry.file)), entry.sha256)
   receipt.visualReview = { file: 'visual-review-i5.json', sha256: hash(local('visual-review-i5.json')), screenshots: reviewed.screenshots.length,
@@ -130,7 +153,8 @@ try {
       const link = match[1].trim().replace(/^<|>$/g, '')
       if (/^(?:[a-z]+:|#)/i.test(link)) continue
       const target = path.resolve(path.dirname(file), decodeURIComponent(link.split('#')[0]))
-      assert(target.startsWith(root + path.sep)); assert(fs.existsSync(target), `Missing document link: ${relative} ${link}`)
+      assert(target.startsWith(root + path.sep))
+      assert(target === out || fs.existsSync(target), `Missing document link: ${relative} ${link}`)
       links.push({ file: relative, link })
     }
   }

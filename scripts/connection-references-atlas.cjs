@@ -9,7 +9,7 @@ const json = name => JSON.parse(fs.readFileSync(path.join(evidence, name), 'utf8
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 for (const file of ['index.html', 'atlas-manifest.json']) assert(!fs.existsSync(path.join(evidence, file)), 'Preserve existing atlas evidence')
 const web = json('views-i5/results.json')
-const native = json('native-i5-r2/results.json')
+const native = json('native-i5-r3/results.json')
 assert(web.passed && web.errors.length === 0 && native.pass && native.errors.length === 0)
 const labels = {
   closed: '连接详情', references: '连接引用', 'backup-roles': '备用目标引用', 'routing-editor': '定位路由编辑',
@@ -24,7 +24,7 @@ const screenshots = [
   ...web.pages.map(entry => ({ platform: 'web', family: entry.family, mode: entry.mode, width: String(entry.width),
     view: entry.view, label: labels[entry.view] || entry.view, file: `views-i5/${entry.screenshot}` })),
   ...native.pages.map(entry => ({ platform: 'android', family: entry.family, mode: entry.mode, width: 'android',
-    view: entry.screen, label: labels[entry.screen] || entry.screen, file: `native-i5-r2/${entry.screenshot}` })),
+    view: entry.screen, label: labels[entry.screen] || entry.screen, file: `native-i5-r3/${entry.screenshot}` })),
 ].map(entry => {
   const file = path.resolve(evidence, entry.file)
   assert(file.startsWith(evidence + path.sep) && fs.existsSync(file))
@@ -33,7 +33,7 @@ const screenshots = [
 const data = { schema: 'islemind.connection-references-atlas.v1', createdAt: new Date().toISOString(),
   webExportSha256: web.exportHash, nativeApkSha256: native.apkSha256,
   webViews: web.pages.length, nativeViews: native.pages.length, webChecks: web.checks.length, nativeChecks: native.checks.length,
-  screenshots, reports: ['views-i5/results.json', 'native-i5-r2/results.json', 'gates-i5/results.json'] }
+  screenshots, reports: ['views-i5/results.json', 'native-i5-r3/results.json', 'gates-i5/results.json'] }
 fs.writeFileSync(path.join(evidence, 'atlas-manifest.json'), JSON.stringify(data, null, 2))
 const embedded = JSON.stringify(data).replaceAll('<', '\\u003c')
 const report = path.relative(evidence, path.join(root, 'docs/release/connection-references-implementation-2026-11-06.md')).replaceAll('\\', '/')
@@ -63,7 +63,7 @@ footer{margin-top:36px;font-size:14px;color:#617773;line-height:1.7}#empty{paddi
 </style>
 <main><header><span class="eyebrow">IsleMind · I 批 · 本地验收</span><h1>连接、方案与会话，关系更清楚。</h1>
 <p>按需查看连接引用，在删除前核对影响，再进入对应配置。图册收录最终 Web 与独立 Android 验收截图，可以切换主题、浅深模式与屏幕宽度。</p>
-<nav><a href="${report}">实施与验收报告</a><a href="views-i5/results.json">Web 记录</a><a href="native-i5-r2/results.json">Android 记录</a><a href="gates-i5/results.json">工程检查</a></nav></header>
+<nav><a href="${report}">实施与验收报告</a><a href="views-i5/results.json">Web 记录</a><a href="native-i5-r3/results.json">Android 记录</a><a href="gates-i5/results.json">工程检查</a></nav></header>
 <div class="filters"><label>主题<select id="family"><option value="minimal">Minimal</option><option value="monet">Monet</option><option value="material">Material</option><option value="liquid-glass">Liquid Glass</option><option value="animal-island-ui">Animal Island</option></select></label>
 <label>模式<select id="mode"><option value="light">浅色</option><option value="dark">深色</option></select></label>
 <label>屏幕<select id="width"><option value="390">Web · 390px</option><option value="320">Web · 320px</option><option value="960">Web · 960px</option><option value="android">Android · 实际设备</option></select></label>
