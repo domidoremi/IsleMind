@@ -29,6 +29,11 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.8 source release checkpoint](./release/source-release-1.1.8-2026-11-06.md): release scope, the published UI dependency revision, existing verification evidence, and unfinished final Android qualification.
+- [IsleMind upgrade implementation and verification](./release/islemind-upgrade-2026-11-06.md): coordinated page themes, provider/routing/request workflows, architecture checks, local screenshot atlases, and focused Android qualification. The [ongoing local plan](./plans/islemind-upgrade-2026-11-06.md) records completed batches and future evaluated mechanisms.
+- [Tool discovery implementation](./release/tool-discovery-implementation-2026-11-06.md): frozen-catalog discovery, declaration character targets, original authorization and recovery, five-theme settings/receipts, native choice and keyboard fixes, and isolated Android evidence.
+- [Scene plans implementation](./release/scene-plans-implementation-2026-11-06.md): saved configuration, exact reference and change previews, independent conversation copies, explicit resource scopes, save/conflict protection, coordinated themes, and isolated evidence.
+- [Connection references implementation](./release/connection-references-implementation-2026-11-06.md): on-demand dependency counts, deletion impact, exact template/history navigation, scoped history writes, coordinated connection states, and verification records.
 - [Project README](../README.md): setup, development, builds, tests and release usage.
 - [Architecture](./architecture/architecture.md): module ownership, trust, persistence, recovery, platform constraints and open decisions.
 - [Module public API](./architecture/module-public-api.md): supported entry points and caller contracts.
@@ -39,5 +44,10 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 - [1.1.5 candidate preparation](./release/qualification-1.1.5.md): release scope, candidate-only signing/build boundaries and remaining qualification.
 - [Provider maintenance](./release/provider-maintenance-2026-10-31.md): F01-F08 remediation, source-linked offline gates, advisory dispositions and pending live/device qualification.
 - [Official provider API review](./release/provider-api-review-2026-10-31.md): 45 classified identities, dated primary evidence and limitations, 12 local counterexample groups, and current-tree offline acceptance.
+- [Learning from Magpie's source](./research/magpie-source-study-2026-11-05.md): pinned source evidence, twelve product mechanisms, IsleMind implementation priorities, an interactive conversation inspector design, and isolated upstream UI verification.
+- [Magpie product and design study](./research/magpie-product-design-study-2026-11-06.md): the full page system, nine user journeys, current UI screenshots, design tradeoffs, an interactive reading atlas, and verification limits.
+- [Model picker implementation](./release/model-picker-implementation-2026-11-05.md): cross-connection search, durable favorites, exact model identities, five-theme interaction checks, and verification limits.
+- [Context inspector implementation](./release/context-inspector-implementation-2026-11-06.md): frozen request plans, current draft previews, captured source metadata, separate provider counts, and verification limits.
+- [Model routing plans](./release/model-routing-plans-2026-11-06.md): fixed or primary/backup plans, explicit cross-provider consent, conversation snapshots, request attribution, and offline verification.
 
 Architecture owns [qualification requirements and current limitations](./architecture/architecture.md#qualification-reference). Test results do not grant policy exceptions or release approval.

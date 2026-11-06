@@ -2,9 +2,9 @@
 id: "tools"
 slug: "tools"
 title: "Tools & automation"
-updatedAt: "2026-10-05"
-reviewedAt: "2026-10-05"
-reviewedSourceHash: "a96a0e72441574fc6b7aee6b79e347a068f4d3c582f4613100c79f9e176bd995"
+updatedAt: "2026-11-06"
+reviewedAt: "2026-11-06"
+reviewedSourceHash: "d23732d8de5185cf681cc032c20e44a893bf10666e5b5b1350a4fdb130738096"
 ---
 # Tools & automation
 
@@ -16,6 +16,17 @@ Home has one input. Ordinary answers need no extra planning or independent revie
 Code & files under the input’s + button lists app-owned workspace paths only when opened. Choosing a path adds it to the draft without sending or granting permission; after Send, authorized tools may read relevant content. Attachments or pasted code can also be used for advice. Where writing is supported, small-file changes show a complete diff before approval and recheck the revision. An unsafe or incomplete preview cannot be approved. Unsupported execution or tests are never claimed as completed.
 
 The answer comes first. Actual activity is collapsed by default, and unused capabilities do not appear. Expand to inspect real records; pending approval, failures and uncertain effects remain visible. Collapsing does not stop work, and expanding does not retry requests.
+
+<a id="tool-discovery"></a>
+## Tool definitions and discovery
+
+Settings → Context → Tool definitions offers full definitions or automatic discovery. Save explicitly to apply the choice to new runs. Full definitions remain the default, including for older backups.
+
+Above 10 tools or 12,000 characters of complete declarations, automatic discovery provides directory descriptions first. The model then discovers complete parameters for the tools it needs. Small catalogs retain full definitions. Discovery may add a model request, and more tools do not always mean less input; use the recorded counts to choose. Schemas are never truncated to meet the character target.
+
+Discovery only searches the frozen, scoped catalog for this run. It does not execute tools or grant permission. Execution still uses each tool's original identity, and writes still need individual confirmation. Discovery cannot enable an undeclared tool in the same output batch. Paused runs and confirmations retain their saved declaration page.
+
+The conversation context record shows tool counts and declaration characters for the run's first request, including directory descriptions. These local character counts are separate from provider tokens and the existing text estimate. Later discovery pages and operation results appear in the recorded activity.
 
 <a id="goal"></a>
 ## Outcome
