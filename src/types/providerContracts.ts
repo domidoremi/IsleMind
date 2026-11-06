@@ -213,10 +213,14 @@ export interface AIModel {
   /** null means discovery did not report support; false is an explicit denial. */
   supportsTools?: boolean | null
   supportedParameters?: string[]
+  /** A gateway route's supplier identity; independent of the saved API connection. */
+  upstreamProvider?: { id: string; name: string; automatic?: boolean }
   supportsStreaming?: boolean
   preferredEndpoint?: 'chat-completions' | 'responses'
   reasoningMode?: ModelReasoningMode
   reasoningEfforts?: ReasoningEffort[]
+  /** Supplier wire names for the app's semantic effort levels, declared by model discovery. */
+  reasoningEffortWireValues?: Partial<Record<ReasoningEffort, string>>
   sourceUrl?: string
   verifiedAt?: string
   deprecatedReason?: string
@@ -261,4 +265,15 @@ export interface AIProvider {
   lastModelTestCapabilityChecks?: ProviderModelTestCapabilityCheck[]
   /** Provider-owned persisted data. Validate through the Providers module before use. */
   usageQueryConfiguration?: unknown
+  modelParameterOverrides?: ProviderModelParameterConfiguration
+}
+
+export interface ProviderModelParameterConfiguration {
+  schema: 'islemind.provider-model-parameters.v1'
+  models: Record<string, {
+    temperature?: number
+    topP?: number
+    topK?: number
+    maxTokens?: number
+  }>
 }

@@ -6,7 +6,7 @@ export const CHAT_REQUEST_MAX_SERIALIZED_CHARACTERS = 4 * 1024 * 1024
 
 export type ChatMessageRole = 'system' | 'user' | 'assistant' | 'tool'
 
-export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 
 export type GenerationParameterKey = 'temperature' | 'topP' | 'topK' | 'maxTokens'
 
@@ -15,6 +15,13 @@ export type GenerationParameterSource = 'provider-default' | 'explicit' | 'inter
 export type GenerationParameterSources = Partial<
   Readonly<Record<GenerationParameterKey, GenerationParameterSource>>
 >
+
+export const MODEL_PARAMETER_BASELINE_SCHEMA = 'islemind.model-parameter-baseline.v1' as const
+export interface ModelParameterBaseline {
+  readonly schema: typeof MODEL_PARAMETER_BASELINE_SCHEMA
+  readonly values: Partial<Readonly<Record<GenerationParameterKey, number | undefined>>>
+  readonly sources: GenerationParameterSources
+}
 
 export interface ChatProviderStateBinding {
   readonly providerId: string
@@ -95,6 +102,8 @@ export interface ChatRequest {
   reasoningEffort?: ReasoningEffort
   maxTokens?: number
   generationParameterSources: GenerationParameterSources
+  /** Bounded host metadata: restores caller values on a route change; serializers never forward it. */
+  modelParameterBaseline?: ModelParameterBaseline
   requestedCapabilities?: readonly string[]
   toolDefinitions?: readonly ChatToolDefinition[]
   providerStateBinding?: ChatProviderStateBinding
@@ -158,6 +167,7 @@ export function isChatRequest(value: unknown): value is ChatRequest {
     'requestedCapabilities',
     'toolDefinitions',
     'providerStateBinding',
+    'modelParameterBaseline',
   ])) return false
   if (
     value.schema !== CHAT_REQUEST_SCHEMA
@@ -170,6 +180,7 @@ export function isChatRequest(value: unknown): value is ChatRequest {
     || !isGenerationParameterSources(value.generationParameterSources)
   ) return false
   if (value.systemPrompt !== undefined && !isBoundedText(value.systemPrompt, 262_144)) return false
+  if (value.modelParameterBaseline !== undefined && !isModelParameterBaseline(value.modelParameterBaseline)) return false
   for (const key of ['temperature', 'topP', 'topK', 'maxTokens'] as const) {
     const candidate = value[key]
     if (candidate !== undefined && !isFiniteNumber(candidate)) return false
@@ -331,13 +342,21 @@ function isGenerationParameterSources(value: unknown): value is GenerationParame
   ))
 }
 
+function isModelParameterBaseline(value: unknown): value is ModelParameterBaseline {
+  return isPlainRecord(value) && hasExactKeys(value, ['schema', 'values', 'sources'])
+    && value.schema === MODEL_PARAMETER_BASELINE_SCHEMA
+    && isPlainRecord(value.values) && hasExactKeys(value.values, [], ['temperature', 'topP', 'topK', 'maxTokens'])
+    && Object.values(value.values).every(field => field === undefined || isFiniteNumber(field))
+    && isGenerationParameterSources(value.sources)
+}
+
 function isChatMessageRole(value: unknown): value is ChatMessageRole {
   return value === 'system' || value === 'user' || value === 'assistant' || value === 'tool'
 }
 
 function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return value === 'none' || value === 'minimal' || value === 'low' || value === 'medium'
-    || value === 'high' || value === 'xhigh' || value === 'max'
+    || value === 'high' || value === 'xhigh' || value === 'max' || value === 'ultra'
 }
 
 function hasExactKeys(

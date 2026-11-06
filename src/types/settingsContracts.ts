@@ -1,3 +1,8 @@
+import type { ModelRoutingPlan } from '@/core/modelRoutingPlan'
+import type { ScenePlan } from '@/core/scenePlan'
+import type { ToolDeclarationMode } from '@/core/toolDeclarations'
+export type { ToolDeclarationMode } from '@/core/toolDeclarations'
+
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type ThemeBackgroundVariation = 'fixed' | 'random' | 'startup' | 'daily' | 'preset'
 export type ThemeBackgroundMotion = 'static' | 'subtle' | 'dynamic' | 'immersive'
@@ -71,6 +76,12 @@ export interface SettingsModelDisplayAlias {
   displayName: string
 }
 
+export interface SettingsModelFavorite {
+  providerId: string
+  /** The requested ID, including a connection-specific routing alias. */
+  modelId: string
+}
+
 export interface SettingsLastPreferredModel {
   schema: 'islemind.global-model-preference.v1'
   providerId: string
@@ -94,6 +105,9 @@ export interface Settings {
   backgroundPreset?: number
   assistantDisplayName?: string
   modelDisplayAliases?: SettingsModelDisplayAlias[]
+  modelFavorites?: SettingsModelFavorite[]
+  modelRoutingPlans?: ModelRoutingPlan[]
+  scenePlans?: ScenePlan[]
   /** Updated only by an explicit user selection, not runtime fallback or initialization. */
   lastPreferredModel?: SettingsLastPreferredModel
   language: Language
@@ -145,6 +159,7 @@ export interface Settings {
   agentWorkflowAllowReadWriteTools?: boolean | 'visible'
   agentWorkflowAllowDestructiveTools?: boolean | 'confirm'
   agentWorkflowOutputCharLimit?: number
+  toolDeclarationMode?: ToolDeclarationMode
   transportMode?: UpstreamTransportMode
   remoteCompactMode?: RemoteCompactMode
   remoteCompactThreshold?: number

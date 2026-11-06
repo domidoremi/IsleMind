@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from '@/core'
+import type { ConversationContextPolicyOverride, ConversationResourceScopeOverride, ConversationScenePlanSource, ReasoningEffort, ToolDeclarationMode } from '@/core'
 import type { MessageCitation } from './contextContracts'
 import type { ChatErrorCode, ProviderProtocolAdapterId } from './providerContracts'
 import type { ProcessTrace } from '@/core'
@@ -89,6 +89,14 @@ export interface Message {
   errorHasPartialResponse?: boolean
   errorProviderId?: string
   responseLifecycle?: MessageResponseLifecycle
+  /** Explicit diagnostics references; absent on historical and copied branch messages. */
+  usageExecution?: MessageUsageExecution
+}
+
+export interface MessageUsageExecution {
+  schema: 'islemind.message-usage-reference.v1'
+  responseExecutionId: string
+  requestIds: string[]
 }
 
 export interface MessageUsage {
@@ -112,6 +120,8 @@ export interface Conversation {
   providerId: string | null
   model: string | null
   providerModelMode?: ConversationProviderModelMode
+  /** Explicit selection snapshot; editing a saved plan does not alter this conversation. */
+  routingPlan?: import('@/core/modelRoutingPlan').ModelRoutingPlan
   skillIds?: string[]
   skillSnapshot?: SkillSnapshot
   enabledTools?: string[]
@@ -124,6 +134,10 @@ export interface Conversation {
   reasoningEffort?: ReasoningEffort
   maxTokens: number
   generationParameterOverrides?: ConversationGenerationParameterOverrides
+  contextPolicyOverride?: ConversationContextPolicyOverride
+  toolDeclarationModeOverride?: ToolDeclarationMode
+  scenePlanSource?: ConversationScenePlanSource
+  resourceScopeOverride?: ConversationResourceScopeOverride
   messages: Message[]
   createdAt: number
   updatedAt: number

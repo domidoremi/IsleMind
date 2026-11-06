@@ -282,7 +282,21 @@ function model(
   }
 }
 
+const KNOWN_MODEL_LOOKUP_CACHE_LIMIT = 2048
+const knownModelLookupCache = new Map<string, AIModel | undefined>()
+
 function findKnownModel(modelId: string, modelName?: string): AIModel | undefined {
+  const key = JSON.stringify([modelId, modelName ?? null])
+  if (knownModelLookupCache.has(key)) return knownModelLookupCache.get(key)
+  const result = resolveKnownModel(modelId, modelName)
+  if (knownModelLookupCache.size >= KNOWN_MODEL_LOOKUP_CACHE_LIMIT) {
+    knownModelLookupCache.delete(knownModelLookupCache.keys().next().value!)
+  }
+  knownModelLookupCache.set(key, result)
+  return result
+}
+
+function resolveKnownModel(modelId: string, modelName?: string): AIModel | undefined {
   const normalized = normalizeModelId(modelId)
   const exact = DEFAULT_MODELS.find((item) => item.id.toLowerCase() === modelId.trim().toLowerCase())
   if (exact) return exact
