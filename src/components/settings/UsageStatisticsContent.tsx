@@ -13,7 +13,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 import { useThemeMotion } from '@/hooks/useThemeMotion'
-import { WorkspaceChoice } from '@/presentation/layout/WorkspaceChoice'
+import { WorkspaceTabs } from '@/presentation/layout/WorkspaceTabs'
 import { useSettingsDraft } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import type { RedactedUsageRequestDetail, UsageRequestDetailState, UsageRequestStatus } from './usageRequestDetailTypes'
@@ -21,7 +21,7 @@ import type { RedactedUsageRequestDetail, UsageRequestDetailState, UsageRequestS
 import { USAGE_PRICING_CONFLICT } from '@/modules/diagnostics'
 
 export type { RedactedUsageDetailField, RedactedUsageRequestDetail, UsageRequestDetailState, UsageRequestStatus } from './usageRequestDetailTypes'
-export type UsageStatisticsTab = 'requests' | 'providers' | 'models'
+export type UsageStatisticsTab = 'overview' | 'conversations' | 'requests' | 'providers' | 'models'
 export type UsageExportFormat = 'csv' | 'json'
 
 export interface UsageFilterOption {
@@ -36,6 +36,9 @@ export interface UsageStatisticsFilters {
   status: string
   requestSource: string
   includeEstimates: boolean
+  conversation?: string
+  startAt?: number
+  endAt?: number
 }
 
 export interface UsageStatisticsFilterOptions {
@@ -63,6 +66,9 @@ export interface UsageStatisticsSummary {
   estimatedCost?: string
   averageLatency: string
   errorRate: string
+  attempts?: string
+  historicalAttempts?: string
+  coverageLabel?: string
 }
 
 export interface UsageStatusSlice {
@@ -79,7 +85,7 @@ export interface UsageTrendSeries {
   value: string
   change?: string
   direction?: 'up' | 'down' | 'flat'
-  points: number[]
+  points: (number | undefined)[]
   accessibilityLabel?: string
 }
 
@@ -112,6 +118,7 @@ export interface UsageBreakdownRow {
   averageLatencyLabel?: string
   cacheHitRateLabel?: string
   share: number
+  countLabel?: string
 }
 
 export interface UsagePricingOverride {
@@ -218,6 +225,14 @@ export interface UsageStatisticsContentProps {
   requests: UsageRequestRow[]
   providers: UsageBreakdownRow[]
   models: UsageBreakdownRow[]
+  conversations?: UsageBreakdownRow[]
+  conversationLabel?: string
+  onConversationPress?: (id: string) => void
+  onConversationContext?: () => void
+  onLoadMore?: () => void
+  hasMore?: boolean
+  pageLabel?: string
+  onPreviousPage?: () => void
   requestDetail?: UsageRequestDetailState
   onRequestPress: (requestId: string) => void
   onCloseRequestDetail: () => void
@@ -306,7 +321,7 @@ export const DEFAULT_USAGE_STATISTICS_COPY: UsageStatisticsCopy = {
   rowAccessibility: (row) => [row.timestampLabel, row.providerLabel, row.modelLabel, row.statusLabel, row.tokensLabel, row.latencyLabel, row.estimatedCostLabel].filter(Boolean).join('. '),
 }
 
-type FilterKey = Exclude<keyof UsageStatisticsFilters, 'includeEstimates'>
+type FilterKey = 'dateRange' | 'provider' | 'model' | 'status' | 'requestSource'
 
 interface PricingDraftState extends UsagePricingOverrideDraft {
   key: string
@@ -331,6 +346,14 @@ export function UsageStatisticsContent({
   requests,
   providers,
   models,
+  conversations = [],
+  conversationLabel,
+  onConversationPress,
+  onConversationContext,
+  onLoadMore,
+  hasMore = false,
+  pageLabel,
+  onPreviousPage,
   requestDetail = null,
   onRequestPress,
   onCloseRequestDetail,
@@ -364,6 +387,8 @@ export function UsageStatisticsContent({
   const [filterSheet, setFilterSheet] = useState<FilterKey | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [overviewGroup, setOverviewGroup] = useState<'providers' | 'models'>('providers')
+  const providerBreakdown = activeTab === 'providers' || (activeTab === 'overview' && overviewGroup === 'providers')
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
   const [pricingDraft, setPricingDraft] = useState<PricingDraftState | null>(null)
   const [pricingSubmitting, setPricingSubmitting] = useState(false)
@@ -393,7 +418,7 @@ export function UsageStatisticsContent({
     { id: 'total', label: copy.totalTokens, value: summary.totalTokens ?? '-', icon: 'sigma' as AppIconName },
     { id: 'cache', label: copy.cacheTokens, value: summary.cacheTokens ?? '-', icon: 'knowledge-database' as AppIconName },
     { id: 'reasoning', label: copy.reasoningTokens, value: summary.reasoningTokens ?? '-', icon: 'reasoning' as AppIconName },
-    { id: 'cost', label: copy.estimatedCost, value: filters.includeEstimates ? (summary.estimatedCost ?? copy.estimatesExcluded) : copy.estimatesExcluded, icon: 'sigma' as AppIconName },
+    { id: 'cost', label: copy.estimatedCost, value: summary.estimatedCost ?? '—', icon: 'sigma' as AppIconName },
     { id: 'latency', label: copy.averageLatency, value: summary.averageLatency, icon: 'activity' as AppIconName },
     { id: 'first-token', label: copy.firstTokenLatency, value: summary.firstTokenLatency ?? '-', icon: 'zap' as AppIconName },
     { id: 'cache-rate', label: copy.cacheHitRate, value: summary.cacheHitRate ?? '-', icon: 'knowledge-database' as AppIconName },
@@ -491,6 +516,9 @@ export function UsageStatisticsContent({
               onPress={() => setFilterSheet('dateRange')} />
           </View>
           <Text accessibilityLabel={`${copy.requests}: ${summary.requests}`} style={[colors.design?.semantic.typography.display, styles.primaryMetricValue, { color: colors.text }]}>{summary.requests}</Text>
+          {summary.attempts ? <Text testID="usage-attempt-count" style={[styles.rowMeta, { color: colors.textSecondary }]}>{t('usage.executionCounts', {
+            requests: summary.requests, attempts: summary.attempts, historical: summary.historicalAttempts ?? '0',
+          })}</Text> : null}
         </View>
         <View testID="usage-summary-context" style={[styles.summaryContext, narrow && { flexDirection: 'column' }]}>
           {summaryItems.filter(item => item.id === 'total' || item.id === 'cost').map((item, index) => (
@@ -501,6 +529,7 @@ export function UsageStatisticsContent({
             </View>
           ))}
         </View>
+        {summary.coverageLabel ? <Text testID="usage-measurement-coverage" style={[styles.rowMeta, { color: colors.textSecondary }]}>{summary.coverageLabel}</Text> : null}
         {detailsOpen ? <View style={[styles.summaryGrid, narrow && styles.summaryGridNarrow]}>
           {summaryItems.filter(item => !['requests', 'total', 'cost'].includes(item.id)).map((item) => (
             <View
@@ -553,6 +582,11 @@ export function UsageStatisticsContent({
       ) : null}
 
       <View style={[styles.section, { borderColor }]}>
+        {conversationLabel ? <View style={{ gap: 8, marginBottom: 12 }}>
+          <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>{t('usage.conversationFilter', { name: conversationLabel })}</Text>
+          {onConversationContext ? <IsleButton label={t('usage.contextSettings')} onPress={onConversationContext} /> : null}
+          <IsleButton compact label={t('usage.clearConversationFilter')} onPress={() => onFiltersChange({ ...filters, conversation: undefined })} />
+        </View> : null}
         <UsageDisclosure testID="usage-filters-toggle" label={copy.filters} expanded={filtersOpen} onPress={() => setFiltersOpen(value => !value)} />
         {filtersOpen ? <>
         {sectionHeader(copy.filters, onResetFilters ? (
@@ -584,11 +618,16 @@ export function UsageStatisticsContent({
       </View>
 
       <View style={[styles.section, { borderColor }]}>
-        <View accessibilityRole="tablist" style={styles.tabBar}>
-          <UsageTabButton active={activeTab === 'requests'} label={copy.requestsTab} icon="list-check" narrow={narrow} onPress={() => onTabChange('requests')} />
-          <UsageTabButton active={activeTab === 'providers'} label={copy.providersTab} icon="provider-key" narrow={narrow} onPress={() => onTabChange('providers')} />
-          <UsageTabButton active={activeTab === 'models'} label={copy.modelsTab} icon="model" narrow={narrow} onPress={() => onTabChange('models')} />
-        </View>
+        <WorkspaceTabs testID="usage-view-tabs" value={activeTab} onChange={onTabChange} tabs={[
+          { value: 'overview', label: t('usage.overviewTab'), icon: 'activity' },
+          { value: 'conversations', label: t('usage.conversationsTab'), icon: 'conversation' },
+          { value: 'requests', label: copy.requestsTab, icon: 'list-check' },
+        ]} />
+        {activeTab === 'overview' ? <WorkspaceTabs testID="usage-overview-tabs" accessibilityLabel={t('usage.overviewTab')}
+          value={overviewGroup} onChange={setOverviewGroup} tabs={[
+            { value: 'providers', label: copy.providersTab, icon: 'provider-key' },
+            { value: 'models', label: copy.modelsTab, icon: 'model' },
+          ]} /> : null}
 
         <View
           style={[styles.listViewport, { height: listHeight, borderColor, borderWidth: subtleBorderWidth }]}
@@ -619,12 +658,22 @@ export function UsageStatisticsContent({
                 />
               )}
             />
-          ) : (
+          ) : activeTab === 'conversations' ? <FlashList
+              data={conversations} keyExtractor={item => item.id} accessibilityRole="list"
+              accessibilityLabel={t('usage.conversationsTab')} nestedScrollEnabled drawDistance={listHeight}
+              contentContainerStyle={styles.listContent}
+              ListEmptyComponent={<UsageEmptyState title={copy.emptyTitle} detail={copy.emptyDetail} />}
+              ItemSeparatorComponent={RowSeparator}
+              renderItem={({ item }) => <IslePressable accessibilityRole="button" accessibilityLabel={item.label}
+                testID={`usage-conversation-${item.id}`} onPress={() => onConversationPress?.(item.id)} style={{ minHeight: 44 }}>
+                <BreakdownRow item={item} compact={stackedRows} copy={copy} includeEstimates={filters.includeEstimates} />
+              </IslePressable>}
+            /> : (
             <FlashList
-              data={activeTab === 'providers' ? providers : models}
+              data={providerBreakdown ? providers : models}
               keyExtractor={(item) => item.id}
               accessibilityRole="list"
-              accessibilityLabel={activeTab === 'providers' ? copy.providersTab : copy.modelsTab}
+              accessibilityLabel={providerBreakdown ? copy.providersTab : copy.modelsTab}
               nestedScrollEnabled
               drawDistance={listHeight}
               contentContainerStyle={styles.listContent}
@@ -634,6 +683,11 @@ export function UsageStatisticsContent({
             />
           )}
         </View>
+        {activeTab === 'requests' && (hasMore || onPreviousPage || pageLabel) ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingTop: 12 }}>
+          {pageLabel ? <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>{pageLabel}</Text> : null}
+          {onPreviousPage ? <IsleButton compact label={t('usage.previousPage')} disabled={refreshing} onPress={onPreviousPage} /> : null}
+          {hasMore && onLoadMore ? <IsleButton compact testID="usage-next-page" label={t('usage.nextPage')} disabled={refreshing} onPress={onLoadMore} /> : null}
+        </View> : null}
       </View>
 
       <View style={[styles.section, { borderColor }]}>
@@ -834,7 +888,7 @@ export function UsageStatisticsContent({
 
 function TrendItem({ trend, compact }: { trend: UsageTrendSeries; compact: boolean }) {
   const { colors } = useAppTheme()
-  const maximum = Math.max(...trend.points, 1)
+  const maximum = trend.points.reduce<number>((largest, value) => Math.max(largest, value ?? 0), 1)
   const directionTone = trend.direction === 'up'
     ? colors.ui.tone.success.foreground
     : trend.direction === 'down'
@@ -862,7 +916,8 @@ function TrendItem({ trend, compact }: { trend: UsageTrendSeries; compact: boole
       <View style={styles.trendBars} accessible={false}>
         {trend.points.slice(-14).map((point, index) => (
           <View key={`${trend.id}:${index}`} style={styles.trendBarTrack}>
-            <View style={[styles.trendBar, { height: Math.max(2, (Math.max(0, point) / maximum) * 24), backgroundColor: colors.ui.control.primaryBackground }]} />
+            {point === undefined ? <Text style={{ color: colors.textSecondary }}>—</Text>
+              : <View style={[styles.trendBar, { height: Math.max(2, (Math.max(0, point) / maximum) * 24), backgroundColor: colors.ui.control.primaryBackground }]} />}
           </View>
         ))}
       </View>
@@ -902,11 +957,6 @@ function UsageDisclosure({ label, expanded, onPress, testID }: { label: string; 
   </IslePressable>
 }
 
-function UsageTabButton({ active, label, icon, narrow, onPress }: { active: boolean; label: string; icon: AppIconName; narrow: boolean; onPress: () => void }) {
-  return <WorkspaceChoice label={label} icon={narrow ? undefined : icon}
-    selected={active} onPress={onPress} style={styles.tabButton} />
-}
-
 function RequestRow({ item, compact, includeEstimates, accessibilityLabel, onPress }: { item: UsageRequestRow; compact: boolean; includeEstimates: boolean; accessibilityLabel: string; onPress: () => void }) {
   const { colors } = useAppTheme()
   const tone = statusTone(item.status, colors)
@@ -937,7 +987,7 @@ function RequestRow({ item, compact, includeEstimates, accessibilityLabel, onPre
         ) : null}
         {item.cacheTokensLabel ? <Text style={[styles.metricCaption, { color: colors.textSecondary }]}>{item.cacheTokensLabel}</Text> : null}
         {item.firstTokenLabel ? <Text style={[styles.metricCaption, { color: colors.textSecondary }]}>{item.firstTokenLabel}</Text> : null}
-        {includeEstimates && item.estimatedCostLabel ? <Text style={[styles.metricCaption, { color: colors.textSecondary }]}>{item.estimatedCostLabel}</Text> : null}
+        {item.estimatedCostLabel ? <Text style={[styles.metricCaption, { color: colors.textSecondary }]}>{item.estimatedCostLabel}</Text> : null}
       </View>
       <View style={[styles.requestTime, compact && { width: '100%' }]}>
         <Text style={[styles.timeLabel, { color: colors.textTertiary }]}>{item.timestampLabel}</Text>
@@ -955,11 +1005,11 @@ function BreakdownRow({ item, compact, copy, includeEstimates }: { item: UsageBr
     { label: t('usage.successRate'), value: item.successRateLabel },
     { label: copy.averageLatency, value: item.averageLatencyLabel },
     { label: copy.cacheHitRate, value: item.cacheHitRateLabel },
-    { label: copy.estimatedCost, value: includeEstimates ? item.estimatedCostLabel : undefined },
+    { label: copy.estimatedCost, value: item.estimatedCostLabel },
   ].filter(metric => metric.value)
   return (
     <View testID={`usage-breakdown-${item.id}`} accessible
-      accessibilityLabel={[item.label, item.secondaryLabel, `${copy.requests} ${item.requestCountLabel}`, `${copy.totalTokens} ${item.tokensLabel}`, ...secondaryMetrics.map(metric => `${metric.label} ${metric.value}`)].filter(Boolean).join('. ')}
+      accessibilityLabel={[item.label, item.secondaryLabel, `${item.countLabel ?? copy.requests} ${item.requestCountLabel}`, `${copy.totalTokens} ${item.tokensLabel}`, ...secondaryMetrics.map(metric => `${metric.label} ${metric.value}`)].filter(Boolean).join('. ')}
       style={styles.breakdownRow}>
       <View style={[styles.breakdownHeading, compact && { flexDirection: 'column', alignItems: 'stretch' }]}>
         <View style={[styles.pricingIdentity, compact && { flex: undefined, width: '100%' }]}>
@@ -967,7 +1017,7 @@ function BreakdownRow({ item, compact, copy, includeEstimates }: { item: UsageBr
           {item.secondaryLabel ? <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>{item.secondaryLabel}</Text> : null}
         </View>
         <View style={[styles.breakdownMetrics, compact && { width: '100%' }]}>
-          {[{ label: copy.requests, value: item.requestCountLabel }, { label: copy.totalTokens, value: item.tokensLabel }].map(metric => <View key={metric.label} style={styles.breakdownMetric}>
+          {[{ label: item.countLabel ?? copy.requests, value: item.requestCountLabel }, { label: copy.totalTokens, value: item.tokensLabel }].map(metric => <View key={metric.label} style={styles.breakdownMetric}>
             <Text style={[styles.metricCaption, { color: colors.textSecondary }]}>{metric.label}</Text>
             <Text style={[styles.breakdownValue, { color: colors.text }]}>{metric.value}</Text>
           </View>)}
@@ -1312,17 +1362,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     includeFontPadding: false,
     marginTop: 1,
-  },
-  tabBar: {
-    minHeight: 44,
-    flexDirection: 'row',
-    gap: 4,
-    marginBottom: 7,
-  },
-  tabButton: {
-    flex: 1,
-    minWidth: 0,
-    paddingHorizontal: 6,
   },
   listViewport: {
     width: '100%',

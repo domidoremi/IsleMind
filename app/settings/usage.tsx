@@ -8,6 +8,7 @@ import { resolveSettingsChildReturnAction } from '@/presentation/app-shell/route
 import { createLazyComponent } from '@/utils/lazyLoad'
 import { SettingsEditBoundary, useSettingsLeave } from '@/components/settings/SettingsEditBoundary'
 import { PageFeedbackBoundary, PageFeedbackRegion } from '@/components/ui/PageFeedback'
+import { parseUsageRoute } from '@/presentation/features/settings/usageNavigation'
 
 const UsageStatisticsScreen = createLazyComponent(
   () => import('@/components/settings/UsageStatisticsScreen').then((module) => ({ default: module.UsageStatisticsScreen })),
@@ -20,7 +21,8 @@ export default function UsageStatisticsRoute() {
 function UsageStatisticsRouteContent() {
   const { t } = useTranslation()
   const leave = useSettingsLeave()
-  const params = useLocalSearchParams<{ returnTo?: string | string[] }>()
+  const params = useLocalSearchParams()
+  const initial = parseUsageRoute(params)
   const goBack = useCallback(() => {
     void leave(() => {
     const action = resolveSettingsChildReturnAction(params.returnTo, router.canGoBack())
@@ -44,7 +46,8 @@ function UsageStatisticsRouteContent() {
   return (
     <ThemeDetailFrame kind="usage" title={t('usage.title')} onBack={goBack} backLabel={t('common.back')}>
       <PageFeedbackRegion />
-      <UsageStatisticsScreen />
+      <UsageStatisticsScreen initialFilters={initial.filters} initialView={initial.view} initialOffset={initial.offset}
+        onNavigationStateChange={snapshot => router.setParams(snapshot)} />
     </ThemeDetailFrame>
   )
 }

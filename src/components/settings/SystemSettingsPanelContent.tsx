@@ -48,6 +48,7 @@ import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/platform/na
 import type { ApkInstallProgress, ApkInstallProgressStage, ApkReleaseInfo } from '@/platform/native/androidApkUpdates'
 import { isGooglePlayDistribution, openGooglePlayListing } from '@/platform/native/appDistribution'
 import { useIsleDialog } from '@/components/ui/isle'
+import { DeleteAllConversationsButton } from '@/components/conversations/DeleteAllConversationsButton'
 import { useApkUpdatePrompt } from '@/components/updates/useApkUpdatePrompt'
 import { ApkUpdateDeliverySettings } from '@/components/updates/ApkUpdateDeliverySettings'
 import { apkUpdateDeliverySession } from '@/components/updates/apkUpdateDeliverySession'
@@ -573,26 +574,6 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
         tone: 'danger',
       })
     }
-  }
-
-  function confirmClearChats() {
-    void dialog.confirm({
-      title: t('settings.clearChats'),
-      message: t('settings.clearChatsConfirm'),
-      tone: 'danger',
-      confirmLabel: t('settings.clear'),
-      cancelLabel: t('common.cancel'),
-    }).then(async (confirmed) => {
-      if (!confirmed) return
-      const { useChatStore } = await import('@/store/chatStore')
-      useChatStore.getState().clearAll()
-    }).catch((error) => {
-      dialog.toast({
-        title: t('settings.clearChats'),
-        message: userFacingErrorDetail(error),
-        tone: 'danger',
-      })
-    })
   }
 
   function confirmResetSettings() {
@@ -1897,7 +1878,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             style={foldoutBodyStyle}
           >
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              <DangerButton label={t('settings.clearChats')} icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={18} />} onPress={confirmClearChats} />
+              <DeleteAllConversationsButton />
               <DangerButton label={t('settings.resetSettings')} icon={<AppIcon name="retry" color={colors.ui.control.dangerForeground} size={18} />} onPress={confirmResetSettings} />
               <DangerButton label={t('settings.clearData')} icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={18} />} onPress={() => void dialog.confirm({
                 title: t('settings.clearData'),

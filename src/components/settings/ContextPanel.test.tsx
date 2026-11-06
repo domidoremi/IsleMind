@@ -107,11 +107,12 @@ jest.mock('@/modules/knowledge', () => ({
   LocalModelStateDataError: jest.requireActual('@/modules/knowledge/application/localModelStateRepository').LocalModelStateDataError,
   LocalModelStateRecoveryConflictError: jest.requireActual('@/modules/knowledge/application/localModelStateRepository').LocalModelStateRecoveryConflictError,
 }))
-jest.mock('@/modules/integrations', () => ({ resolveSearchProvider: (settings: any) => settings.searchProvider ?? 'off', SEARCH_PROVIDER_OPTIONS: [] }))
+jest.mock('@/modules/integrations', () => ({ ...jest.requireActual('@/modules/integrations/modelOperationDiscovery'),
+  resolveSearchProvider: (settings: any) => settings.searchProvider ?? 'off', SEARCH_PROVIDER_OPTIONS: [] }))
 jest.mock('@/services/contextSelfTest', () => ({ runContextSelfTest: (...args: unknown[]) => mockSelfTest(...args) }))
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: () => ({ colors: require('@/theme/colors').getColors(mockMode, mockTheme), canonicalThemeId: mockTheme, mode: mockMode, isDark: mockMode === 'dark' }) }))
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: () => mockMotion }))
-jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
+jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }))
 jest.mock('expo-router', () => ({ useNavigation: () => ({ dispatch: mockDispatch }) }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: (_: boolean, callback: typeof mockRemove) => { mockRemove = callback } }))
 jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null }))
@@ -196,6 +197,57 @@ beforeEach(() => {
 
 const ragRun = { id: 'owned', ranAt: 1, cases: [], averageConfidence: 0.8,
   averageCitationCoverage: 1, averageContextPrecision: 0.9, fallbackReasons: [] }
+
+function ToolPage() {
+  return <IsleThemeProvider><SettingsEditBoundary><SettingsSectionContext.Provider value={{ target: 'tool-declarations', register: () => undefined }}>
+    <ContextPanel providers={[]} section="context" />
+  </SettingsSectionContext.Provider></SettingsEditBoundary></IsleThemeProvider>
+}
+
+it('keeps the legacy full default and an unsaved tool-mode choice through a theme change until explicit save', async () => {
+  const screen = await render(<ToolPage />)
+  await waitFor(() => screen.getByTestId('settings-tool-declarations'))
+  expect(screen.getByRole('radio', { name: 'toolDeclarations.full' }).props.accessibilityState.checked).toBe(true)
+  await fireEvent.press(screen.getByRole('radio', { name: 'toolDeclarations.auto' }))
+  expect(mockUpdate).not.toHaveBeenCalled()
+  expect(mockFlush).not.toHaveBeenCalled()
+  mockTheme = 'monet'
+  await screen.rerender(<ToolPage />)
+  expect(screen.getByRole('radio', { name: 'toolDeclarations.auto' }).props.accessibilityState.checked).toBe(true)
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'settingsWorkspace.save' })).toBeNull())
+  expect(mockUpdate).toHaveBeenCalledWith({ toolDeclarationMode: 'auto' })
+  expect(mockFlush).toHaveBeenCalledTimes(1)
+  expect(mockSettings.localModelDownloadMirrorBaseUrl).toBe('https://saved.invalid')
+})
+
+it('retains the exact failed tool-mode draft and exposes a working persistence retry', async () => {
+  mockFlush.mockRejectedValueOnce(new Error('disk unavailable'))
+  const screen = await render(<ToolPage />)
+  await waitFor(() => screen.getByTestId('settings-tool-declarations'))
+  await fireEvent.press(screen.getByRole('radio', { name: 'toolDeclarations.auto' }))
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
+  await waitFor(() => screen.getByText('settingsWorkspace.saveFailed'))
+  expect(screen.getByRole('radio', { name: 'toolDeclarations.auto' }).props.accessibilityState.checked).toBe(true)
+  expect(mockFlush).toHaveBeenCalledTimes(1)
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
+  await waitFor(() => expect(screen.queryByText('settingsWorkspace.saveFailed')).toBeNull())
+  expect(mockFlush).toHaveBeenCalledTimes(2)
+  expect(mockSettings.toolDeclarationMode).toBe('auto')
+})
+
+it('refuses to overwrite a newer tool setting and permits discarding the obsolete draft', async () => {
+  const screen = await render(<ToolPage />)
+  await waitFor(() => screen.getByTestId('settings-tool-declarations'))
+  await fireEvent.press(screen.getByRole('radio', { name: 'toolDeclarations.auto' }))
+  await act(() => publishModelSettings({ toolDeclarationMode: 'full' }))
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.save' }))
+  await waitFor(() => screen.getByText('settingsWorkspace.conflict'))
+  expect(mockUpdate).not.toHaveBeenCalled()
+  expect(mockFlush).not.toHaveBeenCalled()
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsWorkspace.reload' }))
+  expect(screen.getByRole('radio', { name: 'toolDeclarations.full' }).props.accessibilityState.checked).toBe(true)
+})
 
 it.each(CANONICAL_THEME_IDS)('names the actual %s local-model download progress without committing a selection before settlement', async family => {
   mockTheme = family

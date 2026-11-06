@@ -15,6 +15,7 @@ import { safeHttpUrl } from '@/utils/sourceUrlSafety'
 import { restoreAccessibilityFocus } from '@/platform/native/restoreAccessibilityFocus'
 import { WorkspaceIntro } from '@/components/ui/WorkspaceIntro'
 import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
+import { WorkspaceHeader } from '@/presentation/layout/WorkspaceHeader'
 
 const guideHeading: RenderFunction = (node, children, _parents, styles) => (
   <View key={node.key} accessible accessibilityRole="header" {...(Platform.OS === 'web' ? { 'aria-level': Number(node.type.slice(-1)) } : {})} style={styles[`_VIEW_SAFE_${node.type}`]}>{children}</View>
@@ -26,7 +27,7 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
   const { colors } = useAppTheme()
   const typography = colors.design?.semantic.typography
   const motion = useMotionPreference(true)
-  const { width } = useWindowDimensions()
+  const { width, fontScale } = useWindowDimensions()
   const illustrationWidth = Math.max(120, Math.min(720, width - 32) - 40)
   const language = i18n.language.startsWith('zh') ? 'zh-CN' : i18n.language.startsWith('ja') ? 'ja' : 'en'
   const chapters: readonly { id: string; title: string; body: string; anchors: readonly string[] }[] = userGuide.chapters[language]
@@ -73,9 +74,15 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
     paragraph: { marginBottom: 12 },
   }
   return <IsleScreen padded={false}>
-    <View style={{ padding: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between' }}>
-      <IsleButton tone="soft" label={t('settingsWorkspace.contents')} onPress={() => { pendingAnchor.current = undefined; setSlug(undefined) }} />
-      <IsleButton tone="soft" label={t('settingsWorkspace.closeManual')} onPress={onClose} />
+    <View style={{ width: '100%', maxWidth: 860, alignSelf: 'center', paddingHorizontal: width / fontScale < 430 ? 14 : 18, paddingTop: 8 }}>
+      <WorkspaceHeader title={chapter?.title ?? t('settingsWorkspace.manual')}
+        contextLabel={slug ? t('settingsWorkspace.manual') : t('settingsWorkspace.offline')} compact={width / fontScale < 430}
+        leading={<IslePressable accessibilityRole="button" accessibilityLabel={t('settingsWorkspace.contents')}
+          disabled={!slug} onPress={() => { pendingAnchor.current = undefined; setSlug(undefined) }}
+          style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+          <AppIcon name="back-previous" size={18} color={slug ? colors.text : colors.textTertiary} />
+        </IslePressable>}
+        trailing={<IsleButton tone="soft" compact label={t('settingsWorkspace.closeManual')} onPress={onClose} />} />
     </View>
     <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" scrollEventThrottle={64}
       onScroll={event => { if (!slug && !restoreIndex.current) indexOffset.current = event.nativeEvent.contentOffset.y }}

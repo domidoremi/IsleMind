@@ -3,6 +3,7 @@ import { SettingsSection, useSettingsTarget } from './SettingsSection'
 import { useSettingsDraft, useSettingsLifetime } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
 import { SavedSettingsField, useSettingsFieldSession } from './SettingsFieldSession'
+import { ToolDeclarationSettings } from './ToolDeclarationSettings'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Text } from '@/components/ui/AppText'
@@ -46,6 +47,7 @@ import {
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { glassShadowStyle } from '@/components/ui/isle/glassShadowStyle'
 import { useSettingsStore } from '@/store/settingsStore'
+import { normalizeSettingsToolDeclarationMode } from '@/modules/settings'
 import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_OPTIONS, legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
 import { SEARCH_PROVIDER_CREDENTIAL_FIELDS, searchProviderCredentialPresentation, searchProviderLabel } from '@/presentation/features/settings/searchProviderPresentation'
 import { filterAndSortKnowledgeDocuments, filterAndSortMemories, hasKnowledgeAssetFilters, hasMemoryAssetFilters, knowledgeAssetEmptyMessage, memoryAssetEmptyMessage, type KnowledgeSortMode, type KnowledgeStatusFocus, type MemorySortMode, type MemoryStatusFocus } from '@/services/contextAssetFilters'
@@ -344,14 +346,15 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     plainDraft.current = { title: plainTitle, text: plainText }
   }
   const reviewedPlainDraft = plainDraft.current
-  const [activeContextSection, setActiveContextSection] = useState<'search' | 'rag' | 'credentials' | null>(null)
   const target = useSettingsTarget()
+  const [activeContextSection, setActiveContextSection] = useState<'search' | 'rag' | 'credentials' | 'tools' | null>(target === 'tool-declarations' ? 'tools' : null)
   const [ragTechniquesOpen, setRagTechniquesOpen] = useState(false)
   const [localModelsOpen, setLocalModelsOpen] = useState(false)
   useEffect(() => {
     if (target === 'rag-profile' || target === 'local-model-mirror') setActiveContextSection('rag')
     if (target === 'local-model-mirror') setLocalModelsOpen(true)
     if (target === 'search-provider') setActiveContextSection('search')
+    if (target === 'tool-declarations') setActiveContextSection('tools')
   }, [target])
   const [knowledgeToolsOpen, setKnowledgeToolsOpen] = useState<boolean | undefined>()
   const showContext = section === 'all' || section === 'context'
@@ -1519,6 +1522,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         : MinimalContextSettingsLead
   return (
     <View style={{ paddingBottom: showKnowledge ? 12 : 0 }}>
+      {activeContextSection !== 'tools' ? <>
       {assetBusy ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
       {modelBusyId && modelDownloadCanCancel ? <IsleButton label={t(cancellingModelDownload ? 'contextPanel.localModel.cancellingDownload' : 'contextPanel.localModel.cancelDownload')} onPress={cancelLocalModelDownload} disabled={cancellingModelDownload} /> : null}
       {modelDownloadCancelled ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary }}>{t('contextPanel.localModel.downloadCancelled')}</Text> : null}
@@ -1548,6 +1552,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       </View> : null}
       {catalogState === 'ready' && importReadbackRequired && !importing
         ? <IsleButton label={t('common.retry')} onPress={() => void refresh()} /> : null}
+      </> : null}
       {!activeContextSection ? <Lead section={section} summary={summary} toggles={toggles} compact={compact} /> : null}
       {showContext && !activeContextSection && Platform.OS === 'web' ? (
         <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, marginTop: 10 }}>
@@ -1555,7 +1560,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         </Text>
       ) : null}
 
-      {showContext ? <SettingsTaskWorkspace onTaskChange={id => setActiveContextSection(id === 'rag-profile' ? 'rag' : id === 'search-provider' ? 'credentials' : null)} tasks={[
+      {showContext ? <SettingsTaskWorkspace onTaskChange={id => setActiveContextSection(id === 'rag-profile' ? 'rag' : id === 'search-provider' ? 'credentials' : id === 'tool-declarations' ? 'tools' : null)} tasks={[
         { id: 'search-provider', title: t('settings.webSearch'), description: t('settingsUx.searchHint'), summary: searchProviderLabel(searchProvider), icon: 'globe', content: <><MotiView from={target || motion !== 'full' ? undefined : { opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }}>
               <SettingsSection id="search-provider"><View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                 {SEARCH_PROVIDER_OPTIONS.map((mode) => (
@@ -1782,6 +1787,9 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           assetCardSurface={(borderColor) => assetCardSurface(colors, borderColor)}
         />
             </MotiView> },
+        { id: 'tool-declarations', title: t('toolDeclarations.title'), description: t('toolDeclarations.taskHint'),
+          summary: t(normalizeSettingsToolDeclarationMode(settings.toolDeclarationMode) === 'auto' ? 'toolDeclarations.auto' : 'toolDeclarations.full'),
+          icon: 'workflow', content: <SettingsSection id="tool-declarations"><ToolDeclarationSettings session={fieldSession} /></SettingsSection> },
       ]} /> : null}
       {shouldPromoteKnowledgeImport ? knowledgeImportControls : null}
       {!shouldPromoteKnowledgeImport ? knowledgeImportControls : null}

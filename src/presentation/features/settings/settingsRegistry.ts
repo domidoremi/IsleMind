@@ -14,12 +14,17 @@ export interface SettingsDestination {
   searchKeys?: readonly string[]
 }
 export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
+  { id: 'scenes', category: 'models', titleKey: 'scenes.title', route: '/settings/scenes', helpTopic: 'models',
+    keywords: ['scene profile preset configuration 场景 方案 配置 模板 シーン プロファイル プリセット'], searchKeys: ['scenes.preview', 'scenes.apply'] },
+  { id: 'routing', category: 'models', titleKey: 'routing.title', route: '/settings/routing', helpTopic: 'models', keywords: ['routing fallback backup 路由 备用 首选 ルーティング'] },
   { id: 'preferences', category: 'personalization', titleKey: 'settings.preferences', route: '/settings/preferences', helpTopic: 'personalization', keywords: ['identity interaction generation workflow 偏好 名称 交互 生成 工作流 設定'] },
-  { id: 'providers', category: 'models', titleKey: 'settings.providers', route: '/settings/providers', helpTopic: 'models', keywords: ['API token key endpoint 服务商 密钥 接口 プロバイダー'], searchKeys: ['providerSettings.protocol.title'] },
-  { id: 'model-availability', category: 'models', titleKey: 'modelAvailability.details', route: '/settings/model-availability', helpTopic: 'models', keywords: ['model availability 模型 可用性 モデル'] },
+  { id: 'providers', category: 'models', titleKey: 'settings.providers', route: '/settings/providers', helpTopic: 'models', keywords: ['API token key endpoint LAN Magpie 服务商 连接 密钥 接口 局域网 本地 网关 プロバイダー'], searchKeys: ['providerSettings.protocol.title', 'gateway.addLocal'] },
   { id: 'generation', fieldOnly: true, category: 'models', titleKey: 'preferences.generation', route: '/settings/preferences', section: 'generation', helpTopic: 'models', keywords: ['temperature tokens 温度 最大输出 生成参数 出力 トークン'], searchKeys: ['preferences.generationSubtitle'] },
   { id: 'usage', category: 'models', titleKey: 'usage.title', route: '/settings/usage', helpTopic: 'usage', keywords: ['cost billing tokens 用量 费用 使用量 コスト'], searchKeys: ['usage.totalTokens'] },
   { id: 'context', category: 'knowledge', titleKey: 'settings.context', route: '/settings/context', helpTopic: 'search', keywords: ['RAG search retrieval profile 联网 搜索 检索 上下文 検索 コンテキスト'] },
+  { id: 'tool-declarations', fieldOnly: true, category: 'tools', titleKey: 'toolDeclarations.title', route: '/settings/context',
+    section: 'tool-declarations', helpTopic: 'tools', keywords: ['tool discovery declarations schema budget 工具 定义 发现 按需 声明 参数 预算 ツール 発見 定義 予算'],
+    searchKeys: ['toolDeclarations.auto', 'toolDeclarations.full'] },
   { id: 'knowledge', category: 'knowledge', titleKey: 'settings.knowledge', route: '/settings/knowledge', helpTopic: 'knowledge', keywords: ['documents import 知识 导入 ナレッジ 取り込み'], searchKeys: ['contextPanel.importKnowledgeFile'] },
   { id: 'memory', category: 'knowledge', titleKey: 'settings.memory', route: '/settings/memory', helpTopic: 'knowledge', keywords: ['review memory 记忆 审核 メモリ 承認'], searchKeys: ['contextPanel.memoryReviewQueue'] },
   { id: 'skills', category: 'tools', titleKey: 'settings.skills', route: '/settings/skills', helpTopic: 'tools', keywords: ['skill template 技能 模板 スキル'] },
@@ -35,7 +40,7 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
   { id: 'notifications', category: 'personalization', titleKey: 'settingsWorkspace.notifications', route: '/settings/system/advanced', helpTopic: 'personalization', keywords: ['system notifications 系统 通知'], searchKeys: ['settings.systemStatusNotifications'] },
   { id: 'data', category: 'privacy', titleKey: 'settingsWorkspace.backup', route: '/settings/system/data', helpTopic: 'privacy', keywords: ['backup restore export import JSON 备份 恢复 导入 导出 復元'], searchKeys: ['settings.exportJson'] },
   { id: 'governance', category: 'privacy', titleKey: 'settingsWorkspace.governance', route: '/settings/system/governance', helpTopic: 'privacy', keywords: ['access log proxy upstream permission 安全 代理 权限 日志 プロキシ 権限'] },
-  { id: 'danger', category: 'privacy', titleKey: 'settingsWorkspace.danger', route: '/settings/system/danger', helpTopic: 'privacy', keywords: ['delete reset 清除 删除 重置 削除 リセット'] },
+  { id: 'danger', category: 'privacy', titleKey: 'settingsWorkspace.danger', route: '/settings/system/danger', helpTopic: 'privacy', keywords: ['delete reset conversations 清除 删除 全部会话 重置 削除 リセット'], searchKeys: ['conversation.deleteAll.title'] },
   { id: 'help', category: 'maintenance', titleKey: 'settingsWorkspace.manual', route: '/help', helpTopic: 'quick-start', keywords: ['help guide manual 使用手册 说明 ヘルプ ガイド'] },
   { id: 'diagnostics', category: 'maintenance', titleKey: 'settingsWorkspace.diagnostics', route: '/settings/system/diagnostics', helpTopic: 'troubleshooting', keywords: ['diagnostics repair 诊断 修复 診断 修復'], searchKeys: ['settings.runtimeLogFile'] },
   { id: 'updates', category: 'maintenance', titleKey: 'settingsWorkspace.updates', route: '/settings/system/updates', helpTopic: 'troubleshooting', keywords: ['update version 更新 版本 アップデート'], searchKeys: ['settings.checkApk', 'settings.autoCheck', 'settings.neverRemindUpdates', 'settings.neverRemindUpdatesDescription'] },

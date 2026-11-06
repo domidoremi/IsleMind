@@ -17,11 +17,11 @@ import { useWorkspaceLayout } from '@/presentation/layout/useWorkspaceLayout'
 import { WorkspaceChoice } from '@/presentation/layout/WorkspaceChoice'
 
 const icons: Record<SettingsCategory, AppIconName> = { models: 'bot', knowledge: 'network', tools: 'command', personalization: 'sun', privacy: 'shield', maintenance: 'settings-sliders' }
-const entryIcons: Record<string, AppIconName> = { 'model-availability': 'model', generation: 'preferences-sliders', appearance: 'sun', interaction: 'toggle-on', identity: 'bot', mcp: 'mcp-network', skills: 'skills-sparkles', agents: 'reasoning', workflow: 'workflow', knowledge: 'knowledge', memory: 'memory-brain', context: 'search', usage: 'chart', data: 'layers', governance: 'shield', notifications: 'device', help: 'source', diagnostics: 'health', updates: 'download', danger: 'delete' }
+const entryIcons: Record<string, AppIconName> = { scenes: 'layers', routing: 'network', generation: 'preferences-sliders', appearance: 'sun', interaction: 'toggle-on', identity: 'bot', mcp: 'mcp-network', skills: 'skills-sparkles', agents: 'reasoning', workflow: 'workflow', knowledge: 'knowledge', memory: 'memory-brain', context: 'search', usage: 'chart', data: 'layers', governance: 'shield', notifications: 'device', help: 'source', diagnostics: 'health', updates: 'download', danger: 'delete' }
 const taskEntries: Record<SettingsTaskArea, readonly string[]> = {
-  everyday: ['model-availability', 'preferences', 'appearance'],
+  everyday: ['scenes', 'preferences', 'appearance'],
   capabilities: ['mcp', 'skills', 'agents', 'knowledge', 'memory', 'context'],
-  manage: ['usage', 'data', 'governance', 'notifications'],
+  manage: ['routing', 'usage', 'data', 'governance', 'notifications'],
   support: ['help', 'diagnostics', 'updates', 'danger'],
 }
 let locationSequence = 0
@@ -78,7 +78,6 @@ export const SettingsNavigationContent = memo(function SettingsNavigationContent
   const language = useSettingsStore(state => state.settings.language)
   const summaries: Record<string, string | undefined> = {
     providers: providerCount ? t('settingsWorkspace.providerCount', { count: providerCount }) : undefined,
-    'model-availability': preferredModel,
     appearance: t(`settingsWorkspace.themes.${canonicalThemeId}`) + ' · ' + ({ 'zh-CN': '简体中文', en: 'English', ja: '日本語' }[language] ?? language),
   }
   const entries = category ? SETTINGS_DESTINATIONS.filter(entry => entry.category === category && !entry.fieldOnly)

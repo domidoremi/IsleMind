@@ -90,7 +90,7 @@ it('uses the measured reading column at large font scale and keeps every request
   expect(screen.getByText('Reference connection')).toBeTruthy()
   expect(screen.getByText('· Knowledge')).toBeTruthy()
   for (const label of ['3,840 tokens', '3,200 input / 640 output', '120 cached', '1.6s', 'First token 0.38s']) expect(screen.getByText(label)).toBeTruthy()
-  expect(screen.queryByText('$0.014')).toBeNull()
+  expect(screen.getByText('$0.014')).toBeTruthy()
   await fireEvent.press(row)
   expect(value.onRequestPress).toHaveBeenCalledWith('request')
   await screen.rerender(page({ ...value, filters: { ...value.filters, includeEstimates: true } }))
@@ -111,10 +111,27 @@ it('labels grouped values and secondary rates instead of leaving a column of une
   expect(row.props.accessibilityLabel).toContain('Total tokens 8K')
   expect(screen.getByText('usage.successRate 67%')).toBeTruthy()
   expect(screen.getByText('Average latency 1.6s')).toBeTruthy()
-  expect(screen.queryByText('Estimated cost $0.03')).toBeNull()
+  expect(screen.getByText('Estimated cost $0.03')).toBeTruthy()
   await screen.rerender(page({ ...value, filters: { ...value.filters, includeEstimates: true } }))
   expect(screen.getByTestId('usage-breakdown-provider')).toBe(row)
   expect(screen.getByText('Estimated cost $0.03')).toBeTruthy()
+})
+
+it('keeps the overview list label and selected group consistent with the displayed data', async () => {
+  const value = props()
+  value.activeTab = 'overview'
+  value.providers = [{ id: 'p', label: 'Saved connection', requestCountLabel: '2', tokensLabel: '150', share: 1 }]
+  value.models = [{ id: 'm', label: 'Reported model', requestCountLabel: '2', tokensLabel: '150', share: 1 }]
+  const screen = await render(page(value))
+  expect(screen.getAllByLabelText('Providers').some(node => node.props.accessibilityRole === 'list')).toBe(true)
+  expect(screen.getByTestId('usage-breakdown-p')).toBeTruthy()
+  expect(screen.queryByTestId('usage-breakdown-m')).toBeNull()
+  await fireEvent.press(screen.getByTestId('usage-overview-tabs-models'))
+  expect(screen.getAllByLabelText('Models').some(node => node.props.accessibilityRole === 'list')).toBe(true)
+  expect(screen.queryByTestId('usage-breakdown-p')).toBeNull()
+  expect(screen.getByTestId('usage-breakdown-m')).toBeTruthy()
+  expect(value.onTabChange).not.toHaveBeenCalled()
+  expect(value.onRequestPress).not.toHaveBeenCalled()
 })
 
 it('guards sheet dismissal and navigation, but explicit cancel destroys the local draft', async () => {

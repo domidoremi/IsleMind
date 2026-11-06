@@ -6,6 +6,7 @@ import * as FileSystem from 'expo-file-system/legacy'
 import * as Sharing from 'expo-sharing'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { router } from 'expo-router'
 
 import {
   clearUsageStatistics,
@@ -29,6 +30,9 @@ import { USAGE_PRICING_CONFLICT } from '@/modules/diagnostics'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { useSettingsStore } from '@/store/settingsStore'
 import { getProviderSelectableModels } from '@/utils/providerModels'
+import { useChatStore } from '@/store/chatStore'
+import { buildUsageRecordFilter, DEFAULT_USAGE_FILTERS, usageRouteSnapshot } from '@/presentation/features/settings/usageNavigation'
+import { usageCostSources, usageKnownCost, usageCount, usageDuration } from '@/presentation/features/settings/usageExecutionPresentation'
 
 import { resolveChatModelDisplayName } from '../chat/chatIdentityPresentation'
 import {
@@ -49,27 +53,28 @@ import {
   type UsageTrendSeries,
 } from './UsageStatisticsContent'
 
-const DEFAULT_FILTERS: UsageStatisticsFilters = {
-  dateRange: '30d',
-  provider: 'all',
-  model: 'all',
-  status: 'all',
-  requestSource: 'all',
-  includeEstimates: false,
-}
+const DEFAULT_FILTERS = DEFAULT_USAGE_FILTERS
 
 const STATUS_VALUES: UsageRecordStatus[] = ['success', 'failed', 'cancelled', 'limited', 'partial']
 const SOURCE_VALUES: UsageOperationSource[] = ['chat', 'agent', 'tavern', 'tool-continuation', 'memory', 'context', 'knowledge', 'embedding', 'transcription', 'speech', 'media', 'other']
 const NANO_DOLLARS_PER_DOLLAR = 1_000_000_000
 
-export function UsageStatisticsScreen() {
+export function UsageStatisticsScreen({ initialFilters = DEFAULT_FILTERS, initialView = 'overview', initialOffset = 0, onNavigationStateChange }: {
+  initialFilters?: UsageStatisticsFilters
+  initialView?: UsageStatisticsTab
+  initialOffset?: number
+  onNavigationStateChange?: (snapshot: ReturnType<typeof usageRouteSnapshot>) => void
+} = {}) {
   const { t, i18n } = useTranslation()
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
   const providers = useSettingsStore((state) => state.providers)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
-  const [filters, setFilters] = useState<UsageStatisticsFilters>(DEFAULT_FILTERS)
-  const [activeTab, setActiveTab] = useState<UsageStatisticsTab>('requests')
+  const [filters, setFilters] = useState<UsageStatisticsFilters>(initialFilters)
+  const [activeTab, setActiveTab] = useState<UsageStatisticsTab>(initialView)
+  const [offset, setOffset] = useState(initialOffset)
+  const conversations = useChatStore(state => state.conversations)
+  const conversationById = useMemo(() => new Map(conversations.map(conversation => [conversation.id, conversation])), [conversations])
   const [snapshot, setSnapshot] = useState<UsageStatisticsSnapshot | null>(null)
   const [pricingEntries, setPricingEntries] = useState<readonly UsagePricingEntry[]>([])
   const [screenState, setScreenState] = useState<'ready' | 'loading' | 'error'>('loading')
@@ -83,6 +88,17 @@ export function UsageStatisticsScreen() {
   const loadSequence = useRef(0)
   const providerById = useMemo(() => new Map(providers.map((provider) => [provider.id, provider] as const)), [providers])
   const runtimeFilter = useMemo(() => buildUsageRecordFilter(filters), [filters])
+  const initialSignature = JSON.stringify([initialFilters, initialView, initialOffset])
+  const appliedInitialSignature = useRef(initialSignature)
+  useEffect(() => {
+    if (appliedInitialSignature.current === initialSignature) return
+    appliedInitialSignature.current = initialSignature
+    setFilters(current => JSON.stringify([current.dateRange, current.provider, current.model, current.status, current.requestSource, current.includeEstimates, current.conversation, current.startAt, current.endAt])
+      === JSON.stringify([initialFilters.dateRange, initialFilters.provider, initialFilters.model, initialFilters.status, initialFilters.requestSource, initialFilters.includeEstimates, initialFilters.conversation, initialFilters.startAt, initialFilters.endAt]) ? current : initialFilters)
+    setActiveTab(initialView)
+    setOffset(initialOffset)
+  }, [initialSignature])
+  useEffect(() => () => { loadSequence.current += 1 }, [])
 
   const refresh = useCallback(async (manual = false) => {
     const sequence = loadSequence.current + 1
@@ -92,7 +108,7 @@ export function UsageStatisticsScreen() {
     setErrorMessage(undefined)
     try {
       const [nextSnapshot, nextPricing] = await Promise.all([
-        loadUsageStatistics({ filter: runtimeFilter, limit: 500 }),
+        loadUsageStatistics({ filter: runtimeFilter, limit: 100, offset }),
         listUsagePricingEntries(),
       ])
       if (loadSequence.current !== sequence) return
@@ -106,11 +122,11 @@ export function UsageStatisticsScreen() {
     } finally {
       if (loadSequence.current === sequence) setRefreshing(false)
     }
-  }, [runtimeFilter, snapshot, t])
+  }, [runtimeFilter, offset, snapshot, t])
 
   useEffect(() => {
     void refresh(false)
-  }, [runtimeFilter])
+  }, [runtimeFilter, offset])
 
   const filterOptions = useMemo(() => {
     const providerOptions: UsageFilterOption[] = [
@@ -153,39 +169,52 @@ export function UsageStatisticsScreen() {
     }
   }, [modelDisplayAliases, providerById, providers, snapshot?.records.records, t])
 
-  const requestRows = useMemo<UsageRequestRow[]>(() => (snapshot?.records.records ?? []).map((record) => ({
-    id: record.id,
-    timestampLabel: formatTimestamp(record.occurredAt, i18n.language),
-    providerLabel: providerLabel(record, providerById, t),
-    modelLabel: resolveChatModelDisplayName(providerById.get(record.providerId), record.upstreamModel, modelDisplayAliases),
-    status: usagePresentationStatus(record.status),
-    statusLabel: usageStatusLabel(record.status, t),
-    sourceLabel: usageSourceLabel(record.operationSource, t),
-    tokensLabel: usageRecordTokenLabel(record, t),
-    inputTokensLabel: `${formatReportedTokens(record.tokens.inputTokens)} ${t('usage.inputTokens')}`,
-    outputTokensLabel: `${formatReportedTokens(record.tokens.outputTokens)} ${t('usage.outputTokens')}`,
-    cacheTokensLabel: `${formatReportedTokens(reportedCacheTokens(record.tokens))} ${t('usage.cacheTokens')}`,
-    firstTokenLabel: record.firstTokenMs === undefined ? undefined : `${t('usage.firstToken')}: ${formatMilliseconds(record.firstTokenMs)}`,
-    measurementLabel: measurementSourceLabel(record, t),
-    latencyLabel: formatMilliseconds(record.durationMs),
-    estimatedCostLabel: formatUsageCost(record.totalCostNanodollars),
-  })), [i18n.language, modelDisplayAliases, providerById, snapshot?.records.records, t])
+  const requestRows = useMemo<UsageRequestRow[]>(() => (snapshot?.requests?.requests ?? []).map(request => ({
+    id: `${request.reference.kind}:${request.reference.id}`,
+    timestampLabel: formatTimestamp(request.occurredAt, i18n.language),
+    providerLabel: request.providerName,
+    modelLabel: resolveChatModelDisplayName(providerById.get(request.providerId), request.requestedModel, modelDisplayAliases),
+    status: usagePresentationStatus(request.status),
+    statusLabel: usageStatusLabel(request.status, t),
+    sourceLabel: usageSourceLabel(request.operationSource, t),
+    tokensLabel: `${usageCount(request.summary.totalTokens, i18n.language)} ${t('usage.knownTokens')}`,
+    inputTokensLabel: `${usageCount(request.summary.inputTokens, i18n.language)} ${t('usage.inputTokens')}`,
+    outputTokensLabel: `${usageCount(request.summary.outputTokens, i18n.language)} ${t('usage.outputTokens')}`,
+    cacheTokensLabel: `${usageCount(request.summary.cachedInputTokens, i18n.language)} ${t('usage.cacheTokens')}`,
+    firstTokenLabel: request.firstVisibleTextMs === undefined ? undefined : `${t('usage.requestToFirstText')}: ${usageDuration(request.firstVisibleTextMs)}`,
+    measurementLabel: request.reference.kind === 'attempt' ? t('usage.historicalAttempt') : t('usage.matchingAttempts', { count: request.summary.requestCount }),
+    latencyLabel: usageDuration(request.durationMs ?? (request.reference.kind === 'attempt' ? request.summary.averageDurationMs : undefined)),
+    estimatedCostLabel: usageKnownCost(request.summary, t),
+  })), [i18n.language, modelDisplayAliases, providerById, snapshot?.requests, t])
+
+  const conversationRows = useMemo<UsageBreakdownRow[]>(() => (snapshot?.conversations ?? []).map(group => ({
+    id: group.conversationId,
+    label: conversationById.get(group.conversationId)?.title ?? t('usage.unavailableConversation'),
+    secondaryLabel: t('usage.executionCounts', { requests: group.logicalRequestCount, attempts: group.requestCount, historical: group.legacyAttemptCount }),
+    countLabel: t('usage.logicalRequests'),
+    requestCountLabel: formatInteger(group.logicalRequestCount),
+    tokensLabel: usageCount(group.totalTokens, i18n.language),
+    estimatedCostLabel: usageKnownCost(group, t),
+    share: snapshot?.summary.totalTokens ? Math.min(1, (group.totalTokens ?? 0) / snapshot.summary.totalTokens) : 0,
+  })), [snapshot?.conversations, snapshot?.summary.totalTokens, conversationById, i18n.language, t])
 
   const providerRows = useMemo(
-    () => mapUsageBreakdown(snapshot?.providers ?? [], snapshot?.summary.totalTokens ?? 0),
-    [snapshot?.providers, snapshot?.summary.totalTokens]
+    () => mapUsageBreakdown(snapshot?.providers ?? [], snapshot?.summary.totalTokens ?? 0, t),
+    [snapshot?.providers, snapshot?.summary.totalTokens, t]
   )
   const modelRows = useMemo(
-    () => mapUsageBreakdown(snapshot?.models ?? [], snapshot?.summary.totalTokens ?? 0),
-    [snapshot?.models, snapshot?.summary.totalTokens]
+    () => mapUsageBreakdown(snapshot?.models ?? [], snapshot?.summary.totalTokens ?? 0, t),
+    [snapshot?.models, snapshot?.summary.totalTokens, t]
   )
   const summary = useMemo(() => ({
-    requests: formatInteger(snapshot?.summary.requestCount ?? 0),
-    inputTokens: formatCompactNumber(snapshot?.summary.inputTokens ?? 0),
-    outputTokens: formatCompactNumber(snapshot?.summary.outputTokens ?? 0),
-    totalTokens: formatCompactNumber(snapshot?.summary.totalTokens ?? 0),
-    cacheTokens: formatCompactNumber(snapshot?.summary.cachedInputTokens ?? ((snapshot?.summary.cacheReadInputTokens ?? 0) + (snapshot?.summary.cacheCreationInputTokens ?? 0))),
-    reasoningTokens: formatCompactNumber(snapshot?.summary.reasoningTokens ?? 0),
+    requests: formatInteger(snapshot?.summary.logicalRequestCount ?? 0),
+    attempts: formatInteger(snapshot?.summary.requestCount ?? 0),
+    historicalAttempts: formatInteger(snapshot?.summary.legacyAttemptCount ?? 0),
+    inputTokens: usageCount(snapshot?.summary.inputTokens, i18n.language),
+    outputTokens: usageCount(snapshot?.summary.outputTokens, i18n.language),
+    totalTokens: usageCount(snapshot?.summary.totalTokens, i18n.language),
+    cacheTokens: usageCount(snapshot?.summary.cachedInputTokens, i18n.language),
+    reasoningTokens: usageCount(snapshot?.summary.reasoningTokens, i18n.language),
     firstTokenLatency: formatMilliseconds(snapshot?.summary.averageFirstTokenMs),
     cacheHitRate: formatRatioPercent(snapshot?.summary.cacheHitRate),
     successfulRequests: formatInteger(snapshot?.summary.successCount ?? 0),
@@ -193,22 +222,28 @@ export function UsageStatisticsScreen() {
     estimatedRequests: formatInteger(snapshot?.summary.estimatedCount ?? 0),
     retryCount: formatInteger(snapshot?.summary.retryCount ?? 0),
     failoverCount: formatInteger(snapshot?.summary.failoverCount ?? 0),
-    estimatedCost: formatUsageCost(snapshot?.summary.totalCostNanodollars),
+    estimatedCost: snapshot ? usageKnownCost(snapshot.summary, t) : '—',
+    coverageLabel: snapshot ? t('usage.measurementCoverage', {
+      tokens: snapshot.summary.tokenSampleCount, first: snapshot.summary.firstTokenSampleCount,
+      costs: snapshot.summary.costSampleCount, attempts: snapshot.summary.requestCount,
+    }) + ` · ${usageCostSources(snapshot.summary, t)}`
+      + (snapshot.summary.archivedAttemptCount ? ` · ${t('usage.archivedMeasurementHint', { count: snapshot.summary.archivedAttemptCount })}` : '')
+      + (snapshot.summary.totalsOverflowed ? ` · ${t('usage.totalsOverflowed')}` : '') : undefined,
     averageLatency: formatMilliseconds(snapshot?.summary.averageDurationMs),
-    errorRate: formatPercent(snapshot?.summary.failedCount ?? 0, snapshot?.summary.requestCount ?? 0),
-  }), [snapshot?.summary])
+    errorRate: formatPercent(snapshot?.requestOutcomes?.failedCount ?? 0, snapshot?.requestOutcomes?.requestCount ?? 0),
+  }), [snapshot?.summary, snapshot?.requestOutcomes, i18n.language, t])
   const statusDistribution = useMemo<UsageStatusSlice[]>(() => {
     if (!snapshot) return []
-    const requestCount = Math.max(0, snapshot?.summary.requestCount ?? 0)
-    const successCount = Math.max(0, snapshot?.summary.successCount ?? 0)
-    const failedCount = Math.max(0, snapshot?.summary.failedCount ?? 0)
+    const requestCount = Math.max(0, snapshot.requestOutcomes?.requestCount ?? 0)
+    const successCount = Math.max(0, snapshot.requestOutcomes?.successCount ?? 0)
+    const failedCount = Math.max(0, snapshot.requestOutcomes?.failedCount ?? 0)
     const otherCount = Math.max(0, requestCount - successCount - failedCount)
     return [
       { id: 'success', label: t('usage.statusSuccess'), value: formatInteger(successCount), ratio: requestCount ? successCount / requestCount : 0, tone: 'success' },
       { id: 'failed', label: t('usage.statusFailed'), value: formatInteger(failedCount), ratio: requestCount ? failedCount / requestCount : 0, tone: 'danger' },
       { id: 'other', label: t('usage.statusOther'), value: formatInteger(otherCount), ratio: requestCount ? otherCount / requestCount : 0, tone: 'neutral' },
     ]
-  }, [snapshot?.summary, t])
+  }, [snapshot?.requestOutcomes, t])
   const trends = useMemo<UsageTrendSeries[]>(() => buildUsageTrends(snapshot, t), [snapshot, t])
   const pricingOverrides = useMemo<UsagePricingOverride[]>(() => pricingEntries
     .filter((entry) => entry.source === 'manual' && entry.providerId)
@@ -235,13 +270,26 @@ export function UsageStatisticsScreen() {
   const copy = useMemo<Partial<UsageStatisticsCopy>>(() => buildUsageCopy(t), [t])
 
   function openRequestDetail(requestId: string) {
-    setRequestDetail({ status: 'loading', requestId })
-    const record = snapshot?.records.records.find((item) => item.id === requestId)
-    if (!record) {
-      setRequestDetail({ status: 'error', requestId, message: t('usage.detailUnavailable') })
-      return
-    }
-    setRequestDetail({ status: 'ready', detail: mapRequestDetail(record, providerById, modelDisplayAliases, i18n.language, t) })
+    const request = snapshot?.requests.requests.find(item => `${item.reference.kind}:${item.reference.id}` === requestId)
+    if (!request) return
+    const navigation = usageRouteSnapshot(filters, activeTab, offset, runtimeFilter)
+    onNavigationStateChange?.(navigation)
+    router.push({ pathname: '/request/[id]', params: {
+      ...navigation, id: request.reference.id, kind: request.reference.kind, returnTo: 'usage',
+    } })
+  }
+
+  function updateNavigation(next: UsageStatisticsFilters, view = activeTab, page = offset) {
+    const range = buildUsageRecordFilter(next)
+    const anchored = { ...next, startAt: range.startAt, endAt: range.endAt }
+    setFilters(anchored)
+    setActiveTab(view)
+    setOffset(page)
+    onNavigationStateChange?.(usageRouteSnapshot(anchored, view, page, range))
+  }
+
+  function changeFilters(next: UsageStatisticsFilters) {
+    updateNavigation(next.dateRange === filters.dateRange ? next : { ...next, startAt: undefined, endAt: undefined }, activeTab, 0)
   }
 
   async function savePricingOverride(draft: UsagePricingOverrideDraft, expectedRevision?: string) {
@@ -340,13 +388,23 @@ export function UsageStatisticsScreen() {
           trends={trends}
           filters={filters}
           filterOptions={filterOptions}
-          onFiltersChange={setFilters}
-          onResetFilters={() => setFilters(DEFAULT_FILTERS)}
+          onFiltersChange={changeFilters}
+          onResetFilters={() => updateNavigation(DEFAULT_FILTERS, activeTab, 0)}
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={view => updateNavigation(filters, view)}
           requests={requestRows}
           providers={providerRows}
           models={modelRows}
+          conversations={conversationRows}
+          conversationLabel={filters.conversation ? conversationById.get(filters.conversation)?.title ?? t('usage.unavailableConversation') : undefined}
+          onConversationPress={id => updateNavigation({ ...filters, conversation: id }, 'requests', 0)}
+          onConversationContext={filters.conversation ? () => router.push({
+            pathname: '/settings/context', params: { conversationId: filters.conversation, returnTo: 'settings' },
+          }) : undefined}
+          hasMore={snapshot?.requests.hasMore}
+          onLoadMore={() => updateNavigation(filters, activeTab, offset + 100)}
+          onPreviousPage={offset > 0 ? () => updateNavigation(filters, activeTab, Math.max(0, offset - 100)) : undefined}
+          pageLabel={snapshot?.requests.total ? t('usage.pageRange', { start: offset + 1, end: Math.min(offset + 100, snapshot.requests.total), total: snapshot.requests.total }) : undefined}
           requestDetail={requestDetail}
           onRequestPress={openRequestDetail}
           onCloseRequestDetail={() => setRequestDetail(null)}
@@ -372,36 +430,17 @@ export function UsageStatisticsScreen() {
   )
 }
 
-function buildUsageRecordFilter(filters: UsageStatisticsFilters, now = Date.now()): UsageRecordFilter {
-  const startAt = filters.dateRange === '24h'
-    ? now - 24 * 60 * 60 * 1000
-    : filters.dateRange === '7d'
-      ? now - 7 * 24 * 60 * 60 * 1000
-      : filters.dateRange === '30d'
-        ? now - 30 * 24 * 60 * 60 * 1000
-        : filters.dateRange === '90d'
-          ? now - 90 * 24 * 60 * 60 * 1000
-          : undefined
-  return {
-    ...(startAt ? { startAt } : {}),
-    ...(filters.provider === 'all' ? {} : { providerIds: [filters.provider] }),
-    ...(filters.model === 'all' ? {} : { models: [filters.model] }),
-    ...(filters.status === 'all' ? {} : { statuses: [filters.status as UsageRecordStatus] }),
-    ...(filters.requestSource === 'all' ? {} : { operationSources: [filters.requestSource as UsageOperationSource] }),
-    includeEstimated: filters.includeEstimates,
-  }
-}
-
-function mapUsageBreakdown(groups: UsageStatisticsSnapshot['providers'], totalTokens: number): UsageBreakdownRow[] {
+function mapUsageBreakdown(groups: UsageStatisticsSnapshot['providers'], totalTokens: number, t: ReturnType<typeof useTranslation>['t']): UsageBreakdownRow[] {
   return groups.map((group) => ({
     id: group.key,
     label: group.label,
+    countLabel: t('usage.attempts'),
     requestCountLabel: formatInteger(group.requestCount),
-    tokensLabel: formatCompactNumber(group.totalTokens ?? 0),
+    tokensLabel: usageCount(group.totalTokens),
     successRateLabel: `${Math.round((group.successCount / Math.max(1, group.requestCount)) * 100)}%`,
     averageLatencyLabel: group.averageDurationMs === undefined ? undefined : formatMilliseconds(group.averageDurationMs),
     cacheHitRateLabel: formatRatioPercent(group.cacheHitRate),
-    estimatedCostLabel: formatUsageCost(group.totalCostNanodollars),
+    estimatedCostLabel: usageKnownCost(group, t),
     share: totalTokens > 0 ? Math.min(1, (group.totalTokens ?? 0) / totalTokens) : 0,
   }))
 }
@@ -412,89 +451,47 @@ function buildUsageTrends(snapshot: UsageStatisticsSnapshot | null, t: ReturnTyp
   return [
     {
       id: 'requests',
-      label: t('usage.requests'),
-      value: formatInteger(snapshot.summary.requestCount),
-      points: points.map((point) => point.requestCount),
+      label: t('usage.logicalRequests'),
+      value: formatInteger(snapshot.summary.logicalRequestCount),
+      points: points.map((point) => point.logicalRequestCount),
     },
     {
       id: 'tokens',
       label: t('usage.totalTokens'),
-      value: formatCompactNumber(snapshot.summary.totalTokens ?? 0),
-      points: points.map((point) => point.totalTokens ?? 0),
+      value: snapshot.summary.totalTokens === undefined ? '—' : formatCompactNumber(snapshot.summary.totalTokens),
+      points: points.map((point) => point.totalTokens),
     },
     {
       id: 'cache',
       label: t('usage.cacheTokens'),
-      value: formatCompactNumber(snapshot.summary.cachedInputTokens ?? ((snapshot.summary.cacheReadInputTokens ?? 0) + (snapshot.summary.cacheCreationInputTokens ?? 0))),
-      points: points.map((point) => point.cachedInputTokens ?? ((point.cacheReadInputTokens ?? 0) + (point.cacheCreationInputTokens ?? 0))),
+      value: snapshot.summary.cachedInputTokens === undefined ? '—' : formatCompactNumber(snapshot.summary.cachedInputTokens),
+      points: points.map((point) => point.cachedInputTokens),
     },
     {
       id: 'reasoning',
       label: t('usage.reasoningTokens'),
-      value: formatCompactNumber(snapshot.summary.reasoningTokens ?? 0),
-      points: points.map((point) => point.reasoningTokens ?? 0),
+      value: snapshot.summary.reasoningTokens === undefined ? '—' : formatCompactNumber(snapshot.summary.reasoningTokens),
+      points: points.map((point) => point.reasoningTokens),
     },
   ]
-}
-
-function mapRequestDetail(
-  record: UsageRecord,
-  providerById: Map<string, ReturnType<typeof useSettingsStore.getState>['providers'][number]>,
-  aliases: ReturnType<typeof useSettingsStore.getState>['settings']['modelDisplayAliases'],
-  language: string,
-  t: ReturnType<typeof useTranslation>['t'],
-): RedactedUsageRequestDetail {
-  const tokens = record.tokens
-  const originalProviderId = record.originalProviderId ?? record.providerId
-  const originalModel = record.originalModel ?? record.requestedModel
-  const routeChanged = originalProviderId !== record.providerId || originalModel !== record.upstreamModel
-  const fields: RedactedUsageRequestDetail['fields'] = [
-    { id: 'provider', label: t('usage.provider'), value: providerLabel(record, providerById, t) },
-    { id: 'model', label: t('usage.model'), value: resolveChatModelDisplayName(providerById.get(record.providerId), record.upstreamModel, aliases) },
-    ...(routeChanged ? [
-      { id: 'original-provider', label: t('usage.originalProvider'), value: providerLabelFromId(originalProviderId, providerById, t) },
-      { id: 'original-model', label: t('usage.originalModel'), value: resolveChatModelDisplayName(providerById.get(originalProviderId), originalModel, aliases) },
-    ] : []),
-    ...((record.retryCount ?? 0) > 0 ? [{ id: 'retries', label: t('usage.retries'), value: formatInteger(record.retryCount ?? 0) }] : []),
-    ...((record.failoverCount ?? 0) > 0 ? [{ id: 'failovers', label: t('usage.failovers'), value: formatInteger(record.failoverCount ?? 0), tone: 'warning' as const }] : []),
-    { id: 'source', label: t('usage.requestSource'), value: usageSourceLabel(record.operationSource, t) },
-    { id: 'measurement', label: t('usage.measurementSource'), value: measurementSourceLabel(record, t) },
-    { id: 'input', label: t('usage.inputTokens'), value: formatReportedTokens(tokens.inputTokens) },
-    { id: 'output', label: t('usage.outputTokens'), value: formatReportedTokens(tokens.outputTokens) },
-    { id: 'total', label: t('usage.totalTokens'), value: formatReportedTokens(reportedTotalTokens(tokens)) },
-    { id: 'cache', label: t('usage.cacheTokens'), value: formatReportedTokens(reportedCacheTokens(tokens)) },
-    { id: 'reasoning', label: t('usage.reasoningTokens'), value: formatReportedTokens(tokens.reasoningTokens) },
-    { id: 'latency', label: t('usage.latency'), value: formatMilliseconds(record.durationMs) },
-    ...(record.firstTokenMs === undefined ? [] : [{ id: 'first-token', label: t('usage.firstToken'), value: formatMilliseconds(record.firstTokenMs) }]),
-    ...(record.totalCostNanodollars === undefined ? [] : [{ id: 'cost', label: t('usage.estimatedCost'), value: formatUsageCost(record.totalCostNanodollars) ?? '-' }]),
-    ...(record.errorCode ? [{ id: 'error', label: t('usage.errorCode'), value: record.errorCode, tone: 'danger' as const }] : []),
-  ]
-  return {
-    requestId: record.id,
-    title: t('usage.requestDetail'),
-    subtitle: formatTimestamp(record.occurredAt, language),
-    status: usagePresentationStatus(record.status),
-    statusLabel: usageStatusLabel(record.status, t),
-    fields,
-  }
 }
 
 function buildUsageCopy(t: ReturnType<typeof useTranslation>['t']): Partial<UsageStatisticsCopy> {
   return {
     summary: t('usage.summary'),
-    requests: t('usage.requests'),
+    requests: t('usage.logicalRequests'),
     inputTokens: t('usage.inputTokens'),
     outputTokens: t('usage.outputTokens'),
-    estimatedCost: t('usage.estimatedCost'),
+    estimatedCost: t('usage.knownCost'),
     averageLatency: t('usage.averageLatency'),
     errorRate: t('usage.errorRate'),
     totalTokens: t('usage.totalTokens'),
     cacheTokens: t('usage.cacheTokens'),
     reasoningTokens: t('usage.reasoningTokens'),
-    firstTokenLatency: t('usage.firstToken'),
+    firstTokenLatency: t('usage.averageAttemptFirstText'),
     cacheHitRate: t('usage.cacheHitRate'),
-    successfulRequests: t('usage.statusSuccess'),
-    failedRequests: t('usage.statusFailed'),
+    successfulRequests: t('usage.statusSuccessAttempts'),
+    failedRequests: t('usage.statusFailedAttempts'),
     estimatedRequests: t('usage.estimatedRequests'),
     retries: t('usage.retries'),
     failovers: t('usage.failovers'),

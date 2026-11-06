@@ -2,10 +2,10 @@ import { SettingsTaskWorkspace } from './SettingsTaskWorkspace'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useRef } from 'react'
-import { SettingsSection, useSettingsTarget } from './SettingsSection'
+import { SettingsSection, SettingsSectionContext, useSettingsTarget } from './SettingsSection'
 import { useSettingsDraft, useSettingsLifetime } from './SettingsEditBoundary'
 import { SettingsHelpButton } from './SettingsHelp'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
@@ -14,6 +14,7 @@ import { AppIcon } from '@/components/ui/AppIcon'
 import { userFacingErrorDetail } from '@/core'
 import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IsleField, IsleListItem, IslePressable, IsleToggle, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { WorkspaceSurface } from '@/presentation/layout/WorkspaceSurface'
 import { listMcpServers, refreshMcpManifest, removeMcpServer, upsertMcpServer } from '@/bootstrap/mcpCatalog'
 import {
   listMcpRemotePresets,
@@ -63,6 +64,7 @@ export function McpSettingsContent() {
   const readGeneration = useRef(0)
   const draftServerId = useRef<string | null>(null)
   const target = useSettingsTarget()
+  const { resetScroll } = useContext(SettingsSectionContext)
   const [url, setUrl] = useState('')
   const [managementOpen, setManagementOpen] = useState(false)
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null)
@@ -357,7 +359,7 @@ export function McpSettingsContent() {
       {!loadFailed ? <Text accessibilityLiveRegion="polite" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }}>{!loaded ? t('common.loading') : t('settingsSubsystem.remoteSummary', { enabled: userServers.filter(server => server.enabled).length, disabled: userServers.filter(server => !server.enabled).length })}</Text> : null}
       <View style={{ marginTop: 20, gap: 8 }}>
       <Text accessibilityRole="header" style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '700' }}>{t('settingsUx.configuredTools')}</Text>
-      {userServers.map(server => <IslePressable key={server.id} accessibilityRole="button" accessibilityLabel={server.name} onPress={() => setSelectedServerId(server.id)}
+      {userServers.map(server => <IslePressable key={server.id} accessibilityRole="button" accessibilityLabel={server.name} onPress={() => { resetScroll?.(false); setSelectedServerId(server.id) }}
         style={{ minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 0.5, borderBottomColor: colors.ui.section.divider }}>
         <View style={{ flex: 1, minWidth: 0, gap: 4 }}><Text style={{ color: colors.text, fontSize: 16 }}>{server.name}</Text>
           <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t(server.enabled ? 'settings.enabled' : 'settings.disabled')} · {t('settingsSubsystem.lastConnection', { status: t(`mcp.status.${server.status}`) })}</Text>
@@ -367,11 +369,12 @@ export function McpSettingsContent() {
       {loaded && !userServers.length ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }}>{t('settingsUx.noRemoteTools')}</Text> : null}
     </View>
     </> : null}
-    {selectedServer ? <>
-      <IsleButton label={t('settingsUx.allOptions')} onPress={() => void requestCloseDraft(() => setSelectedServerId(null))} />
-      <IsleButton label={t('settingsSubsystem.configuration')} disabled={saving || pendingServerId !== null || installingPresetId !== null} onPress={() => { setEditingServer(selectedServer); draftServerId.current = selectedServer.id; setName(selectedServer.name); setUrl(selectedServer.url); setSelectedServerId(null); setActiveTask('mcp-add') }} />
-      <McpServerDetails key={selectedServer.id} busy={pendingServerId !== null} server={selectedServer} onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
-    </> : <SettingsTaskWorkspace value={activeTask} onTaskChange={id => { if (id !== 'mcp-add' && editingServer) discardDraft(); setActiveTask(id ?? null) }} tasks={[
+    {selectedServer ? <SettingsTaskWorkspace value={selectedServer.id} onTaskChange={id => setSelectedServerId(id ?? null)} tasks={[{
+      id: selectedServer.id, title: selectedServer.name, description: t('mcp.showDetails'), icon: 'mcp-network', content: <>
+        <IsleButton label={t('settingsSubsystem.configuration')} disabled={saving || pendingServerId !== null || installingPresetId !== null} onPress={() => { setEditingServer(selectedServer); draftServerId.current = selectedServer.id; setName(selectedServer.name); setUrl(selectedServer.url); setSelectedServerId(null); setActiveTask('mcp-add') }} />
+        <McpServerDetails key={selectedServer.id} busy={pendingServerId !== null} server={selectedServer} onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
+      </>,
+    }]} /> : <SettingsTaskWorkspace value={activeTask} onTaskChange={id => { if (id !== 'mcp-add' && editingServer) discardDraft(); setActiveTask(id ?? null) }} tasks={[
       { id: 'mcp-add', title: t(editingServer ? 'settingsSubsystem.configuration' : 'mcp.addServer'), description: t('settingsUx.mcpAddHint'), icon: 'add', content: <SettingsSection id="mcp-add"><View style={{ gap: 10 }}>
           <View style={{ gap: 10 }}>
             <IsleField label={t('mcp.name')} inputProps={{ editable: !saving, value: name, onChangeText: setName, placeholder: 'Local tools' }} />
@@ -473,9 +476,6 @@ function McpServerDetails({
   const [toolsOpen, setToolsOpen] = useState(false)
   const [resourcesOpen, setResourcesOpen] = useState(false)
   const [promptsOpen, setPromptsOpen] = useState(false)
-  const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
-  const cardSurface = colors.ui.liquidGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
-  const cardBorder = colors.ui.liquidGlass ? colors.ui.actionBar.itemBorder : colors.ui.monet ? colors.material.stroke : colors.ui.semantic.chrome.border
   const mutedSurface = colors.ui.liquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const resourceItems = server.resources.map((resource) => ({
     key: resource.uri,
@@ -507,21 +507,7 @@ function McpServerDetails({
     </View>
   )
   return (
-    <View
-      style={{
-        borderRadius: Math.min(colors.ui.radius.panel, 8),
-        padding: 9,
-        gap: 9,
-        backgroundColor: cardSurface,
-        borderWidth: subtleBorderWidth,
-        borderColor: cardBorder,
-        shadowColor: colors.ui.control.shadow,
-        shadowOpacity: 0,
-        shadowRadius: 0,
-        shadowOffset: { width: 0, height: 0 },
-        elevation: 0,
-      }}
-    >
+    <WorkspaceSurface role="reading" testID={`mcp-server-detail-${server.id}`} style={{ padding: 12, gap: 12 }}>
       <IsleListItem
         title={server.name}
         description={[server.url, t('mcp.refreshSummary', { tools: server.tools.length, resources: server.resources.length, prompts: server.prompts.length })].join('\n')}
@@ -532,7 +518,7 @@ function McpServerDetails({
       {actions}
       <Text style={{ color: colors.textSecondary }}>{t('settingsSubsystem.approvedTools', { count: server.tools.filter(tool => tool.enabled && server.approvedToolNames.includes(tool.name)).length, total: server.tools.length })}</Text>
       <View style={{ gap: 8 }}>
-          <View style={{ borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), padding: 8, gap: 4, backgroundColor: mutedSurface, borderWidth: subtleBorderWidth, borderColor: pluginValidation.ok ? cardBorder : colors.ui.tone.warning.border }}>
+          <View style={{ borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), padding: 8, gap: 4, backgroundColor: mutedSurface, borderWidth: StyleSheet.hairlineWidth, borderColor: pluginValidation.ok ? colors.ui.section.divider : colors.ui.tone.warning.border }}>
             <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>{t('mcp.pluginManifest')}</Text>
             <Text style={{ color: pluginValidation.ok ? colors.textTertiary : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{pluginPreview}</Text>
           </View>
@@ -599,7 +585,7 @@ function McpServerDetails({
             </MotiView>
           ) : null}
       </View>
-    </View>
+    </WorkspaceSurface>
   )
 }
 

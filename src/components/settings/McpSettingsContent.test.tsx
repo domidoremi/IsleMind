@@ -1,6 +1,7 @@
 import { act, fireEvent, render } from '@testing-library/react-native'
 import { McpSettingsContent } from './McpSettingsContent'
 import { SettingsEditBoundary } from './SettingsEditBoundary'
+import { SettingsSectionContext, type SettingsTaskNavigation } from './SettingsSection'
 import { McpCatalogConflictError } from '@/modules/integrations/mcpCatalogPolicy'
 const mockUpsert = jest.fn()
 const mockRemove = jest.fn()
@@ -319,9 +320,30 @@ it('reads a fresh catalog after save so invalidating the initial read does not l
   await fireEvent.changeText(screen.getByLabelText('mcp.url'), 'https://example.invalid/current')
   await fireEvent.press(screen.getByLabelText('settingsWorkspace.save'))
   await act(() => initial.resolve([]))
-  await fireEvent.press(screen.getByLabelText('settingsUx.allOptions'))
   await fireEvent.press(screen.getByLabelText('common.back'))
   expect(screen.queryByText('common.loading')).toBeNull()
   expect(screen.getByText('remote: 1 enabled, 0 disabled')).toBeTruthy()
   expect(mockList).toHaveBeenCalledTimes(2)
+})
+
+it('uses the connection name in shared task navigation and restores its list on Back without connecting', async () => {
+  mockTarget = undefined
+  mockServers = [remoteServer()]
+  const resetScroll = jest.fn()
+  let navigation: SettingsTaskNavigation | undefined
+  const setTaskNavigation = jest.fn((value: SettingsTaskNavigation | undefined) => { navigation = value })
+  const screen = await render(<SettingsSectionContext.Provider value={{ register: jest.fn(), resetScroll, setTaskNavigation }}>
+    <SettingsEditBoundary><McpSettingsContent /></SettingsEditBoundary>
+  </SettingsSectionContext.Provider>)
+  await fireEvent.press(screen.getByLabelText('Example MCP'))
+  expect(navigation?.title).toBe('Example MCP')
+  expect(resetScroll).toHaveBeenLastCalledWith(false)
+  expect(screen.getByTestId('mcp-server-detail-remote')).toBeTruthy()
+  await act(() => navigation?.onBack())
+  expect(navigation).toBeUndefined()
+  expect(resetScroll).toHaveBeenLastCalledWith(true)
+  expect(screen.queryByTestId('mcp-server-detail-remote')).toBeNull()
+  expect(screen.getByLabelText('Example MCP')).toBeTruthy()
+  expect(mockRefreshManifest).not.toHaveBeenCalled()
+  expect(mockUpsert).not.toHaveBeenCalled()
 })

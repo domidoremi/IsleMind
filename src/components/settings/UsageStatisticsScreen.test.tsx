@@ -12,6 +12,9 @@ const mockToast = jest.fn()
 const mockFileWrite = jest.fn()
 let mockDirectory: string | undefined
 const mockProviders: unknown[] = []
+const mockConversations: unknown[] = []
+jest.mock('expo-router', () => ({ router: { push: jest.fn() } }))
+jest.mock('@/store/chatStore', () => ({ useChatStore: (select: any) => select({ conversations: mockConversations }) }))
 jest.mock('./UsageStatisticsContent', () => ({ USAGE_PRICING_CONFLICT: 'usage_pricing_conflict', UsageStatisticsContent: (props: UsageStatisticsContentProps) => { mockContent = props; return null } }))
 jest.mock('@/bootstrap/usageStatisticsRuntime', () => ({
   listUsagePricingEntries: async () => mockEntries,

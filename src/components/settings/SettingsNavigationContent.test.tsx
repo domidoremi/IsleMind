@@ -135,7 +135,7 @@ it('manages existing connections without forcing import when no default is selec
 it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)('%s exposes one task area without losing any destination or connection setup semantics', async family => {
   mockTheme = family
   const screen = await render(<SettingsNavigationContent />)
-  expect(screen.getAllByTestId(/^settings-entry-/)).toHaveLength(4)
+  expect(screen.getAllByTestId(/^settings-entry-/)).toHaveLength(3)
   expect(screen.queryByTestId('settings-entry-danger')).toBeNull()
   const all = new Set<string>()
   for (const area of SETTINGS_TASK_AREAS) {
@@ -144,6 +144,7 @@ it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as 
     screen.getAllByTestId(/^settings-entry-/).forEach(row => all.add(row.props.testID))
   }
   expect(all.size).toBe(18)
+  expect(all.has('settings-entry-routing')).toBe(true)
   expect(router.push).not.toHaveBeenCalled()
   await fireEvent.press(screen.getByTestId('settings-entry-providers'))
   expect(router.push).toHaveBeenLastCalledWith({ pathname: '/settings/providers', params: { setup: 'add', returnTo: 'settings' } })
