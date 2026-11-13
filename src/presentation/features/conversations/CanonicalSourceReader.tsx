@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, FlatList, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
@@ -9,6 +9,7 @@ import type { MessageCitation } from '@/types/contextContracts'
 import { WorkspaceSurface } from '@/presentation/layout/WorkspaceSurface'
 import { useWorkspaceLayout } from '@/presentation/layout/useWorkspaceLayout'
 import { useCanonicalSourceController } from './useCanonicalSourceController'
+import { useSourceReaderPosition, type SourceReadingSession } from './useSourceReadingSession'
 
 export interface CanonicalSourceReaderProps {
   conversationId: string
@@ -17,10 +18,11 @@ export interface CanonicalSourceReaderProps {
   citation: MessageCitation
   readLocalSource: KnowledgeLocalSourceReader['readLocalSource']
   header: ReactNode
+  reading?: SourceReadingSession
 }
 
 /** A disposable, scoped read projection; captured citation text is never rewritten. */
-export function CanonicalSourceReader({ conversationId, messageId, messageTimestamp, citation, readLocalSource, header }: CanonicalSourceReaderProps) {
+export function CanonicalSourceReader({ conversationId, messageId, messageTimestamp, citation, readLocalSource, header, reading }: CanonicalSourceReaderProps) {
   const { colors } = useAppTheme()
   const { t, i18n } = useTranslation()
   const layout = useWorkspaceLayout()
@@ -30,6 +32,9 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
   const detailsIdentity = JSON.stringify([conversationId, messageId, citation.id])
   const detailsOpen = detailsKey === detailsIdentity
   const typography = colors.design!.semantic.typography
+  const list = useRef<FlatList>(null)
+  const readingKey = JSON.stringify(['saved', conversationId, messageId, citation.id, updatedAt, showAll, status])
+  const reader = useSourceReaderPosition(reading, readingKey, status !== 'loading', offset => list.current?.scrollToOffset({ offset, animated: false }))
   const textStyle = { ...typography.body, color: colors.text }
   const captionStyle = { ...typography.caption, color: colors.textSecondary }
 
@@ -46,7 +51,7 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
           {status !== 'unlinked' ? <IsleButton compact label={t('source.refreshSavedSource')} onPress={controller.refreshSource} /> : null}
         </View>
       </View>
-    <FlatList
+    <FlatList key={readingKey} ref={list} {...reader}
       testID="canonical-source-reader"
       style={{ flex: 1, minWidth: 0, minHeight: 0 }}
       data={controller.visibleChunks}

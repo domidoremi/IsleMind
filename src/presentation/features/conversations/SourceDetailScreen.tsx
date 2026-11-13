@@ -34,6 +34,7 @@ import { PageFeedbackRegion } from '@/components/ui/PageFeedback'
 import { IsleEmptyState } from '@/components/ui/isle/EmptyState'
 import { WorkspaceSurface } from '@/presentation/layout/WorkspaceSurface'
 import { WebSourceSnapshot } from './WebSourceSnapshot'
+import { useSourceReadingSession, type SourceReadingSession } from './useSourceReadingSession'
 
 type ProcessTraceGroupKey = 'agentPlan' | 'context' | 'search' | 'toolActivity' | 'agentSynthesis' | 'agentRecovery' | 'other'
 
@@ -67,6 +68,8 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
   const webUrl = mode === 'source' ? safeHttpUrl(rawWebUrl) : undefined
   // A new target or Refresh needs fresh state and callback ownership, not just a new WebView URI.
   const webReaderKey = JSON.stringify([conversationId, messageId, citation?.id, webUrl, webKey])
+  const readingIdentity = JSON.stringify([conversationId, messageId, selectedCitationId, mode, webUrl, webKey])
+  const { session: reading } = useSourceReadingSession(readingIdentity)
   const externalUrl = webUrl ?? (mode === 'source' && citation ? safeHttpUrl(citation.url) ?? safeHttpUrl(citation.sourceUri) : undefined)
   const processBackgroundState: IsleBackgroundState = traces.some((trace) => trace.status === 'error')
     ? 'error'
@@ -194,7 +197,7 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
           ) : webUrl ? (
             <WebReader key={webReaderKey} url={webUrl} citation={citation} context={providerPassages} previewSupported={webPreviewSupported} onOpenExternal={openExternal} onBackgroundStateChange={setReaderBackgroundState} />
           ) : (
-            <LocalSourceReader citation={citation} context={providerPassages} conversationId={conversationId} messageId={messageId} messageTimestamp={message?.timestamp} readLocalSource={readLocalSource} />
+            <LocalSourceReader reading={reading} citation={citation} context={providerPassages} conversationId={conversationId} messageId={messageId} messageTimestamp={message?.timestamp} readLocalSource={readLocalSource} />
           )}
         </RenderGuard>
         </View>
@@ -305,10 +308,11 @@ function WebReader({
   )
 }
 
-function LocalSourceReader({ citation, conversationId, messageId, messageTimestamp, readLocalSource, context }: {
+function LocalSourceReader({ citation, conversationId, messageId, messageTimestamp, readLocalSource, context, reading }: {
   citation?: MessageCitation; conversationId?: string; messageId?: string; messageTimestamp?: number
   readLocalSource: KnowledgeLocalSourceReader['readLocalSource']
   context?: ReactNode
+  reading?: SourceReadingSession
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -321,7 +325,7 @@ function LocalSourceReader({ citation, conversationId, messageId, messageTimesta
       <IsleEmptyState title={t('source.noSource')} description={t('source.noSourceMessage')} icon="source" />
     )
   }
-  return <CanonicalSourceReader citation={citation} conversationId={conversationId} messageId={messageId} messageTimestamp={messageTimestamp} readLocalSource={readLocalSource} header={
+  return <CanonicalSourceReader reading={reading} citation={citation} conversationId={conversationId} messageId={messageId} messageTimestamp={messageTimestamp} readLocalSource={readLocalSource} header={
     <WorkspaceSurface role="support" testID="source-captured-evidence" style={{ gap: 12 }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
         <Text style={[colors.design!.semantic.typography.label, { color: colors.textSecondary, flex: 1 }]}>{t('source.capturedCitation')}</Text>
