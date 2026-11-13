@@ -143,7 +143,8 @@ function segmentSentences(text: string): string[] {
       if (result.length) return result
     } catch {}
   }
-  return (text.match(/[^。！？!?;\n]+[。！？!?;；]?|\n+/g) ?? [text]).filter((item) => item.trim())
+  // Separators belong to the saved text; dropping them merges headings with body paragraphs.
+  return text.match(/[^。！？!?;\n]+[。！？!?;；]?|\n+/g) ?? [text]
 }
 
 function buildChunkMetadata(content: string, title: string): Pick<
