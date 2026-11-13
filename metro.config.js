@@ -1,5 +1,8 @@
 const { getDefaultConfig } = require('expo/metro-config')
 const path = require('path')
+const { installWebIsolationHeaders } = require('./scripts/metro-web-isolation.cjs')
+
+installWebIsolationHeaders()
 
 // Both native and Web package the same validated, offline documentation source.
 require('./scripts/user-guide').writeGuide()
