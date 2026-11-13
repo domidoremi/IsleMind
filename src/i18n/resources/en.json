@@ -1514,6 +1514,8 @@
     "providerPassageRange": "Part index {{part}} · bytes {{start}}–{{end}} (end exclusive)",
     "currentSavedSource": "Current saved source",
     "currentSavedSourceNotice": "This is the text retained now, not a historical copy of the source when cited. Saved sections may overlap; original files and formatting are not reconstructed.",
+    "currentSavedSourceSummary": "The currently saved text may differ from the cited version.",
+    "savedSourceDetails": "Source info",
     "savedUpdatedAt": "Saved source updated: {{date}}",
     "updatedAfterResponse": "The saved source was updated after this message's timestamp. It may differ from the cited version.",
     "loadingSavedSource": "Loading saved source",

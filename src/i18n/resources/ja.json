@@ -1514,6 +1514,8 @@
     "providerPassageRange": "部分インデックス {{part}} · バイト {{start}}–{{end}}（終了位置は含まない）",
     "currentSavedSource": "現在保存されているソース",
     "currentSavedSourceNotice": "現在保持されているテキストであり、引用当時の履歴コピーではありません。区間が重複する場合があり、元のファイルや書式を再現するものではありません。",
+    "currentSavedSourceSummary": "現在の保存テキストは引用時と異なる場合があります。",
+    "savedSourceDetails": "ソース情報",
     "savedUpdatedAt": "ソースの更新日時：{{date}}",
     "updatedAfterResponse": "保存されたソースはこのメッセージの時刻より後に更新されています。引用当時の内容とは異なる可能性があります。",
     "loadingSavedSource": "保存されたソースを読み込み中",

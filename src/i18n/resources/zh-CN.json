@@ -1514,6 +1514,8 @@
     "providerPassageRange": "内容部分索引 {{part}} · 字节 {{start}}–{{end}}（不含结束位置）",
     "currentSavedSource": "当前保存的来源",
     "currentSavedSourceNotice": "这是当前保留的文本，并非引用当时的历史副本。文本分段可能重叠，不代表重建了原始文件及其格式。",
+    "currentSavedSourceSummary": "当前保存的文本可能与引用时不同。",
+    "savedSourceDetails": "来源信息",
     "savedUpdatedAt": "来源更新时间：{{date}}",
     "updatedAfterResponse": "保存的来源在此消息的时间戳之后更新过，可能与引用当时的版本不同。",
     "loadingSavedSource": "正在读取保存的来源",

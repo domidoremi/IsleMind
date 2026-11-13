@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ActivityIndicator, FlatList, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
-import { IsleButton, IsleChip } from '@/components/ui/isle'
+import { IsleButton, IsleChip, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import type { KnowledgeLocalSourceReader } from '@/modules/knowledge'
 import type { MessageCitation } from '@/types/contextContracts'
@@ -26,6 +26,9 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
   const layout = useWorkspaceLayout()
   const controller = useCanonicalSourceController({ conversationId, messageId, citation, readLocalSource })
   const { document, memory, chunks, citedChunk, showAll, updatedAt, status } = controller
+  const [detailsKey, setDetailsKey] = useState<string>()
+  const detailsIdentity = JSON.stringify([conversationId, messageId, citation.id])
+  const detailsOpen = detailsKey === detailsIdentity
   const typography = colors.design!.semantic.typography
   const textStyle = { ...typography.body, color: colors.text }
   const captionStyle = { ...typography.caption, color: colors.textSecondary }
@@ -54,12 +57,20 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
       ListHeaderComponent={
         <View style={{ gap: 12 }}>
           <Text selectable accessibilityRole="header" style={[typography.headline, { color: colors.text }]}>{document?.title ?? citation.title}</Text>
-          <Text style={captionStyle}>{t('source.currentSavedSourceNotice')}</Text>
-            {updatedAt !== undefined ? (
-              <Text style={captionStyle}>
-                {t('source.savedUpdatedAt', { date: new Date(updatedAt).toLocaleString(i18n.language) })}
-              </Text>
-            ) : null}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={[captionStyle, { flex: 1, minWidth: 0 }]}>{t('source.currentSavedSourceSummary')}</Text>
+          <IslePressable testID="source-reader-details" accessibilityRole="button" accessibilityLabel={t('source.savedSourceDetails')}
+            accessibilityState={{ expanded: detailsOpen }} onPress={() => setDetailsKey(detailsOpen ? undefined : detailsIdentity)}
+            style={{ minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center', paddingHorizontal: 4 }}>
+            <Text style={[typography.caption, { color: colors.textSecondary }]}>{t('source.savedSourceDetails')} {detailsOpen ? '−' : '+'}</Text>
+          </IslePressable>
+          </View>
+          {detailsOpen ? <View testID="source-reader-metadata" style={{ gap: 8 }}>
+            <Text style={captionStyle}>{t('source.currentSavedSourceNotice')}</Text>
+            {updatedAt !== undefined ? <Text style={captionStyle}>
+              {t('source.savedUpdatedAt', { date: new Date(updatedAt).toLocaleString(i18n.language) })}
+            </Text> : null}
+          </View> : null}
             {updatedAt !== undefined && updatedAt > messageTimestamp ? (
               <Text accessibilityRole="alert" style={captionStyle}>{t('source.updatedAfterResponse')}</Text>
             ) : null}
