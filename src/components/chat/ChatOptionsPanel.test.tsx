@@ -17,9 +17,10 @@ const mockListModels = jest.fn(async (_input: { providerId: string; modelId: str
 const mockRefresh = jest.fn()
 const mockRetest = jest.fn()
 const mockUpdateConversation = jest.fn()
+const mockI18n = { language: 'en', resolvedLanguage: undefined as string | undefined }
 jest.mock('react-i18next', () => {
   const t = (key: string) => key
-  return { useTranslation: () => ({ t }) }
+  return { useTranslation: () => ({ t, i18n: mockI18n }) }
 })
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }))
 jest.mock('expo-network', () => ({ useNetworkState: () => mockNetwork }))
@@ -118,6 +119,8 @@ it('selects an explicit routing plan and keeps the active snapshot after its tem
 beforeEach(() => {
   jest.clearAllMocks()
   mockThemeId = 'minimal'
+  mockI18n.language = 'en'
+  mockI18n.resolvedLanguage = undefined
   mockNetwork = { isConnected: true, isInternetReachable: true }
   mockListModels.mockResolvedValue([])
   saveSettings = jest.fn(async () => undefined)
@@ -289,6 +292,37 @@ it('keeps successful evidence visible when another target read fails', async () 
   await waitFor(() => expect(within(view.getByTestId(optionId(a.id))).getByText('modelStatus.readFailed')).toBeTruthy())
   expect(within(view.getByTestId(optionId(b.id))).getByText(/modelStatus\.available/)).toBeTruthy()
   expect(view.getByTestId(optionId(b.id)).props.accessibilityState.disabled).toBe(false)
+})
+
+it('updates evidence dates when the app language changes without rereading model status', async () => {
+  const connections = [a, b]
+  const observedAt = 0
+  const updatedAt = Date.UTC(2026, 10, 12, 7, 8, 9)
+  mockListModels.mockImplementation(async input => [{
+    ...evidence(input.providerId === a.id ? a : b, input.modelId),
+    updatedAt,
+    ...(input.providerId === a.id ? { evidence: {
+      schema: 'islemind.model-availability-evidence.v1' as const, source: 'generation' as const, observedAt,
+      evidence: { kind: 'operational' as const, reason: 'server_error' as const },
+    } } : {}),
+  }])
+  const { view, chat } = await panel({ providers: connections })
+  await waitFor(() => expect(within(view.getByTestId(optionId(a.id)))
+    .getByText(new RegExp(new Date(observedAt).toLocaleString('en').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeTruthy())
+  const reads = mockListModels.mock.calls.length
+  for (const language of ['ja', 'zh-CN', 'en']) {
+    mockI18n.language = language
+    mockI18n.resolvedLanguage = language
+    await view.rerender(<ChatOptionsPanel conversation={chat} provider={a} switchableProviders={connections}
+      colors={getColors('light', mockThemeId)} maxHeight={780} placement="sheet" scope="essential"
+      onSwitchModel={jest.fn()} onClose={jest.fn()} />)
+    for (const [connection, date] of [[a, observedAt], [b, updatedAt]] as const) {
+      const expected = new Date(date).toLocaleString(language)
+      expect(within(view.getByTestId(optionId(connection.id)))
+        .getByText(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeTruthy()
+    }
+  }
+  expect(mockListModels).toHaveBeenCalledTimes(reads)
 })
 
 it('ignores late evidence from an obsolete search instead of applying it to the new page', async () => {

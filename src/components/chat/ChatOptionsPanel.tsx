@@ -93,7 +93,8 @@ export function ChatOptionsPanel({
   embedded?: boolean
   scope?: 'essential' | 'full'
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const evidenceLocale = i18n.resolvedLanguage ?? i18n.language
   const { isLiquidGlass, isMonet, canonicalThemeId } = useAppTheme()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
   const updateConversation = useChatStore((state) => state.updateConversation)
@@ -216,11 +217,11 @@ export function ChatOptionsPanel({
             ...projection.labels.map((label) => t(`modelStatus.${label}`))].filter(Boolean).join(' · '),
           evidenceLabel: current && !current.invalidated ? [credentialSourceLabel(current.credentialSource, modelProvider, t),
             current.evidence ? t(`modelStatus.source.${current.evidence.source}`) : '',
-            new Date(current.evidence?.observedAt ?? current.updatedAt).toLocaleString()].filter(Boolean).join(' · ')
+            new Date(current.evidence?.observedAt ?? current.updatedAt).toLocaleString(evidenceLocale)].filter(Boolean).join(' · ')
             : t(availabilitySnapshot.request === availabilityRequest && availabilitySnapshot.failedKeys.has(getSettingsModelIdentityKey(modelProvider.id, upstreamModel)) ? 'modelStatus.readFailed' : 'modelStatus.noEvidence'),
           blockedReason: projection.blockedReason ? t(`modelStatus.${projection.blockedReason}`) : undefined,
         }
-      })), [pageModelCandidates, modelDisplayAliases, favoriteKeys, availabilityRows, availabilitySnapshot, availabilityRequest, network.isConnected, network.isInternetReachable, settings, conversation.providerId, conversation.model, conversation.messages, t])
+      })), [pageModelCandidates, modelDisplayAliases, favoriteKeys, availabilityRows, availabilitySnapshot, availabilityRequest, network.isConnected, network.isInternetReachable, settings, conversation.providerId, conversation.model, conversation.messages, t, evidenceLocale])
   const selectedModelGroups = useMemo(() => orderedProviders.flatMap((item) => {
     const groups = groupModelPickerItemsByToken(item, selectedModels.filter((model) => model.provider.id === item.id), t)
     const isCurrent = (model: ModelPickerItem) => model.provider.id === conversation.providerId && model.id === conversation.model
