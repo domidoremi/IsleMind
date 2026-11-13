@@ -42,7 +42,7 @@ export function DocumentSaveStatus({ status }: { status: 'new' | 'saving' | 'uns
   return <View testID="document-save-status-slot" accessibilityState={{ busy: status === 'saving' }} style={styles.saveStatus}>
     <View pointerEvents="none" accessible={false} importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', left: 0, top: 6, width: 5, height: 5, borderRadius: 3, backgroundColor: status === 'saved' ? colors.ui.tone.success.foreground : status === 'saving' ? colors.ui.icon.accentForeground : colors.textTertiary }} />
     {/* Reserve the longest status so saving does not shift the title. */}
-    <Text accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+    <Text aria-hidden accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
       style={[textStyle, styles.measurement]}>{t('documents.saved')}</Text>
     <Text testID="document-save-status" accessibilityLiveRegion="polite" style={[textStyle, StyleSheet.absoluteFill]}>{t(status === 'new' ? 'documents.newDraft' : `documents.${status}`)}</Text>
   </View>
