@@ -28,7 +28,9 @@ export function useCanonicalSourceController({ conversationId, messageId, citati
     const reference: KnowledgeLocalSourceReference | undefined = sourceType === 'knowledge' && documentId
       ? { type: 'knowledge', documentId }
       : sourceType === 'memory' ? { type: 'memory', memoryId: sourceId, conversationId } : undefined
-    setState({ key, status: reference ? 'loading' : 'unlinked' })
+    // Revalidate a retained reader without unmounting its measured list.
+    setState(previous => previous?.key === key && previous.status === 'ready'
+      ? previous : { key, status: reference ? 'loading' : 'unlinked' })
     if (reference) void (async () => {
       try {
         const source = await readLocalSource(reference, { signal: controller.signal })
