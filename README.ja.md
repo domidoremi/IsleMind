@@ -63,7 +63,7 @@ LLM は次の操作を提案し、Harness がコンテキスト・ツール範�
 - ナレッジとメモリ件数の英語表記で、単数形と複数形を正しく使い分けます。
 - 言語変更の確認を、新しく選択した言語で表示します。
 
-[更新内容の全文](docs/release/v1.1.10.md)
+[更新内容の全文](docs/release/v1.1.10.md) · [GitHub リリース](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.10)
 
 ### APK バリアント
 

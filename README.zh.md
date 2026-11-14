@@ -67,7 +67,7 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 - 知识与记忆的英文数量描述正确区分单复数。
 - 语言切换确认使用新选择的语言。
 
-[完整更新说明](docs/release/v1.1.10.md)
+[完整更新说明](docs/release/v1.1.10.md) · [GitHub 发布页](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.10)
 
 ### APK 变体
 

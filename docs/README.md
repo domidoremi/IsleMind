@@ -29,9 +29,10 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.9 and 1.1.10 source releases](./release/source-releases-1.1.9-1.1.10-2026-11-15.md): published GitHub Releases, immutable version tags, matching three-language notes, and workflow checks.
 - [1.1.10 source version checkpoint](./release/source-version-1.1.10-2026-11-14.md): five verified pushes, synchronized source metadata and documentation, and scoped browser/Android evidence.
 - [1.1.9 source version checkpoint](./release/source-version-1.1.9-2026-11-14.md): accumulated verified changes, version metadata, documentation checks, and the current qualification scope.
-- [Source version cadence](./release/source-version-cadence.md): advance the source version after every five verified feature or optimization pushes, with a durable counting checkpoint.
+- [Source version cadence](./release/source-version-cadence.md): advance the source version and publish its GitHub Release after every five verified feature or optimization pushes, with a durable counting checkpoint.
 - [1.1.8 source release checkpoint](./release/source-release-1.1.8-2026-11-06.md): release scope, the published UI dependency revision, the original qualification cutoff, and subsequent Android verification using the existing isolated package.
 - [IsleMind upgrade implementation and verification](./release/islemind-upgrade-2026-11-06.md): coordinated page themes, provider/routing/request workflows, architecture checks, local screenshot atlases, and focused Android qualification. The [ongoing local plan](./plans/islemind-upgrade-2026-11-06.md) records completed batches and future evaluated mechanisms.
 - [Tool discovery implementation](./release/tool-discovery-implementation-2026-11-06.md): frozen-catalog discovery, declaration character targets, original authorization and recovery, five-theme settings/receipts, native choice and keyboard fixes, and isolated Android evidence.

@@ -11,6 +11,7 @@
   ],
   "sourceOnly": true,
   "buildsAllowed": false,
+  "publishGithubRelease": true,
   "sourceVersion": "1.1.10",
   "sourceAndroidVersionCode": 135,
   "countedThroughCommit": "ad4df3dbe022b69b444daaf801f7e6814eda65f9",
@@ -28,5 +29,12 @@
       "aeff736499cd934162f99118ba87723a672ef31c",
       "ad4df3dbe022b69b444daaf801f7e6814eda65f9"
     ]
+  },
+  "lastPublication": {
+    "date": "2026-11-15",
+    "tag": "v1.1.10",
+    "sourceCommit": "352fd21d81c7f9a0da52d4b0426edfd3c5f33f4d",
+    "url": "https://github.com/domidoremi/IsleMind/releases/tag/v1.1.10",
+    "alsoPublishedTag": "v1.1.9"
   }
 }

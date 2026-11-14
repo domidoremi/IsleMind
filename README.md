@@ -66,7 +66,7 @@ The source version may lead the APK candidate. The website and update catalog cu
 - Use correct singular and plural wording for knowledge and memory counts in English.
 - Show language confirmations in the newly selected language.
 
-[Full release notes](docs/release/v1.1.10.md)
+[Full release notes](docs/release/v1.1.10.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.10)
 
 ### APK variants
 
