@@ -3667,6 +3667,8 @@
     "knowledgeSource": "Source {{source}}",
     "knowledgeError": "Error: {{error}}",
     "chunkDescription": "{{count}} chunks · {{kb}} KB",
+    "chunkDescription_one": "{{count}} chunk · {{kb}} KB",
+    "chunkDescription_other": "{{count}} chunks · {{kb}} KB",
     "clearTitle": "Clear {{title}}",
     "clearConfirm": "Clear everything?",
     "clear": "Clear",
@@ -4864,5 +4866,9 @@
     "lanSummary": "This is a local or LAN model connection. The app can try it whenever the device can reach the service, even if Wi-Fi has no internet access.",
     "magpieShort": "Magpie gateway · One connection, multiple model sources",
     "lanShort": "Local model connection · Can work without internet"
+  },
+  "contextExperience": {
+    "savedSections_one": "{{count}} saved section",
+    "savedSections_other": "{{count}} saved sections"
   }
 }
