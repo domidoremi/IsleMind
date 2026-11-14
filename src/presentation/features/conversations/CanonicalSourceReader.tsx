@@ -41,9 +41,9 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
   return (
     <WorkspaceSurface role="reading" testID="source-local-workspace" style={{ flex: 1, minHeight: 0, marginHorizontal: 12, marginTop: 12, marginBottom: 16, padding: 16, gap: 12 }}>
       <View testID="source-reader-commands" style={{ minWidth: 0, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <Text testID="source-reader-label" style={[typography.label, {
+        {status !== 'ready' ? <Text testID="source-reader-label" style={[typography.label, {
           color: colors.textSecondary, flexGrow: 1, flexBasis: layout.wide ? 'auto' : '100%',
-        }]}>{t('source.currentSavedSource')}</Text>
+        }]}>{t('source.currentSavedSource')}</Text> : null}
         <View testID="source-reader-actions" style={{ minWidth: 0, maxWidth: '100%', flexShrink: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {citedChunk && chunks.length > 1 ? <IsleButton compact
             label={t(showAll ? 'source.showCitedSection' : 'source.showAllSavedSections', { count: chunks.length })}
@@ -62,8 +62,8 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
       ListHeaderComponent={
         <View style={{ gap: 12 }}>
           <Text selectable accessibilityRole="header" style={[typography.headline, { color: colors.text }]}>{document?.title ?? citation.title}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={[captionStyle, { flex: 1, minWidth: 0 }]}>{t('source.currentSavedSourceSummary')}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+          {!detailsOpen ? <Text style={[captionStyle, { flex: 1, minWidth: 0 }]}>{t('source.currentSavedSourceSummary')}</Text> : null}
           <IslePressable testID="source-reader-details" accessibilityRole="button" accessibilityLabel={t('source.savedSourceDetails')}
             accessibilityState={{ expanded: detailsOpen }} onPress={() => setDetailsKey(detailsOpen ? undefined : detailsIdentity)}
             style={{ minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center', paddingHorizontal: 4 }}>
