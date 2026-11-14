@@ -1815,7 +1815,7 @@ it('keeps settings traversal busy while a cancelled rebuild and its readback are
   let finish!: () => void
   mockRebuild.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
-  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
   await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Retained unsaved text')
   await act(async () => { mockImportPresses['contextPanel.knowledgeRecoveryRebuild']() })
   await act(async () => { mockImportPresses['contextPanel.cancelKnowledgeRebuild']() })
@@ -1934,7 +1934,7 @@ it.each(['file', 'text'] as const)('contains %s import failures, retains drafts,
   const operation = kind === 'file' ? mockImportFile : mockImportPlainText
   operation.mockRejectedValueOnce(new Error('The document text is invalid.'))
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
-  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
   await fireEvent.changeText(screen.getByLabelText('contextPanel.knowledgeTitle'), 'Retained title')
   await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Retained text')
   const button = () => screen.getByRole('button', { name: kind === 'file' ? 'contextPanel.importKnowledgeFile' : 'contextPanel.importPastedText' })
@@ -2332,7 +2332,7 @@ it.each(['file', 'text'] as const)('suppresses a late %s import result after unm
   operation.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ ok: true, message: 'Already persisted' }) }))
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" focus="import" /></SettingsEditBoundary>)
   if (kind === 'text') {
-    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
     await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Owned import draft')
   }
   await fireEvent.press(screen.getByLabelText(kind === 'file' ? 'contextPanel.importKnowledgeFile' : 'contextPanel.importPastedText'))
@@ -2349,7 +2349,7 @@ it('retains a newer knowledge text draft when an earlier import completes', asyn
   let finish!: () => void
   mockImportPlainText.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ ok: true, message: 'Imported earlier draft' }) }))
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
-  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
   await fireEvent.changeText(screen.getByLabelText('contextPanel.knowledgeTitle'), 'Earlier title')
   await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Earlier text')
   await fireEvent.press(screen.getByLabelText('contextPanel.importPastedText'))
@@ -2365,7 +2365,7 @@ it('retains a newer knowledge text draft when an earlier import completes', asyn
 
 it.each(['changed', 'changed-and-restored'])('does not import a retained text callback after its draft is %s', async change => {
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
-  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
   await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Reviewed text')
   const earlier = mockImportPresses['contextPanel.importPastedText']
   await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Replacement text')
@@ -2382,7 +2382,7 @@ it('preserves a changed-and-restored text draft when its earlier import complete
   let finish!: () => void
   mockImportPlainText.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ ok: true, message: 'Earlier draft imported' }) }))
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
-  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
   await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Reviewed text')
   await fireEvent.press(screen.getByLabelText('contextPanel.importPastedText'))
   await waitFor(() => expect(mockImportPlainText).toHaveBeenCalledTimes(1))
@@ -2398,7 +2398,7 @@ it.each(['file', 'text'] as const)('does not announce %s import success while sa
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
   await waitFor(() => expect(mockDocuments).toHaveBeenCalledTimes(1))
   if (kind === 'text') {
-    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
     await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Saved text')
   }
   let fail!: (error: Error) => void
@@ -2470,7 +2470,7 @@ it.each(['file', 'text'] as const)('waits for successful %s readback before succ
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
   await waitFor(() => expect(mockDocuments).toHaveBeenCalledTimes(1))
   if (kind === 'text') {
-    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
     await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Saved text')
   }
   let finish!: (documents: KnowledgeDocument[]) => void
@@ -2538,7 +2538,7 @@ it.each(['file', 'text'] as const)('keeps an ordinary skipped %s import as a toa
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
   await waitFor(() => expect(mockDocuments).toHaveBeenCalledTimes(1))
   if (kind === 'text') {
-    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
     await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Retained local draft')
   }
   await fireEvent.press(screen.getByLabelText(kind === 'file' ? 'contextPanel.importKnowledgeFile' : 'contextPanel.importPastedText'))
@@ -2577,7 +2577,7 @@ it.each(['file', 'text'] as const)('cancels the %s import without releasing the 
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
   await waitFor(() => expect(mockDocuments).toHaveBeenCalledTimes(1))
   if (kind === 'text') {
-    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+    await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
     await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Retained draft')
   }
   await fireEvent.press(screen.getByLabelText(kind === 'file' ? 'contextPanel.importKnowledgeFile' : 'contextPanel.importPastedText'))
@@ -2677,7 +2677,7 @@ it('cancels before provider resolution without starting the import adapter or di
   mockPrimaryProvider.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve(undefined) }))
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
   await waitFor(() => expect(mockDocuments).toHaveBeenCalledTimes(1))
-  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
   await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Owned text')
   await fireEvent.press(screen.getByLabelText('contextPanel.importPastedText'))
   await waitFor(() => expect(mockPrimaryProvider).toHaveBeenCalledTimes(1))
@@ -2698,7 +2698,7 @@ it('waits for a rejected cancelled text adapter before reading back and keeps it
   mockImportPlainText.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
   const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
   await waitFor(() => expect(mockDocuments).toHaveBeenCalledTimes(1))
-  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge\./ }))
+  await fireEvent.press(screen.getByRole('button', { name: /^contextPanel.pasteTextKnowledge(?:\.|$)/ }))
   await fireEvent.changeText(screen.getByLabelText('contextPanel.body'), 'Owned text')
   await fireEvent.press(screen.getByLabelText('contextPanel.importPastedText'))
   await waitFor(() => expect(mockImportPlainText).toHaveBeenCalledTimes(1))

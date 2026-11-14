@@ -40,6 +40,10 @@ export function KnowledgeImportSection({
   const { t } = useTranslation()
   const [pasteOpen, setPasteOpen] = useState(false)
   const importDisabled = importing || blocked
+  const pasteTitle = t('contextPanel.pasteTextKnowledge')
+  const pasteDraftSummary = plainText.trim()
+    ? t('contextPanel.pasteTextDraftReady', { count: plainText.trim().length })
+    : null
   const subtleBorderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
   const foldoutPanelStyle = {
     borderRadius: Math.min(colors.ui.radius.card, 8),
@@ -97,7 +101,7 @@ export function KnowledgeImportSection({
       <IslePressable
         haptic
         accessibilityRole="button"
-        accessibilityLabel={`${t('contextPanel.pasteTextKnowledge')}. ${plainText.trim() ? t('contextPanel.pasteTextDraftReady', { count: plainText.trim().length }) : t('contextPanel.pasteTextCollapsedHint')}`}
+        accessibilityLabel={pasteDraftSummary ? `${pasteTitle}. ${pasteDraftSummary}` : pasteTitle}
         accessibilityState={{ expanded: pasteOpen }}
         onPress={() => setPasteOpen((value) => !value)}
         style={{
@@ -116,11 +120,11 @@ export function KnowledgeImportSection({
         <AppIcon name="edit" color={colors.textTertiary} size={16} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
-            {t('contextPanel.pasteTextKnowledge')}
+            {pasteTitle}
           </Text>
-          <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>
-            {plainText.trim() ? t('contextPanel.pasteTextDraftReady', { count: plainText.trim().length }) : t('contextPanel.pasteTextCollapsedHint')}
-          </Text>
+          {pasteDraftSummary ? <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 1 }}>
+            {pasteDraftSummary}
+          </Text> : null}
         </View>
         <MotiView animate={{ rotate: pasteOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 160 : 0 }}>
           <AppIcon name="collapse" color={colors.textTertiary} size={16} />
@@ -129,7 +133,6 @@ export function KnowledgeImportSection({
 
       {pasteOpen ? (
         <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={{ marginTop: 10, ...foldoutPanelStyle }}>
-          <KnowledgeImportFoldoutHeader title={t('contextPanel.pasteTextKnowledge')} detail={plainText.trim() ? t('contextPanel.pasteTextDraftReady', { count: plainText.trim().length }) : t('contextPanel.pasteTextCollapsedHint')} />
           <IsleField
             label={t('contextPanel.knowledgeTitle')}
             inputProps={{ value: plainTitle, onChangeText: onPlainTitleChange, placeholder: t('contextPanel.knowledgeTitle') }}
@@ -174,19 +177,5 @@ export function KnowledgeImportSection({
         </MotiView>
       ) : null}
     </ThemeExpressionRegion>
-  )
-}
-
-function KnowledgeImportFoldoutHeader({ title, detail }: { title: string; detail: string }) {
-  const { colors } = useAppTheme()
-  return (
-    <View style={{ marginBottom: 10 }}>
-      <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
-        {title}
-      </Text>
-      <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
-        {detail}
-      </Text>
-    </View>
   )
 }
