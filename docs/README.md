@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.10 source version checkpoint](./release/source-version-1.1.10-2026-11-14.md): five verified pushes, synchronized source metadata and documentation, and scoped browser/Android evidence.
 - [1.1.9 source version checkpoint](./release/source-version-1.1.9-2026-11-14.md): accumulated verified changes, version metadata, documentation checks, and the current qualification scope.
 - [Source version cadence](./release/source-version-cadence.md): advance the source version after every five verified feature or optimization pushes, with a durable counting checkpoint.
 - [1.1.8 source release checkpoint](./release/source-release-1.1.8-2026-11-06.md): release scope, the published UI dependency revision, the original qualification cutoff, and subsequent Android verification using the existing isolated package.
