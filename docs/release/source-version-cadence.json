@@ -1,0 +1,30 @@
+{
+  "schema": "islemind.source-version-cadence.v1",
+  "threshold": 5,
+  "branch": "main",
+  "eligibleCommitTypes": [
+    "feat",
+    "fix",
+    "perf",
+    "refactor",
+    "style"
+  ],
+  "sourceOnly": true,
+  "buildsAllowed": false,
+  "sourceVersion": "1.1.9",
+  "sourceAndroidVersionCode": 134,
+  "countedThroughCommit": "bdac542717606ed2dd9e53c3dfde3c2d94671b9e",
+  "lastUpdate": {
+    "date": "2026-11-14",
+    "previousVersion": "1.1.8",
+    "previousVersionTag": "v1.1.8",
+    "qualifyingCommitCount": 10,
+    "verifiedLatestPushes": [
+      "4f243552db59fb3c35e6d2eaa1f6b373597510fc",
+      "835c71d7c7662890cc4093ae75c415a6bb53ac4b",
+      "750700bf52794606c00496170ca209e0b56e2ae8",
+      "d6697791365fc5e5644e396346175ff06e948375",
+      "bdac542717606ed2dd9e53c3dfde3c2d94671b9e"
+    ]
+  }
+}
