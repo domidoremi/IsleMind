@@ -834,6 +834,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         ? await importKnowledgeFile(provider ?? undefined, provider ? getPolicyPreferredProviderModel(provider, reviewedSettings) : undefined, { signal: controller.signal, settings: reviewedSettings })
         : await importKnowledgePlainText(plainTitle, plainText, provider ?? undefined, { signal: controller.signal, settings: reviewedSettings })
       if (controller.signal.aborted) return
+      if (kind === 'file' && !result.ok && result.reason === 'picker_cancelled') return
       operation.phase = 'readback'
       setImportCanCancel(false)
       if (kind === 'text' && result.ok && reviewedPlainDraft === plainDraft.current) {

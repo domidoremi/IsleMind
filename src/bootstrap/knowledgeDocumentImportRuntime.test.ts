@@ -481,3 +481,39 @@ it('settles a cancelled PDF extraction as cancellation rather than late local-re
   await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
   expect(mockImport).not.toHaveBeenCalled()
 })
+
+it('identifies picker cancellation without initializing, importing, or reading a file', async () => {
+  jest.mocked(DocumentPicker.getDocumentAsync).mockResolvedValueOnce({ canceled: true, assets: null })
+  const controller = new AbortController()
+  await expect(importKnowledgeFile(undefined, undefined, { signal: controller.signal })).resolves.toEqual({
+    ok: false, message: 'contextImport.noFileSelected', reason: 'picker_cancelled',
+  })
+  expect(controller.signal.aborted).toBe(false)
+  expect(mockInitialize).not.toHaveBeenCalled()
+  expect(mockImport).not.toHaveBeenCalled()
+  expect(mockCreateIndex).not.toHaveBeenCalled()
+  expect(FileSystem.readAsStringAsync).not.toHaveBeenCalled()
+  expect(FileSystem.deleteAsync).not.toHaveBeenCalled()
+})
+
+it('keeps an empty successful picker result distinct from user cancellation', async () => {
+  jest.mocked(DocumentPicker.getDocumentAsync).mockResolvedValueOnce({ canceled: false, assets: [] })
+  await expect(importKnowledgeFile(undefined, undefined, { signal: new AbortController().signal })).resolves.toEqual({
+    ok: false, message: 'contextImport.noFileSelected',
+  })
+  expect(mockInitialize).not.toHaveBeenCalled()
+  expect(mockImport).not.toHaveBeenCalled()
+})
+
+it('preserves an operation abort when its pending picker later reports cancellation', async () => {
+  let select!: (value: unknown) => void
+  jest.mocked(DocumentPicker.getDocumentAsync).mockImplementationOnce(() => new Promise(resolve => { select = resolve as never }))
+  const controller = new AbortController()
+  const pending = importKnowledgeFile(undefined, undefined, { signal: controller.signal })
+  const check = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  controller.abort()
+  select({ canceled: true, assets: null })
+  await check
+  expect(mockInitialize).not.toHaveBeenCalled()
+  expect(mockImport).not.toHaveBeenCalled()
+})

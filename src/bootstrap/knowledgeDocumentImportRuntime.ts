@@ -35,7 +35,7 @@ export interface KnowledgeDocumentImportOptions {
 export interface KnowledgeDocumentImportResult {
   ok: boolean
   message: string
-  reason?: 'pdf_capacity_unavailable'
+  reason?: 'pdf_capacity_unavailable' | 'picker_cancelled'
 }
 
 export async function importKnowledgeFile(
@@ -58,7 +58,8 @@ export async function importKnowledgeFile(
     })
     if (!picked.canceled && picked.assets[0]) importUri = validatePickerAssetUri(picked.assets[0])
     throwIfAborted(signal)
-    if (picked.canceled || !picked.assets[0]) return { ok: false, message: st('contextImport.noFileSelected') }
+    if (picked.canceled) return { ok: false, message: st('contextImport.noFileSelected'), reason: 'picker_cancelled' }
+    if (!picked.assets[0]) return { ok: false, message: st('contextImport.noFileSelected') }
 
     const asset = validatePickerAsset(picked.assets[0])
     importTitle = asset.name

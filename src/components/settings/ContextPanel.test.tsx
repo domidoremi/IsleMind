@@ -3345,3 +3345,43 @@ it.each(['localEmbeddingModelId', 'localModelDownloadMirrorBaseUrl'] as const)('
   expect(mockConfirm).toHaveBeenCalledTimes(1)
   f.assertPreserved()
 })
+
+it('returns silently from picker cancellation and releases the import lock for a subsequent import', async () => {
+  mockImportFile.mockResolvedValueOnce({ ok: false, message: 'No file selected', reason: 'picker_cancelled' })
+  const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
+  await waitFor(() => expect(mockDocuments).toHaveBeenCalledTimes(1))
+  const add = screen.queryByLabelText('contextExperience.addKnowledge')
+  if (add && !add.props.accessibilityState.expanded) await fireEvent.press(add)
+  await fireEvent.press(screen.getByLabelText('contextPanel.importKnowledgeFile'))
+  await waitFor(() => expect(mockImportFile).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(screen.getByLabelText('contextPanel.importKnowledgeFile')).not.toBeDisabled())
+  expect(mockImportFile.mock.calls[0][2].signal.aborted).toBe(false)
+  expect(mockDocuments).toHaveBeenCalledTimes(1)
+  expect(mockToast).not.toHaveBeenCalled()
+  expect(mockNotice).not.toHaveBeenCalled()
+  expect(screen.queryByText('contextPanel.knowledgeImportCancelled')).toBeNull()
+  await fireEvent.press(screen.getByLabelText('contextPanel.importKnowledgeFile'))
+  await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+    title: 'contextPanel.knowledgeUpdated', message: 'Imported', tone: 'mint',
+  })))
+  await waitFor(() => expect(screen.getByLabelText('contextPanel.importKnowledgeFile')).not.toBeDisabled())
+  expect(mockImportFile).toHaveBeenCalledTimes(2)
+  expect(mockDocuments).toHaveBeenCalledTimes(2)
+  await screen.unmount()
+})
+
+it('retains skipped-import feedback for an empty picker result without a cancellation reason', async () => {
+  mockImportFile.mockResolvedValueOnce({ ok: false, message: 'No file selected' })
+  const screen = await render(<SettingsEditBoundary><ContextPanel providers={[]} section="knowledge" /></SettingsEditBoundary>)
+  await waitFor(() => expect(mockDocuments).toHaveBeenCalledTimes(1))
+  const add = screen.queryByLabelText('contextExperience.addKnowledge')
+  if (add && !add.props.accessibilityState.expanded) await fireEvent.press(add)
+  await fireEvent.press(screen.getByLabelText('contextPanel.importKnowledgeFile'))
+  await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+    title: 'settings.importSkipped', message: 'No file selected', tone: 'amber',
+  })))
+  await waitFor(() => expect(screen.getByLabelText('contextPanel.importKnowledgeFile')).not.toBeDisabled())
+  expect(mockDocuments).toHaveBeenCalledTimes(2)
+  expect(mockNotice).not.toHaveBeenCalled()
+  await screen.unmount()
+})
