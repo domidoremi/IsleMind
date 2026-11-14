@@ -9,7 +9,7 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
-import { Easing, runOnJS } from 'react-native-reanimated'
+import { Easing } from 'react-native-reanimated'
 import type { Message, MessageResponseLifecycle } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -301,18 +301,20 @@ function MessageBubbleComponent({
   }
 
   const tapBubble = Gesture.Tap()
+    .runOnJS(true)
     .enabled(multiSelectActive)
     .maxDuration(220)
     .maxDistance(14)
     .onEnd((_event, success) => {
-      if (success) runOnJS(toggleSelectedFromTap)()
+      if (success) toggleSelectedFromTap()
     })
   const longPressBubble = Gesture.LongPress()
+    .runOnJS(true)
     .enabled(canOpenActions || multiSelectActive)
     .minDuration(360)
     .maxDistance(16)
     .onEnd((_event, success) => {
-      if (success) runOnJS(openActionBarFromLongPress)()
+      if (success) openActionBarFromLongPress()
     })
   const bubbleGesture = Gesture.Exclusive(longPressBubble, tapBubble)
 

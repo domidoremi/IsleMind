@@ -18,7 +18,7 @@ jest.mock('@/store/chatStreamingStore', () => ({
   mergeMessageWithStreamingTraceSnapshot: (message: Message) => message,
 }))
 jest.mock('react-native-gesture-handler', () => {
-  const gesture = () => { const chain: any = {}; for (const key of ['enabled', 'maxDuration', 'minDuration', 'maxDistance', 'onEnd']) chain[key] = () => chain; return chain }
+  const gesture = () => { const chain: any = {}; for (const key of ['runOnJS', 'enabled', 'maxDuration', 'minDuration', 'maxDistance', 'onEnd']) chain[key] = () => chain; return chain }
   return { Gesture: { Tap: gesture, LongPress: gesture, Exclusive: jest.fn() }, GestureDetector: ({ children }: any) => children }
 })
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
