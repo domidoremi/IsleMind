@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react'
 import { Platform, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { AppFontContext, Text, TextInput } from '@/components/ui/AppText'
 import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
@@ -312,6 +312,24 @@ export function IsleButton({
     </PressableScale>
   )
 }
+function measureWebInputContentHeight(input: unknown) {
+  if (Platform.OS !== 'web') return undefined
+  const node = input as { scrollHeight?: number; style?: { height: string; minHeight: string; flex: string } } | null
+  if (!node?.style || typeof node.scrollHeight !== 'number') return undefined
+  const { height, minHeight, flex } = node.style
+  try {
+    // scrollHeight includes the current frame; measure natural text height before sizing it.
+    node.style.height = '0px'
+    node.style.minHeight = '0px'
+    node.style.flex = 'none'
+    return node.scrollHeight
+  } finally {
+    node.style.height = height
+    node.style.minHeight = minHeight
+    node.style.flex = flex
+  }
+}
+
 export function IsleInput({
   label,
   prefix,
@@ -321,6 +339,7 @@ export function IsleInput({
   size = 'middle',
   wrapperStyle,
   inputStyle,
+  style: textInputStyle,
   value,
   defaultValue,
   onChangeText,
@@ -357,6 +376,19 @@ export function IsleInput({
   const [uncontrolledValue, setUncontrolledValue] = useState(defaultValue ?? '')
   const controlled = value !== undefined
   const currentValue = controlled ? value : uncontrolledValue
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null)
+  useEffect(() => {
+    if (multiline) {
+      const measured = measureWebInputContentHeight(inputRef.current)
+      if (measured !== undefined) setMultilineContentHeight(measured)
+    }
+  }, [currentValue, multiline])
+  const handleContentSizeChange = useCallback<NonNullable<TextInputProps['onContentSizeChange']>>((event) => {
+    if (multiline) setMultilineContentHeight(
+      measureWebInputContentHeight(inputRef.current) ?? event.nativeEvent.contentSize.height,
+    )
+    onContentSizeChange?.(event)
+  }, [multiline, onContentSizeChange])
   const disabled = editable === false
   const input = palette.ui.input
   const design = palette.colors.design
@@ -405,11 +437,17 @@ export function IsleInput({
         ? 1
         : 0
     : 0
-  const multilineMaxHeight = 156
+  const requestedInputStyle = StyleSheet.flatten([inputStyle, textInputStyle])
+  const multilineMinHeight = Math.max(ISLE_MIN_TOUCH_TARGET, fieldTokens?.minHeight ?? 0,
+    typeof requestedInputStyle?.minHeight === 'number' ? requestedInputStyle.minHeight : 76)
+  const multilineMaxHeight = Math.max(multilineMinHeight,
+    typeof requestedInputStyle?.maxHeight === 'number' ? requestedInputStyle.maxHeight : 156)
+  const requestedHeight = typeof requestedInputStyle?.height === 'number' ? requestedInputStyle.height : undefined
   const multilineShellHeight = multiline
-    ? Math.max(76, Math.min(multilineMaxHeight, Math.ceil(multilineContentHeight || 56) + 18))
+    ? Math.max(multilineMinHeight, Math.min(multilineMaxHeight,
+      requestedHeight ?? Math.ceil(multilineContentHeight || multilineMinHeight - 18) + 18))
     : undefined
-  const inputMinimumHeight = multiline ? 76 : Math.max(height, ISLE_MIN_TOUCH_TARGET)
+  const inputMinimumHeight = multiline ? multilineMinHeight : Math.max(height, ISLE_MIN_TOUCH_TARGET)
   return (
     <View style={wrapperStyle}>
       {label ? <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{label}</Text> : null}
@@ -450,6 +488,7 @@ export function IsleInput({
           prefix={prefix}
           input={(
             <NativeInput
+              inputRef={inputRef}
               size={size}
               status={status}
               shadow={nativeMaterial && shadow}
@@ -474,10 +513,7 @@ export function IsleInput({
                 ...props,
                 underlineColorAndroid: palette.liquidGlass ? 'transparent' : props.underlineColorAndroid,
                 scrollEnabled: multiline ? scrollEnabled ?? true : scrollEnabled,
-                onContentSizeChange: (event) => {
-                  if (multiline) setMultilineContentHeight(event.nativeEvent.contentSize.height)
-                  onContentSizeChange?.(event)
-                },
+                onContentSizeChange: handleContentSizeChange,
                 accessibilityState: { ...props.accessibilityState, disabled: disabled || props.accessibilityState?.disabled === true },
               }}
               style={[{ flex: 1, minWidth: 0, width: undefined, minHeight: inputMinimumHeight, height: multiline ? multilineShellHeight : inputMinimumHeight },
@@ -501,6 +537,8 @@ export function IsleInput({
                 },
                 inputStyle,
                 palette.liquidGlass ? { backgroundColor: 'transparent', borderWidth: 0, elevation: 0 } : null,
+                textInputStyle,
+                multiline ? { height: multilineShellHeight, minHeight: multilineMinHeight, maxHeight: multilineMaxHeight } : null,
               ]}
             />
           )}

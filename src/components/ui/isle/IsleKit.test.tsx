@@ -15,10 +15,15 @@ import { IsleButton as AppButton, IsleChip as AppChip } from './Controls'
 import { IsleIconButton } from './Primitives'
 import { appUpdateActivity } from '@/presentation/app-shell/appUpdateActivity'
 
+let mockWebInputHost: { style: { height: string; minHeight: string; flex: string }; readonly scrollHeight: number } | undefined
 let mockNativeSelectChange: (value: string) => void
 jest.mock('animal-island-ui-rn', () => {
   const actual = jest.requireActual('animal-island-ui-rn')
-  return { ...actual, Select: (props: any) => {
+  return { ...actual, Input: (props: any) => {
+    const React = require('react')
+    React.useImperativeHandle(mockWebInputHost ? props.inputRef : undefined, () => mockWebInputHost, [mockWebInputHost])
+    return React.createElement(actual.Input, mockWebInputHost ? { ...props, inputRef: undefined } : props)
+  }, Select: (props: any) => {
     mockNativeSelectChange = props.onChange
     return require('react').createElement(actual.Select, props)
   } }
@@ -279,6 +284,75 @@ it('keeps uncontrolled input and switch values when changing themes in a mounted
   await fireEvent.press(screen.getByRole('button', { name: 'common.clear' }))
   expect(screen.getByTestId('field').props.value).toBe('')
   expect(onChangeText).toHaveBeenLastCalledWith('')
+})
+
+it.each([
+  { source: 'style', minHeight: 160, maxHeight: 280 },
+  { source: 'inputStyle', minHeight: 96, maxHeight: 180 },
+  { source: 'style', minHeight: 48, maxHeight: 88 },
+])('keeps the $source $minHeight–$maxHeight input inside its caller-sized frame', async ({ source, minHeight, maxHeight }) => {
+  const size = { minHeight, maxHeight }
+  const screen = await render(<IsleThemeProvider>
+    <IsleInput testID="sized-input" multiline {...(source === 'style' ? { style: size } : { inputStyle: size })} />
+  </IsleThemeProvider>)
+  const assertContained = () => {
+    const field = screen.getByTestId('sized-input')
+    const frame = StyleSheet.flatten(field.parent!.props.style)
+    const input = StyleSheet.flatten(field.props.style)
+    expect(frame.height).toBeGreaterThanOrEqual(minHeight)
+    expect(frame.height).toBeLessThanOrEqual(maxHeight)
+    const inputHeight = typeof input.height === 'number' ? input.height : frame.height
+    expect(Math.max(input.minHeight ?? 0, inputHeight)).toBeLessThanOrEqual(frame.height)
+  }
+  assertContained()
+  await fireEvent(screen.getByTestId('sized-input'), 'contentSizeChange',
+    { nativeEvent: { contentSize: { width: 160, height: 200 } } })
+  assertContained()
+  await fireEvent(screen.getByTestId('sized-input'), 'contentSizeChange',
+    { nativeEvent: { contentSize: { width: 160, height: 800 } } })
+  assertContained()
+  expect(StyleSheet.flatten(screen.getByTestId('sized-input').parent!.props.style).height).toBe(maxHeight)
+})
+
+it('keeps web multiline frames stable, grows for text and shrinks after a controlled edit', async () => {
+  const original = Platform.OS
+  Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' })
+  let naturalHeight = 40
+  const host = {
+    style: { height: '160px', minHeight: '160px', flex: '1 1 0%' },
+    get scrollHeight() {
+      return Math.max(naturalHeight, parseFloat(this.style.height) || 0, parseFloat(this.style.minHeight) || 0)
+    },
+  }
+  const originalStyle = { ...host.style }
+  const onContentSizeChange = jest.fn()
+  const tree = (value: string) => <IsleThemeProvider>
+    <IsleInput testID="web-sized-input" value={value} multiline style={{ minHeight: 160, maxHeight: 280 }}
+      onContentSizeChange={onContentSizeChange} />
+  </IsleThemeProvider>
+  try {
+    mockWebInputHost = host
+    const screen = await render(tree(''))
+    const field = () => screen.getByTestId('web-sized-input')
+    const event = { nativeEvent: { contentSize: { width: 160, height: 160 } } }
+    await fireEvent(field(), 'contentSizeChange', event)
+    expect(field().parent).toHaveStyle({ height: 160 })
+    expect(onContentSizeChange).toHaveBeenCalledWith(event)
+    expect(host.style).toEqual(originalStyle)
+    naturalHeight = 500
+    await screen.rerender(tree('long draft'))
+    await fireEvent(field(), 'contentSizeChange', { nativeEvent: { contentSize: { width: 160, height: 500 } } })
+    expect(field().parent).toHaveStyle({ height: 280 })
+    expect(field().props.value).toBe('long draft')
+    naturalHeight = 40
+    await screen.rerender(tree('short draft'))
+    expect(field().parent).toHaveStyle({ height: 160 })
+    expect(field().props.value).toBe('short draft')
+    expect(host.style).toEqual(originalStyle)
+  } finally {
+    mockWebInputHost = undefined
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: original })
+  }
 })
 
 it('preserves native input events, selection, multiline growth and read-only state', async () => {
