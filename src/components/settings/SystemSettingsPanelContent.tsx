@@ -973,7 +973,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
   async function chooseLanguage(language: Language) {
     setLanguage(language)
     await changeAppLanguage(language)
-    dialog.toast({ title: t('settings.languageUpdated'), message: LANGUAGE_OPTIONS.find((item) => item.id === language)?.label, tone: 'mint' })
+    dialog.toast({ title: t('settings.languageUpdated', { lng: language }), message: LANGUAGE_OPTIONS.find((item) => item.id === language)?.label, tone: 'mint' })
   }
 
   function updateSettingsList(key: 'providerAllowlist' | 'providerBlocklist' | 'modelAllowlist' | 'modelBlocklist', value: string) {
