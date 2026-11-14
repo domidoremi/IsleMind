@@ -638,7 +638,7 @@
     "edit": "Edit Markdown",
     "preview": "Preview",
     "copyText": "Copy text",
-    "copyNotice": "Copied the editable text only. Captured origin and retained review context stay in Documents.",
+    "copyNotice": "Copy includes only the editable text. Sources and review context stay in Documents.",
     "showOrigin": "Show captured origin",
     "hideOrigin": "Hide captured origin",
     "originTitle": "Captured origin",
