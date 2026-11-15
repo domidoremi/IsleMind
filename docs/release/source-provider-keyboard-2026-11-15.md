@@ -17,3 +17,17 @@ Web第09轮恢复失败记录保留。新增数据库结构及页面重排导致
 后续继续多密钥策略、模型目录与归属、同模型路由组、全部深层操作及主题、语言、尺寸、大字体、TalkBack、恢复和性能矩阵。`fullAcceptance`、`nativeVerified`、`visualAcceptance`及广义`loadedRuntimeVerified`保持`false`。
 
 证据：[范围验收](../../test-evidence/implementation/native-provider-key-policy-20261115-01/acceptance-provider-keyboard-18.json)、[最终候选检查](../../test-evidence/implementation/native-provider-key-policy-20261115-01/keyboard-sheet-checks-03.json)、[原生操作](../../test-evidence/implementation/native-provider-key-policy-20261115-01/native-key-policy-09.json)、[原生图像范围](../../test-evidence/implementation/native-provider-key-policy-20261115-01/native-key-policy-visual-09.json)、[最新原生复核](../../test-evidence/implementation/native-provider-key-policy-20261115-01/original-state-audit-03.json)、[四张Web图像](../../test-evidence/implementation/native-provider-key-policy-20261115-01/web-keyboard-visual-review-12.json)、[原始数据库精确重建](../../test-evidence/implementation/native-provider-key-policy-20261115-01/browser-opfs-reconstruction-32.json)、[实际重载后的原始状态](../../test-evidence/implementation/native-provider-key-policy-20261115-01/browser-keyboard-originals-restored-16.json)、[空间关闭](../../test-evidence/implementation/native-provider-key-policy-20261115-01/browser-keyboard-space-finished-17.json)。
+
+## 2026-11-15：多密钥策略与明确模型选择补验
+
+第10轮四项实际原生操作通过：未保存的首选与停用只影响当前草稿，保存后保留轮转策略、B首选及A停用；重开仍一致，重新启用A后恢复其已选模型。停用期间仅共享模型可用，已选模型清单未被删减。
+
+第11轮三项实际原生操作通过：只选择B-only后可用清单只含该模型，三个目录模型完整保留；重开后取消修改保留原选择；A密钥准确替换，B原值和模型选择保持。实际输入底部515.27dp，键盘顶部527.27dp，收起键盘恢复滚动留白。
+
+两轮8张有效最终图像均完成完整复核，范围为中文Animal深色、普通字号。第11轮键盘开启时两处截图仍未取得有效图像，失败记录保留，不根据失败推断原因，也不扩展视觉通过范围。
+
+第04次独立复核确认2,122项stage源码输入及完整原始状态一致，同一进程7625，临时连接已删除，Inspector自然关闭，清理错误为空。原请求日志、设备设置、所有历史、消息、设置、供应商、用量、六组草稿和恢复槽、编辑器文字、附件、选区、焦点与原路由保持。本次仅补验记录，产品周期维持4/5。
+
+完整原目标仍进行中、预算无限制，目标登记的旧批次摘要未改写成功。继续供应商、同模型路由组及全应用矩阵；fullAcceptance、nativeVerified、visualAcceptance和广义loadedRuntimeVerified保持false。没有构建、导出、安装或派发工作流。
+
+证据：[七项范围](../../test-evidence/implementation/native-provider-key-policy-20261115-01/acceptance-provider-policy-supplement-20.json)、[第10轮图像](../../test-evidence/implementation/native-provider-key-policy-20261115-01/native-key-policy-visual-10.json)、[第11轮图像](../../test-evidence/implementation/native-provider-key-policy-20261115-01/native-key-policy-visual-11.json)、[最新原始状态复核](../../test-evidence/implementation/native-provider-key-policy-20261115-01/original-state-audit-04.json)。
