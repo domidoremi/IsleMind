@@ -1,7 +1,7 @@
 import { setExecutionTimeout } from '@/core/executionTimers'
 import type { AIModel, AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderOperationCode } from '@/types/providerContracts'
 import { extractUserFacingErrorDetail } from '@/core'
-import { mergeModelConfig, sortModelConfigs } from '@/types/modelCatalog'
+import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types/modelCatalog'
 import { selectProviderCredential, updateProviderCredentialHealth, type ProviderCredentialSource } from './providerCredentials'
 
 const PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT = 256
@@ -247,6 +247,16 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
   for (const configs of syncedConfigsByGroup) {
     for (const config of configs ?? []) {
       configsById.set(config.id, config)
+    }
+  }
+  // Failed and disabled keys retain their last catalog and its metadata, even
+  // when another key successfully refreshes a different model list.
+  const previousConfigs = new Map((provider.modelConfigs ?? []).map(config => [config.id, config]))
+  for (const group of nextGroups) {
+    for (const modelId of group.availableModels ?? []) {
+      if (configsById.has(modelId)) continue
+      const previous = previousConfigs.get(modelId)
+      configsById.set(modelId, getModelConfig(modelId, provider.type, previous ? [previous] : []))
     }
   }
   const modelConfigs = sortModelConfigs(Array.from(configsById.values()), provider.type)
