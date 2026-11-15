@@ -10,6 +10,10 @@ const canonicalArchitectureDocuments = new Set([
   'docs/architecture/architecture.md',
   'docs/architecture/module-public-api.md',
 ])
+const requiredArchitectureDocuments = new Set([
+  ...canonicalArchitectureDocuments,
+  'docs/architecture/full-application-improvement-goal.md',
+])
 const durableWorkspaceEvidenceContractPhrases = [
   '`AssistantRun` schema v4 persists the exact captured handoff atomically with `run.created` as strictly validated durable evidence only; it does not grant recovery authority.',
   'terminal decode-only no-replay inputs',
@@ -65,13 +69,13 @@ function walkAllFiles(dir, files = []) {
 function collectArchitectureDocumentSetIssues(documents) {
   const issues = []
   const documentSet = new Set(documents)
-  for (const requiredDocument of canonicalArchitectureDocuments) {
+  for (const requiredDocument of requiredArchitectureDocuments) {
     if (!documentSet.has(requiredDocument)) {
       issues.push({ file: requiredDocument, specifier: '', rule: 'architecture-document-set' })
     }
   }
   for (const document of documentSet) {
-    if (!canonicalArchitectureDocuments.has(document)) {
+    if (!requiredArchitectureDocuments.has(document)) {
       issues.push({ file: document, specifier: '', rule: 'architecture-document-set' })
     }
   }
@@ -266,27 +270,29 @@ function collectIssues(files) {
 }
 
 if (process.argv.includes('--self-test')) {
-  assert.deepEqual(collectArchitectureDocumentSetIssues([...canonicalArchitectureDocuments]), [])
+  assert.deepEqual(collectArchitectureDocumentSetIssues([...requiredArchitectureDocuments]), [])
   for (const unexpectedDocument of [
     'docs/architecture/remote-compact-provider-evidence.md',
     'docs/architecture/technology-radar.md',
   ]) {
     assert.deepEqual(
       collectArchitectureDocumentSetIssues([
-        ...canonicalArchitectureDocuments,
+        ...requiredArchitectureDocuments,
         unexpectedDocument,
       ]),
       [{ file: unexpectedDocument, specifier: '', rule: 'architecture-document-set' }],
     )
   }
-  const missingArchitectureIssues = collectArchitectureDocumentSetIssues(
-    [...canonicalArchitectureDocuments].filter((document) => document !== 'docs/architecture/architecture.md'),
-  )
-  assert.deepEqual(missingArchitectureIssues, [{
-    file: 'docs/architecture/architecture.md',
-    specifier: '',
-    rule: 'architecture-document-set',
-  }])
+  for (const missingDocument of requiredArchitectureDocuments) {
+    const missingArchitectureIssues = collectArchitectureDocumentSetIssues(
+      [...requiredArchitectureDocuments].filter((document) => document !== missingDocument),
+    )
+    assert.deepEqual(missingArchitectureIssues, [{
+      file: missingDocument,
+      specifier: '',
+      rule: 'architecture-document-set',
+    }])
+  }
   const durableEvidenceFixture = new Map(
     [...canonicalArchitectureDocuments].map((document) => [
       document,
