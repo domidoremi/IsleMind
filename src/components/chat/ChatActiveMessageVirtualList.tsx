@@ -1,4 +1,5 @@
 import { useMemo, type Dispatch, type RefObject, type SetStateAction } from 'react'
+import { View } from 'react-native'
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
 
 import type { useIsleDialog } from '@/components/ui/isle'
@@ -107,6 +108,12 @@ export function ChatActiveMessageVirtualList({
     0,
     viewportHeight - emptyConversationTopPadding - messageListBottomPadding,
   )
+  const readingColumnStyle = useMemo(() => ({
+    width: '100%' as const,
+    minWidth: 0,
+    maxWidth: Math.max(0, messageListLayout.readingColumnMaxWidth - messageListLayout.horizontalPadding * 2),
+    alignSelf: 'center' as const,
+  }), [messageListLayout.horizontalPadding, messageListLayout.readingColumnMaxWidth])
   const messageListRenderExtraData = useMemo(() => ({
     feed: messageListExtraData,
     providerId: provider?.id ?? null,
@@ -142,21 +149,16 @@ export function ChatActiveMessageVirtualList({
       drawDistance={messageListDrawDistance}
       getItemType={getMessageItemType}
       contentContainerStyle={{
-        width: '100%',
         minWidth: 0,
-        // The canvas owns the reading column: capping and centring the content
-        // box keeps both roles inside one conversation column on wide windows
-        // instead of letting them drift toward opposite screen edges.
-        maxWidth: messageListLayout.readingColumnMaxWidth,
-        alignSelf: 'center',
         paddingLeft: messageListLayout.horizontalPadding,
         paddingRight: messageListLayout.horizontalPadding,
         paddingTop: conversation.messages.length ? 0 : emptyConversationTopPadding,
         paddingBottom: messageListBottomPadding,
       }}
-      ListHeaderComponent={conversation.messages.length ? renderConversationHeaderSpacer(conversationHeaderTopPadding) : null}
-      ListFooterComponent={<ChatReplyFallbackNotice conversation={conversation} />}
+      ListHeaderComponent={<View style={readingColumnStyle}>{conversation.messages.length ? renderConversationHeaderSpacer(conversationHeaderTopPadding) : null}</View>}
+      ListFooterComponent={<View style={readingColumnStyle}><ChatReplyFallbackNotice conversation={conversation} /></View>}
       renderItem={({ item: message, index }) => (
+        <View testID={`chat-reading-row-${message.id}`} style={readingColumnStyle}>
         <ChatActiveMessageItem
           conversationId={conversation.id}
           message={message}
@@ -184,8 +186,10 @@ export function ChatActiveMessageVirtualList({
           startMessageMultiSelect={startMessageMultiSelect}
           isRewinding={rewindingMessageIds.has(message.id)}
         />
+        </View>
       )}
       ListEmptyComponent={(
+        <View style={readingColumnStyle}>
         <ChatActiveMessageEmptyState
           multimodalPolicy={multimodalPolicy}
           memoryStatus={memoryStatus}
@@ -197,6 +201,7 @@ export function ChatActiveMessageVirtualList({
           onApplyStarter={onApplyStarter}
           minHeight={emptyConversationMinHeight}
         />
+        </View>
       )}
     />
   )
