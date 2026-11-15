@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.11 source version checkpoint](./release/source-version-1.1.11-2026-11-15.md): five verified product pushes, synchronized source metadata and scoped native/Web evidence.
 - [1.1.9 and 1.1.10 source releases](./release/source-releases-1.1.9-1.1.10-2026-11-15.md): published GitHub Releases, immutable version tags, matching three-language notes, and workflow checks.
 - [1.1.10 source version checkpoint](./release/source-version-1.1.10-2026-11-14.md): five verified pushes, synchronized source metadata and documentation, and scoped browser/Android evidence.
 - [1.1.9 source version checkpoint](./release/source-version-1.1.9-2026-11-14.md): accumulated verified changes, version metadata, documentation checks, and the current qualification scope.
