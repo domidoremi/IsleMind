@@ -49,6 +49,7 @@ import { getProviderGatewayInfo } from '@/utils/providerGateway'
 import { hasProviderModelAccessRules } from '@/bootstrap/providerModelAccess'
 import { buildProviderSettingsPolicyModelCache, buildProviderSettingsSearchIndex, filterAndSortProviders } from '@/bootstrap/providerSettingsList'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useKeyboardScrollViewport } from '@/presentation/layout/useKeyboardScrollViewport'
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
@@ -828,7 +829,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
 
 export default ProviderSettingsContent
 
-function ProviderConfigurationSheet({
+export function ProviderConfigurationSheet({
   visible,
   provider,
   runtimeDetail,
@@ -853,6 +854,7 @@ function ProviderConfigurationSheet({
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
+  const keyboardViewport = useKeyboardScrollViewport('provider-configuration-' + (provider?.id ?? 'empty'))
   const motion = useMotionPreference(true)
   const leave = useSettingsLeave()
   const navigation = useNavigation()
@@ -890,25 +892,33 @@ function ProviderConfigurationSheet({
                 feedback={<PageFeedbackIndicator />} help={<SettingsHelpButton compact topic="models" />} />
             </View>
             <PageFeedbackRegion style={{ marginHorizontal: 12, marginTop: 8 }} />
-            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 18) + 20 }}>
-              {provider ? (
-                <>
-                  <DeferredProviderDetails
-                    provider={provider}
-                    runtimeDetail={runtimeDetail}
-                    expanded
-                    initialView={initialView}
-                    onViewChange={onViewChange}
-                    onUse={onUse}
-                    sortControl={sortControl}
-                    onExpandedChange={(next) => {
-                      if (!next) void requestSheetClose()
-                    }}
-                    deferMount={deferMount}
-                  />
-                </>
-              ) : null}
-            </ScrollView>
+            <View ref={keyboardViewport.frameRef} onLayout={keyboardViewport.onFrameLayout} collapsable={false} style={{ flex: 1 }}>
+              <ScrollView testID="provider-configuration-scroll" ref={keyboardViewport.scrollRef}
+                nestedScrollEnabled keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets
+                style={{ flex: 1, marginBottom: keyboardViewport.bottomInset }}
+                onLayout={keyboardViewport.onScrollLayout} onScroll={keyboardViewport.onScroll} scrollEventThrottle={16}
+                onScrollBeginDrag={keyboardViewport.onScrollBeginDrag} onContentSizeChange={keyboardViewport.onInputLayout}
+                onFocus={keyboardViewport.onInputFocus} onBlur={keyboardViewport.onInputBlur}
+                contentContainerStyle={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 18) + 20 }}>
+                {provider ? (
+                  <>
+                    <DeferredProviderDetails
+                      provider={provider}
+                      runtimeDetail={runtimeDetail}
+                      expanded
+                      initialView={initialView}
+                      onViewChange={onViewChange}
+                      onUse={onUse}
+                      sortControl={sortControl}
+                      onExpandedChange={(next) => {
+                        if (!next) void requestSheetClose()
+                      }}
+                      deferMount={deferMount}
+                    />
+                  </>
+                ) : null}
+              </ScrollView>
+            </View>
           </GlassSurface>
         </KeyboardAvoidingView>
       </View>

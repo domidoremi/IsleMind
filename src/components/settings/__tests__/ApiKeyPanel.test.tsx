@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native'
 import { View } from 'react-native'
 import { ApiKeyPanel } from '../ApiKeyPanel'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -170,7 +170,7 @@ it('keeps a local credential read failure visible and retries without probing', 
   const screen = await render(<Panel initialView="connection" />)
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/settingsSubsystem\.loadFailed/))
   expect(screen.queryByText(/settingsSubsystem.connectionReady/)).toBeNull()
-  await fireEvent.press(screen.getByRole('button', { name: 'common.retry' }))
+  await fireEvent.press(within(screen.getByRole('alert').parent!).getByRole('button', { name: 'common.retry' }))
   await waitFor(() => expect(screen.getByText(/settingsSubsystem.connectionReady/)).toBeTruthy())
   expect(screen.queryByRole('alert')).toBeNull()
   expect(mockHydrate).toHaveBeenCalledTimes(2)
@@ -496,22 +496,26 @@ it('passes the editor signal to explicit probing and discards a late result', as
   expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.interfaceProbeDone' }))
 })
 
-it('binds immediate compatibility changes to the shown configuration and waits for persistence', async () => {
+it('stages compatibility changes and persists the shown configuration only after explicit save', async () => {
   let durable!: () => void
   mockFlushProviders.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
   const screen = await render(<Panel />)
   await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
   const shown = useSettingsStore.getState().providers[0]
   await fireEvent.press(screen.getByRole('button', { name: 'providerSettings.clientCompatibility.islemind' }))
+  expect(mockUpdate).not.toHaveBeenCalled()
+  expect(mockFlushProviders).not.toHaveBeenCalled()
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsSubsystem.saveChoose' }))
+  expect(mockUpdate.mock.calls[0]?.[1]).toMatchObject({ clientCompatibilityProfile: 'islemind' })
   expect(mockUpdate.mock.calls[0]?.[2]).toEqual({ expectedProvider: shown, signal: expect.any(AbortSignal) })
   expect(mockFlushProviders).toHaveBeenCalledTimes(1)
   await screen.unmount()
   await act(() => durable())
-  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'providerSettings.configurationSaved' }))
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.providerSaved:Fixture connection' }))
   expect(mockProbe).not.toHaveBeenCalled()
 })
 
-it('keeps capability declarations local and does not acknowledge them before provider durability', async () => {
+it('stages capability declarations and acknowledges only the durable save', async () => {
   let durable!: () => void
   mockFlushProviders.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
   const screen = await render(<Panel />)
@@ -519,11 +523,14 @@ it('keeps capability declarations local and does not acknowledge them before pro
   await fireEvent.press(screen.getByRole('button', { name: /apiKeyPanel.capabilityMatrix\./ }))
   const shown = useSettingsStore.getState().providers[0]
   await fireEvent.press(screen.getByRole('checkbox', { name: 'apiKeyPanel.capability.nativeTools' }))
-  expect(mockUpdate).toHaveBeenCalledWith('fixture', { capabilities: expect.objectContaining({ nativeTools: true }) }, {
+  expect(mockUpdate).not.toHaveBeenCalled()
+  expect(mockFlushProviders).not.toHaveBeenCalled()
+  await fireEvent.press(screen.getByRole('button', { name: 'settingsSubsystem.saveChoose' }))
+  expect(mockUpdate).toHaveBeenCalledWith('fixture', expect.objectContaining({ capabilities: expect.objectContaining({ nativeTools: true }) }), {
     expectedProvider: shown, signal: expect.any(AbortSignal),
   })
-  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.capabilityUpdated' }))
+  expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.providerSaved:Fixture connection' }))
   await act(() => durable())
-  expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.capabilityUpdated', message: 'apiKeyPanel.capability.nativeTools' }))
+  await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.providerSaved:Fixture connection' })))
   expect(mockProbe).not.toHaveBeenCalled()
 })
