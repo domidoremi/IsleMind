@@ -1911,8 +1911,8 @@ export function ProviderFormModal({
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('settings.addProvider')}</Text>
-                  <SettingsHelpButton compact topic="models" />
                 </View>
+                <SettingsHelpButton compact topic="models" />
                 <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit}>
                   <AppIcon name="close" color={colors.textSecondary} size={18} />
                 </IsleIconButton>
@@ -1991,7 +1991,6 @@ export function ProviderFormModal({
                   <View onLayout={rememberFieldLayout('models')}>
                     <IsleField
                       label={t('settings.models')}
-                      note={t('providerSettings.modelsNote')}
                       inputProps={{ editable: !saving, value: modelsText, onChangeText: setModelsText, onFocus: () => markInputFocused('models'), placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
                     />
                   </View>
