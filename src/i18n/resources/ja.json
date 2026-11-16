@@ -4539,7 +4539,7 @@
     "reportedSource": "報告元",
     "reportedUpstream": "応答で報告された上流",
     "executionNotReported": "報告なし",
-    "reportedExecutionHint": "対象モデルとカタログの宣言は設定情報です。実行モデルは応答で明示された場合にのみ表示します。",
+    "reportedExecutionHint": "実行モデルの情報源：応答。",
     "requestDuration": "モデル呼び出し全体の所要時間",
     "requestToFirstText": "リクエストから最初の表示テキストまで",
     "attemptDuration": "この試行の所要時間",

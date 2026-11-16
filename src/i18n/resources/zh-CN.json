@@ -4539,7 +4539,7 @@
     "reportedSource": "报告来源",
     "reportedUpstream": "响应报告的上游",
     "executionNotReported": "未报告",
-    "reportedExecutionHint": "请求目标与模型目录声明是配置信息。实际执行模型仅展示响应明确报告的值。",
+    "reportedExecutionHint": "执行模型来源：响应报告。",
     "requestDuration": "整个模型调用耗时",
     "requestToFirstText": "请求到首个可见文本",
     "attemptDuration": "本次尝试耗时",
