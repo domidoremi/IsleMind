@@ -12,6 +12,7 @@ import type { AIProvider } from '@/types/providerContracts'
 import { createLazyComponent, LazyLoadingFallback } from '@/utils/lazyLoad'
 
 import type { ModelAccessSettings } from './chatModelSelection'
+import { useChatOptionsDraftCommits } from './useChatOptionsDraftCommits'
 
 const ProviderSettingsContent = createLazyComponent(
   () => import('@/components/providers/ProviderSettingsContent').then((module) => ({ default: module.ProviderSettingsContent })),
@@ -58,6 +59,7 @@ export function ChatAiConfigurationSheet({
   onClose,
 }: ChatAiConfigurationSheetProps) {
   const { colors } = useAppTheme()
+  const draftCommits = useChatOptionsDraftCommits()
   const sheetMotion = useThemeMotion('overlay', { readable: true })
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
@@ -74,6 +76,8 @@ export function ChatAiConfigurationSheet({
   if (!visible) return null
 
   function closeCurrentView() {
+    draftCommits.commit()
+    Keyboard.dismiss()
     if (view === 'providers' && initialView !== 'providers') {
       setView('configuration')
       return
@@ -137,6 +141,7 @@ export function ChatAiConfigurationSheet({
               </View>
             ) : (
               <ChatOptionsPanel
+                draftCommits={draftCommits}
                 embedded
                 placement="sheet"
                 scope={scope}

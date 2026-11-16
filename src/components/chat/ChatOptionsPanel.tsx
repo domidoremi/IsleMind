@@ -1,6 +1,6 @@
 import { getConversationReasoningEffortOptions as getReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Keyboard, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Text, TextInput } from '@/components/ui/AppText'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
@@ -39,6 +39,7 @@ import { groupProviderModelsBySource } from '@/utils/providerModelSources'
 import { ProviderModelSourceFilter, ProviderModelPagination, PROVIDER_MODEL_PAGE_SIZE } from '@/components/providers/ProviderModelSourceFilter'
 import { buildChatModelPickerCandidates, filterChatModelPickerCandidates, sortChatModelPickerProviders, type ChatModelPickerScope } from './chatModelPickerPresentation'
 import { ChatRoutingPlanPicker } from './ChatRoutingPlanPicker'
+import { useChatOptionsDraftCommits, type ChatOptionsDraftCommits } from './useChatOptionsDraftCommits'
 
 interface ModelPickerItem {
   key: string
@@ -78,6 +79,7 @@ export function ChatOptionsPanel({
   placement = 'popover',
   embedded = false,
   scope = 'full',
+  draftCommits,
 }: {
   conversation: Conversation
   provider: AIProvider | undefined
@@ -93,12 +95,15 @@ export function ChatOptionsPanel({
   placement?: 'popover' | 'sheet'
   embedded?: boolean
   scope?: 'essential' | 'full'
+  draftCommits?: ChatOptionsDraftCommits
 }) {
   const { t, i18n } = useTranslation()
   const evidenceLocale = i18n.resolvedLanguage ?? i18n.language
   const { isLiquidGlass, isMonet, canonicalThemeId } = useAppTheme()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
   const keyboardViewport = useKeyboardScrollViewport('chat-options-' + conversation.id)
+  const localDraftCommits = useChatOptionsDraftCommits()
+  const parameterDraftCommits = draftCommits ?? localDraftCommits
   const updateConversation = useChatStore((state) => state.updateConversation)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
   const modelFavorites = useSettingsStore((state) => state.settings.modelFavorites)
@@ -382,6 +387,16 @@ export function ChatOptionsPanel({
     }
   }
 
+  function finishParameterDrafts() {
+    parameterDraftCommits.commit()
+    Keyboard.dismiss()
+  }
+
+  function closePanel() {
+    finishParameterDrafts()
+    onClose()
+  }
+
   function patchConversation(updates: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'reasoningEffort' | 'maxTokens' | 'generationParameterOverrides'>>) {
     if (onDraftChange) {
       onDraftChange(updates)
@@ -425,7 +440,7 @@ export function ChatOptionsPanel({
           <Text style={{ flex: 1, color: colors.text, fontSize: 17, fontWeight: '800' }}>{t('chat.aiConfiguration')}</Text>
           <IslePressable
             haptic
-            onPress={onClose}
+            onPress={closePanel}
             accessibilityRole="button"
             accessibilityLabel={t('dialog.closeLayer')}
             hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
@@ -500,7 +515,7 @@ export function ChatOptionsPanel({
           {onManageProviders ? (
             <IslePressable
               haptic
-              onPress={onManageProviders}
+              onPress={() => { finishParameterDrafts(); onManageProviders() }}
               accessibilityRole="button"
               accessibilityLabel={currentProvider ? t('settings.providerManagement') : t('chat.connectProvider')}
               hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
@@ -513,7 +528,7 @@ export function ChatOptionsPanel({
           ) : null}
         </View>
         {scope === 'full' ? <IslePressable accessibilityRole="button" accessibilityLabel={t('agentTasks.title')}
-          onPress={() => { onClose(); router.push({ pathname: '/agent', params: { conversationId: conversation.id } }) }}
+          onPress={() => { closePanel(); router.push({ pathname: '/agent', params: { conversationId: conversation.id } }) }}
           style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center', padding: 12, marginBottom: 12 }}>
           <Text style={{ color: colors.text, fontWeight: '700' }}>{t('agentTasks.title')}</Text>
         </IslePressable> : null}
@@ -523,14 +538,14 @@ export function ChatOptionsPanel({
           </Text> : null}
           {(['choose', 'capture'] as const).map(action => <IslePressable key={action} testID={`chat-scene-${action}`}
             accessibilityRole="button" accessibilityLabel={t(action === 'capture' ? 'scenes.capture' : 'scenes.choose')}
-            onPress={() => { onClose(); router.push({ pathname: '/settings/scenes', params: { conversationId: conversation.id, ...(action === 'capture' ? { action: 'capture' } : {}) } }) }}
+            onPress={() => { closePanel(); router.push({ pathname: '/settings/scenes', params: { conversationId: conversation.id, ...(action === 'capture' ? { action: 'capture' } : {}) } }) }}
             style={{ minHeight: ISLE_MIN_TOUCH_TARGET, padding: 12, justifyContent: 'center' }}>
             <Text style={{ color: colors.text, fontWeight: '700' }}>{t(action === 'capture' ? 'scenes.capture' : 'scenes.choose')}</Text>
           </IslePressable>)}
         </View> : null}
         <View testID="chat-ai-model-selection-section">
         <ChatRoutingPlanPicker conversation={conversation} providers={orderedProviders} query={modelPickerQuery} settings={settings}
-          onSelect={onSwitchModel} onManage={() => { onClose(); router.push('/settings/routing') }} />
+          onSelect={onSwitchModel} onManage={() => { closePanel(); router.push('/settings/routing') }} />
         {selectedProvider ? <ProviderModelSourceFilter sources={modelSources} selectedSourceId={modelSourceId} onSelect={(sourceId) => { setModelSourceId(sourceId); setModelPage(0) }} colors={colors} /> : null}
           <ThemeModelPicker
             family={canonicalThemeId}
@@ -645,6 +660,8 @@ export function ChatOptionsPanel({
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
             {showTemperatureControl ? (
               <ParamInput
+                key={conversation.id + ':temperature'}
+                draftCommits={parameterDraftCommits}
                 label={t('chat.temperature')}
                 accessibilityHint={t('chat.parameterAccessibilityHint', { min: temperatureRange.min, max: temperatureRange.max })}
                 value={conversation.temperature}
@@ -659,6 +676,8 @@ export function ChatOptionsPanel({
             ) : null}
             {showMaxTokensControl ? (
               <ParamInput
+                key={conversation.id + ':maxTokens'}
+                draftCommits={parameterDraftCommits}
                 label={t('chat.maxTokens')}
                 accessibilityHint={t('chat.parameterAccessibilityHint', { min: maxTokensRange.min, max: maxTokensRange.max })}
                 value={conversation.maxTokens}
@@ -676,6 +695,8 @@ export function ChatOptionsPanel({
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
           {showAdvancedControls && showTopPControl ? (
             <ParamInput
+              key={conversation.id + ':topP'}
+              draftCommits={parameterDraftCommits}
               label={t('chat.topP')}
               accessibilityHint={t('chat.parameterAccessibilityHint', { min: topPRange.min, max: topPRange.max })}
               value={conversation.topP}
@@ -690,6 +711,8 @@ export function ChatOptionsPanel({
           ) : null}
           {showAdvancedControls && showTopKControl ? (
             <ParamInput
+              key={conversation.id + ':topK'}
+              draftCommits={parameterDraftCommits}
               label={t('chat.topK')}
               accessibilityHint={t('chat.parameterAccessibilityHint', { min: topKRange.min, max: topKRange.max })}
               value={conversation.topK}
@@ -1131,6 +1154,7 @@ function groupModelPickerItemsByToken(provider: AIProvider, models: ModelPickerI
 }
 
 function ParamInput({
+  draftCommits,
   label,
   value,
   automatic,
@@ -1142,6 +1166,7 @@ function ParamInput({
   onCommit,
   onReset,
 }: {
+  draftCommits: ChatOptionsDraftCommits
   label: string
   value: number | undefined
   automatic: boolean
@@ -1179,6 +1204,9 @@ function ParamInput({
     setDraft(String(next))
     onCommit(next)
   }
+
+  // Replace the registration after each render so close uses the latest draft and owner.
+  useLayoutEffect(() => draftCommits.register(commit))
 
   return (
     <View style={{ flex: 1 }}>

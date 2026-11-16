@@ -540,3 +540,74 @@ describe('Android parameter keyboard visibility', () => {
     await f.screen.unmount()
   })
 })
+
+describe('pending parameter drafts at close', () => {
+  const events: string[] = []
+  beforeEach(() => {
+    events.length = 0
+    mockGetProviderParameterEntry.mockReturnValue({ status: 'sendable' })
+    mockResolveRequestParameters.mockReturnValue({ temperatureSupported: true, maxTokensSupported: true, topPSupported: true, topKSupported: false })
+    mockUpdateConversation.mockImplementation(() => { events.push('save') })
+    jest.spyOn(Keyboard, 'dismiss').mockImplementation(() => { events.push('blur') })
+  })
+  afterEach(() => { jest.restoreAllMocks(); mockUpdateConversation.mockReset() })
+  async function draftPanel() {
+    const onClose = jest.fn(() => { events.push('close') })
+    const onManageProviders = jest.fn(() => { events.push('providers') })
+    const tree = (id = 'chat') => <ChatOptionsPanel
+      conversation={conversation({ id, temperature: 0.3, topP: 1, maxTokens: 2048, generationParameterOverrides: { temperature: true } })}
+      provider={a} switchableProviders={[a, b]} colors={getColors('light', 'minimal')}
+      maxHeight={780} placement="sheet" embedded onSwitchModel={jest.fn()} onClose={onClose} onManageProviders={onManageProviders}
+    />
+    const screen = await render(tree())
+    return { screen, tree, onClose, onManageProviders }
+  }
+
+  it.each([
+    ['0.6', { temperature: 0.6, generationParameterOverrides: { temperature: true } }],
+    ['9', { temperature: 2, generationParameterOverrides: { temperature: true } }],
+    ['', { generationParameterOverrides: { temperature: false } }],
+    ['.', undefined],
+  ] as const)('finishes numeric draft %j before closing without waiting for native blur', async (draft, patch) => {
+    const f = await draftPanel()
+    await fireEvent.changeText(f.screen.getByLabelText('chat.temperature'), draft)
+    expect(mockUpdateConversation).not.toHaveBeenCalled()
+    await fireEvent.press(f.screen.getByLabelText('dialog.closeLayer'))
+    if (patch) expect(mockUpdateConversation).toHaveBeenCalledWith('chat', patch)
+    else expect(mockUpdateConversation).not.toHaveBeenCalled()
+    expect(events).toEqual(patch ? ['save', 'blur', 'close'] : ['blur', 'close'])
+    expect(f.onClose).toHaveBeenCalledTimes(1)
+    expect(f.screen.getByLabelText('chat.maxTokens').props.value).toBe('')
+    expect(f.screen.getByLabelText('chat.topP').props.value).toBe('')
+    expect(saveSettings).not.toHaveBeenCalled()
+  })
+
+  it('finishes the draft before switching to provider management', async () => {
+    const f = await draftPanel()
+    await fireEvent.changeText(f.screen.getByLabelText('chat.temperature'), '0.6')
+    await fireEvent.press(f.screen.getByLabelText('settings.providerManagement'))
+    expect(mockUpdateConversation).toHaveBeenCalledWith('chat', { temperature: 0.6, generationParameterOverrides: { temperature: true } })
+    expect(events).toEqual(['save', 'blur', 'providers'])
+    expect(f.onClose).not.toHaveBeenCalled()
+  })
+
+  it('does not save a parameter twice after a completed blur', async () => {
+    const f = await draftPanel()
+    const input = f.screen.getByLabelText('chat.temperature')
+    await fireEvent.changeText(input, '0.6')
+    await fireEvent(input, 'blur')
+    await fireEvent.press(f.screen.getByLabelText('dialog.closeLayer'))
+    expect(mockUpdateConversation).toHaveBeenCalledTimes(1)
+    expect(events).toEqual(['save', 'blur', 'close'])
+  })
+
+  it('does not carry an uncommitted parameter into another conversation', async () => {
+    const f = await draftPanel()
+    await fireEvent.changeText(f.screen.getByLabelText('chat.temperature'), '0.6')
+    await f.screen.rerender(f.tree('other-chat'))
+    expect(f.screen.getByLabelText('chat.temperature').props.value).toBe('0.3')
+    await fireEvent.press(f.screen.getByLabelText('dialog.closeLayer'))
+    expect(mockUpdateConversation).not.toHaveBeenCalled()
+    expect(events).toEqual(['blur', 'close'])
+  })
+})
