@@ -17,6 +17,7 @@
 
 ## 源码版本维护
 
+- [1.1.12 发布记录](./source-release-1.1.12-2026-11-17.md)
 - [1.1.12 更新记录](./source-version-1.1.12-2026-11-17.md)
 - [更新节奏与计数规则](./source-version-cadence.md)
 - [1.1.11 发布记录](./source-release-1.1.11-2026-11-15.md)

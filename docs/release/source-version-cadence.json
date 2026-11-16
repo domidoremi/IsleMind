@@ -31,10 +31,10 @@
     ]
   },
   "lastPublication": {
-    "date": "2026-11-15",
-    "tag": "v1.1.11",
-    "sourceCommit": "02190b3bde18da27c98727009f9aac48c60bacf6",
-    "publishedAt": "2026-11-15T12:28:24Z",
-    "url": "https://github.com/domidoremi/IsleMind/releases/tag/v1.1.11"
+    "date": "2026-11-17",
+    "tag": "v1.1.12",
+    "sourceCommit": "c18a8909e7e580d40c338429662d592fcd466ed1",
+    "publishedAt": "2026-11-16T23:01:26Z",
+    "url": "https://github.com/domidoremi/IsleMind/releases/tag/v1.1.12"
   }
 }

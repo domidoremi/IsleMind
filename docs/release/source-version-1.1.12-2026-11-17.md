@@ -29,3 +29,9 @@
 参数标题与输入行对齐、请求参数载荷、路由组及31路由深层操作、主题/语言/尺寸/字号/无障碍/恢复/性能继续。fullAcceptance、nativeVerified、visualAcceptance及广义loadedRuntimeVerified保持false。
 
 证据位于test-evidence/release/source-version-1.1.12-20261117-01/及test-evidence/implementation/native-routing-groups-20261115-01/。
+
+## 实际发布
+
+版本提交`c18a8909e7e580d40c338429662d592fcd466ed1`已推送，v1.1.12于2026-11-17 07:01:26（台北）实际发布。标签固定到版本提交，公开三语正文逐字一致，GitHub API核对公开稳定状态和最新版本。38个历史Release、既有标签与41条Actions任务保持，没有新增任务。详见[发布记录](./source-release-1.1.12-2026-11-17.md)。
+
+五组版本元数据、计数、三语内容、文档链接和原始资料检查，以及22项版本契约测试通过。495个原有未完成路径除package版本字段外保持；版本提交、标签和发布均未构建、导出、安装或上传APK。
