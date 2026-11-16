@@ -1,5 +1,6 @@
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native'
-import { StyleSheet } from 'react-native'
+import { Keyboard, Platform, ScrollView, StyleSheet, TextInput, type KeyboardEvent, type View } from 'react-native'
+import type { useKeyboardScrollViewport } from '@/presentation/layout/useKeyboardScrollViewport'
 import { ChatOptionsPanel } from './ChatOptionsPanel'
 import { useSettingsStore } from '@/store/settingsStore'
 import { getColors } from '@/theme/colors'
@@ -10,6 +11,10 @@ import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsCont
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import { bindSettingsStorePersistence, flushPersistedSettings, releaseSettingsStorePersistence, type SettingsStorePersistence } from '@/presentation/features/settings/settingsStorePersistenceCommand'
+
+let mockKeyboardViewport: ReturnType<typeof useKeyboardScrollViewport> | undefined
+const mockGetProviderParameterEntry = jest.fn()
+const mockResolveRequestParameters = jest.fn()
 
 let mockThemeId: CanonicalThemeId = 'minimal'
 let mockNetwork = { isConnected: true, isInternetReachable: true }
@@ -22,7 +27,17 @@ jest.mock('react-i18next', () => {
   const t = (key: string) => key
   return { useTranslation: () => ({ t, i18n: mockI18n }) }
 })
-jest.mock('expo-router', () => ({ router: { push: jest.fn() } }))
+jest.mock('expo-router', () => ({
+  router: { push: jest.fn() },
+  useFocusEffect: (effect: () => void | (() => void)) => require('react').useEffect(effect, [effect]),
+}))
+jest.mock('@/presentation/layout/useKeyboardScrollViewport', () => ({
+  useKeyboardScrollViewport: (key: string) => {
+    const viewport = jest.requireActual('@/presentation/layout/useKeyboardScrollViewport').useKeyboardScrollViewport(key)
+    mockKeyboardViewport = viewport
+    return viewport
+  },
+}))
 jest.mock('expo-network', () => ({ useNetworkState: () => mockNetwork }))
 jest.mock('@/hooks/useAppTheme', () => ({
   useAppTheme: () => ({
@@ -50,8 +65,8 @@ jest.mock('@/bootstrap/providerConversationGeneration', () => ({
     temperature: { min: 0, max: 2 }, topP: { min: 0, max: 1 }, topK: { min: 0, max: 100 }, maxTokens: { min: 1, max: 4096 },
   }),
 }))
-jest.mock('@/bootstrap/providerRequestPolicies', () => ({ resolveProviderRequestParameters: () => undefined }))
-jest.mock('@/bootstrap/providerParameterMatrix', () => ({ getProviderParameterEntry: () => undefined }))
+jest.mock('@/bootstrap/providerRequestPolicies', () => ({ resolveProviderRequestParameters: () => mockResolveRequestParameters() }))
+jest.mock('@/bootstrap/providerParameterMatrix', () => ({ getProviderParameterEntry: () => mockGetProviderParameterEntry() }))
 jest.mock('@/bootstrap/conversationProviderNativeSearchAdmission', () => ({ providerSupportsNativeSearch: () => false }))
 jest.mock('@/services/chatProviderNativeToolUtils', () => ({
   providerSupportsVisionInput: () => false, resolveProviderNativeToolSupport: () => ({ supported: false }),
@@ -118,6 +133,8 @@ it('selects an explicit routing plan and keeps the active snapshot after its tem
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockGetProviderParameterEntry.mockReset()
+  mockResolveRequestParameters.mockReset()
   mockThemeId = 'minimal'
   mockI18n.language = 'en'
   mockI18n.resolvedLanguage = undefined
@@ -391,4 +408,135 @@ it('does not recreate a deleted connection favorite through a delayed save retry
   expect(view.queryByLabelText('chat.retryModelFavoriteSave')).toBeNull()
   expect(useSettingsStore.getState().settings.modelFavorites).toEqual([])
   expect(saveSettings).toHaveBeenCalledTimes(1)
+})
+
+describe('Android parameter keyboard visibility', () => {
+  const listeners = new Map<string, Set<(event: KeyboardEvent) => void>>()
+  const frames = new Map<number, FrameRequestCallback>()
+  let frameId = 0
+  let focused: ReturnType<typeof TextInput.State.currentlyFocusedInput> | null = null
+  const keyboardEvent: KeyboardEvent = {
+    duration: 0, easing: 'keyboard',
+    endCoordinates: { screenX: 0, screenY: 550, width: 390, height: 300 },
+  }
+  const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } })
+  const scroll = (y: number) => ({ nativeEvent: { contentOffset: { x: 0, y } } })
+  async function flushFrame() {
+    await act(() => {
+      const pending = [...frames.values()]
+      frames.clear()
+      for (const callback of pending) callback(0)
+    })
+  }
+  async function emit(name: string) {
+    await act(() => { for (const callback of listeners.get(name) ?? []) callback(keyboardEvent) })
+    await flushFrame()
+  }
+  beforeEach(() => {
+    listeners.clear(); frames.clear(); frameId = 0; focused = null; mockKeyboardViewport = undefined
+    jest.replaceProperty(Platform, 'OS', 'android')
+    jest.spyOn(Keyboard, 'metrics').mockReturnValue(undefined)
+    jest.spyOn(Keyboard, 'addListener').mockImplementation((name, callback) => {
+      const callbacks = listeners.get(name) ?? new Set()
+      callbacks.add(callback); listeners.set(name, callbacks)
+      return { remove: () => { callbacks.delete(callback) } } as ReturnType<typeof Keyboard.addListener>
+    })
+    jest.spyOn(TextInput.State, 'currentlyFocusedInput').mockImplementation(() => focused!)
+    jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => {
+      frames.set(++frameId, callback)
+      return frameId
+    })
+    jest.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(id => { if (typeof id === 'number') frames.delete(id) })
+  })
+  afterEach(() => { jest.restoreAllMocks() })
+
+  async function keyboardPanel() {
+    mockGetProviderParameterEntry.mockReturnValue({ status: 'sendable' })
+    mockResolveRequestParameters.mockReturnValue({ temperatureSupported: true, maxTokensSupported: true, topPSupported: true, topKSupported: false })
+    const screen = await render(<ChatOptionsPanel
+      conversation={conversation({ temperature: 0.3, topP: 1, maxTokens: 2048, generationParameterOverrides: {} })}
+      provider={a} switchableProviders={[a, b]} colors={getColors('light', 'minimal')}
+      maxHeight={780} placement="sheet" embedded onSwitchModel={jest.fn()} onClose={jest.fn()}
+    />)
+    const scrollViews = screen.container.queryAll(node => node.props.keyboardShouldPersistTaps === 'handled')
+    expect(scrollViews).toHaveLength(1)
+    const sheetScroll = scrollViews[0]
+    let offset = 120, inputTop = 700
+    const input = {
+      measureInWindow: jest.fn((callback: (x: number, y: number, width: number, height: number) => void) => callback(0, inputTop, 340, 46)),
+      focus: jest.fn(), setSelection: jest.fn(), setNativeProps: jest.fn(),
+    }
+    focused = input as unknown as NonNullable<typeof focused>
+    const scrollTo = jest.fn(({ y }: { y: number }) => {
+      inputTop -= y - offset
+      offset = y
+      sheetScroll.props.onScroll?.(scroll(y))
+    })
+    if (mockKeyboardViewport) {
+      mockKeyboardViewport.frameRef.current = {
+        measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 110, 390, 740),
+      } as unknown as View
+      mockKeyboardViewport.scrollRef.current = { scrollTo } as unknown as ScrollView
+    }
+    const temperature = screen.getByLabelText('chat.temperature')
+    await fireEvent.changeText(temperature, '0.8')
+    await act(() => {
+      sheetScroll.props.onScroll?.(scroll(offset))
+      sheetScroll.props.onLayout?.(layout(740))
+    })
+    await fireEvent(temperature, 'focus')
+    // Native focus bubbles to the scroll viewport; fireEvent invokes only the nearest handler.
+    await act(() => sheetScroll.props.onFocus?.({ nativeEvent: { target: 1 } }))
+    await flushFrame()
+    return { screen, sheetScroll, temperature, scrollTo, input }
+  }
+
+  it('reveals a numeric draft after resize and keeps it uncommitted until blur', async () => {
+    const f = await keyboardPanel()
+    await emit('keyboardDidShow')
+    expect(StyleSheet.flatten(f.sheetScroll.props.style)?.marginBottom ?? 0).toBe(300)
+    expect(f.scrollTo).not.toHaveBeenCalled()
+    await act(() => f.sheetScroll.props.onLayout?.(layout(440)))
+    await flushFrame()
+    expect(f.scrollTo).toHaveBeenLastCalledWith({ y: 328, animated: false })
+    expect(f.screen.getByLabelText('chat.temperature')).toBe(f.temperature)
+    expect(f.temperature.props.value).toBe('0.8')
+    expect(mockUpdateConversation).not.toHaveBeenCalled()
+    await emit('keyboardDidHide')
+    await act(() => f.sheetScroll.props.onLayout?.(layout(740)))
+    await flushFrame()
+    expect(f.scrollTo).toHaveBeenLastCalledWith({ y: 120, animated: false })
+    expect(f.temperature.props.value).toBe('0.8')
+    await fireEvent(f.temperature, 'blur')
+    expect(mockUpdateConversation).toHaveBeenCalledTimes(1)
+    expect(mockUpdateConversation).toHaveBeenLastCalledWith('chat', { temperature: 0.8, generationParameterOverrides: { temperature: true } })
+    expect(f.screen.getByLabelText('chat.maxTokens').props.value).toBe('')
+    expect(f.screen.getByLabelText('chat.topP').props.value).toBe('')
+    expect(saveSettings).not.toHaveBeenCalled()
+    expect(f.input.focus).not.toHaveBeenCalled()
+    expect(f.input.setSelection).not.toHaveBeenCalled()
+    expect(f.input.setNativeProps).not.toHaveBeenCalled()
+    await f.screen.unmount()
+  })
+
+  it('retains a deliberate scroll and the same numeric draft when the keyboard closes', async () => {
+    const f = await keyboardPanel()
+    await emit('keyboardDidShow')
+    await act(() => f.sheetScroll.props.onLayout?.(layout(440)))
+    await flushFrame()
+    expect(f.scrollTo).toHaveBeenLastCalledWith({ y: 328, animated: false })
+    f.scrollTo.mockClear()
+    await act(() => {
+      f.sheetScroll.props.onScrollBeginDrag?.()
+      f.sheetScroll.props.onScroll?.(scroll(400))
+    })
+    await emit('keyboardDidHide')
+    await act(() => f.sheetScroll.props.onLayout?.(layout(740)))
+    await flushFrame()
+    expect(f.scrollTo).not.toHaveBeenCalled()
+    expect(f.screen.getByLabelText('chat.temperature')).toBe(f.temperature)
+    expect(f.temperature.props.value).toBe('0.8')
+    expect(mockUpdateConversation).not.toHaveBeenCalled()
+    await f.screen.unmount()
+  })
 })

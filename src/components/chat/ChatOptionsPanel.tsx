@@ -10,6 +10,7 @@ import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIco
 import { acceptNumericDraft, commitNumericDraft, type NumericDraftKind, type NumericDraftRange } from '@/components/ui/numericDraft'
 import { ISLE_MIN_TOUCH_TARGET, IsleChip, IslePanel, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useKeyboardScrollViewport } from '@/presentation/layout/useKeyboardScrollViewport'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { getSettingsModelDisplayAlias, getSettingsModelIdentityKey, SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH, SETTINGS_MODEL_FAVORITE_LIMIT, SettingsModelFavoriteLimitError, upsertSettingsModelDisplayAlias } from '@/modules/settings'
@@ -97,6 +98,7 @@ export function ChatOptionsPanel({
   const evidenceLocale = i18n.resolvedLanguage ?? i18n.language
   const { isLiquidGlass, isMonet, canonicalThemeId } = useAppTheme()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
+  const keyboardViewport = useKeyboardScrollViewport('chat-options-' + conversation.id)
   const updateConversation = useChatStore((state) => state.updateConversation)
   const modelDisplayAliases = useSettingsStore((state) => state.settings.modelDisplayAliases)
   const modelFavorites = useSettingsStore((state) => state.settings.modelFavorites)
@@ -461,8 +463,23 @@ export function ChatOptionsPanel({
         </View>
       </View>
 
+      <View
+        ref={embedded ? keyboardViewport.frameRef : undefined}
+        onLayout={embedded ? keyboardViewport.onFrameLayout : undefined}
+        collapsable={false}
+        style={{ flex: embedded ? 1 : undefined, flexShrink: 1 }}
+      >
       <ScrollView
-        style={{ flex: embedded ? 1 : undefined, maxHeight: embedded ? undefined : panelBodyMaxHeight, backgroundColor: panelBody }}
+        testID="chat-ai-options-scroll"
+        ref={keyboardViewport.scrollRef}
+        style={{ flex: embedded ? 1 : undefined, maxHeight: embedded ? undefined : panelBodyMaxHeight, backgroundColor: panelBody, marginBottom: keyboardViewport.bottomInset }}
+        onLayout={keyboardViewport.onScrollLayout}
+        onScroll={keyboardViewport.onScroll}
+        scrollEventThrottle={16}
+        onScrollBeginDrag={keyboardViewport.onScrollBeginDrag}
+        onContentSizeChange={keyboardViewport.onInputLayout}
+        onFocus={keyboardViewport.onInputFocus}
+        onBlur={keyboardViewport.onInputBlur}
         contentContainerStyle={{ padding: 12, paddingBottom: 14 }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
@@ -712,6 +729,7 @@ export function ChatOptionsPanel({
           ) : null}
         </View>
       </ScrollView>
+      </View>
     </IslePanel>
   )
 }
