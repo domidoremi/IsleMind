@@ -1209,24 +1209,28 @@ function ParamInput({
   useLayoutEffect(() => draftCommits.register(commit))
 
   return (
-    <View style={{ flex: 1 }}>
-      <View style={{ minHeight: 24, flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
-        <Text style={{ color: colors.textTertiary, fontSize: 10 }}>{formatParameterRange(range)}</Text>
-        {!automatic ? (
-          <IslePressable
-            onPress={() => {
-              commitPending.current = false
-              setDraft('')
-              onReset()
-            }}
-            accessibilityLabel={resetLabel}
-            accessibilityHint={automaticLabel}
-            style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}
-          >
-            <AppIcon name="undo" color={colors.textTertiary} size={14} />
-          </IslePressable>
-        ) : null}
+    <View style={{ flex: 1, minWidth: 0 }}>
+      <View style={{ flex: 1, minHeight: ISLE_MIN_TOUCH_TARGET, flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 10 }}>{formatParameterRange(range)}</Text>
+        </View>
+        <View style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET }}>
+          {!automatic ? (
+            <IslePressable
+              onPress={() => {
+                commitPending.current = false
+                setDraft('')
+                onReset()
+              }}
+              accessibilityLabel={resetLabel}
+              accessibilityHint={automaticLabel}
+              style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <AppIcon name="undo" color={colors.textTertiary} size={14} />
+            </IslePressable>
+          ) : null}
+        </View>
       </View>
       <TextInput
         value={draft}
