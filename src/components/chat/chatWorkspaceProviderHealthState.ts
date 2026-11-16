@@ -95,6 +95,7 @@ export function useChatWorkspaceProviderHealthState({
     runtimeConversation?.providerId,
     runtimeConversation?.model,
     runtimeConversation?.providerModelMode,
+    runtimeConversation?.routingPlan,
     hydrateProviderKey,
     modelAccessSettings,
     providerHealthKey,
