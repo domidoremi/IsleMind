@@ -51,8 +51,8 @@ Network access is limited to:
 
 | Item | Value |
 |---|---|
-| Current source version | `1.1.12` |
-| Source Android versionCode | `137` |
+| Current source version | `1.1.13` |
+| Source Android versionCode | `138` |
 | APK candidate version | `1.1.2` |
 | APK candidate Android versionCode | `127` |
 | APK candidate channel | Preview |
@@ -61,11 +61,11 @@ The source version may lead the APK candidate. The website and update catalog cu
 
 ### What’s new in the source
 
-- Keep numeric parameters visible above the keyboard and save drafts when closing AI configuration.
-- Refresh configuration status after routing plan changes.
-- Fix repeated message list updates and simplify request detail wording.
+- Reduce repeated message writes when saving long conversations.
+- Reduce repeated processing and credential reads with large provider configurations.
+- Align numeric parameter rows and recognize access or routing changes before dispatch.
 
-[Full release notes](docs/release/v1.1.12.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.12)
+[Full release notes](docs/release/v1.1.13.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.13)
 
 ### APK variants
 
@@ -239,7 +239,7 @@ When production signing secrets are unavailable, explicitly use
 `node scripts/build-local-android-apk.js --release --unsigned --variant no-model --release-arch arm64-v8a`.
 This keeps the real production package/version and non-debuggable release behavior;
 it does not substitute a debug certificate, install the APK or publish anything.
-For the current source version, the output is `dist-apk/IsleMind-1.1.12-android-release-unsigned-no-model-arm64-v8a.apk`
+For the current source version, the output is `dist-apk/IsleMind-1.1.13-android-release-unsigned-no-model-arm64-v8a.apk`
 with `.sha256` and `.source-snapshot.json` sidecars. Signed release qualification still
 requires legitimate production signing and exact-artifact installation/runtime checks.
 
