@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { KeyboardAvoidingView, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { KeyboardAvoidingView, Platform, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import type { EdgeInsets } from 'react-native-safe-area-context'
@@ -395,7 +395,17 @@ export function FloatingComposer({
         flexShrink: 0,
       }}
     >
-      <View ref={modelSelectorRef} style={{ height: ISLE_MIN_TOUCH_TARGET, minWidth: 0, flexShrink: 1 }}>
+      <View
+        ref={modelSelectorRef}
+        {...(Platform.OS === 'web' ? {
+          // Keep the focused layout until click opens the menu. Blur can move
+          // this selector before mouseup and send the click to the canvas.
+          onMouseDown: (event: MouseEvent) => {
+            if (event.button === 0) event.preventDefault()
+          },
+        } : {})}
+        style={{ height: ISLE_MIN_TOUCH_TARGET, minWidth: 0, flexShrink: 1 }}
+      >
         <ModelSelector
           testID="chat-model-selector"
           family={canonicalThemeId}
