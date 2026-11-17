@@ -1,3 +1,5 @@
+const validatedImmutableData = new WeakSet<object>()
+
 /** Detaches operation data, never controllers, signals, adapters or callbacks. */
 export function snapshotPlainData<Value>(
   value: Value,
@@ -46,10 +48,10 @@ function assertPlainObject(value: object): void {
 
 function isDeeplyFrozen(value: object): boolean {
   const pending = [value]
-  const seen = new WeakSet<object>()
+  const seen = new Set<object>()
   while (pending.length) {
     const current = pending.pop()!
-    if (seen.has(current)) continue
+    if (seen.has(current) || validatedImmutableData.has(current)) continue
     seen.add(current)
     assertPlainObject(current)
     if (!Object.isFrozen(current)) return false
@@ -63,5 +65,8 @@ function isDeeplyFrozen(value: object): boolean {
       if (child !== null && typeof child === 'object') pending.push(child)
     }
   }
+  // Publish only after the whole reachable graph passes. A frozen cycle can
+  // reach mutable or invalid data through an ancestor that is still pending.
+  for (const current of seen) validatedImmutableData.add(current)
   return true
 }

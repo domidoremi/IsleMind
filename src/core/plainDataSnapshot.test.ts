@@ -23,6 +23,44 @@ describe('operation-local plain data snapshots', () => {
     expect(captured).not.toBe(shallow)
   })
 
+  it('bounds repeated capture work for an already validated immutable catalog', () => {
+    const catalog = snapshotPlainData(Array.from({ length: 256 }, (_, index) => ({
+      id: `model-${index}`, capabilities: { text: true, limits: [4096, 8192] },
+    })))
+    expect(snapshotPlainData(catalog)).toBe(catalog)
+    const enumerate = jest.spyOn(Object, 'getOwnPropertyNames')
+    try {
+      for (let index = 0; index < 10; index++) expect(snapshotPlainData(catalog)).toBe(catalog)
+      expect(enumerate.mock.calls.length).toBeLessThanOrEqual(10)
+    } finally {
+      enumerate.mockRestore()
+    }
+  })
+
+  it('does not trust a frozen cycle that reaches a mutable child', () => {
+    const child: { value: unknown } = { value: 'before' }
+    const parent: { child: typeof child; cycle?: { parent: unknown } } = { child }
+    parent.cycle = Object.freeze({ parent })
+    Object.freeze(parent)
+    const captured = snapshotPlainData(parent)
+    expect(captured).not.toBe(parent)
+    expect(captured.cycle?.parent).toBe(captured)
+    child.value = () => 'invalid'
+    expect(() => snapshotPlainData(parent.cycle)).toThrow()
+    expect(captured.child.value).toBe('before')
+  })
+
+  it('rejects an invalid graph again after a failed immutable validation', () => {
+    const read = jest.fn(() => 'live')
+    const parent = Object.create(null) as Record<string, unknown>
+    parent.invalid = Object.freeze(Object.defineProperty({}, 'value', { get: read }))
+    parent.cycle = Object.freeze({ parent })
+    Object.freeze(parent)
+    expect(() => snapshotPlainData(parent)).toThrow()
+    expect(() => snapshotPlainData(parent.cycle)).toThrow()
+    expect(read).not.toHaveBeenCalled()
+  })
+
   it('preserves shared references and safely detaches cyclic data', () => {
     const child = { id: 'shared' }
     const original: { a: typeof child; b: typeof child; self?: unknown } = { a: child, b: child }
