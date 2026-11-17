@@ -362,11 +362,13 @@ export async function streamProviderChat(
 ): Promise<ProviderRuntimeStreamHandle> {
   const cancelled = (): ProviderRuntimeStreamHandle => ({ controller: new AbortController(), done: Promise.resolve() })
   if (request.signal?.aborted) return cancelled()
+  // Capture the caller's live admission ports before adding derived usage data.
+  // Spreading first would bind fallback reads to an intermediate request object.
+  request = snapshotProviderRuntimeRequest(request)
   request = {
     ...request,
-    usageContext: providerRuntimeUsageContext(request),
+    usageContext: snapshotPlainData(providerRuntimeUsageContext(request)),
   }
-  request = snapshotProviderRuntimeRequest(request)
   // The request fence is set by Chat admission; generic non-Chat consumers keep
   // their existing contract and do not accidentally acquire another route loop.
   if (!request.executionConstraint) {

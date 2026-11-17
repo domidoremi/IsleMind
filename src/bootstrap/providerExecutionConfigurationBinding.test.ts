@@ -105,6 +105,8 @@ it('captures runtime request data, original signal and metadata before dynamic i
   expect(request.messages[0].content).toBe('original request')
   expect(request.fallbackProviders![0].apiKey).toBe('secure-fixture-a')
   expect(request.signal).toBe(f.controller.signal)
+  expect(Object.isFrozen(request.usageContext)).toBe(true)
+  expect(Object.isFrozen(request.usageContext!.execution)).toBe(true)
 })
 
 it('never substitutes hydrated fallback providers for metadata catalog equality checks', async () => {
@@ -164,20 +166,45 @@ it('retains original execution observer ports while request data is detached', a
 it('preserves a live caller access revocation without allowing settings drift to expand selection', async () => {
   const f = fixture()
   const gate = deferred<void>()
+  const entered = deferred<void>()
   mockRevalidate.mockImplementationOnce(async (constraint: ProviderChatExecutionConstraint,
     input: ProviderChatResolutionInput & { readCurrentAccessSettings?: () => ProviderRuntimeChatRequest['settings'] }) => {
+    entered.resolve()
     await gate.promise
     const current = input.readCurrentAccessSettings?.() ?? input.settings
     return current?.modelBlocklist?.includes('gpt-4o') ? undefined
       : { provider: hydrated('a'), model: 'gpt-4o', constraint }
   })
   const pending = streamProviderChat(f.request, jest.fn(), jest.fn(), jest.fn())
-  await tick()
+  await entered.promise
   f.request.settings = { modelBlocklist: ['gpt-4o'], upstreamMaxRetries: 99 }
   gate.resolve()
   await expect(pending).rejects.toThrow('admitted model route changed')
   expect(mockStart).not.toHaveBeenCalled()
 })
+
+it.each(['policy', 'fallback', 'continuation'] as const)(
+  'keeps the original caller %s check live while deriving usage metadata', async change => {
+    const f = fixture()
+    const entered = deferred<void>()
+    const gate = deferred<void>()
+    mockRevalidate.mockImplementationOnce(async (constraint: ProviderChatExecutionConstraint, input: ProviderChatResolutionInput) => {
+      entered.resolve()
+      await gate.promise
+      return input.isSelectionPolicyCurrent?.() ? { provider: hydrated('a'), model: 'gpt-4o', constraint } : undefined
+    })
+    const pending = streamProviderChat(f.request, jest.fn(), jest.fn(), jest.fn())
+    await entered.promise
+    if (change === 'policy') f.request.failoverPolicy = { mode: 'auto-safe', approvedProviderIds: ['b'] }
+    else if (change === 'fallback') f.request.allowFallback = true
+    else f.request.previousResponseId = 'later-bound-continuation'
+    gate.resolve()
+    await expect(pending).rejects.toThrow('admitted model route changed')
+    expect(mockStart).not.toHaveBeenCalled()
+    expect(mockBegin).not.toHaveBeenCalled()
+    expect(f.request.usageContext).toBeUndefined()
+  },
+)
 
 it('pre-aborted constrained streams admit no resolver, runtime or availability operation', async () => {
   const f = fixture()
