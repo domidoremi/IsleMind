@@ -52,8 +52,8 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 | 项目 | 值 |
 |---|---|
-| 当前源码版本 | `1.1.13` |
-| 源码 Android 版本码 | `138` |
+| 当前源码版本 | `1.1.14` |
+| 源码 Android 版本码 | `139` |
 | APK 候选版本 | `1.1.2` |
 | APK 候选 Android 版本码 | `127` |
 | APK 候选渠道 | 预览版 |
@@ -62,11 +62,11 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 ### 当前源码更新亮点
 
-- 减少保存长会话时的重复消息写入。
-- 减少大量供应商配置下的重复处理和凭据读取。
-- 对齐数字参数输入行，识别发送准备期间的访问与路由变化。
+- 固定待发请求的模型参数基线。
+- 修正模型密钥分组、别名归属与筛选数量。
+- 无可用页面状态时回到首页。
 
-[完整更新说明](docs/release/v1.1.13.md) · [GitHub 发布页](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.13)
+[完整更新说明](docs/release/v1.1.14.md) · [GitHub 发布页](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.14)
 
 ### APK 变体
 

@@ -1,0 +1,33 @@
+# IsleMind 1.1.14 源码版本更新记录
+
+日期：2026-11-17。五项已验证产品改动完成提交推送，源码版本由1.1.13更新为1.1.14，Android源码版本码由138更新为139。三语公开说明见[v1.1.14.md](./v1.1.14.md)。[完整目标](../architecture/full-application-improvement-goal.md)继续进行中。
+
+## 五项改动与累计
+
+从前一检查点`37734cbd16ca0ca6e6eb13e7d16fc8d1d22565c7`之后累计，覆盖模型参数基线快照、有效密钥组与别名分组、英文单复数、岛屿主题筛选数量和根导航默认首页。
+
+- `796fb2d48bd75feed81d6f83b5a1962ebcfeb439`：fix(providers): 固定发送请求的模型参数基线
+- `57f029dcac77036732973a2bcc62afca7e4ccfa4`：fix(chat): 按有效密钥组归类模型与别名
+- `2b07f091843e8f3d9e452ed5ba8ebfb3410cc5d7`：fix(i18n): 修正模型列表英文单项数量
+- `a092f3c9f7cd6d2b7226ed470c42cce7946721c4`：fix(chat): 同步岛屿主题模型筛选数量
+- `56c38c5d57dca06eac849f1a25f42fb0145e9cd3`：fix(navigation): 将根导航默认入口设为首页
+
+新检查点为`56c38c5d57dca06eac849f1a25f42fb0145e9cd3`，版本维护不计入产品提交，下一周期从0/5累计。40个历史Release保持，实际发布结果另行记录。
+
+## 验证与保留范围
+
+根导航旧实现五项回归中四项错误进入上下文设置；修复后工作区三组29项通过，类型检查通过，独立main根布局候选五项通过。最终夹具补充main既有全局状态层后，工作区五项复验通过。实际已加载根布局及根栈参数一致，三条纯路由器回退使用首页，显式上下文链接参数保留；未强制重置真机导航栈，历史同步状态丢失触发原因继续调查。
+
+模型参数基线已在Web和真机完成跨成员默认值、显式覆盖、单项重置及确认故障切换。模型分组与英文数量已分别完成Web、真机实际输入和别名选择。岛屿新筛选表达式已核对真机实际挂载4/7；其Web补验及4/7截图范围仍未完成。各维护记录保留测试、运行源码、失败和视觉范围。
+
+628独立核对53表3256行、四raw、全部用户资料、六组草稿恢复槽、编辑器、路由实例、设备设置、反向映射、原前台和70条请求完整。没有新增模型请求，Inspector已自然关闭，cleanup/pending为空。源码同步2127项stage一致，固定调试应用身份保持。重载保持进程，编辑器与路由实例重建已记录。
+
+相关记录见[参数基线](./source-model-parameter-baseline-snapshot-2026-11-17.md)、[密钥分组](./source-model-picker-credential-groups-2026-11-17.md)、[英文数量](./source-model-picker-count-2026-11-17.md)、[筛选数量](./source-animal-model-filter-count-2026-11-17.md)、[根导航](./source-root-stack-entry-2026-11-17.md)。494个原有未完成路径保留；版本变更只修改package原版本字段。617清理命令被自动审批拒绝，候选保持且未重试，其他历史被拒绝目标也保持。
+
+## 版本与发布边界
+
+同步源码版本、三语README、索引、公开说明及计数。安装身份仍为1.1.8/133，updates/android.json保持实际1.1.2/127候选和空资产。没有构建、导出、安装或上传APK。提交、推送、标签和发布前核对全部远端工作流事件，执行后复核任务清单，禁止触发Actions。
+
+版本元数据变更不构成新运行源码资格。31路由深层操作、55原型及全部主题、语言、尺寸、输入、无障碍、恢复和性能矩阵继续。fullAcceptance、nativeVerified、visualAcceptance及广义loadedRuntimeVerified保持false。
+
+证据位于test-evidence/release/source-version-1.1.14-20261117-01/及test-evidence/implementation/native-routing-groups-20261115-01/。

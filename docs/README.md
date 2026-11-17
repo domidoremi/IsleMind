@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.14 source version checkpoint](./release/source-version-1.1.14-2026-11-17.md): five verified product pushes covering model parameter baselines, credential grouping, model counts and home navigation recovery.
 - [1.1.13 source version checkpoint](./release/source-version-1.1.13-2026-11-17.md): five verified product pushes covering parameter alignment, conversation persistence, configuration processing and live request revocation.
 - [1.1.12 source version checkpoint](./release/source-version-1.1.12-2026-11-17.md): five verified product pushes covering chat layout, request wording, routing status and numeric parameter input.
 - [1.1.11 source version checkpoint](./release/source-version-1.1.11-2026-11-15.md): five verified product pushes, synchronized source metadata and scoped native/Web evidence.
