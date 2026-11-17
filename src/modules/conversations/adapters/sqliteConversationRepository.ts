@@ -553,8 +553,13 @@ async function upsertNormalizedRows(
   )
   const existingById = new Map(existingRows.map((row) => [row.id, row]))
   const nextIds = new Set(conversation.messages.map((message) => message.id))
-  if (existingRows.length > 0) {
-    // Free the ordinal uniqueness constraint before applying inserts/reorders.
+  const reordersExistingMessages = conversation.messages.some((message, ordinal) => {
+    const existing = existingById.get(message.id)
+    return existing !== undefined && existing.ordinal !== ordinal
+  })
+  if (reordersExistingMessages) {
+    // Free occupied ordinals only when retained messages actually move.
+    // Content updates and tail appends/removals keep their existing ordinals.
     await database.run(
       'UPDATE conversation_message_records SET ordinal = ordinal + 1000000000 WHERE conversationId = ?',
       [conversation.id],
@@ -572,10 +577,12 @@ async function upsertNormalizedRows(
     const messageJson = JSON.stringify(message)
     const existing = existingById.get(message.id)
     if (existing?.ordinal === ordinal && existing.messageJson === messageJson) {
-      await database.run(
-        'UPDATE conversation_message_records SET ordinal = ? WHERE conversationId = ? AND id = ?',
-        [ordinal, conversation.id, message.id],
-      )
+      if (reordersExistingMessages) {
+        await database.run(
+          'UPDATE conversation_message_records SET ordinal = ? WHERE conversationId = ? AND id = ?',
+          [ordinal, conversation.id, message.id],
+        )
+      }
       continue
     }
     await database.run(

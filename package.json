@@ -24,7 +24,7 @@
     "android": "node node_modules/expo/bin/cli run:android",
     "ios": "node node_modules/expo/bin/cli run:ios",
     "test": "bun --no-env-file run test:sqlite && jest",
-    "test:sqlite": "bun --no-env-file test --preload ./scripts/offline-provider-test-guard.js ./src/platform/storage/sqliteWalIntegration.test.ts ./src/modules/tasks/adapters/sqliteTaskEffects.test.ts ./src/modules/assistant-runtime/adapters/sqliteHarnessLifecycle.test.ts ./src/modules/assistant-runtime/adapters/sqliteAgentDefinitionRepository.test.ts ./src/modules/assistant-runtime/adapters/sqliteRunBudgetStore.test.ts ./src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution.test.ts ./src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort.test.ts ./src/modules/conversations/adapters/sqliteConversationPreference.test.ts ./src/modules/conversations/adapters/sqliteConversationRepository.test.ts ./src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts ./src/modules/documents/adapters/sqliteDocumentRepository.test.ts ./src/modules/providers/adapters/sqliteModelAvailabilityRepository.test.ts",
+    "test:sqlite": "bun --no-env-file test --preload ./scripts/offline-provider-test-guard.js ./src/platform/storage/sqliteWalIntegration.test.ts ./src/modules/tasks/adapters/sqliteTaskEffects.test.ts ./src/modules/assistant-runtime/adapters/sqliteHarnessLifecycle.test.ts ./src/modules/assistant-runtime/adapters/sqliteAgentDefinitionRepository.test.ts ./src/modules/assistant-runtime/adapters/sqliteRunBudgetStore.test.ts ./src/modules/assistant-runtime/adapters/sqliteAssistantRunAttribution.test.ts ./src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort.test.ts ./src/modules/conversations/adapters/sqliteConversationPreference.test.ts ./src/modules/conversations/adapters/sqliteConversationRepository.test.ts ./src/modules/conversations/adapters/sqliteConversationIncrementalSave.test.ts ./src/modules/diagnostics/adapters/sqliteUsageRecordRepository.test.ts ./src/modules/documents/adapters/sqliteDocumentRepository.test.ts ./src/modules/providers/adapters/sqliteModelAvailabilityRepository.test.ts",
     "test:watch": "jest --watch",
     "test:coverage": "bun --no-env-file run test:sqlite && jest --coverage",
     "test:android-capability-boundary": "node scripts/android-capability-boundary-audit.js",
@@ -321,6 +321,7 @@
       "src/modules/integrations/adapters/sqliteBuiltInWorkspaceFilePort\\.test\\.ts$",
       "src/modules/conversations/adapters/sqliteConversationPreference\\.test\\.ts$",
       "src/modules/conversations/adapters/sqliteConversationRepository\\.test\\.ts$",
+      "src/modules/conversations/adapters/sqliteConversationIncrementalSave\\.test\\.ts$",
       "src/modules/diagnostics/adapters/sqliteUsageRecordRepository\\.test\\.ts$",
       "src/modules/documents/adapters/sqliteDocumentRepository\\.test\\.ts$",
       "src/modules/providers/adapters/sqliteModelAvailabilityRepository\\.test\\.ts$"
