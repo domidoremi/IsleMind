@@ -31,3 +31,9 @@
 版本元数据变更不构成新运行源码资格。31路由深层操作、55原型及全部主题、语言、尺寸、输入、无障碍、恢复和性能矩阵继续。fullAcceptance、nativeVerified、visualAcceptance及广义loadedRuntimeVerified保持false。
 
 证据位于test-evidence/release/source-version-1.1.14-20261117-01/及test-evidence/implementation/native-routing-groups-20261115-01/。
+
+## 实际发布
+
+版本提交`db8e0cba16468d65769e17ec93128635c67f11cc`已推送，v1.1.14于2026-11-17 13:52:50（台北）实际发布。标签固定到版本提交，公开三语正文逐字一致，GitHub API核对公开稳定状态和最新版本。40个历史Release、既有标签与41条Actions任务保持，没有新增任务。详见[发布记录](./source-release-1.1.14-2026-11-17.md)。
+
+五组版本元数据、计数、三语内容、文档链接及原有改动保护检查，以及22项版本契约测试通过。494个原有未完成路径除package版本字段外保持；没有构建、导出、安装或上传APK。
