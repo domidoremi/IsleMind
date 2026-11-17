@@ -1018,7 +1018,7 @@ function IsleModelPicker(props: ThemeModelPickerProps) {
   return (
     <View testID="chat-model-picker-animal-island-ui" style={{ gap: 12, minHeight: props.pickerMinHeight }}>
       <IslePanel radius={props.colors.ui.radius.panel} contentStyle={{ padding: 10, gap: 8 }}>
-        <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
+        <PickerSectionHeading label={props.t('settings.providerManagement')} detail={props.normalizedQuery ? `${props.visibleProviders.length}/${props.providerCount}` : props.t('chat.countItems', { count: props.providerCount })} colors={props.colors} />
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <PickerCategories props={props} family="animal-island-ui" maxWidth={props.compactPicker ? Math.min(160, props.panelWidth - 44) : props.panelWidth * 0.36} />
         </View>
