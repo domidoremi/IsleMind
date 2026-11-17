@@ -20,6 +20,7 @@ let readCurrentProviders: () => readonly AIProvider[] | undefined = () => undefi
 export const providerChatResolutionRuntime = createProviderChatResolutionRuntime({
   async readProviders(signal, options) {
     const admittedProviders = snapshotPlainData(options?.providers)
+    const providerId = options?.providerId
     throwIfProviderSelectionCancelled(signal)
     const { useSettingsStore } = await import('@/store/settingsStore')
     throwIfProviderSelectionCancelled(signal)
@@ -29,6 +30,7 @@ export const providerChatResolutionRuntime = createProviderChatResolutionRuntime
     const catalog = admittedProviders ?? snapshotPlainData(state.providers)
     const providers = []
     for (const item of catalog) {
+      if (providerId !== undefined && item.id !== providerId) continue
       throwIfProviderSelectionCancelled(signal)
       const hydrated = snapshotPlainData(await state.hydrateProviderKey(item.id, { providers: catalog, signal }))
       throwIfProviderSelectionCancelled(signal)

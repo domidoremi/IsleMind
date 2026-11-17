@@ -174,3 +174,95 @@ it.each(['metadata', 'key', 'scope'] as const)('does not transfer fallback confi
   expect(outcome.kind).not.toBe('ready')
   expect(mockConfirm).toHaveBeenCalledTimes(1)
 })
+
+it.each(['admitted', 'current'] as const)('rehydrates only the selected provider on each %s catalog revalidation', async mode => {
+  const request = { preferred: { providerId: 'b', model: 'one' }, signal: new AbortController().signal,
+    ...(mode === 'admitted' ? { providers: mockProviders.slice() } : {}) }
+  const admitted = await providerChatResolutionRuntime.resolvePreferred(request)
+  if (admitted.kind !== 'ready') throw new Error('Expected an admitted provider')
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['a', 'b'])
+  mockHydrate.mockClear()
+
+  for (let index = 0; index < 2; index++) {
+    const checked = await providerChatResolutionRuntime.revalidate(admitted.selection.constraint, request)
+    expect(checked?.provider).toMatchObject({ id: 'b', apiKey: 'fixture-b' })
+    expect(checked?.constraint).toEqual(admitted.selection.constraint)
+  }
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['b', 'b'])
+  for (const [, options] of mockHydrate.mock.calls) {
+    expect(options).toMatchObject({ providers: [provider('a'), provider('b')], signal: request.signal })
+  }
+})
+
+it('rehydrates the admitted fallback provider independently of the original preference', async () => {
+  mockProviders[0].enabled = false
+  const request = { preferred: { providerId: 'a', model: 'one' }, providers: mockProviders.slice(),
+    signal: new AbortController().signal, confirmFallback: mockConfirm }
+  const admitted = await providerChatResolutionRuntime.resolvePreferred(request)
+  if (admitted.kind !== 'ready') throw new Error('Expected an admitted fallback')
+  expect(admitted.selection.provider.id).toBe('b')
+  expect(admitted.selection.constraint.fallbackUsed).toBe(true)
+  mockHydrate.mockClear()
+  const checked = await providerChatResolutionRuntime.revalidate(admitted.selection.constraint, request)
+  expect(checked?.provider.id).toBe('b')
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['b'])
+})
+
+it.each(['during-read', 'before-dispatch'] as const)('keeps the entire admitted metadata fence %s when reading one credential', async change => {
+  const request = { preferred: { providerId: 'b', model: 'one' }, providers: mockProviders.slice(),
+    signal: new AbortController().signal }
+  const admitted = await providerChatResolutionRuntime.resolvePreferred(request)
+  if (admitted.kind !== 'ready') throw new Error('Expected an admitted provider')
+  mockHydrate.mockClear()
+  const read = deferred<AIProvider>()
+  mockHydrate.mockImplementationOnce(() => read.promise)
+  const pending = providerChatResolutionRuntime.revalidate(admitted.selection.constraint, request)
+  await tick()
+  const revoke = () => { mockProviders[0] = { ...mockProviders[0], baseUrl: 'https://changed.invalid/v1' } }
+  if (change === 'during-read') revoke()
+  read.resolve({ ...provider('b'), apiKey: 'fixture-b', apiKeySource: { kind: 'primary' } })
+  if (change === 'during-read') {
+    await expect(pending).rejects.toThrow('provider_configuration_conflict')
+  } else {
+    const checked = await pending
+    expect(checked?.checkCurrentAdmission).toEqual(expect.any(Function))
+    revoke()
+    expect(() => checked?.checkCurrentAdmission?.()).toThrow('provider_configuration_conflict')
+  }
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['b'])
+})
+
+it('settles the selected secure read and stops revalidation when cancelled', async () => {
+  const controller = new AbortController()
+  const request = { preferred: { providerId: 'b', model: 'one' }, providers: mockProviders.slice(), signal: controller.signal }
+  const admitted = await providerChatResolutionRuntime.resolvePreferred(request)
+  if (admitted.kind !== 'ready') throw new Error('Expected an admitted provider')
+  mockHydrate.mockClear()
+  mockAvailability.mockClear()
+  const read = deferred<AIProvider>()
+  mockHydrate.mockImplementationOnce(() => read.promise)
+  const pending = providerChatResolutionRuntime.revalidate(admitted.selection.constraint, request)
+  await tick()
+  controller.abort()
+  read.resolve({ ...provider('b'), apiKey: 'fixture-b', apiKeySource: { kind: 'primary' } })
+  await expect(pending).resolves.toBeUndefined()
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['b'])
+  expect(mockAvailability).not.toHaveBeenCalled()
+})
+
+it.each(['key-removed', 'scope-changed'] as const)('rejects %s from a fresh selected credential read', async change => {
+  const request = { preferred: { providerId: 'b', model: 'one' }, providers: mockProviders.slice(),
+    signal: new AbortController().signal }
+  const admitted = await providerChatResolutionRuntime.resolvePreferred(request)
+  if (admitted.kind !== 'ready') throw new Error('Expected an admitted provider')
+  mockHydrate.mockClear()
+  if (change === 'key-removed') {
+    mockHydrate.mockImplementation(async (id: string) => ({ ...provider(id), apiKey: '', apiKeySource: { kind: 'none' } }))
+  } else {
+    mockAvailability.mockImplementation(async (identity: { providerId: string }) => ({
+      scope: { scopeId: identity.providerId, epoch: 'epoch-2' }, availability: 'unknown',
+    }))
+  }
+  await expect(providerChatResolutionRuntime.revalidate(admitted.selection.constraint, request)).resolves.toBeUndefined()
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['b'])
+})

@@ -59,7 +59,8 @@ export interface ProviderChatFallbackInput extends ProviderChatResolutionInput {
 export type ProviderChatResolutionReason = 'offline' | 'disabled_provider' | 'missing_key' | 'invalid_configuration' | 'model_unavailable' | 'provider_cooldown' | 'policy_blocked' | 'confirmation_declined' | 'candidate_changed'
 
 export interface ProviderChatResolutionDependencies {
-  readProviders(signal: AbortSignal, options?: { readonly providers?: readonly AIProvider[] }): Promise<readonly AIProvider[]>
+  /** providerId limits credential reads; providers retains the full admitted metadata catalog. */
+  readProviders(signal: AbortSignal, options?: { readonly providers?: readonly AIProvider[]; readonly providerId?: string }): Promise<readonly AIProvider[]>
   isOnline(provider?: AIProvider): Promise<boolean>
   buildCandidates: ProviderFallbackCandidateBuilder
   loadHealthRecords(): Promise<Record<string, ProviderHealthRecord>>
@@ -362,7 +363,7 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       checkConfiguration?.()
       throwIfCancelled(input.signal)
       const providers = snapshotPlainData(await dependencies.readProviders(input.signal,
-        input.providers === undefined ? undefined : { providers: input.providers }))
+        { providers: input.providers, providerId: constraint.identity.providerId }))
       throwIfCancelled(input.signal)
       const provider = providers.find((item) => item.id === constraint.identity.providerId)
       if (!await dependencies.isOnline(provider)) return undefined
