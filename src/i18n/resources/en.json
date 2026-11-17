@@ -1126,6 +1126,8 @@
     "clearSystemPromptAccessibilityHint": "Removes the current system prompt from this chat.",
     "closeQuickPanelAccessibilityHint": "Closes the current quick panel.",
     "countItems": "{{count}} items",
+    "countItems_one": "{{count}} item",
+    "countItems_other": "{{count}} items",
     "noProviderModelMatches": "No matching models in this scope.",
     "noProviderModelMatchesDescription": "Adjust your search or filters.",
     "notSelected": "Not selected",
