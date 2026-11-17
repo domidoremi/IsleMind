@@ -86,6 +86,7 @@ export default function RootLayout() {
       <IsleDialogProvider updateNotice={boot.ready ? qaUpdateMessage : null}>
         {appReady ? (
           <Stack
+            initialRouteName="index"
             screenOptions={{
               headerShown: false,
               contentStyle: { backgroundColor: colors.surface },
