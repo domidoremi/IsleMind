@@ -109,6 +109,34 @@ it('captures runtime request data, original signal and metadata before dynamic i
   expect(Object.isFrozen(request.usageContext!.execution)).toBe(true)
 })
 
+it('keeps model baseline values and provenance stable while execution admission is pending', async () => {
+  const f = fixture()
+  const values = { temperature: 0.2, maxTokens: 4096 }
+  const sources: { temperature: 'explicit' | 'provider-default'; maxTokens: 'provider-default' } = {
+    temperature: 'explicit', maxTokens: 'provider-default',
+  }
+  f.request.modelParameterBaseline = { schema: 'islemind.model-parameter-baseline.v1', values, sources }
+  const entered = deferred<void>(), gate = deferred<void>()
+  mockRevalidate.mockImplementationOnce(async (constraint: ProviderChatExecutionConstraint) => {
+    entered.resolve()
+    await gate.promise
+    return { provider: hydrated('a'), model: 'gpt-4o', constraint }
+  })
+  const pending = streamProviderChat(f.request, jest.fn(), jest.fn(), jest.fn())
+  await entered.promise
+  values.temperature = 1.7
+  values.maxTokens = 16
+  sources.temperature = 'provider-default'
+  gate.resolve()
+  await (await pending).done
+  const [request] = mockStart.mock.calls[0] as [ProviderRuntimeChatRequest]
+  expect(request.modelParameterBaseline).toEqual({ schema: 'islemind.model-parameter-baseline.v1',
+    values: { temperature: 0.2, maxTokens: 4096 },
+    sources: { temperature: 'explicit', maxTokens: 'provider-default' } })
+  expect(values).toEqual({ temperature: 1.7, maxTokens: 16 })
+  expect(sources.temperature).toBe('provider-default')
+})
+
 it('never substitutes hydrated fallback providers for metadata catalog equality checks', async () => {
   const f = fixture()
   await (await streamProviderChat(f.request, jest.fn(), jest.fn(), jest.fn())).done

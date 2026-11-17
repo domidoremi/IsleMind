@@ -1,4 +1,5 @@
 import { snapshotProviderRuntimeRequest } from './providerRuntimeRequestSnapshot'
+import { applyProviderModelParameterOverrides } from './providerModelParameterOverrides'
 import type { ProviderRuntimeChatRequest } from './providerRuntimeContracts'
 
 function fixture(): ProviderRuntimeChatRequest {
@@ -33,6 +34,31 @@ it('detaches and freezes plain request data while retaining original ports and s
   request.provider = { ...request.provider, name: 'runtime-only health projection' }
   expect(source.provider.name).toBe('later')
 })
+
+it.each(['values', 'sources', 'inherited-output'] as const)(
+  'keeps the admitted parameter baseline when caller %s change before selecting another member', kind => {
+    const values = { temperature: 0.2, maxTokens: 4096 }
+    const sources: { temperature: 'explicit' | 'provider-default'; maxTokens: 'provider-default' } = {
+      temperature: 'explicit', maxTokens: 'provider-default',
+    }
+    const source: ProviderRuntimeChatRequest = { ...fixture(), temperature: 0.2, maxTokens: 512,
+      generationParameterSources: { temperature: 'explicit', maxTokens: 'explicit' },
+      modelParameterBaseline: { schema: 'islemind.model-parameter-baseline.v1', values, sources } }
+    const request = snapshotProviderRuntimeRequest(source)
+    if (kind === 'values') values.temperature = 1.7
+    else if (kind === 'sources') sources.temperature = 'provider-default'
+    else values.maxTokens = 16
+    const next = applyProviderModelParameterOverrides({ ...request, provider: { ...request.provider,
+      id: 'next-member', modelParameterOverrides: kind === 'inherited-output' ? undefined : {
+        schema: 'islemind.provider-model-parameters.v1', models: { one: { temperature: 0.9, maxTokens: 1024 } },
+      },
+    } })
+    expect(next.temperature).toBe(0.2)
+    expect(next.maxTokens).toBe(kind === 'inherited-output' ? 4096 : 1024)
+    expect(next.generationParameterSources.temperature).toBe('explicit')
+    expect(next.signal).toBe(source.signal)
+  },
+)
 
 it('repeated boundary snapshots retain the original caller access-revocation port', () => {
   const source = fixture()

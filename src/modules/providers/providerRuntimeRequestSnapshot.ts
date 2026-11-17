@@ -13,6 +13,7 @@ export function snapshotProviderRuntimeRequest(
     messages: snapshotPlainData(source.messages, snapshots),
     generationParameterSources: snapshotPlainData(source.generationParameterSources, snapshots),
     generationParameterPlan: snapshotPlainData(source.generationParameterPlan, snapshots),
+    modelParameterBaseline: snapshotPlainData(source.modelParameterBaseline, snapshots),
     attachments: snapshotPlainData(source.attachments, snapshots),
     retrievalSources: snapshotPlainData(source.retrievalSources, snapshots),
     usageContext: snapshotPlainData(source.usageContext, snapshots),
