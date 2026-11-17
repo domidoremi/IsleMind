@@ -12,6 +12,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions,
 import { Modal } from '@/components/ui/AppModal'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ProviderBrandIcon, type ProviderBrand } from '@/components/ui/ProviderBrandIcon'
@@ -832,6 +833,7 @@ export function ModelMenu({
 }) {
   const { t } = useTranslation()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
+  const { top: safeTop, right: safeRight, bottom: safeBottom, left: safeLeft } = useSafeAreaInsets()
   const [mounted, setMounted] = useState(visible)
   const [selectionFailed, setSelectionFailed] = useState(false)
   const closing = useRef(false)
@@ -843,11 +845,12 @@ export function ModelMenu({
     : motion === 'reduced' ? 90 : 0
 
   const placement = useMemo(() => resolveModelMenuPlacement({
+    safeAreaInsets: { top: safeTop, right: safeRight, bottom: safeBottom, left: safeLeft },
     anchor,
     windowWidth,
     windowHeight,
     estimatedMenuHeight,
-  }), [anchor, estimatedMenuHeight, windowHeight, windowWidth])
+  }), [anchor, estimatedMenuHeight, safeBottom, safeLeft, safeRight, safeTop, windowHeight, windowWidth])
 
   const placementStyle = placement.top === undefined
     ? { left: placement.left, bottom: placement.bottom, width: placement.width, maxHeight: placement.maxHeight }

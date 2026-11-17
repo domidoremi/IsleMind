@@ -171,6 +171,7 @@ export interface ModelMenuAnchor {
 }
 
 interface ModelMenuPlacementInput {
+  safeAreaInsets?: Partial<{ top: number; right: number; bottom: number; left: number }>
   anchor: ModelMenuAnchor | null
   windowWidth: number
   windowHeight: number
@@ -187,20 +188,37 @@ export interface ModelMenuPlacement {
 }
 
 export function resolveModelMenuPlacement({
+  safeAreaInsets = {},
   anchor,
   windowWidth,
   windowHeight,
   estimatedMenuHeight,
 }: ModelMenuPlacementInput): ModelMenuPlacement {
-  const width = Math.min(272, Math.max(240, windowWidth - 32))
+  const inset = (value: number | undefined) => Number.isFinite(value) ? Math.max(0, value!) : 0
+  const safeLeft = inset(safeAreaInsets.left)
+  const safeRight = inset(safeAreaInsets.right)
+  const safeTop = inset(safeAreaInsets.top)
+  const safeBottom = inset(safeAreaInsets.bottom)
+  const usableWidth = Math.max(0, windowWidth - safeLeft - safeRight)
+  const horizontalMargin = Math.min(12, usableWidth / 2)
+  const minimumLeft = safeLeft + horizontalMargin
+  const maximumRight = windowWidth - safeRight - horizontalMargin
+  const width = Math.min(272, Math.max(240, usableWidth - 32), Math.max(0, maximumRight - minimumLeft))
   const left = anchor
-    ? clamp(anchor.x + anchor.width / 2 - width / 2, 12, windowWidth - width - 12)
-    : Math.max(12, (windowWidth - width) / 2)
-  const maximumOffset = Math.max(12, windowHeight - 12)
-  const top = anchor ? clamp(anchor.y + anchor.height + 10, 12, maximumOffset) : 24
-  const bottom = anchor ? clamp(windowHeight - anchor.y + 10, 12, maximumOffset) : 12
-  const roomAbove = Math.max(0, windowHeight - bottom - 12)
-  const roomBelow = Math.max(0, windowHeight - top - 12)
+    ? clamp(anchor.x + anchor.width / 2 - width / 2, minimumLeft, maximumRight - width)
+    : minimumLeft + (maximumRight - minimumLeft - width) / 2
+  const usableHeight = Math.max(0, windowHeight - safeTop - safeBottom)
+  const verticalMargin = Math.min(12, usableHeight / 2)
+  const minimumTop = safeTop + verticalMargin
+  const maximumBottom = windowHeight - safeBottom - verticalMargin
+  const top = anchor
+    ? clamp(anchor.y + anchor.height + 10, minimumTop, maximumBottom)
+    : clamp(safeTop + 24, minimumTop, maximumBottom)
+  const bottom = anchor
+    ? clamp(windowHeight - anchor.y + 10, windowHeight - maximumBottom, windowHeight - minimumTop)
+    : windowHeight - maximumBottom
+  const roomAbove = Math.max(0, windowHeight - bottom - minimumTop)
+  const roomBelow = Math.max(0, maximumBottom - top)
   const openAbove = !!anchor && (roomAbove >= estimatedMenuHeight || roomAbove >= roomBelow)
   if (openAbove) {
     return {
