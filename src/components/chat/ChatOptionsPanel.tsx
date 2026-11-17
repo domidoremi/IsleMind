@@ -1125,11 +1125,19 @@ function groupModelPickerItemsByToken(provider: AIProvider, models: ModelPickerI
       models: source.models.map(id => byId.get(id)!),
     }))
   }
+  const byUpstreamId = new Map<string, ModelPickerItem[]>()
+  for (const model of models) {
+    const upstreamId = resolveProviderModelAlias(provider, model.id)
+    const entries = byUpstreamId.get(upstreamId) ?? []
+    entries.push(model)
+    byUpstreamId.set(upstreamId, entries)
+  }
   const used = new Set<string>()
   const groups: ModelPickerGroup[] = []
   for (const [index, group] of (provider.credentialGroups ?? []).entries()) {
+    if (group.enabled === false) continue
     const groupModels = (group.availableModels ?? [])
-      .map((modelId) => byId.get(modelId))
+      .flatMap((modelId) => byUpstreamId.get(resolveProviderModelAlias(provider, modelId)) ?? [])
       .filter((model): model is ModelPickerItem => {
         if (!model || used.has(model.id)) return false
         used.add(model.id)

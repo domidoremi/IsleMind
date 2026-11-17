@@ -228,6 +228,55 @@ it('keeps the current model first inside its original credential group', async (
   expect(rows[0].props.accessibilityLabel).toContain('Current credential group')
 })
 
+
+describe('model picker credential catalog ownership', () => {
+  it('skips a disabled group when an enabled group advertises the same model', async () => {
+    const grouped = provider(a.id, {
+      models: ['upstream-shared'], manualModels: [], modelAliases: [], modelConfigs: [],
+      credentialGroups: [
+        { id: 'disabled', label: 'Disabled catalog', enabled: false, availableModels: ['upstream-shared'], lastModelSyncStatus: 'ok' },
+        { id: 'enabled', label: 'Enabled catalog', enabled: true, availableModels: ['upstream-shared'], lastModelSyncStatus: 'ok' },
+      ],
+    })
+    const { view, onSwitchModel } = await panel({ providers: [grouped], chat: conversation({ model: 'upstream-shared' }) })
+    const row = view.getByTestId(optionId(a.id, 'upstream-shared'))
+    expect(row.props.accessibilityLabel).toContain('Enabled catalog')
+    expect(row.props.accessibilityLabel).not.toContain('Disabled catalog')
+    expect(view.getAllByTestId(/^chat-model-option-/)).toHaveLength(1)
+    await fireEvent.press(row)
+    expect(onSwitchModel).toHaveBeenCalledWith(grouped, 'upstream-shared')
+  })
+
+  it('places aliases beside their upstream model in the enabled credential catalog', async () => {
+    const grouped = provider(a.id, {
+      manualModels: [], modelConfigs: [],
+      modelAliases: [{ alias: 'routing-alias', model: 'upstream-shared' }, { alias: 'second-alias', model: 'upstream-shared' }],
+      credentialGroups: [
+        { id: 'disabled', label: 'Disabled catalog', enabled: false, availableModels: ['upstream-shared'], lastModelSyncStatus: 'ok' },
+        { id: 'enabled', label: 'Enabled catalog', enabled: true, availableModels: ['upstream-shared', 'upstream-shared'], lastModelSyncStatus: 'ok' },
+      ],
+    })
+    const { view, onSwitchModel } = await panel({ providers: [grouped] })
+    for (const model of ['upstream-shared', 'routing-alias', 'second-alias']) {
+      expect(view.getByTestId(optionId(a.id, model)).props.accessibilityLabel).toContain('Enabled catalog')
+    }
+    expect(view.getAllByTestId(/^chat-model-option-/)).toHaveLength(3)
+    await fireEvent.press(view.getByTestId(optionId(a.id, 'routing-alias')))
+    expect(onSwitchModel).toHaveBeenCalledWith(grouped, 'routing-alias')
+  })
+
+  it('keeps provider models without an enabled credential catalog in the provider group', async () => {
+    const grouped = provider(a.id, {
+      manualModels: [], modelAliases: [], modelConfigs: [],
+      credentialGroups: [{ id: 'disabled', label: 'Disabled catalog', enabled: false, availableModels: ['upstream-shared'], lastModelSyncStatus: 'ok' }],
+    })
+    const { view } = await panel({ providers: [grouped], chat: conversation({ model: 'upstream-shared' }) })
+    const row = view.getByTestId(optionId(a.id, 'upstream-shared'))
+    expect(row.props.accessibilityLabel).toContain('apiKeyPanel.providerMergedModels')
+    expect(row.props.accessibilityLabel).not.toContain('Disabled catalog')
+  })
+})
+
 it('applies a source filter only to the selected connection and resets it on all-model browsing', async () => {
   const withSources = provider(b.id, { manualModels: ['upstream-shared', 'manual-other'] })
   const { view } = await panel({ providers: [a, withSources] })
