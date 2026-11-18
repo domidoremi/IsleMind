@@ -51,8 +51,8 @@ Network access is limited to:
 
 | Item | Value |
 |---|---|
-| Current source version | `1.1.15` |
-| Source Android versionCode | `140` |
+| Current source version | `1.1.16` |
+| Source Android versionCode | `141` |
 | APK candidate version | `1.1.2` |
 | APK candidate Android versionCode | `127` |
 | APK candidate channel | Preview |
@@ -61,11 +61,13 @@ The source version may lead the APK candidate. The website and update catalog cu
 
 ### What’s new in the source
 
-- Keep the chat model menu visible around display cutouts, after window resizing and when zooming in.
-- Keep focus on the web model button when the composer wraps.
-- Close the model menu more easily with a larger tap target.
+- Recover automatically when web startup encounters a brief storage lock.
+- Exclude image filenames and hidden anchors from offline guide search results.
+- Save a draft once when switching conversations quickly, and restore its full text when returning.
+- Keep the caret at the insertion point when composing text with an IME in web chat.
+- Release input focus after discarding an unsaved document and returning to chat.
 
-[Full release notes](docs/release/v1.1.15.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.15)
+[Full release notes](docs/release/v1.1.16.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.16)
 
 ### APK variants
 
@@ -239,7 +241,7 @@ When production signing secrets are unavailable, explicitly use
 `node scripts/build-local-android-apk.js --release --unsigned --variant no-model --release-arch arm64-v8a`.
 This keeps the real production package/version and non-debuggable release behavior;
 it does not substitute a debug certificate, install the APK or publish anything.
-For the current source version, the output is `dist-apk/IsleMind-1.1.15-android-release-unsigned-no-model-arm64-v8a.apk`
+For the current source version, the output is `dist-apk/IsleMind-1.1.16-android-release-unsigned-no-model-arm64-v8a.apk`
 with `.sha256` and `.source-snapshot.json` sidecars. Signed release qualification still
 requires legitimate production signing and exact-artifact installation/runtime checks.
 
