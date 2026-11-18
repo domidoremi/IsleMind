@@ -574,6 +574,7 @@ export function FloatingComposer({
       <ModelMenu
         visible={modelMenuOpen}
         anchor={modelSelectorAnchor}
+        anchorRef={modelSelectorRef}
         items={modelMenuItems}
         selectedId={selectedModelMenuId}
         colors={colors}

@@ -170,6 +170,8 @@ export interface ModelMenuAnchor {
   height: number
 }
 
+export const MODEL_MENU_VIEWPORT_MARGIN = 12
+
 interface ModelMenuPlacementInput {
   safeAreaInsets?: Partial<{ top: number; right: number; bottom: number; left: number }>
   anchor: ModelMenuAnchor | null
@@ -200,7 +202,7 @@ export function resolveModelMenuPlacement({
   const safeTop = inset(safeAreaInsets.top)
   const safeBottom = inset(safeAreaInsets.bottom)
   const usableWidth = Math.max(0, windowWidth - safeLeft - safeRight)
-  const horizontalMargin = Math.min(12, usableWidth / 2)
+  const horizontalMargin = Math.min(MODEL_MENU_VIEWPORT_MARGIN, usableWidth / 2)
   const minimumLeft = safeLeft + horizontalMargin
   const maximumRight = windowWidth - safeRight - horizontalMargin
   const width = Math.min(272, Math.max(240, usableWidth - 32), Math.max(0, maximumRight - minimumLeft))
@@ -208,7 +210,7 @@ export function resolveModelMenuPlacement({
     ? clamp(anchor.x + anchor.width / 2 - width / 2, minimumLeft, maximumRight - width)
     : minimumLeft + (maximumRight - minimumLeft - width) / 2
   const usableHeight = Math.max(0, windowHeight - safeTop - safeBottom)
-  const verticalMargin = Math.min(12, usableHeight / 2)
+  const verticalMargin = Math.min(MODEL_MENU_VIEWPORT_MARGIN, usableHeight / 2)
   const minimumTop = safeTop + verticalMargin
   const maximumBottom = windowHeight - safeBottom - verticalMargin
   const top = anchor

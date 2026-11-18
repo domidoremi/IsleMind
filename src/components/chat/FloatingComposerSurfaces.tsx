@@ -37,6 +37,7 @@ import {
   type ComposerActivityState,
 } from './floatingComposerGeometry'
 import type { ComposerKeyboardMotion } from './chatWorkspaceKeyboard'
+import { useModelMenuWebViewport, webModelMenuStyle } from './modelMenuWebViewport'
 
 type ThemeColors = ReturnType<typeof useAppTheme>['colors']
 
@@ -807,6 +808,7 @@ export interface ModelMenuItem {
 export function ModelMenu({
   visible,
   anchor,
+  anchorRef,
   items,
   selectedId,
   colors,
@@ -820,6 +822,7 @@ export function ModelMenu({
 }: {
   visible: boolean
   anchor: { x: number; y: number; width: number; height: number } | null
+  anchorRef?: RefObject<View | null>
   items: ModelMenuItem[]
   selectedId?: string
   colors: ThemeColors
@@ -832,9 +835,18 @@ export function ModelMenu({
   onClose: () => void
 }) {
   const { t } = useTranslation()
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions()
-  const { top: safeTop, right: safeRight, bottom: safeBottom, left: safeLeft } = useSafeAreaInsets()
+  const windowSize = useWindowDimensions()
+  const safeArea = useSafeAreaInsets()
   const [mounted, setMounted] = useState(visible)
+  const menuRootRef = useRef<View>(null)
+  const viewport = useModelMenuWebViewport(visible && mounted, menuRootRef, anchorRef, anchor)
+  const windowWidth = viewport?.width ?? windowSize.width
+  const windowHeight = viewport?.height ?? windowSize.height
+  const menuAnchor = viewport?.anchor ?? anchor
+  const safeTop = Math.max(safeArea.top, viewport?.obscured.top ?? 0)
+  const safeRight = Math.max(safeArea.right, viewport?.obscured.right ?? 0)
+  const safeBottom = Math.max(safeArea.bottom, viewport?.obscured.bottom ?? 0)
+  const safeLeft = Math.max(safeArea.left, viewport?.obscured.left ?? 0)
   const [selectionFailed, setSelectionFailed] = useState(false)
   const closing = useRef(false)
   // Reserve a short status line so a rejection never changes the menu's anchor.
@@ -846,13 +858,15 @@ export function ModelMenu({
 
   const placement = useMemo(() => resolveModelMenuPlacement({
     safeAreaInsets: { top: safeTop, right: safeRight, bottom: safeBottom, left: safeLeft },
-    anchor,
+    anchor: menuAnchor,
     windowWidth,
     windowHeight,
     estimatedMenuHeight,
-  }), [anchor, estimatedMenuHeight, safeBottom, safeLeft, safeRight, safeTop, windowHeight, windowWidth])
+  }), [menuAnchor, estimatedMenuHeight, safeBottom, safeLeft, safeRight, safeTop, windowHeight, windowWidth])
 
-  const placementStyle = placement.top === undefined
+  const placementStyle = viewport
+    ? webModelMenuStyle(placement, { top: safeTop, right: safeRight, bottom: safeBottom, left: safeLeft }, windowWidth, windowHeight, estimatedMenuHeight)
+    : placement.top === undefined
     ? { left: placement.left, bottom: placement.bottom, width: placement.width, maxHeight: placement.maxHeight }
     : { left: placement.left, top: placement.top, width: placement.width, maxHeight: placement.maxHeight }
 
@@ -912,7 +926,7 @@ export function ModelMenu({
       navigationBarTranslucent
       onRequestClose={closeMenu}
     >
-      <View style={styles.menuRoot} accessibilityViewIsModal>
+      <View ref={menuRootRef} style={styles.menuRoot} accessibilityViewIsModal>
         <AnimatedView testID="model-menu-backdrop" style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }, backdropMotionStyle]}>
           <Pressable
             testID="model-menu-dismiss"
@@ -961,7 +975,7 @@ export function ModelMenu({
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            style={{ maxHeight: Math.min(280, windowHeight * 0.42), flexShrink: 1 }}
+            style={{ maxHeight: Math.min(280, (viewport?.visibleHeight ?? windowHeight) * 0.42), flexShrink: 1 }}
             contentContainerStyle={{ padding: 8, gap: 2 }}
           >
             {items.length ? items.map((item) => {
