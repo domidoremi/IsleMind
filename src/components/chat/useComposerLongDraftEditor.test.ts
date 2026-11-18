@@ -1,6 +1,6 @@
 import { act, render, renderHook } from "@testing-library/react-native";
 import { createElement, useLayoutEffect, useRef, useState } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 
 import { useComposerLongDraftEditor } from "./useComposerLongDraftEditor";
 
@@ -143,6 +143,25 @@ describe("useComposerLongDraftEditor", () => {
       result.current.editor.measureContentHeight(2 * 22 + 16),
     );
     expect(result.current.editor.sizeMode).toBe("compact");
+  });
+
+  it("keeps the browser caret between a committed IME candidate and the unchanged suffix", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Platform, "OS")!;
+    Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+    try {
+      const { result, unmount } = await renderHook(() => useHarness("前后"));
+      const input = { value: "前ni后", selectionStart: 3, selectionEnd: 3 };
+      Object.assign(result.current.editor.inputRef, { current: input });
+      await act(async () => result.current.editor.changeText(input.value));
+      expect(result.current.editor.selection).toEqual({ start: 3, end: 3 });
+      Object.assign(input, { value: "前你后", selectionStart: 2, selectionEnd: 2 });
+      await act(async () => result.current.editor.changeText(input.value));
+      expect(result.current.editor.selection).toEqual({ start: 2, end: 2 });
+      expect(result.current.editor.captureSendRecovery().history.present.selection).toEqual({ start: 2, end: 2 });
+      await unmount();
+    } finally {
+      Object.defineProperty(Platform, "OS", descriptor);
+    }
   });
 
   it("applies a Markdown action as an independent undo checkpoint", async () => {

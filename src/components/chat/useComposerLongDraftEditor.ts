@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { TextInput } from "react-native";
+import { Platform, type TextInput } from "react-native";
 
 import {
   createComposerEditHistory,
@@ -45,6 +45,13 @@ interface ComposerMeasurementFrame {
     event: ComposerSizeEvent,
     measuredContentHeight?: number,
   ) => void;
+}
+
+function readWebInputSelection(input: TextInput | null, text: string): ComposerTextSelection | undefined {
+  if (Platform.OS !== "web" || !input) return;
+  const field = input as unknown as HTMLInputElement | HTMLTextAreaElement;
+  if (field.value !== text || typeof field.selectionStart !== "number" || typeof field.selectionEnd !== "number") return;
+  return { start: field.selectionStart, end: field.selectionEnd };
 }
 
 function nextTypingSelection(
@@ -217,7 +224,8 @@ export function useComposerLongDraftEditor({
       }
       commitSnapshot(
         nextText,
-        nextTypingSelection(previousText, nextText, selectionRef.current),
+        readWebInputSelection(inputRef.current, nextText) ??
+          nextTypingSelection(previousText, nextText, selectionRef.current),
         editKind(previousText, nextText, selectionRef.current),
         false,
       );
