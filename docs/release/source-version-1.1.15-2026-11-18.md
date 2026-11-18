@@ -15,3 +15,9 @@
 真机横屏安全区、模型按钮点击及关闭按钮边缘操作的范围分别见[安全区](./source-model-menu-safe-area-2026-11-18.md)、[鼠标焦点](./source-model-selector-focus-2026-11-18.md)和[关闭按钮](./source-model-menu-close-target-2026-11-18.md)。Web 三语四尺寸共 24 组焦点转移和返回检查通过。连续调整窗口的九个场景及双倍缩放的两个场景通过。动态视口修复在工作区和独立候选各通过 42 项测试。细节见[折行焦点](./source-model-selector-wrap-focus-2026-11-18.md)和[动态视口](./source-model-menu-web-viewport-2026-11-18.md)。
 
 原有工作区改动、用户资料和 APK 候选目录受保护。现有隔离安装为 1.1.8/133，APK 候选仍为 1.1.2/127。真实网页按键、手机输入法、SQLite 启动锁，以及 31 条路由与 55 个原型的完整验收继续跟进。[完整目标](../architecture/full-application-improvement-goal.md)
+
+## 实际发布
+
+版本提交`3c6c785dc9cde086a98bbf71454abf38ac0dbb88`已推送，v1.1.15于2026-11-18 21:07:21（台北）实际发布。标签固定到版本提交，公开三语正文逐字一致，GitHub API核对公开稳定状态和最新版本。41个历史Release、既有标签与41条Actions任务保持，没有新增任务。详见[发布记录](./source-release-1.1.15-2026-11-18.md)。
+
+五组版本元数据、计数、三语内容、文档链接及原有改动保护检查，以及22项版本契约测试通过。494个原有未完成路径除package版本字段外保持；没有构建、导出、安装或上传APK。
