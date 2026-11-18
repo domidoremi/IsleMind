@@ -52,8 +52,8 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 | 项目 | 值 |
 |---|---|
-| 当前源码版本 | `1.1.14` |
-| 源码 Android 版本码 | `139` |
+| 当前源码版本 | `1.1.15` |
+| 源码 Android 版本码 | `140` |
 | APK 候选版本 | `1.1.2` |
 | APK 候选 Android 版本码 | `127` |
 | APK 候选渠道 | 预览版 |
@@ -62,11 +62,11 @@ IsleMind 将模型服务商、对话、知识与记忆、Agent 任务以及工�
 
 ### 当前源码更新亮点
 
-- 固定待发请求的模型参数基线。
-- 修正模型密钥分组、别名归属与筛选数量。
-- 无可用页面状态时回到首页。
+- 模型菜单避开屏幕缺口，调整窗口或放大页面后仍可完整查看。
+- 网页输入区折行时，模型按钮保留焦点。
+- 模型菜单的关闭按钮更容易点中。
 
-[完整更新说明](docs/release/v1.1.14.md) · [GitHub 发布页](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.14)
+[完整更新说明](docs/release/v1.1.15.md) · [GitHub 发布页](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.15)
 
 ### APK 变体
 
