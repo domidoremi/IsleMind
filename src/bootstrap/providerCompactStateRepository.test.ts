@@ -1,5 +1,5 @@
 jest.mock('expo-sqlite', () => ({ openDatabaseAsync: jest.fn() }))
-jest.mock('@/platform/storage', () => ({ scheduleSqliteDatabaseOperation: (_name: string, work: () => unknown) => work() }))
+jest.mock('@/platform/storage', () => jest.requireActual('@/platform/storage/expoSqliteDatabase'))
 jest.mock('@/modules/providers', () => jest.requireActual('../modules/providers/providerCompactStateRepository'))
 
 import * as SQLite from 'expo-sqlite'

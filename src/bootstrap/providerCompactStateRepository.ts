@@ -3,17 +3,17 @@ import {
   createProviderCompactStateRepository,
   type ProviderCompactStateDatabase,
 } from '@/modules/providers'
-import { scheduleSqliteDatabaseOperation } from '@/platform/storage'
+import { retryWebSqliteOpen, scheduleSqliteDatabaseOperation } from '@/platform/storage'
 
 export type { CompactStateRecord } from '@/modules/providers'
 
 export const providerCompactStateRepository = createProviderCompactStateRepository({
   openDatabase: async (databaseName) => {
     return scheduleSqliteDatabaseOperation(databaseName, async () => {
-      const database = await SQLite.openDatabaseAsync(databaseName, {
+      const database = await retryWebSqliteOpen(() => SQLite.openDatabaseAsync(databaseName, {
         useNewConnection: true,
         finalizeUnusedStatementsBeforeClosing: false,
-      })
+      }))
       try {
         await database.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;')
         return database as ProviderCompactStateDatabase

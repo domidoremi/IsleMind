@@ -104,10 +104,10 @@ async function openDatabase(name: string): Promise<SqliteDatabase> {
     const SQLite = require('expo-sqlite') as typeof import('expo-sqlite')
     // Each provider owns its connection. The adapter exposes no raw prepared
     // statements, so Expo's close-time sweep is redundant and unsafe for FTS5.
-    const database = await SQLite.openDatabaseAsync(name, {
+    const database = await retryWebSqliteOpen(() => SQLite.openDatabaseAsync(name, {
       useNewConnection: true,
       finalizeUnusedStatementsBeforeClosing: false,
-    })
+    }))
     try {
       await database.execAsync(`
         PRAGMA journal_mode = WAL;
@@ -121,6 +121,23 @@ async function openDatabase(name: string): Promise<SqliteDatabase> {
       throw error
     }
   })
+}
+
+/** A previous page's SQLite worker can briefly retain its OPFS file handles. */
+export async function retryWebSqliteOpen<Value>(open: () => Promise<Value>): Promise<Value> {
+  const delays = [100, 250]
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await open()
+    } catch (error) {
+      const wait = delays[attempt]
+      if (typeof document === 'undefined' || wait === undefined || !(error instanceof Error)) throw error
+      // Expo wraps the worker's DOMException in an Error when crossing the worker boundary.
+      const fileLocked = error.name === 'NoModificationAllowedError' || error.message.startsWith('NoModificationAllowedError:')
+      if (!fileLocked || !error.message.includes('createSyncAccessHandle')) throw error
+      await new Promise<void>(resolve => setTimeout(resolve, wait))
+    }
+  }
 }
 
 /**
