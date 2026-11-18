@@ -1,5 +1,5 @@
 import { act, fireEvent, render } from '@testing-library/react-native'
-import { StyleSheet } from 'react-native'
+import { Dimensions, Platform, Pressable, StyleSheet } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { useIsleDialog } from '@/components/ui/isle'
 import { Composer } from './Composer'
@@ -7,6 +7,35 @@ import { MessageContent } from './MessageContent'
 
 let mockMode: 'light' | 'dark' = 'light'
 let mockFamily = 'minimal'
+
+it('keeps the Web model button mounted as editor focus changes the 640px layout', async () => {
+  const viewport = { width: 640, height: 800, scale: 1, fontScale: 1 }
+  const dimensions = jest.spyOn(Dimensions, 'get').mockReturnValue(viewport)
+  const platform = Platform.OS
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  Object.defineProperty(globalThis, 'window', { value: new EventTarget(), configurable: true })
+  Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true })
+  let screen: Awaited<ReturnType<typeof render>> | undefined
+  try {
+    screen = await render(<Composer
+      leadingAccessory={<Pressable accessibilityRole="button" accessibilityLabel="Models" />}
+      viewportHeight={800} horizontalPadding={12} safeAreaTop={0} safeAreaBottom={0}
+      keyboardLift={0} motion="none" onSend={jest.fn()} />)
+    const button = screen.getByRole('button', { name: 'Models' })
+    const input = screen.getByLabelText('chat.inputAccessibility')
+    await fireEvent(input, 'focus')
+    expect(screen.getByRole('button', { name: 'Models' }) === button).toBe(true)
+    await fireEvent(input, 'blur')
+    expect(screen.getByRole('button', { name: 'Models' }) === button).toBe(true)
+    expect(screen.getByLabelText('chat.inputAccessibility') === input).toBe(true)
+  } finally {
+    await screen?.unmount()
+    dimensions.mockRestore()
+    Object.defineProperty(Platform, 'OS', { value: platform, configurable: true })
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
+    else Reflect.deleteProperty(globalThis, 'window')
+  }
+})
 
 it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'])('keeps %s reply typography consistent when streaming finishes', async family => {
   mockFamily = family

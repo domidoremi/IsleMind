@@ -287,6 +287,8 @@ export function Composer({
     sizeMode: editor.sizeMode,
     activityState,
   })
+  const wrapWebControls = Platform.OS === 'web' && !!leadingAccessory && composerGeometry.controlsStacked
+  const stackControlRow = composerGeometry.controlsStacked && !wrapWebControls
   const fieldRadius = colors.ui.radius.field
   const chipRadius = colors.ui.radius.controlLarge
   const compactControlRadius = colors.ui.radius.controlMiddle
@@ -689,10 +691,26 @@ export function Composer({
           </View>
         </View>
       ) : null}
-      <View testID="composer-input-dock" style={{ minHeight: COMPOSER_INPUT_MIN_HEIGHT + 6, flexDirection: composerGeometry.controlsStacked ? 'column' : 'row', alignItems: composerGeometry.controlsStacked ? 'stretch' : 'center', paddingHorizontal: 0, paddingTop: 0, paddingBottom: bottomAccessory ? 4 : 2, columnGap: activityState === 'idle' ? 8 : 6, rowGap: COMPOSER_CONTROL_ROW_GAP }}>
-        {!composerGeometry.controlsStacked && leadingAccessory ? <View key="leading-accessory" style={{ flexShrink: 0, minWidth: 0, alignSelf: 'center' }}>{leadingAccessory}</View> : null}
+      <View testID="composer-input-dock" style={{
+        minHeight: COMPOSER_INPUT_MIN_HEIGHT + 6,
+        flexDirection: stackControlRow ? 'column' : 'row',
+        flexWrap: wrapWebControls ? 'wrap' : 'nowrap',
+        alignItems: stackControlRow ? 'stretch' : 'center',
+        paddingHorizontal: 0,
+        paddingTop: 0,
+        paddingBottom: bottomAccessory ? 4 : 2,
+        columnGap: activityState === 'idle' ? 8 : 6,
+        rowGap: COMPOSER_CONTROL_ROW_GAP,
+      }}>
+        {!stackControlRow && leadingAccessory ? <View key="leading-accessory" style={{ flexShrink: 0, minWidth: 0, alignSelf: 'center' }}>{leadingAccessory}</View> : null}
         {/* Keep this input parent mounted through width/focus changes; only its flex geometry changes. */}
-        <View key="message-input" style={{ flex: composerGeometry.controlsStacked ? undefined : 1, width: composerGeometry.controlsStacked ? '100%' : undefined, minWidth: 0, justifyContent: 'center' }}>
+        <View key="message-input" style={{
+          flex: composerGeometry.controlsStacked ? undefined : 1,
+          width: composerGeometry.controlsStacked ? '100%' : undefined,
+          minWidth: 0,
+          justifyContent: 'center',
+          ...(wrapWebControls && { order: -1 }),
+        }}>
           <MessageInput
             value={content}
             onChangeText={editor.changeText}
@@ -778,8 +796,15 @@ export function Composer({
         </View>
         {/* An explicit row contributes its full height to Yoga measurement;
             wrapping percentage-width input siblings can undermeasure the dock. */}
-        <View testID="composer-control-row" style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 0, width: composerGeometry.controlsStacked ? '100%' : undefined, gap: activityState === 'idle' ? 8 : 6 }}>
-          {composerGeometry.controlsStacked && leadingAccessory ? <View key="leading-accessory" style={{ flexShrink: 0, minWidth: 0, alignSelf: 'center' }}>{leadingAccessory}</View> : null}
+        <View testID="composer-control-row" style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          flexShrink: 0,
+          width: stackControlRow ? '100%' : undefined,
+          gap: activityState === 'idle' ? 8 : 6,
+          ...(wrapWebControls && { flexGrow: 1, flexBasis: 0, minWidth: 0 }),
+        }}>
+          {stackControlRow && leadingAccessory ? <View key="leading-accessory" style={{ flexShrink: 0, minWidth: 0, alignSelf: 'center' }}>{leadingAccessory}</View> : null}
           {showInlineUtilities ? (
             <IslePressable
               haptic

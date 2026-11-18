@@ -20,21 +20,8 @@ jest.mock('react-native', () => {
 jest.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
-jest.mock('@/bootstrap/providerRoutingGroups', () => ({
-  buildSameModelRoutingPlans: () => [],
-  resolveRoutingPlanSelection: () => null,
-}))
 jest.mock('@/bootstrap/providerModelAccess', () => ({
   resolveProviderModelAliasAccess: () => true,
-}))
-jest.mock('@/presentation/layout/WorkspaceViewport', () => ({
-  useWorkspaceViewport: () => ({ width: 1280, height: 900 }),
-}))
-jest.mock('@/presentation/layout/useCompactKeyboardEditing', () => ({
-  useCompactKeyboardEditing: () => false,
-}))
-jest.mock('@/presentation/app-shell/AppNavigationButton', () => ({
-  AppNavigationButton: () => null,
 }))
 jest.mock('@/hooks/useAppTheme', () => ({
   useAppTheme: () => ({
