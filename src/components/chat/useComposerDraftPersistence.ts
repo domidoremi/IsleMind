@@ -145,16 +145,6 @@ export function useComposerDraftPersistence({
     const previousKey = activeKeyRef.current
     clearPersistTimer()
 
-    if (
-      previousKey &&
-      previousKey !== key &&
-      hydratedKeyRef.current === previousKey &&
-      dirtyRef.current &&
-      !sendingRef.current
-    ) {
-      void persistSnapshot(previousKey, contentRef.current, attachmentsRef.current)
-    }
-
     activeKeyRef.current = key
     hydratedKeyRef.current = null
     setHydratedKey(null)

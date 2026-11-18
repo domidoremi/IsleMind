@@ -78,6 +78,23 @@ describe('useComposerDraftPersistence', () => {
     }
   }
 
+  it('saves the outgoing draft once when switching before the debounce and restores both owners', async () => {
+    const texts = new Map([['second', '另一份草稿']])
+    load.mockImplementation(async key => texts.has(key) ? { key, content: texts.get(key)!, updatedAt: 1 } : null)
+    save.mockImplementation(async (key, content) => { texts.set(key, content) })
+    const screen = await renderHook(({ draftKey }: { draftKey: string }) => useHarness(draftKey), { initialProps: { draftKey: 'first' } })
+    await act(async () => screen.result.current.setDraft('你好，明天见'))
+    expect(save).not.toHaveBeenCalled()
+    await screen.rerender({ draftKey: 'second' })
+    expect(screen.result.current.content).toBe('另一份草稿')
+    await screen.rerender({ draftKey: 'first' })
+    expect(screen.result.current.content).toBe('你好，明天见')
+    await act(async () => jest.advanceTimersByTime(COMPOSER_DRAFT_PERSIST_DEBOUNCE_MS))
+    await screen.unmount()
+    expect(save.mock.calls.map(([key, content]) => [key, content])).toEqual([['first', '你好，明天见']])
+    expect(remove).not.toHaveBeenCalled()
+  })
+
   it('hydrates an untouched composer', async () => {
     load.mockResolvedValue({ key: 'conversation-1', content: 'Recovered text', updatedAt: 1 })
     const { result, unmount } = await renderHook(() => useHarness('conversation-1'))
