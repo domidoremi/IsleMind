@@ -200,3 +200,16 @@ it('handles Escape and removes the browser listener on unmount', async () => {
     Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow })
   }
 })
+
+describe.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)(
+  '%s menu close target',
+  family => {
+    it.each(['light', 'dark'] as const)('provides at least 44 by 44 in %s mode', async mode => {
+      const screen = await render(<ModelMenu {...baseProps} colors={getColors(mode, family)} isDark={mode === 'dark'} />)
+      const close = screen.getByRole('button', { name: 'dialog.closeLayer' })
+      const style = StyleSheet.flatten(close.props.style)
+      expect(style.width).toBeGreaterThanOrEqual(44)
+      expect(style.height).toBeGreaterThanOrEqual(44)
+    })
+  },
+)
