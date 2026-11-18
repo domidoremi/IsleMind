@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { AccessibilityInfo, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { AnimatePresence, MotiView } from 'moti'
@@ -122,7 +122,10 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const closeDialog = useCallback((value: boolean) => {
     const [active, ...remaining] = dialogQueueRef.current
     if (!active) return
-    if (value && active.kind === 'confirm' && !active.signal?.aborted) active.onConfirm?.()
+    if (value && active.kind === 'confirm' && !active.signal?.aborted) {
+      if (Platform.OS !== 'web') Keyboard.dismiss()
+      active.onConfirm?.()
+    }
     publishDialogs(remaining)
     dialogSettlementsRef.current.settle(active.id, value)
   }, [publishDialogs])
