@@ -27,9 +27,13 @@ jest.mock('@/components/ui/isle', () => {
     IsleButton: jest.fn(({ label, onPress }: any) => <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}><Text>{label}</Text></Pressable>),
   }
 })
-jest.mock('react-native-markdown-display', () => jest.fn(({ children }: any) => {
-  const { Text } = require('react-native')
-  return <Text>{children}</Text>
+jest.mock('react-native-markdown-display', () => ({
+  __esModule: true,
+  MarkdownIt: jest.requireActual('react-native-markdown-display').MarkdownIt,
+  default: jest.fn(({ children }: any) => {
+    const { Text } = require('react-native')
+    return <Text>{children}</Text>
+  }),
 }))
 
 beforeEach(() => {

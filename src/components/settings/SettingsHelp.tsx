@@ -11,6 +11,7 @@ import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { userGuide } from '@/generated/userGuide'
+import { guideSearchText, normalizeGuideSearch } from './guideSearchText'
 import { safeHttpUrl } from '@/utils/sourceUrlSafety'
 import { restoreAccessibilityFocus } from '@/platform/native/restoreAccessibilityFocus'
 import { WorkspaceIntro } from '@/components/ui/WorkspaceIntro'
@@ -40,8 +41,8 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
   const pendingAnchor = useRef(initialAnchor)
   const positions = useRef(new Map<string, number>())
   const chapter = chapters.find(item => item.id === slug)
-  const searchIndex = useMemo(() => chapters.map(item => ({ ...item, search: `${item.title} ${item.body}`.normalize('NFKC').toLocaleLowerCase() })), [chapters])
-  const results = searchIndex.filter(item => item.search.includes(query.normalize('NFKC').trim().toLocaleLowerCase()))
+  const searchTerm = normalizeGuideSearch(query)
+  const results = searchTerm && !slug ? chapters.filter(item => guideSearchText(item).includes(searchTerm)) : chapters
   const blocks = useMemo(() => chapter?.body.split(/<a id="([a-z0-9-]+)"><\/a>/) ?? [], [chapter])
   useEffect(() => {
     positions.current.clear()
