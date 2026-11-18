@@ -1654,6 +1654,7 @@ export function ProviderFormModal({
   const [nameDirty, setNameDirty] = useState(false)
   const [baseUrlDirty, setBaseUrlDirty] = useState(false)
   const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(DEFAULT_PROVIDER_WIRE_PROTOCOL)
+  const protocolChoiceRef = useRef(false)
   const [modelsText, setModelsText] = useState('')
   const [keysText, setKeysText] = useState('')
   const [step, setStep] = useState<'connection' | 'models'>('connection')
@@ -1713,6 +1714,7 @@ export function ProviderFormModal({
   }
 
   function resetDraft() {
+    protocolChoiceRef.current = false
     pendingProvider.current = null
     setName('')
     setBaseUrl('')
@@ -1844,6 +1846,7 @@ export function ProviderFormModal({
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
+    protocolChoiceRef.current = false
     setLanSetup(false)
     setPresetPickerOpen(false)
     const currentPreset = getProviderPreset(presetId)
@@ -1867,6 +1870,7 @@ export function ProviderFormModal({
   }
 
   function selectWireProtocol(nextProtocol: ProviderWireProtocol) {
+    protocolChoiceRef.current = true
     setWireProtocol(nextProtocol)
     const shouldReplaceBaseUrl = !baseUrlDirty || isPresetDefaultBaseUrl(baseUrl, presetId, wireProtocol)
     setBaseUrl(resolveProviderConfigDraft({ provider: {}, presetId, baseUrl: shouldReplaceBaseUrl ? '' : baseUrl, wireProtocol: nextProtocol }).baseUrl)
@@ -1876,6 +1880,7 @@ export function ProviderFormModal({
   function applyProviderImportDraftText(text: string, source: 'clipboard' | 'manual'): boolean {
     const draft = parseProviderImportDraft(text, { requireConnection: source === 'manual', preferredWireProtocol: wireProtocol })
     if (!draft) return false
+    protocolChoiceRef.current = true
     const nextDraft = resolveProviderConfigDraft({ provider: draft.provider, presetId: draft.presetId, baseUrl: draft.baseUrl, wireProtocol: draft.wireProtocol })
     setPresetId(draft.presetId)
     setWireProtocol(draft.wireProtocol)
@@ -1897,7 +1902,7 @@ export function ProviderFormModal({
     if (looksLikeProviderImportConnectionText(value) && applyProviderImportDraftText(value, 'manual')) return
     setBaseUrl(value)
     setBaseUrlDirty(true)
-    if (shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
+    if (!protocolChoiceRef.current && shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
   }
 
   function handleKeysText(value: string) {
