@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react'
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react'
 import { Platform, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { AppFontContext, Text, TextInput } from '@/components/ui/AppText'
 import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
@@ -377,6 +377,11 @@ export function IsleInput({
   const controlled = value !== undefined
   const currentValue = controlled ? value : uncontrolledValue
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null)
+  useLayoutEffect(() => () => {
+    // Release focus while the native child still has its host reference.
+    const input = inputRef.current
+    if (input?.isFocused?.()) input.blur()
+  }, [])
   useEffect(() => {
     if (multiline) {
       const measured = measureWebInputContentHeight(inputRef.current)
