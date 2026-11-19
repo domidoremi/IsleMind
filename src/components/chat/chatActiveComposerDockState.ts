@@ -120,7 +120,10 @@ export function useChatActiveComposerDockState({
   scrollToLatestMessage,
 }: ChatActiveComposerDockStateProps) {
   const [systemPromptDraft, setSystemPromptDraft] = useState(activeConversation.systemPrompt)
-  const systemPromptDraftRef = useRef({ conversationId: activeConversation.id, value: activeConversation.systemPrompt })
+  const systemPromptDraftRef = useRef({
+    conversationId: activeConversation.id, value: activeConversation.systemPrompt,
+    baseValue: activeConversation.systemPrompt, dirty: false,
+  })
   const systemPromptPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushSystemPrompt = useCallback(() => {
     if (systemPromptPersistTimerRef.current) {
@@ -128,13 +131,22 @@ export function useChatActiveComposerDockState({
       systemPromptPersistTimerRef.current = null
     }
     const pending = systemPromptDraftRef.current
-    const persisted = useChatStore.getState().conversations.find((item) => item.id === pending.conversationId)?.systemPrompt
-    if (persisted !== pending.value) updateConversation(pending.conversationId, { systemPrompt: pending.value })
+    if (!pending.dirty) return
+    const current = useChatStore.getState().conversations.find((item) => item.id === pending.conversationId)
+    pending.dirty = false
+    // Only local edits based on the current prompt may write back. Scene application
+    // and other external updates replace that base while this editor stays mounted.
+    if (!current || current.systemPrompt !== pending.baseValue) return
+    pending.baseValue = pending.value
+    if (current.systemPrompt !== pending.value) updateConversation(pending.conversationId, { systemPrompt: pending.value })
   }, [updateConversation])
 
   useEffect(() => {
     flushSystemPrompt()
-    systemPromptDraftRef.current = { conversationId: activeConversation.id, value: activeConversation.systemPrompt }
+    systemPromptDraftRef.current = {
+      conversationId: activeConversation.id, value: activeConversation.systemPrompt,
+      baseValue: activeConversation.systemPrompt, dirty: false,
+    }
     setSystemPromptDraft(activeConversation.systemPrompt)
   }, [activeConversation.id, activeConversation.systemPrompt, flushSystemPrompt])
 
@@ -216,7 +228,10 @@ export function useChatActiveComposerDockState({
   const handleStop = useCallback(() => safeStopMessage(activeConversation.id), [activeConversation.id, safeStopMessage])
   const handleSystemPromptChange = useCallback((systemPrompt: string) => {
     if (isConversationLocked(activeConversation.id)) return
-    systemPromptDraftRef.current = { conversationId: activeConversation.id, value: systemPrompt }
+    systemPromptDraftRef.current = {
+      conversationId: activeConversation.id, value: systemPrompt,
+      baseValue: systemPromptDraftRef.current.baseValue, dirty: true,
+    }
     setSystemPromptDraft(systemPrompt)
     if (systemPromptPersistTimerRef.current) clearTimeout(systemPromptPersistTimerRef.current)
     systemPromptPersistTimerRef.current = setTimeout(() => {
