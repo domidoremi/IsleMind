@@ -577,6 +577,7 @@ function extractCredentialEntries(input: string, explicit = false): CredentialEn
   if (!trimmed) return []
   const parsed = parseCredentialJson(trimmed)
   if (parsed !== null) return collectCredentialEntries(parsed, {}, explicit)
+  if (explicit && /^[\[{]/.test(trimmed)) return []
   // A token field is authoritative input, unlike mixed configuration prose.
   // Keep opaque tokens (including JWTs) intact rather than extracting fragments.
   if (explicit) {
