@@ -623,7 +623,7 @@ export function ApiKeyPanel({
       setModelFetchFailed(!result.synced)
       dialog.toast({
         title: t(result.synced ? 'apiKeyPanel.fetchAndTestDone' : 'apiKeyPanel.fetchAndTestNeedsCheck'),
-        message: result.synced ? t('settingsSubsystem.modelCount', { count: summarizeProviderModelInventory(latest ?? current).selectableModels }) : providerDisplayName,
+        message: result.synced ? t('apiKeyPanel.modelCount', { count: getPolicyAllowedProviderModels({ ...(latest ?? current), enabledModels: undefined }, settings).length }) : providerDisplayName,
         tone: result.synced ? 'mint' : 'amber',
       })
     } catch (error) {
