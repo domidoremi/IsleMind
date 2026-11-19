@@ -21,3 +21,15 @@
 继续时旧主机服务执行句柄已不存在，端口关闭；1476恢复服务后等待Inspector45秒超时，原报告保持incomplete。确认该次子进程已结束后，1478延长观察并成功重连，未重启应用；1477随后独立核对原值。原历史请求日志保留，失败未改写为通过。1473本轮验证副本、归档与两条依赖链接已定向清理，依赖目标保留；此前自动审批拒绝清理的资料继续保留。[本轮清理](../../test-evidence/implementation/native-routing-groups-20261115-01/usage-cost-disposable-cleanup-20261120-1484.json)
 
 此批补充原生证据不计入新的产品改动，发布后周期仍为0/5。实际Web费用界面、原生浅色及其余主题/尺寸、无障碍和全应用完整矩阵继续，四项整体资格保持false。
+
+## 后续 Web 验证与恢复
+
+当前工作区2,146项源码输入已绑定至独立Web测试域名。岛屿深色下通过页面输入和发送生成一条真实本地请求，服务端回传17/13/30 Token且不报告费用；中英日回执、执行摘要和展开请求费用字段各只显示一次未知费用。320×844下八次已捕获的真实Enter/空格操作覆盖返回、打开和展开；发送通过浏览器click完成，但事件监听未捕获按钮后代目标的可信点击，不把该监听缺口记为通过。[三语界面与键盘记录](../../test-evidence/implementation/native-routing-groups-20261115-01/web-usage-cost-languages-20261120-1508.json)
+
+实际挂载的MessageUsageReceipt、UsageExecutionDetailScreen和UsageExecutionRequestCard已绑定到当前执行脚本、模块工厂和源码映射，完整已加载脚本与同源重新读取一致。当前费用函数的三语全部未知、真实零值、部分未知和溢出输出，以及脱敏摘要费用行均核对；这些函数用例不扩大为对应网络或界面场景。五主题深浅色共十组只确认详情文字和320像素宽度。截图接口首次及一次重试均超时，没有取得可目视的Web截图，不授予视觉或完整布局通过，也没有操作系统剪贴板。[范围与源码记录](../../test-evidence/implementation/native-routing-groups-20261115-01/web-usage-cost-checkpoint-20261120-1517.json)
+
+刷新后，持久化按既有规则省略一条空attachments数组，其他消息、连接、设置及请求身份一致。内存费用缓存清空后回执显示“费用见详情”，再打开持久化详情仍只显示一次“费用未报告”；无历史返回栈时回到同一/chat会话。两次错误预期与后续独立核对分别保留。[刷新与恢复](../../test-evidence/implementation/native-routing-groups-20261115-01/web-usage-cost-recovery-20261120-1512.json)
+
+原浏览器13项localStorage和六个OPFS文件哈希及原70请求保持。测试凭据先经公开接口移除，独立域名的localStorage/OPFS再恢复为空；未清理整个浏览器配置。测试空间关闭，8108/8218服务和本轮Metro缓存移除，原生服务保留。1514独立核对原生53表、四raw、六组草稿/恢复槽、全部资料、编辑器正文/附件/选区/焦点、路由、设备和实际前台一致，PID32730及原缓存保持；Inspector关闭且cleanup/pending为空。[原生独立回读](../../test-evidence/implementation/native-routing-groups-20261115-01/native-after-web-cost-restored-20261120-1514.json)
+
+本批仅补充维护证据，不计产品改动，源码1.1.18/143、发布后周期0/5。准备期间计数、就绪等待、动态函数绑定、偏好schema、语言选择器、跨轮尺寸、键名、刷新规范化及费用缓存预期的失败原件均保留，并在检查点列明处理；未据此修改产品。此前自动审批拒绝清理的资料继续保留。全应用目标继续，四项整体资格均保持false；未构建、导出、安装或上传APK，未派发工作流。
