@@ -465,7 +465,7 @@ export function createProviderRegistry(dependencies: ProviderRegistryDependencie
     detectProviderPreset: policy.detect,
     probeProviderPreset: (input: ProviderDetectionInput, options: ProviderProbeDeps = {}) => policy.probe(input, { fetch: options.fetch ?? dependencies.fetch, timeoutMs: options.timeoutMs, signal: options.signal }),
     applyProviderPreset: policy.apply,
-    parseCredentialGroups: (input: string, options?: { explicit?: boolean }) => credentialEntriesToGroups(extractCredentialEntries(input, options?.explicit), dependencies),
+    parseCredentialGroups: (input: string, options?: { explicit?: boolean; previousGroups?: ProviderCredentialGroup[] }) => credentialEntriesToGroups(extractCredentialEntries(input, options?.explicit), dependencies, options?.previousGroups),
     parseProviderImportText: (input: string, options: ProviderImportOptions = {}) => parseProviderImportText(input, options, dependencies),
     parseProviderImportDraft: (input: string, options: ProviderImportDraftOptions = {}) => parseProviderImportDraft(input, options, dependencies),
     countDetectedProviderImports: (input: string) => countDetectedProviderImports(input, dependencies),
@@ -549,7 +549,8 @@ function isProviderImportDraftCandidate(provider: AIProvider, requireConnection 
   return !requireConnection || !!provider.baseUrl?.trim()
 }
 
-function credentialEntriesToGroups(entries: CredentialEntry[], dependencies: ProviderRegistryDependencies): NonNullable<AIProvider['credentialGroups']> {
+function credentialEntriesToGroups(entries: CredentialEntry[], dependencies: ProviderRegistryDependencies, previousGroups?: ProviderCredentialGroup[]): NonNullable<AIProvider['credentialGroups']> {
+  const previousByKey = new Map((previousGroups ?? []).map(group => [group.apiKey?.trim(), group]))
   const seen = new Set<string>()
   return entries
     .filter((item) => {
@@ -560,11 +561,13 @@ function credentialEntriesToGroups(entries: CredentialEntry[], dependencies: Pro
     })
     .map((item, index) => {
       const apiKey = item.apiKey.trim()
+      const previous = previousByKey.get(apiKey)
       return {
-        id: `group-${Date.now().toString(36)}-${index + 1}-${hashKey(apiKey)}`,
-        label: item.label?.trim() || dependencies.translate('apiKeyPanel.groupName', { index: index + 1 }),
+        ...previous,
+        id: previous?.id ?? `group-${Date.now().toString(36)}-${index + 1}-${hashKey(apiKey)}`,
+        label: item.label?.trim() || previous?.label || dependencies.translate('apiKeyPanel.groupName', { index: index + 1 }),
         apiKey,
-        enabled: item.enabled ?? true,
+        enabled: item.enabled ?? previous?.enabled ?? true,
       }
     })
 }

@@ -1669,10 +1669,10 @@ export function ProviderFormModal({
   const webKeyboardInset = useWebVisualKeyboardInset(visible)
   const preset = getProviderPreset(presetId)
   const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
-  const validationCredentialGroups = useMemo(() => {
-    const imported = new Map(importedConnection?.credentialGroups?.map(group => [group.apiKey?.trim(), group]))
-    return parseCredentialGroups(keysText, { explicit: true }).map(group => imported.get(group.apiKey?.trim()) ?? group)
-  }, [keysText, importedConnection])
+  const validationCredentialGroups = useMemo(() => parseCredentialGroups(keysText, {
+    explicit: true,
+    previousGroups: importedConnection?.credentialGroups,
+  }), [keysText, importedConnection])
   const invalidTokenInput = Boolean(keysText.trim() && !validationCredentialGroups.length)
   const validationApiKey = validationCredentialGroups.find((group) => group.enabled && group.apiKey?.trim())?.apiKey
     ?? validationCredentialGroups.find((group) => group.apiKey?.trim())?.apiKey
