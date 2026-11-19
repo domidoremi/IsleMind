@@ -1,4 +1,5 @@
 import { snapshotPlainData } from '@/core'
+import { ProviderConfigurationConflictError } from './providerConfigurationMutation'
 import type { BoundConversation, Conversation } from '@/types/chatContracts'
 import type { AIProvider, ChatErrorCode } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
@@ -128,7 +129,8 @@ export function createProviderConversationAdmissionRuntime<ModelConfig>(
         outcome = await dependencies.resolveExecution(input)
       } catch (error) {
         if (input.signal.aborted || error instanceof Error && error.name === 'AbortError') return { kind: 'cancelled' }
-        throw error
+        if (!(error instanceof ProviderConfigurationConflictError)) throw error
+        outcome = { kind: 'blocked', reason: 'candidate_changed' }
       }
       if (input.signal.aborted || outcome.kind === 'cancelled') return { kind: 'cancelled' }
       if (outcome.kind === 'blocked') {
