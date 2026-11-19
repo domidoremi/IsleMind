@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.17 source version checkpoint](./release/source-version-1.1.17-2026-11-19.md): provider protocols, connection imports, configuration typing and credential input.
 - [1.1.16 source version checkpoint](./release/source-version-1.1.16-2026-11-19.md): startup recovery, guide search, draft saving and input focus.
 - [1.1.15 source version checkpoint](./release/source-version-1.1.15-2026-11-18.md): model menu placement, focus and tap targets in chat.
 - [1.1.14 source version checkpoint](./release/source-version-1.1.14-2026-11-17.md): five verified product pushes covering model parameter baselines, credential grouping, model counts and home navigation recovery.
