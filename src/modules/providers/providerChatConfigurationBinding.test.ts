@@ -82,12 +82,16 @@ it('detaches hydrated metadata and admitted settings before availability and hea
   expect(f.accessAllowed.mock.calls[0][2]).toEqual({ modelBlocklist: [] })
 })
 
-it.each(['success', 'rejection'] as const)('settles an admitted online %s and stops provider reads after original cancellation', async mode => {
+it.each(['success', 'rejection'] as const)('settles an admitted online %s and stops later reads after original cancellation', async mode => {
   const f = resolutionFixture()
+  const entered = deferred<void>()
   const online = deferred<boolean>()
-  f.isOnline.mockImplementationOnce(() => online.promise)
+  f.isOnline.mockImplementationOnce(() => { entered.resolve(); return online.promise })
   let settled = false
   const pending = f.runtime.resolvePreferred(f.input).finally(() => { settled = true })
+  await entered.promise
+  expect(f.isOnline).toHaveBeenCalledTimes(1)
+  expect(f.isOnline).toHaveBeenCalledWith(provider('a'))
   f.input.signal = new AbortController().signal
   f.controller.abort()
   await tick()
@@ -95,8 +99,11 @@ it.each(['success', 'rejection'] as const)('settles an admitted online %s and st
   if (mode === 'success') online.resolve(true)
   else online.reject(new Error('late online failure'))
   await expect(pending).resolves.toEqual({ kind: 'cancelled' })
-  expect(f.readProviders).not.toHaveBeenCalled()
+  expect(f.readProviders).toHaveBeenCalledTimes(1)
+  expect(f.readProviders).toHaveBeenCalledWith(f.controller.signal, { providers: [provider('a'), provider('b')] })
   expect(f.getAvailability).not.toHaveBeenCalled()
+  expect(f.healthAllows).not.toHaveBeenCalled()
+  expect(f.loadHealthRecords).not.toHaveBeenCalled()
 })
 
 it.each(['success', 'rejection'] as const)('settles an admitted catalog %s and suppresses later availability/health work after original cancellation', async mode => {
