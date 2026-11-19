@@ -15,7 +15,7 @@ jest.mock('react-native', () => {
   const actual = jest.requireActual('react-native')
   const React = require('react')
   const state = jest.requireActual('react-native/Libraries/Components/TextInput/TextInputState').default
-  const Input = React.forwardRef((props: any, ref: unknown) => {
+  const HostInput = React.forwardRef((props: any, ref: any) => {
     const reference = React.useRef(null)
     if (!reference.current) {
       const input: any = { mounted: false, value: props.value }
@@ -29,7 +29,15 @@ jest.mock('react-native', () => {
     }
     const input = reference.current
     input.value = props.value
-    React.useImperativeHandle(ref, () => input, [input])
+    React.useLayoutEffect(() => {
+      const cleanup = typeof ref === 'function' ? ref(input) : undefined
+      if (ref && typeof ref !== 'function') ref.current = input
+      return () => {
+        if (actual.Platform.OS !== 'web' && typeof cleanup === 'function') cleanup()
+        else if (typeof ref === 'function') ref(null)
+        else if (ref) ref.current = null
+      }
+    }, [ref, input])
     React.useLayoutEffect(() => {
       input.mounted = true
       state.registerInput(input)
@@ -41,6 +49,8 @@ jest.mock('react-native', () => {
     }, [input])
     return React.createElement(actual.View, { testID: props.testID })
   })
+  const Input = React.forwardRef((props: any, ref: unknown) =>
+    React.createElement(HostInput, { ...props, ref, key: props.multiline ? 'multiline' : 'singleline' }))
   Input.State = state
   return new Proxy(actual, { get: (target, key) => key === 'TextInput' ? Input : Reflect.get(target, key) })
 })
@@ -114,4 +124,61 @@ it('forwards a callback ref and releases its focused native field on removal', a
   await view.unmount()
   expect(reference).toHaveBeenLastCalledWith(null)
   expect(state.currentlyFocusedInput()).toBeNull()
+})
+
+it('keeps an object ref attached to the current field when its host changes', async () => {
+  const ref = createRef<NativeTextInput>()
+  const view = await render(<TextInput ref={ref} testID="prompt" value="Kept draft" />)
+  const first = mockControls.get('prompt')!
+  await view.rerender(<TextInput ref={ref} testID="prompt" value="Kept draft" multiline />)
+  const replacement = mockControls.get('prompt')!
+  expect(replacement).not.toBe(first)
+  expect(first.mounted).toBe(false)
+  expect(ref.current).toBe(replacement)
+  expect(replacement.value).toBe('Kept draft')
+  state.focusInput(replacement)
+  await view.unmount()
+  expect(ref.current).toBeNull()
+  expect(state.currentlyFocusedInput()).toBeNull()
+})
+
+it('notifies a callback ref when the native input host changes', async () => {
+  const reference = jest.fn()
+  const view = await render(<TextInput ref={reference} testID="prompt" value="Kept draft" />)
+  const first = mockControls.get('prompt')!
+  await view.rerender(<TextInput ref={reference} testID="prompt" value="Kept draft" multiline />)
+  const replacement = mockControls.get('prompt')!
+  expect(reference.mock.calls.map(([input]) => input)).toEqual([first, null, replacement])
+  await view.unmount()
+  expect(reference).toHaveBeenLastCalledWith(null)
+})
+
+it.each(['android', 'web'])('runs callback ref cleanup on removal without an extra null assignment on %s', async platform => {
+  jest.replaceProperty(Platform, 'OS', platform as 'android' | 'web')
+  const cleanup = jest.fn()
+  const reference = jest.fn(() => cleanup)
+  const view = await render(<TextInput ref={reference} testID="prompt" value="Kept draft" />)
+  const input = mockControls.get('prompt')!
+  state.focusInput(input)
+  await view.unmount()
+  expect(cleanup).toHaveBeenCalledTimes(1)
+  expect(reference).toHaveBeenCalledTimes(1)
+  expect(state.currentlyFocusedInput()).toBeNull()
+})
+
+it.each(['android', 'web'])('cleans up a replaced callback ref without blurring the retained input on %s', async platform => {
+  jest.replaceProperty(Platform, 'OS', platform as 'android' | 'web')
+  const cleanup = jest.fn()
+  const first = jest.fn(() => cleanup)
+  const next = jest.fn()
+  const view = await render(<TextInput ref={first} testID="prompt" value="Kept draft" />)
+  const input = mockControls.get('prompt')!
+  state.focusInput(input)
+  await view.rerender(<TextInput ref={next} testID="prompt" value="Kept draft" />)
+  expect(cleanup).toHaveBeenCalledTimes(1)
+  expect(first).toHaveBeenCalledTimes(1)
+  expect(next).toHaveBeenLastCalledWith(input)
+  expect(state.currentlyFocusedInput()).toBe(input)
+  expect(input.blur).not.toHaveBeenCalled()
+  await view.unmount()
 })
