@@ -101,12 +101,12 @@ export function useSettingsDraft(dirty: boolean, busy: boolean, discard: () => v
     // A changed-and-restored draft still requires fresh consent.
     revision.current = { dirty, busy, snapshot }
   }
-  const currentRevision = revision.current
   const dialog = useIsleDialog()
   const { t } = useTranslation()
   const pending = useRef(false)
   const lifetime = useSettingsLifetime()
-  useEffect(() => context?.register(id, { dirty, busy, revision: () => revision.current, discard: () => latest.current() }), [context?.register, id, dirty, busy, currentRevision])
+  // Content revisions remain current through the ref without registering the editor again.
+  useEffect(() => context?.register(id, { dirty, busy, revision: () => revision.current, discard: () => latest.current() }), [context?.register, id, dirty, busy])
   return async (action: () => void) => {
     const signal = lifetime.current?.signal
     if (signal?.aborted || busyRef.current || pending.current) return
