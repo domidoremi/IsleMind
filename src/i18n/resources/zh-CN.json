@@ -182,6 +182,7 @@
     "saveChoose": "保存并选择模型",
     "connectionReady": "密钥已保存，可检查连接",
     "connectionMissing": "需要填写连接密钥",
+    "connectionKeysDisabled": "已保存密钥均已停用",
     "modelCount": "已配置 {{count}} 个模型",
     "regularSkills": "普通技能按对话选择使用，不会全部自动执行",
     "disabledWorkflows": "停用工作流",

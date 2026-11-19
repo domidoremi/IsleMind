@@ -215,7 +215,7 @@ export function ApiKeyPanel({
   const [capabilityOverridesOpen, setCapabilityOverridesOpen] = useState(false)
   const [credentialGroupsOpen, setCredentialGroupsOpen] = useState(false)
   const [groupKeyMasks, setGroupKeyMasks] = useState<Record<string, string>>({})
-  const [credentialReadState, setCredentialReadState] = useState<'idle' | 'loading' | 'ready' | 'missing' | 'failed'>('idle')
+  const [credentialReadState, setCredentialReadState] = useState<'idle' | 'loading' | 'ready' | 'disabled' | 'missing' | 'failed'>('idle')
   const [credentialReadRequest, setCredentialReadRequest] = useState(0)
   const [task, setTask] = useState<PanelTask>('idle')
   const syncAndTestAbortController = useRef<AbortController | null>(null)
@@ -354,7 +354,11 @@ export function ApiKeyPanel({
       if (cancelled) return
       const masks = Object.fromEntries((keyed?.credentialGroups ?? []).map((group) => [group.id, maskSecret(group.apiKey ?? '')]))
       setGroupKeyMasks(masks)
-      setCredentialReadState(keyed && (keyed.apiKey.trim() || keyed.credentialGroups?.some(group => group.enabled && group.apiKey?.trim())) ? 'ready' : 'missing')
+      const hasEnabledKey = keyed?.credentialGroups?.length
+        ? keyed.credentialGroups.some(group => group.enabled && group.apiKey?.trim()) : !!keyed?.apiKey.trim()
+      const hasStoredKey = keyed?.credentialGroups?.length
+        ? keyed.credentialGroups.some(group => group.apiKey?.trim()) : !!keyed?.apiKey.trim()
+      setCredentialReadState(hasEnabledKey ? 'ready' : hasStoredKey ? 'disabled' : 'missing')
     }).catch(() => {
       if (!cancelled) setCredentialReadState('failed')
     })
@@ -857,7 +861,7 @@ export function ApiKeyPanel({
           {workspaceView === 'connection' && connectionReferencesPort ? <ProviderConnectionReferences
             providerId={provider.id} port={connectionReferencesPort} /> : null}
           <View accessibilityLiveRegion="polite" style={{ gap: 4 }}>
-            <Text accessibilityRole={credentialReadState === 'failed' ? 'alert' : undefined} style={{ color: colors.text, fontSize: 14, lineHeight: 22 }}>{t(dirty ? 'settingsWorkspace.unsaved' : credentialReadState === 'loading' ? 'common.loading' : credentialReadState === 'failed' ? 'settingsSubsystem.loadFailed' : credentialReadState === 'ready' ? 'settingsSubsystem.connectionReady' : credentialReadState === 'missing' ? 'settingsSubsystem.connectionMissing' : 'settingsSubsystem.savedNotVerified')} · {t(provider.enabled ? 'settings.enabled' : 'settings.disabled')}{isDefault ? ` · ${t('providerSettings.defaultConnection')}` : ''}</Text>
+            <Text accessibilityRole={credentialReadState === 'failed' ? 'alert' : undefined} style={{ color: colors.text, fontSize: 14, lineHeight: 22 }}>{t(dirty ? 'settingsWorkspace.unsaved' : credentialReadState === 'loading' ? 'common.loading' : credentialReadState === 'failed' ? 'settingsSubsystem.loadFailed' : credentialReadState === 'ready' ? 'settingsSubsystem.connectionReady' : credentialReadState === 'disabled' ? 'settingsSubsystem.connectionKeysDisabled' : credentialReadState === 'missing' ? 'settingsSubsystem.connectionMissing' : 'settingsSubsystem.savedNotVerified')} · {t(provider.enabled ? 'settings.enabled' : 'settings.disabled')}{isDefault ? ` · ${t('providerSettings.defaultConnection')}` : ''}</Text>
             {credentialReadState === 'failed' ? <MiniAction label={t('common.retry')} onPress={() => { setWorkspaceView('connection'); setCredentialReadRequest(value => value + 1) }} /> : null}
             <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('settingsSubsystem.modelCount', { count: modelInventory.selectableModels })}</Text>
             {getProviderGatewayInfo(provider) ? <Text testID="provider-gateway-summary" style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }}>

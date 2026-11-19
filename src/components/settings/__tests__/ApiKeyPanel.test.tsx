@@ -79,7 +79,9 @@ beforeEach(() => {
   })
   mockHydrate.mockImplementation(async () => {
     order.push('hydrate')
-    return { ...useSettingsStore.getState().providers[0], apiKey: 'fixture-only-credential' }
+    const current = useSettingsStore.getState().providers[0]
+    return { ...current, apiKey: 'fixture-only-credential',
+      credentialGroups: current.credentialGroups?.map(group => ({ ...group, apiKey: group.apiKey || 'fixture-only-' + group.id })) }
   })
   mockFlushProviders.mockImplementation(async () => { order.push('providers-durable') })
   mockRemember.mockImplementation(async (providerId: string, model: string) => {

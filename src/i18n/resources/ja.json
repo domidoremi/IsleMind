@@ -182,6 +182,7 @@
     "saveChoose": "保存してモデルを選択",
     "connectionReady": "キーを保存済み。接続をチェックできます",
     "connectionMissing": "接続キーが必要です",
+    "connectionKeysDisabled": "保存済みのキーは無効です",
     "modelCount": "{{count}} 個のモデルを設定済み",
     "regularSkills": "通常のスキルは会話ごとに選択します。すべてが自動実行されるわけではありません",
     "disabledWorkflows": "無効なワークフロー",

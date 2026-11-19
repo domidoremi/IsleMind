@@ -182,6 +182,7 @@
     "saveChoose": "Save and choose model",
     "connectionReady": "Key saved; ready to check the connection",
     "connectionMissing": "Connection key needed",
+    "connectionKeysDisabled": "Saved keys are disabled",
     "modelCount": "{{count}} models configured",
     "regularSkills": "Select ordinary skills per conversation; they do not all run automatically",
     "disabledWorkflows": "Disabled workflows",
