@@ -34,7 +34,7 @@
     "false": "否",
     "chooseRouting": "换用路由方案",
     "noRoutingPlans": "还没有路由方案，可在模型设置中创建。",
-    "routingSnapshotHint": "此处保存首选、备用与跨连接规则的副本。原路由后续修改时，可以重新选择。",
+    "routingSnapshotHint": "保存独立路由配置，原方案更新不影响此副本。",
     "aliasTarget": "实际目标：{{model}}",
     "editorHint": "未指定的配置保留目标会话当前值。选用技能时，先应用技能组合，再应用这里指定的配置。",
     "promptHint": "指定提示词会替换技能组合带入的提示词。空内容会清空会话提示词。",

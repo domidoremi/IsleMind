@@ -34,7 +34,7 @@
     "false": "No",
     "chooseRouting": "Choose another routing plan",
     "noRoutingPlans": "Create a routing plan in model settings to use it here.",
-    "routingSnapshotHint": "This saves a copy of the primary, backup and connection rules. Select again to adopt later routing changes.",
+    "routingSnapshotHint": "Saved routing configuration is independent of later template changes.",
     "aliasTarget": "Resolved target: {{model}}",
     "editorHint": "Unspecified fields keep the conversation's current values. Skills are combined first, followed by the configuration specified here.",
     "promptHint": "Specified instructions replace those produced by the skill combination. Empty content clears the conversation instructions.",
