@@ -69,6 +69,20 @@ export interface ProviderRegistryDependencies {
 }
 
 type CredentialEntry = { apiKey: string; label?: string; enabled?: boolean }
+type ImportedCredentialEntry = CredentialEntry & Pick<ProviderCredentialGroup, 'availableModels' | 'modelCatalogKnown'> & { sourceId?: string }
+interface ProviderImportConnection {
+  name?: string
+  baseUrl?: string
+  presetId?: ProviderPresetId
+  wireProtocol?: ProviderWireProtocol
+  credentialEntries: ImportedCredentialEntry[]
+  credentialSelection?: AIProvider['credentialSelection']
+  models: string[]
+  manualModels?: string[]
+  enabledModels?: string[]
+  modelCatalogKnown?: boolean
+  clientCompatibilityProfile?: AIProvider['clientCompatibilityProfile']
+}
 
 interface ProviderProbeDeps {
   fetch?: typeof fetch
@@ -700,9 +714,11 @@ function parseProviderImportText(input: string, options: ProviderImportOptions, 
   const warnings: string[] = []
   const duplicates: string[] = []
   const normalizedInput = normalizeProviderImportInput(input, warnings, dependencies)
-  const chunks = splitProviderImportChunks(normalizedInput.text).flatMap(expandProviderImportChunk)
+  const chunks = normalizedInput.connections ?? splitProviderImportChunks(normalizedInput.text).flatMap(expandProviderImportChunk)
   const providers = chunks
-    .map((chunk, index) => parseProviderImportChunk(chunk, index, warnings, dependencies))
+    .map((chunk, index) => typeof chunk === 'string'
+      ? parseProviderImportChunk(chunk, index, warnings, dependencies)
+      : createImportedProvider(chunk, index, warnings, dependencies))
     .filter((provider): provider is AIProvider => !!provider)
   const dedupedProviders = dedupeImportedProviders(providers, warnings, duplicates, dependencies)
   return { providers: applyImportedProviderAccessPolicy(dedupedProviders, warnings, options.accessSettings, dependencies), warnings, duplicates, sourceType: normalizedInput.sourceType }
@@ -790,75 +806,104 @@ function hashKey(value: string): string {
   return hash.toString(36)
 }
 
-function normalizeProviderImportInput(input: string, warnings: string[], dependencies: ProviderRegistryDependencies): { text: string; sourceType: ProviderImportResult['sourceType'] } {
+function normalizeProviderImportInput(input: string, warnings: string[], dependencies: ProviderRegistryDependencies): { text: string; connections?: ProviderImportConnection[]; sourceType: ProviderImportResult['sourceType'] } {
   const trimmed = stripImportBoundary(input.trim())
   if (!trimmed) return { text: '', sourceType: 'text' }
-  const jsonText = tryNormalizeJsonProviderImport(trimmed, warnings, dependencies)
-  if (jsonText !== null) return { text: jsonText, sourceType: 'json' }
+  const connections = tryNormalizeJsonProviderImport(trimmed, warnings, dependencies)
+  if (connections !== null) return { text: '', connections, sourceType: 'json' }
   if (looksLikeCsvImport(trimmed)) {
     return { text: normalizeCsvProviderImport(trimmed), sourceType: 'csv' }
   }
   return { text: trimmed, sourceType: 'text' }
 }
 
-function tryNormalizeJsonProviderImport(input: string, warnings: string[], dependencies: ProviderRegistryDependencies): string | null {
+function tryNormalizeJsonProviderImport(input: string, warnings: string[], dependencies: ProviderRegistryDependencies): ProviderImportConnection[] | null {
   if (!/^[\[{]/.test(input)) return null
   try {
-    const parsed = JSON.parse(input)
-    const blocks = jsonImportBlocks(parsed, dependencies)
-    if (!blocks.length) {
-      warnings.push(dependencies.translate('providerRegistry.jsonNoProviders'))
-      return ''
-    }
-    return blocks.join('\n\n')
+    const connections = jsonImportConnections(JSON.parse(input), dependencies)
+    if (!connections.length) warnings.push(dependencies.translate('providerRegistry.jsonNoProviders'))
+    return connections
   } catch {
     warnings.push(dependencies.translate('providerRegistry.jsonParseFailed'))
-    return ''
+    return []
   }
 }
 
-function jsonImportBlocks(value: unknown, dependencies: ProviderRegistryDependencies): string[] {
-  if (Array.isArray(value)) return value.flatMap((item) => jsonImportBlocks(item, dependencies))
+function jsonImportConnections(value: unknown, dependencies: ProviderRegistryDependencies): ProviderImportConnection[] {
+  if (Array.isArray(value)) return value.flatMap((item) => jsonImportConnections(item, dependencies))
   if (!value || typeof value !== 'object') return []
   const record = value as Record<string, unknown>
   const providersValue = record.providers ?? record.items ?? record.data
-  if (Array.isArray(providersValue)) return providersValue.flatMap((item) => jsonImportBlocks(item, dependencies))
-  const directBlock = jsonProviderObjectToBlock(record, dependencies)
+  if (Array.isArray(providersValue)) return providersValue.flatMap((item) => jsonImportConnections(item, dependencies))
+  const directBlock = jsonProviderObjectToConnection(record, dependencies)
   if (directBlock) return [directBlock]
   return Object.entries(record)
     .flatMap(([name, item]) => {
       if (item && typeof item === 'object') {
-        const block = jsonProviderObjectToBlock({ name, ...(item as Record<string, unknown>) }, dependencies)
+        const block = jsonProviderObjectToConnection({ name, ...(item as Record<string, unknown>) }, dependencies)
         return block ? [block] : []
       }
       return []
     })
 }
 
-function jsonProviderObjectToBlock(record: Record<string, unknown>, dependencies: ProviderRegistryDependencies): string | null {
+function jsonProviderObjectToConnection(record: Record<string, unknown>, dependencies: ProviderRegistryDependencies): ProviderImportConnection | null {
   const type = firstString(record._type, record.type)
   const isNewApiChannelConnection = type === NEWAPI_CHANNEL_CONN_TYPE
   const baseUrl = firstString(record.baseUrl, record.base_url, record.url, record.endpoint, record.apiBase, record.api_base, record['站点'], record['地址'], record['接口'])
   const name = firstString(record.provider, record.name, record.title, record.channel, record.channelName, record.channel_name, record['供应商'], record['服务商'], record['名称'])
-  const models = stringArray(record.models, record.model, record['模型'], record['模型列表'])
-  const keys = stringArray(record.apiKey, record.api_key, record.apiKeys, record.api_keys, record.key, record.keys, record.token, record.tokens, record['秘钥'], record['密钥'], record['令牌'])
-  const clientCompatibilityProfile = firstString(record.clientCompatibilityProfile, record.client_compatibility_profile)
+  const credentialEntries = collectImportedCredentialEntries(record, true)
+  if (isNewApiChannelConnection && (!baseUrl || !credentialEntries.length)) return null
+  if (!baseUrl && !name && !credentialEntries.length) return null
   const requestedPreset = firstString(record.presetId, record.preset, record.providerPreset)
-  const presetHint = PROVIDER_PRESETS.some(preset => preset.id === requestedPreset) ? requestedPreset : undefined
-  const wireProtocol = parseProviderWireProtocolText(firstString(record.wireProtocol, record.protocol))
-  if (isNewApiChannelConnection && (!baseUrl || !keys.length)) return null
-  if (!baseUrl && !name && !keys.length) return null
-  const resolvedName = name ?? (baseUrl ? inferProviderNameFromUrl(baseUrl) : undefined) ?? (isNewApiChannelConnection ? providerRegistryPolicy(dependencies).getPreset('newapi').name : undefined)
-  const parts = [
-    resolvedName ? `Name: ${resolvedName}` : '',
-    isNewApiChannelConnection ? 'Preset: newapi' : presetHint ? `Preset: ${presetHint}` : '',
-    wireProtocol ? `Protocol: ${wireProtocol}` : '',
-    baseUrl ? `Base URL: ${baseUrl}` : '',
-    ...keys.map((key, index) => `Key${index + 1}: ${key}`),
-    models.length ? `Models: ${models.join('|')}` : '',
-    clientCompatibilityProfile ? `Client compatibility profile: ${clientCompatibilityProfile}` : '',
-  ].filter(Boolean)
-  return parts.join('\n')
+  const presetId = isNewApiChannelConnection ? 'newapi' : isProviderPresetId(requestedPreset) ? requestedPreset : undefined
+  const rawSelection = record.credentialSelection
+  const selection = rawSelection && typeof rawSelection === 'object' && !Array.isArray(rawSelection) ? rawSelection as Record<string, unknown> : undefined
+  return {
+    name: name ?? (baseUrl ? inferProviderNameFromUrl(baseUrl) : undefined) ?? (isNewApiChannelConnection ? providerRegistryPolicy(dependencies).getPreset('newapi').name : undefined),
+    baseUrl, presetId, credentialEntries,
+    wireProtocol: parseProviderWireProtocolText(firstString(record.wireProtocol, record.protocol)),
+    models: jsonModelIds(record.models ?? record.model ?? record['模型'] ?? record['模型列表'] ?? credentialEntries.flatMap(entry => entry.availableModels ?? [])),
+    ...(Array.isArray(record.enabledModels) ? { enabledModels: jsonModelIds(record.enabledModels) } : {}),
+    ...(Array.isArray(record.manualModels) ? { manualModels: jsonModelIds(record.manualModels) } : {}),
+    ...(typeof record.modelCatalogKnown === 'boolean'
+      ? { modelCatalogKnown: record.modelCatalogKnown }
+      : record.lastModelSyncStatus === 'ok' ? { modelCatalogKnown: true } : {}),
+    ...(selection ? { credentialSelection: {
+      strategy: selection.strategy === 'least-recently-used' ? 'least-recently-used' : 'balanced',
+      preferredGroupId: firstString(selection.preferredGroupId),
+    } } : {}),
+    clientCompatibilityProfile: normalizeProviderClientCompatibilityMode(firstString(record.clientCompatibilityProfile, record.client_compatibility_profile)),
+  }
+}
+
+function jsonModelIds(value: unknown): string[] {
+  const entries = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\n,，;；|]+/) : []
+  return [...new Set(entries.filter((item): item is string => typeof item === 'string').map(item => item.trim()).filter(Boolean))]
+}
+
+function collectImportedCredentialEntries(value: unknown, providerRoot = false): ImportedCredentialEntry[] {
+  if (typeof value === 'string') return splitExplicitCredentialText(value).map(apiKey => ({ apiKey }))
+  if (Array.isArray(value)) return value.flatMap(item => collectImportedCredentialEntries(item))
+  if (!value || typeof value !== 'object') return []
+  const record = value as Record<string, unknown>
+  // Structured groups take precedence over a duplicated legacy primary key.
+  const nested = ['credentialGroups', 'credential_groups', 'credentials', 'groups', 'keys', 'apiKeys', 'api_keys', 'tokens']
+    .flatMap(key => collectImportedCredentialEntries(record[key]))
+  if (providerRoot && nested.length) return nested
+  const directValues = [record.apiKey, record.api_key, record.key, record.token, record.secret, record.accessToken, record.access_token, record['秘钥'], record['密钥'], record['令牌']]
+  const catalog = record.availableModels ?? record.models
+  const context: Omit<ImportedCredentialEntry, 'apiKey'> = providerRoot ? {} : {
+    sourceId: firstString(record.id), label: firstString(record.label, record.name, record.title),
+    enabled: typeof record.enabled === 'boolean' ? record.enabled : true,
+    ...(Array.isArray(catalog) || typeof catalog === 'string' ? { availableModels: jsonModelIds(catalog) } : {}),
+    ...(typeof record.modelCatalogKnown === 'boolean'
+      ? { modelCatalogKnown: record.modelCatalogKnown }
+      : record.lastModelSyncStatus === 'ok' || record.models !== undefined ? { modelCatalogKnown: true } : {}),
+  }
+  return [...nested, ...directValues.flatMap(value => typeof value === 'string'
+    ? splitExplicitCredentialText(value).map(apiKey => ({ ...context, apiKey }))
+    : collectImportedCredentialEntries(value))]
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -866,14 +911,6 @@ function firstString(...values: unknown[]): string | undefined {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return undefined
-}
-
-function stringArray(...values: unknown[]): string[] {
-  return values.flatMap((value) => {
-    if (typeof value === 'string') return value.split(/[\n,，;；|]+/)
-    if (Array.isArray(value)) return value.flatMap((item) => typeof item === 'string' ? item.split(/[\n,，;；|]+/) : [])
-    return []
-  }).map((item) => item.trim()).filter(Boolean)
 }
 
 function looksLikeCsvImport(input: string): boolean {
@@ -1015,7 +1052,6 @@ function expandProviderImportChunk(chunk: string): string[] {
 }
 
 function parseProviderImportChunk(chunk: string, index: number, warnings: string[], dependencies: ProviderRegistryDependencies): AIProvider | null {
-  const registry = providerRegistryPolicy(dependencies)
   const normalizedChunk = stripImportBoundary(chunk)
   const fields = readImportFields(normalizedChunk)
   const endpoints = extractLabeledProtocolBaseUrls(normalizedChunk)
@@ -1040,58 +1076,58 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
     baseUrl = explicitBaseUrl ?? looseBaseUrl
   }
 
-  const explicitName = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
-  const name = explicitName ?? inferProviderName(normalizedChunk, index, baseUrl, dependencies)
-  const wireProtocolHint = parseProviderWireProtocolText(pickField(fields, ['protocol', 'wireprotocol', 'wire protocol', '协议', '接口协议']))
-    ?? inferExplicitProviderWireProtocolFromBaseUrl(baseUrl)
-  const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
-  const clientCompatibilityProfile = normalizeProviderClientCompatibilityMode(pickField(fields, ['clientcompatibilityprofile', 'client compatibility profile', 'clientcompatibility', 'client compatibility']))
-  const credentialEntries = extractProviderImportCredentialEntries(normalizedChunk, fields)
-  const keysText = credentialEntries.map((item) => item.apiKey).join('\n')
+  const name = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
   const hintedPreset = pickField(fields, ['preset', 'presetid', 'providerpreset'])
-  const hintedPresetId = hintedPreset && PROVIDER_PRESETS.some((item) => item.id === hintedPreset)
-    ? hintedPreset as ProviderPresetId
-    : undefined
-  const detection = hintedPresetId
-    ? { presetId: hintedPresetId, confidence: 'high' as const, reason: 'imported preset hint' }
+  return createImportedProvider({
+    name, baseUrl,
+    presetId: isProviderPresetId(hintedPreset) ? hintedPreset : undefined,
+    wireProtocol: parseProviderWireProtocolText(pickField(fields, ['protocol', 'wireprotocol', 'wire protocol', '协议', '接口协议'])),
+    credentialEntries: extractProviderImportCredentialEntries(normalizedChunk, fields),
+    models: parseModelList(pickField(fields, ['models', 'model', '模型', '模型列表'])),
+    clientCompatibilityProfile: normalizeProviderClientCompatibilityMode(pickField(fields, ['clientcompatibilityprofile', 'client compatibility profile', 'clientcompatibility', 'client compatibility'])),
+  }, index, warnings, dependencies, inferProviderName(normalizedChunk, index, baseUrl, dependencies))
+}
+
+function createImportedProvider(input: ProviderImportConnection, index: number, warnings: string[], dependencies: ProviderRegistryDependencies, inferredName?: string): AIProvider {
+  const registry = providerRegistryPolicy(dependencies)
+  const { baseUrl } = input
+  const name = input.name ?? inferredName
+  const keysText = input.credentialEntries.map(item => item.apiKey).join('\n')
+  const detection = input.presetId
+    ? { presetId: input.presetId, confidence: 'high' as const, reason: 'imported preset hint' }
     : registry.detect({ baseUrl, name, apiKey: keysText })
   const presetId = resolveImportPresetId(detection)
   const preset = registry.getPreset(presetId)
   const isMimo = presetId === 'xiaomi-mimo'
   const credentialMode = isMimo ? inferProviderCredentialModeFromKeyOrBaseUrl(keysText, baseUrl) : undefined
   const tokenPlanRegion = isMimo ? inferProviderTokenPlanRegionFromBaseUrl(baseUrl) : undefined
+  const wireProtocolHint = input.wireProtocol ?? inferExplicitProviderWireProtocolFromBaseUrl(baseUrl)
   const wireProtocol = isMimo
     ? wireProtocolHint ?? inferProviderWireProtocolFromBaseUrl(baseUrl)
     : presetId === DEFAULT_PROVIDER_PRESET_ID
       ? wireProtocolHint ?? detection.wireProtocol ?? inferProviderWireProtocolFromBaseUrl(baseUrl)
       : undefined
-  const models = parseModelList(modelsText)
-  const credentialGroups = credentialEntriesToGroups(credentialEntries, dependencies)
-  const providerName = explicitName ?? (isMimo ? preset.name : name)
-
-  if (!name && !baseUrl && !credentialGroups.length) {
-    warnings.push(dependencies.translate('providerRegistry.chunkUnrecognized', { index: index + 1 }))
-    return null
+  const credentialGroups = credentialEntriesToGroups(input.credentialEntries, dependencies)
+  const entryByKey = new Map<string, ImportedCredentialEntry>()
+  for (const entry of input.credentialEntries) if (!entryByKey.has(entry.apiKey.trim())) entryByKey.set(entry.apiKey.trim(), entry)
+  for (const group of credentialGroups) {
+    const entry = entryByKey.get(group.apiKey ?? '')
+    if (entry?.availableModels !== undefined) group.availableModels = entry.availableModels
+    if (entry?.modelCatalogKnown !== undefined) group.modelCatalogKnown = entry.modelCatalogKnown
   }
-
+  const preferredKeys = new Set(input.credentialEntries.filter(entry => entry.sourceId && entry.sourceId === input.credentialSelection?.preferredGroupId).map(entry => entry.apiKey.trim()))
+  const preferredGroupId = preferredKeys.size === 1 ? credentialGroups.find(group => preferredKeys.has(group.apiKey ?? ''))?.id : undefined
   const provider = registry.apply({
-    id: importProviderId(providerName || preset.name, index),
-    presetId,
-    detectedPresetId: presetId,
-    detectionStatus: 'detected',
-    type: preset.type,
-    name: providerName || preset.name,
+    id: importProviderId(name || preset.name, index), presetId, detectedPresetId: presetId, detectionStatus: 'detected',
+    type: preset.type, name: input.name ?? (isMimo ? preset.name : name) ?? preset.name,
     baseUrl: baseUrl?.trim() || (isMimo ? getXiaomiMimoOfficialBaseUrl(credentialMode, tokenPlanRegion, wireProtocol) : preset.baseUrl),
-    credentialMode,
-    tokenPlanRegion,
-    wireProtocol,
-    apiKey: '',
-    credentialGroups,
-    models,
-    clientCompatibilityProfile,
-    enabled: false,
+    credentialMode, tokenPlanRegion, wireProtocol, apiKey: '', credentialGroups, models: input.models,
+    ...(input.credentialSelection ? { credentialSelection: { strategy: input.credentialSelection.strategy, preferredGroupId } } : {}),
+    ...(input.enabledModels !== undefined ? { enabledModels: input.enabledModels } : {}),
+    ...(input.manualModels !== undefined ? { manualModels: input.manualModels } : {}),
+    ...(input.modelCatalogKnown !== undefined ? { modelCatalogKnown: input.modelCatalogKnown } : {}),
+    clientCompatibilityProfile: input.clientCompatibilityProfile, enabled: false,
   } satisfies AIProvider, presetId)
-
   if (!credentialGroups.length) warnings.push(dependencies.translate('providerRegistry.noTokens', { name: provider.name }))
   return provider
 }
@@ -1291,21 +1327,25 @@ function applyImportedProviderAccessPolicy(providers: AIProvider[], warnings: st
 }
 
 function importedProviderAllowedByPolicy(provider: AIProvider, settings: ProviderImportOptions['accessSettings'], dependencies: ProviderRegistryDependencies): boolean {
-  const probe = dependencies.resolveModelAccess({ provider, model: '__provider_import_policy_probe__', settings })
+  const probe = dependencies.resolveModelAccess({ provider: { ...provider, enabledModels: undefined }, model: '__provider_import_policy_probe__', settings })
   return probe.allowed || probe.reason === 'model_blocked' || probe.reason === 'model_not_allowed'
 }
 
 function filterImportedProviderModelsByPolicy(provider: AIProvider, warnings: string[], settings: ProviderImportOptions['accessSettings'], dependencies: ProviderRegistryDependencies): AIProvider {
-  const models = filterImportedModelsByPolicy(provider, provider.models, settings, dependencies)
-  const manualModels = Array.isArray(provider.manualModels)
-    ? filterImportedModelsByPolicy(provider, provider.manualModels, settings, dependencies)
-    : provider.manualModels
-  const skipped = provider.models.length - models.length + (Array.isArray(provider.manualModels) ? provider.manualModels.length - (manualModels?.length ?? 0) : 0)
+  const policyProvider = { ...provider, enabledModels: undefined }
+  const filter = (models: string[]) => filterImportedModelsByPolicy(policyProvider, models, settings, dependencies)
+  const models = filter(provider.models)
+  const manualModels = provider.manualModels === undefined ? undefined : filter(provider.manualModels)
+  const enabledModels = provider.enabledModels === undefined ? undefined : filter(provider.enabledModels)
+  const credentialGroups = provider.credentialGroups?.map(group => ({ ...group,
+    ...(group.availableModels !== undefined ? { availableModels: filter(group.availableModels) } : {}),
+  }))
+  const allModels = new Set([...provider.models, ...provider.manualModels ?? [], ...provider.enabledModels ?? [], ...provider.credentialGroups?.flatMap(group => group.availableModels ?? []) ?? []])
+  const skipped = allModels.size - filter([...allModels]).length
   if (skipped > 0) warnings.push(dependencies.translate('providerRegistry.modelsSkippedByPolicy', { name: provider.name, count: skipped }))
-  return {
-    ...provider,
-    models,
-    ...(Array.isArray(provider.manualModels) ? { manualModels } : {}),
+  return { ...provider, models, credentialGroups,
+    ...(manualModels !== undefined ? { manualModels } : {}),
+    ...(enabledModels !== undefined ? { enabledModels } : {}),
   }
 }
 

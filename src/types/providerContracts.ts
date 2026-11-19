@@ -138,12 +138,19 @@ export type ProviderCredentialSource =
   | { kind: 'group'; groupId: string }
   | { kind: 'none' }
 
+export interface ProviderCredentialSelectionPolicy {
+  strategy: 'balanced' | 'least-recently-used'
+  preferredGroupId?: string
+}
+
 export interface ProviderCredentialGroup {
   id: string
   label: string
   apiKey?: string
   enabled: boolean
   availableModels?: string[]
+  /** A successful model list, including an empty list, has been received. */
+  modelCatalogKnown?: boolean
   lastModelSyncAt?: number
   lastModelSyncStatus?: ProviderTestStatus
   lastModelSyncMessage?: string
@@ -245,14 +252,19 @@ export interface AIProvider {
   wireProtocol?: ProviderWireProtocol
   clientCompatibilityProfile?: ProviderClientCompatibilityMode
   credentialGroups?: ProviderCredentialGroup[]
+  credentialSelection?: ProviderCredentialSelectionPolicy
   capabilities?: ProviderCapabilities
   modelAvailability?: ProviderModelAvailability[]
   syncPolicy?: ProviderSyncPolicy
   models: string[]
   manualModels?: string[]
+  /** Selected models. Undefined retains legacy catalog behavior; [] enables none. */
+  enabledModels?: string[]
   modelAliases?: ModelAlias[]
   modelConfigs?: AIModel[]
   enabled: boolean
+  /** Retains successful catalog authority after a later refresh failure. */
+  modelCatalogKnown?: boolean
   lastModelSyncAt?: number
   lastModelSyncStatus?: ProviderTestStatus
   lastModelSyncMessage?: string

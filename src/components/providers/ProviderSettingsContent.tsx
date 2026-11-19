@@ -1657,6 +1657,7 @@ export function ProviderFormModal({
   const protocolChoiceRef = useRef(false)
   const [modelsText, setModelsText] = useState('')
   const [keysText, setKeysText] = useState('')
+  const [importedConnection, setImportedConnection] = useState<AIProvider | null>(null)
   const [step, setStep] = useState<'connection' | 'models'>('connection')
   const [presetPickerOpen, setPresetPickerOpen] = useState(false)
   const [presetQuery, setPresetQuery] = useState('')
@@ -1668,7 +1669,10 @@ export function ProviderFormModal({
   const webKeyboardInset = useWebVisualKeyboardInset(visible)
   const preset = getProviderPreset(presetId)
   const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
-  const validationCredentialGroups = useMemo(() => parseCredentialGroups(keysText, { explicit: true }), [keysText])
+  const validationCredentialGroups = useMemo(() => {
+    const imported = new Map(importedConnection?.credentialGroups?.map(group => [group.apiKey?.trim(), group]))
+    return parseCredentialGroups(keysText, { explicit: true }).map(group => imported.get(group.apiKey?.trim()) ?? group)
+  }, [keysText, importedConnection])
   const invalidTokenInput = Boolean(keysText.trim() && !validationCredentialGroups.length)
   const validationApiKey = validationCredentialGroups.find((group) => group.enabled && group.apiKey?.trim())?.apiKey
     ?? validationCredentialGroups.find((group) => group.apiKey?.trim())?.apiKey
@@ -1716,6 +1720,7 @@ export function ProviderFormModal({
   function resetDraft() {
     protocolChoiceRef.current = false
     pendingProvider.current = null
+    setImportedConnection(null)
     setName('')
     setBaseUrl('')
     setNameDirty(false)
@@ -1733,7 +1738,7 @@ export function ProviderFormModal({
     setWireProtocol(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   }
 
-  const requestDiscard = useSettingsDraft(visible && Boolean(name || baseUrl || keysText || modelsText || presetId !== DEFAULT_PROVIDER_PRESET_ID || wireProtocol !== DEFAULT_PROVIDER_WIRE_PROTOCOL), saving, resetDraft, JSON.stringify([visible, name, baseUrl, keysText, modelsText, presetId, wireProtocol]))
+  const requestDiscard = useSettingsDraft(visible && Boolean(name || baseUrl || keysText || modelsText || presetId !== DEFAULT_PROVIDER_PRESET_ID || wireProtocol !== DEFAULT_PROVIDER_WIRE_PROTOCOL), saving, resetDraft, JSON.stringify([visible, name, baseUrl, keysText, modelsText, presetId, wireProtocol, importedConnection]))
   function closeWithoutSubmit() { void requestDiscard(onClose) }
 
   const keyboardRequestClose = useKeyboardAwareModalRequestClose(closeWithoutSubmit)
@@ -1833,6 +1838,13 @@ export function ProviderFormModal({
       wireProtocol: providerConfigDraft.wireProtocol,
       apiKey: '',
       credentialGroups: validationCredentialGroups,
+      ...(importedConnection?.credentialSelection ? { credentialSelection: {
+        strategy: importedConnection.credentialSelection.strategy,
+        preferredGroupId: validationCredentialGroups.find(group => group.id === importedConnection.credentialSelection?.preferredGroupId)?.id,
+      } } : {}),
+      ...(importedConnection?.enabledModels !== undefined ? { enabledModels: importedConnection.enabledModels } : {}),
+      ...(importedConnection?.modelCatalogKnown !== undefined ? { modelCatalogKnown: importedConnection.modelCatalogKnown } : {}),
+      ...(importedConnection?.manualModels !== undefined ? { manualModels: importedConnection.manualModels } : {}),
       models: modelList,
       enabled: false,
     } satisfies AIProvider, presetId)
@@ -1888,8 +1900,9 @@ export function ProviderFormModal({
     setName(draft.provider.name)
     setNameDirty(false)
     setBaseUrlDirty(false)
+    setImportedConnection(draft.provider)
     setKeysText(draft.credentialText)
-    if (draft.modelText) setModelsText(draft.modelText)
+    setModelsText(draft.modelText)
     dialog.toast({
       title: t('providerSettings.clipboardDetected'),
       message: t(source === 'clipboard' && draft.count > 1 ? 'providerSettings.importAppliedFirst' : 'providerSettings.importDetected', { count: draft.count }),
