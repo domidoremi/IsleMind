@@ -23,3 +23,9 @@ Android 中文岛屿深色竖屏完成错误输入、纠正、模型步骤、一
 778 字符高速连续 Android 注入的截短尚未确认根因，分段输入的通过不替代该项。真实网页键鼠、其余主题语言与尺寸、无障碍、完整供应商/密钥/模型/同模型路由组以及 31 路由、55 原型的完整矩阵继续验收。fullAcceptance、nativeVerified、visualAcceptance 和广义 loadedRuntimeVerified 保持 false。[完整目标](../architecture/full-application-improvement-goal.md)
 
 原有未完成工作与 APK 候选保持；没有构建、导出、安装、上传 APK 或派发工作流。
+
+## 实际发布
+
+版本提交`277245f95ea57fe127cd7d48da81161f921999b3`已推送，v1.1.17于2026-11-19 19:54:26（台北）实际发布。标签固定到版本提交，公开三语正文逐字一致，GitHub API核对公开稳定状态和最新版本。43个历史Release、既有标签与41条Actions任务保持，没有新增任务。详见[发布记录](./source-release-1.1.17-2026-11-19.md)。
+
+五组版本元数据、计数、三语内容、文档链接及原有改动保护检查，以及22项版本契约测试通过。493个原有未完成路径除package版本字段外保持；没有构建、导出、安装或上传APK。
