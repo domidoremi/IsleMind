@@ -12,6 +12,7 @@ export function usageDuration(value: number | undefined): string {
 }
 
 export function usageKnownCost(summary: Pick<UsageStatisticsSummary, 'totalCostNanodollars' | 'unknownCostCount' | 'costTotalOverflowed'>, t: TFunction): string {
+  if (summary.totalCostNanodollars === undefined && !summary.costTotalOverflowed) return t('usage.costNotReported')
   const known = summary.costTotalOverflowed ? t('usage.totalsOverflowed')
     : summary.totalCostNanodollars === undefined ? t('usage.costNotReported') : `$${(summary.totalCostNanodollars / 1_000_000_000).toFixed(5)}`
   return summary.unknownCostCount ? t('usage.knownCostWithUnknown', { known, count: summary.unknownCostCount }) : known
