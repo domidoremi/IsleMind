@@ -1,9 +1,11 @@
+import { isProviderModelEnabled } from './providerModelSelection'
 import type { AIProvider, ProviderCredentialGroup } from '@/types/providerContracts'
 import type { ProviderFailoverCandidate, ProviderFailoverRoute } from './providerFailoverPolicy'
 import { annotateFailoverCandidatesWithHealth, type ProviderHealthRecord } from './providerHealth'
 import type { ProviderCredentialSource } from './providerCredentials'
 import { providerFailoverRouteIdentityKey } from './providerFailoverPolicy'
 import { getProviderCompatibilityEvidenceForProvider } from './providerCompatibilityCatalog'
+import { credentialCanUseProviderModel, getProviderRemoteModelSources, hasCredentialModelCatalog, primaryCredentialModelCatalog } from './providerModelCatalog'
 
 export const PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA = 'islemind.provider-fallback-candidate-build.v1'
 
@@ -84,17 +86,17 @@ export function createProviderFallbackCandidateBuilder(
         continue
       }
 
-      const models = candidateModelIds(provider).slice(0, input.maxModelsPerProvider ?? 20)
-      modelCount += models.length
-      if (!models.length) {
-        rejectedCandidates.push({ providerId: provider.id, reason: 'no_candidate_models' })
-        continue
-      }
-
       const credentialGroups = candidateCredentialGroups(provider)
       credentialGroupCount += credentialGroups.length
       if (!credentialGroups.some((group) => group.enabled || input.includeDisabledCredentials === true)) {
         rejectedCandidates.push({ providerId: provider.id, reason: 'no_enabled_credentials' })
+        continue
+      }
+
+      const models = candidateModelIds(provider, input.includeDisabledCredentials === true).slice(0, input.maxModelsPerProvider ?? 20)
+      modelCount += models.length
+      if (!models.length) {
+        rejectedCandidates.push({ providerId: provider.id, reason: 'no_candidate_models' })
         continue
       }
 
@@ -154,14 +156,23 @@ export function createProviderFallbackCandidateBuilder(
   }
 }
 
-function candidateModelIds(provider: AIProvider): string[] {
+function candidateModelIds(provider: AIProvider, includeDisabledCredentials: boolean): string[] {
+  const authoritative = provider.credentialGroups?.length
+    ? provider.credentialGroups.some(hasCredentialModelCatalog)
+    : hasCredentialModelCatalog(primaryCredentialModelCatalog(provider))
+  const catalogProvider = includeDisabledCredentials && provider.credentialGroups?.length
+    ? { ...provider, credentialGroups: provider.credentialGroups.map(group => ({ ...group, enabled: true })) }
+    : provider
+  const remote = getProviderRemoteModelSources(catalogProvider).flatMap(source => source.models)
+  const configured = uniqueStrings([...(provider.manualModels ?? []), ...(provider.modelAliases ?? []).flatMap(alias => [alias.alias, alias.model])])
+  const allowed = new Set(uniqueStrings([...remote, ...configured]))
   return uniqueStrings([
     ...provider.models,
-    ...(provider.manualModels ?? []),
-    ...(provider.modelConfigs ?? []).map((model) => model.id),
-    ...(provider.modelAvailability ?? []).map((item) => item.modelId),
-    ...(provider.modelAliases ?? []).map((item) => item.model),
-  ])
+    ...remote,
+    ...configured,
+    ...(!authoritative ? (provider.modelConfigs ?? []).map((model) => model.id) : []),
+    ...(!authoritative ? (provider.modelAvailability ?? []).map((item) => item.modelId) : []),
+  ]).filter(model => (!authoritative || allowed.has(model)) && isProviderModelEnabled(provider, model))
 }
 
 function candidateCredentialGroups(provider: AIProvider): (ProviderCredentialGroup & { source?: ProviderCredentialSource })[] {
@@ -172,7 +183,7 @@ function candidateCredentialGroups(provider: AIProvider): (ProviderCredentialGro
     label: 'Default',
     apiKey: provider.apiKey,
     enabled: true,
-    availableModels: [],
+    ...primaryCredentialModelCatalog(provider),
     source: provider.apiKeySource ?? { kind: 'primary' },
   }]
 }
@@ -186,17 +197,8 @@ function rejectCredential(
 ): ProviderFallbackCandidateRejectionReason | undefined {
   if (!group.enabled && !includeDisabledCredentials) return 'credential_disabled'
   if (!group.apiKey?.trim()) return 'credential_missing'
-  if (!credentialCanUseModel(model, upstreamModel, group)) return 'model_not_available_for_credential'
+  if (!credentialCanUseProviderModel(provider, group, model, upstreamModel)) return 'model_not_available_for_credential'
   return undefined
-}
-
-function credentialCanUseModel(
-  model: string,
-  upstreamModel: string,
-  group: ProviderCredentialGroup,
-): boolean {
-  if (!group.availableModels?.length) return true
-  return group.availableModels.includes(model) || group.availableModels.includes(upstreamModel)
 }
 
 function capabilitiesSatisfied(required: string[], available: string[]): boolean {
@@ -225,6 +227,6 @@ function dedupeCandidates(candidates: ProviderFailoverCandidate[]): ProviderFail
   return result
 }
 
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
+function uniqueStrings(values: readonly unknown[]): string[] {
+  return Array.from(new Set(values.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean)))
 }

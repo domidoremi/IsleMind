@@ -24,6 +24,18 @@ function provider(overrides: Partial<AIProvider> = {}): AIProvider {
 }
 
 describe('provider metadata persistence identity validation', () => {
+  it('round-trips explicit empty model selections and rejects malformed lists before writing', async () => {
+    let records: readonly AIProvider[] = []
+    const write = jest.fn(async (value: readonly AIProvider[]) => { records = JSON.parse(JSON.stringify(value)) })
+    const persistence = createProviderMetadataPersistence({ read: async () => records, write })
+    await persistence.save([provider({ enabledModels: [] })])
+    expect((await persistence.load())?.[0].enabledModels).toEqual([])
+    const invalid = provider({ enabledModels: [''] })
+    expect(() => persistence.save([invalid])).toThrow('Invalid provider model selection')
+    expect(write).toHaveBeenCalledTimes(1)
+    records = [invalid]
+    await expect(persistence.load()).rejects.toBeInstanceOf(ProviderMetadataPersistenceValidationError)
+  })
   it('round-trips key selection as metadata and rejects invalid selection before writing', async () => {
     let records: readonly AIProvider[] = []
     const write = jest.fn(async (value: readonly AIProvider[]) => { records = JSON.parse(JSON.stringify(value)) })

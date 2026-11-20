@@ -1,6 +1,7 @@
 import { getModelConfig } from '@/types/modelCatalog'
 import type { AIProvider, ModelAlias, ProviderCredentialGroup } from '@/types/providerContracts'
 import { normalizeModelId } from '@/utils/modelReasoning'
+import { getProviderRemoteModelSources, isProviderModelSelected } from '@/modules/providers'
 export type ModelQuickGroup =
   | 'all'
   | 'gpt'
@@ -83,54 +84,25 @@ export function clearHistoricalInjectedGroupModels(group: ProviderCredentialGrou
 
 export function getProviderAvailableModels(provider: AIProvider): string[] {
   const manualModels = getProviderManualModels(provider)
-  // Discovery failure changes the observation, not the saved configuration.
-  // Cached models stay selectable; this is not a live availability claim.
-  const syncedGroupModels = (provider.credentialGroups ?? [])
-    .filter((group) => group.enabled !== false && (group.lastModelSyncStatus === 'ok' || group.lastModelSyncStatus === 'bad'))
-    .flatMap((group) => clearHistoricalInjectedGroupModels(group, provider))
-  if (syncedGroupModels.length) return filterChatCompatibleModels(provider, [...syncedGroupModels, ...manualModels])
-
-  if (provider.lastModelSyncStatus === 'ok') {
-    const syncedProviderModels = clearHistoricalInjectedProviderModels(provider)
-    if (syncedProviderModels.length) return filterChatCompatibleModels(provider, [...syncedProviderModels, ...manualModels])
-  }
-
-  if (provider.lastTestStatus === 'ok' && provider.lastTestModel) {
-    return filterChatCompatibleModels(provider, [provider.lastTestModel, ...manualModels])
-  }
-
-  return filterChatCompatibleModels(provider, manualModels)
+  const remoteModels = getProviderRemoteModelSources(provider).flatMap(source =>
+    source.confirmed ? [...source.models] : clearHistoricalInjectedModelList([...source.models], provider))
+  return filterChatCompatibleModels(provider, [...remoteModels, ...manualModels])
 }
 
 export function getProviderPreferredModel(provider: AIProvider): string | undefined {
   const manualModels = getProviderManualModels(provider)
   const testedModel = provider.lastTestStatus === 'ok' ? provider.lastTestModel?.trim() : undefined
   const pickTestedModel = (sourceModels: string[]): string | undefined => {
-    if (!testedModel) return undefined
+    if (!testedModel || !isProviderModelSelected(provider, testedModel)) return undefined
     if (![...sourceModels, ...manualModels].some((model) => sameProviderModelId(model, testedModel))) return undefined
     return isProviderChatCompatibleModel(provider, testedModel) ? testedModel : undefined
   }
   const pickFirstModel = (sourceModels: string[]): string | undefined =>
     firstChatCompatibleModel(provider, [...sourceModels, ...manualModels])
 
-  const syncedGroupModels = (provider.credentialGroups ?? [])
-    .filter((group) => group.enabled !== false && (group.lastModelSyncStatus === 'ok' || group.lastModelSyncStatus === 'bad'))
-    .flatMap((group) => clearHistoricalInjectedGroupModels(group, provider))
-  if (syncedGroupModels.length) {
-    return pickTestedModel(syncedGroupModels) ?? pickFirstModel(syncedGroupModels)
-  }
-
-  if (provider.lastModelSyncStatus === 'ok') {
-    const syncedProviderModels = clearHistoricalInjectedProviderModels(provider)
-    if (syncedProviderModels.length) {
-      return pickTestedModel(syncedProviderModels) ?? pickFirstModel(syncedProviderModels)
-    }
-  }
-
-  if (testedModel) {
-    return firstChatCompatibleModel(provider, [testedModel, ...manualModels])
-  }
-  return firstChatCompatibleModel(provider, manualModels)
+  const sourceModels = getProviderRemoteModelSources(provider).flatMap(source =>
+    source.confirmed ? [...source.models] : clearHistoricalInjectedModelList([...source.models], provider))
+  return pickTestedModel(sourceModels) ?? pickFirstModel(sourceModels)
 }
 
 export function getProviderManualModels(provider: AIProvider): string[] {
@@ -153,7 +125,7 @@ export function getProviderSelectableModels(provider: AIProvider): string[] {
   return uniqueModels([
     ...getProviderAvailableModels(provider),
     ...normalizeProviderModelAliases(provider).map((item) => item.alias),
-  ])
+  ]).filter(model => isProviderModelSelected(provider, model))
 }
 
 export interface ProviderModelInventorySummary {
@@ -217,7 +189,7 @@ export function getProviderDisplayModel(provider: Pick<AIProvider, 'modelAliases
 }
 
 function sameProviderModelId(left: string | undefined, right: string | undefined): boolean {
-  return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase())
+  return Boolean(left && right && left.trim() === right.trim())
 }
 
 /** Display-only: never use this label for routing, persistence or model access. */
@@ -325,7 +297,7 @@ export function isProviderChatCompatibleModel(provider: AIProvider, model: strin
 }
 
 function filterChatCompatibleModels(provider: AIProvider, models: string[]): string[] {
-  return uniqueModels(models).filter((model) => isProviderChatCompatibleModel(provider, model))
+  return uniqueModels(models).filter((model) => isProviderModelSelected(provider, model) && isProviderChatCompatibleModel(provider, model))
 }
 
 function firstChatCompatibleModel(provider: AIProvider, models: string[]): string | undefined {
@@ -334,7 +306,7 @@ function firstChatCompatibleModel(provider: AIProvider, models: string[]): strin
     const normalized = model.trim()
     if (!normalized || seen.has(normalized)) continue
     seen.add(normalized)
-    if (isProviderChatCompatibleModel(provider, normalized)) return normalized
+    if (isProviderModelSelected(provider, normalized) && isProviderChatCompatibleModel(provider, normalized)) return normalized
   }
   return undefined
 }

@@ -129,12 +129,15 @@ function run() {
       ] }),
       provider({ id: 'no-enabled-creds', credentialGroups: [{ id: 'disabled-only', label: 'Disabled only', apiKey: 'sk-disabled', enabled: false, availableModels: [] }] }),
       provider({ id: 'missing-creds', apiKey: '', credentialGroups: [{ id: 'missing-group', label: 'Missing', apiKey: '', enabled: true, availableModels: [] }] }),
-      provider({ id: 'model-limited-creds', models: ['strong-pro'], credentialGroups: [{ id: 'limited-group', label: 'Limited', apiKey: 'sk-limited', enabled: true, availableModels: ['other-model'] }] }),
+      provider({ id: 'model-limited-creds', models: ['strong-pro'], credentialGroups: [
+        { id: 'limited-group', label: 'Limited', apiKey: 'sk-limited', enabled: true, availableModels: ['other-model'] },
+        { id: 'strong-group', label: 'Strong', apiKey: 'sk-strong', enabled: true, availableModels: ['strong-pro'] },
+      ] }),
       provider({
         id: 'alias-provider',
         models: [],
         manualModels: ['friendly-model'],
-        modelAliases: [{ model: 'friendly-model' }],
+        modelAliases: [{ alias: 'friendly-model', model: 'upstream-model' }],
         aliasMap: { 'friendly-model': 'upstream-model' },
         credentialGroups: [{ id: 'alias-group', label: 'Alias', apiKey: 'sk-alias', enabled: true, availableModels: ['upstream-model'] }],
       }),
@@ -196,7 +199,7 @@ function run() {
       manualModels: ['d-mini'],
       modelConfigs: [{ id: 'e-mini' }],
       modelAvailability: [{ modelId: 'f-mini' }],
-      modelAliases: [{ model: 'g-mini' }],
+      modelAliases: [{ alias: 'g-short', model: 'g-mini' }],
     })],
     original: { providerId: 'max-model-provider', model: 'a-mini' },
     requiredCapabilities: ['text'],
@@ -227,7 +230,8 @@ function run() {
   assert.ok(fallbackCandidateSource.includes('maxModelsPerProvider ?? 20'), 'fallback candidate source caps per-provider model expansion')
   assert.ok(fallbackCandidateSource.includes('projection.deprecated'), 'fallback candidate source rejects models marked deprecated by its projection port')
   assert.ok(fallbackCandidateSource.includes('dependencies.projectModel'), 'fallback candidate source receives model compatibility projection through an explicit port')
-  assert.ok(fallbackCandidateSource.includes('credentialCanUseModel'), 'fallback candidate source scopes credentials to available models')
+  assert.ok(result.candidates.filter(item => item.providerId === 'model-limited-creds' && item.model === 'strong-pro')
+    .every(item => item.credentialGroupId === 'strong-group'), 'fallback candidates keep exact model ownership')
   assert.ok(fallbackCandidateSource.includes('annotateFailoverCandidatesWithHealth'), 'fallback candidate source carries provider health annotations')
   assert.ok(fallbackCandidateSource.includes('dedupeCandidates'), 'fallback candidate source deduplicates routes')
   assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerFallbackCandidates.ts')), false, 'legacy fallback candidate facade is deleted after target factory migration')

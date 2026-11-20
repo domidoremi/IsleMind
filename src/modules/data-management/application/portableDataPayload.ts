@@ -30,7 +30,7 @@ import {
 import type { PortableKnowledgeSnapshot } from '@/modules/knowledge'
 import { parseSavedDocuments, type SavedDocument, type DocumentRepository } from '@/modules/documents'
 import { normalizeConversationContextPolicy, normalizeConversationResourceScope, normalizeConversationScenePlanSource, normalizeMessageUsageExecution, normalizeResponseLifecycle } from '@/modules/conversations'
-import { parseProviderCredentialSelection, parseProviderModelParameterConfiguration } from '@/modules/providers'
+import { parseProviderEnabledModels, parseProviderCredentialSelection, parseProviderModelParameterConfiguration } from '@/modules/providers'
 import {
   redactSensitiveText,
   sanitizeTraceMetadata,
@@ -621,6 +621,7 @@ function preserveProviderModels(imported: AIProvider, existing?: AIProvider): AI
     ...imported,
     models: [...(existing?.models ?? [])],
     manualModels: existing?.manualModels ? [...existing.manualModels] : undefined,
+    enabledModels: parseProviderEnabledModels(existing?.enabledModels),
     modelAliases: existing?.modelAliases ? [...existing.modelAliases] : undefined,
     modelAvailability: existing?.modelAvailability
       ? [...existing.modelAvailability]
@@ -641,6 +642,7 @@ function replaceProviderModels(existing: AIProvider, imported: AIProvider): AIPr
     ...existing,
     models: [...imported.models],
     manualModels: imported.manualModels ? [...imported.manualModels] : undefined,
+    enabledModels: parseProviderEnabledModels(imported.enabledModels),
     modelAliases: imported.modelAliases ? [...imported.modelAliases] : undefined,
     modelAvailability: imported.modelAvailability
       ? [...imported.modelAvailability]
@@ -1135,6 +1137,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     ),
     modelParameterOverrides: parseProviderModelParameterConfiguration(provider.modelParameterOverrides),
     credentialSelection: parseProviderCredentialSelection(provider.credentialSelection),
+    enabledModels: parseProviderEnabledModels(provider.enabledModels),
     modelConfigs: buildProviderModelConfigsForStorage(
       provider,
       models,

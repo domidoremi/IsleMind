@@ -3,6 +3,7 @@ import { isProviderWireProtocol } from './providerConfigPolicy'
 import { isProviderPresetId } from './providerRegistry'
 import { parseProviderModelParameterConfiguration } from './providerModelParameterOverrides'
 import { parseProviderCredentialSelection } from './providerCredentials'
+import { parseProviderEnabledModels } from './providerModelSelection'
 
 export class ProviderMetadataPersistenceValidationError extends Error {
   constructor() {
@@ -45,6 +46,7 @@ export function createProviderMetadataPersistence(
       for (const provider of providers) {
         parseProviderModelParameterConfiguration(provider.modelParameterOverrides)
         parseProviderCredentialSelection(provider.credentialSelection)
+        parseProviderEnabledModels(provider.enabledModels)
       }
       return records.write(providers)
     },
@@ -62,6 +64,7 @@ function migrateProviderMetadata(value: unknown): AIProvider | null {
   try {
     parseProviderModelParameterConfiguration(provider.modelParameterOverrides)
     parseProviderCredentialSelection(provider.credentialSelection)
+    parseProviderEnabledModels(provider.enabledModels)
   } catch { return null }
 
   const presetId = migrateLegacyPresetId(provider.presetId)

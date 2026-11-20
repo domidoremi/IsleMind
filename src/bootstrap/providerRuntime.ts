@@ -722,11 +722,14 @@ function resolveProviderCredentialSynchronization(): Promise<ProviderCredentialS
     import('@/i18n/service'),
     import('@/modules/providers'),
     import('./providerRegistry'),
+    import('@/utils/providerModels'),
   ]).then(([
     { st },
     { runCredentialGroupModelSync },
     { getProviderPreset },
+    { getProviderSelectableModels },
   ]) => createProviderCredentialSynchronization({
+    getEnabledModels: getProviderSelectableModels,
     messages: {
       saveTokenGroupFirst: st('providerOperation.saveTokenGroupFirst'),
       defaultToken: st('providerOperation.defaultToken'),

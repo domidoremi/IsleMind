@@ -3,6 +3,8 @@ import type { AIProvider } from '@/types/providerContracts'
 import type { WebSearchMode } from '@/types/settingsContracts'
 import { selectProviderRequestAttachments, type ProviderSelectableAttachment } from './providerAttachments'
 import type { ProviderCredentialSource } from './providerCredentials'
+import { chooseCredentialForModel } from './providerCredentialGroups'
+import { credentialCanUseProviderModel, primaryCredentialModelCatalog } from './providerModelCatalog'
 
 export interface ProviderRuntimeFallbackRoute {
   providerId: string
@@ -97,11 +99,16 @@ export function providerForRuntimeFallback(
       ?? { kind: 'group', groupId: route.credentialGroupId }
     : source.apiKeySource ?? { kind: 'primary' })
   if (credentialSource.kind === 'group') {
-    const group = source.credentialGroups?.find((item) => item.id === credentialSource.groupId && item.source?.kind !== 'primary')
-    if (!group?.enabled || !group.apiKey?.trim()) throw new Error('Requested credential group is not available')
-    return { ...source, apiKey: group.apiKey, apiKeySource: credentialSource }
+    const selected = chooseCredentialForModel(source, route.model, { targetCredentialGroupId: credentialSource.groupId })
+    return { ...source, apiKey: selected.apiKey, apiKeySource: credentialSource }
   }
   if (credentialSource.kind !== 'primary' || !source.apiKey.trim() || (source.apiKeySource && source.apiKeySource.kind !== 'primary')) {
+    throw new Error('Requested primary credential is not available')
+  }
+  const primaryGroup = source.credentialGroups?.find(group => group.source?.kind === 'primary')
+  const upstreamModel = source.modelAliases?.find(alias => alias.alias.trim().toLowerCase() === route.model.trim().toLowerCase())?.model ?? route.model
+  if (primaryGroup?.enabled === false || !credentialCanUseProviderModel({ ...source, credentialGroups: undefined },
+    primaryGroup ?? primaryCredentialModelCatalog(source), route.model, upstreamModel)) {
     throw new Error('Requested primary credential is not available')
   }
   return { ...source, apiKeySource: credentialSource }

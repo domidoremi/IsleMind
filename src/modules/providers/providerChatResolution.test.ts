@@ -1,3 +1,4 @@
+import { isProviderModelEnabled } from './providerModelSelection'
 import type { AIProvider } from '@/types/providerContracts'
 import { createProviderChatResolutionRuntime } from './providerChatResolution'
 import { createProviderFallbackCandidateBuilder } from './providerFallbackCandidates'
@@ -19,7 +20,7 @@ describe('preferred Chat route resolution', () => {
       buildCandidates: createProviderFallbackCandidateBuilder({ projectModel: (_provider, model) => ({ deprecated: false, upstreamModel: model, capabilities: ['text'] }) }),
       loadHealthRecords: async () => ({}),
       configurationValid: (provider) => Boolean(provider.apiKey),
-      accessAllowed: (_provider, model, settings) => !settings?.modelBlocklist?.includes(model),
+      accessAllowed: (provider, model, settings) => isProviderModelEnabled(provider, model) && !settings?.modelBlocklist?.includes(model),
       resolveIdentity: (provider, model, credentialSource) => ({ providerId: provider.id, model, credentialSource, protocolAdapterId: 'openai-chat', endpointVariant: 'native' }),
       getAvailability: async (identity) => ({ scope: { scopeId: `${identity.providerId}:primary`, epoch }, availability: unavailable.has(`${identity.providerId}:${identity.model}`) ? 'unavailable' : 'unknown' }),
       healthAllows: async (identity) => !coolingDown.has(`${identity.providerId}:${identity.model}`),
@@ -29,6 +30,20 @@ describe('preferred Chat route resolution', () => {
   }
   const preferred = { providerId: 'a', model: 'one' }
   const request = () => ({ preferred, signal: new AbortController().signal, requiredCapabilities: ['text'] })
+
+  it('rejects unselected models and invalidates a saved admission when its model is deselected', async () => {
+    const f = fixture()
+    f.providers[0].enabledModels = ['one']
+    const input = { ...request(), allowFallback: false }
+    const admitted = await f.runtime.resolvePreferred(input)
+    expect(admitted.kind).toBe('ready')
+    if (admitted.kind !== 'ready') throw Error('Expected enabled model')
+    f.providers[0].enabledModels = []
+    expect(await f.runtime.revalidate(admitted.selection.constraint, input)).toBeUndefined()
+    expect(await f.runtime.resolvePreferred(input)).toEqual({ kind: 'blocked', reason: 'policy_blocked' })
+    f.providers[0].enabledModels = ['two']
+    expect(await f.runtime.resolvePreferred({ ...input, preferred: { providerId: 'a', model: 'two' } })).toMatchObject({ kind: 'ready' })
+  })
 
   it('admits and revalidates a LAN model without internet, then blocks it when the network disconnects', async () => {
     const f = fixture()

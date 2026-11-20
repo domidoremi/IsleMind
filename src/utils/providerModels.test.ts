@@ -1,4 +1,5 @@
-import { getProviderAvailableModels, getProviderPreferredModel, getProviderCompactModel, isProviderConversationReady, resolveProviderModelAlias } from './providerModels'
+import { getProviderAvailableModels, getProviderPreferredModel, getProviderCompactModel, getProviderDisplayModel, isProviderConversationReady, resolveProviderModelAlias } from './providerModels'
+import { getModelConfig } from '@/types/modelCatalog'
 import { runCredentialGroupModelSync } from '@/modules/providers/providerCredentialGroups'
 import { getPolicyAllowedProviderModels, providerHasPolicyModel } from '@/bootstrap/providerModelAccess'
 import type { AIModel, AIProvider } from '@/types/providerContracts'
@@ -29,6 +30,18 @@ it('disambiguates cached model IDs even when detailed model metadata is absent',
   const provider = { models: ['first/model-0731', 'second/model-0731'] }
   expect(getProviderCompactModel(provider, 'first/model-0731')).toBe('first/model-0731')
   expect(getProviderCompactModel(provider, 'second/model-0731')).toBe('second/model-0731')
+})
+
+it('uses the exact remote model metadata and disambiguates case-distinct IDs with the same display name', () => {
+  const provider = { type: 'openai-compatible' as const, modelConfigs: [
+    { ...getModelConfig('Model'), name: 'Upper catalog' },
+    { ...getModelConfig('model'), name: 'Lower catalog' },
+  ] }
+  expect(getProviderDisplayModel(provider, 'Model')).toBe('Upper catalog')
+  expect(getProviderDisplayModel(provider, 'model')).toBe('Lower catalog')
+  const shared = { ...provider, modelConfigs: provider.modelConfigs.map(model => ({ ...model, name: 'Shared name' })) }
+  expect(getProviderDisplayModel(shared, 'Model')).toBe('Shared name (Model)')
+  expect(getProviderDisplayModel(shared, 'model')).toBe('Shared name (model)')
 })
 
 it('retains the discovered model catalog after a failed refresh without rewriting failure as success', async () => {

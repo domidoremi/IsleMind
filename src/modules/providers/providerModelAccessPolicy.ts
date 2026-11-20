@@ -1,7 +1,9 @@
 import type { AIProvider, ModelAlias } from '@/types/providerContracts'
+import { isProviderModelEnabled, isProviderModelSelected } from './providerModelSelection'
+import { getProviderRemoteModelSources } from './providerModelCatalog'
 
-type ProviderModelAccessProvider = Pick<AIProvider, 'id' | 'type' | 'presetId' | 'detectedPresetId' | 'baseUrl'>
-type ProviderModelAliasAccessProvider = ProviderModelAccessProvider & Pick<AIProvider, 'modelAliases'>
+type ProviderModelAccessProvider = Pick<AIProvider, 'id' | 'type' | 'presetId' | 'detectedPresetId' | 'baseUrl' | 'enabledModels' | 'modelAliases'>
+type ProviderModelAliasAccessProvider = ProviderModelAccessProvider & Pick<AIProvider, 'modelAliases' | 'enabledModels'>
 
 export interface ProviderModelAccessSettings {
   providerAllowlist?: string[]
@@ -93,6 +95,9 @@ function hasProviderModelAccessRules(settings?: ProviderModelAccessInput['settin
 function resolveProviderModelAccess(input: ProviderModelAccessInput): AccessPolicyDecision {
   const providerId = input.provider.id
   const model = input.model
+  if (!isProviderModelEnabled(input.provider, model)) {
+    return { allowed: false, providerId, model, reason: 'model_blocked', matchedRules: ['enabledModels'] }
+  }
   const providerBlock = matchProviderScope(input.provider, providerId, input.settings?.providerBlocklist)
   if (providerBlock) return { allowed: false, providerId, model, reason: 'provider_blocked', matchedRules: [`providerBlocklist:${providerBlock}`] }
   const providerAllowlist = normalizeList(input.settings?.providerAllowlist)
@@ -115,6 +120,9 @@ function resolveProviderModelAccess(input: ProviderModelAccessInput): AccessPoli
 }
 
 function resolveProviderModelAliasAccess(input: ProviderModelAliasAccessInput): AccessPolicyDecision {
+  if (!isProviderModelEnabled(input.provider, input.model)) {
+    return { allowed: false, providerId: input.provider.id, model: input.model, reason: 'model_blocked', matchedRules: ['enabledModels'] }
+  }
   const upstreamModel = dependencies.resolveProviderModelAlias(input.provider, input.model)
   const direct = resolveProviderModelAccess(input)
   if (upstreamModel === input.model) return direct
@@ -145,6 +153,7 @@ function getPolicyAllowedProviderModels(provider: AIProvider, settings?: Provide
     const normalized = model?.trim()
     if (!normalized || seen.has(normalized)) return false
     seen.add(normalized)
+    if (!isProviderModelSelected(provider, normalized)) return false
     if (!dependencies.isProviderChatCompatibleModel(provider, normalized)) return false
     if (enforceAccessRules && !resolveProviderModelAliasAccess({ provider, model: normalized, settings }).allowed) return false
     allowed.push(normalized)
@@ -152,29 +161,10 @@ function getPolicyAllowedProviderModels(provider: AIProvider, settings?: Provide
   }
 
   const manualModels = dependencies.getProviderManualModels(provider)
-  // A failed refresh must not revoke a saved model choice. Access rules and
-  // credential/runtime admission remain independent of this cached catalog.
-  const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled !== false && (group.lastModelSyncStatus === 'ok' || group.lastModelSyncStatus === 'bad')) ?? []
-  let usedSyncedSource = false
-  for (const group of enabledGroups) {
-    let groupHadModels = false
-    for (const model of iteratePolicySourceModels(group.availableModels ?? [], provider)) {
-      groupHadModels = true
+  for (const source of getProviderRemoteModelSources(provider)) {
+    for (const model of source.confirmed ? source.models : iteratePolicySourceModels(source.models, provider)) {
       if (pushAllowed(model)) return allowed
     }
-    if (groupHadModels) usedSyncedSource = true
-  }
-  if (!usedSyncedSource && provider.lastModelSyncStatus === 'ok') {
-    let hasSyncedProviderModels = false
-    for (const model of iteratePolicySourceModels(provider.models ?? [], provider)) {
-      hasSyncedProviderModels = true
-      usedSyncedSource = true
-      if (pushAllowed(model)) return allowed
-    }
-    if (!hasSyncedProviderModels) usedSyncedSource = false
-  }
-  if (!usedSyncedSource && provider.lastTestStatus === 'ok' && provider.lastTestModel) {
-    if (pushAllowed(provider.lastTestModel)) return allowed
   }
   for (const model of manualModels) {
     if (pushAllowed(model)) return allowed
@@ -189,6 +179,7 @@ function getPolicyPreferredProviderModel(provider: AIProvider, settings?: Provid
   const preferred = dependencies.getProviderPreferredModel(provider)
   if (
     preferred &&
+    isProviderModelSelected(provider, preferred) &&
     dependencies.isProviderChatCompatibleModel(provider, preferred) &&
     providerHasAvailableSourceModel(provider, preferred) &&
     (!hasProviderModelAccessRules(settings) || resolveProviderModelAliasAccess({ provider, model: preferred, settings }).allowed)
@@ -203,6 +194,7 @@ function providerHasPolicyAllowedModel(provider: AIProvider, settings?: Provider
 function providerHasPolicyModel(provider: AIProvider, model: string, settings?: ProviderModelAccessInput['settings']): boolean {
   const normalized = model.trim()
   return !!normalized &&
+    isProviderModelEnabled(provider, normalized) &&
     dependencies.isProviderChatCompatibleModel(provider, normalized) &&
     (!hasProviderModelAccessRules(settings) || resolveProviderModelAliasAccess({ provider, model: normalized, settings }).allowed) &&
     providerHasAvailableSourceModel(provider, normalized)
@@ -276,7 +268,7 @@ function normalizeModelLimit(limit: number | undefined): number | undefined {
   return Math.max(1, Math.floor(limit))
 }
 
-function* iteratePolicySourceModels(models: string[], provider: ProviderModelAccessProvider): Iterable<string> {
+function* iteratePolicySourceModels(models: readonly string[], provider: ProviderModelAccessProvider): Iterable<string> {
   const allowHistorical = isDeepSeekProvider(provider)
   if (!allowHistorical && isHistoricalDeepSeekDefaultSet(models)) return
   for (const model of models) {
@@ -287,39 +279,24 @@ function* iteratePolicySourceModels(models: string[], provider: ProviderModelAcc
 
 function providerHasAvailableSourceModel(provider: AIProvider, targetModel: string): boolean {
   const manualModels = dependencies.getProviderManualModels(provider)
-  const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled !== false && (group.lastModelSyncStatus === 'ok' || group.lastModelSyncStatus === 'bad')) ?? []
-  let usedSyncedSource = false
-  for (const group of enabledGroups) {
-    let groupHadModels = false
-    for (const model of iteratePolicySourceModels(group.availableModels ?? [], provider)) {
-      groupHadModels = true
+  for (const source of getProviderRemoteModelSources(provider)) {
+    for (const model of source.confirmed ? source.models : iteratePolicySourceModels(source.models, provider)) {
       if (samePolicyModel(model, targetModel)) return true
     }
-    if (groupHadModels) usedSyncedSource = true
   }
-  if (!usedSyncedSource && provider.lastModelSyncStatus === 'ok') {
-    let hasSyncedProviderModels = false
-    for (const model of iteratePolicySourceModels(provider.models ?? [], provider)) {
-      hasSyncedProviderModels = true
-      usedSyncedSource = true
-      if (samePolicyModel(model, targetModel)) return true
-    }
-    if (!hasSyncedProviderModels) usedSyncedSource = false
-  }
-  if (!usedSyncedSource && provider.lastTestStatus === 'ok' && samePolicyModel(provider.lastTestModel, targetModel)) return true
   if (manualModels.some((model) => samePolicyModel(model, targetModel))) return true
   return dependencies.normalizeProviderModelAliases(provider).some((alias) =>
-    samePolicyModel(alias.alias, targetModel) || samePolicyModel(alias.model, targetModel)
+    alias.alias.trim().toLowerCase() === targetModel.trim().toLowerCase() || samePolicyModel(alias.model, targetModel)
   )
 }
 
 function samePolicyModel(left: string | undefined, right: string | undefined): boolean {
-  const normalizedLeft = left?.trim().toLowerCase()
-  const normalizedRight = right?.trim().toLowerCase()
+  const normalizedLeft = left?.trim()
+  const normalizedRight = right?.trim()
   return !!normalizedLeft && !!normalizedRight && normalizedLeft === normalizedRight
 }
 
-function isHistoricalDeepSeekDefaultSet(models: string[]): boolean {
+function isHistoricalDeepSeekDefaultSet(models: readonly string[]): boolean {
   if (models.length !== HISTORICAL_DEEPSEEK_DEFAULT_MODEL_SET.size) return false
   const normalized = new Set(models.map((model) => model.trim().toLowerCase()).filter(Boolean))
   if (normalized.size !== HISTORICAL_DEEPSEEK_DEFAULT_MODEL_SET.size) return false

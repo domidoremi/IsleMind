@@ -15,6 +15,7 @@ export interface ProviderCredentialSynchronizationMessages {
 }
 
 export interface ProviderCredentialSynchronizationDependencies {
+  getEnabledModels?(provider: AIProvider): string[]
   messages: ProviderCredentialSynchronizationMessages
   synchronize(
     provider: AIProvider,
@@ -43,10 +44,12 @@ export function createProviderCredentialSynchronization(
 ): ProviderCredentialSynchronization {
   return {
     async synchronize(provider, options = {}) {
+      // Capture before discovery. Newly discovered IDs remain unselected.
+      const enabledModels = [...(provider.enabledModels ?? dependencies.getEnabledModels?.(provider) ?? [])]
       const groups = provider.credentialGroups?.filter(
         (group) => group.enabled && group.apiKey?.trim(),
       ) ?? []
-      if (!groups.length && !provider.apiKey.trim()) {
+      if (!groups.length && (provider.credentialGroups?.length || !provider.apiKey.trim())) {
         return failure('missing_key', dependencies.messages.saveTokenGroupFirst)
       }
 
@@ -57,11 +60,14 @@ export function createProviderCredentialSynchronization(
             label: dependencies.messages.defaultToken,
             enabled: true,
             apiKey: provider.apiKey,
-            availableModels: [],
+            availableModels: provider.lastModelSyncStatus === 'ok' || provider.lastModelSyncStatus === 'bad'
+              ? [...provider.models] : [],
+            lastModelSyncStatus: provider.lastModelSyncStatus,
+            modelCatalogKnown: provider.modelCatalogKnown === true || provider.lastModelSyncStatus === 'ok',
             source: provider.apiKeySource ?? { kind: 'primary' as const },
           }]
       const synchronized = await dependencies.synchronize(
-        { ...provider, credentialGroups: sourceGroups },
+        { ...provider, enabledModels, credentialGroups: sourceGroups },
         {
           fetchModels: async (source, group) => {
             const result = await dependencies.fetchModels(

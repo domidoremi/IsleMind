@@ -83,7 +83,7 @@ it('revalidates against the fence catalog even when the caller supplies a later 
   later[0] = { ...later[0], models: ['one', 'two', 'later-model'] }
   const result = await f.runtime.revalidate(constraint, { ...f.input, providers: later })
   expect(result).toBeDefined()
-  expect(f.readProviders).toHaveBeenCalledWith(f.controller.signal, { providers: f.catalog })
+  expect(f.readProviders).toHaveBeenCalledWith(f.controller.signal, { providers: f.catalog, providerId: 'a' })
   expect(result!.provider.models).toEqual(['one', 'two'])
 })
 
@@ -96,7 +96,7 @@ it('does not infer metadata receipts from hydrated providers for legacy fences',
   }
   const { providers: _providers, ...input } = f.input
   await expect(f.runtime.revalidate(constraint, input)).resolves.toBeDefined()
-  expect(f.readProviders).toHaveBeenCalledWith(f.controller.signal, undefined)
+  expect(f.readProviders).toHaveBeenCalledWith(f.controller.signal, { providers: undefined, providerId: 'a' })
 })
 
 it('intersects captured access with the original runtime caller live revocation port', async () => {

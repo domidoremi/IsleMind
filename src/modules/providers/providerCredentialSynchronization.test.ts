@@ -3,6 +3,19 @@ import { createProviderModelList } from './providerModelList'
 import { failure } from './providerOperationResult'
 import type { AIProvider } from '@/types/providerContracts'
 
+it('does not discover through a stale primary when all explicit keys are disabled', async () => {
+  const synchronize = jest.fn()
+  const sync = createProviderCredentialSynchronization({
+    messages: { saveTokenGroupFirst: 'missing', defaultToken: 'default', credentialGroupsSynced: 'synced' },
+    synchronize, fetchModels: jest.fn(),
+  })
+  const result = await sync.synchronize({ id: 'disabled', apiKey: 'old-primary', credentialGroups: [
+    { id: 'key', label: 'Key', enabled: false, apiKey: 'disabled-key' },
+  ] } as AIProvider)
+  expect(result).toMatchObject({ ok: false, code: 'missing_key' })
+  expect(synchronize).not.toHaveBeenCalled()
+})
+
 it('explicit synchronization bypasses cached success and retries the current endpoint after failure', async () => {
   const provider = { id: 'local', type: 'openai', baseUrl: 'http://localhost/v1', apiKey: 'local' } as AIProvider
   const fetchModels = jest.fn().mockResolvedValueOnce([{ id: 'first' }])
