@@ -51,3 +51,14 @@ Web独立域名已清空，原浏览器13项存储与六文件保持，空间已
 最终独立回读53表3256行、四项原始存储、六组草稿与恢复槽、全部资料和编辑器状态一致；原USB设置任务、进程15464和70条请求保持，当前编辑器19680。测试对象和密钥均已清除，Inspector关闭，本轮8092映射已撤销并恢复原空映射。四张图片仅作中文岛屿深色原竖屏可见区域记录，整体四项资格保持false。12份临时基线与本轮Web缓存的删除被自动审批拒绝，文件保留。版本1.1.21/146，周期0/5。
 
 [真机策略检查点](../../test-evidence/implementation/native-routing-groups-20261115-01/native-credential-policy-checkpoint-20261120-199.json)、[最终独立回读](../../test-evidence/implementation/native-routing-groups-20261115-01/native-provider-current-20261120-197.json)、[原端口映射恢复](../../test-evidence/implementation/native-routing-groups-20261115-01/native-transport-restored-20261120-198.json)。
+
+
+## 原生密钥编辑器保存与取消验收
+
+第43份源码下，真实原生点击完成密钥策略、首选、单密钥停用与重新启用；继续编辑保留草稿，放弃修改后恢复已保存值。四次保存并重开核对通过，持久化记录、安全密钥、2／1模型目录、明确模型选择和合成健康数值均符合预期，没有发送模型请求。前两轮脚本分别因导航归属与页面挂载等待停止，均在保存前完成恢复，失败原件保留；最终使用新测试身份通过。
+
+场景结束时全部原值恢复；随后独立回读发现进程15464被MIUI内存服务终止，系统记录PSS约1.4GB。离线53表3256行及四项原始存储核对一致，执行一次冷启动后，全部资料、六组草稿与恢复槽、编辑器正文／附件／选区／焦点和首页路由值再次核对通过；三个测试连接及九个安全存储槽不存在。当前进程596、编辑器218，进程、编辑器与路由实例已变化。原USB设置任务和70条请求保持，Inspector关闭，本轮8092映射已撤销；内存终止问题仍未解决。
+
+三张截图仅覆盖中文岛屿深色原竖屏可见区域。长连接名末字符单独换行已列入布局待办；密钥实际输入／更换和完整语言、主题、尺寸及辅助功能矩阵继续。源码1.1.21/146，周期0/5，四项整体资格保持false；没有构建、导出、安装APK或触发Actions。
+
+[原生编辑验收检查点](../../test-evidence/implementation/native-routing-groups-20261115-01/native-credential-editor-checkpoint-20261120-209.json)、[冷启动原值回读](../../test-evidence/implementation/native-routing-groups-20261115-01/native-cold-runtime-20261120-213.json)、[原端口映射恢复](../../test-evidence/implementation/native-routing-groups-20261115-01/native-transport-restored-20261120-208.json)。
