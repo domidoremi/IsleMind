@@ -27,3 +27,7 @@ Web独立测试域名已验证MiMo模式和区域、导入选择、停用全部�
 31路由／55原型、五主题深浅色、三语尺寸、TalkBack、输入恢复、真实存储故障、性能及系统内存终止仍待闭环。fullAcceptance、nativeVerified、visualAcceptance及loadedRuntimeVerified保持false。[完整目标](../architecture/full-application-improvement-goal.md)
 
 证据：[健康保存](./provider-credential-health-2026-11-20.md)、[MiMo导入](./provider-mimo-import-2026-11-20.md)、[导入选择](./provider-import-selection-2026-11-20.md)、[停用选择](./provider-disabled-selection-2026-11-20.md)、[实际轮换](./provider-credential-rotation-2026-11-20.md)、[最终Web请求](../../test-evidence/implementation/provider-current-20261120-01/browser-rotation-final-fixed-163.json)、[运行函数绑定](../../test-evidence/implementation/provider-current-20261120-01/browser-rotation-final-bind-164.json)。
+
+## 实际发布
+
+版本提交`406f915799896a6ab83924c568405e527b6b682a`已推送，v1.1.21于2026-11-20 20:59:27（台北）实际发布。标签固定到版本提交，三语正文逐字一致；GitHub API核对公开稳定状态与最新版本。47个历史Release、原有标签和41条Actions保持。五组版本资料检查及22项版本契约测试通过，436个原未完成路径除package版本字段外保持。详见[发布记录](./source-release-1.1.21-2026-11-20.md)。
