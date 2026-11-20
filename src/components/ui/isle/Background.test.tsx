@@ -1,5 +1,6 @@
 import { act, render } from '@testing-library/react-native'
 import { AppState, type AppStateStatus } from 'react-native'
+import { NavigationContext } from 'expo-router/react-navigation'
 
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { getColors } from '@/theme/colors'
@@ -8,6 +9,7 @@ import { IsleBackground, type IsleBackgroundMode, type IsleBackgroundState } fro
 
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: jest.fn(() => 'full') }))
 jest.mock('moti', () => ({ MotiView: require('react-native').View }))
+jest.mock('react-native-reanimated', () => ({ Easing: { inOut: (value: unknown) => value, sin: 'sin' } }))
 jest.mock('./FluidBackdrop', () => ({
   FluidBackdrop: (props: object) => require('react').createElement(require('react-native').View, { ...props, testID: 'flow-props' }),
 }))
@@ -110,4 +112,40 @@ it('suspends background work offscreen and resumes through the shared lifecycle 
   expect(animated()).toBe(true)
   await screen.unmount()
   expect(remove).toHaveBeenCalledTimes(1)
+})
+
+it('pauses retained-route motion and variation timers, and resumes only on its focused route', async () => {
+  const listeners: Record<string, () => void> = {}
+  const remove = jest.fn()
+  const navigation = { isFocused: () => false, addListener: (event: string, listener: () => void) => { listeners[event] = listener; return remove } }
+  const interval = jest.spyOn(globalThis, 'setInterval'), clear = jest.spyOn(globalThis, 'clearInterval')
+  const screen = await render(<NavigationContext.Provider value={navigation as never}>
+    <IsleBackground colors={colors} environment={{ ...environment, variation: 'random' }} />
+  </NavigationContext.Provider>)
+  const animated = () => screen.getByTestId('flow-props', { includeHiddenElements: true }).props.animated
+  expect(animated()).toBe(false)
+  expect(interval).not.toHaveBeenCalled()
+  await act(() => listeners.focus())
+  expect(animated()).toBe(true)
+  expect(interval).toHaveBeenCalledTimes(1)
+  await act(() => listeners.blur())
+  expect(animated()).toBe(false)
+  expect(clear).toHaveBeenCalledWith(interval.mock.results[0].value)
+  await act(() => listeners.focus())
+  expect(animated()).toBe(true)
+  expect(interval).toHaveBeenCalledTimes(2)
+  await screen.unmount()
+  expect(remove).toHaveBeenCalledTimes(2)
+  expect(clear).toHaveBeenCalledWith(interval.mock.results[1].value)
+})
+
+it.each(['light', 'dark'] as const)('uses broad ambient fields for the island theme in %s mode', async (mode) => {
+  const islandColors = getColors(mode, 'animal-island-ui')
+  const islandEnvironment = resolveBackgroundEnvironment({ family: 'animal-island-ui', mode, variation: 'fixed' })
+  const screen = await render(<IsleBackground colors={islandColors} environment={islandEnvironment} />)
+
+  expect(screen.queryByTestId('theme-background-animal-island-ui', { includeHiddenElements: true })).toBeNull()
+  expect(screen.getByTestId(`theme-background-${islandColors.ui.experience.background}-atmospheric`, { includeHiddenElements: true })).toBeTruthy()
+  expect(screen.container.queryAll((node) => node.type === 'RNSVGCircle')).toHaveLength(0)
+  expect(screen.container.queryAll((node) => node.type === 'RNSVGEllipse')).toHaveLength(islandEnvironment.layerCount)
 })

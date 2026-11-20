@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useState } from 'react'
+import { NavigationContext } from 'expo-router/react-navigation'
 import { AppState, StyleSheet, View, type AppStateStatus } from 'react-native'
 import { MotiView } from 'moti'
 import Svg, { Circle, Defs, Ellipse, RadialGradient, Rect, Stop } from 'react-native-svg'
@@ -7,7 +8,6 @@ import type { AppPalette, ThemeBackgroundMode } from '@/theme/colors'
 import { hashEnvironmentSeed, seededEnvironmentValue, type BackgroundEnvironmentConfig } from '@/theme/backgroundEnvironment'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { FluidBackdrop } from './FluidBackdrop'
-import { Background as NativeBackground } from 'animal-island-ui-rn'
 
 export type IsleBackgroundMode = 'default' | ThemeBackgroundMode | 'none'
 export type IsleBackgroundState = 'idle' | 'active' | 'input' | 'modal' | 'error'
@@ -45,8 +45,8 @@ export function IsleBackground({ colors, environment, mode = 'default', state = 
 function DecorativeBackground({ colors, environment, mode, state, intensity }: Omit<Required<IsleBackgroundProps>, 'mode'> & { mode: ThemeBackgroundMode }) {
   const experienceBackground = colors.ui.experience.background
   const motionPreference = useMotionPreference(environment.kind === 'fluid')
-  const appActive = useAppActive()
-  const variationEpoch = useEnvironmentVariationEpoch(environment.variation)
+  const appActive = useBackgroundActive()
+  const variationEpoch = useEnvironmentVariationEpoch(environment.variation, appActive)
   const seed = environment.variation === 'random' || environment.variation === 'daily'
     ? hashEnvironmentSeed(`${environment.seed}:${variationEpoch}`)
     : environment.seed
@@ -56,17 +56,11 @@ function DecorativeBackground({ colors, environment, mode, state, intensity }: O
     && environment.motion !== 'static'
     && (state === 'idle' || state === 'active' || environment.kind === 'fluid' && state === 'input')
   const fields = useMemo(
-    () => environment.kind === 'atmospheric' && environment.family !== 'animal-island-ui'
+    () => environment.kind === 'atmospheric'
       ? buildAmbientFields(colors, environment, seed, profile.environmentOpacity)
       : [],
     [colors, environment, profile.environmentOpacity, seed],
   )
-
-  if (environment.family === 'animal-island-ui') {
-    return <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.backdrop}>
-      <NativeBackground type="default" testID="theme-background-animal-island-ui" style={StyleSheet.absoluteFill} />
-    </View>
-  }
 
   return (
     <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" testID={`theme-background-${experienceBackground}-${environment.kind}`} style={styles.backdrop}>
@@ -180,23 +174,33 @@ function backgroundProfile(colors: AppPalette, mode: ThemeBackgroundMode, state:
   }
 }
 
-function useAppActive(): boolean {
+function useBackgroundActive(): boolean {
+  const navigation = useContext(NavigationContext)
+  const [focused, setFocused] = useState(() => navigation?.isFocused() ?? true)
   const [state, setState] = useState<AppStateStatus>(AppState.currentState)
+  useEffect(() => {
+    setFocused(navigation?.isFocused() ?? true)
+    if (!navigation) return
+    const focus = navigation.addListener('focus', () => setFocused(true))
+    const blur = navigation.addListener('blur', () => setFocused(false))
+    return () => { focus(); blur() }
+  }, [navigation])
   useEffect(() => {
     const subscription = AppState.addEventListener('change', setState)
     return () => subscription.remove()
   }, [])
-  return state === 'active'
+  return focused && state === 'active'
 }
 
-function useEnvironmentVariationEpoch(variation: BackgroundEnvironmentConfig['variation']): string | number {
+function useEnvironmentVariationEpoch(variation: BackgroundEnvironmentConfig['variation'], active: boolean): string | number {
   const [epoch, setEpoch] = useState(() => variationEpoch(variation))
   useEffect(() => {
+    if (!active) return
     setEpoch(variationEpoch(variation))
     if (variation !== 'random' && variation !== 'daily') return undefined
     const interval = setInterval(() => setEpoch(variationEpoch(variation)), variation === 'random' ? 15 * 60 * 1000 : 60 * 60 * 1000)
     return () => clearInterval(interval)
-  }, [variation])
+  }, [variation, active])
   return epoch
 }
 
