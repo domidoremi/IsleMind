@@ -15,3 +15,14 @@
 本周期真机仅恢复连接并独立核对原值，仍运行第42份旧源码；53表、四raw、六组草稿、编辑器正文／附件／选区／焦点、原路由及70请求保持。native-baseline-111作为下轮保护参考，本周期修复待同步后验收。31路由／55原型、五主题三语尺寸、TalkBack、输入恢复、实际存储故障、性能及系统内存终止继续处理。fullAcceptance、nativeVerified、visualAcceptance及loadedRuntimeVerified保持false。
 
 证据：[版本检查](../../test-evidence/release/source-version-1.1.21-20261120-01/version-checks-03.json)、[版本提交](../../test-evidence/release/source-version-1.1.21-20261120-01/commit-version-04.json)、[发布复核](../../test-evidence/release/source-version-1.1.21-20261120-01/publication-receipt-05.json)。
+
+
+## 发布后真机验证与资料恢复
+
+本周期修复已同步至第43份原生源码并完成受保护重载。完整设备缓存、服务脚本、源码映射、三字体、三语及本周期模块绑定核对通过。四次真实键盘请求均返回HTTP200，实际密钥按1／2／1／2轮换；使用时间和持久化健康记录更新，四条用量及最后请求详情归属正确。三张截图仅覆盖中文岛屿深色原竖屏的模型菜单、末次回复和详情可见区域。
+
+测试清理曾因健康记录变化及JSON／undefined比较停止，失败记录保留。定向恢复后另开Inspector回读：53表3256行、四项原始存储、六组草稿与恢复槽、原会话设置及编辑器文字／附件／选区／焦点全部一致，八个测试密钥已移除；原USB设置任务和70条请求保持。当前进程15464、编辑器8968，Inspector关闭且无遗留操作。
+
+Web独立域名已清空，原浏览器13项存储与六文件保持，空间已关闭，8108和8214测试服务已停止，24条请求记录保留。12份可再生临时基线的删除被自动审批拒绝，文件保持。版本仍1.1.21/146，周期0/5；全应用验收和系统内存问题继续，四项整体资格保持false。
+
+[真机检查点](../../test-evidence/implementation/native-routing-groups-20261115-01/native-provider-cycle-checkpoint-20261120-188.json)、[独立原值回读](../../test-evidence/implementation/native-routing-groups-20261115-01/native-provider-current-20261120-185.json)、[限定目视记录](../../test-evidence/implementation/native-routing-groups-20261115-01/native-provider-rotation-visual-review-20261120-188.json)。
