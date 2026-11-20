@@ -25,3 +25,7 @@
 fullAcceptance、nativeVerified、visualAcceptance及loadedRuntimeVerified保持false。[完整目标](../architecture/full-application-improvement-goal.md)
 
 证据：[目录](../../test-evidence/implementation/native-routing-groups-20261115-01/catalog-preservation-progress-20261120-1703.json)、[模型选择](../../test-evidence/implementation/native-routing-groups-20261115-01/model-selection-progress-20261120-1709.json)、[路由组](../../test-evidence/implementation/native-routing-groups-20261115-01/routing-group-progress-20261120-1721.json)、[场景预览](../../test-evidence/implementation/native-routing-groups-20261115-01/scene-routing-preview-progress-20261120-1726.json)、[目录同步](../../test-evidence/implementation/native-routing-groups-20261115-01/provider-activation-progress-20261120-1732.json)。
+
+## 实际发布
+
+版本提交`d966ba93661b938e58dfeec3fd133b43f1708799`已推送，v1.1.20于2026-11-20 18:03:10（台北）实际发布。标签固定到版本提交，三语正文逐字一致；GitHub API核对公开稳定状态与最新版本。46个历史Release、原有标签和41条Actions保持。五组版本资料检查及22项版本契约测试通过，435个原未完成路径除package版本字段外保持。详见[发布记录](./source-release-1.1.20-2026-11-20.md)。
