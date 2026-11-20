@@ -42,3 +42,12 @@ Web独立测试域名已验证MiMo模式和区域、导入选择、停用全部�
 Web独立域名已清空，原浏览器13项存储与六文件保持，空间已关闭，8108和8214测试服务已停止，24条请求记录保留。12份可再生临时基线的删除被自动审批拒绝，文件保持。版本仍1.1.21/146，周期0/5；全应用验收和系统内存问题继续，四项整体资格保持false。
 
 [真机检查点](../../test-evidence/implementation/native-routing-groups-20261115-01/native-provider-cycle-checkpoint-20261120-188.json)、[独立原值回读](../../test-evidence/implementation/native-routing-groups-20261115-01/native-provider-current-20261120-185.json)、[限定目视记录](../../test-evidence/implementation/native-routing-groups-20261115-01/native-provider-rotation-visual-review-20261120-188.json)。
+
+
+## 首选与停用策略的真机补充
+
+两次真实键盘请求均使用已保存的首选密钥2。停用操作后的验收脚本因可选健康字段undefined的表示差异停止，失败记录保留并完成精确恢复。随后使用两个新请求分别验证：首选停用时选择密钥1；重新启用并取消首选后，按最久未用策略选择密钥2。后两次请求的持久化用量与实际密钥、健康记录及请求详情一致。配置更改使用受条件保护的设置接口，本次未计入原生密钥编辑器覆盖。
+
+最终独立回读53表3256行、四项原始存储、六组草稿与恢复槽、全部资料和编辑器状态一致；原USB设置任务、进程15464和70条请求保持，当前编辑器19680。测试对象和密钥均已清除，Inspector关闭，本轮8092映射已撤销并恢复原空映射。四张图片仅作中文岛屿深色原竖屏可见区域记录，整体四项资格保持false。12份临时基线与本轮Web缓存的删除被自动审批拒绝，文件保留。版本1.1.21/146，周期0/5。
+
+[真机策略检查点](../../test-evidence/implementation/native-routing-groups-20261115-01/native-credential-policy-checkpoint-20261120-199.json)、[最终独立回读](../../test-evidence/implementation/native-routing-groups-20261115-01/native-provider-current-20261120-197.json)、[原端口映射恢复](../../test-evidence/implementation/native-routing-groups-20261115-01/native-transport-restored-20261120-198.json)。
