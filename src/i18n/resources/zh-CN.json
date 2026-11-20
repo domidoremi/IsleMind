@@ -168,7 +168,13 @@
     "keepEditing": "继续编辑",
     "discard": "放弃修改",
     "receipt": "本次路由方案：{{name}}",
-    "active": "路由：{{name}}"
+    "active": "路由：{{name}}",
+    "group": "同模型路由组",
+    "strategyName": {
+      "priority": "顺序优先",
+      "round-robin": "连接轮换",
+      "health-first": "健康优先"
+    }
   },
   "settingsSubsystem": {
     "cachedModels": "已保存的模型仍可选择，不代表当前连接可用。",

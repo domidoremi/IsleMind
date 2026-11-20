@@ -168,7 +168,13 @@
     "keepEditing": "Keep editing",
     "discard": "Discard changes",
     "receipt": "Routing plan for this request: {{name}}",
-    "active": "Route: {{name}}"
+    "active": "Route: {{name}}",
+    "group": "Same-model group",
+    "strategyName": {
+      "priority": "In order",
+      "round-robin": "Rotate connections",
+      "health-first": "Health first"
+    }
   },
   "settingsSubsystem": {
     "cachedModels": "Saved models remain selectable. This does not confirm current connectivity.",

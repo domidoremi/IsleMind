@@ -168,7 +168,13 @@
     "keepEditing": "編集を続ける",
     "discard": "変更を破棄",
     "receipt": "このリクエストのプラン：{{name}}",
-    "active": "ルート：{{name}}"
+    "active": "ルート：{{name}}",
+    "group": "同一モデルグループ",
+    "strategyName": {
+      "priority": "順序優先",
+      "round-robin": "接続を順番に",
+      "health-first": "稼働状況優先"
+    }
   },
   "settingsSubsystem": {
     "cachedModels": "保存済みモデルは引き続き選択できます。現在の接続を保証するものではありません。",

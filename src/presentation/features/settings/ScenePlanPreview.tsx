@@ -31,7 +31,11 @@ export function ScenePlanPreview({ preview, providers, threshold, declarationMod
     if (field === 'model') return modelLabel(value as { providerId: string | null; model: string | null })
     if (field === 'routingPlan') {
       const plan = value as ModelRoutingPlan | undefined
-      return plan ? `${plan.name} · ${t(`routing.${plan.mode}`)}\n${modelLabel(plan.primary)}${plan.backup ? ` → ${modelLabel(plan.backup)}` : ''}\n${t(`routing.${plan.crossProvider}`)}` : t('scenes.single')
+      if (!plan) return t('scenes.single')
+      const targets = plan.group ? plan.group.members.map(modelLabel).join('\n')
+        : `${modelLabel(plan.primary)}${plan.backup ? ` → ${modelLabel(plan.backup)}` : ''}`
+      const strategy = plan.group ? ` · ${t(`routing.strategyName.${plan.group.strategy}`)}` : ''
+      return `${plan.name} · ${t(`routing.${plan.mode}`)}${strategy}\n${targets}\n${t(`routing.${plan.crossProvider}`)}`
     }
     if (field === 'enabledTools' || field === 'knowledgeSources') {
       const selection = value as { values?: string[]; scope?: 'selected' | 'none' }
