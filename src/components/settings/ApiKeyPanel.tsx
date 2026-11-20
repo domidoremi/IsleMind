@@ -195,8 +195,10 @@ export function ApiKeyPanel({
   const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(initialProviderWireProtocol(provider))
   const [credentialText, setCredentialText] = useState('')
   const [credentialEditorOpen, setCredentialEditorOpen] = useState(false)
+  const [enabledModels, setEnabledModels] = useState<string[] | undefined>(provider.enabledModels)
   const [modelsText, setModelsText] = useState(formatModelEntries(provider))
   const [aliasDrafts, setAliasDrafts] = useState<ModelAlias[]>(provider.modelAliases ?? [])
+  const modelSelectionBaseline = useRef({ models: getProviderManualModels(provider), aliases: provider.modelAliases ?? [] })
   const [draftGroups, setDraftGroups] = useState<ProviderCredentialGroup[]>(provider.credentialGroups ?? [])
   const [parameterDrafts, setParameterDrafts] = useState<ProviderModelParameterDrafts>(() => modelParameterDrafts(provider.modelParameterOverrides))
   const [parameterModel, setParameterModel] = useState<string>()
@@ -281,7 +283,7 @@ export function ApiKeyPanel({
   const protocolLabel = t(`providerSettings.protocol.${wireProtocol}`)
   const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
   const selectedPresetLabel = presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProvider') : selectedPreset.name
-  const draftSnapshot = JSON.stringify({ name, baseUrl, presetId, wireProtocol, modelsText, aliasDrafts, draftGroups, credentialText, parameterDrafts, capabilitiesDraft, compatibilityDraft })
+  const draftSnapshot = JSON.stringify({ name, baseUrl, presetId, wireProtocol, enabledModels, modelsText, aliasDrafts, draftGroups, credentialText, parameterDrafts, capabilitiesDraft, compatibilityDraft })
   const baseline = useRef(draftSnapshot)
   const serverBaseline = useRef(providerEditVersion(provider))
   const dirty = draftSnapshot !== baseline.current
@@ -290,13 +292,15 @@ export function ApiKeyPanel({
   const saveLock = useRef(false)
   const lifetime = useSettingsLifetime()
   function resetEditor(next = provider) {
-    baseline.current = JSON.stringify({ name: next.name, baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialText: '', parameterDrafts: modelParameterDrafts(next.modelParameterOverrides), capabilitiesDraft: next.capabilities, compatibilityDraft: normalizeProviderClientCompatibilityMode(next.clientCompatibilityProfile) })
+    baseline.current = JSON.stringify({ name: next.name, baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), enabledModels: next.enabledModels, modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialText: '', parameterDrafts: modelParameterDrafts(next.modelParameterOverrides), capabilitiesDraft: next.capabilities, compatibilityDraft: normalizeProviderClientCompatibilityMode(next.clientCompatibilityProfile) })
     serverBaseline.current = providerEditVersion(next)
     dirtyRef.current = false
     setName(next.name)
     setBaseUrl(next.baseUrl ?? '')
     setPresetId(initialProviderPresetId(next))
     setWireProtocol(initialProviderWireProtocol(next))
+    setEnabledModels(next.enabledModels)
+    modelSelectionBaseline.current = { models: getProviderManualModels(next), aliases: next.modelAliases ?? [] }
     setModelsText(formatModelEntries(next))
     setAliasDrafts(next.modelAliases ?? [])
     setDraftGroups(next.credentialGroups ?? [])
@@ -323,7 +327,7 @@ export function ApiKeyPanel({
     setCapabilityOverridesOpen(false)
     setCredentialGroupsOpen(false)
     setCredentialText('')
-  }, [provider.name, provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol, provider.modelParameterOverrides, provider.capabilities, provider.clientCompatibilityProfile])
+  }, [provider.name, provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol, provider.modelParameterOverrides, provider.capabilities, provider.clientCompatibilityProfile, provider.enabledModels])
 
   useEffect(() => { setWorkspaceView(initialView); setModelQuery(''); setModelFetchFailed(false) }, [initialView, provider.id])
 
@@ -407,6 +411,9 @@ export function ApiKeyPanel({
         : 'islemind',
       credentialGroups,
       models,
+      enabledModels: enabledModels === undefined ? undefined : [...new Set([...enabledModels,
+        ...models.filter(model => !modelSelectionBaseline.current.models.includes(model)),
+        ...modelAliases.filter(alias => !modelSelectionBaseline.current.aliases.some(saved => saved.alias === alias.alias)).map(alias => alias.alias)])],
       manualModels: models,
       modelAliases,
       modelParameterOverrides,
@@ -480,6 +487,14 @@ export function ApiKeyPanel({
     }
     setDraftGroups((current) => mergeGroups(current, draft.provider.credentialGroups ?? [], t))
     setCredentialText('')
+    if (draft.provider.enabledModels !== undefined) {
+      setEnabledModels(draft.provider.enabledModels)
+      // An explicit import selects this draft; only subsequent manual additions auto-enable.
+      modelSelectionBaseline.current = {
+        models: [...new Set([...getProviderManualModels(provider), ...parseModelEntries(draft.modelText || modelsText).models])],
+        aliases: [...(provider.modelAliases ?? []), ...normalizeAliasDrafts(aliasDrafts)],
+      }
+    }
     if (draft.modelText) setModelsText(draft.modelText)
     const messageKey = source === 'clipboard' && draft.count > 1 ? 'providerSettings.importAppliedFirst' : 'providerSettings.importDetected'
     dialog.toast({
