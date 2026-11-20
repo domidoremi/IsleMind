@@ -1,4 +1,4 @@
-import { routingPlanPolicy } from '@/modules/providers'
+import { chooseCredentialForModel, routingPlanPolicy } from '@/modules/providers'
 import type {
   ProviderRuntimeAudioTranscriptionInput,
   ProviderRuntimeChatMessage,
@@ -592,7 +592,7 @@ function resolveProviderMediaAdapter(): Promise<ProviderMediaAdapter> {
   ]) => createProviderMediaAdapter({
     selectProvider(provider, model) {
       const credential = chooseCredentialForModel(provider, model)
-      return { ...provider, apiKey: credential.apiKey || provider.apiKey }
+      return { ...provider, apiKey: credential.apiKey, apiKeySource: credential.source }
     },
     validateConfiguration(provider) {
       const issue = getProviderConfigIssue(provider, provider.apiKey)
@@ -632,11 +632,13 @@ export async function embedProviderText(
   options: ProviderEmbeddingOptions = {},
 ): Promise<ProviderEmbeddingResult> {
   const model = resolveProviderEmbeddingModel(provider) ?? 'embedding-model-unconfigured'
+  const selected = chooseCredentialForModel(provider, model)
+  const selectedProvider = { ...provider, apiKey: selected.apiKey, apiKeySource: selected.source }
   return observeDirectProviderOperation(
-    provider,
+    selectedProvider,
     model,
     'embedding',
-    () => resolveProviderEmbeddingAdapter().then((adapter) => adapter.embed(provider, text, options)),
+    () => resolveProviderEmbeddingAdapter().then((adapter) => adapter.embed(selectedProvider, text, options)),
   )
 }
 

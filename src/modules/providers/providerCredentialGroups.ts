@@ -2,7 +2,8 @@ import { setExecutionTimeout } from '@/core/executionTimers'
 import type { AIModel, AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderOperationCode } from '@/types/providerContracts'
 import { extractUserFacingErrorDetail } from '@/core'
 import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types/modelCatalog'
-import { selectProviderCredential, updateProviderCredentialHealth, type ProviderCredentialSource } from './providerCredentials'
+import { parseProviderCredentialSelection, selectProviderCredential, updateProviderCredentialHealth, type ProviderCredentialSource } from './providerCredentials'
+import { isProviderModelManuallyConfigured, primaryCredentialModelCatalog } from './providerModelCatalog'
 
 const PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT = 256
 const PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT = 512
@@ -75,7 +76,7 @@ export function normalizeProviderCredentialGroups(
           label: messages.defaultToken,
           apiKey: provider.apiKey,
           enabled: true,
-          availableModels: [],
+          ...primaryCredentialModelCatalog(provider),
           source: provider.apiKeySource ?? { kind: 'primary' as const },
         }]
       : []
@@ -85,8 +86,9 @@ export function normalizeProviderCredentialGroups(
     id: group.id || `group-${index + 1}`,
     label: group.label || messages.groupName(index + 1),
     enabled: group.enabled ?? true,
+    modelCatalogKnown: group.modelCatalogKnown === true || group.lastModelSyncStatus === 'ok',
     availableModels: group.availableModels
-      ? limitModelIdsForStorage(clearHistoricalInjectedGroupModels(group, provider), [provider.lastTestModel], PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT)
+      ? clearHistoricalInjectedGroupModels(group, provider)
       : [],
     failureCount: group.failureCount ?? 0,
   }))
@@ -95,6 +97,7 @@ export function normalizeProviderCredentialGroups(
     credentialGroups: normalizedGroups,
     modelAvailability: mergeCredentialModelAvailability(normalizedGroups),
     syncPolicy: normalizeProviderCredentialSyncPolicy(provider.syncPolicy),
+    credentialSelection: parseProviderCredentialSelection(provider.credentialSelection),
   }
 }
 
@@ -163,6 +166,8 @@ export function chooseCredentialForModel(
     providerCredentialSource: options.providerCredentialSource ?? provider.apiKeySource,
     excludedCredentialIds: options.excludedCredentialGroupIds,
     includeSource: true,
+    selectionPolicy: normalized.credentialSelection,
+    allowUnlistedModel: isProviderModelManuallyConfigured(provider, modelId, upstreamModel),
   })
   return {
     credentialGroupId: selected.credentialId,
@@ -200,6 +205,7 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
       nextGroups[index] = {
         ...group,
         availableModels: configs.map((item) => item.id),
+        modelCatalogKnown: true,
         lastModelSyncAt: now(),
         lastModelSyncStatus: 'ok',
         lastModelSyncMessage: messages.modelsFetched(configs.length),
@@ -215,6 +221,7 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
       nextGroups[index] = {
         ...group,
         lastModelSyncAt: now(),
+        modelCatalogKnown: group.modelCatalogKnown === true || group.lastModelSyncStatus === 'ok',
         lastModelSyncStatus: 'bad',
         lastModelSyncMessage: message,
         lastModelSyncCode: 'unknown',
@@ -367,7 +374,7 @@ function resolveCredentialModelAlias(provider: Pick<AIProvider, 'modelAliases'>,
 
 function clearHistoricalInjectedGroupModels(group: ProviderCredentialGroup, provider: AIProvider): string[] {
   const models = uniqueModelIds(group.availableModels ?? [])
-  if (group.lastModelSyncStatus === 'ok') return models
+  if (group.lastModelSyncStatus === 'ok' || group.modelCatalogKnown === true) return models
   if (provider.presetId === 'deepseek' || provider.detectedPresetId === 'deepseek' || provider.baseUrl?.toLowerCase().includes('api.deepseek.com')) {
     return models
   }

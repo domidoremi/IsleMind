@@ -30,7 +30,7 @@ import {
 import type { PortableKnowledgeSnapshot } from '@/modules/knowledge'
 import { parseSavedDocuments, type SavedDocument, type DocumentRepository } from '@/modules/documents'
 import { normalizeConversationContextPolicy, normalizeConversationResourceScope, normalizeConversationScenePlanSource, normalizeMessageUsageExecution, normalizeResponseLifecycle } from '@/modules/conversations'
-import { parseProviderModelParameterConfiguration } from '@/modules/providers'
+import { parseProviderCredentialSelection, parseProviderModelParameterConfiguration } from '@/modules/providers'
 import {
   redactSensitiveText,
   sanitizeTraceMetadata,
@@ -1134,6 +1134,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
       provider.usageQueryConfiguration,
     ),
     modelParameterOverrides: parseProviderModelParameterConfiguration(provider.modelParameterOverrides),
+    credentialSelection: parseProviderCredentialSelection(provider.credentialSelection),
     modelConfigs: buildProviderModelConfigsForStorage(
       provider,
       models,

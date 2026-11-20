@@ -23,6 +23,7 @@ const {
   createProviderCredentialStorage,
   providerCredentialGroupStorageKey,
   providerCredentialStorageKey,
+  selectProviderCredential,
 } = require('../src/modules/providers/index.ts')
 
 function registerTypeScriptSupport() {
@@ -465,7 +466,14 @@ async function run() {
 
   const credentialSource = readSource('src/modules/providers/providerCredentials.ts')
   assertSourceIncludes(credentialSource, 'selectProviderCredential', 'target model-scoped credential selection exists')
-  assertSourceIncludes(credentialSource, 'availableModels.includes(upstreamModelId)', 'target credential selection checks upstream model availability')
+  const modelCredentials = [
+    { id: 'wrong', enabled: true, apiKey: 'synthetic-wrong', availableModels: ['short'] },
+    { id: 'owner', enabled: true, apiKey: 'synthetic-owner', availableModels: ['upstream'] },
+  ]
+  const modelSelection = { providerApiKey: '', credentials: modelCredentials, modelId: 'short', upstreamModelId: 'upstream', preferredCredentialId: 'wrong' }
+  assert.equal(selectProviderCredential(modelSelection).credentialId, 'owner', 'selection checks resolved upstream model ownership')
+  assert.throws(() => selectProviderCredential({ ...modelSelection, targetCredentialId: 'wrong' }), /not available/, 'strict targeting rejects a key without the resolved model')
+  assert.equal(selectProviderCredential({ ...modelSelection, excludedCredentialIds: ['owner'] }).apiKey, '', 'excluded ownership does not transfer to an unlisted key')
   assertSourceIncludes(credentialSource, 'excludedCredentialIds', 'target credential selection supports excluded groups')
   assertSourceIncludes(credentialSource, 'updateProviderCredentialHealth', 'target credential health updates exist')
   assertSourceIncludes(credentialSource, 'failureCount', 'target credential health tracks failure count')

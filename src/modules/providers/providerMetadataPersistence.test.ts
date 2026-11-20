@@ -24,6 +24,19 @@ function provider(overrides: Partial<AIProvider> = {}): AIProvider {
 }
 
 describe('provider metadata persistence identity validation', () => {
+  it('round-trips key selection as metadata and rejects invalid selection before writing', async () => {
+    let records: readonly AIProvider[] = []
+    const write = jest.fn(async (value: readonly AIProvider[]) => { records = JSON.parse(JSON.stringify(value)) })
+    const persistence = createProviderMetadataPersistence({ read: async () => records, write })
+    const current = provider({ credentialSelection: { strategy: 'least-recently-used', preferredGroupId: 'key-b' } })
+    await persistence.save([current])
+    await expect(persistence.load()).resolves.toEqual([current])
+    const invalid = { ...current, credentialSelection: { strategy: 'unsupported' } } as unknown as AIProvider
+    expect(() => persistence.save([invalid])).toThrow('Invalid credential selection policy')
+    expect(write).toHaveBeenCalledTimes(1)
+    records = [invalid]
+    await expect(persistence.load()).rejects.toBeInstanceOf(ProviderMetadataPersistenceValidationError)
+  })
   it('loads the current custom endpoint identity and wire protocol', async () => {
     const persistence = createProviderMetadataPersistence({
       read: async () => [provider()],

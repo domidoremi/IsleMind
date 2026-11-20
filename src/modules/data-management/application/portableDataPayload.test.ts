@@ -10,6 +10,18 @@ import {
 } from './portableDataPayload'
 import { createPortableBackupEnvelope } from './portableBackupPolicy'
 
+it('preserves key selection through backup restore and rejects malformed selection before applying', async () => {
+  const exported = await runtime().payloadRuntime.exportPayload()
+  exported.providers = [provider({ credentialSelection: { strategy: 'least-recently-used', preferredGroupId: 'key-b' } })]
+  const target = runtime()
+  expect((await target.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+  expect(target.importedPlans[0].providerMetadata[0].credentialSelection).toEqual(exported.providers[0].credentialSelection)
+  const invalid = { ...exported, providers: [{ ...exported.providers[0], credentialSelection: { strategy: 'future' } }] }
+  const refused = runtime()
+  expect((await refused.payloadRuntime.importJson(JSON.stringify(invalid))).ok).toBe(false)
+  expect(refused.importedPlans).toHaveLength(0)
+})
+
 const retiredOpenAICompatiblePresetId = ['custom', 'openai', 'compatible'].join('-')
 const retiredAnthropicCompatiblePresetId = ['custom', 'anthropic', 'compatible'].join('-')
 
