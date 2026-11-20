@@ -5,9 +5,6 @@ import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types/mode
 import { parseProviderCredentialSelection, selectProviderCredential, updateProviderCredentialHealth, type ProviderCredentialSource } from './providerCredentials'
 import { isProviderModelManuallyConfigured, primaryCredentialModelCatalog } from './providerModelCatalog'
 
-const PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT = 256
-const PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT = 512
-
 export interface ProviderCredentialGroupMessages {
   defaultToken: string
   groupName(index: number): string
@@ -137,14 +134,12 @@ export function mergeCredentialModelAvailability(groups: ProviderCredentialGroup
   const byModel = new Map<string, { modelId: string; credentialGroupIds: string[]; lastSyncedAt?: number }>()
   for (const group of groups) {
     if (!group.enabled) continue
-    for (const modelId of group.availableModels ?? []) {
+    for (const modelId of uniqueModelIds(group.availableModels ?? [])) {
       const current = byModel.get(modelId) ?? { modelId, credentialGroupIds: [], lastSyncedAt: undefined }
-      current.credentialGroupIds.push(group.id)
+      if (!current.credentialGroupIds.includes(group.id)) current.credentialGroupIds.push(group.id)
       current.lastSyncedAt = Math.max(current.lastSyncedAt ?? 0, group.lastModelSyncAt ?? 0) || undefined
       byModel.set(modelId, current)
-      if (byModel.size >= PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT) break
     }
-    if (byModel.size >= PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT) break
   }
   return Array.from(byModel.values()).sort((a, b) => a.modelId.localeCompare(b.modelId))
 }
@@ -198,8 +193,8 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
     try {
       const remote = await fetchModelsForCredentialGroup(provider, group, deps, requestCache)
       throwIfCredentialSyncAborted(deps.signal)
-      const remoteModels = limitModelIdsForStorage(remote.map((model) => model.id), [provider.lastTestModel], PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT)
-      const remoteById = new Map(remote.map((model) => [model.id, model]))
+      const remoteModels = uniqueModelIds(remote.map((model) => model.id))
+      const remoteById = new Map(remote.map((model) => [model.id.trim(), model]))
       const configs = remoteModels.map((modelId) => mergeModelConfig(modelId, provider.type, remoteById.get(modelId)))
       syncedConfigsByGroup[index] = configs
       nextGroups[index] = {
@@ -220,8 +215,8 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
       )
       nextGroups[index] = {
         ...group,
-        lastModelSyncAt: now(),
         modelCatalogKnown: group.modelCatalogKnown === true || group.lastModelSyncStatus === 'ok',
+        lastModelSyncAt: now(),
         lastModelSyncStatus: 'bad',
         lastModelSyncMessage: message,
         lastModelSyncCode: 'unknown',
@@ -267,15 +262,17 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
     }
   }
   const modelConfigs = sortModelConfigs(Array.from(configsById.values()), provider.type)
-  const models = modelConfigs.length ? modelConfigs.map((item) => item.id) : provider.models
+  const synced = syncedConfigsByGroup.some(configs => configs !== undefined)
+  const models = synced ? modelConfigs.map((item) => item.id) : provider.models
   const merged: AIProvider = {
     ...provider,
     credentialGroups: nextGroups,
     models,
-    modelConfigs: modelConfigs.length ? modelConfigs : provider.modelConfigs,
+    modelConfigs: synced ? modelConfigs : provider.modelConfigs,
     modelAvailability: mergeCredentialModelAvailability(nextGroups),
+    modelCatalogKnown: synced || provider.modelCatalogKnown === true || provider.lastModelSyncStatus === 'ok',
     lastModelSyncAt: now(),
-    lastModelSyncStatus: nextGroups.some((group) => group.lastModelSyncStatus === 'ok') ? 'ok' as const : 'bad' as const,
+    lastModelSyncStatus: synced ? 'ok' as const : 'bad' as const,
     lastModelSyncMessage: nextGroups.map((group) => `${group.label}: ${group.lastModelSyncMessage ?? messages.notSynced}`).join('\n'),
   }
   const resolvedCapabilities = deps.resolveCapabilities?.(provider)
@@ -382,23 +379,6 @@ function clearHistoricalInjectedGroupModels(group: ProviderCredentialGroup, prov
   const historicalSet = ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner']
   if (models.length === historicalSet.length && historicalSet.every((model) => models.some((item) => item.toLowerCase() === model))) return []
   return models.filter((model) => !historical.has(model.toLowerCase()))
-}
-
-function limitModelIdsForStorage(
-  models: readonly string[],
-  priorityModels: readonly (string | undefined)[],
-  limit: number,
-): string[] {
-  const normalized = uniqueModelIds(models)
-  const source = new Set(normalized)
-  const ordered: string[] = []
-  for (const model of [...priorityModels, ...normalized]) {
-    const value = model?.trim()
-    if (!value || !source.has(value) || ordered.includes(value)) continue
-    ordered.push(value)
-    if (ordered.length >= limit) break
-  }
-  return ordered
 }
 
 function uniqueModelIds(models: readonly string[]): string[] {

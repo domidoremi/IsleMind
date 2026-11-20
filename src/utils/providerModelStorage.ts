@@ -1,24 +1,19 @@
 import type { AIModel, AIProvider, ModelAlias, ProviderCredentialGroup } from '@/types/providerContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels } from '@/utils/providerModels'
-export const PROVIDER_REMOTE_MODEL_STORAGE_LIMIT = 256
-export const PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT = 256
-export const PROVIDER_MODEL_CONFIG_STORAGE_LIMIT = 256
-export const PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT = 512
-
-export function pruneProviderModelsForStorage(provider: AIProvider): string[] {
-  return limitModelIdsForStorage(
+// Catalogs are persisted in full. Presentation samples and pages bound rendering,
+// while deduplication reduces redundant storage without removing selectable IDs.
+export function normalizeProviderModelsForStorage(provider: AIProvider): string[] {
+  return orderModelIdsForStorage(
     clearHistoricalInjectedProviderModels(provider),
     providerPriorityModelIds(provider),
-    PROVIDER_REMOTE_MODEL_STORAGE_LIMIT
   )
 }
 
-export function pruneCredentialGroupModelsForStorage(group: ProviderCredentialGroup, provider: AIProvider): string[] {
-  return limitModelIdsForStorage(
+export function normalizeCredentialGroupModelsForStorage(group: ProviderCredentialGroup, provider: AIProvider): string[] {
+  return orderModelIdsForStorage(
     clearHistoricalInjectedGroupModels(group, provider),
     providerPriorityModelIds(provider),
-    PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT
   )
 }
 
@@ -28,40 +23,52 @@ export function buildProviderModelConfigsForStorage(
   manualModels: readonly string[],
   modelAliases: readonly ModelAlias[]
 ): AIModel[] {
-  const ids = limitModelIdsForStorage(
+  const ids = orderModelIdsForStorage(
     [
       ...models,
       ...(provider.credentialGroups ?? []).flatMap(group => group.availableModels ?? []),
       ...manualModels,
       ...modelAliases.map((item) => item.model),
+      ...(provider.modelConfigs ?? []).map((item) => item.id),
     ],
     providerPriorityModelIds(provider, manualModels, modelAliases),
-    PROVIDER_MODEL_CONFIG_STORAGE_LIMIT,
     true
   )
-  return ids.map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs))
+  const configsById = new Map<string, AIModel>()
+  for (const config of provider.modelConfigs ?? []) {
+    const id = config.id.trim()
+    if (id && !configsById.has(id)) configsById.set(id, config)
+  }
+  return ids.map((modelId) => {
+    const config = configsById.get(modelId)
+    return getModelConfig(modelId, provider.type, config ? [{ ...config, id: modelId }] : [])
+  })
 }
 
-export function hasOversizedProviderModelStorage(provider: AIProvider): boolean {
-  if ((provider.models ?? []).length > PROVIDER_REMOTE_MODEL_STORAGE_LIMIT) return true
-  if ((provider.modelConfigs ?? []).length > PROVIDER_MODEL_CONFIG_STORAGE_LIMIT) return true
-  if ((provider.modelAvailability ?? []).length > PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT) return true
-  return (provider.credentialGroups ?? []).some((group) =>
-    (group.availableModels ?? []).length > PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT
-  )
+export function hasRedundantProviderModelStorage(provider: AIProvider): boolean {
+  const redundant = (ids: readonly string[]) => {
+    const seen = new Set<string>()
+    for (const id of ids) {
+      if (!id.trim() || id !== id.trim() || seen.has(id)) return true
+      seen.add(id)
+    }
+    return false
+  }
+  return redundant(provider.models ?? [])
+    || redundant((provider.modelConfigs ?? []).map(model => model.id))
+    || redundant((provider.modelAvailability ?? []).map(model => model.modelId))
+    || (provider.credentialGroups ?? []).some(group => redundant(group.availableModels ?? []))
 }
 
-export function limitModelIdsForStorage(
+function orderModelIdsForStorage(
   models: readonly string[],
   priorityModels: readonly (string | undefined)[] = [],
-  limit: number,
   includePriorityOutsideSource = false
 ): string[] {
   const normalized = uniqueModelIds(models)
   const source = new Set(normalized)
   const ordered: string[] = []
   const orderedSet = new Set<string>()
-  const normalizedLimit = normalizeLimit(limit)
   const push = (model: string | undefined) => {
     const value = model?.trim()
     if (!value) return
@@ -71,11 +78,8 @@ export function limitModelIdsForStorage(
     orderedSet.add(value)
   }
   for (const model of priorityModels) push(model)
-  for (const model of normalized) {
-    if (ordered.length >= normalizedLimit) break
-    push(model)
-  }
-  return ordered.slice(0, normalizedLimit)
+  for (const model of normalized) push(model)
+  return ordered
 }
 
 function providerPriorityModelIds(
@@ -99,9 +103,4 @@ function uniqueModelIds(models: readonly string[]): string[] {
       seen.add(model)
       return true
     })
-}
-
-function normalizeLimit(limit: number): number {
-  if (!Number.isFinite(limit)) return PROVIDER_REMOTE_MODEL_STORAGE_LIMIT
-  return Math.max(1, Math.floor(limit))
 }

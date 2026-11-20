@@ -23,7 +23,7 @@ import { applyProviderPreset, detectProviderPreset, getProviderPreset, normalize
 import { assertProviderConfiguration, ProviderConfigurationConflictError, snapshotProviderConfiguration, normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, sanitizeProviderUsageQueryConfiguration, type ProviderConfigurationMutationOptions, type ProviderCredentialMutation, type ProviderCredentialMutationOptions } from '@/modules/providers'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
 import { clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
-import { buildProviderModelConfigsForStorage, hasOversizedProviderModelStorage, pruneCredentialGroupModelsForStorage, pruneProviderModelsForStorage } from '@/utils/providerModelStorage'
+import { buildProviderModelConfigsForStorage, hasRedundantProviderModelStorage, normalizeCredentialGroupModelsForStorage, normalizeProviderModelsForStorage } from '@/utils/providerModelStorage'
 import { getPolicyPreferredProviderModel, providerHasPolicyAllowedModel } from '@/bootstrap/providerModelAccess'
 import { st } from '@/i18n/service'
 import { getSystemLanguage, setServiceLanguage } from '@/i18n/service'
@@ -449,7 +449,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (providerCatalogMigrated || themeModeMigrated || themeIdMigrated || themeAccentMigrated || backgroundEnvironmentMigrated || settingsUrlMigrated || settingsIdentityMigrated || settingsUpdateRemindersMigrated || observabilitySecretStateMigrated) {
       persistSettingsSnapshot({ ...mergedSettings, defaultProvider })
     }
-    if (providerIdentityMetadataMigrated || savedProviders.some(hasOversizedProviderModelStorage)) {
+    if (providerIdentityMetadataMigrated || savedProviders.some(hasRedundantProviderModelStorage)) {
       persistProvidersSnapshot(mergedProviders, 'deferred')
     }
   },
@@ -722,7 +722,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   compactProviderStorage: () => {
     const current = get().providers
-    if (!current.some(hasOversizedProviderModelStorage)) return false
+    if (!current.some(hasRedundantProviderModelStorage)) return false
     const updated = current.map((provider) => normalizeProvider(provider))
     set({ providers: updated })
     persistProvidersSnapshot(updated, 'deferred')
@@ -1255,13 +1255,13 @@ function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined,
     label: group.label || st('apiKeyPanel.groupName', { index: index + 1 }),
     apiKey: '',
     enabled: group.enabled ?? true,
-    availableModels: group.availableModels?.length ? pruneCredentialGroupModelsForStorage(group, provider) : [],
+    availableModels: group.availableModels?.length ? normalizeCredentialGroupModelsForStorage(group, provider) : [],
     failureCount: group.failureCount ?? 0,
   }))
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {
-  const models = pruneProviderModelsForStorage(provider)
+  const models = normalizeProviderModelsForStorage(provider)
   const existing = models.filter((model) => {
     const config = getModelConfig(model, provider.type, provider.modelConfigs)
     return !config.deprecated

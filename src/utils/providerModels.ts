@@ -72,12 +72,12 @@ export function hasRemoteProviderModelEvidence(provider: AIProvider): boolean {
 }
 
 export function clearHistoricalInjectedProviderModels(provider: AIProvider): string[] {
-  if (provider.lastModelSyncStatus === 'ok') return uniqueModels(provider.models ?? [])
+  if (provider.lastModelSyncStatus === 'ok' || provider.modelCatalogKnown) return uniqueModels(provider.models ?? [])
   return clearHistoricalInjectedModelList(provider.models ?? [], provider)
 }
 
 export function clearHistoricalInjectedGroupModels(group: ProviderCredentialGroup, provider?: AIProvider): string[] {
-  if (group.lastModelSyncStatus === 'ok') return uniqueModels(group.availableModels ?? [])
+  if (group.lastModelSyncStatus === 'ok' || group.modelCatalogKnown) return uniqueModels(group.availableModels ?? [])
   return clearHistoricalInjectedModelList(group.availableModels ?? [], provider)
 }
 

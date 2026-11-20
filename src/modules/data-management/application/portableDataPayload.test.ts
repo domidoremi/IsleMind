@@ -1,3 +1,4 @@
+import { getModelConfig } from '@/types/modelCatalog'
 import { describe, expect, it } from '@jest/globals'
 import type { UsagePortableSnapshotRepository } from '@/modules/diagnostics'
 import { SAVED_DOCUMENT_SCHEMA, type SavedDocument } from '@/modules/documents'
@@ -20,6 +21,41 @@ it('preserves key selection through backup restore and rejects malformed selecti
   const refused = runtime()
   expect((await refused.payloadRuntime.importJson(JSON.stringify(invalid))).ok).toBe(false)
   expect(refused.importedPlans).toHaveLength(0)
+})
+
+it('preserves a successful empty catalog after a failed refresh through backup restore', async () => {
+  const source = provider({ models: [], modelCatalogKnown: true, lastModelSyncStatus: 'bad',
+    lastTestStatus: 'ok', lastTestModel: 'stale', enabledModels: ['stale'],
+    credentialGroups: [{ id: 'empty', label: 'Empty', enabled: true, availableModels: [], modelCatalogKnown: true, lastModelSyncStatus: 'bad' }] })
+  const exported = await runtime([], [], null, [source]).payloadRuntime.exportPayload()
+  const target = runtime()
+  expect((await target.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+  expect(target.importedPlans[0].providerMetadata[0]).toMatchObject({ modelCatalogKnown: true, lastModelSyncStatus: 'bad', models: [],
+    credentialGroups: [{ modelCatalogKnown: true, availableModels: [], lastModelSyncStatus: 'bad' }] })
+})
+
+it('round-trips full large catalogs, tail metadata, aliases and selections through backup', async () => {
+  const models = Array.from({ length: 1200 }, (_, i) => `portable-catalog-${i}`)
+  const source = provider({
+    models, manualModels: [], lastModelSyncStatus: 'ok', enabledModels: ['tail-alias'],
+    modelAliases: [{ alias: 'tail-alias', model: models[1199] }],
+    modelConfigs: models.map(id => ({ ...getModelConfig(id, 'openai-compatible'), contextWindow: 196608 })),
+    credentialGroups: [
+      { id: 'a', label: 'A', enabled: true, availableModels: models, lastModelSyncStatus: 'ok' },
+      { id: 'b', label: 'B', enabled: false, availableModels: [models[1199]], lastModelSyncStatus: 'ok' },
+    ],
+  })
+  const exported = await runtime([], [], null, [source]).payloadRuntime.exportPayload()
+  expect(exported.providers![0].models).toHaveLength(1200)
+  const target = runtime()
+  expect((await target.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+  const restored = target.importedPlans[0].providerMetadata[0]
+  expect(restored.models).toHaveLength(1200)
+  expect(restored.credentialGroups![0].availableModels).toHaveLength(1200)
+  expect(restored.credentialGroups![1]).toMatchObject({ enabled: false, availableModels: [models[1199]] })
+  expect(restored.modelConfigs!.find(config => config.id === models[1199])!.contextWindow).toBe(196608)
+  expect(restored.enabledModels).toEqual(['tail-alias'])
+  expect(restored.modelAliases).toEqual(source.modelAliases)
 })
 
 const retiredOpenAICompatiblePresetId = ['custom', 'openai', 'compatible'].join('-')
@@ -104,12 +140,12 @@ function payload(providerMetadata: unknown): string {
   })
 }
 
-function runtime(documents: SavedDocument[] = [], agents: import('@/modules/assistant-runtime/agentDefinition').AgentDefinition[] = [], settings: Settings | null = null) {
+function runtime(documents: SavedDocument[] = [], agents: import('@/modules/assistant-runtime/agentDefinition').AgentDefinition[] = [], settings: Settings | null = null, providers: AIProvider[] = []) {
   const importedPlans: PortableDataApplicationImportPlan[] = []
   const dependencies: PortableDataPayloadRuntimeDependencies = {
     records: {
       loadSettings: async () => settings,
-      loadProviders: async () => [],
+      loadProviders: async () => providers,
       loadSkills: async () => [],
       loadAgentDefinitions: async () => agents,
       loadMcpServers: async () => [],

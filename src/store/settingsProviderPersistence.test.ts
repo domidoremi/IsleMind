@@ -1,8 +1,14 @@
+import { getModelConfig } from '@/types/modelCatalog'
 import { useSettingsStore } from './settingsStore'
 import { bindSettingsStorePersistence, flushPersistedSettings, releaseSettingsStorePersistence, type SettingsStorePersistence } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import { providerCredentialStorage } from '@/bootstrap/secureCredentialStorage'
 import type { Settings } from '@/types/settingsContracts'
 import type { AIProvider } from '@/types/providerContracts'
+
+jest.mock('@/bootstrap/providerModelAvailabilityRuntime', () => ({
+  withProviderModelAvailabilityChanges: async (_ids: readonly string[], change: () => Promise<unknown>) => change(),
+  providerModelAvailabilityRuntime: {},
+}))
 
 jest.mock('@/bootstrap/secureCredentialStorage', () => {
   const { createProviderCredentialStorage } = jest.requireActual('@/modules/providers')
@@ -29,6 +35,48 @@ beforeEach(() => {
   useSettingsStore.setState({ providers: [provider('Initial')] })
 })
 afterEach(() => { releaseSettingsStorePersistence(persistence); useSettingsStore.setState({ providers: originalProviders, settings: originalSettings }) })
+
+it('retains authoritative empty catalogs when settings are saved and reloaded after a discovery failure', async () => {
+  let metadata: readonly AIProvider[] = []
+  save.mockImplementation(async value => { metadata = JSON.parse(JSON.stringify(value)) })
+  persistence.providers.load = async () => metadata
+  await useSettingsStore.getState().updateProvider('fixture', { modelCatalogKnown: true, lastModelSyncStatus: 'bad', models: [],
+    lastTestStatus: 'ok', lastTestModel: 'stale', enabledModels: ['stale'],
+    credentialGroups: [{ id: 'empty', label: 'Empty', enabled: true, availableModels: [], modelCatalogKnown: true, lastModelSyncStatus: 'bad' }] })
+  await useSettingsStore.getState().flushProviderPersistence()
+  await useSettingsStore.getState().load()
+  expect(useSettingsStore.getState().providers[0]).toMatchObject({ modelCatalogKnown: true, lastModelSyncStatus: 'bad', models: [],
+    credentialGroups: [{ modelCatalogKnown: true, availableModels: [], lastModelSyncStatus: 'bad' }] })
+})
+
+it('saves and reloads a complete large catalog with selected tail models, aliases and key ownership', async () => {
+  const models = Array.from({ length: 1200 }, (_, i) => `catalog-${i}`)
+  let metadata: readonly AIProvider[] = []
+  save.mockImplementation(async value => { metadata = JSON.parse(JSON.stringify(value)) })
+  persistence.providers.load = async () => metadata
+  await useSettingsStore.getState().updateProvider('fixture', {
+    models, manualModels: [], lastModelSyncStatus: 'ok', enabledModels: ['tail-alias'],
+    modelAliases: [{ alias: 'tail-alias', model: models[1199] }],
+    modelConfigs: models.map(id => ({ ...getModelConfig(id, 'openai-compatible'), contextWindow: 196608 })),
+    credentialGroups: [
+      { id: 'a', label: 'A', enabled: true, availableModels: models, lastModelSyncStatus: 'ok' },
+      { id: 'b', label: 'B', enabled: true, availableModels: [models[1199]], lastModelSyncStatus: 'ok' },
+    ],
+  })
+  await useSettingsStore.getState().flushProviderPersistence()
+  const verify = (value: AIProvider) => {
+    expect(value.models).toHaveLength(1200)
+    expect(value.enabledModels).toEqual(['tail-alias'])
+    expect(value.credentialGroups![0].availableModels).toHaveLength(1200)
+    expect(value.modelAvailability!.find(item => item.modelId === models[1199])!.credentialGroupIds).toEqual(['a', 'b'])
+    expect(value.modelConfigs!.find(config => config.id === models[1199])!.contextWindow).toBe(196608)
+  }
+  verify(metadata[0])
+  await useSettingsStore.getState().load()
+  verify(useSettingsStore.getState().providers[0])
+  expect(useSettingsStore.getState().compactProviderStorage()).toBe(false)
+  verify(useSettingsStore.getState().providers[0])
+})
 
 it('retries a failed metadata write through the existing queue', async () => {
   save.mockRejectedValueOnce(new Error('disk full'))

@@ -52,8 +52,8 @@ import { getModelConfig } from '@/types/modelCatalog'
 import { sanitizeProviderBaseUrl } from '@/types/providerBaseUrls'
 import {
   buildProviderModelConfigsForStorage,
-  pruneCredentialGroupModelsForStorage,
-  pruneProviderModelsForStorage,
+  normalizeCredentialGroupModelsForStorage,
+  normalizeProviderModelsForStorage,
 } from '@/utils/providerModelStorage'
 import {
   clearHistoricalInjectedProviderModels,
@@ -1146,7 +1146,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
       apiKey: '',
       id: group.id || `group-${index + 1}`,
       availableModels: group.availableModels?.length
-        ? pruneCredentialGroupModelsForStorage(group, provider)
+        ? normalizeCredentialGroupModelsForStorage(group, provider)
         : [],
       enabled: group.enabled ?? true,
     })),
@@ -1156,7 +1156,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {
-  const models = pruneProviderModelsForStorage(provider)
+  const models = normalizeProviderModelsForStorage(provider)
   const existing = models.filter((model) =>
     !getModelConfig(model, provider.type, provider.modelConfigs).deprecated)
   return uniqueStrings(existing)

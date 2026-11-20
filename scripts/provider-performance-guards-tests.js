@@ -64,7 +64,7 @@ async function run() {
     PROVIDER_PERFORMANCE_FIXTURE_IDS,
     [
       'batch-activation-progress-is-compacted',
-      'provider-catalog-storage-is-pruned',
+      'provider-catalog-storage-is-lossless',
       'policy-model-lookup-is-bounded',
       'provider-settings-search-index-is-cached',
       'provider-settings-search-index-is-bounded',
@@ -83,7 +83,7 @@ async function run() {
 
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'ACTIVATION_JOB_VISIBLE_ITEM_LIMIT', 'activation job compacts visible progress items')
   assertSourceIncludes('src/store/settingsStore.ts', 'compactProviderStorage', 'settings store exposes provider storage compaction')
-  assertSourceIncludes('src/utils/providerModelStorage.ts', 'PROVIDER_REMOTE_MODEL_STORAGE_LIMIT', 'provider model storage limit is centralized')
+  assertSourceIncludes('src/utils/providerModelStorage.ts', 'hasRedundantProviderModelStorage', 'provider storage compaction only removes redundant entries')
   assertSourceIncludes('src/modules/providers/providerModelAccessPolicy.ts', 'providerHasAvailableSourceModel', 'specific policy validation checks model source availability')
   assertSourceIncludes('src/bootstrap/runtimeDiagnostics.ts', 'RUNTIME_DIAGNOSTICS_PROVIDER_HEAVY_LIMIT', 'runtime diagnostics caps heavy provider scans')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'RUNTIME_DIAGNOSTICS_DEBOUNCE_MS', 'provider settings debounces runtime diagnostics')

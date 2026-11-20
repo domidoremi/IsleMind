@@ -2,17 +2,15 @@ import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
 import type { ProviderModelAccessInput } from '../providerModelAccessPolicy'
 import {
-  PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT,
-  PROVIDER_MODEL_CONFIG_STORAGE_LIMIT,
-  PROVIDER_REMOTE_MODEL_STORAGE_LIMIT,
-  hasOversizedProviderModelStorage,
-  pruneCredentialGroupModelsForStorage,
-  pruneProviderModelsForStorage,
+  buildProviderModelConfigsForStorage,
+  hasRedundantProviderModelStorage,
+  normalizeCredentialGroupModelsForStorage,
+  normalizeProviderModelsForStorage,
 } from '@/utils/providerModelStorage'
 export const PROVIDER_PERFORMANCE_GUARD_SCHEMA = 'islemind.provider-performance-guards.v1'
 export const PROVIDER_PERFORMANCE_FIXTURE_IDS = [
   'batch-activation-progress-is-compacted',
-  'provider-catalog-storage-is-pruned',
+  'provider-catalog-storage-is-lossless',
   'policy-model-lookup-is-bounded',
   'provider-settings-search-index-is-cached',
   'provider-settings-search-index-is-bounded',
@@ -112,8 +110,9 @@ export function runProviderPerformanceGuardSelfTest(
   } = dependencies
   const provider = createLargeProvider()
   const settings: ProviderModelAccessInput['settings'] = {} satisfies Pick<Settings, 'providerAllowlist' | 'providerBlocklist' | 'modelAllowlist' | 'modelBlocklist'>
-  const prunedModels = pruneProviderModelsForStorage(provider)
-  const prunedGroupModels = pruneCredentialGroupModelsForStorage(provider.credentialGroups![0], provider)
+  const storedModels = normalizeProviderModelsForStorage(provider)
+  const storedGroupModels = normalizeCredentialGroupModelsForStorage(provider.credentialGroups![0], provider)
+  const storedConfigs = buildProviderModelConfigsForStorage(provider, storedModels, provider.manualModels!, provider.modelAliases!)
   const limitedPolicyModels = getPolicyAllowedProviderModels(provider, settings, { limit: 7 })
   const providerSettingsPolicyCache = buildProviderSettingsPolicyModelCache([provider], settings)
   const providerSettingsSearchIndex = buildProviderSettingsSearchIndex([provider], providerSettingsPolicyCache)
@@ -167,11 +166,13 @@ export function runProviderPerformanceGuardSelfTest(
       detail: 'source guard: activation job UI stores a compact visible item sample while aggregate counters remain full-fidelity',
     },
     {
-      fixtureId: 'provider-catalog-storage-is-pruned',
-      passed: hasOversizedProviderModelStorage(provider) &&
-        prunedModels.length <= PROVIDER_REMOTE_MODEL_STORAGE_LIMIT &&
-        prunedGroupModels.length <= PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT,
-      detail: `provider=${prunedModels.length}/${PROVIDER_REMOTE_MODEL_STORAGE_LIMIT}; group=${prunedGroupModels.length}/${PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT}`,
+      fixtureId: 'provider-catalog-storage-is-lossless',
+      passed: !hasRedundantProviderModelStorage(provider) &&
+        storedModels.length === provider.models.length &&
+        storedGroupModels.length === provider.credentialGroups![0].availableModels!.length &&
+        storedModels.includes('model-799') && storedGroupModels.includes('model-799') &&
+        storedConfigs.some(config => config.id === 'model-799' && config.contextWindow === 128000),
+      detail: `full catalog=${storedModels.length}; group=${storedGroupModels.length}; configs=${storedConfigs.length}; rendering samples remain bounded`,
     },
     {
       fixtureId: 'policy-model-lookup-is-bounded',
