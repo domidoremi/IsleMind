@@ -334,7 +334,7 @@ it('binds provider saves and confirmed removal to the shown snapshot and screen 
   const screen = await render(<Panel initialView="connection" />)
   await fireEvent.changeText(screen.getByDisplayValue('Fixture connection'), 'Bound draft')
   await fireEvent.press(screen.getByRole('button', { name: 'settingsSubsystem.saveChoose' }))
-  expect(mockUpdate.mock.calls[0][2]).toEqual({ expectedProvider: expected, signal: expect.any(AbortSignal) })
+  expect(mockUpdate.mock.calls[0][2]).toEqual({ expectedProvider: expected, signal: expect.any(AbortSignal), preserveCredentialHealth: true })
   await fireEvent.press(screen.getByRole('tab', { name: 'apiKeyPanel.workspaceAdvanced' }))
   const shown = useSettingsStore.getState().providers[0]
   mockConfirm.mockResolvedValueOnce(true)
@@ -519,7 +519,7 @@ it('stages compatibility changes and persists the shown configuration only after
   expect(mockFlushProviders).not.toHaveBeenCalled()
   await fireEvent.press(screen.getByRole('button', { name: 'settingsSubsystem.saveChoose' }))
   expect(mockUpdate.mock.calls[0]?.[1]).toMatchObject({ clientCompatibilityProfile: 'islemind' })
-  expect(mockUpdate.mock.calls[0]?.[2]).toEqual({ expectedProvider: shown, signal: expect.any(AbortSignal) })
+  expect(mockUpdate.mock.calls[0]?.[2]).toEqual({ expectedProvider: shown, signal: expect.any(AbortSignal), preserveCredentialHealth: true })
   expect(mockFlushProviders).toHaveBeenCalledTimes(1)
   await screen.unmount()
   await act(() => durable())
@@ -544,7 +544,7 @@ it('stages capability declarations and acknowledges only the durable save', asyn
   expect(useSettingsStore.getState().settings).toEqual(settingsBefore)
   await fireEvent.press(screen.getByRole('button', { name: 'settingsSubsystem.saveChoose' }))
   expect(mockUpdate).toHaveBeenCalledWith('fixture', expect.objectContaining({ capabilities: expect.objectContaining({ nativeTools: true }) }), {
-    expectedProvider: shown, signal: expect.any(AbortSignal),
+    expectedProvider: shown, signal: expect.any(AbortSignal), preserveCredentialHealth: true,
   })
   expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'apiKeyPanel.providerSaved:Fixture connection' }))
   await act(() => durable())

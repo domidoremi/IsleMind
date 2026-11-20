@@ -1,4 +1,4 @@
-import type { AIProvider } from '@/types/providerContracts'
+import type { AIProvider, ProviderCredentialGroup } from '@/types/providerContracts'
 
 export interface ProviderConfigurationMutationOptions {
   signal?: AbortSignal
@@ -43,4 +43,27 @@ function equalValues(left: unknown, right: unknown): boolean {
   const keys = Object.keys(a).filter(key => a[key] !== undefined)
   return keys.length === Object.keys(b).filter(key => b[key] !== undefined).length
     && keys.every(key => equalValues(a[key], b[key]))
+}
+
+/** Only execution health is excluded. Catalogs, keys and all configuration remain guarded. */
+export function withoutProviderCredentialHealth(provider: Readonly<AIProvider>): AIProvider {
+  return { ...provider, credentialGroups: provider.credentialGroups?.map(group => ({
+    ...group, lastUsedAt: undefined, lastFailureAt: undefined, failureCount: undefined,
+  })) }
+}
+
+/** Rebase retained keys at metadata commit, including updates during secure-storage awaits. */
+export function preserveProviderCredentialHealth(
+  groups: readonly ProviderCredentialGroup[],
+  currentGroups: readonly ProviderCredentialGroup[] | undefined,
+  replacedGroupIds: ReadonlySet<string> = new Set(),
+): ProviderCredentialGroup[] {
+  const current = new Map(currentGroups?.map(group => [group.id, group]))
+  return groups.map(group => {
+    if (replacedGroupIds.has(group.id)) return { ...group,
+      lastUsedAt: undefined, lastFailureAt: undefined, failureCount: 0 }
+    const latest = current.get(group.id)
+    return latest ? { ...group, lastUsedAt: latest.lastUsedAt,
+      lastFailureAt: latest.lastFailureAt, failureCount: latest.failureCount } : group
+  })
 }

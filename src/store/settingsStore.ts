@@ -20,7 +20,7 @@ import {
   secureKeyValueStorage,
 } from '@/bootstrap/secureCredentialStorage'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, normalizeProviderSyncPolicy } from '@/bootstrap/providerRegistry'
-import { assertProviderConfiguration, ProviderConfigurationConflictError, snapshotProviderConfiguration, normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, sanitizeProviderUsageQueryConfiguration, type ProviderConfigurationMutationOptions, type ProviderCredentialMutation, type ProviderCredentialMutationOptions } from '@/modules/providers'
+import { withoutProviderCredentialHealth, preserveProviderCredentialHealth, assertProviderConfiguration, ProviderConfigurationConflictError, snapshotProviderConfiguration, normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, sanitizeProviderUsageQueryConfiguration, type ProviderConfigurationMutationOptions, type ProviderCredentialMutation, type ProviderCredentialMutationOptions } from '@/modules/providers'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
 import { clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
 import { buildProviderModelConfigsForStorage, hasRedundantProviderModelStorage, normalizeCredentialGroupModelsForStorage, normalizeProviderModelsForStorage } from '@/utils/providerModelStorage'
@@ -53,7 +53,7 @@ interface SettingsState {
   setLanguage: (language: Language) => void
   addProvider: (provider: AIProvider) => Promise<void>
   addProviders: (providers: AIProvider[], options?: AddProvidersOptions) => Promise<void>
-  updateProvider: (id: string, updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => Promise<void>
+  updateProvider: (id: string, updates: Partial<AIProvider>, options?: ProviderEditOptions) => Promise<void>
   updateProviderPatches: (patches: ProviderPatch[], options?: ProviderUpdateOptions) => Promise<void>
   updateProviders: (ids: string[], updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => Promise<void>
   flushProviderPersistence: () => Promise<void>
@@ -113,6 +113,11 @@ interface AddProvidersOptions {
   onProgress?: (progress: AddProvidersProgress) => void
   yieldEvery?: number
   persist?: 'immediate' | 'deferred'
+}
+
+interface ProviderEditOptions extends ProviderUpdateOptions {
+  /** Rebase execution health only; all configuration still uses the captured mutation fence. */
+  preserveCredentialHealth?: boolean
 }
 
 interface ProviderUpdateOptions extends ProviderConfigurationMutationOptions {
@@ -576,20 +581,44 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     })
   },
 
-  updateProvider: async (id: string, updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => {
+  updateProvider: async (id: string, updates: Partial<AIProvider>, options?: ProviderEditOptions) => {
     updates = snapshotProviderConfiguration(updates)
     const captured = captureProviderMutationOptions(options)
+    const preserveHealth = options?.preserveCredentialHealth === true
+    const expected = preserveHealth ? { ...captured,
+      expectedProvider: captured.expectedProvider ? withoutProviderCredentialHealth(captured.expectedProvider) : captured.expectedProvider,
+      expectedProviders: captured.expectedProviders?.map(withoutProviderCredentialHealth),
+    } : captured
+    const beforeMutation = () => checkProviderMutation(
+      preserveHealth ? get().providers.map(withoutProviderCredentialHealth) : get().providers, id, expected,
+    )
     const persist = options?.persist
     return enqueueProviderMutation(async () => {
-    checkProviderMutation(get().providers, id, captured)
+    beforeMutation()
     const previous = get().providers.find((provider) => provider.id === id)
     await withProviderModelAvailabilityChanges(providerModelScopeConfigurationChanged(previous, updates) ? [id] : [], async () => {
-    const beforeMutation = () => checkProviderMutation(get().providers, id, captured)
     beforeMutation()
+    const replacedGroupIds = new Set<string>()
+    if (preserveHealth) {
+      const editedGroups = updates.credentialGroups?.filter(group => group.apiKey
+        && previous?.credentialGroups?.some(current => current.id === group.id)) ?? []
+      if (editedGroups.length) {
+        const stored = await providerCredentialStorage.getProviderCredentials(id, editedGroups.map(group => group.id),
+          { signal: captured.signal, beforeRead: beforeMutation })
+        beforeMutation()
+        for (const group of editedGroups) {
+          if (group.apiKey !== stored.credentialGroups.find(current => current.groupId === group.id)?.credential) replacedGroupIds.add(group.id)
+        }
+      }
+    }
     await providerCredentialStorage.applyMutations(providerCredentialMutationsForUpdate(id, updates, previous), { signal: captured.signal, beforeMutation })
     set((state) => {
+      beforeMutation()
       const updated = state.providers.map((p) =>
-        p.id === id ? normalizeProvider({ ...p, ...updates, apiKey: '' } as AIProvider) : p
+        p.id === id ? normalizeProvider({ ...p, ...updates,
+          ...(preserveHealth && updates.credentialGroups ? {
+            credentialGroups: preserveProviderCredentialHealth(updates.credentialGroups, p.credentialGroups, replacedGroupIds),
+          } : {}), apiKey: '' } as AIProvider) : p
       )
       persistProvidersSnapshot(updated, persist)
       return { providers: updated }

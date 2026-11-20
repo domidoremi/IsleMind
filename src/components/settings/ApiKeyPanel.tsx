@@ -12,7 +12,7 @@ import { composeUserFacingError, isUserFacingErrorCode, userFacingErrorCodeKey }
 import type { ModelAlias, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
 import { getModelName } from '@/types/modelCatalog'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, looksLikeProviderImportConnectionText, maskSecret, parseCredentialGroups, parseProviderImportDraft, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
-import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, ProviderConfigurationConflictError, getCompatibleProviderClientCompatibilityModes, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, normalizeProviderClientCompatibilityMode, shouldSyncWireProtocolFromBaseUrl, snapshotProviderConfiguration, type ProviderClientCompatibilityMode } from '@/modules/providers'
+import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, ProviderConfigurationConflictError, withoutProviderCredentialHealth, getCompatibleProviderClientCompatibilityModes, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, normalizeProviderClientCompatibilityMode, shouldSyncWireProtocolFromBaseUrl, snapshotProviderConfiguration, type ProviderClientCompatibilityMode } from '@/modules/providers'
 import { resolveProviderConfigDraft } from '@/bootstrap/providerPolicies'
 import { syncAndTestProvider } from '@/bootstrap/providerActivationRuntime'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -421,7 +421,7 @@ export function ApiKeyPanel({
       lastTestMessage: undefined,
       lastTestCode: undefined,
       lastModelTestCapabilityChecks: undefined,
-    }, { expectedProvider: latest, signal })
+    }, { expectedProvider: latest, signal, preserveCredentialHealth: true })
     // Retrying a failed durable write must not be mistaken for an external edit.
     serverBaseline.current = providerEditVersion(useSettingsStore.getState().providers.find(item => item.id === provider.id) ?? applied)
     await useSettingsStore.getState().flushProviderPersistence()
@@ -1880,5 +1880,5 @@ function ActionButton({ label, busy = false, secondary = false, disabled = false
 }
 
 function providerEditVersion(provider: AIProvider): string {
-  return JSON.stringify([provider.name, provider.baseUrl, initialProviderPresetId(provider), initialProviderWireProtocol(provider), formatModelEntries(provider), provider.modelAliases ?? [], provider.credentialGroups ?? [], provider.modelParameterOverrides, provider.capabilities, provider.clientCompatibilityProfile])
+  return JSON.stringify([provider.name, provider.baseUrl, initialProviderPresetId(provider), initialProviderWireProtocol(provider), formatModelEntries(provider), provider.modelAliases ?? [], withoutProviderCredentialHealth(provider).credentialGroups ?? [], provider.modelParameterOverrides, provider.capabilities, provider.clientCompatibilityProfile, provider.credentialSelection, provider.enabledModels])
 }
