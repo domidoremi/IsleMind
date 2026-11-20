@@ -62,3 +62,18 @@ Web独立域名已清空，原浏览器13项存储与六文件保持，空间已
 三张截图仅覆盖中文岛屿深色原竖屏可见区域。长连接名末字符单独换行已列入布局待办；密钥实际输入／更换和完整语言、主题、尺寸及辅助功能矩阵继续。源码1.1.21/146，周期0/5，四项整体资格保持false；没有构建、导出、安装APK或触发Actions。
 
 [原生编辑验收检查点](../../test-evidence/implementation/native-routing-groups-20261115-01/native-credential-editor-checkpoint-20261120-209.json)、[冷启动原值回读](../../test-evidence/implementation/native-routing-groups-20261115-01/native-cold-runtime-20261120-213.json)、[原端口映射恢复](../../test-evidence/implementation/native-routing-groups-20261115-01/native-transport-restored-20261120-208.json)。
+
+
+## 窄屏连接标题与内存归因初探
+
+配置页在窄屏或字体放大后，将连接名称与操作区分行，标题使用完整宽度；保留三行上限、完整无障碍名称、状态反馈、帮助和44dp关闭按钮。真机原名称Native-key-editor-206完整单行显示，末字符独占一行的问题已消除；关闭重开后布局和配置保持。
+
+工作区和独立main副本各2项组件测试及类型检查通过；测试覆盖尺寸变化时节点与操作保持，以及五主题重新渲染。第44份源码2157输入、4159模块、完整设备缓存与服务脚本、源码映射、三字体和三语核对通过，挂载标题模块绑定一致。初次真机脚本错误要求闲置状态指示可点击，失败保留且原值恢复；修正后使用新测试身份通过。独立副本首次因mise目录信任检查停止，改用工作区已解析的同一Node完成测试，原日志保留。
+
+最终独立回读53表3256行、四项原始存储、六组草稿与恢复槽、全部资料和编辑器正文／附件／选区／焦点一致；测试连接和三个安全密钥槽已移除。PID596、editor218、USB设置前台和70条请求保持，Inspector关闭，pending为空，216添加的8092映射已撤销。原436个未完成路径逐项哈希保持。
+
+只读内存观测显示Hermes活动JS堆约64MB，原生分配器libc_malloc的PSS约716MB，Hermes内存段约105MB；尚未确定具体分配来源，系统内存终止问题仍开放。验收后的进程内存快照另行记录，不据此宣称性能通过。
+
+截图仅覆盖中文岛屿深色原竖屏标题可见区域；其他主题、三语、横屏、实际系统大字体、TalkBack及全应用覆盖继续。源码1.1.21/146，本修复成功提交推送后计入新周期第1项；四项整体资格保持false。没有构建、导出、安装APK或触发Actions。本轮可再生header-candidate-219删除被自动审批以blocked by policy拒绝，命令未启动，副本保留且未换机制重试。
+
+[标题验收检查点](../../test-evidence/implementation/native-routing-groups-20261115-01/native-header-checkpoint-20261120-231.json)、[限定目视记录](../../test-evidence/implementation/native-routing-groups-20261115-01/native-header-visual-review-20261120-231.json)、[内存映射](../../test-evidence/implementation/native-routing-groups-20261115-01/native-memory-maps-20261120-218.json)。

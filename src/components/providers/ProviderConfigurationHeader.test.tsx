@@ -18,13 +18,24 @@ function page(onClose = jest.fn()) {
 beforeEach(() => { mockFamily = 'minimal' })
 afterEach(() => jest.restoreAllMocks())
 
-it('gives narrow and large-text layouts the title gutter without losing the full accessible name', async () => {
-  jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({ width: 600, height: 844, scale: 1, fontScale: 2 })
-  const view = await render(page())
+it('keeps the full accessible name and close action when resizing into a large-text layout', async () => {
+  const dimensions = jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({ width: 1280, height: 900, scale: 1, fontScale: 1 })
+  const onClose = jest.fn()
+  const view = await render(page(onClose))
+  const title = view.getByRole('header')
+  const close = view.getByRole('button', { name: 'Close' })
+  dimensions.mockReturnValue({ width: 600, height: 844, scale: 1, fontScale: 2 })
+  await view.rerender(page(onClose))
   expect(view.queryByTestId('provider-configuration-ornament', { includeHiddenElements: true })).toBeNull()
   expect(view.getByRole('header').props.accessibilityLabel).toBe(name)
   expect(view.getByRole('header').props.numberOfLines).toBe(3)
-  expect(view.getByTestId('provider-configuration-title')).toHaveStyle({ flex: 1, minWidth: 0 })
+  expect(view.getByRole('header')).toBe(title)
+  expect(view.getByRole('button', { name: 'Close' })).toBe(close)
+  expect(view.getByTestId('feedback')).toBeTruthy()
+  expect(view.getByTestId('help')).toBeTruthy()
+  expect(close).toHaveStyle({ width: 44, height: 44 })
+  await fireEvent.press(close)
+  expect(onClose).toHaveBeenCalledTimes(1)
 })
 
 it('keeps close at 44 by 44, invokes only the supplied close action, and retains header slots across themes', async () => {
