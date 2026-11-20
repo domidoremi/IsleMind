@@ -38,6 +38,7 @@ interface AmbientField {
 export function IsleBackground({ colors, environment, mode = 'default', state = 'idle', intensity = 1 }: IsleBackgroundProps) {
   const resolvedMode = resolveBackgroundMode(colors, mode)
   // The screen owns the canvas; absent decoration must not mount scene hooks.
+  if (environment.family === 'animal-island-ui') return null
   if (resolvedMode === 'none' || environment.layerCount <= 0 || intensity <= 0) return null
   return <DecorativeBackground colors={colors} environment={environment} mode={resolvedMode} state={state} intensity={intensity} />
 }

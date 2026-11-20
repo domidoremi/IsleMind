@@ -19,6 +19,7 @@ const environment = resolveBackgroundEnvironment({ family: 'liquid-glass', mode:
 const motion = jest.mocked(useMotionPreference)
 
 beforeEach(() => {
+  motion.mockClear()
   motion.mockReturnValue('full')
   Object.defineProperty(AppState, 'currentState', { value: 'active', configurable: true })
 })
@@ -26,6 +27,7 @@ afterEach(() => jest.restoreAllMocks())
 
 it.each([
   ['minimal', 'light'], ['minimal', 'dark'], ['material', 'light'], ['material', 'dark'],
+  ['animal-island-ui', 'light'], ['animal-island-ui', 'dark'],
 ] as const)('renders no %s/%s artwork or background work even with immersive preferences', async (family, mode) => {
   const lifecycle = jest.spyOn(AppState, 'addEventListener')
   const interval = jest.spyOn(globalThis, 'setInterval')
@@ -139,13 +141,20 @@ it('pauses retained-route motion and variation timers, and resumes only on its f
   expect(clear).toHaveBeenCalledWith(interval.mock.results[1].value)
 })
 
-it.each(['light', 'dark'] as const)('uses broad ambient fields for the island theme in %s mode', async (mode) => {
+it.each(['light', 'dark'] as const)('keeps the island theme on its plain canvas in %s mode, even with a stale decorative environment', async (mode) => {
   const islandColors = getColors(mode, 'animal-island-ui')
-  const islandEnvironment = resolveBackgroundEnvironment({ family: 'animal-island-ui', mode, variation: 'fixed' })
+  const resolvedEnvironment = resolveBackgroundEnvironment({ family: 'animal-island-ui', mode, variation: 'fixed' })
+  const islandEnvironment = { ...resolvedEnvironment, kind: 'atmospheric' as const, layerCount: 3, visualIntensity: 1 }
+  const lifecycle = jest.spyOn(AppState, 'addEventListener')
+  const interval = jest.spyOn(globalThis, 'setInterval')
+  lifecycle.mockClear()
+  interval.mockClear()
   const screen = await render(<IsleBackground colors={islandColors} environment={islandEnvironment} />)
-
-  expect(screen.queryByTestId('theme-background-animal-island-ui', { includeHiddenElements: true })).toBeNull()
-  expect(screen.getByTestId(`theme-background-${islandColors.ui.experience.background}-atmospheric`, { includeHiddenElements: true })).toBeTruthy()
+  expect(screen.container.queryAll((node) => node.type === 'View')).toHaveLength(0)
+  expect(screen.queryByTestId(/^theme-background-/, { includeHiddenElements: true })).toBeNull()
   expect(screen.container.queryAll((node) => node.type === 'RNSVGCircle')).toHaveLength(0)
-  expect(screen.container.queryAll((node) => node.type === 'RNSVGEllipse')).toHaveLength(islandEnvironment.layerCount)
+  expect(screen.container.queryAll((node) => node.type === 'RNSVGEllipse')).toHaveLength(0)
+  expect(motion).not.toHaveBeenCalled()
+  expect(lifecycle).not.toHaveBeenCalled()
+  expect(interval).not.toHaveBeenCalled()
 })

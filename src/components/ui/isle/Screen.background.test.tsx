@@ -57,7 +57,7 @@ it.each(['light', 'dark'] as const)('retains the %s canvas, draft and selection 
     const colors = setTheme(family, mode)
     await screen.rerender(content())
     const artwork = screen.container.queryAll((node) => String(node.props.testID ?? '').startsWith('theme-background-'))
-    if (family === 'minimal' || family === 'material') {
+    if (family === 'minimal' || family === 'material' || family === 'animal-island-ui') {
       expect(artwork).toHaveLength(0)
     } else {
       expect(artwork.length).toBeGreaterThan(0)

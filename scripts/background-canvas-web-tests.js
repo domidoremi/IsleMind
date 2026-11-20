@@ -41,7 +41,7 @@ const server = http.createServer((request, response) => {
   fs.createReadStream(file).pipe(response)
 })
 
-const plain = family => family === 'minimal' || family === 'material'
+const plain = family => family === 'minimal' || family === 'material' || family === 'animal-island-ui'
 const results = {
   generatedAt: new Date().toISOString(), passed: false, nativeAcceptance: false,
   isolatedBrowserData: true, osClipboardWritten: false, pages: [], transitions: [], retainedTransitions: [],

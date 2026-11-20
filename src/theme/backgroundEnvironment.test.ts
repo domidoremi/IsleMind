@@ -1,20 +1,20 @@
 import { resolveBackgroundEnvironment, seededEnvironmentValue } from './backgroundEnvironment'
 
 describe('background environment', () => {
-  test.each(['minimal', 'monet', 'material', 'liquid-glass'] as const)('%s supports light, dark, and accent-derived variation', (family) => {
+  test.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const)('%s supports light, dark, and accent-derived variation', (family) => {
     const light = resolveBackgroundEnvironment({ family, mode: 'light', variation: 'fixed' })
     const dark = resolveBackgroundEnvironment({ family, mode: 'dark', variation: 'fixed' })
     const accented = resolveBackgroundEnvironment({ family, mode: 'light', accent: '#4963A6', variation: 'fixed' })
     expect(light.seed).not.toBe(dark.seed)
     expect(light.seed).not.toBe(accented.seed)
-    if (family === 'minimal' || family === 'material') {
+    if (family === 'minimal' || family === 'material' || family === 'animal-island-ui') {
       expect(light.layerCount).toBe(0)
     } else {
       expect(light.layerCount).toBeGreaterThan(0)
     }
   })
 
-  test.each(['minimal', 'material'] as const)('%s has no decorative budget regardless of stored background preferences', (family) => {
+  test.each(['minimal', 'material', 'animal-island-ui'] as const)('%s has no decorative budget regardless of stored background preferences', (family) => {
     for (const mode of ['light', 'dark'] as const) {
       for (const motion of ['static', 'subtle', 'dynamic', 'immersive'] as const) {
         for (const intensity of ['low', 'medium', 'high'] as const) {

@@ -46,7 +46,7 @@ const DEFAULT_MOTION_BY_FAMILY: Readonly<Record<CanonicalThemeId, ThemeBackgroun
 })
 
 const KIND_BY_FAMILY: Readonly<Record<CanonicalThemeId, BackgroundEnvironmentKind>> = Object.freeze({
-  'animal-island-ui': 'atmospheric',
+  'animal-island-ui': 'minimal',
   minimal: 'minimal',
   monet: 'atmospheric',
   material: 'tonal',
