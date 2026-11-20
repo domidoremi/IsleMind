@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.19 source version checkpoint](./release/source-version-1.1.19-2026-11-20.md): scene copies, prompt preservation, input focus, return state and credential selection.
 - [1.1.18 source version checkpoint](./release/source-version-1.1.18-2026-11-20.md): credential status, model counts, input focus, changed fallback connections and cost notices.
 - [1.1.17 source version checkpoint](./release/source-version-1.1.17-2026-11-19.md): provider protocols, connection imports, configuration typing and credential input.
 - [1.1.16 source version checkpoint](./release/source-version-1.1.16-2026-11-19.md): startup recovery, guide search, draft saving and input focus.
