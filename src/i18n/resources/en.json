@@ -2947,6 +2947,8 @@
     "noMatchingModels": "No matching models. Try a different search or add a model ID.",
     "modelSearchLimit": "Up to {{count}} results shown. Search covers all configured models.",
     "replaceCredential": "Replace connection key",
+    "replacementCredential": "New connection key",
+    "credentialPosition": "Key {{index}}",
     "replaceCredentialHint": "Paste a new key and save. Leave it blank to keep the saved key.",
     "reviewImport": "Review import",
     "importReviewHint": "Parsed locally. Credentials are hidden. Saving sends no request and does not change existing connections or chats.",

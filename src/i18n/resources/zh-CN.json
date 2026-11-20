@@ -2945,6 +2945,8 @@
     "noMatchingModels": "没有匹配的模型，可更换搜索词或手动添加模型 ID。",
     "modelSearchLimit": "最多显示 {{count}} 项；搜索覆盖全部已配置模型。",
     "replaceCredential": "更换连接密钥",
+    "replacementCredential": "新连接密钥",
+    "credentialPosition": "密钥 {{index}}",
     "replaceCredentialHint": "粘贴新的连接密钥后保存；留空会保留原有密钥。",
     "reviewImport": "核对导入",
     "importReviewHint": "仅在本地解析，凭据已隐藏。保存不发送请求，也不更改已有连接或对话。",

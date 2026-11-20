@@ -2945,6 +2945,8 @@
     "noMatchingModels": "一致するモデルがありません。検索語を変えるかモデル ID を追加してください。",
     "modelSearchLimit": "最大 {{count}} 件を表示。検索は設定済みの全モデルが対象です。",
     "replaceCredential": "接続キーを変更",
+    "replacementCredential": "新しい接続キー",
+    "credentialPosition": "キー {{index}}",
     "replaceCredentialHint": "新しいキーを貼り付けて保存します。空欄なら元のキーを保持します。",
     "reviewImport": "インポートを確認",
     "importReviewHint": "端末内だけで解析し、認証情報は非表示にします。保存ではリクエストを送らず、既存の接続や会話も変更しません。",

@@ -22,7 +22,7 @@ jest.mock('expo-clipboard', () => ({
 }))
 jest.mock('expo-router', () => ({ useNavigation: jest.fn() }))
 jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
-jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { name?: string; count?: number }) => key === 'apiKeyPanel.providerSaved' ? `${key}:${values?.name}` : key === 'settingsSubsystem.modelCount' ? `${key}:${values?.count}` : key }) }))
+jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { name?: string; count?: number; index?: number }) => key === 'apiKeyPanel.providerSaved' ? `${key}:${values?.name}` : key === 'settingsSubsystem.modelCount' ? `${key}:${values?.count}` : key === 'providerSettings.credentialPosition' ? `${key}:${values?.index}` : key }) }))
 jest.mock('moti', () => ({
   MotiView: require('react-native').View,
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -218,14 +218,39 @@ it('retains the discovered model count after saving a connection with no manual 
   expect(screen.getByText('settingsSubsystem.modelCount:2')).toBeTruthy()
 })
 
+it('distinguishes same-name keys and exposes the expansion state of each replacement', async () => {
+  const provider = fixture()
+  useSettingsStore.setState({ providers: [{ ...provider, credentialGroups: [
+    ...provider.credentialGroups!, { id: 'key-b', label: 'Key A', enabled: true, apiKey: '' },
+  ] }] })
+  const screen = await render(<Panel initialView="connection" />)
+  const replace = (index: number) => `providerSettings.replaceCredential · providerSettings.credentialPosition:${index} · Key A`
+  const input = (index: number) => `providerSettings.replacementCredential · providerSettings.credentialPosition:${index} · Key A`
+
+  expect(screen.getByRole('button', { name: replace(1), expanded: false })).toBeTruthy()
+  await fireEvent.press(screen.getByRole('button', { name: replace(2), expanded: false }))
+  expect(screen.getByRole('button', { name: replace(2), expanded: true })).toBeTruthy()
+  expect(screen.getByRole('button', { name: replace(1), expanded: false })).toBeTruthy()
+  expect(screen.queryByLabelText(input(1))).toBeNull()
+  const newKey = screen.getByLabelText(input(2))
+  expect(newKey.props.secureTextEntry).toBe(true)
+  await fireEvent.changeText(newKey, 'test-key-b')
+  await fireEvent.press(screen.getByRole('button', { name: replace(2), expanded: true }))
+  expect(screen.queryByLabelText(input(2))).toBeNull()
+  await fireEvent.press(screen.getByRole('button', { name: replace(2), expanded: false }))
+  expect(screen.getByLabelText(input(2)).props.value).toBe('test-key-b')
+  expect(mockUpdate).not.toHaveBeenCalled()
+})
+
 it('keeps credential replacement in the local draft until Connection is saved', async () => {
   let durable!: () => void
   mockFlushProviders.mockReturnValueOnce(new Promise<void>(resolve => { durable = resolve }))
   const screen = await render(<Panel initialView="connection" />)
-  await fireEvent.press(screen.getByRole('button', { name: 'providerSettings.replaceCredential' }))
-  const input = screen.getByDisplayValue('')
+  await fireEvent.press(screen.getByRole('button', { name: /^providerSettings\.replaceCredential/ }))
+  const input = screen.getByLabelText(/^providerSettings\.replacementCredential/)
   // The credential field is masked; no existing secret is copied into it.
   expect(input.props.secureTextEntry).toBe(true)
+  expect(input.props.value).toBe('')
   await fireEvent.changeText(input, 'replacement-fixture-credential')
   expect(mockUpdate).not.toHaveBeenCalled()
   await fireEvent.press(screen.getByRole('button', { name: 'settingsSubsystem.saveChoose' }))

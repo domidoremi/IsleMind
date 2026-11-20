@@ -1450,6 +1450,10 @@ function CredentialGroupRow({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const [editingKey, setEditingKey] = useState(false)
+  const replaceLabel = t('providerSettings.replaceCredential')
+  const replacementLabel = t('providerSettings.replacementCredential')
+  const credentialIdentity = [t('providerSettings.credentialPosition', { index: index + 1 }), group.label.trim()]
+    .filter(Boolean).join(' · ')
   const statusText = group.lastModelSyncStatus === 'bad'
     ? t('apiKeyPanel.syncFailed')
     : group.enabled ? undefined : t('apiKeyPanel.disabled')
@@ -1490,13 +1494,14 @@ function CredentialGroupRow({
       </View>
       <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
         <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', maxWidth: '100%', includeFontPadding: false }}>{maskedKey || emptyKeyLabel}</Text>
-        <MiniAction label={t('providerSettings.replaceCredential')} onPress={() => setEditingKey(value => !value)} />
+        <MiniAction label={replaceLabel} accessibilityLabel={`${replaceLabel} · ${credentialIdentity}`}
+          expanded={editingKey} onPress={() => setEditingKey(value => !value)} />
         <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.modelCount', { count: group.availableModels?.length ?? 0 })}</Text>
         {statusText ? <Text style={{ color: group.lastModelSyncStatus === 'bad' ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{statusText}</Text> : null}
         {group.failureCount ? <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.failureCount', { count: group.failureCount })}</Text> : null}
       </View>
-      {editingKey ? <IsleField label={t('providerSettings.replaceCredential')} note={t('providerSettings.replaceCredentialHint')}
-        inputProps={{ value: group.apiKey ?? '', onChangeText: onChangeKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, autoComplete: 'off', placeholder: maskedKey }} /> : null}
+      {editingKey ? <IsleField label={replacementLabel} note={t('providerSettings.replaceCredentialHint')}
+        inputProps={{ accessibilityLabel: `${replacementLabel} · ${credentialIdentity}`, value: group.apiKey ?? '', onChangeText: onChangeKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, autoComplete: 'off', placeholder: maskedKey }} /> : null}
     </View>
   )
 }
@@ -1871,10 +1876,13 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
   )
 }
 
-function MiniAction({ label, children, active = false, disabled = false, onPress }: { label: string; children?: ReactNode; active?: boolean; disabled?: boolean; onPress: () => void }) {
+function MiniAction({ label, accessibilityLabel = label, children, active = false, expanded, disabled = false, onPress }: {
+  label: string; accessibilityLabel?: string; children?: ReactNode; active?: boolean; expanded?: boolean; disabled?: boolean; onPress: () => void
+}) {
   const { colors } = useAppTheme()
+  const accessibilityState = expanded === undefined ? { selected: active, disabled } : { expanded, disabled }
   return (
-    <IslePressable haptic accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active, disabled }} disabled={disabled} onPress={onPress} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, maxWidth: '100%', flexShrink: 1, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, ...quietControlSurface(colors, active), opacity: disabled ? 0.5 : 1 }}>
+    <IslePressable haptic accessibilityRole="button" accessibilityLabel={accessibilityLabel} accessibilityState={accessibilityState} disabled={disabled} onPress={onPress} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, maxWidth: '100%', flexShrink: 1, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, ...quietControlSurface(colors, active), opacity: disabled ? 0.5 : 1 }}>
       {children}
       <Text style={{ flexShrink: 1, color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
     </IslePressable>
