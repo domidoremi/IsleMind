@@ -1,4 +1,4 @@
-import type { ProviderConnectionReference, ProviderConnectionReferenceTarget } from '@/core'
+import { modelRoutingPlanTargets, type ProviderConnectionReference, type ProviderConnectionReferenceTarget } from '@/core'
 import type { Settings } from '@/types/settingsContracts'
 
 export type SettingsConnectionReferencePreferences = Pick<Settings,
@@ -20,6 +20,7 @@ export function projectSettingsProviderReferences(
     add('routing', plan.id, plan.name, [
       { ...plan.primary, role: 'primary' },
       ...(plan.mode === 'fallback' && plan.backup ? [{ ...plan.backup, role: 'backup' as const }] : []),
+      ...(plan.mode === 'group' ? modelRoutingPlanTargets(plan).slice(1).map(target => ({ ...target, role: 'member' as const })) : []),
     ])
   }
   for (const plan of settings.scenePlans ?? []) {
@@ -29,7 +30,8 @@ export function projectSettingsProviderReferences(
       { ...model.target, role: 'model' },
       ...(model.routingPlan ? [{ ...model.routingPlan.primary, role: 'primary' as const },
         ...(model.routingPlan.mode === 'fallback' && model.routingPlan.backup
-          ? [{ ...model.routingPlan.backup, role: 'backup' as const }] : [])] : []),
+          ? [{ ...model.routingPlan.backup, role: 'backup' as const }] : []),
+        ...(model.routingPlan.mode === 'group' ? modelRoutingPlanTargets(model.routingPlan).slice(1).map(target => ({ ...target, role: 'member' as const })) : [])] : []),
     ])
   }
   if (settings.defaultProvider) add('default', 'default', '', [{ providerId: settings.defaultProvider, role: 'default' }])

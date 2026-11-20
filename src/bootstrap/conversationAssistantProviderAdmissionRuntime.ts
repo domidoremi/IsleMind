@@ -10,6 +10,8 @@ import { buildSetupGuide } from '@/services/chatErrorUtils'
 import { sanitizeTrace } from '@/services/chatTraceUtils'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
+import { getActiveStream } from '@/services/chatStreamLifecycle'
+import { stopConversationMessage } from '@/presentation/features/conversations/conversationControlCommand'
 import type { BoundConversation, Conversation } from '@/types/chatContracts'
 import { getModelConfig } from '@/types/modelCatalog'
 import type { AIProvider, ChatErrorCode } from '@/types/providerContracts'
@@ -26,8 +28,14 @@ export const conversationAssistantProviderAdmissionRuntime =
     ProcessTrace,
     BoundConversation
   >({
-    admitConversation(input) {
-      return conversationProviderAdmissionRuntime.admitConversation(input)
+    async admitConversation(input) {
+      const outcome = await conversationProviderAdmissionRuntime.admitConversation(input)
+      if (outcome.kind !== 'rejected' || outcome.reason !== 'confirmation_declined') return outcome
+      // A superseded confirmation must never stop a newer turn in this conversation.
+      if (getActiveStream(input.conversation.id)?.controller.signal === input.signal) {
+        await stopConversationMessage(input.conversation.id)
+      }
+      return { kind: 'cancelled' as const }
     },
     buildSetupGuide,
     translate(key, parameters, fallback) {

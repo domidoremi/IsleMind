@@ -347,6 +347,8 @@ function providerRuntimeUsageContext(
       ...(plan ? { routingPlan: {
         id: plan.id, name: plan.name,
         primaryProviderId: plan.primary.providerId, primaryModel: plan.primary.model,
+        ...(plan.mode === 'group' ? { mode: 'group' as const, selectedProviderId: request.provider.id,
+          selectedModel: request.executionConstraint?.identity.model ?? plan.group!.model } : {}),
       } } : {}),
     },
   }

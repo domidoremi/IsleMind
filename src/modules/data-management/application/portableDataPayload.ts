@@ -1,5 +1,5 @@
 import { parseAgentDefinitions, type AgentDefinition } from '@/modules/assistant-runtime'
-import { normalizeModelRoutingPlan, sameModelRoute } from '@/core/modelRoutingPlan'
+import { normalizeModelRoutingPlan, isModelRoutingPlanTarget } from '@/core/modelRoutingPlan'
 import {
   PROVIDER_PLATFORM_DEFAULT_TEMPERATURE,
   defaultProviderCredentialMode,
@@ -737,7 +737,7 @@ function isLanguagePreferenceSource(
 function isConversationLike(value: unknown): value is Conversation {
   if (!isRecord(value)) return false
   if (value.routingPlan !== undefined && (!normalizeModelRoutingPlan(value.routingPlan)
-    || !sameModelRoute(normalizeModelRoutingPlan(value.routingPlan)!.primary, { providerId: String(value.providerId ?? ''), model: String(value.model ?? '') }))) return false
+    || !isModelRoutingPlanTarget(normalizeModelRoutingPlan(value.routingPlan)!, { providerId: String(value.providerId ?? ''), model: String(value.model ?? '') }))) return false
   if (value.contextPolicyOverride !== undefined && !normalizeConversationContextPolicy(value.contextPolicyOverride)) return false
   if (value.toolDeclarationModeOverride !== undefined && value.toolDeclarationModeOverride !== 'full' && value.toolDeclarationModeOverride !== 'auto') return false
   if (value.scenePlanSource !== undefined && !normalizeConversationScenePlanSource(value.scenePlanSource)) return false

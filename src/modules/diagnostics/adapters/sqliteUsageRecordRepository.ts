@@ -119,6 +119,9 @@ const executionSchema = v.strictObject({
     name: v.pipe(v.string(), v.minLength(1), v.maxLength(80)),
     primaryProviderId: boundedIdSchema,
     primaryModel: v.pipe(v.string(), v.minLength(1), v.maxLength(240)),
+    mode: v.optional(v.literal('group')),
+    selectedProviderId: v.optional(boundedIdSchema),
+    selectedModel: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(240))),
   })),
 })
 const reportedExecutionSchema = v.strictObject({

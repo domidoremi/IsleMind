@@ -1,77 +1,18 @@
+import type { ProviderChatExecutionConstraint, ProviderChatSelection, ProviderChatResolutionInput, ProviderChatFallbackInput, ProviderChatResolutionReason, ProviderChatResolutionDependencies } from './providerChatResolutionContracts'
+export type { ProviderChatExecutionConstraint, ProviderChatSelection, ProviderChatResolutionInput, ProviderChatFallbackInput, ProviderChatResolutionReason, ProviderChatResolutionDependencies } from './providerChatResolutionContracts'
 import { snapshotPlainData } from '@/core'
-import { normalizeModelRoutingPlan, sameModelRoute, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
+import { isModelRoutingPlanTarget, modelRoutingPlanTargets, normalizeModelRoutingPlan, sameModelRoute } from '@/core/modelRoutingPlan'
 import { routingPlanPolicy } from './providerRoutingPlan'
+import { createProviderRoutingGroupSelector } from './providerRoutingGroupSelection'
 import type { AIProvider, ProviderCredentialSource } from '@/types/providerContracts'
 import { chooseCredentialForModel } from './providerCredentialGroups'
-import { providerExecutionIdentityKey, type ProviderExecutionIdentity } from './providerExecutionTarget'
-import { compareProviderFailoverCandidates, providerFailoverRouteIdentityKey, type ProviderFailoverPolicy, type ProviderFailoverRoute, type ProviderFailoverTrigger } from './providerFailoverPolicy'
-import { PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA, type ProviderFallbackCandidateBuilder, type ProviderFallbackCandidateBuildResult } from './providerFallbackCandidates'
-import type { ProviderHealthRecord } from './providerHealth'
+import { providerExecutionIdentityKey } from './providerExecutionTarget'
+import { compareProviderFailoverCandidates, providerFailoverRouteIdentityKey, type ProviderFailoverRoute } from './providerFailoverPolicy'
+import { PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA, type ProviderFallbackCandidateBuildResult } from './providerFallbackCandidates'
 import { resolveLocalProviderRoute } from './providerLocalRouter'
-import { isProviderModelAvailabilityBlocked, type ProviderModelAvailability } from './providerModelAvailability'
+import { isProviderModelAvailabilityBlocked } from './providerModelAvailability'
 import type { ProviderModelAccessSettings } from './providerModelAccessPolicy'
 import { providerForRuntimeFallback } from './providerRuntimeFallback'
-
-/** Request-local admission fence, not a persisted preference or approval. */
-export interface ProviderChatExecutionConstraint {
-  identity: ProviderExecutionIdentity
-  scope: { scopeId: string; epoch: string }
-  fallbackUsed: boolean
-  routingPlan?: ModelRoutingPlan
-  /** Original metadata only; secure hydration and live revocation remain separate. */
-  providerCatalog?: readonly AIProvider[]
-}
-
-export interface ProviderChatSelection {
-  /** Hydrated runtime-only provider. Never passed to Presentation or persisted. */
-  provider: AIProvider
-  model: string
-  constraint: ProviderChatExecutionConstraint
-  /** Synchronous revocation check for the captured read; never durable dispatch authority. */
-  checkCurrentAdmission?: () => void
-}
-
-export interface ProviderChatResolutionInput {
-  preferred: { providerId: string; model: string }
-  routingPlan?: ModelRoutingPlan
-  signal: AbortSignal
-  providers?: readonly AIProvider[]
-  settings?: ProviderModelAccessSettings
-  requiredCapabilities?: readonly string[]
-  policy?: Partial<ProviderFailoverPolicy>
-  allowFallback?: boolean
-  targetCredentialGroupId?: string
-  confirmFallback?: (candidate: ProviderFailoverRoute, signal: AbortSignal) => Promise<boolean>
-  readCurrentAccessSettings?: () => ProviderModelAccessSettings | undefined
-  isSelectionPolicyCurrent?: () => boolean
-}
-
-export interface ProviderChatFallbackInput extends ProviderChatResolutionInput {
-  original: ProviderFailoverRoute
-  trigger: ProviderFailoverTrigger
-  /** Already-serialized native declarations can only be replayed by their adapter. */
-  requiredProtocolAdapterId?: ProviderExecutionIdentity['protocolAdapterId']
-  streamStarted?: boolean
-  continuationBound?: boolean
-  fallbackUsed?: boolean
-}
-
-export type ProviderChatResolutionReason = 'offline' | 'disabled_provider' | 'missing_key' | 'invalid_configuration' | 'model_unavailable' | 'provider_cooldown' | 'policy_blocked' | 'confirmation_declined' | 'candidate_changed'
-
-export interface ProviderChatResolutionDependencies {
-  /** providerId limits credential reads; providers retains the full admitted metadata catalog. */
-  readProviders(signal: AbortSignal, options?: { readonly providers?: readonly AIProvider[]; readonly providerId?: string }): Promise<readonly AIProvider[]>
-  isOnline(provider?: AIProvider): Promise<boolean>
-  buildCandidates: ProviderFallbackCandidateBuilder
-  loadHealthRecords(): Promise<Record<string, ProviderHealthRecord>>
-  configurationValid(provider: AIProvider): boolean
-  accessAllowed(provider: AIProvider, model: string, settings?: ProviderModelAccessSettings): boolean
-  resolveIdentity(provider: AIProvider, model: string, source: ProviderCredentialSource): ProviderExecutionIdentity
-  getAvailability(identity: ProviderExecutionIdentity): Promise<{ scope: { scopeId: string; epoch: string }; availability: ProviderModelAvailability }>
-  healthAllows(identity: ProviderExecutionIdentity): Promise<boolean>
-  captureConfiguration?(): () => void
-  captureDispatchValidation?(constraint: ProviderChatExecutionConstraint, input: ProviderChatResolutionInput): () => void
-}
 
 /**
  * Admission for the existing Chat executor. Candidate construction, ranking,
@@ -79,6 +20,7 @@ export interface ProviderChatResolutionDependencies {
  * this use case never dispatches, retries, saves a preference or runs a route loop.
  */
 export function createProviderChatResolutionRuntime(dependencies: ProviderChatResolutionDependencies) {
+  const selectGroup = createProviderRoutingGroupSelector(dependencies)
   interface AdmissionSafety {
     currentSettings(): ProviderModelAccessSettings | undefined
     fallbackPolicyUnchanged(): boolean
@@ -183,7 +125,7 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
     // must not authorize a route under an earlier settings snapshot.
     if (!accessAllowed(provider, model, input, safety)) return { reason: 'policy_blocked' }
     throwIfCancelled(input.signal)
-    return { selection: { provider: hydrated, model, constraint: { identity, scope: current.scope, fallbackUsed: false,
+    return { selection: { provider: hydrated, model, constraint: { identity, scope: current.scope, fallbackUsed: false, requestedModel: model,
       ...(input.routingPlan ? { routingPlan: input.routingPlan } : {}),
       ...(input.providers === undefined ? {} : { providerCatalog: input.providers }) } } }
   }
@@ -214,15 +156,18 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
     if (plan && (!normalizeModelRoutingPlan(plan) || plan.mode === 'fixed')) return { ...emptyFallback(input), policyChanged: false }
     // Build the exact requested backup first, including aliases beyond catalog
     // pagination. Other models on the same connection never become candidates.
-    const backupProviders = plan ? providers.filter(provider => provider.id === plan.backup!.providerId)
-      .map(provider => ({ ...provider, models: [plan.backup!.model] })) : [...providers]
+    const targets = plan ? plan.mode === 'group' ? modelRoutingPlanTargets(plan) : [plan.backup!] : []
+    const backupProviders = plan ? targets.flatMap(target => {
+      const provider = providers.find(item => item.id === target.providerId)
+      return provider ? [{ ...provider, models: [target.model] }] : []
+    }) : [...providers]
     const built = snapshotPlainData(dependencies.buildCandidates({ providers: backupProviders, original: input.original,
       requiredCapabilities: [...(input.requiredCapabilities ?? ['text'])], healthRecords,
       ...(plan ? { maxModelsPerProvider: 1 } : {}) }))
     const candidates: ProviderFallbackCandidateBuildResult = { ...built, candidates: [] }
     const selections = new Map<string, ProviderChatSelection>()
     // Preserve Chat's existing candidate ceiling. No second pass can replenish it.
-    const bounded = built.candidates.filter(candidate => !plan || sameModelRoute(candidate, plan.backup!))
+    const bounded = built.candidates.filter(candidate => !plan || targets.some(target => sameModelRoute(candidate, target)))
       .sort((a, b) => compareProviderFailoverCandidates(input.original, a, b)).slice(0, 8)
     const onlineProviders = new Map<string, boolean>()
     for (const candidate of bounded) {
@@ -236,6 +181,7 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       if (!onlineProviders.get(provider.id)) continue
       const checked = await inspect(provider, candidate.model, input, safety, candidate.credentialSource)
       if (!('selection' in checked)) continue
+      if (plan?.mode === 'group' && checked.selection.constraint.identity.model !== plan.group!.model) continue
       if (input.requiredProtocolAdapterId && checked.selection.constraint.identity.protocolAdapterId !== input.requiredProtocolAdapterId) continue
       const route = { ...candidate, ...checked.selection.constraint.identity }
       candidates.candidates.push(route)
@@ -312,7 +258,7 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
 
   async function resolvePreferred(source: ProviderChatResolutionInput) {
     const { input, safety } = captureInput(source)
-    if (input.routingPlan && (!normalizeModelRoutingPlan(input.routingPlan) || !sameModelRoute(input.routingPlan.primary, input.preferred))) return { kind: 'blocked' as const, reason: 'policy_blocked' as const }
+    if (input.routingPlan && (!normalizeModelRoutingPlan(input.routingPlan) || !isModelRoutingPlanTarget(input.routingPlan, input.preferred))) return { kind: 'blocked' as const, reason: 'policy_blocked' as const }
     if (input.signal.aborted) return { kind: 'cancelled' as const }
     if (!safety.fallbackPolicyUnchanged()) return { kind: 'blocked' as const, reason: 'policy_blocked' as const }
     try {
@@ -323,6 +269,26 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       const providers = snapshotPlainData(await dependencies.readProviders(input.signal,
         input.providers === undefined ? undefined : { providers: input.providers }))
       throwIfCancelled(input.signal)
+      if (input.routingPlan?.mode === 'group') {
+        const result = await selectGroup(input, providers, {
+          inspect: (provider, model, source) => inspect(provider, model, input, safety, source),
+          unchanged: safety.fallbackPolicyUnchanged, checkConfiguration: () => checkConfiguration?.(),
+        })
+        let accepted = false
+        try {
+          throwIfCancelled(input.signal)
+          if (result.kind === 'blocked') return result
+          if (!safety.fallbackPolicyUnchanged()
+            || !accessAllowed(result.selection.provider, result.selection.model, input, safety)) {
+            return { kind: 'blocked' as const, reason: 'policy_blocked' as const }
+          }
+          throwIfCancelled(input.signal)
+          accepted = true
+          return { kind: 'ready' as const, selection: result.selection }
+        } finally {
+          if (result.kind === 'ready') result.complete(accepted)
+        }
+      }
       const provider = providers.find((item) => item.id === input.preferred.providerId)
       const online = await dependencies.isOnline(provider)
       throwIfCancelled(input.signal)
@@ -370,12 +336,14 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       throwIfCancelled(input.signal)
       const checkCurrentAdmission = dependencies.captureDispatchValidation?.(constraint, input)
       checkCurrentAdmission?.()
-      const checked = await inspect(provider, input.preferred.model, input, safety, constraint.identity.credentialSource)
+      const checked = await inspect(provider, constraint.requestedModel ?? input.preferred.model, input, safety, constraint.identity.credentialSource)
       checkConfiguration?.()
       if (!('selection' in checked) || input.signal.aborted || !safety.fallbackPolicyUnchanged()
         || !accessAllowed(checked.selection.provider, checked.selection.model, input, safety)) return undefined
       throwIfCancelled(input.signal)
       const actual = checked.selection.constraint
+      if (input.routingPlan?.mode === 'group' && (!isModelRoutingPlanTarget(input.routingPlan, { providerId: actual.identity.providerId, model: checked.selection.model })
+        || actual.identity.model !== input.routingPlan.group!.model)) return undefined
       if (providerExecutionIdentityKey(actual.identity) !== providerExecutionIdentityKey(constraint.identity)
         || actual.scope.scopeId !== constraint.scope.scopeId || actual.scope.epoch !== constraint.scope.epoch) return undefined
       checkCurrentAdmission?.()

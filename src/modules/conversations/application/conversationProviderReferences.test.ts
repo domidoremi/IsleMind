@@ -7,6 +7,12 @@ const conversation = { id: 'conversation', title: 'Work', providerId: 'A', model
   messages: [{ content: 'Private history', providerId: 'historic-only' }], systemPrompt: 'Private prompt',
   scenePlanSource: { schema: 'islemind.conversation-scene-plan.v1', id: 'scene-template', name: 'Past application', revision: 1, appliedAt: 1 } }
 
+it('retains the saved group member reference after its connection is removed', () => {
+  const group: ModelRoutingPlan = { ...routingPlan, mode: 'group', group: { model: 'shared', strategy: 'round-robin', members: [routingPlan.primary, routingPlan.backup!] } }
+  expect(projectConversationProviderReference({ ...conversation, routingPlan: group }, ['B']).reference?.targets)
+    .toEqual([{ providerId: 'B', model: 'Model', role: 'member' }])
+})
+
 it('finds an older conversation’s exact backup without counting messages or applied-scene provenance', () => {
   expect(projectConversationProviderReference(conversation, ['B'])).toEqual({
     unreadable: false, reference: { kind: 'conversation', id: 'conversation', label: 'Work',

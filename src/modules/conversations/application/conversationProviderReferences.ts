@@ -1,4 +1,4 @@
-import { normalizeModelRoutingPlan, type ProviderConnectionReference, type ProviderConnectionReferenceTarget } from '@/core'
+import { modelRoutingPlanTargets, normalizeModelRoutingPlan, type ProviderConnectionReference, type ProviderConnectionReferenceTarget } from '@/core'
 
 export interface ConversationProviderReferenceReadInput {
   providerIds: readonly string[]
@@ -38,7 +38,8 @@ export function projectConversationProviderReference(
       role: 'model' as const,
     }] : []),
     ...(routingPlan ? [{ ...routingPlan.primary, role: 'primary' as const },
-      ...(routingPlan.mode === 'fallback' && routingPlan.backup ? [{ ...routingPlan.backup, role: 'backup' as const }] : [])] : []),
+      ...(routingPlan.mode === 'fallback' && routingPlan.backup ? [{ ...routingPlan.backup, role: 'backup' as const }] : []),
+      ...(routingPlan.mode === 'group' ? modelRoutingPlanTargets(routingPlan).slice(1).map(target => ({ ...target, role: 'member' as const })) : [])] : []),
   ].filter(target => ids.has(target.providerId))
   return {
     unreadable: false,

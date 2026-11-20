@@ -83,16 +83,18 @@ async function persistProviderUsageAttempt(input: ProviderUsageAttemptInput): Pr
     const providerId = bounded(input.provider.id, 120) || 'unknown-provider'
     const upstreamModel = bounded(input.upstreamModel, 240) || 'unknown-model'
     const plan = input.execution?.routingPlan
-    const usedBackup = plan && (plan.primaryProviderId !== providerId || plan.primaryModel !== (input.requestedModel ?? upstreamModel))
+    const originalProviderId = plan?.mode === 'group' ? plan.selectedProviderId : plan?.primaryProviderId
+    const originalModel = plan?.mode === 'group' ? plan.selectedModel : plan?.primaryModel
+    const usedBackup = plan && (originalProviderId !== providerId || originalModel !== (plan.mode === 'group' ? upstreamModel : input.requestedModel ?? upstreamModel))
     const attribution = resolveUsageRouteAttribution({
       actualProviderId: providerId,
       actualModel: upstreamModel,
-      originalProviderId: plan?.primaryProviderId ?? input.originalProviderId,
-      originalModel: plan?.primaryModel ?? input.originalModel,
+      originalProviderId: originalProviderId ?? input.originalProviderId,
+      originalModel: originalModel ?? input.originalModel,
       attempt: input.attempt,
       attemptReason: input.attemptReason,
       retryCount: input.retryCount,
-      failoverCount: input.failoverCount ?? (usedBackup ? 1 : undefined),
+      failoverCount: input.failoverCount ?? (usedBackup ? 1 : plan?.mode === 'group' ? 0 : undefined),
       attemptIdentity: input.attemptIdentity ?? recordId,
     })
     return await usageStatisticsService.record({

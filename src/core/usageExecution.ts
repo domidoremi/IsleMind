@@ -13,6 +13,9 @@ export interface UsageExecutionReference {
     readonly name: string
     readonly primaryProviderId: string
     readonly primaryModel: string
+    readonly mode?: 'group'
+    readonly selectedProviderId?: string
+    readonly selectedModel?: string
   }
 }
 
@@ -43,7 +46,10 @@ export function isUsageExecutionReference(value: unknown): value is UsageExecuti
 function validRoutingReceipt(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const plan = value as Record<string, unknown>
-  return Object.keys(plan).length === 4 && [['id', 120], ['name', 80], ['primaryProviderId', 120], ['primaryModel', 240]].every(([key, limit]) => {
+  const group = plan.mode === 'group'
+  const fields: [string, number][] = [['id', 120], ['name', 80], ['primaryProviderId', 120], ['primaryModel', 240],
+    ...(group ? [['selectedProviderId', 120], ['selectedModel', 240]] as [string, number][] : [])]
+  return Object.keys(plan).length === (group ? 7 : 4) && fields.every(([key, limit]) => {
     const text = plan[key as string]
     return typeof text === 'string' && text.trim() === text && text.length > 0 && text.length <= (limit as number) && !/[\u0000-\u001f\u007f]/u.test(text)
   })

@@ -43,3 +43,25 @@ it('validates request plan attribution and rejects secret-bearing or oversized r
   expect(isUsageExecutionReference({ ...execution, routingPlan: { ...execution.routingPlan, apiKey: 'secret' } })).toBe(false)
   expect(isUsageExecutionReference({ ...execution, routingPlan: { ...execution.routingPlan, name: 'x'.repeat(81) } })).toBe(false)
 })
+
+it('preserves group snapshots through member selection, branching and portable settings', () => {
+  const group: ModelRoutingPlan = { ...plan, mode: 'group', backup: undefined, group: {
+    model: 'first', strategy: 'round-robin', members: [plan.primary, { providerId: 'b', model: 'alias' }],
+  } }
+  const selected = applyConversationModelPreference(conversation, { providerId: 'b', model: 'alias', routingPlan: group }, 2)
+  const restored = parseConversationSnapshot(JSON.parse(JSON.stringify(selected)))!
+  const branch = createConversationBranchDraft({ ...selected, routingPlan: restored.routingPlan }, 'reply', { id: 'group-branch', title: 'Group branch', now: 3 })!
+  group.group!.members[1].model = 'changed'
+  branch.routingPlan!.group!.members.pop()
+  expect(restored.routingPlan!.group!.members[1].model).toBe('alias')
+  expect(sanitizeSettingsForPortableExport({ modelRoutingPlans: [restored.routingPlan!] } as Settings).modelRoutingPlans![0].group?.members).toHaveLength(2)
+})
+
+it('requires a complete group allocation receipt and excludes extra fields', () => {
+  const execution = { schema: 'islemind.request-execution.v1', logicalRequestId: 'group-request', requestStartedAt: 1,
+    routingPlan: { id: 'group', name: 'Group', primaryProviderId: 'a', primaryModel: 'first', mode: 'group', selectedProviderId: 'b', selectedModel: 'first' } }
+  expect(isUsageExecutionReference(execution)).toBe(true)
+  expect(isUsageExecutionReference({ ...execution, routingPlan: { ...execution.routingPlan, selectedModel: undefined } })).toBe(false)
+  expect(isUsageExecutionReference({ ...execution, routingPlan: { ...execution.routingPlan, mode: undefined } })).toBe(false)
+  expect(isUsageExecutionReference({ ...execution, routingPlan: { ...execution.routingPlan, apiKey: 'secret' } })).toBe(false)
+})

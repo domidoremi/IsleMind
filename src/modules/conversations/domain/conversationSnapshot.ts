@@ -10,7 +10,7 @@ import type {
 import * as v from 'valibot'
 import { normalizeConversationContextPolicy } from './conversationContextPolicy'
 import { normalizeConversationResourceScope, normalizeConversationScenePlanSource } from './conversationScenePlan'
-import { normalizeModelRoutingPlan, sameModelRoute, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
+import { normalizeModelRoutingPlan, isModelRoutingPlanTarget, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
 
 export const CONVERSATION_SNAPSHOT_SCHEMA = 'islemind.conversation-snapshot.v3'
 const PREVIOUS_CONVERSATION_SNAPSHOT_SCHEMA = 'islemind.conversation-snapshot.v2'
@@ -91,7 +91,7 @@ export function parseConversationSnapshot(value: unknown): ConversationSnapshot 
   if (scopeValue !== undefined && !resourceScopeOverride) return undefined
   const routingValue = (value as Record<string, unknown>).routingPlan
   const routingPlan = normalizeModelRoutingPlan(routingValue)
-  if (routingValue !== undefined && (!routingPlan || !sameModelRoute(routingPlan.primary,
+  if (routingValue !== undefined && (!routingPlan || !isModelRoutingPlanTarget(routingPlan,
     { providerId: parsed.output.providerId ?? '', model: parsed.output.model ?? '' }))) return undefined
 
   const messages = parsed.output.messages.flatMap<ChatMessageInput>((message) => {

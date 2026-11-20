@@ -11,6 +11,7 @@ export function attributeConversationUsageRequest(
   messageId: string,
   source: ProviderRuntimeUsageSource = 'chat',
 ): ProviderRuntimeChatRequest {
+  if (request.signal?.aborted || (request.conversationId && request.conversationId !== conversationId)) return request
   const message = useChatStore.getState().conversations.find(item => item.id === conversationId)
     ?.messages.find(item => item.id === messageId)
   if (!message || message.role !== 'assistant') return request
@@ -32,6 +33,8 @@ export function attributeConversationUsageRequest(
         requestStartedAt: Date.now(),
         responseExecutionId,
         messageId,
+        ...(request.usageContext?.execution?.routingPlan
+          ? { routingPlan: { ...request.usageContext.execution.routingPlan } } : {}),
         ...(parentRequestId ? { parentRequestId } : {}),
       },
     },

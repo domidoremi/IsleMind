@@ -4849,7 +4849,8 @@
       "model": "当前模型",
       "primary": "首选",
       "backup": "备用",
-      "default": "默认连接"
+      "default": "默认连接",
+      "member": "组成员"
     }
   },
   "gateway": {

@@ -4,7 +4,7 @@ export type ProviderConnectionReferenceKind = 'routing' | 'scene' | 'conversatio
 export interface ProviderConnectionReferenceTarget {
   providerId: string
   model?: string
-  role: 'model' | 'primary' | 'backup' | 'default'
+  role: 'model' | 'primary' | 'backup' | 'default' | 'member'
 }
 
 export interface ProviderConnectionReference {

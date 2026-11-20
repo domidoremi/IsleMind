@@ -11,6 +11,20 @@ import {
 } from './portableDataPayload'
 import { createPortableBackupEnvelope } from './portableBackupPolicy'
 
+it('restores a conversation bound to a non-primary group member with its independent plan snapshot', async () => {
+  const exported = await runtime().payloadRuntime.exportPayload()
+  const routingPlan = { schema: 'islemind.model-routing-plan.v1' as const, id: 'group', name: 'Group', mode: 'group' as const,
+    primary: { providerId: 'a', model: 'shared' }, crossProvider: 'ask' as const,
+    group: { model: 'shared', strategy: 'round-robin' as const, members: [{ providerId: 'a', model: 'shared' }, { providerId: 'b', model: 'alias' }] } }
+  exported.conversations = [{ id: 'group-chat', title: 'Group', providerId: 'b', model: 'alias', routingPlan,
+    systemPrompt: '', temperature: 0, maxTokens: 1, createdAt: 1, updatedAt: 2, messages: [] }]
+  const target = runtime()
+  expect((await target.payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(true)
+  expect(target.importedPlans[0].conversations[0].routingPlan).toEqual(routingPlan)
+  exported.conversations[0].providerId = 'unlisted'
+  expect((await runtime().payloadRuntime.importJson(JSON.stringify(exported))).ok).toBe(false)
+})
+
 it.each([{ enabledModels: [] }, { enabledModels: ['chosen-model'] }])('preserves model selections through portable restore: %j', async ({ enabledModels }) => {
   const exported = await runtime().payloadRuntime.exportPayload()
   exported.providers = [provider({ enabledModels })]

@@ -9,6 +9,14 @@ const settings: SettingsConnectionReferencePreferences = { defaultProvider: 'A',
   lastPreferredModel: { schema: 'islemind.global-model-preference.v1', providerId: 'A', model: 'Alias' },
   modelRoutingPlans: [route], scenePlans: [scene], modelFavorites: [{ providerId: 'A', modelId: 'Alias' }, { providerId: 'B', modelId: 'Alias' }] }
 
+it('includes every group member in route and scene references', () => {
+  const group: ModelRoutingPlan = { ...route, mode: 'group', group: { model: 'shared', strategy: 'priority', members: [route.primary, route.backup!] } }
+  const result = projectSettingsProviderReferences({ defaultProvider: null, modelRoutingPlans: [group],
+    scenePlans: [{ ...scene, configuration: { model: { target: route.primary, routingPlan: group } } }] }, ['B'])
+  expect(result.map(item => item.kind)).toEqual(['routing', 'scene'])
+  expect(result.every(item => item.targets[0].role === 'member' && item.targets[0].providerId === 'B')).toBe(true)
+})
+
 it('counts an object once while preserving each matching role and exact connection/model identity', () => {
   const result = projectSettingsProviderReferences(settings, ['A', 'B', 'A'])
   expect(result.filter(item => item.kind === 'routing')).toHaveLength(1)

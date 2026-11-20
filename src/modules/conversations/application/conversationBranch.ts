@@ -1,3 +1,4 @@
+import { normalizeModelRoutingPlan } from '@/core/modelRoutingPlan'
 import type { Conversation, Message } from '@/types/chatContracts'
 
 /**
@@ -42,8 +43,7 @@ export function createConversationBranchDraft(
     providerId: source.providerId,
     model: source.model,
     providerModelMode: source.providerModelMode,
-    ...(source.routingPlan ? { routingPlan: { ...source.routingPlan, primary: { ...source.routingPlan.primary },
-      ...(source.routingPlan.backup ? { backup: { ...source.routingPlan.backup } } : {}) } } : {}),
+    ...(source.routingPlan ? { routingPlan: normalizeModelRoutingPlan(source.routingPlan) } : {}),
     systemPrompt: source.systemPrompt,
     temperature: source.temperature,
     topP: source.topP,

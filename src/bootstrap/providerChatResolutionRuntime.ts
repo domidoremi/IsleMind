@@ -70,7 +70,7 @@ export const providerChatResolutionRuntime = createProviderChatResolutionRuntime
       for (const expected of catalog ?? []) {
         assertProviderConfiguration(current.find(provider => provider.id === expected.id), expected)
       }
-      if (!resolveProviderModelAliasAccess({ provider: selected, model: input.preferred.model,
+      if (!resolveProviderModelAliasAccess({ provider: selected, model: constraint.requestedModel ?? input.preferred.model,
         settings: readCurrentSettings() }).allowed) throw new Error('Provider access changed before dispatch')
       checkEvidence()
       checkHealth()

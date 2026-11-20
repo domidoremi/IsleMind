@@ -152,10 +152,11 @@ function callAttempt(id: string, overrides: Partial<UsageRecord> = {}): UsageRec
 }
 
 describeWithBunSqlite('SQLite execution identities and filtering', () => {
-  it('retains the selected routing plan in exact execution receipts after repository restart', async () => {
+  it.each([false, true])('retains the selected routing plan and group allocation (%s) after repository restart', async (group) => {
     const fixture = createBunSqliteFixture()
     try {
-      const routingPlan = { id: 'stable', name: 'Stable research', primaryProviderId: 'provider-1', primaryModel: 'model-1' }
+      const routingPlan = { id: 'stable', name: 'Stable research', primaryProviderId: 'provider-1', primaryModel: 'model-1',
+        ...(group ? { mode: 'group' as const, selectedProviderId: 'provider-2', selectedModel: 'model-1' } : {}) }
       const record = callAttempt('planned', { execution: { schema: 'islemind.request-execution.v1', logicalRequestId: 'planned-request',
         responseExecutionId: 'planned-answer', requestStartedAt: 50, routingPlan } })
       await createSqliteUsageRecordRepository(fixture.provider).append(record)

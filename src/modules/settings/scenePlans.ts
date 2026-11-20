@@ -1,4 +1,4 @@
-import { normalizeModelRoutingPlan, sameModelRoute, type ScenePlan, type ScenePlanConfiguration } from '@/core'
+import { normalizeModelRoutingPlan, isModelRoutingPlanTarget, type ScenePlan, type ScenePlanConfiguration } from '@/core'
 import { normalizeConversationContextPolicy } from '@/modules/conversations'
 
 export const SCENE_PLAN_LIMIT = 50
@@ -17,7 +17,7 @@ export function normalizeScenePlanConfiguration(value: unknown): ScenePlanConfig
       || !identity(value.model.target.providerId, 120) || !identity(value.model.target.model, 240)) return undefined
     const target = { providerId: value.model.target.providerId, model: value.model.target.model }
     const routingPlan = normalizeModelRoutingPlan(value.model.routingPlan)
-    if (value.model.routingPlan !== undefined && (!routingPlan || !sameModelRoute(routingPlan.primary, target))) return undefined
+    if (value.model.routingPlan !== undefined && (!routingPlan || !isModelRoutingPlanTarget(routingPlan, target))) return undefined
     next.model = { target, ...(routingPlan ? { routingPlan } : {}) }
   }
   for (const [field, count, length] of [['skillIds', 32, 120], ['enabledTools', 128, 320], ['knowledgeSources', 128, 120]] as const) {

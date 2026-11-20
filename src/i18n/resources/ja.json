@@ -4849,7 +4849,8 @@
       "model": "現在のモデル",
       "primary": "優先",
       "backup": "予備",
-      "default": "既定の接続"
+      "default": "既定の接続",
+      "member": "メンバー"
     }
   },
   "gateway": {

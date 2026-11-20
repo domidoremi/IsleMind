@@ -4857,7 +4857,8 @@
       "model": "Current model",
       "primary": "Preferred",
       "backup": "Backup",
-      "default": "Default connection"
+      "default": "Default connection",
+      "member": "Group member"
     }
   },
   "gateway": {

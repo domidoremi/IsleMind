@@ -1,5 +1,5 @@
 import type { ScenePlan, ScenePlanConfiguration, ToolDeclarationMode } from '@/core'
-import { normalizeModelRoutingPlan, sameModelRoute, snapshotPlainData } from '@/core'
+import { normalizeModelRoutingPlan, isModelRoutingPlanTarget, snapshotPlainData } from '@/core'
 import type { Conversation } from '@/types/chatContracts'
 import type { SkillDefinition, SkillVariable } from '@/types/skillContracts'
 import type { SkillApplyResult } from './conversationSkillPolicy'
@@ -73,7 +73,7 @@ export function applyConversationScenePlanPatch(conversation: Conversation, patc
   if (next.resourceScopeOverride !== undefined && !normalizeConversationResourceScope(next.resourceScopeOverride)) throw new Error(CONVERSATION_SCENE_PLAN_INVALID)
   if (next.routingPlan !== undefined) {
     const plan = normalizeModelRoutingPlan(next.routingPlan)
-    if (!plan || !sameModelRoute(plan.primary, { providerId: next.providerId ?? '', model: next.model ?? '' })) throw new Error(CONVERSATION_SCENE_PLAN_INVALID)
+    if (!plan || !isModelRoutingPlanTarget(plan, { providerId: next.providerId ?? '', model: next.model ?? '' })) throw new Error(CONVERSATION_SCENE_PLAN_INVALID)
     next.routingPlan = plan
   }
   return next

@@ -1,11 +1,11 @@
-import { normalizeModelRoutingPlan, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
+import { modelRoutingPlanTargets, normalizeModelRoutingPlan, type ModelRoutingPlan } from '@/core/modelRoutingPlan'
 import type { ProviderFailoverPolicy } from './providerFailoverPolicy'
 
 export function routingPlanPolicy(plan: ModelRoutingPlan, restrictions?: Partial<ProviderFailoverPolicy>): Partial<ProviderFailoverPolicy> {
   if (!normalizeModelRoutingPlan(plan)) return { mode: 'off' }
   const policy: Partial<ProviderFailoverPolicy> = plan.mode === 'fixed' ? { mode: 'off' } : {
     mode: plan.crossProvider === 'allow' ? 'approved-providers' : 'ask-before-cross-provider',
-    approvedProviderIds: [plan.backup!.providerId],
+    approvedProviderIds: plan.mode === 'group' ? modelRoutingPlanTargets(plan).map(target => target.providerId) : [plan.backup!.providerId],
     // Choosing a named backup explicitly permits its price class. No claim is
     // made about its actual price; capability/access/continuation checks remain.
     allowHigherCostTier: true,
