@@ -25,3 +25,9 @@
 fullAcceptance、nativeVerified、visualAcceptance及广义loadedRuntimeVerified保持false。[完整目标](../architecture/full-application-improvement-goal.md)
 
 证据：[密钥回归](../../test-evidence/implementation/native-routing-groups-20261115-01/credential-selection-validation-20261120-1689.json)、[产品提交推送](../../test-evidence/implementation/native-routing-groups-20261115-01/credential-selection-commit-push-20261120-1691.json)、[场景提示词与焦点](./source-scene-prompt-focus-2026-11-20.md)、[场景返回](./source-scene-return-2026-11-20.md)、[Web字段矩阵](./source-scene-web-editor-2026-11-20.md)。
+
+## 实际发布
+
+版本提交`6ee8bd9af5aca1646a260072c0cc6d2696eabd8d`已推送，v1.1.19于2026-11-20 15:09:25（台北）实际发布。标签固定到版本提交，公开三语正文逐字一致，GitHub API核对公开稳定状态和最新版本。45个历史Release、既有标签与41条Actions任务保持，没有新增任务。详见[发布记录](./source-release-1.1.19-2026-11-20.md)。
+
+五组版本元数据、计数、三语内容、文档链接及原有改动保护检查，以及22项版本契约测试通过。487个原有未完成路径除package版本字段外保持；没有构建、导出、安装或上传APK。
