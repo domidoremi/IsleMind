@@ -51,8 +51,8 @@ Network access is limited to:
 
 | Item | Value |
 |---|---|
-| Current source version | `1.1.19` |
-| Source Android versionCode | `144` |
+| Current source version | `1.1.20` |
+| Source Android versionCode | `145` |
 | APK candidate version | `1.1.2` |
 | APK candidate Android versionCode | `127` |
 | APK candidate channel | Preview |
@@ -61,13 +61,13 @@ The source version may lead the APK candidate. The website and update catalog cu
 
 ### What’s new in the source
 
-- Clearly identify routing configurations saved in scenes as independent copies.
-- Keep the new prompt after applying a scene instead of restoring an older draft.
-- Release focus when shared input fields close and handle focus correctly after switching between single-line and multiline inputs.
-- Return to the original scene with its selection and application state after opening a conversation.
-- Honor saved preferred-key and rotation settings, and prevent reuse of the old primary key when every credential is disabled.
+- Same-model routing groups support priority, round-robin and health-first selection, with independent conversation copies and usage attribution.
+- Preserve complete large model catalogs, credential ownership and saved model details.
+- Show every routing-group member, selection strategy and cross-provider rule in scene previews.
+- Apply model selections consistently to available models and fallback access, and retain selections after catalog refreshes.
+- Preserve concurrent configuration changes during model discovery, handle empty catalogs correctly and use the owning credential for model checks.
 
-[Full release notes](docs/release/v1.1.19.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.19)
+[Full release notes](docs/release/v1.1.20.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.20)
 
 ### APK variants
 
@@ -241,7 +241,7 @@ When production signing secrets are unavailable, explicitly use
 `node scripts/build-local-android-apk.js --release --unsigned --variant no-model --release-arch arm64-v8a`.
 This keeps the real production package/version and non-debuggable release behavior;
 it does not substitute a debug certificate, install the APK or publish anything.
-For the current source version, the output is `dist-apk/IsleMind-1.1.19-android-release-unsigned-no-model-arm64-v8a.apk`
+For the current source version, the output is `dist-apk/IsleMind-1.1.20-android-release-unsigned-no-model-arm64-v8a.apk`
 with `.sha256` and `.source-snapshot.json` sidecars. Signed release qualification still
 requires legitimate production signing and exact-artifact installation/runtime checks.
 
