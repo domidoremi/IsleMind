@@ -1668,7 +1668,7 @@ export function ProviderFormModal({
   const [keyboardFrame, setKeyboardFrame] = useState<KeyboardFrameSnapshot | null>(null)
   const webKeyboardInset = useWebVisualKeyboardInset(visible)
   const preset = getProviderPreset(presetId)
-  const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
+  const providerConfigDraft = resolveProviderConfigDraft({ provider: importedConnection ?? {}, presetId, baseUrl, wireProtocol })
   const validationCredentialGroups = useMemo(() => parseCredentialGroups(keysText, {
     explicit: true,
     previousGroups: importedConnection?.credentialGroups,
@@ -1859,6 +1859,9 @@ export function ProviderFormModal({
 
   function selectPreset(nextPresetId: ProviderPresetId) {
     protocolChoiceRef.current = false
+    setImportedConnection(current => current ? {
+      ...current, credentialMode: undefined, tokenPlanRegion: undefined,
+    } : null)
     setLanSetup(false)
     setPresetPickerOpen(false)
     const currentPreset = getProviderPreset(presetId)
@@ -1885,7 +1888,7 @@ export function ProviderFormModal({
     protocolChoiceRef.current = true
     setWireProtocol(nextProtocol)
     const shouldReplaceBaseUrl = !baseUrlDirty || isPresetDefaultBaseUrl(baseUrl, presetId, wireProtocol)
-    setBaseUrl(resolveProviderConfigDraft({ provider: {}, presetId, baseUrl: shouldReplaceBaseUrl ? '' : baseUrl, wireProtocol: nextProtocol }).baseUrl)
+    setBaseUrl(resolveProviderConfigDraft({ provider: importedConnection ?? {}, presetId, baseUrl: shouldReplaceBaseUrl ? '' : baseUrl, wireProtocol: nextProtocol }).baseUrl)
     setBaseUrlDirty(!shouldReplaceBaseUrl)
   }
 
