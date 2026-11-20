@@ -3254,7 +3254,8 @@
     "stageFailed": "{{name}} の有効化に失敗しました",
     "stageMissingToken": "{{name}} はトークンがありません",
     "stageNoModels": "{{name}} に利用可能なモデルがありません",
-    "stageProviderMissing": "{{name}} が見つかりません"
+    "stageProviderMissing": "{{name}} が見つかりません",
+    "modelsAwaitSelection": "モデル取得済み・選択待ち"
   },
   "apiKeyPanel": {
     "workspaceOverview": "概要",

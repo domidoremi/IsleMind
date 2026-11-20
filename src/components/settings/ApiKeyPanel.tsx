@@ -606,9 +606,10 @@ export function ApiKeyPanel({
       setTask('syncing')
       const current = useSettingsStore.getState().providers.find((item) => item.id === provider.id) ?? provider
       const result = await syncAndTestProvider(current, {
-        updateProvider: (providerId, updates) => useSettingsStore.getState().updateProvider(providerId, updates),
-        hydrateProviderKey: (providerId) => useSettingsStore.getState().hydrateProviderKey(providerId),
-        updateProviderCredentialGroupHealth: (providerId, groupId, ok) => useSettingsStore.getState().updateProviderCredentialGroupHealth(providerId, groupId, ok),
+        readProviderConfiguration: providerId => useSettingsStore.getState().providers.find(item => item.id === providerId),
+        updateProvider: (providerId, updates, options) => useSettingsStore.getState().updateProvider(providerId, updates, options),
+        hydrateProviderKey: (providerId, options) => useSettingsStore.getState().hydrateProviderKey(providerId, { signal: options?.signal }),
+        updateProviderCredentialGroupHealth: (providerId, groupId, ok, options) => useSettingsStore.getState().updateProviderCredentialGroupHealth(providerId, groupId, ok, options),
       }, {
         enable: provider.enabled,
         testModels: false,

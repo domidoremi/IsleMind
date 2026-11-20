@@ -5,6 +5,7 @@ import { chooseCredentialForModel, runCredentialGroupModelSync } from './provide
 import { createProviderFallbackCandidateBuilder } from './providerFallbackCandidates'
 import { providerForRuntimeFallback } from './providerRuntimeFallback'
 import { createProviderMetadataPersistence } from './providerMetadataPersistence'
+import { createProviderActivation } from './providerActivation'
 
 const key = (id: string, models: string[], overrides: Partial<ProviderCredentialGroup> = {}): ProviderCredentialGroup => ({
   id, label: id, apiKey: `synthetic-${id}`, enabled: true, availableModels: models, lastModelSyncStatus: 'ok', ...overrides,
@@ -31,6 +32,28 @@ function expectNoStaleModel(p: AIProvider) {
 
 it.each([true, false])('does not revive a tested model after an empty catalog, grouped=%s', grouped => {
   expectNoStaleModel(provider({ models: [], ...(grouped ? {} : { credentialGroups: undefined }) }))
+})
+
+it.each([false, true])('reports empty catalog discovery as successful while preserving readiness, testModels=%s', async testModels => {
+  let saved = provider({ models: [], lastTestModel: 'stale' })
+  const test = jest.fn()
+  const activation = createProviderActivation({
+    translate: key => key,
+    synchronizeProviderCredentials: async source => ({ ok: true, code: 'ok', message: 'Fetched', data: await runCredentialGroupModelSync(source, { fetchModels: async () => [] }) }),
+    testProviderModel: test,
+    getAvailableModels: getProviderAvailableModels, getManualModels: p => p.manualModels ?? [], getPreferredModel: getProviderPreferredModel,
+    isChatCompatibleModel: () => true, isModelAllowed: (p, model) => providerHasPolicyModel(p, model),
+  })
+  const result = await activation.syncAndTestProvider(saved, {
+    updateProvider: async (_id, update) => { saved = { ...saved, ...update } },
+    hydrateProviderKey: async () => ({ ...saved, apiKey: 'synthetic-primary', credentialGroups: saved.credentialGroups?.map(group => ({ ...group, apiKey: 'synthetic-key' })) }),
+    updateProviderCredentialGroupHealth: async () => undefined,
+  }, { testModels })
+  expect(result).toMatchObject({ synced: true, syncedGroups: 1, modelCount: 0, ready: false, tested: false })
+  expect(result.failures).toHaveLength(testModels ? 1 : 0)
+  expect(test).not.toHaveBeenCalled()
+  expect(saved.lastTestModel).toBeUndefined()
+  expectNoStaleModel(saved)
 })
 
 it('does not turn old aggregate metadata into models after all owning keys are disabled', () => {

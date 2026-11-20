@@ -18,7 +18,7 @@ export const PROVIDER_PERFORMANCE_FIXTURE_IDS = [
   'provider-settings-policy-cache-is-lazy',
   'provider-settings-heavy-sort-rail-is-gated',
   'provider-settings-detail-mount-is-deferred',
-  'batch-activation-provider-updates-are-coalesced',
+  'batch-activation-provider-persistence-is-deferred',
   'specific-model-validation-checks-source',
   'diagnostics-heavy-provider-scan-is-bounded',
   'activation-failure-noise-is-grouped',
@@ -219,9 +219,9 @@ export function runProviderPerformanceGuardSelfTest(
       detail: 'source guard: imported/heavy lists acknowledge row taps before mounting the expensive inline provider editor',
     },
     {
-      fixtureId: 'batch-activation-provider-updates-are-coalesced',
+      fixtureId: 'batch-activation-provider-persistence-is-deferred',
       passed: true,
-      detail: 'source guard: batch activation merges provider patches before publishing them to the settings store',
+      detail: 'source guard: conditional activation patches defer metadata persistence while updating current configuration',
     },
     {
       fixtureId: 'specific-model-validation-checks-source',

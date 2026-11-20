@@ -1,9 +1,13 @@
+import type { ProviderActivationStageEvent, ProviderActivationOperationOptions, ProviderActivationPorts } from './providerActivationPorts'
+export type { ProviderActivationStageEvent, ProviderActivationOperationOptions, ProviderActivationPorts } from './providerActivationPorts'
 import { setExecutionTimeout, clearExecutionTimeout } from '@/core/executionTimers'
 import type { Settings } from '@/types/settingsContracts'
 import type { AIProvider, ProviderOperationCode } from '@/types/providerContracts'
 import type { ProviderModelTestEvidenceResult } from './providerModelTestEvidence'
 import { projectProviderModelTestHealth } from './providerModelTestHealthProjection'
 import type { ProviderOperationResult } from './providerOperationResult'
+import { bindProviderActivationConfiguration } from './providerActivationConfigurationBoundary'
+import { credentialCanUseProviderModel, primaryCredentialModelCatalog, type CredentialModelCatalog } from './providerModelCatalog'
 
 const ACTIVATION_TEST_MODELS_PER_CREDENTIAL = 3
 const ACTIVATION_RETRY_DELAY_MS = 450
@@ -50,38 +54,6 @@ export interface ProviderActivationFailure {
   model?: string
   code?: ProviderOperationCode
   message: string
-}
-
-export interface ProviderActivationStageEvent {
-  providerId: string
-  providerName: string
-  stage: 'enabled' | 'syncing' | 'testing' | 'done' | 'failed'
-  message: string
-  tone: 'mint' | 'amber' | 'danger'
-}
-
-export interface ProviderActivationOperationOptions {
-  signal?: AbortSignal
-}
-
-export interface ProviderActivationPorts {
-  updateProvider(
-    id: string,
-    updates: Partial<AIProvider>,
-    options?: ProviderActivationOperationOptions,
-  ): Promise<void>
-  hydrateProviderKey(
-    id: string,
-    options?: ProviderActivationOperationOptions,
-  ): Promise<AIProvider | null>
-  updateProviderCredentialGroupHealth(
-    providerId: string,
-    groupId: string | undefined,
-    ok: boolean,
-    options?: ProviderActivationOperationOptions,
-  ): Promise<void>
-  delay?(ms: number, options?: ProviderActivationOperationOptions): Promise<void> | void
-  onStage?(event: ProviderActivationStageEvent): void
 }
 
 export interface ProviderActivationDependencies {
@@ -182,6 +154,7 @@ export function createProviderActivation(
     options: ProviderActivationOptions,
   ): Promise<ProviderActivationResult> {
     const operation = activationOperation(options.signal)
+    ports = bindProviderActivationConfiguration(provider.id, ports)
     if (options.enable && !provider.enabled) {
       await updateProvider(ports, provider.id, { enabled: true }, operation)
       emitStage(ports, {
@@ -268,15 +241,22 @@ export function createProviderActivation(
       throwIfProviderActivationAborted(options.signal)
       current = hydrated ?? sync.data
       result.modelCount = countPolicyAllowedAvailableModels(current, options.accessSettings)
-      result.syncedGroups = countSyncedGroups(current, options.accessSettings)
+      result.syncedGroups = countSyncedGroups(current)
     }
-    result.synced = sync.ok && result.syncedGroups > 0 && result.modelCount > 0
+    result.synced = sync.ok && result.syncedGroups > 0
     if (!sync.ok || !result.synced) {
       collectSyncFailures(result, current, sync.message)
     }
 
     if (options.testModels !== true) {
       const preferredModel = dependencies.getPreferredModel(current)
+      if (result.synced && result.modelCount === 0) {
+        await clearLastModelTest(ports, provider.id, undefined, operation)
+        emitStage(ports, { providerId: provider.id, providerName: provider.name, stage: 'done',
+          message: translate(countPolicyAllowedAvailableModels({ ...current, enabledModels: undefined }, options.accessSettings) > 0
+            ? 'providerActivation.modelsAwaitSelection' : 'providerSettings.addModelHint'), tone: 'mint' }, options.signal)
+        return result
+      }
       if (!preferredModel) {
         pushFailure(result, translate('providerActivation.noModels'), { code: 'empty_models' })
         await clearLastModelTest(ports, provider.id, undefined, operation)
@@ -417,61 +397,53 @@ export function createProviderActivation(
     requestedModel?: string,
     settings?: ProviderActivationAccessSettings,
   ): ProviderActivationTestCandidate[] {
+    const grouped = !!provider.credentialGroups?.length
     const enabledGroups = provider.credentialGroups?.filter(
       (group) => group.enabled && group.apiKey?.trim(),
     ) ?? []
+    const canUse = (catalog: CredentialModelCatalog, model: string): boolean => {
+      const upstream = provider.modelAliases?.find(alias =>
+        alias.alias.trim().toLowerCase() === model.trim().toLowerCase() && alias.model.trim(),
+      )?.model.trim() || model.trim()
+      return credentialCanUseProviderModel(provider, catalog, model, upstream)
+    }
     const testModel = requestedModel?.trim()
-    if (testModel && dependencies.isModelAllowed(provider, testModel, settings)) {
-      if (enabledGroups.length) {
-        return dedupeCandidates(enabledGroups.map((group) => ({
-          groupId: group.id,
-          groupLabel: group.label,
-          apiKey: group.apiKey!.trim(),
-          model: testModel,
+    if (testModel) {
+      // A requested test must stay on that model and its owning credentials.
+      if (!dependencies.isModelAllowed(provider, testModel, settings)) return []
+      if (grouped) {
+        return dedupeCandidates(enabledGroups.filter(group => canUse(group, testModel)).map(group => ({
+          groupId: group.id, groupLabel: group.label, apiKey: group.apiKey!.trim(), model: testModel,
         })))
       }
-      if (provider.apiKey?.trim()) return [{ apiKey: provider.apiKey.trim(), model: testModel }]
+      return provider.apiKey?.trim() && canUse(primaryCredentialModelCatalog(provider), testModel)
+        ? [{ apiKey: provider.apiKey.trim(), model: testModel }] : []
     }
 
-    const syncedGroups = enabledGroups.filter((group) => group.lastModelSyncStatus === 'ok')
-    const candidates = syncedGroups.flatMap((group) => {
-      const models = selectActivationTestModels(provider, group.availableModels ?? [], settings)
-      return models.map((model) => ({
-        groupId: group.id,
-        groupLabel: group.label,
-        apiKey: group.apiKey!.trim(),
-        model,
-      }))
-    })
+    const syncedGroups = enabledGroups.filter(group => group.lastModelSyncStatus === 'ok')
+    const candidates = syncedGroups.flatMap(group =>
+      selectActivationTestModels(provider, group.availableModels ?? [], settings)
+        .filter(model => canUse(group, model))
+        .map(model => ({ groupId: group.id, groupLabel: group.label, apiKey: group.apiKey!.trim(), model })),
+    )
     if (candidates.length) return dedupeCandidates(candidates)
 
-    const manualModels = selectActivationTestModels(
-      provider,
-      dependencies.getManualModels(provider),
-      settings,
-    )
+    const manualModels = selectActivationTestModels(provider, dependencies.getManualModels(provider), settings)
     if (manualModels.length) {
-      if (enabledGroups.length) {
-        return dedupeCandidates(enabledGroups.flatMap((group) => manualModels.map((model) => ({
-          groupId: group.id,
-          groupLabel: group.label,
-          apiKey: group.apiKey!.trim(),
-          model,
-        }))))
+      if (grouped) {
+        return dedupeCandidates(enabledGroups.flatMap(group => manualModels.filter(model => canUse(group, model))
+          .map(model => ({ groupId: group.id, groupLabel: group.label, apiKey: group.apiKey!.trim(), model }))))
       }
       if (provider.apiKey?.trim()) {
-        return manualModels.map((model) => ({ apiKey: provider.apiKey.trim(), model }))
+        return manualModels.filter(model => canUse(primaryCredentialModelCatalog(provider), model))
+          .map(model => ({ apiKey: provider.apiKey.trim(), model }))
       }
     }
 
-    if (
-      !enabledGroups.length &&
-      provider.apiKey?.trim() &&
-      provider.lastModelSyncStatus === 'ok' &&
-      provider.models.length
-    ) {
+    if (!grouped && provider.apiKey?.trim() && provider.lastModelSyncStatus === 'ok' && provider.models.length) {
       return selectActivationTestModels(provider, provider.models, settings)
-        .map((model) => ({ apiKey: provider.apiKey.trim(), model }))
+        .filter(model => canUse(primaryCredentialModelCatalog(provider), model))
+        .map(model => ({ apiKey: provider.apiKey.trim(), model }))
     }
     return []
   }
@@ -496,16 +468,10 @@ export function createProviderActivation(
     return uniqueModels([...preferred, ...allowed]).slice(0, ACTIVATION_TEST_MODELS_PER_CREDENTIAL)
   }
 
-  function countSyncedGroups(
-    provider: AIProvider,
-    settings?: ProviderActivationAccessSettings,
-  ): number {
+  function countSyncedGroups(provider: AIProvider): number {
     return provider.credentialGroups?.filter((group) =>
       group.enabled &&
-      group.lastModelSyncStatus === 'ok' &&
-      (group.availableModels ?? []).some((model) =>
-        dependencies.isModelAllowed(provider, model, settings),
-      )
+      group.lastModelSyncStatus === 'ok'
     ).length ?? 0
   }
 

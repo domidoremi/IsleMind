@@ -72,7 +72,7 @@ async function run() {
       'provider-settings-policy-cache-is-lazy',
       'provider-settings-heavy-sort-rail-is-gated',
       'provider-settings-detail-mount-is-deferred',
-      'batch-activation-provider-updates-are-coalesced',
+      'batch-activation-provider-persistence-is-deferred',
       'specific-model-validation-checks-source',
       'diagnostics-heavy-provider-scan-is-bounded',
       'activation-failure-noise-is-grouped',
@@ -141,17 +141,17 @@ async function run() {
   assertSourceIncludes('src/services/providerActivationIssueSummary.ts', 'summarizeProviderActivationIssueGroups', 'provider activation groups repeated failures')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'ActivationIssueGroupList', 'provider settings renders grouped activation issues')
   assertSourceIncludes('src/store/settingsStore.ts', 'updateProviderPatches', 'settings store can publish multiple provider patches in one update')
-  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'createProviderActivationPatchBuffer', 'batch provider activation coalesces provider store writes')
+  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'readProviderConfiguration:', 'batch activation checks the live configuration before each conditional mutation')
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', "from '@/modules/providers'", 'provider activation consumes the provider module public API')
-  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'signal: abortController.signal', 'provider activation passes its exact cancellation signal to the patch buffer')
-  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'await patchBuffer?.close()', 'provider activation awaits the final buffered persistence flush')
-  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'patchBuffer?.dispose()', 'provider activation disposes its patch buffer lifecycle')
+  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'signal: abortController.signal', 'provider activation passes its exact cancellation signal to the conditional mutation path')
+  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'flushProviderPersistence()', 'batch activation flushes deferred metadata persistence')
+  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'controller?.abort()', 'provider activation cancels its owned lifecycle')
   assertSourceIncludes('src/modules/providers/providerActivationPatchBuffer.ts', 'enqueueCredentialGroupHealth', 'provider module coalesces credential group health into buffered patches')
   assertSourceIncludes('src/modules/providers/index.ts', "export * from './providerActivationPatchBuffer'", 'provider module publishes the activation patch buffer')
   const legacyPatchBufferPath = path.join(root, 'src', 'services', 'providerActivationPatchBuffer.ts')
   assert.equal(fs.existsSync(legacyPatchBufferPath), false, 'legacy provider activation patch buffer is deleted after cutover')
-  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'hydrateProviderForActivation', 'batch provider activation hydrates against pending coalesced patches')
-  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT', 'batch provider activation has an explicit patch flush bound')
+  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'hydrateProviderForActivation', 'batch provider activation hydrates against current configuration')
+  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', "persist: mode === 'single' ? 'immediate' : 'deferred'", 'batch provider activation defers persistence while validating each store mutation')
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'foregroundService: true', 'batch provider activation publishes a foreground-service progress notification')
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'await publishProviderActivationStatusNotification(', 'batch provider activation starts its foreground-service notification before network work')
   await assertActivationPatchBufferKeepsCredentialGroupHealth()

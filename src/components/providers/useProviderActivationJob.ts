@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useIsleDialog } from '@/components/ui/isle'
 import { composeUserFacingError, extractUserFacingErrorDetail } from '@/core'
-import { createProviderActivationPatchBuffer, type ProviderActivationPatchBuffer } from '@/modules/providers'
+import { ProviderConfigurationConflictError } from '@/modules/providers'
 import { isProviderActivationReady, syncAndTestProvider, summarizeProviderActivation, type ProviderActivationResult } from '@/bootstrap/providerActivationRuntime'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { summarizeProviderActivationIssueGroups } from '@/services/providerActivationIssueSummary'
@@ -14,8 +14,6 @@ import type { AIProvider } from '@/types/providerContracts'
 export type ProviderActivationMode = 'single' | 'batch' | 'all'
 
 const ACTIVATION_JOB_VISIBLE_ITEM_LIMIT = 8
-const ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT = 8
-const ACTIVATION_PROVIDER_PATCH_FLUSH_MS = 64
 let activationNotificationSequence = 0
 
 function createProviderNotificationOwner(): string {
@@ -35,7 +33,6 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
   const settings = useSettingsStore((state) => state.settings)
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
-  const updateProviderPatches = useSettingsStore((state) => state.updateProviderPatches)
   const updateProviderCredentialGroupHealth = useSettingsStore((state) => state.updateProviderCredentialGroupHealth)
   const flushProviderPersistence = useSettingsStore((state) => state.flushProviderPersistence)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
@@ -89,26 +86,10 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
     activationNotificationOwner.current = notificationOwner
     setActivationBusy(true)
     clearActivationNotificationTimer()
-    let patchBuffer: ProviderActivationPatchBuffer | null = null
     try {
       let activationItems = createActivationItems(chosen, t('providerSettings.activationQueued'))
       const progressThrottleMs = chosen.length > 1 ? 240 : 0
-      patchBuffer = mode === 'single'
-        ? null
-        : createProviderActivationPatchBuffer({
-            flushPatches: (patches) => updateProviderPatches(patches, { persist: 'deferred' }),
-            hydrateProviderKey: (providerId, signal) => hydrateProviderKey(providerId, { signal }),
-            flushLimit: ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT,
-            flushMs: ACTIVATION_PROVIDER_PATCH_FLUSH_MS,
-            signal: abortController.signal,
-          })
-      const hydrateProviderForActivation = async (providerId: string) => {
-        // Discovery captures committed configuration authority, not the overlay.
-        // A delayed enable write would otherwise invalidate its own admission.
-        await patchBuffer?.flush()
-        const hydrated = await hydrateProviderKey(providerId)
-        return patchBuffer?.apply(providerId, hydrated) ?? hydrated
-      }
+      const hydrateProviderForActivation = (providerId: string) => hydrateProviderKey(providerId, { signal: abortController.signal })
       let lastProgressPublishedAt = 0
       let pendingProgressUpdate: ActivationNotificationJob | null = null
       let progressPublishTimer: ReturnType<typeof setTimeout> | null = null
@@ -197,13 +178,14 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           stage: currentStage,
         }, currentStage, providerDisplayName)
         const result = await syncAndTestProvider(provider, {
-          updateProvider: (providerId, updates) => mode === 'single'
-            ? updateProvider(providerId, updates, { persist: 'immediate' })
-            : patchBuffer!.enqueue(providerId, updates),
+          readProviderConfiguration: providerId => useSettingsStore.getState().providers.find(item => item.id === providerId),
+          updateProvider: (providerId, updates, options) => updateProvider(providerId, updates, {
+            ...options, persist: mode === 'single' ? 'immediate' : 'deferred',
+          }),
           hydrateProviderKey: hydrateProviderForActivation,
-          updateProviderCredentialGroupHealth: (providerId, groupId, ok) => mode === 'single'
-            ? updateProviderCredentialGroupHealth(providerId, groupId, ok, { persist: 'immediate' })
-            : patchBuffer!.enqueueCredentialGroupHealth(providerId, groupId, ok),
+          updateProviderCredentialGroupHealth: (providerId, groupId, ok, options) => updateProviderCredentialGroupHealth(providerId, groupId, ok, {
+            ...options, persist: mode === 'single' ? 'immediate' : 'deferred',
+          }),
           onStage: (event) => {
             const stageMessage = !provider.name || providerDisplayName === provider.name
               ? event.message
@@ -239,7 +221,8 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
             messages: [],
             failures: [{
               providerName: providerDisplayName,
-              message: composeUserFacingError(t('providerSettings.activationFailed'), extractUserFacingErrorDetail(error)),
+              message: error instanceof ProviderConfigurationConflictError ? t('settingsWorkspace.conflict')
+                : composeUserFacingError(t('providerSettings.activationFailed'), extractUserFacingErrorDetail(error)),
             }],
           }
         })
@@ -274,7 +257,6 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         publishActivationItems(activationItems, t('providerSettings.activationStartedMessage', { count: chosen.length, concurrency: activationConcurrency }))
       }
       const results = await runProviderActivationPool(chosen, activationConcurrency, runProviderActivation, activationPolicy.afterProviderDelayMs, abortController.signal)
-      await patchBuffer?.close()
       activationItems = finalizeActivationItemsFromResults(activationItems, results)
       flushActivationProgress()
 
@@ -335,7 +317,6 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
     } catch (error) {
       if (!isAbortError(error)) throw error
     } finally {
-      patchBuffer?.dispose()
       void clearAndroidStatusNotification({ owner: notificationOwner })
       if (activationNotificationOwner.current === notificationOwner) activationNotificationOwner.current = null
       if (activationAbortController.current === abortController) activationAbortController.current = null

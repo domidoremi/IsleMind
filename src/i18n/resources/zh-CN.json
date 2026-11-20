@@ -3254,7 +3254,8 @@
     "stageFailed": "{{name}} 激活失败",
     "stageMissingToken": "{{name}} 缺少令牌",
     "stageNoModels": "{{name}} 没有可用模型",
-    "stageProviderMissing": "{{name}} 不存在"
+    "stageProviderMissing": "{{name}} 不存在",
+    "modelsAwaitSelection": "模型已获取，待选择"
   },
   "apiKeyPanel": {
     "workspaceOverview": "概览",
