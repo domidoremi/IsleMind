@@ -20,7 +20,7 @@ import {
   secureKeyValueStorage,
 } from '@/bootstrap/secureCredentialStorage'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, normalizeProviderSyncPolicy } from '@/bootstrap/providerRegistry'
-import { withoutProviderCredentialHealth, preserveProviderCredentialHealth, assertProviderConfiguration, ProviderConfigurationConflictError, snapshotProviderConfiguration, normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, sanitizeProviderUsageQueryConfiguration, type ProviderConfigurationMutationOptions, type ProviderCredentialMutation, type ProviderCredentialMutationOptions } from '@/modules/providers'
+import { withoutProviderCredentialHealth, preserveProviderCredentialHealth, assertProviderSelectionConfiguration, assertProviderConfiguration, ProviderConfigurationConflictError, snapshotProviderConfiguration, normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, sanitizeProviderUsageQueryConfiguration, type ProviderConfigurationMutationOptions, type ProviderCredentialMutation, type ProviderCredentialMutationOptions } from '@/modules/providers'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
 import { clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
 import { buildProviderModelConfigsForStorage, hasRedundantProviderModelStorage, normalizeCredentialGroupModelsForStorage, normalizeProviderModelsForStorage } from '@/utils/providerModelStorage'
@@ -67,7 +67,7 @@ interface SettingsState {
   getSecureApiKey: (id: string) => Promise<string | null>
   setProviderCredentialGroupKey: (providerId: string, groupId: string, apiKey: string) => Promise<void>
   getProviderCredentialGroupKey: (providerId: string, groupId: string) => Promise<string | null>
-  updateProviderCredentialGroupHealth: (providerId: string, groupId: string | undefined, ok: boolean, options?: ProviderUpdateOptions) => Promise<void>
+  updateProviderCredentialGroupHealth: (providerId: string, groupId: string | undefined, ok: boolean, options?: ProviderCredentialHealthOptions) => Promise<void>
   setTavilyApiKey: (apiKey: string) => Promise<void>
   getTavilyApiKey: () => Promise<string | null>
   setGoogleSearchApiKey: (apiKey: string) => Promise<void>
@@ -122,6 +122,10 @@ interface ProviderEditOptions extends ProviderUpdateOptions {
 
 interface ProviderUpdateOptions extends ProviderConfigurationMutationOptions {
   persist?: 'immediate' | 'deferred'
+}
+
+interface ProviderCredentialHealthOptions extends ProviderUpdateOptions {
+  expectedCredential?: Pick<AIProvider, 'apiKey' | 'type' | 'baseUrl'>
 }
 
 interface ProviderPatch {
@@ -911,9 +915,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     return providerCredentialStorage.getCredentialGroupCredential(providerId, groupId)
   },
 
-  updateProviderCredentialGroupHealth: async (providerId: string, groupId: string | undefined, ok: boolean, options?: ProviderUpdateOptions) => {
+  updateProviderCredentialGroupHealth: async (providerId: string, groupId: string | undefined, ok: boolean, options?: ProviderCredentialHealthOptions) => {
     if (!groupId) return
-    set((state) => {
+    const expected = options?.expectedCredential && { ...options.expectedCredential }
+    const update = () => set((state) => {
       const now = Date.now()
       const updated = state.providers.map((provider) => {
         if (provider.id !== providerId || !provider.credentialGroups?.length) return provider
@@ -932,6 +937,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       })
       persistProvidersSnapshot(updated, options?.persist)
       return { providers: updated }
+    })
+    if (!expected) { update(); return }
+    // Serialize with credential edits so a late result cannot mark a replacement key used or failed.
+    return enqueueProviderMutation(async () => {
+      const provider = get().providers.find(item => item.id === providerId)
+      const group = provider?.credentialGroups?.find(item => item.id === groupId)
+      if (!provider || !group || provider.type !== expected.type || provider.baseUrl !== expected.baseUrl) return
+      const key = await providerCredentialStorage.getCredentialGroupCredential(providerId, groupId)
+      if (!(key ?? group.apiKey ?? '').trim() || (key ?? group.apiKey ?? '').trim() !== expected.apiKey.trim()) return
+      update()
     })
   },
 
@@ -965,16 +980,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (!provider) return null
     const beforeRead = () => {
       throwIfProviderOperationAborted(signal)
-      assertProviderConfiguration(get().providers.find(item => item.id === id), provider)
+      assertProviderSelectionConfiguration(get().providers.find(item => item.id === id), provider)
     }
     beforeRead()
     const { credential: apiKey, credentialGroups: secureGroups } = await providerCredentialStorage.getProviderCredentials(
       id, (provider.credentialGroups ?? []).map(group => group.id), { signal, beforeRead },
     )
     beforeRead()
-    const credentialGroups = (provider.credentialGroups ?? []).map((group, index) => ({
+    const credentialGroups = preserveProviderCredentialHealth((provider.credentialGroups ?? []).map((group, index) => ({
       ...group, apiKey: secureGroups[index].credential ?? group.apiKey ?? '',
-    }))
+    })), get().providers.find(item => item.id === id)?.credentialGroups)
     const primaryGroup = credentialGroups.find((group) => group.enabled && group.apiKey?.trim())
     return normalizeProviderCredentialGroups({
       ...provider, apiKey: apiKey?.trim() ? apiKey : primaryGroup?.apiKey ?? '', credentialGroups,
@@ -995,7 +1010,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const hydrated = settlements.map((result, index) => {
       if (result.status === 'rejected') throw result.reason
       const expected = captured.providers[index]
-      assertProviderConfiguration(currentProviders.get(expected.id), expected)
+      assertProviderSelectionConfiguration(currentProviders.get(expected.id), expected)
       return result.value
     })
     return hydrated.filter((provider): provider is AIProvider => {
@@ -1015,7 +1030,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     throwIfProviderOperationAborted(captured.signal)
     const defaultProvider = captured.settings.defaultProvider
     const selected = configured.find((provider) => provider.id === defaultProvider) ?? configured[0] ?? null
-    if (selected) assertProviderConfiguration(
+    if (selected) assertProviderSelectionConfiguration(
       get().providers.find(provider => provider.id === selected.id),
       captured.providers.find(provider => provider.id === selected.id),
     )

@@ -293,7 +293,7 @@ function finalizationFixture() {
       return { kind: 'project' as const, messagePatch: { usage: { inputTokens: 1, outputTokens: 1 } } }
     },
     recordRemoteCompactCompleted, recordRemoteCompactFailed: jest.fn(), commitSuccess,
-    updateProviderCredentialGroupHealth: jest.fn(async () => undefined), recordRagEvaluation: jest.fn(),
+    recordRagEvaluation: jest.fn(),
     buildTrace: (value: unknown) => value, completeTrace: (value: unknown) => value,
     recordTrace: jest.fn(), getMessageWithStreamingTraceState: () => null,
     settleRunningTraces: jest.fn(), translate: (key: string) => key, extractMemory,

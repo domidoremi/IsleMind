@@ -52,6 +52,15 @@ export function withoutProviderCredentialHealth(provider: Readonly<AIProvider>):
   })) }
 }
 
+/** Dispatch keeps configuration stable while accepting newer execution-only health. */
+export function assertProviderSelectionConfiguration(
+  current: AIProvider | undefined,
+  expected: Readonly<AIProvider> | null | undefined,
+): void {
+  assertProviderConfiguration(current && withoutProviderCredentialHealth(current),
+    expected == null ? expected : withoutProviderCredentialHealth(expected))
+}
+
 /** Rebase retained keys at metadata commit, including updates during secure-storage awaits. */
 export function preserveProviderCredentialHealth(
   groups: readonly ProviderCredentialGroup[],

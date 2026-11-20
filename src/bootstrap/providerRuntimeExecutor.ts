@@ -362,10 +362,6 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput,
             recordWebSocketUsage('failed', result.usage, 'empty_response')
             throw emptyProviderResponseError(credentialGroupId)
           }
-          void recordProviderRuntimeSuccess({
-            req: runtimeReq,
-            credentialGroupId,
-          })
           void appendRuntimeLog('upstream.response', {
             conversationId: runtimeReq.conversationId,
             providerId: runtimeReq.provider.id,
@@ -397,7 +393,11 @@ function executeResponsesWebSocketChat(input: ProviderRuntimeChatExecutionInput,
       throwIfProviderRuntimeAborted(signal)
       if (reportedError && isProviderContextOverflow(undefined, reportedError.message)) throw reportedError
       if (reportedError) input.onError(reportedError)
-      else if (completedResult) input.onDone(completedResult)
+      else if (completedResult) {
+        await recordProviderRuntimeSuccess({ req: runtimeReq, credentialGroupId })
+        throwIfProviderRuntimeAborted(signal)
+        input.onDone(completedResult)
+      }
     } catch (error) {
       if (executionTarget && !wireStarted) {
         await settleHarnessProviderUsage(runtimeReq, executionTarget, undefined, 0, true, false)
@@ -665,7 +665,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       input.onTrace?.(trace)
       throwIfProviderRuntimeAborted(input.controller.signal)
     }
-    void recordProviderRuntimeSuccess({
+    await recordProviderRuntimeSuccess({
       req: input.req,
       credentialGroupId: input.credentialGroupId,
       latencyMs: Date.now() - startedAt,
@@ -721,7 +721,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
         input.onTrace?.(trace)
         throwIfProviderRuntimeAborted(input.controller.signal)
       }
-      void recordProviderRuntimeSuccess({
+      await recordProviderRuntimeSuccess({
         req: input.req,
         credentialGroupId: input.credentialGroupId,
         latencyMs: Date.now() - startedAt,
@@ -883,7 +883,7 @@ export async function executeHttpSseChat(input: HttpSseExecutionInput): Promise<
       input.onCitations?.(citations)
       throwIfProviderRuntimeAborted(input.controller.signal)
     }
-    void recordProviderRuntimeSuccess({
+    await recordProviderRuntimeSuccess({
       req: input.req,
       credentialGroupId: input.credentialGroupId,
       latencyMs: Date.now() - startedAt,
@@ -2197,6 +2197,8 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       selectedResponse.status,
       selectedResponseText,
       input.controller.signal,
+      false,
+      selectedReq,
     )
     throwIfProviderRetryAborted(input.controller.signal)
     recordRuntimeSessionAffinityInvalidation({
@@ -2273,6 +2275,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
       '',
       input.controller.signal,
       true,
+      selectedReq,
     )
     input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'error', 'empty_response'))
     return false
@@ -2311,7 +2314,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     input.onTrace?.(trace)
     throwIfProviderRetryAborted(input.controller.signal)
   }
-  await input.fallbackEffects.recordRouteSuccess(selectedRoute, input.controller.signal)
+  await input.fallbackEffects.recordRouteSuccess(selectedRoute, input.controller.signal, selectedReq)
   throwIfProviderRetryAborted(input.controller.signal)
   recordRuntimeSessionAffinityRotation({
     req: input.req,
@@ -2720,7 +2723,7 @@ async function retryWithoutStreaming(
       onTrace?.(trace)
     }
     throwIfProviderRetryAborted(controller.signal)
-    void recordProviderRuntimeSuccess({
+    await recordProviderRuntimeSuccess({
       req,
       credentialGroupId,
       latencyMs: Date.now() - startedAt,

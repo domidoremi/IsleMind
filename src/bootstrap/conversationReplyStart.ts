@@ -50,7 +50,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { resolveChatWorkspaceReviewRuntime } from '@/bootstrap/tavernWorkspace'
 import type { Conversation } from '@/types/chatContracts'
 import type { Settings } from '@/types/settingsContracts'
-import { assertProviderConfiguration, snapshotProviderConfiguration } from '@/modules/providers'
+import { assertProviderSelectionConfiguration, snapshotProviderConfiguration } from '@/modules/providers'
 import type { ConversationRunProjection } from '@/modules/conversations'
 import type { Message } from '@/types/chatContracts'
 
@@ -273,7 +273,7 @@ const conversationMessageRuntime: ConversationMessageRuntime = {
       const hydrated = await settingsState.hydrateProviderKey(run.providerId)
       if (!hydrated?.enabled || hydrated.id !== expectedProvider.id || !stillSelected()) return false
       try {
-        assertProviderConfiguration(useSettingsStore.getState().providers.find(provider => provider.id === expectedProvider.id), expectedProvider)
+        assertProviderSelectionConfiguration(useSettingsStore.getState().providers.find(provider => provider.id === expectedProvider.id), expectedProvider)
       } catch {
         return false
       }
@@ -372,7 +372,7 @@ const conversationMessageRuntime: ConversationMessageRuntime = {
         || !sameResumeSnapshot(conversation, latestConversation)
         || !sameResumeSnapshot(settings, latestSettings.settings)) return false
       try {
-        assertProviderConfiguration(latestSettings.providers.find(provider => provider.id === expectedProvider.id), expectedProvider)
+        assertProviderSelectionConfiguration(latestSettings.providers.find(provider => provider.id === expectedProvider.id), expectedProvider)
       } catch {
         return false
       }

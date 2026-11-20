@@ -257,7 +257,7 @@ it('captures provider-tool data before finalization flush rather than treating t
     resolveSupplementalEvidence: async () => ({ status: 'skipped' as const, reason: 'not_needed', sources: [], citations: [] }),
     now: () => 2, buildSuccessPlan: () => ({ kind: 'skip' as const }),
     recordRemoteCompactCompleted: jest.fn(), recordRemoteCompactFailed: jest.fn(), commitSuccess: jest.fn(),
-    updateProviderCredentialGroupHealth: jest.fn(), recordRagEvaluation: jest.fn(),
+    recordRagEvaluation: jest.fn(),
     buildTrace: value => value, completeTrace: value => value, recordTrace: jest.fn(),
     getMessageWithStreamingTraceState: () => null, settleRunningTraces: jest.fn(), translate: key => key,
     extractMemory: jest.fn(), projectProviderModelFailure: jest.fn(), projectProviderNativeSearchFailure: jest.fn(),

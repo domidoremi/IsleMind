@@ -35,21 +35,23 @@ export interface ProviderRuntimeFallbackEffects {
     responseText: string,
     signal: AbortSignal,
     emptyResponse?: boolean,
+    req?: ProviderRuntimeChatRequest,
   ): Promise<void>
-  recordRouteSuccess(route: ProviderFailoverRoute, signal: AbortSignal): Promise<void>
+  recordRouteSuccess(route: ProviderFailoverRoute, signal: AbortSignal, req?: ProviderRuntimeChatRequest): Promise<void>
 }
 
 export const providerRuntimeFallbackEffects: ProviderRuntimeFallbackEffects = {
-  async recordRouteSuccess(route, signal) {
+  async recordRouteSuccess(route, signal, req) {
     if (signal.aborted) return
-    await recordProviderRuntimeRouteSuccess(route)
+    await recordProviderRuntimeRouteSuccess(route, { req })
   },
 
-  async recordRouteFailure(route, status, responseText, signal, emptyResponse) {
+  async recordRouteFailure(route, status, responseText, signal, emptyResponse, req) {
     if (signal.aborted) return
     const classification = classifyProviderFailure({ status, errorMessage: responseText, emptyResponse })
     if (signal.aborted) return
     await recordProviderRuntimeRouteFailure(route, {
+      req,
       status,
       responseText,
       trigger: classification.trigger,

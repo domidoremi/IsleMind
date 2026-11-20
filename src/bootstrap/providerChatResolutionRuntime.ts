@@ -1,5 +1,5 @@
 import { snapshotPlainData } from '@/core'
-import { assertProviderConfiguration, createProviderChatResolutionRuntime, indexProviderHealthRecords, requestProviderFallbackConfirmation,
+import { assertProviderSelectionConfiguration, createProviderChatResolutionRuntime, indexProviderHealthRecords, requestProviderFallbackConfirmation,
   resolveProviderEndpointVariant, type ProviderRuntimeChatRequest } from '@/modules/providers'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
@@ -68,7 +68,7 @@ export const providerChatResolutionRuntime = createProviderChatResolutionRuntime
       const selected = catalog?.find(provider => provider.id === constraint.identity.providerId)
       if (!selected || !current) throw new Error('Provider metadata is unavailable before dispatch')
       for (const expected of catalog ?? []) {
-        assertProviderConfiguration(current.find(provider => provider.id === expected.id), expected)
+        assertProviderSelectionConfiguration(current.find(provider => provider.id === expected.id), expected)
       }
       if (!resolveProviderModelAliasAccess({ provider: selected, model: constraint.requestedModel ?? input.preferred.model,
         settings: readCurrentSettings() }).allowed) throw new Error('Provider access changed before dispatch')

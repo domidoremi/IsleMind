@@ -394,11 +394,6 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
   projectWorkspaceWritebackOutcome?(
     projection: AssistantConversationWorkspaceWritebackOutcomeProjection,
   ): void | Promise<void>
-  updateProviderCredentialGroupHealth(
-    providerId: string,
-    credentialGroupId: string | undefined,
-    healthy: boolean,
-  ): Promise<void>
   recordRagEvaluation(input: {
     readonly conversationId: string
     readonly assistantMessageId: string
@@ -444,7 +439,6 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
   projectProviderModelFailure(input: AssistantConversationProviderFailureInput<TProviderError>): void
   projectProviderNativeSearchFailure(input: AssistantConversationProviderFailureInput<TProviderError>): void
   projectProviderTerminalFailure(input: AssistantConversationProviderFailureInput<TProviderError>): void
-  shouldPenalizeProviderFailure?(error: TProviderError): boolean
 }
 
 export type AssistantConversationFinalizationOutcome<
@@ -781,11 +775,6 @@ export function createAssistantConversationFinalizationRuntime<
         }
       }
     }
-    void dependencies.updateProviderCredentialGroupHealth(
-      input.provider.id,
-      finalResult.credentialGroupId,
-      true,
-    ).catch(() => undefined)
     dependencies.recordRagEvaluation({
       conversationId: input.conversationId,
       assistantMessageId: input.assistantMessageId,
@@ -911,12 +900,6 @@ export function createAssistantConversationFinalizationRuntime<
       dependencies.projectProviderNativeSearchFailure(input)
     }
     dependencies.projectProviderTerminalFailure(input)
-    if (dependencies.shouldPenalizeProviderFailure?.(input.error) === false) return
-    void dependencies.updateProviderCredentialGroupHealth(
-      input.providerId,
-      input.credentialGroupId,
-      false,
-    ).catch(() => undefined)
   }
 
   function clearMatchingActiveStream(conversationId: string, assistantMessageId: string): void {

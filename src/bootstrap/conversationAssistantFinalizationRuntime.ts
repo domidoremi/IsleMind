@@ -150,13 +150,6 @@ export const conversationAssistantFinalizationRuntime =
     projectWorkspaceWritebackOutcome(projection) {
       projectConversationWorkspaceWritebackOutcome(projection)
     },
-    updateProviderCredentialGroupHealth(providerId, credentialGroupId, healthy) {
-      return useSettingsStore.getState().updateProviderCredentialGroupHealth(
-        providerId,
-        credentialGroupId,
-        healthy,
-      )
-    },
     recordRagEvaluation(input) {
       conversationRagFinalizationRuntime.recordEvaluation(input)
     },
@@ -232,9 +225,6 @@ export const conversationAssistantFinalizationRuntime =
         providerId: input.providerId,
         providerUsage: input.error.partialResult?.usage,
       })
-    },
-    shouldPenalizeProviderFailure(error) {
-      return error.streamOutcome?.status !== 'incomplete'
     },
   })
 
