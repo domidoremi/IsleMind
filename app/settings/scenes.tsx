@@ -16,6 +16,6 @@ export default function ScenePlansRoute() {
     <ScenePlansScreen port={scenePlanRuntime} conversationId={conversationId}
       planId={usageRouteIdentity(params.planId)}
       captureOnOpen={params.action === 'capture'}
-      onOpenConversation={id => router.replace({ pathname: '/chat/[id]', params: { id } })} />
+      onOpenConversation={id => router.push({ pathname: '/chat/[id]', params: { id, returnTo: 'scenes' } })} />
   </SettingsPageShell>
 }
