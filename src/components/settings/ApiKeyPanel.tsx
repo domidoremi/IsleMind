@@ -694,10 +694,12 @@ export function ApiKeyPanel({
       const keyed = await store.hydrateProviderKey(provider.id)
       if (signal?.aborted) return
       checkPreference()
-      const credential = keyed?.apiKey.trim() || keyed?.credentialGroups?.find(group => group.enabled && group.apiKey?.trim())?.apiKey
+      const credential = keyed?.credentialGroups?.length
+        ? keyed.credentialGroups.find(group => group.enabled && group.apiKey?.trim())?.apiKey?.trim() : keyed?.apiKey.trim()
+      const hasStoredGroupKey = keyed?.credentialGroups?.some(group => group.apiKey?.trim())
       const issue = keyed && getProviderConfigIssue(keyed, credential)
       if (!credential || issue) {
-        setSelectionIssue(!credential ? t('chat.providerMissingKey') : t(issue!.messageKey ?? issue!.message))
+        setSelectionIssue(!credential ? t(hasStoredGroupKey ? 'settingsSubsystem.connectionKeysDisabled' : 'chat.providerMissingKey') : t(issue!.messageKey ?? issue!.message))
         setWorkspaceView('connection')
         return
       }

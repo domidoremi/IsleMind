@@ -133,3 +133,31 @@ it('ignores a late disabled-credential read after leaving the connection tab', a
   expect(screen.queryByText(new RegExp(disabledText))).toBeNull()
   expect(screen.getByText(new RegExp(resource('settingsSubsystem.savedNotVerified')))).toBeTruthy()
 })
+
+it.each([
+  ['zh-CN', '已保存密钥均已停用'], ['en', 'Saved keys are disabled'], ['ja', '保存済みのキーは無効です'],
+])('using a model reports disabled stored keys in %s without changing preferences', async (language, expected) => {
+  mockLanguage = language
+  useSettingsStore.setState({ providers: [{ ...provider(), models: ['qa-model'], manualModels: ['qa-model'] }] })
+  const before = useSettingsStore.getState().settings
+  const screen = await render(<Panel view="models" />)
+  await fireEvent.press(screen.getByTestId('provider-use-model-qa-model'))
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(expected))
+  expect(screen.queryByText(resource('chat.providerMissingKey'))).toBeNull()
+  expect(useSettingsStore.getState().settings).toEqual(before)
+})
+
+it.each([
+  ['disabled', [group(false, 'synthetic-stored-disabled')], 'settingsSubsystem.connectionKeysDisabled'],
+  ['missing', [group(false)], 'chat.providerMissingKey'],
+  ['empty enabled and stored disabled', [group(false, 'synthetic-stored-disabled'), { ...group(true), id: 'empty' }], 'settingsSubsystem.connectionKeysDisabled'],
+])('model choice cannot use a leftover primary key when explicit groups are %s', async (_name, groups, issue) => {
+  const current = { ...provider(groups as ProviderCredentialGroup[]), models: ['qa-model'], manualModels: ['qa-model'] }
+  useSettingsStore.setState({ providers: [current] })
+  mockHydrate.mockImplementation(async () => ({ ...current, apiKey: 'synthetic-leftover-primary' }))
+  const before = useSettingsStore.getState().settings
+  const screen = await render(<Panel view="models" />)
+  await fireEvent.press(screen.getByTestId('provider-use-model-qa-model'))
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(resource(issue as string)))
+  expect(useSettingsStore.getState().settings).toEqual(before)
+})
