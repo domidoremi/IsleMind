@@ -487,19 +487,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   saveRoutingPlan: async (plan) => {
-    const plans = get().settings.modelRoutingPlans ?? []
-    const modelRoutingPlans = normalizeModelRoutingPlans([...plans.filter(item => item.id !== plan.id), plan])!
-    const selected = modelRoutingPlans.find(item => item.id === plan.id)!
-    if ([selected.primary, selected.backup].some(target => target && !get().providers.some(provider => provider.id === target.providerId))) throw new ProviderConfigurationConflictError()
-    const settings = { ...get().settings, modelRoutingPlans }
-    set({ settings })
-    await savePersistedSettings(settings)
+    const captured = normalizeModelRoutingPlans([plan])![0]
+    await mutateRoutingPlans(state => {
+      const plans = state.settings.modelRoutingPlans ?? []
+      const modelRoutingPlans = normalizeModelRoutingPlans([...plans.filter(item => item.id !== captured.id), captured])!
+      const selected = modelRoutingPlans.find(item => item.id === captured.id)!
+      if ([selected.primary, selected.backup].some(target => target && !state.providers.some(provider => provider.id === target.providerId))) throw new ProviderConfigurationConflictError()
+      return modelRoutingPlans
+    })
   },
 
   removeRoutingPlan: async (id) => {
-    const settings = { ...get().settings, modelRoutingPlans: (get().settings.modelRoutingPlans ?? []).filter(plan => plan.id !== id) }
-    set({ settings })
-    await savePersistedSettings(settings)
+    await mutateRoutingPlans(state => (state.settings.modelRoutingPlans ?? []).filter(plan => plan.id !== id))
   },
 
   saveScenePlan: (plan, expectedRevision) => scenePlanManagement.save(plan, expectedRevision),
@@ -1068,6 +1067,30 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     ])
   },
 }))
+
+let routingPlanMutationTail: Promise<void> = Promise.resolve()
+
+function mutateRoutingPlans(change: (state: SettingsState) => ModelRoutingPlan[]): Promise<void> {
+  const operation = routingPlanMutationTail.then(async () => {
+    const state = useSettingsStore.getState()
+    const previous = state.settings.modelRoutingPlans
+    const next = change(state)
+    useSettingsStore.setState({ settings: { ...state.settings, modelRoutingPlans: next } })
+    try { await savePersistedSettings(useSettingsStore.getState().settings) }
+    catch (error) {
+      // Restore only this collection; a later explicit replacement owns its value.
+      if (JSON.stringify(useSettingsStore.getState().settings.modelRoutingPlans) === JSON.stringify(next)) {
+        useSettingsStore.setState(current => ({ settings: { ...current.settings, modelRoutingPlans: previous } }))
+        // Later queued snapshots may contain the failed optimistic route. Repair
+        // them after preserving unrelated settings, retaining the original error.
+        await savePersistedSettings(useSettingsStore.getState().settings).catch(() => undefined)
+      }
+      throw error
+    }
+  })
+  routingPlanMutationTail = operation.catch(() => undefined)
+  return operation
+}
 
 const scenePlanManagement = createScenePlanManagement({
   read: () => useSettingsStore.getState().settings.scenePlans ?? [],
