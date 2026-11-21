@@ -12,22 +12,22 @@
   "sourceOnly": true,
   "buildsAllowed": false,
   "publishGithubRelease": true,
-  "sourceVersion": "1.1.22",
-  "sourceAndroidVersionCode": 147,
-  "countedThroughCommit": "81242657c404a6ff2aca3aebde32833e81419aa6",
+  "sourceVersion": "1.1.23",
+  "sourceAndroidVersionCode": 148,
+  "countedThroughCommit": "ca02f3c78382d0071e0142e2c8a65a94915f0dfe",
   "lastUpdate": {
     "date": "2026-11-21",
-    "previousVersion": "1.1.21",
-    "previousVersionTag": "v1.1.21",
-    "previousVersionCommit": "406f915799896a6ab83924c568405e527b6b682a",
-    "previousCountedThroughCommit": "ade2d7cfcdca3320260251edea7cab5d43f2567e",
+    "previousVersion": "1.1.22",
+    "previousVersionTag": "v1.1.22",
+    "previousVersionCommit": "063b2500df58934bed0795479733bcd4507e91fc",
+    "previousCountedThroughCommit": "81242657c404a6ff2aca3aebde32833e81419aa6",
     "qualifyingCommitCount": 5,
     "verifiedLatestPushes": [
-      "12271d71e5f57aea63cfe75056ec3aacc1967865",
-      "750f74f1323d9ec13ad0fe9cb9c4f94d4f20ff03",
-      "ff3aff9f0250dca5123e76ba29c9304b621b72f8",
-      "702213764a695e62040276b5fcb49ff53f6fb5fb",
-      "81242657c404a6ff2aca3aebde32833e81419aa6"
+      "068a452d9064271adc3cb3a2fb91b2bf3fcf7dbd",
+      "1360a1ae39918bb5c3717318a903f9048b527c4c",
+      "d6ecf50aa336138a68187491dc236cdd329e5217",
+      "e598ff4b0754a225db129f9832f183b3343cc06c",
+      "ca02f3c78382d0071e0142e2c8a65a94915f0dfe"
     ]
   },
   "lastPublication": {

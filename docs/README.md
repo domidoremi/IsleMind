@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.23 source version checkpoint](./release/source-version-1.1.23-2026-11-21.md): larger background touch targets, concise appearance settings, duplicate key imports and distinct model catalog states.
 - [1.1.22 source version checkpoint](./release/source-version-1.1.22-2026-11-21.md): readable connection titles, accessible credential replacement, plain island canvas and synchronized Web mode metadata.
 - [1.1.21 source version checkpoint](./release/source-version-1.1.21-2026-11-20.md): credential health preservation, MiMo import settings, explicit model selections, disabled credentials and actual request rotation.
 - [1.1.20 source version checkpoint](./release/source-version-1.1.20-2026-11-20.md): complete catalogs, selected models, routing groups, scene strategy previews and discovery configuration protection.
