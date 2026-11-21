@@ -6,7 +6,7 @@ import * as Clipboard from 'expo-clipboard'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { AIProvider } from '@/types/providerContracts'
+import type { AIProvider, ProviderCredentialSelectionPolicy } from '@/types/providerContracts'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
 import { composeUserFacingError, isUserFacingErrorCode, userFacingErrorCodeKey } from '@/core'
 import type { ModelAlias, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
@@ -200,6 +200,7 @@ export function ApiKeyPanel({
   const [aliasDrafts, setAliasDrafts] = useState<ModelAlias[]>(provider.modelAliases ?? [])
   const modelSelectionBaseline = useRef({ models: getProviderManualModels(provider), aliases: provider.modelAliases ?? [] })
   const [draftGroups, setDraftGroups] = useState<ProviderCredentialGroup[]>(provider.credentialGroups ?? [])
+  const [credentialSelection, setCredentialSelection] = useState<ProviderCredentialSelectionPolicy>(provider.credentialSelection ?? { strategy: 'balanced' })
   const [parameterDrafts, setParameterDrafts] = useState<ProviderModelParameterDrafts>(() => modelParameterDrafts(provider.modelParameterOverrides))
   const [parameterModel, setParameterModel] = useState<string>()
   const [parameterSearch, setParameterSearch] = useState('')
@@ -283,7 +284,7 @@ export function ApiKeyPanel({
   const protocolLabel = t(`providerSettings.protocol.${wireProtocol}`)
   const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
   const selectedPresetLabel = presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProvider') : selectedPreset.name
-  const draftSnapshot = JSON.stringify({ name, baseUrl, presetId, wireProtocol, enabledModels, modelsText, aliasDrafts, draftGroups, credentialText, parameterDrafts, capabilitiesDraft, compatibilityDraft })
+  const draftSnapshot = JSON.stringify({ name, baseUrl, presetId, wireProtocol, enabledModels, modelsText, aliasDrafts, draftGroups, credentialSelection, credentialText, parameterDrafts, capabilitiesDraft, compatibilityDraft })
   const baseline = useRef(draftSnapshot)
   const serverBaseline = useRef(providerEditVersion(provider))
   const dirty = draftSnapshot !== baseline.current
@@ -292,7 +293,7 @@ export function ApiKeyPanel({
   const saveLock = useRef(false)
   const lifetime = useSettingsLifetime()
   function resetEditor(next = provider) {
-    baseline.current = JSON.stringify({ name: next.name, baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), enabledModels: next.enabledModels, modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialText: '', parameterDrafts: modelParameterDrafts(next.modelParameterOverrides), capabilitiesDraft: next.capabilities, compatibilityDraft: normalizeProviderClientCompatibilityMode(next.clientCompatibilityProfile) })
+    baseline.current = JSON.stringify({ name: next.name, baseUrl: next.baseUrl ?? '', presetId: initialProviderPresetId(next), wireProtocol: initialProviderWireProtocol(next), enabledModels: next.enabledModels, modelsText: formatModelEntries(next), aliasDrafts: next.modelAliases ?? [], draftGroups: next.credentialGroups ?? [], credentialSelection: next.credentialSelection ?? { strategy: 'balanced' }, credentialText: '', parameterDrafts: modelParameterDrafts(next.modelParameterOverrides), capabilitiesDraft: next.capabilities, compatibilityDraft: normalizeProviderClientCompatibilityMode(next.clientCompatibilityProfile) })
     serverBaseline.current = providerEditVersion(next)
     dirtyRef.current = false
     setName(next.name)
@@ -304,6 +305,7 @@ export function ApiKeyPanel({
     setModelsText(formatModelEntries(next))
     setAliasDrafts(next.modelAliases ?? [])
     setDraftGroups(next.credentialGroups ?? [])
+    setCredentialSelection(next.credentialSelection ?? { strategy: 'balanced' })
     setCredentialText('')
     setParameterDrafts(modelParameterDrafts(next.modelParameterOverrides))
     setCapabilitiesDraft(next.capabilities)
@@ -327,7 +329,7 @@ export function ApiKeyPanel({
     setCapabilityOverridesOpen(false)
     setCredentialGroupsOpen(false)
     setCredentialText('')
-  }, [provider.name, provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol, provider.modelParameterOverrides, provider.capabilities, provider.clientCompatibilityProfile, provider.enabledModels])
+  }, [provider.name, provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol, provider.modelParameterOverrides, provider.capabilities, provider.clientCompatibilityProfile, provider.credentialSelection, provider.enabledModels])
 
   useEffect(() => { setWorkspaceView(initialView); setModelQuery(''); setModelFetchFailed(false) }, [initialView, provider.id])
 
@@ -396,16 +398,35 @@ export function ApiKeyPanel({
       setWorkspaceView('advanced')
       return false
     }
+    const savedGroupIds = new Set(latest.credentialGroups?.map(group => group.id))
+    let resolvedDraftGroups = draftGroups
+    let resolvedCredentialSelection = credentialSelection
     let incomingGroups = pastedGroups
-    if (pastedGroups.length && draftGroups.some(group => !group.apiKey?.trim())) {
+    const hasImportedGroups = draftGroups.some(group => !savedGroupIds.has(group.id))
+    if ((pastedGroups.length || hasImportedGroups) && draftGroups.some(group => !group.apiKey?.trim())) {
       const keyed = await hydrateProviderKey(provider.id, { signal })
       if (signal?.aborted) return false
       if (!keyed) throw new Error('Stored provider credentials are unavailable')
       const storedKeys = new Map(keyed.credentialGroups?.map(group => [group.id, group.apiKey?.trim()]))
-      const existingKeys = new Set(draftGroups.map(group => group.apiKey?.trim() || storedKeys.get(group.id)).filter(Boolean))
-      incomingGroups = pastedGroups.filter(group => !existingKeys.has(group.apiKey?.trim()))
+      const existingIdsByKey = new Map<string, string>()
+      for (const group of draftGroups) {
+        if (!savedGroupIds.has(group.id)) continue
+        const key = group.apiKey?.trim() || storedKeys.get(group.id)
+        if (key && !existingIdsByKey.has(key)) existingIdsByKey.set(key, group.id)
+      }
+      resolvedDraftGroups = draftGroups.filter(group => {
+        if (savedGroupIds.has(group.id)) return true
+        const key = group.apiKey?.trim()
+        if (!key) return true
+        const existingId = existingIdsByKey.get(key)
+        if (!existingId) { existingIdsByKey.set(key, group.id); return true }
+        if (credentialSelection.preferredGroupId === group.id)
+          resolvedCredentialSelection = { ...credentialSelection, preferredGroupId: existingId }
+        return false
+      })
+      incomingGroups = pastedGroups.filter(group => !existingIdsByKey.has(group.apiKey?.trim() ?? ''))
     }
-    const credentialGroups = mergeGroups(draftGroups, incomingGroups, t)
+    const credentialGroups = mergeGroups(resolvedDraftGroups, incomingGroups, t)
     const models = parseModelEntries(modelsText).models
     const modelAliases = normalizeAliasDrafts(aliasDrafts)
     const applied = applyProviderPreset({
@@ -419,6 +440,7 @@ export function ApiKeyPanel({
         ? normalizedClientCompatibilityMode
         : 'islemind',
       credentialGroups,
+      credentialSelection: resolvedCredentialSelection,
       models,
       enabledModels: enabledModels === undefined ? undefined : [...new Set([...enabledModels,
         ...models.filter(model => !modelSelectionBaseline.current.models.includes(model)),
@@ -494,7 +516,13 @@ export function ApiKeyPanel({
       setWireProtocol(draft.wireProtocol)
       setBaseUrl(nextDraft.baseUrl)
     }
-    setDraftGroups((current) => mergeGroups(current, draft.provider.credentialGroups ?? [], t))
+    const merged = mergeGroups(draftGroups, draft.provider.credentialGroups ?? [], t)
+    setDraftGroups(merged)
+    if (draft.provider.credentialSelection) {
+      const preferred = draft.provider.credentialGroups?.find(group => group.id === draft.provider.credentialSelection?.preferredGroupId)
+      setCredentialSelection({ strategy: draft.provider.credentialSelection.strategy,
+        preferredGroupId: preferred ? merged.find(group => group.apiKey?.trim() === preferred.apiKey?.trim())?.id : undefined })
+    }
     setCredentialText('')
     if (draft.provider.enabledModels !== undefined) {
       setEnabledModels(draft.provider.enabledModels)
