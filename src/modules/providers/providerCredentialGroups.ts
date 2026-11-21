@@ -386,10 +386,29 @@ function uniqueModelIds(models: readonly string[]): string[] {
 }
 
 function redactCredentialSyncError(message: string, provider: AIProvider): string {
-  let safe = message
-  for (const secret of [provider.apiKey, ...(provider.credentialGroups ?? []).map((group) => group.apiKey ?? '')]) {
-    const normalized = secret.trim()
-    if (normalized) safe = safe.split(normalized).join('[redacted]')
+  const ranges: [number, number][] = []
+  const secrets = new Set([provider.apiKey, ...(provider.credentialGroups ?? []).map(group => group.apiKey ?? '')]
+    .map(secret => secret.trim()).filter(Boolean))
+  for (const secret of secrets) {
+    let start = message.indexOf(secret)
+    while (start !== -1) {
+      ranges.push([start, start + secret.length])
+      start = message.indexOf(secret, start + 1)
+    }
   }
-  return safe
+  // Find every match in the original detail so overlapping keys cannot expose a suffix.
+  const merged: [number, number][] = []
+  for (const range of ranges.sort((left, right) => left[0] - right[0])) {
+    const previous = merged[merged.length - 1]
+    if (previous && range[0] <= previous[1]) previous[1] = Math.max(previous[1], range[1])
+    else merged.push([...range])
+  }
+  let cursor = 0
+  const safe: string[] = []
+  for (const [start, end] of merged) {
+    safe.push(message.slice(cursor, start), '[redacted]')
+    cursor = end
+  }
+  safe.push(message.slice(cursor))
+  return safe.join('')
 }
