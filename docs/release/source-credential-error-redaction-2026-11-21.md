@@ -17,6 +17,20 @@
 
 证据目录：`test-evidence/implementation/credential-error-20261121/`。核心回执为`verification-workspace-before.json`、`verification-workspace-after.json`和`main-complete-verification.json`。
 
+## 第49份源码的限定原生回验
+
+产品提交`21425cfea307aa441b28f6572cde01a4c704145b`已推送main，发布周期1/5。提交与推送前后审计的六个工作流、41条Actions保持，零新增或活动。
+
+2163份工作区输入及4159个服务模块完成对应，一处运行逻辑、七个相关绑定与源码映射一致。应用元数据同步为1.1.23/148，既有调试应用的原生标识和固定app.json保持。一次显式重载后，Inspector实际脚本与单独获取的Metro脚本逐字相同；设备缓存仅有已记录的来源尾注差异。源准备发生编辑器182→6908，重载后为182，PID8685保持。数字复用不表示保留同一编辑器或路由实例。
+
+第285次在实际加载模块中运行10个合成目录失败场景，覆盖前后缀包含、分组包含、部分重叠、重复出现、字面字符、首尾空白、禁用密钥及无关诊断。全部通过，未发送外部或模型请求、未写应用资料、未新增UI操作。此项为运行函数验证，不增加界面资格。
+
+第286次独立核对53张表3256行、四项原始存储、六组草稿与恢复槽、编辑器正文／附件／选区／焦点、原路径与堆栈名称、实际前台、设备设置和70条请求一致。Inspector关闭、临时8092映射撤销、pending清空。源准备脚本的一次定位断言失败及重载就绪检查中的一次超时保留，均不当作产品通过证据。
+
+原生证据位于`test-evidence/implementation/native-batch-20261121/`与相邻`native-routing-groups-20261115-01/`：`native-stage49-host.json`、`native-stage49-reload.json`、`native-stage49-284-loaded.json`、`native-redaction-285.json`和`native-stage49-286-originals.json`。
+
 ## 未覆盖范围
 
-此补丁尚未同步到既有Android调试应用，未新增Web或真机界面资格。31个生产路由、55个原型、五主题明暗模式、三语、尺寸、真实输入、静默无障碍、恢复及性能目标继续。`fullAcceptance`、`nativeVerified`、`visualAcceptance`及广义`loadedRuntimeVerified`保持`false`。不操作设备音频、TalkBack或音量，不构建、导出、安装APK或触发Actions。
+未新增Web或真机界面资格。31个生产路由、55个原型、五主题明暗模式、三语、尺寸、真实输入、静默无障碍、恢复及性能目标继续。`fullAcceptance`、`nativeVerified`、`visualAcceptance`及广义`loadedRuntimeVerified`保持`false`。不操作设备音频、TalkBack或音量，不构建、导出、安装APK或触发Actions。
+
+自动审批以`blocked by policy`拒绝清理本轮约17MB的Jest缓存，命令未启动；完整提交脚本与实际保留状态已记录，未换机制删除。此前被拒绝清理的验证副本、恢复资料及服务保持。
