@@ -12,7 +12,7 @@ import { composeUserFacingError, isUserFacingErrorCode, userFacingErrorCodeKey }
 import type { ModelAlias, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
 import { getModelName } from '@/types/modelCatalog'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, looksLikeProviderImportConnectionText, maskSecret, parseCredentialGroups, parseProviderImportDraft, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
-import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, ProviderConfigurationConflictError, withoutProviderCredentialHealth, getCompatibleProviderClientCompatibilityModes, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, normalizeProviderClientCompatibilityMode, shouldSyncWireProtocolFromBaseUrl, snapshotProviderConfiguration, type ProviderClientCompatibilityMode } from '@/modules/providers'
+import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, hasCredentialModelCatalog, ProviderConfigurationConflictError, withoutProviderCredentialHealth, getCompatibleProviderClientCompatibilityModes, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, normalizeProviderClientCompatibilityMode, shouldSyncWireProtocolFromBaseUrl, snapshotProviderConfiguration, type ProviderClientCompatibilityMode } from '@/modules/providers'
 import { resolveProviderConfigDraft } from '@/bootstrap/providerPolicies'
 import { syncAndTestProvider } from '@/bootstrap/providerActivationRuntime'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -1533,7 +1533,7 @@ function CredentialGroupRow({
         <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '700', maxWidth: '100%', includeFontPadding: false }}>{maskedKey || emptyKeyLabel}</Text>
         <MiniAction label={replaceLabel} accessibilityLabel={`${replaceLabel} · ${credentialIdentity}`}
           expanded={editingKey} onPress={() => setEditingKey(value => !value)} />
-        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.modelCount', { count: group.availableModels?.length ?? 0 })}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{hasCredentialModelCatalog(group) ? t('apiKeyPanel.modelCount', { count: group.availableModels?.length ?? 0 }) : t('providerSettings.importCatalogUnknown')}</Text>
         {statusText ? <Text style={{ color: group.lastModelSyncStatus === 'bad' ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{statusText}</Text> : null}
         {group.failureCount ? <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 14, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.failureCount', { count: group.failureCount })}</Text> : null}
       </View>

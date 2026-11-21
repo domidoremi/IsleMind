@@ -2953,6 +2953,7 @@
     "reviewImport": "Review import",
     "importReviewHint": "Parsed locally. Credentials are hidden. Saving sends no request and does not change existing connections or chats.",
     "importCredentialSummary": "{{count}} keys · hidden",
+    "importCatalogUnknown": "Models not fetched",
     "importShowMore": "Show more connections",
     "importWarnings": "{{count}} parsing notice(s), including {{duplicates}} duplicate(s) skipped within this input. Only the listed connections will be saved.",
     "importConflicts": "{{count}} connection(s) have the same name and address as existing ones. Choose how to import them; saved connections will not be overwritten.",

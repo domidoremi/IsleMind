@@ -2951,6 +2951,7 @@
     "reviewImport": "核对导入",
     "importReviewHint": "仅在本地解析，凭据已隐藏。保存不发送请求，也不更改已有连接或对话。",
     "importCredentialSummary": "{{count}} 个密钥 · 已隐藏",
+    "importCatalogUnknown": "模型未获取",
     "importShowMore": "显示更多连接",
     "importWarnings": "有 {{count}} 条解析提示，其中 {{duplicates}} 条为本次输入内已跳过的重复项。仅保存下列连接。",
     "importConflicts": "{{count}} 个连接与已有连接同名且地址相同。请选择导入方式，已有配置不会被覆盖。",
