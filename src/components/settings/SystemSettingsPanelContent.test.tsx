@@ -237,7 +237,7 @@ it.each(CANONICAL_THEME_IDS)('names actual %s APK progress, retires a percentage
 
 it.each([
   ['monet', 'Subtle'],
-  ['liquid-glass', 'Subtle'], ['animal-island-ui', 'Static'],
+  ['liquid-glass', 'Subtle'],
 ])('shows the resolved %s motion default without writing over an explicit choice', async (family, expected) => {
   mockState.settings.themeId = family
   const screen = await render(<SystemSettingsPanelContent panel="appearance" />)
@@ -249,7 +249,7 @@ it.each([
   expect(mockUpdateSettings).not.toHaveBeenCalled()
 })
 
-it.each(['minimal', 'material'])('explains the %s plain canvas without exposing ineffective background controls', async (family) => {
+it.each(['minimal', 'material', 'animal-island-ui'])('explains the %s plain canvas without exposing ineffective background controls', async (family) => {
   mockState.settings.themeId = family
   mockState.settings.backgroundMotion = 'immersive'
   const screen = await render(<SystemSettingsPanelContent panel="appearance" />)
@@ -532,3 +532,30 @@ it('retains a readable failure when runtime-log reading fails before clipboard a
   expect(mockClipboardWrite).not.toHaveBeenCalled()
   expect(mockDialog.toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'settings.runtimeLogCopyFailed', tone: 'danger' }))
 })
+
+it.each(['monet', 'liquid-glass'])(
+  'keeps every %s background option at least 44 dp wide and high',
+  async family => {
+    mockState.settings.themeId = family
+    const originalVariation = Object.getOwnPropertyDescriptor(mockState.settings, 'backgroundVariation')
+    Object.assign(mockState.settings, { backgroundVariation: 'preset' })
+    try {
+      const screen = await render(<SystemSettingsPanelContent panel="appearance" />)
+      for (const id of ['variation', 'preset', 'motion', 'intensity']) {
+        const groupId = `settings-background-${id}-group`
+        expect(screen.getByTestId(groupId)).toBeTruthy()
+        const radios = screen.getAllByRole('radio').filter(radio => {
+          for (let node = radio.parent; node; node = node.parent) {
+            if (node.props.testID === groupId) return true
+          }
+          return false
+        })
+        expect(radios.length).toBeGreaterThan(0)
+        for (const radio of radios) expect(radio).toHaveStyle({ minWidth: 44, minHeight: 44 })
+      }
+    } finally {
+      if (originalVariation) Object.defineProperty(mockState.settings, 'backgroundVariation', originalVariation)
+      else Reflect.deleteProperty(mockState.settings, 'backgroundVariation')
+    }
+  },
+)

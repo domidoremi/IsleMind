@@ -123,7 +123,7 @@ const BACKGROUND_INTENSITY_OPTIONS: readonly { id: ThemeBackgroundIntensity; lab
   { id: 'high', labelKey: 'settings.backgroundIntensityHigh' },
 ]
 
-const settingsChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
+const settingsChipPressableStyle = { minWidth: 44, minHeight: 44, justifyContent: 'center' as const }
 const PORTABLE_BACKUP_CATEGORY_OPTIONS: readonly {
   id: PortableBackupCategory
   labelKey: string
