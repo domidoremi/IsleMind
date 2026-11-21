@@ -134,6 +134,8 @@
     "recordedHint": "Local character counts for this run's first request, including directory descriptions. Recorded separately from text estimates and provider tokens."
   },
   "routing": {
+    "editPlan": "Edit route {{number}}: {{name}}",
+    "deletePlan": "Delete route {{number}}: {{name}}",
     "duplicateTarget": "The backup must use a different connection or model.",
     "title": "Routing plans",
     "manage": "Manage routing plans",

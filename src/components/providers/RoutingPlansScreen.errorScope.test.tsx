@@ -22,8 +22,8 @@ jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke
 jest.mock('@/components/ui/PageFeedback', () => ({ PageFeedbackBoundary: ({ children }: any) => children }))
 jest.mock('@/components/ui/isle', () => {
   const { Pressable: MockPressable, Text, TextInput } = jest.requireActual('react-native')
-  return { useIsleDialog: () => ({ confirm: mockConfirm }), IslePressable: MockPressable, IsleButton: ({ label, onPress, disabled, testID }: { label: string; onPress: () => void; disabled?: boolean; testID?: string }) =>
-    <MockPressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={label} testID={testID}><Text>{label}</Text></MockPressable>,
+  return { useIsleDialog: () => ({ confirm: mockConfirm }), IslePressable: MockPressable, IsleButton: ({ label, accessibilityLabel, onPress, disabled, testID }: { label: string; accessibilityLabel?: string; onPress: () => void; disabled?: boolean; testID?: string }) =>
+    <MockPressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} testID={testID}><Text>{label}</Text></MockPressable>,
     IsleInput: ({ inputStyle, ...props }: any) => <TextInput {...props} style={inputStyle} /> }
 })
 jest.mock('@/presentation/layout/WorkspaceSurface', () => ({ WorkspaceSurface: ({ children, role, ...props }: any) => {
@@ -93,7 +93,7 @@ it('closes an unchanged failed edit without showing its error on the saved list 
   await fireEvent.press(view.getByTestId('routing-save'))
   await waitFor(() => expect(view.queryByTestId('routing-editor')).toBeNull())
   const saved = useSettingsStore.getState().settings.modelRoutingPlans
-  await fireEvent.press(view.getByLabelText('common.edit'))
+  await fireEvent.press(view.getByLabelText('routing.editPlan'))
   save.mockRejectedValueOnce(Error('disk unavailable'))
   await fireEvent.press(view.getByTestId('routing-save'))
   await waitFor(() => expect(view.getByText('routing.saveFailed')).toBeTruthy())
@@ -103,7 +103,7 @@ it('closes an unchanged failed edit without showing its error on the saved list 
   expect(view.queryByText('routing.saveFailed')).toBeNull()
   expect(useSettingsStore.getState().settings.modelRoutingPlans).toEqual(saved)
   save.mockRejectedValueOnce(Error('disk unavailable'))
-  await fireEvent.press(view.getByLabelText('common.delete'))
+  await fireEvent.press(view.getByLabelText('routing.deletePlan'))
   await waitFor(() => expect(view.getByText('routing.saveFailed')).toBeTruthy())
   expect(view.getByLabelText('common.retry')).toBeTruthy()
   await fireEvent.press(view.getByLabelText('common.retry'))

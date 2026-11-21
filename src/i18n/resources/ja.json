@@ -134,6 +134,8 @@
     "recordedHint": "一覧の説明を含む、この実行の初回リクエストの文字数です。本文の推定値やプロバイダーのトークン数とは別に記録します。"
   },
   "routing": {
+    "editPlan": "ルート{{number}}「{{name}}」を編集",
+    "deletePlan": "ルート{{number}}「{{name}}」を削除",
     "duplicateTarget": "予備には別の接続またはモデルを選んでください。",
     "title": "ルーティングプラン",
     "manage": "プランを管理",

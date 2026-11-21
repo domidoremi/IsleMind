@@ -13,8 +13,8 @@ jest.mock('@/components/ui/AppIcon', () => ({ AppIcon: () => null, appIconStroke
 jest.mock('@/components/ui/PageFeedback', () => ({ PageFeedbackBoundary: ({ children }: any) => children }))
 jest.mock('@/components/ui/isle', () => {
   const { Pressable: MockPressable, Text, TextInput } = jest.requireActual('react-native')
-  return { IslePressable: MockPressable, IsleButton: ({ label, onPress, disabled, testID }: { label: string; onPress: () => void; disabled?: boolean; testID?: string }) =>
-    <MockPressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={label} testID={testID}><Text>{label}</Text></MockPressable>,
+  return { IslePressable: MockPressable, IsleButton: ({ label, accessibilityLabel, onPress, disabled, testID }: { label: string; accessibilityLabel?: string; onPress: () => void; disabled?: boolean; testID?: string }) =>
+    <MockPressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} testID={testID}><Text>{label}</Text></MockPressable>,
     IsleInput: ({ inputStyle, ...props }: any) => <TextInput {...props} style={inputStyle} /> }
 })
 jest.mock('@/presentation/layout/WorkspaceSurface', () => ({ WorkspaceSurface: ({ children, role, ...props }: any) => {
@@ -71,7 +71,7 @@ it('saves an explicit primary and backup, reloads it for editing, and defaults t
   const plan = useSettingsStore.getState().settings.modelRoutingPlans![0]
   expect(plan).toMatchObject({ name: 'Research', mode: 'fallback', primary: { providerId: 'a', model: 'gpt-4o-mini' }, backup: { providerId: 'b', model: 'gpt-4o-mini' }, crossProvider: 'ask' })
   expect(save).toHaveBeenCalledWith(expect.objectContaining({ modelRoutingPlans: [plan] }))
-  await fireEvent.press(view.getByLabelText('common.edit'))
+  await fireEvent.press(view.getByLabelText('routing.editPlan'))
   expect(view.getByTestId('routing-name').props.value).toBe('Research')
   await fireEvent.press(view.getByText('routing.fixed'))
   await fireEvent.press(view.getByTestId('routing-save'))
@@ -107,7 +107,7 @@ it('blocks duplicate targets, preserves unsaved edits on cancel and retries dele
   await fireEvent.press(view.getByTestId('routing-save'))
   await waitFor(() => expect(view.queryByTestId('routing-editor')).toBeNull())
   save.mockRejectedValueOnce(Error('disk unavailable'))
-  await fireEvent.press(view.getByLabelText('common.delete'))
+  await fireEvent.press(view.getByLabelText('routing.deletePlan'))
   await waitFor(() => expect(view.getByText('routing.saveFailed')).toBeTruthy())
   await fireEvent.press(view.getByLabelText('common.retry'))
   await waitFor(() => expect(view.queryByText('routing.saveFailed')).toBeNull())

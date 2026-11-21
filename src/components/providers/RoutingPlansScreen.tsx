@@ -109,15 +109,18 @@ export function RoutingPlansContent({ planId }: { planId?: string } = {}) {
         {!draft ? <>
           <IsleButton testID="routing-add" label={t('routing.add')} disabled={busy || plans.length >= 50} onPress={() => edit()} />
           {!plans.length ? <Text style={textStyle}>{t('routing.empty')}</Text> : null}
-          {plans.map(plan => <View key={plan.id} testID={`routing-saved-${plan.id}`} style={rowStyle}>
+          {plans.map((plan, index) => <View key={plan.id} testID={`routing-saved-${plan.id}`} style={rowStyle}>
             <Text style={[typography.title, { color: colors.text }]}>{plan.name}</Text>
             <Text style={textStyle}>{t(`routing.${plan.mode}`)}{plan.mode === 'fallback' ? ` · ${t(`routing.${plan.crossProvider}`)}` : ''}</Text>
             <Text style={textStyle}>{t('routing.primary')}: {label(plan.primary)}</Text>
             {plan.backup ? <Text style={textStyle}>{t('routing.backup')}: {label(plan.backup)}</Text> : null}
             {[targetIssue(plan.primary), plan.backup ? targetIssue(plan.backup) : undefined].filter(Boolean).map((issue, i) => <Text key={i} style={textStyle}>{issue}</Text>)}
             <View style={styles.actions}>
-              <IsleButton label={t('common.edit')} disabled={busy} onPress={() => edit(plan)} />
-              <IslePressable accessibilityRole="button" accessibilityLabel={t('common.delete')} disabled={busy}
+              <IsleButton testID={`routing-edit-${plan.id}`} label={t('common.edit')}
+                accessibilityLabel={t('routing.editPlan', { number: index + 1, name: plan.name })}
+                disabled={busy} onPress={() => edit(plan)} />
+              <IslePressable testID={`routing-delete-${plan.id}`} accessibilityRole="button"
+                accessibilityLabel={t('routing.deletePlan', { number: index + 1, name: plan.name })} disabled={busy}
                 accessibilityState={{ disabled: busy }} onPress={() => void persist(undefined, plan.id)} style={styles.textAction}>
                 <Text style={[typography.label, { color: colors.ui.tone.danger.foreground }]}>{t('common.delete')}</Text>
               </IslePressable>
