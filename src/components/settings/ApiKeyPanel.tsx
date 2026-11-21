@@ -396,7 +396,16 @@ export function ApiKeyPanel({
       setWorkspaceView('advanced')
       return false
     }
-    const credentialGroups = mergeGroups(draftGroups, pastedGroups, t)
+    let incomingGroups = pastedGroups
+    if (pastedGroups.length && draftGroups.some(group => !group.apiKey?.trim())) {
+      const keyed = await hydrateProviderKey(provider.id, { signal })
+      if (signal?.aborted) return false
+      if (!keyed) throw new Error('Stored provider credentials are unavailable')
+      const storedKeys = new Map(keyed.credentialGroups?.map(group => [group.id, group.apiKey?.trim()]))
+      const existingKeys = new Set(draftGroups.map(group => group.apiKey?.trim() || storedKeys.get(group.id)).filter(Boolean))
+      incomingGroups = pastedGroups.filter(group => !existingKeys.has(group.apiKey?.trim()))
+    }
+    const credentialGroups = mergeGroups(draftGroups, incomingGroups, t)
     const models = parseModelEntries(modelsText).models
     const modelAliases = normalizeAliasDrafts(aliasDrafts)
     const applied = applyProviderPreset({
