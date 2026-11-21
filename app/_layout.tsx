@@ -61,7 +61,7 @@ export default function RootLayout() {
     const listener = AppState.addEventListener('change', (state) => assistantExecutionHost.setVisible(state === 'active'))
     return () => { listener.remove(); assistantExecutionHost.stop() }
   }, [boot.ready])
-  const { canonicalThemeId, colors, design, mode, themeAccent, backgroundEnvironment } = useAppTheme()
+  const { canonicalThemeId, colors, design, mode, themeMode, themeAccent, backgroundEnvironment } = useAppTheme()
   const { t } = useTranslation()
   const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()
   const qaUpdateVersion = firstQueryParam(params.qaUpdateNotice)
@@ -73,6 +73,7 @@ export default function RootLayout() {
     colors,
     design,
     mode,
+    themeMode,
     ready: boot.status !== 'loading',
     themeAccent,
     backgroundEnvironment,
@@ -310,10 +311,11 @@ function useWebThemeBridge({
   colors,
   design,
   mode,
+  themeMode,
   ready,
   themeAccent,
   backgroundEnvironment,
-}: Pick<ReturnType<typeof useAppTheme>, 'canonicalThemeId' | 'colors' | 'design' | 'mode' | 'themeAccent' | 'backgroundEnvironment'> & { ready: boolean }) {
+}: Pick<ReturnType<typeof useAppTheme>, 'canonicalThemeId' | 'colors' | 'design' | 'mode' | 'themeMode' | 'themeAccent' | 'backgroundEnvironment'> & { ready: boolean }) {
   useLayoutEffect(() => {
     if (Platform.OS !== 'web' || !ready) return
     const documentRef = (globalThis as typeof globalThis & { document?: WebDocumentLike }).document
@@ -322,6 +324,7 @@ function useWebThemeBridge({
 
     root.setAttribute('data-theme-id', canonicalThemeId)
     root.setAttribute('data-theme-mode', mode)
+    root.setAttribute('data-theme-mode-preference', themeMode)
     root.setAttribute('data-theme-family', canonicalThemeId)
     root.setAttribute('data-theme-custom-accent', themeAccent ? 'true' : 'false')
     root.setAttribute('data-theme-ambient', colors.ui.ambient)
@@ -516,7 +519,7 @@ function useWebThemeBridge({
       root.style.setProperty(name, value)
     }
     root.setAttribute('data-theme-ready', 'true')
-  }, [backgroundEnvironment, canonicalThemeId, colors, design, mode, ready, themeAccent])
+  }, [backgroundEnvironment, canonicalThemeId, colors, design, mode, ready, themeAccent, themeMode])
 }
 
 function firstQueryParam(value?: string | string[]): string | undefined {
