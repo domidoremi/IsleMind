@@ -102,7 +102,7 @@ export function RoutingPlansContent({ planId }: { planId?: string } = {}) {
       <View style={styles.content}>
         <Text style={textStyle}>{t('routing.description')}</Text>
         {missingReference ? <Text accessibilityRole="alert" style={textStyle}>{t('connectionReferences.missing')}</Text> : null}
-        {error ? <View accessibilityRole="alert" style={rowStyle}>
+        {error && (draft || retryDelete) ? <View accessibilityRole="alert" style={rowStyle}>
           <Text style={textStyle}>{t('routing.saveFailed')}</Text>
           {retryDelete ? <IsleButton label={t('common.retry')} disabled={busy} onPress={() => void persist(undefined, retryDelete)} /> : null}
         </View> : null}
