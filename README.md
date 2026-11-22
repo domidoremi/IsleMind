@@ -51,8 +51,8 @@ Network access is limited to:
 
 | Item | Value |
 |---|---|
-| Current source version | `1.1.23` |
-| Source Android versionCode | `148` |
+| Current source version | `1.1.24` |
+| Source Android versionCode | `149` |
 | APK candidate version | `1.1.2` |
 | APK candidate Android versionCode | `127` |
 | APK candidate channel | Preview |
@@ -61,13 +61,13 @@ The source version may lead the APK candidate. The website and update catalog cu
 
 ### What’s new in the source
 
-- Larger minimum touch areas for background settings on narrow screens.
-- Concise appearance settings text and an updated plain island canvas description.
-- Bulk key entry recognizes credentials already in secure storage and retains their model assignments.
-- Structured imports reuse credential groups and preserve preferred key references.
-- Unfetched and confirmed empty model catalogs have distinct labels, with known counts retained after refresh failures.
+- Accessibility labels distinguish routing plans and scenes with matching names.
+- Scene editing has a larger minimum touch area.
+- Model catalog errors fully mask overlapping credentials.
+- Failed routing plan saves and deletions retain the saved configuration.
+- Closing or discarding the routing editor clears stale errors while retaining deletion retry errors.
 
-[Full release notes](docs/release/v1.1.23.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.23)
+[Full release notes](docs/release/v1.1.24.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.24)
 
 ### APK variants
 
@@ -241,7 +241,7 @@ When production signing secrets are unavailable, explicitly use
 `node scripts/build-local-android-apk.js --release --unsigned --variant no-model --release-arch arm64-v8a`.
 This keeps the real production package/version and non-debuggable release behavior;
 it does not substitute a debug certificate, install the APK or publish anything.
-For the current source version, the output is `dist-apk/IsleMind-1.1.23-android-release-unsigned-no-model-arm64-v8a.apk`
+For the current source version, the output is `dist-apk/IsleMind-1.1.24-android-release-unsigned-no-model-arm64-v8a.apk`
 with `.sha256` and `.source-snapshot.json` sidecars. Signed release qualification still
 requires legitimate production signing and exact-artifact installation/runtime checks.
 
