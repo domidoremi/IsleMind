@@ -14,7 +14,6 @@ import { userGuide } from '@/generated/userGuide'
 import { guideSearchText, normalizeGuideSearch } from './guideSearchText'
 import { safeHttpUrl } from '@/utils/sourceUrlSafety'
 import { restoreAccessibilityFocus } from '@/platform/native/restoreAccessibilityFocus'
-import { WorkspaceIntro } from '@/components/ui/WorkspaceIntro'
 import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 import { WorkspaceHeader } from '@/presentation/layout/WorkspaceHeader'
 import { useKeyboardViewportInset } from '@/presentation/layout/useKeyboardScrollViewport'
@@ -107,7 +106,6 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
       onScrollBeginDrag={() => { pendingAnchor.current = undefined; restoreIndex.current = false }} contentContainerStyle={{ padding: shortIndex ? 4 : 16, paddingBottom: shortIndex ? 4 : 48 }}>
       <View style={{ maxWidth: 720, width: '100%', alignSelf: 'center', padding: chapter ? 20 : shortIndex ? 0 : 8, borderRadius: 16, backgroundColor: chapter ? colors.ui.semantic.surface.base : 'transparent' }}>
         {!slug ? <>
-          {!shortIndex ? <WorkspaceIntro title={t('settingsWorkspace.manual')} eyebrow={t('settingsWorkspace.offline')} description={t('livelyUi.helpIntro')} icon="source" /> : null}
           <View accessibilityRole="list" style={{ marginTop: shortIndex ? 0 : 12 }}>
             {results.map((item, index) => <IslePressable key={item.id} haptic accessibilityRole="button" accessibilityLabel={item.title} onPress={() => open(item.id)} style={{ minHeight: shortIndex ? 44 : 68, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: shortIndex ? 8 : 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
               <Text accessible={false} importantForAccessibility="no" style={{ fontSize: 12, lineHeight: 18, color: colors.textTertiary }}>{String(index + 1).padStart(2, '0')}</Text>
