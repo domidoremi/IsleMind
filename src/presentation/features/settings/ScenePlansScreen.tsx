@@ -138,9 +138,11 @@ export function ScenePlansScreen({ port, conversationId, captureOnOpen = false, 
     {!plans.length ? <Text style={[typography.body, { color: colors.textSecondary }]}>{t('scenes.empty')}</Text> : null}
     {plans.map((plan, index) => <View key={plan.id} style={styles.saved}>
       <SettingsNavigationRow id={`scene-saved-${plan.id}`} title={plan.name} icon="layers" last={index === plans.length - 1}
+        accessibilityLabel={t('scenes.previewActionLabel', { number: index + 1, name: plan.name })}
         status={t('scenes.revision', { revision: plan.revision })} detail={plan.description || t('scenes.openHint')}
         onPress={() => openPlan(plan)} />
-      <IsleButton testID={`scene-edit-${plan.id}`} compact label={t('common.edit')} disabled={busy} onPress={() => edit(plan)} />
+      <IsleButton testID={`scene-edit-${plan.id}`} compact style={{ minWidth: 44 }} label={t('common.edit')}
+        accessibilityLabel={t('scenes.editActionLabel', { number: index + 1, name: plan.name })} disabled={busy} onPress={() => edit(plan)} />
     </View>)}
     <Text style={[typography.body, { color: colors.textSecondary }]}>{t('scenes.templateHint')}</Text>
   </View>

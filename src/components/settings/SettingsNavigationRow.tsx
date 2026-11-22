@@ -6,8 +6,8 @@ import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 /** A shared navigation treatment, not an editor: values never become controls here. */
-export function SettingsNavigationRow({ title, status, detail, icon, onPress, id, last = false, preview, tile = false, workspace = false }: {
-  title: string; status?: string; detail?: string; icon: AppIconName; onPress: () => void; id: string; last?: boolean; preview?: ReactNode; tile?: boolean; workspace?: boolean
+export function SettingsNavigationRow({ title, accessibilityLabel, status, detail, icon, onPress, id, last = false, preview, tile = false, workspace = false }: {
+  title: string; accessibilityLabel?: string; status?: string; detail?: string; icon: AppIconName; onPress: () => void; id: string; last?: boolean; preview?: ReactNode; tile?: boolean; workspace?: boolean
 }) {
   const { colors, canonicalThemeId } = useAppTheme()
   const minimal = canonicalThemeId === 'minimal'
@@ -20,7 +20,7 @@ export function SettingsNavigationRow({ title, status, detail, icon, onPress, id
   const [pressed, setPressed] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
-  return <IslePressable testID={id} accessibilityRole="button" accessibilityLabel={[title, status].filter(Boolean).join(', ')} accessibilityHint={detail}
+  return <IslePressable testID={id} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? [title, status].filter(Boolean).join(', ')} accessibilityHint={detail}
     haptic
     onPress={onPress} onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}
     onPressIn={() => setPressed(true)} onPressOut={() => setPressed(false)}

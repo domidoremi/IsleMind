@@ -54,6 +54,8 @@
     "openHint": "选择应用对象，查看配置变化后应用。",
     "templateHint": "每次应用都会保存独立配置。之后编辑方案，已有会话保留应用时的配置。",
     "editTemplate": "编辑方案",
+    "editActionLabel": "编辑场景 {{number}}：{{name}}",
+    "previewActionLabel": "预览场景 {{number}}：{{name}}",
     "saveAsNew": "保存为新方案",
     "reloadTemplate": "重新读取方案",
     "templateConflict": "方案已经被修改或删除。本地草稿已保留，请重新读取后检查，或另存为新方案。",

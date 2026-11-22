@@ -54,6 +54,8 @@
     "openHint": "Choose a target and review configuration changes before applying.",
     "templateHint": "Each application saves independent configuration. Later template edits leave existing conversations with the configuration they applied.",
     "editTemplate": "Edit plan",
+    "editActionLabel": "Edit scene {{number}}: {{name}}",
+    "previewActionLabel": "Preview scene {{number}}: {{name}}",
     "saveAsNew": "Save as a new plan",
     "reloadTemplate": "Reload plan",
     "templateConflict": "This plan was changed or deleted. Your draft is retained; reload and review it, or save it as a new plan.",

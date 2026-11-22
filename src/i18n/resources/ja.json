@@ -54,6 +54,8 @@
     "openHint": "適用先を選び、構成の変更を確認してから適用します。",
     "templateHint": "適用ごとに独立した構成を保存します。その後プランを編集しても、既存の会話は適用時の構成を保持します。",
     "editTemplate": "設定を編集",
+    "editActionLabel": "シーン{{number}}「{{name}}」を編集",
+    "previewActionLabel": "シーン{{number}}「{{name}}」をプレビュー",
     "saveAsNew": "新しい設定として保存",
     "reloadTemplate": "設定を再読み込み",
     "templateConflict": "設定が変更または削除されました。下書きは保持されています。再読み込みして確認するか、新しい設定として保存してください。",
