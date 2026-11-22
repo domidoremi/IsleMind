@@ -1,6 +1,5 @@
 import { createInstance, type TFunction } from 'i18next'
-import type { UsageRecord } from '@/modules/diagnostics'
-import { summarizeUsageRecords } from '@/modules/diagnostics/application/usageSummary'
+import { summarizeUsageRecords, type UsageRecord } from '@/modules/diagnostics'
 import zhCN from '@/i18n/resources/zh-CN.json'
 import en from '@/i18n/resources/en.json'
 import ja from '@/i18n/resources/ja.json'
