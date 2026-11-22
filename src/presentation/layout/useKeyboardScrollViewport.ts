@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
 import {
   Keyboard, Platform, TextInput,
@@ -141,4 +141,63 @@ export function useKeyboardScrollViewport(routeKey: string) {
     onFrameLayout: measureViewport, onScrollLayout, onScroll, onScrollBeginDrag,
     onInputFocus, onInputBlur, onInputLayout,
   }
+}
+
+/** Measures the full native frame before its content is cropped above an overlay keyboard. */
+export function useKeyboardViewportInset() {
+  const frameRef = useRef<View>(null)
+  const active = useRef(false)
+  const keyboardTop = useRef<number | null>(null)
+  const generation = useRef(0)
+  const pendingFrame = useRef<number | null>(null)
+  const [viewport, setViewport] = useState<{ bottomInset: number; visibleHeight: number | null }>({ bottomInset: 0, visibleHeight: null })
+
+  const cancelMeasurement = useCallback(() => {
+    generation.current += 1
+    if (pendingFrame.current !== null) cancelAnimationFrame(pendingFrame.current)
+    pendingFrame.current = null
+  }, [])
+
+  const measureViewport = useCallback(() => {
+    if (Platform.OS !== 'android' || !active.current) return
+    cancelMeasurement()
+    const epoch = generation.current
+    pendingFrame.current = requestAnimationFrame(() => {
+      pendingFrame.current = null
+      const frame = frameRef.current
+      frame?.measureInWindow((_x, top, _width, height) => {
+        if (!active.current || generation.current !== epoch || frame !== frameRef.current
+          || !Number.isFinite(top) || !Number.isFinite(height) || height <= 0) return
+        const inset = resolveKeyboardViewportInset({ top, height }, keyboardTop.current)
+        const available = Math.max(0, height - inset)
+        setViewport(current => Math.abs(current.bottomInset - inset) < 0.5
+          && current.visibleHeight !== null && Math.abs(current.visibleHeight - available) < 0.5
+          ? current : { bottomInset: inset, visibleHeight: available })
+      })
+    })
+  }, [cancelMeasurement])
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return
+    active.current = true
+    const show = (event: Pick<KeyboardEvent, 'endCoordinates'>) => {
+      const { screenY, height } = event.endCoordinates
+      if (!Number.isFinite(screenY) || !Number.isFinite(height) || height <= 0) return
+      keyboardTop.current = screenY
+      measureViewport()
+    }
+    const hide = () => { keyboardTop.current = null; measureViewport() }
+    const subscriptions = [Keyboard.addListener('keyboardDidShow', show), Keyboard.addListener('keyboardDidHide', hide)]
+    const metrics = Keyboard.metrics()
+    if (metrics) show({ endCoordinates: metrics })
+    else measureViewport()
+    return () => {
+      active.current = false
+      keyboardTop.current = null
+      cancelMeasurement()
+      for (const subscription of subscriptions) subscription.remove()
+    }
+  }, [cancelMeasurement, measureViewport])
+
+  return { frameRef, ...viewport, onFrameLayout: measureViewport }
 }

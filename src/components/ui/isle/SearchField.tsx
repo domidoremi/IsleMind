@@ -57,6 +57,7 @@ export function IsleSearchField({
   value,
   defaultValue,
   editable = true,
+  disableFullscreenUI = true,
   onChangeText,
   onFocus,
   onBlur,
@@ -84,7 +85,7 @@ export function IsleSearchField({
   if (usesNativeInput) {
     return <NativeInput value={value} defaultValue={defaultValue} disabled={!editable} onChangeText={onChangeText} onFocus={onFocus} onBlur={onBlur}
       allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={[design?.semantic.typography.body, inputStyle]}
-      inputProps={{ ...props, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={setNativeInputRef} style={[{ minHeight: 44 }, containerStyle]}
+      inputProps={{ ...props, disableFullscreenUI, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={setNativeInputRef} style={[{ minHeight: 44 }, containerStyle]}
       prefix={<AppIcon name="search" color={colors.textSecondary} size={18} />}
       suffix={pending ? <HighFrameSpinner color={colors.textSecondary} size={16} /> : undefined} />
   }
@@ -186,6 +187,7 @@ export function IsleSearchField({
       </View>
       <TextInput
         {...props}
+        disableFullscreenUI={disableFullscreenUI}
         underlineColorAndroid={glass ? 'transparent' : props.underlineColorAndroid}
         ref={setNativeInputRef}
         value={value}

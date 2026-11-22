@@ -17,6 +17,7 @@ import { restoreAccessibilityFocus } from '@/platform/native/restoreAccessibilit
 import { WorkspaceIntro } from '@/components/ui/WorkspaceIntro'
 import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 import { WorkspaceHeader } from '@/presentation/layout/WorkspaceHeader'
+import { useKeyboardViewportInset } from '@/presentation/layout/useKeyboardScrollViewport'
 
 const guideHeading: RenderFunction = (node, children, _parents, styles) => (
   <View key={node.key} accessible accessibilityRole="header" {...(Platform.OS === 'web' ? { 'aria-level': Number(node.type.slice(-1)) } : {})} style={styles[`_VIEW_SAFE_${node.type}`]}>{children}</View>
@@ -28,12 +29,15 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
   const { colors } = useAppTheme()
   const typography = colors.design?.semantic.typography
   const motion = useMotionPreference(true)
-  const { width, fontScale } = useWindowDimensions()
+  const { width, height, fontScale } = useWindowDimensions()
   const illustrationWidth = Math.max(120, Math.min(720, width - 32) - 40)
   const language = i18n.language.startsWith('zh') ? 'zh-CN' : i18n.language.startsWith('ja') ? 'ja' : 'en'
   const chapters: readonly { id: string; title: string; body: string; anchors: readonly string[] }[] = userGuide.chapters[language]
   const [slug, setSlug] = useState(initialSlug)
   const [query, setQuery] = useState('')
+  const [viewportHeight, setViewportHeight] = useState(height)
+  const keyboardViewport = useKeyboardViewportInset()
+  const shortIndex = !slug && (keyboardViewport.visibleHeight ?? viewportHeight) / fontScale < 320
   const [contentsExpanded, setContentsExpanded] = useState(false)
   const scroll = useRef<ScrollView>(null)
   const indexOffset = useRef(0)
@@ -75,7 +79,10 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
     paragraph: { marginBottom: 12 },
   }
   return <IsleScreen padded={false}>
-    <View style={{ width: '100%', maxWidth: 860, alignSelf: 'center', paddingHorizontal: width / fontScale < 430 ? 14 : 18, paddingTop: 8 }}>
+    <View testID="guide-frame" ref={keyboardViewport.frameRef} collapsable={false} style={{ flex: 1, minHeight: 0 }} onLayout={keyboardViewport.onFrameLayout}>
+    <View testID="guide-viewport" style={{ flex: 1, minHeight: 0, marginBottom: keyboardViewport.bottomInset }} onLayout={event => setViewportHeight(event.nativeEvent.layout.height)}>
+    <View style={{ width: '100%', maxWidth: 860, alignSelf: 'center', paddingHorizontal: width / fontScale < 430 ? 14 : 18, paddingTop: shortIndex ? 0 : 8 }}>
+      <View style={shortIndex ? { display: 'none' } : undefined} accessibilityElementsHidden={shortIndex} importantForAccessibility={shortIndex ? 'no-hide-descendants' : 'auto'}>
       <WorkspaceHeader title={chapter?.title ?? t('settingsWorkspace.manual')}
         contextLabel={slug ? t('settingsWorkspace.manual') : t('settingsWorkspace.offline')} compact={width / fontScale < 430}
         leading={<IslePressable accessibilityRole="button" accessibilityLabel={t('settingsWorkspace.contents')}
@@ -83,23 +90,26 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
           style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
           <AppIcon name="back-previous" size={18} color={slug ? colors.text : colors.textTertiary} />
         </IslePressable>}
-        trailing={<IsleButton tone="soft" compact label={t('settingsWorkspace.closeManual')} onPress={onClose} />} />
+        trailing={slug ? <IsleButton tone="soft" compact label={t('settingsWorkspace.closeManual')} onPress={onClose} /> : undefined} />
+      </View>
+      {!slug ? <View testID="guide-search-toolbar" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingBottom: shortIndex ? 0 : 12 }}>
+        <IsleSearchField value={query} onChangeText={setQuery} placeholder={t('settingsWorkspace.searchManual')} accessibilityLabel={t('settingsWorkspace.searchManual')} clearAccessibilityLabel={t('common.clearSearch')} onClear={() => setQuery('')} onFocus={keyboardViewport.onFrameLayout} containerStyle={{ flex: 1, minWidth: 0 }} />
+        <IsleButton tone="soft" compact label={t('settingsWorkspace.closeManual')} onPress={onClose} />
+      </View> : null}
     </View>
-    <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" scrollEventThrottle={64}
+    <ScrollView ref={scroll} testID="guide-scroll" keyboardShouldPersistTaps="handled" scrollEventThrottle={64}
       onScroll={event => { if (!slug && !restoreIndex.current) indexOffset.current = event.nativeEvent.contentOffset.y }}
       onContentSizeChange={() => {
         if (slug || !restoreIndex.current) return
         restoreIndex.current = false
         scroll.current?.scrollTo({ y: indexOffset.current, animated: false })
       }}
-      onScrollBeginDrag={() => { pendingAnchor.current = undefined; restoreIndex.current = false }} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
-      <View style={{ maxWidth: 720, width: '100%', alignSelf: 'center', padding: chapter ? 20 : 8, borderRadius: 16, backgroundColor: chapter ? colors.ui.semantic.surface.base : 'transparent' }}>
+      onScrollBeginDrag={() => { pendingAnchor.current = undefined; restoreIndex.current = false }} contentContainerStyle={{ padding: shortIndex ? 4 : 16, paddingBottom: shortIndex ? 4 : 48 }}>
+      <View style={{ maxWidth: 720, width: '100%', alignSelf: 'center', padding: chapter ? 20 : shortIndex ? 0 : 8, borderRadius: 16, backgroundColor: chapter ? colors.ui.semantic.surface.base : 'transparent' }}>
         {!slug ? <>
-          <WorkspaceIntro title={t('settingsWorkspace.manual')} eyebrow={t('settingsWorkspace.offline')} description={t('livelyUi.helpIntro')} icon="source" />
-          <View style={{ height: 20 }} />
-          <IsleSearchField value={query} onChangeText={setQuery} placeholder={t('settingsWorkspace.searchManual')} accessibilityLabel={t('settingsWorkspace.searchManual')} clearAccessibilityLabel={t('common.clearSearch')} onClear={() => setQuery('')} />
-          <View accessibilityRole="list" style={{ marginTop: 12 }}>
-            {results.map((item, index) => <IslePressable key={item.id} haptic accessibilityRole="button" accessibilityLabel={item.title} onPress={() => open(item.id)} style={{ minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
+          {!shortIndex ? <WorkspaceIntro title={t('settingsWorkspace.manual')} eyebrow={t('settingsWorkspace.offline')} description={t('livelyUi.helpIntro')} icon="source" /> : null}
+          <View accessibilityRole="list" style={{ marginTop: shortIndex ? 0 : 12 }}>
+            {results.map((item, index) => <IslePressable key={item.id} haptic accessibilityRole="button" accessibilityLabel={item.title} onPress={() => open(item.id)} style={{ minHeight: shortIndex ? 44 : 68, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: shortIndex ? 8 : 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
               <Text accessible={false} importantForAccessibility="no" style={{ fontSize: 12, lineHeight: 18, color: colors.textTertiary }}>{String(index + 1).padStart(2, '0')}</Text>
               <Text style={{ flex: 1, minWidth: 0, ...typography?.title, color: colors.text }}>{item.title}</Text>
               <AppIcon name="arrow-right" size={18} color={colors.textTertiary} />
@@ -143,6 +153,8 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
         })}</>}
       </View>
     </ScrollView>
+    </View>
+    </View>
   </IsleScreen>
 }
 
