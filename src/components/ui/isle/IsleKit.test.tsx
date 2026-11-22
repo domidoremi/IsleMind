@@ -29,6 +29,16 @@ jest.mock('animal-island-ui-rn', () => {
   } }
 })
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: jest.fn() }))
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}))
+jest.mock('./IsleNativeSelect', () => {
+  const actual = jest.requireActual('./IsleNativeSelect')
+  return { IsleNativeSelect: (props: any) => {
+    mockNativeSelectChange = props.onChange
+    return require('react').createElement(actual.IsleNativeSelect, props)
+  } }
+})
 jest.mock('@/hooks/useMotionPreference', () => ({ useMotionPreference: jest.fn(() => 'none') }))
 jest.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 jest.mock('moti', () => ({ MotiView: require('react-native').View, AnimatePresence: require('react').Fragment }))

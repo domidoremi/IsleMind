@@ -15,6 +15,7 @@ import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import { resolveMinimumTouchTargetHeight } from './touchTarget'
+import { IsleNativeSelect } from './IsleNativeSelect'
 import { glassShadowStyle } from './glassShadowStyle'
 import { GlassSurface } from './GlassSurface'
 import {
@@ -872,6 +873,9 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
   }, [disabled])
   const selected = options.find((option) => option.value === value)
   if (palette.themeId === 'animal-island-ui') {
+    if (Platform.OS !== 'web') return <IsleNativeSelect key={disabled ? 'disabled' : 'enabled'}
+      options={options} value={value} placeholder={placeholder} disabled={disabled} onChange={select}
+      style={style} accessibilityLabel={accessibilityLabel} testID={testID} />
     // The fork owns its menu state; remount it to retire an open menu on disable.
     return <NativeSelect key={disabled ? 'disabled' : 'enabled'} options={options.map((option) => ({ key: option.value, label: option.label, disabled: option.disabled }))}
       value={value ?? ''} placeholder={placeholder} disabled={disabled} onChange={select} style={style}
