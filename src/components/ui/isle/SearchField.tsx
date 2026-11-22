@@ -1,4 +1,4 @@
-import { useState, type Ref } from 'react'
+import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { TextInput } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
@@ -68,10 +68,23 @@ export function IsleSearchField({
   const focusMotion = useThemeMotion('accent')
   const [focused, setFocused] = useState(false)
   const [clearHintVisible, setClearHintVisible] = useState(false)
-  if (canonicalThemeId === 'animal-island-ui') {
+  const nativeInputRef = useRef<TextInput>(null)
+  const usesNativeInput = canonicalThemeId === 'animal-island-ui'
+  const setNativeInputRef = useCallback((input: TextInput | null) => {
+    const previousInput = nativeInputRef.current
+    if (previousInput !== input && previousInput?.isFocused?.()) previousInput.blur()
+    nativeInputRef.current = input
+  }, [])
+  useImperativeHandle(inputRef, () => nativeInputRef.current!, [usesNativeInput])
+  useLayoutEffect(() => () => {
+    // Release focus before the native child loses its host reference.
+    const input = nativeInputRef.current
+    if (input?.isFocused?.()) input.blur()
+  }, [])
+  if (usesNativeInput) {
     return <NativeInput value={value} defaultValue={defaultValue} disabled={!editable} onChangeText={onChangeText} onFocus={onFocus} onBlur={onBlur}
       allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={[design?.semantic.typography.body, inputStyle]}
-      inputProps={{ ...props, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={inputRef} style={[{ minHeight: 44 }, containerStyle]}
+      inputProps={{ ...props, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={setNativeInputRef} style={[{ minHeight: 44 }, containerStyle]}
       prefix={<AppIcon name="search" color={colors.textSecondary} size={18} />}
       suffix={pending ? <HighFrameSpinner color={colors.textSecondary} size={16} /> : undefined} />
   }
@@ -174,7 +187,7 @@ export function IsleSearchField({
       <TextInput
         {...props}
         underlineColorAndroid={glass ? 'transparent' : props.underlineColorAndroid}
-        ref={inputRef}
+        ref={setNativeInputRef}
         value={value}
         defaultValue={defaultValue}
         editable={editable}
