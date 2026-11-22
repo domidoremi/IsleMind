@@ -60,7 +60,7 @@ export function ScenePlansScreen({ port, conversationId, captureOnOpen = false, 
   const formConflict = !!form && !!base && (plans.find(plan => plan.id === form.plan.id)?.revision ?? null) !== base.revision
   const valid = form ? scenePlanFromForm(form, catalog) : undefined
   const stale = previewInvalid || !!preview && plans.find(plan => plan.id === preview.plan.id)?.revision !== preview.plan.revision
-  function clearDraft() { setForm(undefined); setBase(undefined) }
+  function clearDraft() { setForm(undefined); setBase(undefined); setFeedback(undefined) }
   useSettingsDraft(dirty, busy, clearDraft, signature)
 
   useEffect(() => {
