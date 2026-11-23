@@ -16,6 +16,7 @@ jest.mock('@/components/ui/AppText', () => ({ Text: require('react-native').Text
 jest.mock('@/modules/providers', () => ({
   hasCredentialModelCatalog: jest.requireActual('@/modules/providers/providerModelCatalog').hasCredentialModelCatalog,
   normalizeProviderCredentialGroups: jest.requireActual('@/modules/providers/providerCredentialGroups').normalizeProviderCredentialGroups,
+  providerSettingsEndpointOrigin: jest.requireActual('@/modules/providers/providerSettingsList').providerSettingsEndpointOrigin,
 }))
 jest.mock('@/components/ui/isle', () => {
   const { Pressable, Text } = require('react-native')
@@ -32,7 +33,11 @@ const provider = (extra: Partial<AIProvider> = {}): AIProvider => ({
   models: [], credentialGroups: [group()], ...extra,
 })
 const tree = (value: AIProvider) => <ProviderImportReviewCard provider={value} protocolLabel="Anthropic compatible" />
-const tr = (key: string, values?: Record<string, unknown>) => String(mockI18n.t(key, values))
+const tr = (key: string, values?: Record<string, unknown>) => {
+  const value = String(mockI18n.t(key, values))
+  expect(value).not.toBe(key)
+  return value
+}
 beforeAll(async () => { await mockI18n.init({ lng: 'en', fallbackLng: false, resources: { en: { translation: en }, ja: { translation: ja }, 'zh-CN': { translation: zh } }, interpolation: { escapeValue: false } }) })
 beforeEach(() => { mockTheme = 'minimal'; mockMode = 'light' })
 
@@ -82,7 +87,7 @@ it.each(languages)('shows each owner, selection, disabled state and preference w
   expect(rows[1].getByText(tr('apiKeyPanel.modelCount', { count: 0 }))).toBeTruthy()
   expect(rows[2].getByText(tr('providerSettings.importCatalogUnknown'))).toBeTruthy()
   expect(screen.getByText('Anthropic compatible')).toBeTruthy()
-  expect(screen.getByText('https://example.invalid/v1')).toBeTruthy()
+  expect(screen.getByText('https://example.invalid')).toBeTruthy()
   expect(screen.queryByText(/synthetic-/)).toBeNull()
   expect(JSON.stringify(value)).toBe(before)
 })

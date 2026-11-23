@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Text } from '@/components/ui/AppText'
 import { IsleButton } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { hasCredentialModelCatalog, normalizeProviderCredentialGroups } from '@/modules/providers'
+import { hasCredentialModelCatalog, normalizeProviderCredentialGroups, providerSettingsEndpointOrigin } from '@/modules/providers'
 import type { AIProvider } from '@/types/providerContracts'
 
 export function ProviderImportReviewCard({ provider, protocolLabel }: { provider: AIProvider; protocolLabel: string }) {
@@ -18,11 +18,10 @@ export function ProviderImportReviewCard({ provider, protocolLabel }: { provider
   const enabled = groups.filter(group => group.enabled).length
   const models = [...new Set([...provider.models, ...(provider.manualModels ?? [])])]
   const selected = provider.enabledModels === undefined ? models.length : models.filter(model => provider.enabledModels?.includes(model)).length
-  let endpoint = ''
-  try { const url = new URL(provider.baseUrl ?? ''); endpoint = url.origin + url.pathname } catch { /* Invalid addresses are not echoed. */ }
+  const endpoint = providerSettingsEndpointOrigin(provider)
   return <View testID="provider-import-connection-review" style={{ gap: 6, paddingVertical: 10 }}>
     <Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>{provider.name}</Text>
-    <Text style={{ color: colors.textSecondary }}>{endpoint || t('providerSettings.baseUrl')}</Text>
+    <Text style={{ color: colors.textSecondary }}>{endpoint ?? t('providerSettings.baseUrl')}</Text>
     <Text style={{ color: colors.textSecondary }}>{protocolLabel}</Text>
     <Text style={{ color: colors.textSecondary }}>{t('apiKeyPanel.modelsSelectedCount', { selected, total: models.length })}</Text>
     {models.length ? <Text style={{ color: colors.textSecondary }}>{models.slice(0, 3).join(', ')}</Text> : null}

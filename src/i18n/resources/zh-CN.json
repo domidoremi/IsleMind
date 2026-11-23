@@ -3328,6 +3328,12 @@
     "disabledState": "已停用",
     "tokenGroups": "{{count}} 组密钥",
     "modelCount": "{{count}} 个模型",
+    "modelsSelectedCount": "已选 {{selected}} / {{total}}",
+    "preferredCredential": "首选",
+    "credentialStrategies": {
+      "balanced": "健康优先",
+      "least-recently-used": "轮换使用"
+    },
     "overviewEndpoint": "端点",
     "overviewTokens": "连接密钥",
     "overviewModels": "可选模型",

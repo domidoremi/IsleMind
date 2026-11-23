@@ -3332,6 +3332,14 @@
     "disabledState": "Disabled",
     "tokenGroups": "{{count}} key groups",
     "modelCount": "{{count}} models",
+    "modelCount_one": "{{count}} model",
+    "modelCount_other": "{{count}} models",
+    "modelsSelectedCount": "{{selected}} of {{total}} selected",
+    "preferredCredential": "Preferred",
+    "credentialStrategies": {
+      "balanced": "Health first",
+      "least-recently-used": "Least recently used"
+    },
     "overviewEndpoint": "Endpoint",
     "overviewTokens": "Connection keys",
     "overviewModels": "Selectable models",

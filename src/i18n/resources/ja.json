@@ -3328,6 +3328,12 @@
     "disabledState": "無効",
     "tokenGroups": "{{count}} 組のキー",
     "modelCount": "{{count}} モデル",
+    "modelsSelectedCount": "{{total}} 件中 {{selected}} 件選択",
+    "preferredCredential": "優先",
+    "credentialStrategies": {
+      "balanced": "正常なキーを優先",
+      "least-recently-used": "使用間隔順"
+    },
     "overviewEndpoint": "エンドポイント",
     "overviewTokens": "接続キー",
     "overviewModels": "選択可能モデル",

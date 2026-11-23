@@ -7,6 +7,18 @@ export type ProviderSearchTextCache = Map<string, string>
 export const PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT = 96
 export const PROVIDER_SETTINGS_SEARCH_FIELD_SAMPLE_LIMIT = 160
 
+/** The connection list/search may identify a host, never expose authentication
+ * embedded in userinfo, paths, query strings or fragments. The editor owns the
+ * complete editable address. This projection does not modify the request URL. */
+export function providerSettingsEndpointOrigin(provider: Pick<AIProvider, 'baseUrl'>): string | undefined {
+  const endpoint = provider.baseUrl?.trim()
+  if (!endpoint) return undefined
+  try {
+    const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.origin : undefined
+  } catch { return undefined }
+}
+
 export interface ProviderSettingsGroup {
   id: string
   label: string
