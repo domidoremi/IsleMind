@@ -23,3 +23,7 @@
 31生产路由、55原型、五主题明暗、三语、尺寸、大字体、输入、静默无障碍、恢复及高内存性能继续。原Web空间外部不可用，无新空间或截图重试。fullAcceptance、nativeVerified、visualAcceptance和广义loadedRuntimeVerified保持false。
 
 所有命令和子进程隐藏窗口后台执行；没有APK构建／导出／安装、设备音频／TalkBack／音量操作。每项Git、标签和Release操作分别重新核对远端工作流，实际发布后再写入发布回执和下一周期检查点。
+
+## 实际发布
+
+v1.1.26于2026-11-23 20:04:30（台北）实际发布，标签固定2a09aa1b3dbd4bd4fce3a67d4818beb34a0955d1；三语正文、稳定公开和latest核对通过，原52份Release和标签保持，41条Actions零新增／活动。下一周期0/5；[发布回执](./source-release-1.1.26-2026-11-23.md)。
