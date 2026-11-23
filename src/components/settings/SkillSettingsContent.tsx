@@ -126,6 +126,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   const [tags, setTags] = useState('')
   const [layer, setLayer] = useState<SkillLayer>('base')
   const [priority, setPriority] = useState('')
+  const defaultPriority = layer === 'base' ? 0 : layer === 'advanced' ? 20 : 40
   const [providerId, setProviderId] = useState('')
   const [model, setModel] = useState('')
   const [temperature, setTemperature] = useState('')
@@ -306,7 +307,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
       return
     }
     const safeTags = mergeWorkflowSkillEditTags(editing, parseList(tags))
-    const nextPriority = parseBoundedNumber(priority, -1000, 1000) ?? (layer === 'base' ? 0 : layer === 'advanced' ? 20 : 40)
+    const nextPriority = parseBoundedNumber(priority, -1000, 1000) ?? defaultPriority
     const draftSkill = createBaseSkill({
       id: editing?.id ?? pendingId.current,
       createdAt: editing?.createdAt,
@@ -681,7 +682,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
           {advancedOpen ? <View style={{ gap: 10 }}>
           <IsleField label={t('skills.tags')} inputProps={{ editable: !saving, value: tags, onChangeText: setTags, placeholder: 'review, zh-CN' }} />
           <View style={fieldRowStyle}>
-            <IsleField style={fieldFlexStyle} label={t('skills.priority')} inputProps={{ editable: !saving, value: priority, onChangeText: setPriority, placeholder: '20', keyboardType: 'numeric' }} />
+            <IsleField style={fieldFlexStyle} label={t('skills.priority')} inputProps={{ editable: !saving, value: priority, onChangeText: setPriority, placeholder: String(defaultPriority), keyboardType: 'numeric' }} />
             <IsleField style={fieldFlexStyle} label={t('skills.temperature')} inputProps={{ editable: !saving, value: temperature, onChangeText: setTemperature, placeholder: '0.3', keyboardType: 'decimal-pad' }} />
           </View>
           <SettingsReferenceField label={t('skills.providerId')} value={providerId} onChange={setProviderId} multiple={false} disabled={saving}
