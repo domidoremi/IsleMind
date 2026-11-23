@@ -155,14 +155,14 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
       {field('name', { maxLength: 120 })}
       {field('instructions', { multiline: true, maxLength: 24_000 })}
       <Text style={headingStyle}>{t('agents.fields.providerId')}</Text>
-      <IsleSelect value={form.providerId} options={providerOptions} onChange={(value) => { if (!busy) update('providerId', value) }} />
+      <IsleSelect accessibilityLabel={t('agents.fields.providerId')} value={form.providerId} options={providerOptions} onChange={(value) => { if (!busy) update('providerId', value) }} />
       {!configuredProvider ? <Text style={bodyStyle}>{t('agents.missingProvider')}</Text> : null}
       {configuredProvider && getProviderSelectableModels(configuredProvider).length ? <>
         <Text style={headingStyle}>{t('agents.fields.modelId')}</Text>
-        <IsleSelect value={form.modelId} options={Array.from(new Set([form.modelId, ...getProviderSelectableModels(configuredProvider)])).filter(Boolean).map(value => ({ value, label: value }))} onChange={value => { if (!busy) update('modelId', value) }} />
+        <IsleSelect accessibilityLabel={t('agents.fields.modelId')} value={form.modelId} options={Array.from(new Set([form.modelId, ...getProviderSelectableModels(configuredProvider)])).filter(Boolean).map(value => ({ value, label: value }))} onChange={value => { if (!busy) update('modelId', value) }} />
       </> : field('modelId', { maxLength: 512 })}
       <Text style={headingStyle}>{t('agents.actionCapability')}</Text>
-      <IsleSelect value={form.actionCapability} options={AGENT_ACTION_CAPABILITIES.map((value) => ({ value, label: t(`agents.capabilities.${value}`) }))}
+      <IsleSelect accessibilityLabel={t('agents.actionCapability')} value={form.actionCapability} options={AGENT_ACTION_CAPABILITIES.map((value) => ({ value, label: t(`agents.capabilities.${value}`) }))}
         onChange={(value) => { if (!busy) { setForm({ ...form, actionCapability: value as AgentDefinitionForm['actionCapability'] }); setDirty(true) } }} />
       {resolveModelBinding && configuredProvider ? <IsleButton label={t('agents.bindCapabilities')} disabled={busy}
         onPress={() => { setForm({ ...form, ...resolveModelBinding(configuredProvider, form.modelId) }); setDirty(true) }} /> : null}
@@ -179,7 +179,7 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
       <SettingsReferenceField label={t('agents.fields.delegateAgentIds')} value={form.delegateAgentIds} catalogReady={referenceState === 'ready'} options={references.agents.filter(agent => agent.value !== form.source.id)} onChange={value => update('delegateAgentIds', value)} disabled={busy} />
       <Text style={bodyStyle}>{t('agents.referencesHint')}</Text>
       <Text style={headingStyle}>{t('agents.reviewer')}</Text>
-      <IsleSelect value={form.reviewerMode} options={(['off', 'read_only'] as const).map((value) => ({ value, label: t(`agents.reviewerModes.${value}`) }))}
+      <IsleSelect accessibilityLabel={t('agents.reviewer')} value={form.reviewerMode} options={(['off', 'read_only'] as const).map((value) => ({ value, label: t(`agents.reviewerModes.${value}`) }))}
         onChange={(value) => { if (!busy) { setForm({ ...form, reviewerMode: value as AgentDefinitionForm['reviewerMode'], maxReviews: value === 'off' ? '0' : form.maxReviews === '0' ? '1' : form.maxReviews }); setDirty(true) } }} />
       {form.reviewerMode === 'read_only' ? <><SettingsReferenceField label={t('agents.fields.reviewerAgentId')} value={form.reviewerAgentId} catalogReady={referenceState === 'ready'} options={references.agents.filter(agent => agent.value !== form.source.id)} multiple={false} onChange={value => update('reviewerAgentId', value)} disabled={busy} />{field('maxReviews', { numeric: true })}</> : null}
       <Text style={headingStyle}>{t('agents.budget')}</Text>

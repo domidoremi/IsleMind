@@ -54,6 +54,7 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
         testID={testID ? `${testID}-trigger` : undefined}
         accessibilityRole="combobox"
         accessibilityLabel={accessibilityLabel ?? placeholder}
+        accessibilityValue={{ text: selected?.label ?? placeholder }}
         accessibilityState={{ disabled, expanded: open && !disabled }}
         disabled={disabled}
         onPress={() => setOpen(current => !current)}

@@ -46,7 +46,7 @@ it('starts with a selectable discovered group model rather than an internal plac
   const view = await render(<AgentDefinitionsScreen management={management} />)
   await fireEvent.press(view.getByRole('button', { name: 'agents.create' }))
   await waitFor(() => expect(management.newDraft).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'group-model' })))
-  expect(view.getByRole('button', { name: 'group-model' })).toBeTruthy()
+  expect(view.getByRole('button', { name: 'agents.fields.modelId · group-model' })).toBeTruthy()
   expect(view.queryByLabelText('agents.fields.modelId')).toBeNull()
 })
 
