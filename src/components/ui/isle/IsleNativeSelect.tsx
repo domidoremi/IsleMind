@@ -34,8 +34,9 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
   const [panel, setPanel] = useState<Size | null>(null)
   const trigger = useRef<ComponentRef<typeof View>>(null)
   const selected = options.find(option => option.value === value)
+  const preferredWidth = Math.min(320, Math.max(200, anchor?.width ?? 200))
   const bounds = resolveNativeSelectLayout(anchor, viewport ?? window, insets,
-    panel ?? { width: 200, height: options.length * 44 + 24 })
+    { width: preferredWidth, height: panel?.height ?? options.length * 44 + 24 })
   const close = () => setOpen(false)
 
   useEffect(() => {
@@ -96,7 +97,11 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
                 if (width > 0 && height > 0) setPanel(previous =>
                   previous?.width === width && previous.height === height ? previous : { width, height })
               }}
-              style={[styles.dropdown, bounds, { backgroundColor: isDark ? colors.surfaceSecondary : '#ffeea0' }]}
+              style={[styles.dropdown, bounds, {
+                width: Math.min(preferredWidth, bounds.maxWidth),
+                backgroundColor: isDark ? colors.surfaceSecondary : '#ffeea0',
+                borderColor: colors.borderStrong, shadowColor: colors.shadowTint,
+              }]}
             >
               <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled"
                 testID={testID ? `${testID}-options` : undefined}>
@@ -109,14 +114,20 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
                     focusable={!option.disabled}
                     disabled={option.disabled}
                     onPress={option.disabled ? undefined : () => { onChange(option.value); close() }}
-                    style={styles.option}
+                    style={({ pressed }) => [styles.option, {
+                      backgroundColor: option.value === value ? colors.ui.tone.success.background
+                        : pressed && !option.disabled ? colors.ui.control.defaultBackground : 'transparent',
+                    }]}
                     testID={testID ? `${testID}-option-${option.value}` : undefined}
                   >
                     {({ pressed }) => <>
-                      {option.value === value ? <View pointerEvents="none" style={styles.pill} /> : null}
-                      <View pointerEvents="none" style={{ width: 16 }} />
+                      <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+                        style={styles.selectionMark}>
+                        {option.value === value ? <AppIcon name="check" size={18}
+                          color={option.disabled ? colors.textTertiary : colors.ui.tone.success.foreground} /> : null}
+                      </View>
                       <Text style={[styles.optionLabel, {
-                        color: option.disabled ? colors.textTertiary : isDark ? colors.text : '#725d42',
+                        color: option.disabled ? colors.textTertiary : option.value === value ? colors.ui.tone.success.foreground : colors.text,
                         fontWeight: option.value === value || pressed ? '700' : '500',
                       }]}>{option.label}</Text>
                     </>}
@@ -138,12 +149,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8, paddingHorizontal: 13, borderWidth: 2, borderRadius: 12,
   },
   value: { flexShrink: 1, fontSize: 14, fontWeight: '600' },
-  dropdown: { position: 'absolute', paddingVertical: 12, borderRadius: 28 },
-  option: {
-    minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 10, paddingLeft: 14, paddingRight: 30,
+  dropdown: {
+    position: 'absolute', padding: 8, borderRadius: 24, borderWidth: 1,
+    shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 12, elevation: 8,
   },
-  optionLabel: { flexShrink: 1, fontSize: 14 },
-  pill: { position: 'absolute', left: 20, right: 20, top: '56%', marginTop: -7,
-    height: 14, borderRadius: 7, backgroundColor: '#ffcc00', opacity: 0.3 },
+  option: {
+    minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 10, paddingHorizontal: 12, borderRadius: 16,
+  },
+  selectionMark: { width: 18, flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
+  optionLabel: { flex: 1, flexShrink: 1, fontSize: 14 },
 })
