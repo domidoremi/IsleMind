@@ -115,8 +115,16 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
     setForm(agentDefinitionToForm(definition)); setExpectedRevision(revision); setDirty(revision === undefined)
   }
   const update = (key: TextField, value: string) => {
-    setForm((current) => current ? { ...current, [key]: value,
-      ...(key === 'providerId' || key === 'modelId' ? { actionCapability: 'text_only' as const, capabilityRevision: 'unverified' } : {}) } : current)
+    setForm((current) => {
+      if (!current) return current
+      const providerChanged = key === 'providerId' && value !== current.providerId
+      const nextProvider = providerChanged ? providers.find(provider => provider.id === value) : undefined
+      const selectableModels = nextProvider ? getProviderSelectableModels(nextProvider) : []
+      return { ...current, [key]: value,
+        ...(providerChanged ? { modelId: selectableModels.includes(current.modelId) ? current.modelId
+          : nextProvider ? getProviderPreferredModel(nextProvider) ?? selectableModels[0] ?? '' : '' } : {}),
+        ...(key === 'providerId' || key === 'modelId' ? { actionCapability: 'text_only' as const, capabilityRevision: 'unverified' } : {}) }
+    })
     setDirty(true); setFeedback(undefined)
   }
   function field(key: TextField, options: { maxLength?: number; multiline?: boolean; numeric?: boolean; disabled?: boolean } = {}) {
