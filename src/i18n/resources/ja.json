@@ -2955,6 +2955,8 @@
     "reviewImport": "インポートを確認",
     "importReviewHint": "端末内だけで解析し、認証情報は非表示にします。保存ではリクエストを送らず、既存の接続や会話も変更しません。",
     "importCredentialSummary": "{{count}} 個のキー · 非表示",
+    "importCredentialState": "有効 {{enabled}} · 無効 {{disabled}}",
+    "importShowMoreKeys": "キーをさらに表示",
     "importCatalogUnknown": "モデル未取得",
     "importShowMore": "さらに接続を表示",
     "importWarnings": "解析の注意点 {{count}} 件（入力内で除外した重複 {{duplicates}} 件を含む）。一覧の接続だけを保存します。",

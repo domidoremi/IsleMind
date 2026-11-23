@@ -897,6 +897,7 @@ function collectImportedCredentialEntries(value: unknown, providerRoot = false):
   if (providerRoot && nested.length) return nested
   const directValues = [record.apiKey, record.api_key, record.key, record.token, record.secret, record.accessToken, record.access_token, record['秘钥'], record['密钥'], record['令牌']]
   const catalog = record.availableModels ?? record.models
+    ?? (providerRoot ? record.model ?? record['模型'] ?? record['模型列表'] : undefined)
   const context: Omit<ImportedCredentialEntry, 'apiKey'> = providerRoot ? {} : {
     sourceId: firstString(record.id), label: firstString(record.label, record.name, record.title),
     enabled: typeof record.enabled === 'boolean' ? record.enabled : true,
@@ -905,9 +906,18 @@ function collectImportedCredentialEntries(value: unknown, providerRoot = false):
       ? { modelCatalogKnown: record.modelCatalogKnown }
       : record.lastModelSyncStatus === 'ok' || record.models !== undefined ? { modelCatalogKnown: true } : {}),
   }
-  return [...nested, ...directValues.flatMap(value => typeof value === 'string'
+  const entries = [...nested, ...directValues.flatMap(value => typeof value === 'string'
     ? splitExplicitCredentialText(value).map(apiKey => ({ ...context, apiKey }))
     : collectImportedCredentialEntries(value))]
+  if (!providerRoot || directValues.some(value => value !== null && typeof value === 'object')
+    || new Set(entries.map(entry => entry.apiKey)).size !== 1) return entries
+  const legacyCatalogKnown = typeof record.modelCatalogKnown === 'boolean'
+    ? record.modelCatalogKnown
+    : record.lastModelSyncStatus === 'ok'
+  // Only a single plain legacy key can own the confirmed provider-level catalog.
+  return legacyCatalogKnown
+    ? entries.map(entry => ({ ...entry, availableModels: jsonModelIds(catalog), modelCatalogKnown: true }))
+    : entries
 }
 
 function firstString(...values: unknown[]): string | undefined {

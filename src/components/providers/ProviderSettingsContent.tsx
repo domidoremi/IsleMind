@@ -19,6 +19,7 @@ import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
 import { ProviderTokenField } from './ProviderTokenField'
+import { ProviderImportReviewCard } from './ProviderImportReviewCard'
 import { ProviderConnectionRow } from './ProviderConnectionRow'
 import { ProviderConfigurationHeader } from './ProviderConfigurationHeader'
 import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
@@ -2391,7 +2392,7 @@ export function ProviderImportModal({
         <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
           <IsleOverlayPressable accessible={false} accessibilityRole="none" onPress={closeWithoutSubmit} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </View>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardLayoutInset }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardLayoutInset, paddingLeft: insets.left, paddingRight: insets.right }}>
           <View
             accessibilityViewIsModal
             style={{
@@ -2495,16 +2496,8 @@ export function ProviderImportModal({
                   /> : <View testID="provider-import-review" style={{ gap: 10 }}>
                     <Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>{t('providerSettings.reviewImport')}</Text>
 
-                    {review.providers.slice(0, previewLimit).map(provider => {
-                      let endpoint = ''
-                      try { const url = new URL(provider.baseUrl ?? ''); endpoint = url.origin + url.pathname } catch { /* Invalid addresses are not echoed. */ }
-                      return <View key={provider.id} style={{ gap: 3, paddingVertical: 6 }}>
-                        <Text style={{ color: colors.text, fontWeight: '700' }}>{provider.name}</Text>
-                        <Text style={{ color: colors.textSecondary }}>{endpoint || t('providerSettings.baseUrl')}</Text>
-                        <Text style={{ color: colors.textSecondary }}>{provider.models.slice(0, 3).join(', ') || t('providerSettings.addModelHint')}</Text>
-                        <Text style={{ color: colors.textTertiary }}>{t('providerSettings.importCredentialSummary', { count: provider.credentialGroups?.length || (provider.apiKey ? 1 : 0) })}</Text>
-                      </View>
-                    })}
+                    {review.providers.slice(0, previewLimit).map(provider => <ProviderImportReviewCard key={provider.id} provider={provider}
+                      protocolLabel={provider.wireProtocol ? t('providerSettings.protocol.' + provider.wireProtocol) : getProviderPreset(provider.presetId).name} />)}
                     {review.providers.length > previewLimit ? <IsleButton label={t('providerSettings.importShowMore')} onPress={() => setPreviewLimit(value => value + 8)} /> : null}
                     {!review.providers.length ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground }}>{review.warnings.join('\n') || t('providerSettings.importEmptyMessage')}</Text>
                       : review.warnings.length ? <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('providerSettings.importWarnings', { count: review.warnings.length, duplicates: review.duplicates.length })}</Text> : null}
