@@ -376,3 +376,48 @@ it('does not export outside its owned directory when an imported skill has an un
   expect(uri).not.toContain('../')
   expect(mockFileDelete).toHaveBeenCalledWith(uri, { idempotent: true })
 })
+
+it.each([['a', 'alpha.example:8443'], ['b', 'beta.example:8443']])('saves the selected same-name connection and its own model: %s', async (id, host) => {
+  mockProviders = ['a', 'b'].map(connectionId => ({
+    id: 'connection-' + connectionId, name: 'Same provider',
+    type: PROVIDER_PRESETS.find(preset => preset.id === 'custom-endpoint')!.type,
+    baseUrl: connectionId === 'a' ? 'https://alpha.example:8443/v1' : 'https://user:secret@beta.example:8443/private?token=hidden#internal',
+    apiKey: '', enabled: true, lastModelSyncStatus: 'ok' as const, models: ['model-' + connectionId],
+  }))
+  const screen = await render(<SettingsEditBoundary><SkillSettingsContent /></SettingsEditBoundary>)
+  await fireEvent.press(screen.getByTestId('settings-task-edit'))
+  await fireEvent.changeText(screen.getByLabelText('skills.systemPrompt'), 'Connection-specific instructions')
+  await fireEvent.press(screen.getByText('settingsWorkspace.advanced'))
+  expect(screen.queryByText(/user:secret|private|token=hidden|internal/)).toBeNull()
+  await fireEvent.press(screen.getByLabelText('Same provider · ' + host))
+  expect(screen.queryByLabelText('model-' + (id === 'a' ? 'b' : 'a'))).toBeNull()
+  await fireEvent.press(screen.getByLabelText('model-' + id))
+  await fireEvent.press(screen.getByLabelText('skills.saveSkill'))
+  expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
+    providerId: 'connection-' + id, model: 'model-' + id, systemPrompt: 'Connection-specific instructions',
+  }), expect.objectContaining({ expectedSkill: null, signal: expect.anything() }))
+})
+
+it('keeps the same-host connection label bound to its provider after the list is reordered', async () => {
+  mockProviders = ['b', 'a'].map(id => ({
+    id: 'connection-' + id, name: 'Same provider',
+    type: PROVIDER_PRESETS.find(preset => preset.id === 'custom-endpoint')!.type,
+    baseUrl: 'https://shared.example:8443/v1', apiKey: '', enabled: true, lastModelSyncStatus: 'ok' as const, models: ['model-' + id],
+  }))
+  const screen = await render(<SettingsEditBoundary><SkillSettingsContent /></SettingsEditBoundary>)
+  await fireEvent.press(screen.getByTestId('settings-task-edit'))
+  await fireEvent.changeText(screen.getByLabelText('skills.systemPrompt'), 'Keep connection identity')
+  await fireEvent.press(screen.getByText('settingsWorkspace.advanced'))
+  await fireEvent.press(screen.getByLabelText('Same provider · shared.example:8443 · 1'))
+  expect(screen.getByLabelText('model-a')).toBeTruthy()
+  expect(screen.queryByLabelText('model-b')).toBeNull()
+  mockProviders = [...mockProviders].reverse()
+  await screen.rerender(<SettingsEditBoundary><SkillSettingsContent /></SettingsEditBoundary>)
+  expect(screen.getByText('Same provider · shared.example:8443 · 1')).toBeTruthy()
+  expect(screen.getByLabelText('model-a')).toBeTruthy()
+  expect(screen.queryByLabelText('model-b')).toBeNull()
+  await fireEvent.press(screen.getByLabelText('model-a'))
+  await fireEvent.press(screen.getByLabelText('skills.saveSkill'))
+  expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'connection-a', model: 'model-a' }),
+    expect.objectContaining({ expectedSkill: null, signal: expect.anything() }))
+})

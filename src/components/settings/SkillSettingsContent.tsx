@@ -7,7 +7,7 @@ import { SettingsHelpButton } from './SettingsHelp'
 import { useSettingsStore } from '@/store/settingsStore'
 import { SettingsReferenceField } from './SettingsReferenceField'
 import { loadCapabilityReferenceCatalog } from '@/bootstrap/settingsReferenceCatalog'
-import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
+import { resolveProviderConnectionLabel } from '@/presentation/features/settings/providerPresentation'
 import { getProviderSelectableModels } from '@/utils/providerModels'
 import { IsleToggle } from '@/components/ui/isle'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -151,6 +151,10 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   const refreshVersion = useRef(0)
   const enabled = useSettingsStore(state => state.settings.skillsEnabled ?? true)
   const providers = useSettingsStore(state => state.providers)
+  const providerOptions = useMemo(() => providers.map(provider => ({
+    value: provider.id,
+    label: resolveProviderConnectionLabel(provider, providers, t('providerSettings.customProvider')),
+  })), [providers, t])
   const [references, setReferences] = useState<Awaited<ReturnType<typeof loadCapabilityReferenceCatalog>>>()
   const [referenceFailed, setReferenceFailed] = useState(false)
   const [referenceLoading, setReferenceLoading] = useState(false)
@@ -681,7 +685,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
             <IsleField style={fieldFlexStyle} label={t('skills.temperature')} inputProps={{ editable: !saving, value: temperature, onChangeText: setTemperature, placeholder: '0.3', keyboardType: 'decimal-pad' }} />
           </View>
           <SettingsReferenceField label={t('skills.providerId')} value={providerId} onChange={setProviderId} multiple={false} disabled={saving}
-            options={providers.map(provider => ({ value: provider.id, label: resolveProviderDisplayName(provider, t('providerSettings.customProvider')) }))} />
+            options={providerOptions} />
           <SettingsReferenceField label={t('skills.model')} value={model} onChange={setModel} multiple={false} disabled={saving}
             options={(providerId ? providers.filter(provider => provider.id === providerId) : providers).flatMap(provider => getProviderSelectableModels(provider).map(id => ({ value: id, label: id })))} />
           <IsleField label={t('skills.maxTokens')} inputProps={{ editable: !saving, value: maxTokens, onChangeText: setMaxTokens, placeholder: '4096', keyboardType: 'numeric' }} />
