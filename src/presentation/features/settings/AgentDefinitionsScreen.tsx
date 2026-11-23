@@ -215,7 +215,7 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
     <WorkspaceIntro compact icon="reasoning" title={t('agents.savedDefinitions')}
       status={<FeedbackGlyph phase={loading ? 'pending' : 'idle'} label={t('common.loading')} />} />
     {readFailed ? <Text accessibilityRole="alert" style={bodyStyle}>{t('agents.readFailed')}</Text> : null}
-    {!loading && !readFailed && !items.length ? <IsleEmptyState title={t('agents.empty')} description={t('agents.managementOnly')} icon="reasoning" contextual /> : null}
+    {!loading && !readFailed && !items.length ? <IsleEmptyState title={t('agents.empty')} icon="reasoning" contextual /> : null}
     {items.map((item) => <IslePanel key={item.id} contentStyle={{ padding: 14, gap: 8 }}>
       <Text style={headingStyle}>{item.name}</Text>
       <Text selectable style={bodyStyle}>{item.id} · {t('agents.revision', { revision: item.revision })}</Text>
