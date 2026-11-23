@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useNavigation } from 'expo-router'
@@ -11,7 +11,7 @@ import { AGENT_ACTION_CAPABILITIES, type AgentDefinition } from '@/modules/assis
 import { AgentDefinitionConflictError } from '@/modules/assistant-runtime'
 import type { AgentDefinitionManagement } from '@/modules/assistant-runtime'
 import { agentDefinitionFromForm, agentDefinitionToForm, type AgentDefinitionForm } from './agentDefinitionForm'
-import { resolveProviderDisplayName } from './providerPresentation'
+import { resolveProviderConnectionLabel } from './providerPresentation'
 import type { AIProvider } from '@/types/providerContracts'
 import { SettingsReferenceField, type SettingsReferenceOption } from '@/components/settings/SettingsReferenceField'
 import { useSettingsBrowserLeave } from '@/components/settings/SettingsEditBoundary'
@@ -32,6 +32,9 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
   const dialog = useIsleDialog()
   const navigation = useNavigation()
   const providers = useSettingsStore((state) => state.providers)
+  const providerFallbackName = t('providerSettings.customProvider')
+  const providerLabels = useMemo(() => new Map(providers.map(provider => [provider.id,
+    resolveProviderConnectionLabel(provider, providers, providerFallbackName)] as const)), [providers, providerFallbackName])
   const [items, setItems] = useState<AgentDefinition[]>([])
   const [afterId, setAfterId] = useState('')
   const [refresh, setRefresh] = useState(0)
@@ -134,7 +137,7 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
       autoCapitalize="none" autoCorrect={false} editable={!busy && !options.disabled} />
   }
   const configuredProvider = providers.find((provider) => provider.id === form?.providerId)
-  const providerOptions = providers.map((provider) => ({ value: provider.id, label: resolveProviderDisplayName(provider, t('providerSettings.customProvider')) }))
+  const providerOptions = providers.map((provider) => ({ value: provider.id, label: providerLabels.get(provider.id) ?? providerFallbackName }))
   if (form && !configuredProvider) providerOptions.unshift({ value: form.providerId, label: `${form.providerId} (${t('agents.unresolved')})` })
   const feedbackIsError = feedback === 'invalid' || feedback === 'conflict' || feedback?.endsWith('Failed')
   const feedbackNotice = feedback ? <Text accessibilityRole={feedbackIsError ? 'alert' : undefined} accessibilityLiveRegion="polite"
@@ -216,7 +219,7 @@ export function AgentDefinitionsScreen({ management, resolveModelBinding, loadRe
     {items.map((item) => <IslePanel key={item.id} contentStyle={{ padding: 14, gap: 8 }}>
       <Text style={headingStyle}>{item.name}</Text>
       <Text selectable style={bodyStyle}>{item.id} · {t('agents.revision', { revision: item.revision })}</Text>
-      <Text style={bodyStyle}>{providers.find(provider => provider.id === item.modelBinding.providerId)?.name ?? `${item.modelBinding.providerId} (${t('agents.unresolved')})`} · {item.modelBinding.modelId} · {t(`agents.capabilities.${item.modelBinding.actionCapability}`)}</Text>
+      <Text style={bodyStyle}>{providerLabels.get(item.modelBinding.providerId) ?? `${item.modelBinding.providerId} (${t('agents.unresolved')})`} · {item.modelBinding.modelId} · {t(`agents.capabilities.${item.modelBinding.actionCapability}`)}</Text>
       <View style={rowsStyle}>
         <IsleButton compact label={t('common.edit')} accessibilityLabel={t('agents.editNamed', { name: item.name })} disabled={busy} onPress={() => { void operation(async () => {
           if (!await canReplaceDraft()) return

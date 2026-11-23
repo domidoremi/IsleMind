@@ -49,6 +49,21 @@ export function resolveProviderDisplayName(provider: ProviderIdentityInput, fall
   return resolveProviderEndpointHost(provider.baseUrl) ?? fallbackName
 }
 
+/** Display-only disambiguation. URL paths, credentials and provider IDs stay private. */
+export function resolveProviderConnectionLabel(
+  provider: ProviderIdentityInput & Pick<AIProvider, 'id'>,
+  providers: readonly (ProviderIdentityInput & Pick<AIProvider, 'id'>)[],
+  fallbackName: string,
+): string {
+  const name = resolveProviderDisplayName(provider, fallbackName)
+  const peers = providers.filter(item => normalizedProviderName(resolveProviderDisplayName(item, fallbackName)) === normalizedProviderName(name))
+  if (peers.length < 2) return name
+  const host = resolveProviderEndpointHost(provider.baseUrl)
+  const label = host && host !== name ? `${name} · ${host}` : name
+  const sameHost = peers.filter(item => resolveProviderEndpointHost(item.baseUrl) === host).map(item => item.id).sort()
+  return sameHost.length > 1 ? `${label} · ${sameHost.indexOf(provider.id) + 1}` : label
+}
+
 export function resolveProviderSupplierDisclosure(
   configurationCount: number,
   expanded: boolean,
