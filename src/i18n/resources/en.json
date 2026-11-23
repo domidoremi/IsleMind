@@ -2849,6 +2849,8 @@
     "agentWorkflowRecoveryTarget": "Recovery target",
     "agentWorkflowRecoveryTargetMissing": "Recovery target missing",
     "agentWorkflowRecoveryTargetDescription": "{{context}}",
+    "layerLabel": "Layer",
+    "stackPolicyLabel": "Stacking",
     "layer": {
       "base": "Base",
       "advanced": "Advanced",

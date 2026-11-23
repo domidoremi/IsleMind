@@ -2847,6 +2847,8 @@
     "agentWorkflowRecoveryTarget": "恢复目标",
     "agentWorkflowRecoveryTargetMissing": "恢复目标未找到",
     "agentWorkflowRecoveryTargetDescription": "{{context}}",
+    "layerLabel": "层级",
+    "stackPolicyLabel": "叠加方式",
     "layer": {
       "base": "基础",
       "advanced": "高级",

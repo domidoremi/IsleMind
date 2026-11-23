@@ -421,3 +421,46 @@ it('keeps the same-host connection label bound to its provider after the list is
   expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'connection-a', model: 'model-a' }),
     expect.objectContaining({ expectedSkill: null, signal: expect.anything() }))
 })
+
+it('names both skill choices, keeps one selected option and persists changes with the other draft values', async () => {
+  const screen = await render(<SettingsEditBoundary><SkillSettingsContent /></SettingsEditBoundary>)
+  await fireEvent.press(screen.getByTestId('settings-task-edit'))
+  await fireEvent.changeText(screen.getByLabelText('skills.systemPrompt'), 'Keep these instructions')
+  await fireEvent.press(screen.getByText('settingsWorkspace.advanced'))
+  expect(screen.getByTestId('skill-layer')).toHaveProp('accessibilityLabel', 'skills.layerLabel')
+  expect(screen.getByTestId('skill-stack-policy')).toHaveProp('accessibilityLabel', 'skills.stackPolicyLabel')
+  expect(screen.getByRole('radio', { name: 'skills.layer.base' })).toBeChecked()
+  expect(screen.getByRole('radio', { name: 'skills.stackPolicy.append' })).toBeChecked()
+  await fireEvent.press(screen.getByRole('radio', { name: 'skills.layer.adaptive' }))
+  await fireEvent.press(screen.getByRole('radio', { name: 'skills.stackPolicy.override' }))
+  expect(screen.getByRole('radio', { name: 'skills.layer.base' })).not.toBeChecked()
+  expect(screen.getByRole('radio', { name: 'skills.layer.advanced' })).not.toBeChecked()
+  expect(screen.getByRole('radio', { name: 'skills.layer.adaptive' })).toBeChecked()
+  expect(screen.getByRole('radio', { name: 'skills.stackPolicy.append' })).not.toBeChecked()
+  expect(screen.getByRole('radio', { name: 'skills.stackPolicy.override' })).toBeChecked()
+  expect(screen.getByLabelText('skills.systemPrompt').props.value).toBe('Keep these instructions')
+  await fireEvent.press(screen.getByLabelText('skills.saveSkill'))
+  expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({ layer: 'adaptive', stackPolicy: 'override', priority: 40, systemPrompt: 'Keep these instructions' }),
+    expect.objectContaining({ expectedSkill: null, signal: expect.anything() }))
+})
+
+it('blocks changing either skill choice while its selected values are being saved', async () => {
+  let finish!: (value: any) => void
+  mockUpsert.mockImplementationOnce((skill: any) => new Promise(resolve => { finish = () => resolve(skill) }))
+  const screen = await render(<SettingsEditBoundary><SkillSettingsContent /></SettingsEditBoundary>)
+  await fireEvent.press(screen.getByTestId('settings-task-edit'))
+  await fireEvent.changeText(screen.getByLabelText('skills.systemPrompt'), 'Save these instructions')
+  await fireEvent.press(screen.getByText('settingsWorkspace.advanced'))
+  await fireEvent.press(screen.getByRole('radio', { name: 'skills.layer.advanced' }))
+  await fireEvent.press(screen.getByLabelText('skills.saveSkill'))
+  expect(screen.getAllByRole('radio')).toHaveLength(5)
+  for (const radio of screen.getAllByRole('radio')) expect(radio).toBeDisabled()
+  await fireEvent.press(screen.getByRole('radio', { name: 'skills.layer.adaptive' }))
+  await fireEvent.press(screen.getByRole('radio', { name: 'skills.stackPolicy.override' }))
+  expect(screen.getByRole('radio', { name: 'skills.layer.advanced' })).toBeChecked()
+  expect(screen.getByRole('radio', { name: 'skills.stackPolicy.append' })).toBeChecked()
+  expect(mockUpsert).toHaveBeenCalledTimes(1)
+  expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({ layer: 'advanced', stackPolicy: 'append', priority: 20 }),
+    expect.objectContaining({ expectedSkill: null, signal: expect.anything() }))
+  await act(async () => { finish(undefined) })
+})

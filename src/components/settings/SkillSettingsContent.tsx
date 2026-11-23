@@ -13,6 +13,7 @@ import { IsleToggle } from '@/components/ui/isle'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Text } from '@/components/ui/AppText'
+import { WorkspaceTabs } from '@/presentation/layout/WorkspaceTabs'
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
@@ -690,15 +691,17 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
           <SettingsReferenceField label={t('skills.model')} value={model} onChange={setModel} multiple={false} disabled={saving}
             options={(providerId ? providers.filter(provider => provider.id === providerId) : providers).flatMap(provider => getProviderSelectableModels(provider).map(id => ({ value: id, label: id })))} />
           <IsleField label={t('skills.maxTokens')} inputProps={{ editable: !saving, value: maxTokens, onChangeText: setMaxTokens, placeholder: '4096', keyboardType: 'numeric' }} />
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {SKILL_LAYERS.map((item) => (
-              <IsleButton key={item} label={t(`skills.layer.${item}`)} disabled={saving} compact tone={layer === item ? 'mint' : 'soft'} onPress={() => setLayer(item)} />
-            ))}
+          <View style={{ gap: 6 }}>
+            <Text style={[colors.design!.semantic.typography.label, { color: colors.text }]}>{t('skills.layerLabel')}</Text>
+            <WorkspaceTabs role="radio" testID="skill-layer" accessibilityLabel={t('skills.layerLabel')} value={layer}
+              tabs={SKILL_LAYERS.map(value => ({ value, label: t(`skills.layer.${value}`) }))}
+              disabled={saving} onChange={setLayer} />
           </View>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {STACK_POLICIES.map((item) => (
-              <IsleButton key={item} label={t(`skills.stackPolicy.${item}`)} disabled={saving} compact tone={stackPolicy === item ? 'mint' : 'soft'} onPress={() => setStackPolicy(item)} />
-            ))}
+          <View style={{ gap: 6 }}>
+            <Text style={[colors.design!.semantic.typography.label, { color: colors.text }]}>{t('skills.stackPolicyLabel')}</Text>
+            <WorkspaceTabs role="radio" testID="skill-stack-policy" accessibilityLabel={t('skills.stackPolicyLabel')} value={stackPolicy}
+              tabs={STACK_POLICIES.map(value => ({ value, label: t(`skills.stackPolicy.${value}`) }))}
+              disabled={saving} onChange={setStackPolicy} />
           </View>
           {referenceFailed ? <><Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t('settingsSubsystem.loadFailed')}</Text><IsleButton label={t('common.retry')} onPress={() => setReferenceRefresh(value => value + 1)} /></> : referenceLoading || !references ? <Text style={{ color: colors.textSecondary }}>{t('common.loading')}</Text> : null}
           <SettingsReferenceField label={t('skills.enabledTools')} value={enabledTools} onChange={setEnabledTools} disabled={saving} catalogReady={Boolean(references) && !referenceFailed && !referenceLoading} options={references?.tools ?? []} />

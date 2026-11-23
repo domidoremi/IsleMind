@@ -2847,6 +2847,8 @@
     "agentWorkflowRecoveryTarget": "復旧対象",
     "agentWorkflowRecoveryTargetMissing": "復旧対象が見つかりません",
     "agentWorkflowRecoveryTargetDescription": "{{context}}",
+    "layerLabel": "レイヤー",
+    "stackPolicyLabel": "適用方法",
     "layer": {
       "base": "基本",
       "advanced": "詳細",
