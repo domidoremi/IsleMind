@@ -19,7 +19,9 @@ export function WorkspaceHeader({ title, subtitle, contextLabel, leading, traili
   const { width, fontScale } = useWindowDimensions()
   const semantic = colors.design!.semantic
   const glass = canonicalThemeId === 'liquid-glass'
-  const stackedActions = Boolean(trailing) && width / fontScale < 300
+  // Give the title a readable line before fitting trailing controls. Flex wrap
+  // moves actions together when their actual translated width no longer fits.
+  const titleWidth = Math.min(136 * fontScale, Math.max(0, width - 84))
   return <GlassSurface colors={colors} enabled={glass} variant="chrome" shadow="none" testID={testID}
     style={[styles.header, {
       paddingVertical: compact ? semantic.spacing.sm : semantic.spacing.md,
@@ -30,14 +32,14 @@ export function WorkspaceHeader({ title, subtitle, contextLabel, leading, traili
       borderRadius: semantic.radius.medium,
       backgroundColor: glass ? 'transparent' : colors.ui.semantic.surface.muted,
     }]}>{leading}</View>
-    <View style={[styles.copy, stackedActions ? { flexBasis: '60%' } : null]}>
+    <View style={[styles.copy, { flexBasis: titleWidth, minWidth: titleWidth }]}>
       {contextLabel ? <Text style={[semantic.typography.caption, { color: colors.textSecondary }]}>{contextLabel}</Text> : null}
       <View ref={titleRef} accessible accessibilityRole="header" tabIndex={-1}>
         <Text style={[semantic.typography.title, styles.title, { color: colors.text }]}>{title}</Text>
       </View>
       {subtitle ? <Text style={[semantic.typography.body, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
     </View>
-    {trailing ? <View style={[styles.trailing, stackedActions ? styles.stackedActions : null]}>{trailing}</View> : null}
+    {trailing ? <View style={styles.trailing}>{trailing}</View> : null}
   </GlassSurface>
 }
 
@@ -46,6 +48,5 @@ const styles = StyleSheet.create({
   leading: { width: 44, minHeight: 44, flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
   copy: { flex: 1, minWidth: 0, gap: 3 },
   title: { includeFontPadding: false },
-  trailing: { minWidth: 0, flexShrink: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 },
-  stackedActions: { flexBasis: '100%', justifyContent: 'flex-end', paddingLeft: 56 },
+  trailing: { minWidth: 0, maxWidth: '100%', marginLeft: 'auto', flexShrink: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 4 },
 })
