@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.28 source version checkpoint](./release/source-version-1.1.28-2026-11-25.md): guide anchor positioning, readable headers, duplicate import handling, and connection checks after routing consent.
 - [1.1.27 source version checkpoint](./release/source-version-1.1.27-2026-11-24.md): selection markers, concise assistant settings, distinct skill connections, matching priority defaults, and accessible skill choices.
 - [1.1.26 source version checkpoint](./release/source-version-1.1.26-2026-11-23.md): provider import review and catalog ownership, safe connection addresses, accessible agent selectors, and exact model bindings.
 - [1.1.25 source version checkpoint](./release/source-version-1.1.25-2026-11-23.md): landscape guide contents, search focus and keyboard visibility, selection menu safe areas, and scene editor error recovery.
