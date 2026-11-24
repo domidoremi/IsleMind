@@ -40,7 +40,7 @@ import { composeUserFacingError, extractUserFacingErrorDetail } from '@/core'
 import type { ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
 import { getProviderConfigIssue } from '@/types/providerBaseUrls'
 import { applyProviderPreset, countDetectedProviderImports, formatProviderNameList, getProviderPreset, looksLikeProviderImportConnectionText, parseCredentialGroups, parseProviderImportDraft, parseProviderImportText, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
-import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, PROVIDER_WIRE_PROTOCOL_OPTIONS, ProviderConfigurationConflictError, snapshotProviderConfiguration, inferProviderWireProtocolFromBaseUrl, shouldSyncWireProtocolFromBaseUrl, type ProviderSettingsGroup, type ProviderSortMode } from '@/modules/providers'
+import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, PROVIDER_WIRE_PROTOCOL_OPTIONS, ProviderConfigurationConflictError, newProviderImports, snapshotProviderConfiguration, inferProviderWireProtocolFromBaseUrl, shouldSyncWireProtocolFromBaseUrl, type ProviderSettingsGroup, type ProviderSortMode } from '@/modules/providers'
 import { resolveProviderConfigDraft } from '@/bootstrap/providerPolicies'
 import { activationItemProgress } from '@/services/providerActivationJob'
 import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/platform/native/boundedImportFile'
@@ -54,7 +54,7 @@ import { useKeyboardScrollViewport } from '@/presentation/layout/useKeyboardScro
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
-import { isExistingProviderImport, useProviderImportSession } from '@/components/providers/useProviderImportSession'
+import { useProviderImportSession } from '@/components/providers/useProviderImportSession'
 import { PROVIDER_CARD_DETAIL_MAX_WIDTH } from '@/components/providers/ProviderCardGrid'
 import {
   CanonicalProviderSettingsExperience,
@@ -425,13 +425,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       }, ({ completed, total, currentProviderName }) => {
         void publishImportProgress({ stage: 'saving', completed, total, currentProviderName }, { owner: notificationOwner })
       }, skipExisting)
-      if (!result || signal?.aborted) return false
-      if (!result.providers.length) {
-        setImportProgress(null)
-        void clearAndroidStatusNotification({ owner: notificationOwner })
-        dialog.notice({ title: t('providerSettings.importEmpty'), message: result.warnings.join('\n') || t('providerSettings.importEmptyMessage'), tone: 'amber' })
-        return false
-      }
+      if (!result?.providers.length || signal?.aborted) return false
 
       void publishImportProgress({ stage: 'finishing', completed: result.providers.length, total: result.providers.length }, { owner: notificationOwner })
       await yieldToNextPaint()
@@ -2147,7 +2141,7 @@ export function ProviderImportModal({
   const [review, setReview] = useState<ReturnType<typeof parseProviderImportText> | null>(null)
   const [skipExisting, setSkipExisting] = useState(true)
   const [previewLimit, setPreviewLimit] = useState(8)
-  const conflicts = review?.providers.filter(provider => isExistingProviderImport(provider, existingProviders)).length ?? 0
+  const conflicts = useMemo(() => review ? review.providers.length - newProviderImports(review.providers, existingProviders).length : 0, [review, existingProviders])
   const importableCount = (review?.providers.length ?? 0) - (skipExisting ? conflicts : 0)
   const deferredInput = useDeferredValue(input)
   const inputValue = useRef(input)

@@ -32,7 +32,7 @@ import { normalizeThemeId } from '@/theme/colors'
 import { normalizeSettingsBackgroundIntensity, normalizeSettingsBackgroundMotion, normalizeSettingsBackgroundVariation, normalizeSettingsIdentityPreferences, normalizeSettingsLastPreferredModel, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, normalizeSettingsUpdateReminders, removeSettingsModelFavoritesForProviders, sanitizeSettingsUrlFields, setSettingsModelFavorite } from '@/modules/settings'
 import { removeProviderHealthRecordsByProviderId, clearProviderHealthSnapshot } from '@/bootstrap/providerHealthRepository'
 import { invalidateAllCompactStates, invalidateCompactStatesByProvider } from '@/bootstrap/providerCompactStateRepository'
-import { providerModelScopeConfigurationChanged } from '@/modules/providers'
+import { newProviderImports, providerModelScopeConfigurationChanged } from '@/modules/providers'
 import { providerModelAvailabilityRuntime, withProviderModelAvailabilityChanges } from '@/bootstrap/providerModelAvailabilityRuntime'
 
 interface SettingsState {
@@ -52,7 +52,7 @@ interface SettingsState {
   setThemeAccent: (themeAccent: string | undefined) => void
   setLanguage: (language: Language) => void
   addProvider: (provider: AIProvider) => Promise<void>
-  addProviders: (providers: AIProvider[], options?: AddProvidersOptions) => Promise<void>
+  addProviders: (providers: AIProvider[], options?: AddProvidersOptions) => Promise<AIProvider[]>
   updateProvider: (id: string, updates: Partial<AIProvider>, options?: ProviderEditOptions) => Promise<void>
   updateProviderPatches: (patches: ProviderPatch[], options?: ProviderUpdateOptions) => Promise<void>
   updateProviders: (ids: string[], updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => Promise<void>
@@ -108,6 +108,7 @@ interface AddProvidersProgress {
 }
 
 interface AddProvidersOptions {
+  skipExistingConnections?: boolean
   signal?: AbortSignal
   selectDefaultIfEmpty?: boolean
   onProgress?: (progress: AddProvidersProgress) => void
@@ -679,9 +680,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     options = { ...options }
     const signal = options?.signal
     throwIfProviderOperationAborted(signal)
-    if (!providers.length) return
+    if (!providers.length) return []
     return enqueueProviderMutation(async () => {
     throwIfProviderOperationAborted(signal)
+    if (options?.skipExistingConnections) providers = newProviderImports(providers, get().providers)
+    if (!providers.length) return []
     await withProviderModelAvailabilityChanges(providers.map((provider) => provider.id), async () => {
     throwIfProviderOperationAborted(signal)
     const total = providers.length
@@ -711,6 +714,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       return { providers: updated, settings }
     })
     })
+    return providers
     })
   },
 

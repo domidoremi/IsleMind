@@ -22,20 +22,29 @@ beforeEach(() => {
   mockSettings = { defaultProvider: 'old' }
   mockProviders = []
   mockParse.mockImplementation(() => ({ providers: [{ id: `import-${mockParse.mock.calls.length}`, name: 'Example' }], warnings: [] }))
-  mockAdd.mockResolvedValue(undefined)
+  mockAdd.mockImplementation(async providers => providers)
   mockFlushProviders.mockResolvedValue(undefined)
   mockFlushSettings.mockResolvedValue(undefined)
 })
 
-it('skips same-name/address imports by default and allows a separate copy only by explicit choice', async () => {
-  mockProviders = [{ id: 'old', name: 'Example' }]
+it('forwards the skip or keep decision to the serialized writer and returns the accepted records', async () => {
+  mockAdd.mockResolvedValueOnce([])
   const { result } = await renderHook(useProviderImportSession)
   await act(async () => { expect((await result.current.save('fixture', prepared, progress))?.providers).toHaveLength(0) })
-  expect(mockAdd).not.toHaveBeenCalled()
-  await act(async () => { await result.current.save('fixture', prepared, progress, false) })
-  expect(mockAdd).toHaveBeenCalledTimes(1)
-  expect(mockAdd.mock.calls[0][0][0].id).not.toBe('old')
+  expect(mockAdd.mock.calls[0][1].skipExistingConnections).toBe(true)
+  await act(async () => { expect((await result.current.save('fixture', prepared, progress, false))?.providers).toHaveLength(1) })
+  expect(mockAdd.mock.calls[1][1].skipExistingConnections).toBe(false)
   expect(mockSettings.defaultProvider).toBe('old')
+})
+
+it('reports a late conflict without flushing an empty write or entering the persistence retry state', async () => {
+  mockAdd.mockResolvedValueOnce([])
+  const { result } = await renderHook(useProviderImportSession)
+  await act(async () => { expect((await result.current.save('fixture', prepared, progress))?.providers).toEqual([]) })
+  expect(mockAdd.mock.calls[0][1].skipExistingConnections).toBe(true)
+  expect(mockFlushProviders).not.toHaveBeenCalled()
+  expect(mockFlushSettings).not.toHaveBeenCalled()
+  expect(result.current.persistencePending).toBe(false)
 })
 
 it('does not finish or accept duplicate submissions before durability', async () => {

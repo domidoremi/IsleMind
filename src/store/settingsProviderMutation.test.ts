@@ -61,6 +61,26 @@ afterEach(async () => {
   useSettingsStore.setState(initialState, true)
 })
 
+it('skips connections committed by an earlier queued writer before writing credentials and reports only saved entries', async () => {
+  const entered = deferred<void>(), release = deferred<void>()
+  mockFence.mockImplementationOnce(async (_ids, mutate) => { entered.resolve(); await release.promise; return mutate() })
+  const store = useSettingsStore.getState()
+  const first = { ...provider('winner', 'Catalog'), apiKey: 'fixture-winner' }
+  const duplicate = { ...provider('skipped', ' Catalog '), baseUrl: first.baseUrl + '/', apiKey: 'fixture-skipped' }
+  const distinct = { ...provider('alternate', 'Catalog'), baseUrl: first.baseUrl + '/other', apiKey: 'fixture-alternate' }
+  const earlier = store.addProviders([first])
+  await entered.promise
+  const queued = store.addProviders([duplicate, distinct, { ...distinct, id: 'second-alternate' }], { skipExistingConnections: true })
+  release.resolve()
+  await earlier
+  expect((await queued).map(item => item.id)).toEqual(['alternate'])
+  expect(useSettingsStore.getState().providers.map(item => item.id)).toEqual(['alternate', 'winner', 'target', 'other'])
+  expect(await providerCredentialStorage.getProviderCredential('winner')).toBe('fixture-winner')
+  expect(await providerCredentialStorage.getProviderCredential('skipped')).toBeNull()
+  expect(await providerCredentialStorage.getProviderCredential('alternate')).toBe('fixture-alternate')
+  expect(await providerCredentialStorage.getProviderCredential('second-alternate')).toBeNull()
+})
+
 it('rejects an approved clear after a concurrent provider addition without deleting any credentials or defaults', async () => {
   const expectedProviders = useSettingsStore.getState().providers
   const third = provider('third')

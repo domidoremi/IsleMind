@@ -2,16 +2,10 @@ import { useRef, useState } from 'react'
 import { parseProviderImportText } from '@/bootstrap/providerRegistry'
 import { useSettingsStore } from '@/store/settingsStore'
 import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
-import type { AIProvider } from '@/types/providerContracts'
 import { useSettingsLifetime } from '@/components/settings/SettingsEditBoundary'
 
 type ImportResult = ReturnType<typeof parseProviderImportText>
 type ImportProgress = { completed: number; total: number; currentProviderName?: string }
-
-export function isExistingProviderImport(candidate: AIProvider, existing: readonly AIProvider[]): boolean {
-  return existing.some(provider => provider.name.trim().toLowerCase() === candidate.name.trim().toLowerCase()
-    && (provider.baseUrl ?? '').trim().replace(/\/+$/, '') === (candidate.baseUrl ?? '').trim().replace(/\/+$/, ''))
-}
 
 /** Keep retry identity in this editor only; never replay an already committed import. */
 export function useProviderImportSession() {
@@ -33,8 +27,7 @@ export function useProviderImportSession() {
     try {
       const store = useSettingsStore.getState()
       if (!attempt.current || (!attempt.current.committed && (attempt.current.input !== input || attempt.current.skipExisting !== skipExisting))) {
-        const parsed = parseProviderImportText(input, { accessSettings: store.settings })
-        const result = skipExisting ? { ...parsed, providers: parsed.providers.filter(provider => !isExistingProviderImport(provider, store.providers ?? [])) } : parsed
+        const result = parseProviderImportText(input, { accessSettings: store.settings })
         attempt.current = { input, skipExisting, result, committed: false }
       }
       const current = attempt.current
@@ -43,10 +36,15 @@ export function useProviderImportSession() {
       await onPrepared(result.providers.length)
       if (signal?.aborted) return null
       if (!current.committed) {
-        await store.addProviders(result.providers, {
-          persist: 'deferred', yieldEvery: 4, selectDefaultIfEmpty: false, signal,
+        const saved = await store.addProviders(result.providers, {
+          persist: 'deferred', yieldEvery: 4, selectDefaultIfEmpty: false, skipExistingConnections: skipExisting, signal,
           onProgress: progress => { if (!signal?.aborted) onProgress(progress) },
         })
+        current.result = { ...result, providers: saved }
+        if (!saved.length) {
+          attempt.current = null
+          return signal?.aborted ? null : current.result
+        }
         current.committed = true
         if (!signal?.aborted) setPersistencePending(true)
       } else {
@@ -58,7 +56,7 @@ export function useProviderImportSession() {
       attempt.current = null
       if (signal?.aborted) return null
       setPersistencePending(false)
-      return result
+      return current.result
     } catch (error) {
       if (signal?.aborted && !attempt.current?.committed) return null
       throw error

@@ -724,7 +724,10 @@ function parseProviderImportText(input: string, options: ProviderImportOptions, 
       ? parseProviderImportChunk(chunk, index, warnings, dependencies)
       : createImportedProvider(chunk, index, warnings, dependencies))
     .filter((provider): provider is AIProvider => !!provider)
-  const dedupedProviders = dedupeImportedProviders(providers, warnings, duplicates, dependencies)
+  const dedupedProviders = newProviderImports(providers, [], provider => {
+    duplicates.push(provider.name)
+    warnings.push(dependencies.translate('providerRegistry.duplicateSkipped', { name: provider.name }))
+  })
   return { providers: applyImportedProviderAccessPolicy(dedupedProviders, warnings, options.accessSettings, dependencies), warnings, duplicates, sourceType: normalizedInput.sourceType }
 }
 
@@ -1314,17 +1317,19 @@ function importProviderId(name: string, index: number): string {
   return `import-${Date.now().toString(36)}-${index + 1}-${slug}`
 }
 
-function dedupeImportedProviders(providers: AIProvider[], warnings: string[], duplicates: string[], dependencies: ProviderRegistryDependencies): AIProvider[] {
-  const seen = new Set<string>()
-  return providers.filter((provider) => {
-    const key = `${provider.name.toLowerCase()}|${provider.baseUrl ?? ''}`
-    if (seen.has(key)) {
-      const message = dependencies.translate('providerRegistry.duplicateSkipped', { name: provider.name })
-      duplicates.push(provider.name)
-      warnings.push(message)
+function importedConnectionKey(provider: AIProvider): string {
+  return JSON.stringify([provider.name.trim().toLowerCase(), (provider.baseUrl ?? '').trim().replace(/\/+$/, '')])
+}
+
+export function newProviderImports(candidates: readonly AIProvider[], existing: readonly AIProvider[], onDuplicate?: (provider: AIProvider) => void): AIProvider[] {
+  const known = new Set(existing.map(importedConnectionKey))
+  return candidates.filter(provider => {
+    const key = importedConnectionKey(provider)
+    if (known.has(key)) {
+      onDuplicate?.(provider)
       return false
     }
-    seen.add(key)
+    known.add(key)
     return true
   })
 }
