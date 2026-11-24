@@ -14,7 +14,6 @@ import { userGuide } from '@/generated/userGuide'
 import { guideSearchText, normalizeGuideSearch } from './guideSearchText'
 import { safeHttpUrl } from '@/utils/sourceUrlSafety'
 import { restoreAccessibilityFocus } from '@/platform/native/restoreAccessibilityFocus'
-import { IsleMotionFrame } from '@/components/ui/isle/ThemeMotion'
 import { WorkspaceHeader } from '@/presentation/layout/WorkspaceHeader'
 import { useKeyboardViewportInset } from '@/presentation/layout/useKeyboardScrollViewport'
 
@@ -39,24 +38,60 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
   const shortIndex = !slug && (keyboardViewport.visibleHeight ?? viewportHeight) / fontScale < 320
   const [contentsExpanded, setContentsExpanded] = useState(false)
   const scroll = useRef<ScrollView>(null)
+  const contentRoot = useRef<View>(null)
   const indexOffset = useRef(0)
   const restoreIndex = useRef(false)
-  const pendingAnchor = useRef(initialAnchor)
-  const positions = useRef(new Map<string, number>())
+  const contentKey = language + ':' + (slug ?? 'index')
+  const pendingAnchor = useRef<{ contentKey: string; anchor: string; animated: boolean } | undefined>(undefined)
+  const anchorViews = useRef(new Map<string, View>())
+  const readyContent = useRef<string | undefined>(undefined)
   const chapter = chapters.find(item => item.id === slug)
   const searchTerm = normalizeGuideSearch(query)
   const results = searchTerm && !slug ? chapters.filter(item => guideSearchText(item).includes(searchTerm)) : chapters
   const blocks = useMemo(() => chapter?.body.split(/<a id="([a-z0-9-]+)"><\/a>/) ?? [], [chapter])
   useEffect(() => {
-    positions.current.clear()
+    readyContent.current = contentKey
+    if (pendingAnchor.current?.contentKey !== contentKey) pendingAnchor.current = undefined
     restoreIndex.current = !slug
     scroll.current?.scrollTo({ y: slug ? 0 : indexOffset.current, animated: false })
+    measurePendingAnchor()
   }, [slug, language])
-  function open(nextSlug: string, anchor?: string) {
-    pendingAnchor.current = anchor
-    if (nextSlug === slug && anchor && positions.current.has(anchor)) {
-      scroll.current?.scrollTo({ y: positions.current.get(anchor)!, animated: motion === 'full' })
+  useEffect(() => {
+    if (initialAnchor && slug) requestAnchor(slug, initialAnchor, false)
+  }, [initialAnchor, slug, language])
+  useEffect(() => () => {
+    pendingAnchor.current = undefined
+    readyContent.current = undefined
+    anchorViews.current.clear()
+  }, [])
+  function cancelAnchor() {
+    pendingAnchor.current = undefined
+    restoreIndex.current = false
+  }
+  function measurePendingAnchor() {
+    const request = pendingAnchor.current
+    const viewport = scroll.current
+    const nodeKey = request ? request.contentKey + ':' + request.anchor : ''
+    const node = anchorViews.current.get(nodeKey)
+    const content = contentRoot.current
+    if (!viewport || !request || request.contentKey !== contentKey || readyContent.current !== contentKey || !node || !content) return
+    // Measure through all surface wrappers against the actual scroll content.
+    node.measureLayout(content, (_x, y) => {
+      if (pendingAnchor.current !== request || scroll.current !== viewport || contentRoot.current !== content
+        || readyContent.current !== request.contentKey || anchorViews.current.get(nodeKey) !== node || !Number.isFinite(y)) return
       pendingAnchor.current = undefined
+      viewport.scrollTo({ y: Math.max(0, y), animated: request.animated })
+    })
+  }
+  function requestAnchor(nextSlug: string, anchor: string, animated: boolean) {
+    pendingAnchor.current = { contentKey: language + ':' + nextSlug, anchor, animated }
+    measurePendingAnchor()
+  }
+  function open(nextSlug: string, anchor?: string) {
+    cancelAnchor()
+    if (anchor) requestAnchor(nextSlug, anchor, nextSlug === slug && motion === 'full')
+    if (nextSlug === slug) {
+      if (!anchor) scroll.current?.scrollTo({ y: 0, animated: motion === 'full' })
     } else { setContentsExpanded(false); setSlug(nextSlug) }
   }
   function link(href: string) {
@@ -85,25 +120,31 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
       <WorkspaceHeader title={chapter?.title ?? t('settingsWorkspace.manual')}
         contextLabel={slug ? t('settingsWorkspace.manual') : t('settingsWorkspace.offline')} compact={width / fontScale < 430}
         leading={<IslePressable accessibilityRole="button" accessibilityLabel={t('settingsWorkspace.contents')}
-          disabled={!slug} onPress={() => { pendingAnchor.current = undefined; setSlug(undefined) }}
+          disabled={!slug} onPress={() => { cancelAnchor(); setSlug(undefined) }}
           style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
           <AppIcon name="back-previous" size={18} color={slug ? colors.text : colors.textTertiary} />
         </IslePressable>}
         trailing={slug ? <IsleButton tone="soft" compact label={t('settingsWorkspace.closeManual')} onPress={onClose} /> : undefined} />
       </View>
-      {!slug ? <View testID="guide-search-toolbar" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingBottom: shortIndex ? 0 : 12 }}>
-        <IsleSearchField value={query} onChangeText={setQuery} placeholder={t('settingsWorkspace.searchManual')} accessibilityLabel={t('settingsWorkspace.searchManual')} clearAccessibilityLabel={t('common.clearSearch')} onClear={() => setQuery('')} onFocus={keyboardViewport.onFrameLayout} containerStyle={{ flex: 1, minWidth: 0 }} />
+      {!slug ? <View testID="guide-search-toolbar" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, minHeight: 44, paddingBottom: shortIndex ? 0 : 12 }}>
+        <IsleSearchField value={query} onChangeText={setQuery} placeholder={t('settingsWorkspace.searchManual')} accessibilityLabel={t('settingsWorkspace.searchManual')} clearAccessibilityLabel={t('common.clearSearch')} onClear={() => setQuery('')} onFocus={keyboardViewport.onFrameLayout} containerStyle={{ flexGrow: 1, flexShrink: 1, flexBasis: 240, minWidth: 0 }} />
         <IsleButton tone="soft" compact label={t('settingsWorkspace.closeManual')} onPress={onClose} />
       </View> : null}
     </View>
     <ScrollView ref={scroll} testID="guide-scroll" keyboardShouldPersistTaps="handled" scrollEventThrottle={64}
       onScroll={event => { if (!slug && !restoreIndex.current) indexOffset.current = event.nativeEvent.contentOffset.y }}
       onContentSizeChange={() => {
-        if (slug || !restoreIndex.current) return
+        if (slug) { measurePendingAnchor(); return }
+        if (!restoreIndex.current) return
         restoreIndex.current = false
         scroll.current?.scrollTo({ y: indexOffset.current, animated: false })
       }}
-      onScrollBeginDrag={() => { pendingAnchor.current = undefined; restoreIndex.current = false }} contentContainerStyle={{ padding: shortIndex ? 4 : 16, paddingBottom: shortIndex ? 4 : 48 }}>
+      onScrollBeginDrag={cancelAnchor} onTouchStart={cancelAnchor}
+      {...(Platform.OS === 'web' ? { onWheel: cancelAnchor, onKeyDown: (event: { key: string }) => {
+        if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelAnchor()
+      } } : {})} >
+      <View ref={contentRoot} testID="guide-content" collapsable={false} onLayout={measurePendingAnchor}
+        style={{ padding: shortIndex ? 4 : 16, paddingBottom: shortIndex ? 4 : 48 }}>
       <View style={{ maxWidth: 720, width: '100%', alignSelf: 'center', padding: chapter ? 20 : shortIndex ? 0 : 8, borderRadius: 16, backgroundColor: chapter ? colors.ui.semantic.surface.base : 'transparent' }}>
         {!slug ? <>
           <View accessibilityRole="list" style={{ marginTop: shortIndex ? 0 : 12 }}>
@@ -115,7 +156,7 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
           </View>
           {!results.length ? <Text style={{ fontSize: 16, color: colors.text }}>{t('settingsWorkspace.notFound')}</Text> : null}
         </> : !chapter ? <Text style={{ fontSize: 16, color: colors.text }}>{t('settingsWorkspace.notFound')}</Text> : <>
-          <IsleMotionFrame role="section" layout enter={false} style={{ marginBottom: 12 }}>
+          <View style={{ marginBottom: 12 }}>
             <IslePressable accessibilityRole="button" accessibilityLabel={t('settingsWorkspace.chapterContents')} accessibilityState={{ expanded: contentsExpanded }} onPress={() => setContentsExpanded(value => !value)} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 }}>
               <AppIcon name={contentsExpanded ? 'collapse' : 'back-next'} size={20} color={colors.textSecondary} />
               <Text style={{ flex: 1, fontSize: 16, lineHeight: 24, color: colors.text }}>{t('settingsWorkspace.chapterContents')}</Text>
@@ -127,18 +168,16 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
                 <Text style={{ fontSize: 16, lineHeight: 24, color: colors.primary }}>{title}</Text>
               </IslePressable>
             }) : null}
-          </IsleMotionFrame>
+          </View>
           {blocks.map((body, index) => {
           if (index % 2) return null
           const anchor = index ? blocks[index - 1] : 'title'
-          return <View key={`${slug}-${anchor}`} onLayout={event => {
-            const y = event.nativeEvent.layout.y + 16
-            positions.current.set(anchor, y)
-            if (pendingAnchor.current === anchor) {
-              scroll.current?.scrollTo({ y, animated: false })
-              pendingAnchor.current = undefined
-            }
-          }}>
+          return <View key={`${slug}-${anchor}`} testID={`guide-anchor-${anchor}`} collapsable={false}
+            ref={node => {
+              const key = contentKey + ':' + anchor
+              if (node) anchorViews.current.set(key, node)
+              else anchorViews.current.delete(key)
+            }} onLayout={measurePendingAnchor}>
             <Markdown style={markdownStyle} onLinkPress={link} rules={{ ...guideHeadings,
               link: (node, children, _parents, styles) => <Text key={node.key} accessibilityRole="link" style={styles.link} onPress={() => link(node.attributes.href)} {...(Platform.OS === 'web' ? { focusable: true, onKeyDown: (event: { key: string; preventDefault: () => void }) => {
                 if (event.key === 'Enter') { event.preventDefault(); link(node.attributes.href) }
@@ -149,6 +188,7 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
             } }}>{body}</Markdown>
           </View>
         })}</>}
+      </View>
       </View>
     </ScrollView>
     </View>
