@@ -51,6 +51,7 @@ import { hasProviderModelAccessRules } from '@/bootstrap/providerModelAccess'
 import { buildProviderSettingsPolicyModelCache, buildProviderSettingsSearchIndex, filterAndSortProviders } from '@/bootstrap/providerSettingsList'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useKeyboardScrollViewport } from '@/presentation/layout/useKeyboardScrollViewport'
+import { WorkspaceTabs } from '@/presentation/layout/WorkspaceTabs'
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
@@ -2142,6 +2143,7 @@ export function ProviderImportModal({
   const [skipExisting, setSkipExisting] = useState(true)
   const [previewLimit, setPreviewLimit] = useState(8)
   const conflicts = useMemo(() => review ? review.providers.length - newProviderImports(review.providers, existingProviders).length : 0, [review, existingProviders])
+  const conflictLabel = t('providerSettings.importConflicts', { count: conflicts })
   const importableCount = (review?.providers.length ?? 0) - (skipExisting ? conflicts : 0)
   const deferredInput = useDeferredValue(input)
   const inputValue = useRef(input)
@@ -2496,9 +2498,11 @@ export function ProviderImportModal({
                     {!review.providers.length ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.danger.foreground }}>{review.warnings.join('\n') || t('providerSettings.importEmptyMessage')}</Text>
                       : review.warnings.length ? <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('providerSettings.importWarnings', { count: review.warnings.length, duplicates: review.duplicates.length })}</Text> : null}
                     {conflicts ? <View style={{ gap: 6 }}>
-                      <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('providerSettings.importConflicts', { count: conflicts })}</Text>
-                      <IsleButton label={t('providerSettings.importSkipExisting')} tone={skipExisting ? 'primary' : 'soft'} disabled={importBusy || persistencePending} onPress={() => setSkipExisting(true)} />
-                      <IsleButton label={t('providerSettings.importKeepBoth')} tone={!skipExisting ? 'primary' : 'soft'} disabled={importBusy || persistencePending} onPress={() => setSkipExisting(false)} />
+                      <Text style={{ color: colors.ui.tone.warning.foreground }}>{conflictLabel}</Text>
+                      <WorkspaceTabs role="radio" testID="provider-import-duplicates" accessibilityLabel={conflictLabel}
+                        value={skipExisting ? 'skip' : 'keep'} disabled={importBusy || persistencePending}
+                        tabs={[{ value: 'skip', label: t('providerSettings.importSkipExisting') }, { value: 'keep', label: t('providerSettings.importKeepBoth') }]}
+                        onChange={policy => setSkipExisting(policy === 'skip')} />
                     </View> : null}
                     {review.providers.length > 0 && !importableCount ? <Text style={{ color: colors.ui.tone.warning.foreground }}>{t('providerSettings.importNothingNew')}</Text> : null}
                     <IsleButton label={t('common.edit')} disabled={importBusy || persistencePending} onPress={() => setReview(null)} />

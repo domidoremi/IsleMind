@@ -1,6 +1,8 @@
 import { act, fireEvent, render } from '@testing-library/react-native'
 import { Dimensions, StyleSheet } from 'react-native'
 import { ProviderFormModal, ProviderImportModal } from '../ProviderSettingsContent'
+import { parseProviderImportText } from '@/bootstrap/providerRegistry'
+import { useSettingsStore } from '@/store/settingsStore'
 import { IsleThemeProvider } from '@/components/ui/isle/IsleThemeProvider'
 import { CANONICAL_THEME_IDS, type CanonicalThemeId } from '@/types/settingsContracts'
 
@@ -40,6 +42,39 @@ function deferred<T>() {
   return { promise, resolve }
 }
 beforeEach(() => { jest.clearAllMocks(); mockTheme = 'minimal'; mockConfirm.mockResolvedValue(true) })
+
+it('exposes one checked duplicate policy and keeps it locked until the pending import settles', async () => {
+  const input = JSON.stringify({ name: 'Duplicate fixture', baseUrl: 'https://choice.invalid/v1', apiKey: 'fixture-only' })
+  const original = useSettingsStore.getState().providers
+  const pending = deferred<boolean>()
+  const submit = jest.fn(() => pending.promise)
+  useSettingsStore.setState({ providers: parseProviderImportText(input).providers })
+  const screen = await render(<ProviderImportModal visible importProgress={null} onClose={jest.fn()} onSubmit={submit} />)
+  try {
+    await fireEvent.changeText(screen.getByLabelText('providerSettings.importContent'), input)
+    await fireEvent.press(screen.getByRole('button', { name: 'providerSettings.reviewImport' }))
+    const group = screen.getByTestId('provider-import-duplicates')
+    expect(group).toHaveProp('accessibilityRole', 'radiogroup')
+    expect(group).toHaveProp('accessibilityLabel', 'providerSettings.importConflicts')
+    const radio = (name: string, checked: boolean) => screen.getByRole('radio', { name: `providerSettings.${name}`, checked })
+    expect(radio('importSkipExisting', true)).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'providerSettings.import' })).toBeDisabled()
+    await fireEvent.press(radio('importKeepBoth', false))
+    expect(radio('importSkipExisting', false)).toBeEnabled()
+    expect(radio('importKeepBoth', true)).toBeEnabled()
+    await fireEvent.press(screen.getByRole('button', { name: 'providerSettings.import' }))
+    expect(submit).toHaveBeenCalledWith(input, false)
+    expect(radio('importSkipExisting', false)).toBeDisabled()
+    expect(radio('importKeepBoth', true)).toBeDisabled()
+    await act(async () => { pending.resolve(false); await pending.promise })
+    await fireEvent.press(radio('importSkipExisting', false))
+    expect(radio('importKeepBoth', false)).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'providerSettings.import' })).toBeDisabled()
+  } finally {
+    await screen.unmount()
+    useSettingsStore.setState({ providers: original })
+  }
+})
 
 it('guides local gateway setup and warns only when the address points to this device', async () => {
   const screen = await render(<ProviderFormModal visible onClose={jest.fn()} onSubmit={jest.fn()} />)
