@@ -4,7 +4,7 @@ import { createProviderChatResolutionRuntime } from './providerChatResolution'
 import { createProviderFallbackCandidateBuilder } from './providerFallbackCandidates'
 import { isProviderModelEnabled } from './providerModelSelection'
 
-function fixture() {
+function fixture(isOnline: (provider?: AIProvider) => Promise<boolean> = async () => true) {
   const providers: AIProvider[] = ['a', 'b', 'c'].map(id => ({
     id, name: id, type: 'openai', enabled: id !== 'a', apiKey: '',
     models: ['same-model'], enabledModels: ['same-model'],
@@ -18,7 +18,7 @@ function fixture() {
       members: providers.map(provider => ({ providerId: provider.id, model: 'same-model' })) },
   }
   const runtime = createProviderChatResolutionRuntime({
-    readProviders: async () => providers, isOnline: async () => true,
+    readProviders: async () => providers, isOnline,
     buildCandidates: createProviderFallbackCandidateBuilder({
       projectModel: () => ({ deprecated: false, upstreamModel: 'same-model', capabilities: ['text'] }),
     }),
@@ -82,6 +82,25 @@ it('retains rotation after the confirmation callback rejects', async () => {
   })).rejects.toThrow('owned-confirmation-failure')
   const next = await f.runtime.resolvePreferred({ ...f.request(), confirmFallback: async () => true })
   expect(next.kind === 'ready' && next.selection.provider.id).toBe('b')
+})
+
+it('keeps the confirmed member next in rotation when it goes offline during consent', async () => {
+  let offlineProvider: string | undefined
+  const f = fixture(async provider => provider?.id !== offlineProvider)
+  const confirmed: string[] = []
+  const result = await f.runtime.resolvePreferred({ ...f.request(), confirmFallback: async candidate => {
+    confirmed.push(candidate.providerId)
+    offlineProvider = candidate.providerId
+    return true
+  } })
+  expect(result).toEqual({ kind: 'blocked', reason: 'offline' })
+  offlineProvider = undefined
+  const next = await f.runtime.resolvePreferred({ ...f.request(), confirmFallback: async candidate => {
+    confirmed.push(candidate.providerId)
+    return true
+  } })
+  expect(next).toMatchObject({ kind: 'ready', selection: { provider: { id: 'b' } } })
+  expect(confirmed).toEqual(['b', 'b'])
 })
 
 it('keeps a later accepted allocation when an earlier confirmation is declined', async () => {

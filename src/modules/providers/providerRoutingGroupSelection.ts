@@ -137,6 +137,8 @@ export function createProviderRoutingGroupSelector(dependencies: ProviderChatRes
               input.providers === undefined ? undefined : { providers: input.providers }))
             const nextProvider = live.find(item => item.id === provider.id)
             if (!nextProvider) return blocked('candidate_changed')
+            if (!await dependencies.isOnline(nextProvider)) return blocked('offline')
+            if (!current()) return blocked()
             const next = await ports.inspect(nextProvider, candidate.model, candidate.credentialSource!)
             if (!('selection' in next) || !current()
               || next.selection.provider.apiKey !== selection.provider.apiKey
