@@ -147,16 +147,16 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
     const checkConfiguration = dependencies.captureConfiguration?.()
     checkConfiguration?.()
     throwIfCancelled(input.signal)
-    const providers = snapshotPlainData(await dependencies.readProviders(input.signal,
-      input.providers === undefined ? undefined : { providers: input.providers }))
-    throwIfCancelled(input.signal)
-    const healthRecords = snapshotPlainData(await dependencies.loadHealthRecords())
-    throwIfCancelled(input.signal)
     const plan = input.routingPlan
     if (plan && (!normalizeModelRoutingPlan(plan) || plan.mode === 'fixed')) return { ...emptyFallback(input), policyChanged: false }
     // Build the exact requested backup first, including aliases beyond catalog
     // pagination. Other models on the same connection never become candidates.
     const targets = plan ? plan.mode === 'group' ? modelRoutingPlanTargets(plan) : [plan.backup!] : []
+    const providers = snapshotPlainData(await dependencies.readProviders(input.signal,
+      { providers: input.providers, providerIds: plan ? targets.map(target => target.providerId) : undefined }))
+    throwIfCancelled(input.signal)
+    const healthRecords = snapshotPlainData(await dependencies.loadHealthRecords())
+    throwIfCancelled(input.signal)
     const backupProviders = plan ? targets.flatMap(target => {
       const provider = providers.find(item => item.id === target.providerId)
       return provider ? [{ ...provider, models: [target.model] }] : []
@@ -266,8 +266,9 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       const checkConfiguration = dependencies.captureConfiguration?.()
       checkConfiguration?.()
       throwIfCancelled(input.signal)
-      const providers = snapshotPlainData(await dependencies.readProviders(input.signal,
-        input.providers === undefined ? undefined : { providers: input.providers }))
+      const providerIds = input.routingPlan?.mode === 'group'
+        ? modelRoutingPlanTargets(input.routingPlan).map(member => member.providerId) : [input.preferred.providerId]
+      const providers = snapshotPlainData(await dependencies.readProviders(input.signal, { providers: input.providers, providerIds }))
       throwIfCancelled(input.signal)
       if (input.routingPlan?.mode === 'group') {
         const result = await selectGroup(input, providers, {
@@ -329,7 +330,7 @@ export function createProviderChatResolutionRuntime(dependencies: ProviderChatRe
       checkConfiguration?.()
       throwIfCancelled(input.signal)
       const providers = snapshotPlainData(await dependencies.readProviders(input.signal,
-        { providers: input.providers, providerId: constraint.identity.providerId }))
+        { providers: input.providers, providerIds: [constraint.identity.providerId] }))
       throwIfCancelled(input.signal)
       const provider = providers.find((item) => item.id === constraint.identity.providerId)
       if (!await dependencies.isOnline(provider)) return undefined

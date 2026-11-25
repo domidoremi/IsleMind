@@ -134,7 +134,7 @@ export function createProviderRoutingGroupSelector(dependencies: ProviderChatRes
             if (!input.confirmFallback || !await input.confirmFallback(snapshotPlainData(route), input.signal)) return blocked('confirmation_declined')
             if (!current()) return blocked()
             const live = snapshotPlainData(await dependencies.readProviders(input.signal,
-              input.providers === undefined ? undefined : { providers: input.providers }))
+              { providers: input.providers, providerIds: [provider.id] }))
             const nextProvider = live.find(item => item.id === provider.id)
             if (!nextProvider) return blocked('candidate_changed')
             if (!await dependencies.isOnline(nextProvider)) return blocked('offline')

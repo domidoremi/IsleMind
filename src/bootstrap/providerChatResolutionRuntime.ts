@@ -18,9 +18,9 @@ let readCurrentSettings: () => Settings | undefined = () => undefined
 let readCurrentProviders: () => readonly AIProvider[] | undefined = () => undefined
 
 export const providerChatResolutionRuntime = createProviderChatResolutionRuntime({
-  async readProviders(signal, options) {
-    const admittedProviders = snapshotPlainData(options?.providers)
-    const providerId = options?.providerId
+  async readProviders(signal, { providers, providerIds }) {
+    const admittedProviders = snapshotPlainData(providers)
+    const requested = providerIds && new Set(providerIds)
     throwIfProviderSelectionCancelled(signal)
     const { useSettingsStore } = await import('@/store/settingsStore')
     throwIfProviderSelectionCancelled(signal)
@@ -28,15 +28,15 @@ export const providerChatResolutionRuntime = createProviderChatResolutionRuntime
     readCurrentSettings = () => useSettingsStore.getState().settings
     readCurrentProviders = () => useSettingsStore.getState().providers
     const catalog = admittedProviders ?? snapshotPlainData(state.providers)
-    const providers = []
+    const hydratedProviders = []
     for (const item of catalog) {
-      if (providerId !== undefined && item.id !== providerId) continue
+      if (requested && !requested.has(item.id)) continue
       throwIfProviderSelectionCancelled(signal)
       const hydrated = snapshotPlainData(await state.hydrateProviderKey(item.id, { providers: catalog, signal }))
       throwIfProviderSelectionCancelled(signal)
-      if (hydrated) providers.push(hydrated)
+      if (hydrated) hydratedProviders.push(hydrated)
     }
-    return providers
+    return hydratedProviders
   },
   async isOnline(provider) {
     const { getNetworkStateAsync } = await import('expo-network')

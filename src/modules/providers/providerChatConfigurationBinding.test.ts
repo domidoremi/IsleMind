@@ -61,7 +61,7 @@ it('captures preferred identity, catalog, capabilities and signal before the onl
   const outcome = await pending
   expect(outcome).toMatchObject({ kind: 'ready', selection: { model: 'one', provider: { id: 'a', models: ['one', 'two'] } } })
   expect(f.readProviders).toHaveBeenCalledWith(f.controller.signal, {
-    providers: [provider('a'), provider('b')],
+    providers: [provider('a'), provider('b')], providerIds: ['a'],
   })
   expect(f.buildCandidates.mock.calls[0][0].requiredCapabilities).toEqual(['text'])
 })
@@ -100,7 +100,7 @@ it.each(['success', 'rejection'] as const)('settles an admitted online %s and st
   else online.reject(new Error('late online failure'))
   await expect(pending).resolves.toEqual({ kind: 'cancelled' })
   expect(f.readProviders).toHaveBeenCalledTimes(1)
-  expect(f.readProviders).toHaveBeenCalledWith(f.controller.signal, { providers: [provider('a'), provider('b')] })
+  expect(f.readProviders).toHaveBeenCalledWith(f.controller.signal, { providers: [provider('a'), provider('b')], providerIds: ['a'] })
   expect(f.getAvailability).not.toHaveBeenCalled()
   expect(f.healthAllows).not.toHaveBeenCalled()
   expect(f.loadHealthRecords).not.toHaveBeenCalled()

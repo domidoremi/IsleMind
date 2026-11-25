@@ -56,8 +56,8 @@ export interface ProviderChatFallbackInput extends ProviderChatResolutionInput {
 export type ProviderChatResolutionReason = 'offline' | 'disabled_provider' | 'missing_key' | 'invalid_configuration' | 'model_unavailable' | 'provider_cooldown' | 'policy_blocked' | 'confirmation_declined' | 'candidate_changed'
 
 export interface ProviderChatResolutionDependencies {
-  /** providerId limits credential reads; providers retains the full admitted metadata catalog. */
-  readProviders(signal: AbortSignal, options?: { readonly providers?: readonly AIProvider[]; readonly providerId?: string }): Promise<readonly AIProvider[]>
+  /** Omit providerIds only for catalog-wide fallback. Keep the full admitted metadata for revocation checks. */
+  readProviders(signal: AbortSignal, options: { readonly providers?: readonly AIProvider[]; readonly providerIds?: readonly string[] }): Promise<readonly AIProvider[]>
   isOnline(provider?: AIProvider): Promise<boolean>
   buildCandidates: ProviderFallbackCandidateBuilder
   loadHealthRecords(): Promise<Record<string, ProviderHealthRecord>>

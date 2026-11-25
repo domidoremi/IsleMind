@@ -96,7 +96,7 @@ it('passes the conversation-admitted catalog to secure hydration instead of sele
   mockProviders = [provider('later-only')]
   online.resolve({ isConnected: true, isInternetReachable: true })
   await expect(pending).resolves.toMatchObject({ kind: 'ready', provider: { id: 'a', apiKey: 'fixture-a' } })
-  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['a', 'b'])
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['a'])
   for (const [, options] of mockHydrate.mock.calls) {
     expect(options).toMatchObject({ providers: [provider('a'), provider('b')], signal: admitted.signal })
   }
@@ -111,7 +111,7 @@ it('captures an old caller catalog once and forwards its original signal before 
   mockProviders.push(provider('later-provider'))
   read.resolve({ ...provider('a'), apiKey: 'fixture-a', apiKeySource: { kind: 'primary' } })
   await expect(pending).resolves.toMatchObject({ kind: 'ready', selection: { provider: { id: 'a' } } })
-  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['a', 'b'])
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['a'])
   for (const [, options] of mockHydrate.mock.calls) {
     expect(options).toMatchObject({ providers: [provider('a'), provider('b')], signal })
   }
@@ -132,6 +132,25 @@ it('settles the original secure read and does not hydrate another provider after
   expect(mockHydrate).toHaveBeenCalledTimes(1)
   expect(mockHydrate.mock.calls[0][1]).toMatchObject({ signal: controller.signal })
   expect(mockAvailability).not.toHaveBeenCalled()
+})
+
+it.each(['group', 'fallback'] as const)('ignores unrelated credential failures for a saved %s and reads only the confirmed connection again', async mode => {
+  mockProviders[0].enabled = false
+  mockProviders.push(provider('c'), provider('outside'))
+  const members = mockProviders.slice(0, 3).map(p => ({ providerId: p.id, model: 'one' }))
+  mockHydrate.mockImplementation(async (id: string, options: { providers: AIProvider[] }) => {
+    if (id === 'outside') throw new Error('Unrelated credential unavailable')
+    return { ...options.providers.find(p => p.id === id), apiKey: `fixture-${id}`, apiKeySource: { kind: 'primary' } }
+  })
+  const groups = mode === 'group' ? { group: { members, strategy: 'priority' as const, model: 'one' } } : { backup: members[1] }
+  const confirmed = jest.fn(async () => true)
+  const result = await providerChatResolutionRuntime.resolvePreferred({ preferred: members[0], signal: new AbortController().signal,
+    routingPlan: { schema: 'islemind.model-routing-plan.v1', id: 'scope', name: 'Scope', mode, primary: members[0], crossProvider: 'ask', ...groups },
+    confirmFallback: confirmed })
+  expect(result).toMatchObject({ kind: 'ready', selection: { provider: { id: 'b' } } })
+  expect(confirmed).toHaveBeenCalledTimes(1)
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(mode === 'group' ? ['a', 'b', 'c', 'b'] : ['a', 'b', 'b'])
+  expect(mockHydrate.mock.calls.every(([, options]) => options.providers.length === 4)).toBe(true)
 })
 
 it('keeps supplied settings stable without bypassing live blocklist revocation during confirmation', async () => {
@@ -180,7 +199,7 @@ it.each(['admitted', 'current'] as const)('rehydrates only the selected provider
     ...(mode === 'admitted' ? { providers: mockProviders.slice() } : {}) }
   const admitted = await providerChatResolutionRuntime.resolvePreferred(request)
   if (admitted.kind !== 'ready') throw new Error('Expected an admitted provider')
-  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['a', 'b'])
+  expect(mockHydrate.mock.calls.map(([id]) => id)).toEqual(['b'])
   mockHydrate.mockClear()
 
   for (let index = 0; index < 2; index++) {
