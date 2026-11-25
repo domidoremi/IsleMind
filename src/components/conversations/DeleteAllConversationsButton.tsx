@@ -2,12 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, useIsleDialog } from '@/components/ui/isle'
 import { AppIcon } from '@/components/ui/AppIcon'
-import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 
 export function DeleteAllConversationsButton({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation()
-  const { colors } = useAppTheme()
   const dialog = useIsleDialog()
   const hasConversations = useChatStore(state => state.historyHasMore
     || state.conversations.some(conversation => !state.draftConversationIds.has(conversation.id)))
@@ -53,6 +51,6 @@ export function DeleteAllConversationsButton({ compact = false }: { compact?: bo
   return <IsleButton compact={compact} tone="danger"
     label={t(compact ? 'conversation.deleteAll.short' : 'conversation.deleteAll.title')}
     accessibilityLabel={t('conversation.deleteAll.title')}
-    icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={16} />}
+    icon={foreground => <AppIcon name="delete" color={foreground} size={16} />}
     busy={deleting} disabled={!hasConversations || loading || deleting} onPress={() => void removeAll()} />
 }

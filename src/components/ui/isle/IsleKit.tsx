@@ -26,6 +26,7 @@ import {
 } from './ThemeExpressionControls'
 export type IsleButtonType = 'primary' | 'default' | 'dashed' | 'text' | 'link'
 export type IsleButtonSize = 'small' | 'middle' | 'large'
+export type IsleButtonIcon = ReactNode | ((foreground: string) => ReactNode)
 export type IsleInputSize = 'small' | 'middle' | 'large'
 export type IsleSwitchSize = 'small' | 'default'
 export type IsleCardType = 'default' | 'title' | 'dashed'
@@ -145,7 +146,7 @@ export function IsleButton({
   accessibilityRole?: Parameters<typeof PressableScale>[0]['accessibilityRole']
   accessibilityState?: Parameters<typeof PressableScale>[0]['accessibilityState']
   testID?: string
-  icon?: ReactNode
+  icon?: IsleButtonIcon
   type?: IsleButtonType
   size?: IsleButtonSize
   danger?: boolean
@@ -222,13 +223,15 @@ export function IsleButton({
     busy: loading || accessibilityState?.busy === true,
   }
   const flattenedStyle = StyleSheet.flatten(style)
+  const customForeground = StyleSheet.flatten(textStyle)?.color
+  const iconForeground = !disabled && typeof customForeground === 'string' ? customForeground : foreground
   const minimumButtonHeight = resolveMinimumTouchTargetHeight(height, flattenedStyle, ISLE_MIN_TOUCH_TARGET)
   if (palette.themeId === 'animal-island-ui') {
-    const labelStyle = [labelTypography, { fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), textAlign: 'center' as const }, textStyle]
+    const labelStyle = [labelTypography, { fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), textAlign: 'center' as const }, textStyle, disabled && !loading ? { color: disabledStyle.foreground } : null]
     const metrics = resolveWebTextMetricsStyle(labelStyle)
     return <NativeButton type={type} size={size} danger={danger} ghost={ghost} block={block} loading={loading} disabled={disabled} multiline={multiline}
       icon={icon} onPress={onPress} accessibilityLabel={accessibilityLabel ?? label} accessibilityRole={accessibilityRole}
-      accessibilityState={buttonAccessibilityState} testID={testID} textStyle={metrics ? [...labelStyle, metrics] : labelStyle} style={[{ minWidth: 0, maxWidth: '100%', flexShrink: 1 }, style, { minHeight: minimumButtonHeight }]}>
+      accessibilityState={buttonAccessibilityState} testID={testID} textStyle={metrics ? [...labelStyle, metrics] : labelStyle} style={[{ minWidth: 0, maxWidth: '100%', flexShrink: 1 }, style, disabled && !loading ? { backgroundColor: background, borderColor, opacity: disabledStyle.opacity } : null, { minHeight: minimumButtonHeight }]}>
       {children ?? label}
     </NativeButton>
   }
@@ -236,11 +239,11 @@ export function IsleButton({
     <View style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
       {loading ? (
         <HighFrameSpinner color={foreground} size={16} />
-      ) : icon}
+      ) : typeof icon === 'function' ? icon(iconForeground) : icon}
     </View>
   ) : undefined
   const contentNode = children || label ? (
-    <Text numberOfLines={multiline ? undefined : 1} style={[labelTypography, { flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), fontWeight: labelTypography?.fontWeight ?? (primary ? '700' : '600'), includeFontPadding: false, textAlignVertical: 'center', textAlign: 'center' }, textStyle]}>
+    <Text numberOfLines={multiline ? undefined : 1} style={[labelTypography, { flexShrink: 1, minWidth: 0, color: foreground, fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), fontWeight: labelTypography?.fontWeight ?? (primary ? '700' : '600'), includeFontPadding: false, textAlignVertical: 'center', textAlign: 'center' }, textStyle, disabled ? { color: disabledStyle.foreground } : null]}>
       {children ?? label}
     </Text>
   ) : undefined
@@ -248,6 +251,7 @@ export function IsleButton({
     <PressableScale
       haptic
       interactionProfile={buttonExpression?.motion ?? 'default'}
+      disabledOpacity={control.disabledOpacity}
       scaleTo={
         buttonExpression?.interaction === 'physical'
           ? 0.968
@@ -310,6 +314,7 @@ export function IsleButton({
         icon={iconNode}
         content={contentNode}
         primary={primary}
+        disabled={disabled}
       />
     </PressableScale>
   )

@@ -16,6 +16,7 @@ interface PressableScaleProps extends PressableProps {
   hoverOpacity?: number
   focusScaleTo?: number
   focusOpacity?: number
+  disabledOpacity?: number
 }
 
 export type PressableInteractionProfile = 'default' | 'precision' | 'organic' | 'material' | 'fluid'
@@ -114,6 +115,7 @@ export function PressableScale({
   hoverOpacity,
   focusScaleTo,
   focusOpacity,
+  disabledOpacity,
   onPress,
   onPressIn,
   onPressOut,
@@ -133,6 +135,7 @@ export function PressableScale({
   const resolvedHoverOpacity = hoverOpacity ?? profile.hoverOpacity
   const resolvedFocusScaleTo = focusScaleTo ?? profile.focusScaleTo
   const resolvedFocusOpacity = focusOpacity ?? profile.focusOpacity
+  const resolvedDisabledOpacity = disabledOpacity ?? profile.disabledOpacity
   const disabled = !!props.disabled
   const accessibilityState = disabled
     ? { ...props.accessibilityState, disabled: true }
@@ -169,12 +172,12 @@ export function PressableScale({
         )
     return {
       transform: [{ scale: pressScale * hoverScale * focusScale }],
-      opacity: disabled ? profile.disabledOpacity : interactionOpacity,
+      opacity: disabled ? resolvedDisabledOpacity : interactionOpacity,
     }
   }, [
     disabled,
     motion,
-    profile.disabledOpacity,
+    resolvedDisabledOpacity,
     resolvedFocusOpacity,
     resolvedFocusScaleTo,
     resolvedHoverOpacity,

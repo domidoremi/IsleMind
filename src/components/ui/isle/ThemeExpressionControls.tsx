@@ -14,6 +14,7 @@ interface ButtonExpressionBodyProps {
   icon?: ReactNode
   content?: ReactNode
   primary: boolean
+  disabled?: boolean
 }
 
 interface InputExpressionBodyProps {
@@ -42,13 +43,13 @@ const decorativeAccessibility = {
   pointerEvents: 'none' as const,
 }
 
-export function ThemeButtonExpressionBody({ family, colors, icon, content, primary }: ButtonExpressionBodyProps) {
+export function ThemeButtonExpressionBody({ family, colors, icon, content, primary, disabled = false }: ButtonExpressionBodyProps) {
   if (family === 'minimal') {
     return (
       <View testID="theme-button-body-minimal" style={styles.row}>
         {icon ? <View style={styles.icon}>{icon}</View> : null}
         {content ? <View style={styles.label}>{content}</View> : null}
-        {primary ? <View {...decorativeAccessibility} style={[styles.minimalRule, { backgroundColor: colors.ui.control.primaryForeground }]} /> : null}
+        {primary ? <View {...decorativeAccessibility} style={[styles.minimalRule, { backgroundColor: disabled ? colors.ui.control.disabledForeground : colors.ui.control.primaryForeground }]} /> : null}
       </View>
     )
   }
@@ -56,8 +57,8 @@ export function ThemeButtonExpressionBody({ family, colors, icon, content, prima
   if (family === 'monet') {
     return (
       <View testID="theme-button-body-monet" style={styles.row}>
-        <View {...decorativeAccessibility} style={[styles.monetWash, { backgroundColor: colors.ui.icon.accentBackground }]} />
-        <View {...decorativeAccessibility} style={[styles.monetEdge, { borderColor: colors.ui.control.focus }]} />
+        <View {...decorativeAccessibility} style={[styles.monetWash, { backgroundColor: disabled ? colors.ui.control.disabledBackground : colors.ui.icon.accentBackground }]} />
+        <View {...decorativeAccessibility} style={[styles.monetEdge, { borderColor: disabled ? colors.ui.control.disabledBorder : colors.ui.control.focus }]} />
         {icon ? <View style={styles.icon}>{icon}</View> : null}
         {content ? <View style={styles.label}>{content}</View> : null}
       </View>
@@ -67,10 +68,10 @@ export function ThemeButtonExpressionBody({ family, colors, icon, content, prima
   if (family === 'material') {
     return (
       <View testID="theme-button-body-material" style={styles.row}>
-        {primary ? <View {...decorativeAccessibility} style={[styles.materialStateLayer, { backgroundColor: colors.primary }]} /> : null}
+        {primary ? <View {...decorativeAccessibility} style={[styles.materialStateLayer, { backgroundColor: disabled ? colors.ui.control.disabledBackground : colors.primary }]} /> : null}
         {icon ? <View style={styles.icon}>{icon}</View> : null}
         {content ? <View style={styles.label}>{content}</View> : null}
-        {primary ? <View {...decorativeAccessibility} style={[styles.materialIndicator, { backgroundColor: colors.primary }]} /> : null}
+        {primary ? <View {...decorativeAccessibility} style={[styles.materialIndicator, { backgroundColor: disabled ? colors.ui.control.disabledForeground : colors.primary }]} /> : null}
       </View>
     )
   }

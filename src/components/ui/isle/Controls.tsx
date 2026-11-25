@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { StyleSheet, View, type PressableProps, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { IsleButton as BaseIsleButton, type IsleButtonType } from './IsleKit'
+import { IsleButton as BaseIsleButton, type IsleButtonIcon, type IsleButtonType } from './IsleKit'
 import { IsleChip as BaseIsleChip, type IsleChipTone } from './Chip'
 import { FeedbackAnnouncement, FeedbackGlyph } from '../FeedbackGlyph'
 import type { ActionFeedbackPhase } from '@/hooks/useActionFeedback'
@@ -16,7 +16,7 @@ export interface IsleButtonProps {
   label: string
   accessibilityLabel?: string
   testID?: string
-  icon?: ReactNode
+  icon?: IsleButtonIcon
   onPress?: NonNullable<PressableProps['onPress']>
   disabled?: boolean
   busy?: boolean
@@ -31,17 +31,16 @@ export interface IsleButtonProps {
 }
 
 export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, disabled = false, busy = false, feedbackPhase, feedbackLabel, tone = 'soft', compact = false, block = false, multiline = false, style, textStyle }: IsleButtonProps) {
-  const { colors } = useAppTheme()
   const pending = busy || feedbackPhase === 'pending'
   const phase = pending ? 'pending' : feedbackPhase
-  const foreground = buttonTypeForTone(tone) === 'primary' ? colors.ui.control.primaryForeground : colors.text
   return (
     <><BaseIsleButton
       label={label}
       accessibilityLabel={phase === 'success' && feedbackLabel ? `${accessibilityLabel ?? label}. ${feedbackLabel}` : accessibilityLabel}
       accessibilityState={{ busy: pending }}
       testID={testID}
-      icon={feedbackPhase === undefined ? icon : <FeedbackGlyph phase={phase} announce={false} color={foreground} idleIcon={icon} testID={testID ? `${testID}-status` : undefined} />}
+      icon={feedbackPhase === undefined ? icon : foreground => <FeedbackGlyph phase={phase} announce={false} color={foreground}
+        idleIcon={typeof icon === 'function' ? icon(foreground) : icon} testID={testID ? `${testID}-status` : undefined} />}
       type={buttonTypeForTone(tone)}
       danger={tone === 'danger'}
       loading={feedbackPhase === undefined && pending}
