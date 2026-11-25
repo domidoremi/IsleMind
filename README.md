@@ -51,8 +51,8 @@ Network access is limited to:
 
 | Item | Value |
 |---|---|
-| Current source version | `1.1.28` |
-| Source Android versionCode | `153` |
+| Current source version | `1.1.29` |
+| Source Android versionCode | `154` |
 | APK candidate version | `1.1.2` |
 | APK candidate Android versionCode | `127` |
 | APK candidate channel | Preview |
@@ -61,13 +61,13 @@ The source version may lead the APK candidate. The website and update catalog cu
 
 ### What’s new in the source
 
-- When an import finds matching connections, the review shows whether you chose to skip them or keep both. You can switch options with the keyboard.
-- On narrow screens and at larger text sizes, header actions wrap to leave room for long titles and keep the guide readable.
-- Fixed guide links that could miss their headings after opening a chapter’s contents in landscape.
-- Skipping duplicates now also skips a connection and its credentials if another import saved the same connection after review.
-- If a round-robin member goes offline while you are confirming a switch, selection stops. Retrying after connectivity returns starts with the same member.
+- Text, inputs, loading indicators, menus and selection controls use the active theme’s colors and styling.
+- Inline and standalone switches share the same theme shapes and support Space and Enter.
+- Web buttons and their disabled states use theme styling, with clearly visible keyboard focus.
+- Model requests read credentials only for the connections they need, reducing credential reads when many connections are configured.
+- Cancelling a sensitive provider operation returns keyboard focus to the button that opened the confirmation.
 
-[Full release notes](docs/release/v1.1.28.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.28)
+[Full release notes](docs/release/v1.1.29.md) · [GitHub Release](https://github.com/domidoremi/IsleMind/releases/tag/v1.1.29)
 
 ### APK variants
 
@@ -241,7 +241,7 @@ When production signing secrets are unavailable, explicitly use
 `node scripts/build-local-android-apk.js --release --unsigned --variant no-model --release-arch arm64-v8a`.
 This keeps the real production package/version and non-debuggable release behavior;
 it does not substitute a debug certificate, install the APK or publish anything.
-For the current source version, the output is `dist-apk/IsleMind-1.1.28-android-release-unsigned-no-model-arm64-v8a.apk`
+For the current source version, the output is `dist-apk/IsleMind-1.1.29-android-release-unsigned-no-model-arm64-v8a.apk`
 with `.sha256` and `.source-snapshot.json` sidecars. Signed release qualification still
 requires legitimate production signing and exact-artifact installation/runtime checks.
 
