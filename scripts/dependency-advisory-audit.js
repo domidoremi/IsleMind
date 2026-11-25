@@ -18,7 +18,7 @@ function inside(parent, target) {
 
 function inventoryFromLock(text) {
   const lock = json5.parse(text)
-  if (!lock.packages || !lock.workspaces || lock.lockfileVersion !== 3) throw new Error('Unsupported or incomplete Bun lockfile')
+  if (!lock.packages || !lock.workspaces || ![2, 3].includes(lock.lockfileVersion)) throw new Error('Unsupported or incomplete Bun lockfile')
   const versions = Object.create(null), consumers = Object.create(null)
   for (const entry of Object.values(lock.packages)) {
     if (!Array.isArray(entry) || typeof entry[0] !== 'string') throw new Error('Malformed locked package')

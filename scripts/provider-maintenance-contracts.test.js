@@ -488,3 +488,39 @@ describe('visible maintenance and PR/manual gates', () => {
     expect(JSON.stringify(workflow)).not.toMatch(/pull_request_target|"schedule"|secrets\.|publish|adb install/)
   })
 })
+
+describe('Bun lockfile inventory formats', () => {
+  function lockFixture(lockfileVersion) {
+    return {
+      lockfileVersion, configVersion: 0,
+      workspaces: { '': { dependencies: { tooling: '1.0.0' } }, '../animal-island-ui': { dependencies: { foo: '1.2.3' } } },
+      packages: {
+        tooling: ['tooling@1.0.0', '', { dependencies: { '@scope/helper': '^2', foo: '^1' } }, 'sha512-fixture'],
+        foo: ['foo@1.2.3', '', {}, 'sha512-fixture'],
+        'legacy/foo': ['foo@1.2.2', '', {}, 'sha512-fixture'],
+        '@scope/helper': ['@scope/helper@2.0.0', '', {}, 'sha512-fixture'],
+        'animal-island-ui-rn': ['animal-island-ui-rn@workspace:../animal-island-ui'],
+      },
+    }
+  }
+
+  test.each([2, 3])('retains every exact version and consumer in supported format %s', format => {
+    expect(audit.inventoryFromLock(JSON.stringify(lockFixture(format)))).toEqual({
+      versions: { '@scope/helper': ['2.0.0'], foo: ['1.2.2', '1.2.3'], tooling: ['1.0.0'] },
+      consumers: { '@scope/helper': ['tooling@1.0.0'], foo: ['tooling@1.0.0', 'workspace:../animal-island-ui'], tooling: ['workspace:.'] },
+    })
+  })
+
+  test.each([undefined, null, 0, 1, 4, '2', '3'])('rejects an unsupported or mistyped format %s', format => {
+    expect(() => audit.inventoryFromLock(JSON.stringify(lockFixture(format)))).toThrow(/Unsupported or incomplete/)
+  })
+
+  test.each([2, 3])('keeps malformed packages and non-registry versions fail closed in format %s', format => {
+    const malformed = lockFixture(format)
+    malformed.packages.tooling = null
+    expect(() => audit.inventoryFromLock(JSON.stringify(malformed))).toThrow(/Malformed locked package/)
+    const nonRegistry = lockFixture(format)
+    nonRegistry.packages.tooling[0] = 'tooling@file:../unreviewed'
+    expect(() => audit.inventoryFromLock(JSON.stringify(nonRegistry))).toThrow(/Non-registry version needs a separate review/)
+  })
+})
