@@ -38,6 +38,9 @@ function auditThemeControls(source, file) {
   function visit(node) {
     if (!node || typeof node !== 'object') return
     if (node.type === 'JSXOpeningElement' && node.name.type === 'JSXIdentifier' && htmlControls.has(node.name.name)) add(node, '<' + node.name.name + '>')
+    if (node.type === 'JSXOpeningElement' && node.name.type === 'JSXMemberExpression'
+      && node.name.object.type === 'JSXIdentifier' && namespaces.has(node.name.object.name)
+      && nativeControls.has(node.name.property.name)) add(node, 'react-native.' + node.name.property.name)
     if ((node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') && node.object.type === 'Identifier') {
       const property = node.computed ? node.property.value : node.property.name
       if (namespaces.has(node.object.name) && nativeControls.has(property)) add(node, 'react-native.' + property)

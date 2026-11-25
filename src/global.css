@@ -30,10 +30,20 @@ body {
   background-color: var(--background-canvas);
 }
 
+button,
 input,
 textarea {
   appearance: none;
   -webkit-appearance: none;
+}
+
+button {
+  color: inherit;
+  font: inherit;
+}
+
+input,
+textarea {
   caret-color: var(--color-inputFocus);
 }
 
