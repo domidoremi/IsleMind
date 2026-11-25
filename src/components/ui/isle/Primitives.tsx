@@ -438,18 +438,23 @@ export function IsleHeader({
   elevated?: boolean
 }) {
   const { colors } = useAppTheme()
+  const { width, fontScale } = useWindowDimensions()
+  const typography = colors.design!.semantic.typography
+  const titleWidth = Math.min(136 * fontScale, Math.max(0, width - 84))
   return (
     <IslePanel material={material} elevated={elevated} radius={colors.ui.radius.panel} contentStyle={{ paddingHorizontal: 2, paddingVertical: collapsed ? 6 : 8 }}>
-      <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View testID="isle-header-layout" style={{ minHeight: 44, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
         {leading}
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: collapsed ? 17 : 20, lineHeight: collapsed ? 22 : 26, fontWeight: '700', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }}>
+        <View style={{ flex: 1, flexBasis: titleWidth, minWidth: titleWidth }}>
+          <Text testID="isle-header-title" accessibilityRole="header" style={[typography.title, { color: colors.text, includeFontPadding: false, textAlignVertical: 'center' }]}>
             {title}
           </Text>
-          {subtitle ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '500', marginTop: 2, includeFontPadding: false }}>{subtitle}</Text> : null}
+          {subtitle ? <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2, includeFontPadding: false }]}>{subtitle}</Text> : null}
         </View>
-        <PageFeedbackIndicator />
-        {trailing}
+        <View style={{ minWidth: 0, maxWidth: '100%', marginLeft: 'auto', flexShrink: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+          <PageFeedbackIndicator />
+          {trailing}
+        </View>
       </View>
     </IslePanel>
   )
