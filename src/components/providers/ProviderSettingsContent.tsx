@@ -501,6 +501,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       signal,
     }).catch(() => false)
     if (!confirmed || signal.aborted) return
+    setDangerousOperationPending(true)
     await clearAllProviders({ expectedProviders, signal })
     await useSettingsStore.getState().flushProviderPersistence()
     await flushPersistedSettings()
@@ -541,6 +542,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       signal,
     }).catch(() => false)
     if (!confirmed || signal.aborted) return
+    setDangerousOperationPending(true)
     const count = await clearInvalidProviders(invalidProviders.map((provider) => provider.id), { expectedProviders: invalidProviders, signal })
     await useSettingsStore.getState().flushProviderPersistence()
     await flushPersistedSettings()
@@ -578,6 +580,7 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
       signal,
     }).catch(() => false)
     if (!confirmed || signal.aborted) return
+    setDangerousOperationPending(true)
 
     const ids = new Set(group.providers.map((provider) => provider.id))
     setDeletingSupplierId(group.id)
@@ -633,7 +636,6 @@ function ProviderSettingsBody({ embedded = false, autoOpenAdd = false, onAutoOpe
     const signal = lifetime.current?.signal
     if (!signal || signal.aborted || dangerousOperationLock.current || importLock.current || activationBusy) return
     dangerousOperationLock.current = true
-    setDangerousOperationPending(true)
     try {
       await operation(signal)
     } catch (error) {
