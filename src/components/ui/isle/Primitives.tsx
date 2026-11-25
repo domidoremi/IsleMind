@@ -6,11 +6,11 @@ import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useThemeMotion } from '@/hooks/useThemeMotion'
-import { Switch as NativeSwitch } from 'animal-island-ui-rn'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { IslePanel, type IsleMaterial } from './Panel'
 import { IsleButton, IsleInput, IsleSwitch as IsleStyledSwitch } from './IsleKit'
+import { switchKeyboardProps } from './switchKeyboard'
 import { GlassSurface } from './GlassSurface'
 import { PageFeedbackIndicator } from '@/components/ui/PageFeedback'
 export type IsleTone = 'default' | 'mint' | 'amber' | 'danger' | 'sky' | 'ink'
@@ -220,6 +220,7 @@ export function IsleToggle({
   const accentMotion = useThemeMotion('accent')
   const playful = colors.ui.monet && colors.ui.ornamented
   const family = colors.design?.family ?? 'minimal'
+  const switchExpression = resolveThemeComponentExpression(family, 'switch')
   const toggleSurface = active
     ? colors.ui.liquidGlass
       ? colors.ui.semantic.chrome.background
@@ -247,6 +248,8 @@ export function IsleToggle({
       haptic
       onPress={onPress}
       disabled={disabled}
+      interactionProfile={switchExpression.motion}
+      {...switchKeyboardProps(onPress, disabled)}
       accessibilityRole="switch"
       accessibilityLabel={description ? `${title}. ${description}` : title}
       accessibilityState={{ checked: active, disabled }}
@@ -291,7 +294,7 @@ export function IsleToggle({
             {description ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
           </View>
           <View accessible={false} pointerEvents="none" style={{ height: 44, justifyContent: 'center' }}>
-            <IsleSwitch active={active} />
+            <IsleSwitch active={active} disabled={disabled} />
           </View>
         </View>
       </MotiView>
@@ -299,61 +302,9 @@ export function IsleToggle({
   )
 }
 
-export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: () => void }) {
-  const { colors } = useAppTheme()
-  const accentMotion = useThemeMotion('accent')
-  if (colors.ui.family === 'animal-island-ui') {
-    return <NativeSwitch checked={active} onChange={onChange} hitSlop={12} />
-  }
-  const switchTokens = colors.ui.switch
-  if (onChange) return <IsleStyledSwitch checked={active} onChange={() => onChange()} />
-  const width = 52
-  const height = 28
-  const borderWidth = colors.ui.monet ? 1 : StyleSheet.hairlineWidth
-  const thumbInset = 3
-  const knob = height - thumbInset * 2
-  const thumbTravel = width - knob - thumbInset * 2
-  return (
-    <MotiView
-      accessible={false}
-      style={{
-        width,
-        height,
-        borderRadius: height / 2,
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-      }}
-    >
-      <MotiView
-        animate={{
-          backgroundColor: active ? switchTokens.trackOn : switchTokens.trackOff,
-          borderColor: active ? switchTokens.trackOnBorder : switchTokens.trackOffBorder,
-        }}
-        transition={accentMotion.transition}
-        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: height / 2, borderWidth }}
-      />
-      <MotiView
-        animate={{ translateX: active ? thumbTravel : 0 }}
-        transition={accentMotion.intensity === 'full' ? accentMotion.transition : { type: 'timing', duration: 1 }}
-        style={{
-          position: 'absolute',
-          top: thumbInset,
-          left: thumbInset,
-          width: knob,
-          height: knob,
-          borderRadius: knob / 2,
-          backgroundColor: switchTokens.thumb,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: active ? switchTokens.thumbOnBorder : switchTokens.thumbOffBorder,
-          shadowColor: 'transparent',
-          shadowOpacity: 0,
-          shadowRadius: 0,
-          shadowOffset: { width: 0, height: 0 },
-          elevation: 0,
-        }}
-      />
-    </MotiView>
-  )
+export function IsleSwitch({ active, onChange, disabled = false }: { active: boolean; onChange?: () => void; disabled?: boolean }) {
+  return <IsleStyledSwitch checked={active} disabled={disabled} decorative={!onChange}
+    onChange={onChange ? () => onChange() : undefined} />
 }
 
 export function IsleListItem({

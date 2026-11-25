@@ -15,6 +15,7 @@ import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import type { MotionIntensity } from '@/theme/themeMotion'
 import { resolveMinimumTouchTargetHeight } from './touchTarget'
+import { switchKeyboardProps } from './switchKeyboard'
 import { IsleNativeSelect } from './IsleNativeSelect'
 import { glassShadowStyle } from './glassShadowStyle'
 import { GlassSurface } from './GlassSurface'
@@ -570,6 +571,7 @@ export function IsleSwitch({
   defaultChecked = false,
   size = 'default',
   disabled = false,
+  decorative = false,
   loading = false,
   checkedChildren,
   unCheckedChildren,
@@ -579,6 +581,8 @@ export function IsleSwitch({
   defaultChecked?: boolean
   size?: IsleSwitchSize
   disabled?: boolean
+  /** Use the same graphics inside a named row without adding another input. */
+  decorative?: boolean
   loading?: boolean
   checkedChildren?: ReactNode
   unCheckedChildren?: ReactNode
@@ -589,9 +593,20 @@ export function IsleSwitch({
   const motion = switchMotion.intensity
   const [internal, setInternal] = useState(defaultChecked)
   const active = checked ?? internal
+  function toggle() {
+    if (disabled || loading) return
+    const next = !active
+    setInternal(next)
+    onChange?.(next)
+  }
   if (palette.themeId === 'animal-island-ui') {
-    return <View style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}>
-      <NativeSwitch checked={active} size={size} disabled={disabled} loading={loading}
+    return <View accessible={false} accessibilityElementsHidden={decorative || undefined}
+      importantForAccessibility={decorative ? 'no-hide-descendants' : undefined}
+      pointerEvents={decorative ? 'none' : undefined}
+      {...switchKeyboardProps(toggle, decorative || disabled || loading)}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}>
+      <NativeSwitch checked={active} size={size} disabled={decorative || disabled} loading={loading}
+        style={decorative && !disabled ? { opacity: 1 } : undefined}
         checkedChildren={checkedChildren} unCheckedChildren={unCheckedChildren} onChange={(next) => {
           if (checked === undefined) setInternal(next)
           onChange?.(next)
@@ -623,20 +638,19 @@ export function IsleSwitch({
       : switchMotion.transition
   const trackRadius = switchGrammar === 'precision' ? 2 : switchGrammar === 'material' ? height / 2 : height / 2
   const thumbRadius = switchGrammar === 'precision' ? 2 : knob / 2
-  function toggle() {
-    if (disabled || loading) return
-    const next = !active
-    setInternal(next)
-    onChange?.(next)
-  }
+  const SwitchHost = decorative ? View : PressableScale
   return (
-    <PressableScale
-      haptic
-      onPress={toggle}
-      disabled={disabled || loading}
-      accessibilityRole="switch"
-      accessibilityState={loading ? { checked: active, busy: true } : { checked: active }}
-      interactionProfile={switchExpression?.motion ?? 'default'}
+    <SwitchHost
+      {...(decorative ? {
+        pointerEvents: 'none' as const, accessible: false, accessibilityElementsHidden: true,
+        importantForAccessibility: 'no-hide-descendants' as const,
+      } : {
+        haptic: true, onPress: toggle, disabled: disabled || loading,
+        accessibilityRole: 'switch' as const,
+        accessibilityState: loading ? { checked: active, busy: true } : { checked: active },
+        interactionProfile: switchExpression?.motion ?? 'default',
+        ...switchKeyboardProps(toggle, disabled || loading),
+      })}
       testID={`theme-switch-${palette.colors.design?.family ?? 'minimal'}`}
       style={{
         width: touchWidth,
@@ -687,7 +701,7 @@ export function IsleSwitch({
           </Text>
         ) : null}
       </MotiView>
-    </PressableScale>
+    </SwitchHost>
   )
 }
 

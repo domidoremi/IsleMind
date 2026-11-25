@@ -2,7 +2,7 @@ import { fireEvent, render } from '@testing-library/react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { getColors } from '@/theme/colors'
 import { CANONICAL_THEME_IDS } from '@/types/settingsContracts'
-import { IsleToggle } from './Primitives'
+import { IsleSwitch, IsleToggle } from './Primitives'
 import { IsleThemeProvider } from './IsleThemeProvider'
 
 jest.mock('@/hooks/useAppTheme', () => ({ useAppTheme: jest.fn() }))
@@ -21,6 +21,7 @@ it.each(CANONICAL_THEME_IDS)('preserves named and disabled task toggles through 
     </IsleThemeProvider>
     const screen = await render(tree(true, false))
     const control = () => screen.getByRole('switch', { name: 'Continue in background. Keep this task running' })
+    expect(screen.getAllByRole('switch')).toHaveLength(1)
     expect(control()).toBeDisabled()
     await fireEvent.press(control())
     expect(press).not.toHaveBeenCalled()
@@ -30,4 +31,19 @@ it.each(CANONICAL_THEME_IDS)('preserves named and disabled task toggles through 
     expect(press).toHaveBeenCalledTimes(1)
     await screen.unmount()
   }
+})
+
+it.each(CANONICAL_THEME_IDS)('keeps a decorative %s switch out of the input order', async family => {
+  const colors = getColors('light', family)
+  jest.mocked(useAppTheme).mockReturnValue({ colors, design: colors.design, canonicalThemeId: family, mode: 'light' } as ReturnType<typeof useAppTheme>)
+  const press = jest.fn()
+  const tree = (interactive: boolean) => <IsleThemeProvider>
+    <IsleSwitch active onChange={interactive ? press : undefined} />
+  </IsleThemeProvider>
+  const screen = await render(tree(false))
+  expect(screen.queryByRole('switch')).toBeNull()
+  await screen.rerender(tree(true))
+  await fireEvent.press(screen.getByRole('switch'))
+  expect(press).toHaveBeenCalledTimes(1)
+  await screen.unmount()
 })
