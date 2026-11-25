@@ -1,3 +1,4 @@
+import { getColors } from '@/theme/colors'
 import { fireEvent, render } from '@testing-library/react-native'
 import { Platform, StyleSheet, View } from 'react-native'
 
@@ -32,40 +33,7 @@ jest.mock('@/components/ui/isle', () => {
   }
 })
 
-const colors = {
-  text: '#111',
-  textSecondary: '#555',
-  textTertiary: '#777',
-  shadowTint: '#000',
-  ui: {
-    monet: false,
-    semantic: {
-      surface: {
-        base: '#fff',
-      },
-    },
-    control: {
-      primaryBackground: '#175cd3',
-      primaryForeground: '#fff',
-      disabledBackground: '#eee',
-      disabledForeground: '#999',
-      disabledBorder: '#ddd',
-    },
-    input: {
-      background: '#fff',
-      backgroundFocused: '#fff',
-      border: '#ddd',
-      focus: '#06f',
-      placeholderForeground: '#888',
-    },
-    tone: {
-      danger: {
-        background: '#fee4e2',
-        foreground: '#b42318',
-      },
-    },
-  },
-} as never
+const colors = getColors('light', 'minimal')
 
 const toolLabels = {
   characterCount: '120 characters',

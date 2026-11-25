@@ -1,5 +1,6 @@
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import { useEffect, useMemo, useState } from 'react'
-import { ActivityIndicator, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
@@ -235,7 +236,7 @@ function SheetBody({ state, preview, selectedType, onSelectSource }: {
   if (state.kind === 'loading') {
     return (
       <View style={styles.placeholder}>
-        <ActivityIndicator color={colors.textSecondary} />
+        <AppLoadingIndicator color={colors.textSecondary} />
         <Text style={[styles.placeholderMessage, { color: colors.textSecondary }]}>
           {t('chat.contextCapacity.loading')}
         </Text>

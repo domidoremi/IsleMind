@@ -1,4 +1,5 @@
-import { ActivityIndicator, StyleSheet, View } from 'react-native'
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
+import { StyleSheet, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 
@@ -378,7 +379,7 @@ function TaskCancelButton({ onCancel, compact, cancelling }: { onCancel: () => v
       style={{ width: compact ? 34 : 36, height: compact ? 34 : 36, alignSelf: 'center', borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.tone.danger.border }}
     >
       {cancelling ? (
-        <ActivityIndicator color={colors.ui.tone.danger.foreground} size="small" />
+        <AppLoadingIndicator color={colors.ui.tone.danger.foreground} size="small" />
       ) : (
         <AppIcon name="stop" color={colors.ui.tone.danger.foreground} size={compact ? 11 : 12} strokeWidth={appIconStroke.bold} fill={colors.ui.tone.danger.foreground} />
       )}

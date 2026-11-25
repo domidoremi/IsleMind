@@ -1,20 +1,31 @@
 import { createContext, forwardRef, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react'
-import { Text as NativeText, TextInput as NativeTextInput, type TextProps, type TextInputProps } from 'react-native'
+import { Platform, Text as NativeText, TextInput as NativeTextInput, type TextProps, type TextInputProps } from 'react-native'
 import { APP_FONT_FAMILY } from '@/theme/font'
+import { getColors, type AppPalette } from '@/theme/colors'
 import { resolveWebTextMetricsStyle } from './webTextMetrics'
 import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 
 export const AppFontContext = createContext(APP_FONT_FAMILY)
+export const AppTextThemeContext = createContext<{ colors: AppPalette; mode: 'light' | 'dark' }>({
+  colors: getColors('light', 'minimal'), mode: 'light',
+})
+const TextAncestorContext = createContext(false)
 
 export type Text = NativeText
 export const Text = forwardRef<NativeText, TextProps>(function AppText({ style, ...props }, ref) {
   const fontFamily = useContext(AppFontContext)
+  const { colors } = useContext(AppTextThemeContext)
+  const nested = useContext(TextAncestorContext)
   const metrics = resolveWebTextMetricsStyle(style)
-  return <NativeText {...props} ref={ref} style={metrics ? [{ fontFamily }, style, metrics] : [{ fontFamily }, style]} />
+  const defaults = nested ? undefined : { fontFamily, color: colors.text }
+  return <TextAncestorContext.Provider value={true}>
+    <NativeText {...props} ref={ref} style={metrics ? [defaults, style, metrics] : [defaults, style]} />
+  </TextAncestorContext.Provider>
 })
 export type TextInput = NativeTextInput
 export const TextInput = Object.assign(forwardRef<NativeTextInput, TextInputProps>(function AppTextInput({ style, onFocus, onBlur, ...props }, ref) {
   const fontFamily = useContext(AppFontContext)
+  const { colors, mode } = useContext(AppTextThemeContext)
   const [focused, setFocused] = useState(false)
   useAppUpdateBlocker(focused, 'input-focus')
   const inputRef = useRef<NativeTextInput>(null)
@@ -42,8 +53,13 @@ export const TextInput = Object.assign(forwardRef<NativeTextInput, TextInputProp
     if (input?.isFocused?.()) input.blur()
   }, [])
   const metrics = resolveWebTextMetricsStyle(style)
-  return <NativeTextInput {...props} ref={setInputRef}
+  return <NativeTextInput
+    placeholderTextColor={colors.ui.input.placeholderForeground}
+    selectionColor={Platform.OS === 'ios' ? colors.ui.input.focus : colors.design?.semantic.color.selection ?? colors.ui.input.focus}
+    cursorColor={colors.ui.input.focus} selectionHandleColor={colors.ui.input.focus}
+    keyboardAppearance={mode} underlineColorAndroid="transparent"
+    {...props} ref={setInputRef}
     onFocus={(event) => { setFocused(true); onFocus?.(event) }}
     onBlur={(event) => { setFocused(false); onBlur?.(event) }}
-    style={metrics ? [{ fontFamily }, style, metrics] : [{ fontFamily }, style]} />
+    style={metrics ? [{ fontFamily, color: colors.text }, style, metrics] : [{ fontFamily, color: colors.text }, style]} />
 }), { State: NativeTextInput.State })

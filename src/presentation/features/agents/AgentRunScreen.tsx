@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScrollView, Switch, View } from 'react-native'
+import { ScrollView, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { IsleButton, IsleInput, IslePanel } from '@/components/ui/isle'
+import { IsleButton, IsleInput, IslePanel, IsleToggle } from '@/components/ui/isle'
 import { IsleEmptyState } from '@/components/ui/isle/EmptyState'
 import { FeedbackGlyph } from '@/components/ui/FeedbackGlyph'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -179,12 +179,9 @@ export function AgentRunScreen({ runtime, runId, onFreshRun, onOpenRun, loadWork
             onPress={() => { void command(() => runtime.resume(runId)) }} /> : null}
           <IsleButton label={t('agentTasks.cancel')} disabled={busy} onPress={() => { void command(() => runtime.cancel(runId)) }} />
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <Text style={[body, { flex: 1 }]}>{t('agentTasks.background')}</Text>
-          <Switch value={background} disabled={busy || failed} accessibilityLabel={t('agentTasks.background')}
-            trackColor={{ true: colors.ui.control.primaryBackground }} onValueChange={(value) => { void command(() => runtime.setBackground(runId, value)) }} />
-        </View>
-        <Text style={body}>{t('agentTasks.backgroundHint')}</Text>
+        <IsleToggle title={t('agentTasks.background')} description={t('agentTasks.backgroundHint')}
+          active={background} disabled={busy || failed}
+          onPress={() => { void command(() => runtime.setBackground(runId, !background)) }} />
         {run.pendingModelOperation ? <AgentNotice testID="agent-run-confirmation" tone={expiry?.expired ? 'danger' : 'amber'}
           label={t(expiry?.expired ? 'agentTasks.confirmationExpired' : 'agentTasks.status.awaiting-confirmation')} title={t('agentTasks.confirmation')}
           body={t('agentTasks.confirmationScope')}>

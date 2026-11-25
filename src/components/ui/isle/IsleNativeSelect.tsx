@@ -24,7 +24,7 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
   accessibilityLabel?: string
   testID?: string
 }) {
-  const { colors, isDark } = useAppTheme()
+  const { colors } = useAppTheme()
   const motion = useThemeMotion('overlay', { readable: true })
   const insets = useSafeAreaInsets()
   const window = useWindowDimensions()
@@ -60,15 +60,15 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
         disabled={disabled}
         onPress={() => setOpen(current => !current)}
         style={[styles.trigger, {
-          backgroundColor: disabled ? colors.ui.semantic.surface.muted : isDark ? colors.surfaceSecondary : '#fff',
-          borderColor: isDark ? colors.border : '#e8dcc8',
+          backgroundColor: disabled ? colors.ui.control.disabledBackground : colors.ui.input.background,
+          borderColor: disabled ? colors.ui.control.disabledBorder : colors.ui.input.border,
         }]}
       >
-        <Text style={[styles.value, { color: isDark ? colors.text : selected ? '#725d42' : '#a09080' }]}>
+        <Text style={[styles.value, { color: disabled ? colors.ui.control.disabledForeground : selected ? colors.text : colors.ui.input.placeholderForeground }]}>
           {selected?.label ?? placeholder}
         </Text>
         <View style={{ transform: [{ rotate: open ? '180deg' : '0deg' }] }}>
-          <AppIcon name="collapse" size={12} color={open ? colors.primary : isDark ? colors.textSecondary : '#a09080'} />
+          <AppIcon name="collapse" size={12} color={open ? colors.ui.input.focus : colors.ui.input.placeholderForeground} />
         </View>
       </Pressable>
       {open && !disabled ? (
@@ -99,7 +99,7 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
               }}
               style={[styles.dropdown, bounds, {
                 width: Math.min(preferredWidth, bounds.maxWidth),
-                backgroundColor: isDark ? colors.surfaceSecondary : '#ffeea0',
+                backgroundColor: colors.ui.semantic.chrome.sheet,
                 borderColor: colors.borderStrong, shadowColor: colors.shadowTint,
               }]}
             >

@@ -207,12 +207,14 @@ export function IsleToggle({
   active,
   icon,
   onPress,
+  disabled = false,
 }: {
   title: string
   description?: string
   active: boolean
   icon?: ReactNode
   onPress: () => void
+  disabled?: boolean
 }) {
   const { colors } = useAppTheme()
   const accentMotion = useThemeMotion('accent')
@@ -244,9 +246,10 @@ export function IsleToggle({
     <PressableScale
       haptic
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="switch"
       accessibilityLabel={description ? `${title}. ${description}` : title}
-      accessibilityState={{ checked: active }}
+      accessibilityState={{ checked: active, disabled }}
       style={{
          borderRadius: family === 'liquid-glass' ? colors.ui.radius.panel : (colors.design?.semantic.radius.small ?? colors.ui.radius.controlSmall),
       }}

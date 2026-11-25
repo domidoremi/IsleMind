@@ -157,6 +157,10 @@ check('no retired standalone island ID in core theme UI files', forbiddenRuntime
 const legacyCartoonPresentationConsumers = collectFiles('src/components').filter((file) => /colors\.ui\.(?:cartoon|limeRoad|markdown|glass)\b|\bis(?:Cartoon|LimeRoad|Glass)\b|palette\.(?:cartoon|limeRoad|markdown|glass)\b/.test(read(file)))
 check('production presentation uses canonical family flags only', legacyCartoonPresentationConsumers.length === 0, `legacy theme presentation branches: ${legacyCartoonPresentationConsumers.join(', ')}`)
 
+const controlAudit = require('./theme-control-audit').collectThemeControlIssues()
+check('application controls use themed rendering on every platform', controlAudit.issues.length === 0,
+  controlAudit.issues.map(issue => `${issue.file}:${issue.line} ${issue.control}`).join('; '))
+
 const failures = checks.filter((item) => !item.ok)
 for (const item of checks) {
   console.log(`${item.ok ? 'PASS' : 'FAIL'} ${item.name}`)

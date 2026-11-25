@@ -1,5 +1,6 @@
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import { useCallback, useEffect, useState } from 'react'
-import { ActivityIndicator, BackHandler, Platform, ScrollView, StyleSheet, View } from 'react-native'
+import { BackHandler, Platform, ScrollView, StyleSheet, View } from 'react-native'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import * as Clipboard from 'expo-clipboard'
@@ -60,7 +61,7 @@ export function UsageExecutionDetailScreen({ reference, params, loadDetail }: {
   const typography = colors.design!.semantic.typography
   return <ThemeDetailFrame kind="usage" title={title} onBack={back} backLabel={t('common.back')}>
     <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
-      {state.kind === 'loading' ? <View style={styles.placeholder}><ActivityIndicator color={colors.textSecondary} /><Text style={[typography.body, { color: colors.textSecondary }]}>{t('common.loading')}</Text></View>
+      {state.kind === 'loading' ? <View style={styles.placeholder}><AppLoadingIndicator color={colors.textSecondary} /><Text style={[typography.body, { color: colors.textSecondary }]}>{t('common.loading')}</Text></View>
         : state.kind !== 'ready' ? <View testID="usage-execution-unavailable" style={styles.placeholder}>
           <AppIcon name="history" color={colors.textSecondary} size={28} />
           <Text accessibilityRole="header" style={[typography.title, { color: colors.text }]}>{t(state.kind === 'error' ? 'usage.loadFailed' : 'usage.detailUnavailable')}</Text>

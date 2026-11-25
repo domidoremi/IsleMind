@@ -226,7 +226,7 @@ function ThemeAccentSwatch({
         <View style={{ position: 'absolute', top: 4, right: 4 }}>
           <ThemeRadioMark active={active} disabled={disabled} size={15} />
         </View>
-        <View aria-hidden testID={`${testID}-color`} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: swatchColor, borderWidth: 2, borderColor: color ? 'rgba(255,255,255,0.7)' : colors.ui.semantic.chrome.border, overflow: 'hidden' }}>
+        <View aria-hidden testID={`${testID}-color`} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: swatchColor, borderWidth: 2, borderColor: colors.ui.semantic.chrome.border, overflow: 'hidden' }}>
           {color === undefined ? <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 12, backgroundColor: colors.ui.semantic.surface.base }} /> : null}
         </View>
         <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600', textAlign: 'center' }}>{label}</Text>

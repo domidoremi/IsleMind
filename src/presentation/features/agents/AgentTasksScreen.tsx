@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState } from 'react'
-import { ScrollView, StyleSheet, Switch, View } from 'react-native'
+import { ScrollView, StyleSheet, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useFocusEffect } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { IsleButton, IsleInput, IslePanel, IslePressable, IsleSelect } from '@/components/ui/isle'
+import { IsleButton, IsleInput, IslePanel, IsleToggle, IslePressable, IsleSelect } from '@/components/ui/isle'
 import { IsleEmptyState } from '@/components/ui/isle/EmptyState'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { FeedbackGlyph } from '@/components/ui/FeedbackGlyph'
@@ -86,12 +86,8 @@ export function AgentTasksScreen({ runtime, conversationId, onOpenRun, onManageA
         onChange={(value) => { if (!busy) setTaskKind(value as typeof taskKind) }} />
       <IsleInput label={t('agentTasks.request')} accessibilityLabel={t('agentTasks.request')} value={text}
         onChangeText={setText} multiline numberOfLines={5} maxLength={32_000} editable={!busy} />
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <Text style={[body, { flex: 1 }]}>{t('agentTasks.background')}</Text>
-        <Switch value={background} onValueChange={setBackground} disabled={busy} accessibilityLabel={t('agentTasks.background')}
-          trackColor={{ true: colors.ui.control.primaryBackground }} />
-      </View>
-      <Text style={body}>{t('agentTasks.backgroundHint')}</Text>
+      <IsleToggle title={t('agentTasks.background')} description={t('agentTasks.backgroundHint')}
+        active={background} disabled={busy} onPress={() => setBackground(current => !current)} />
       <IsleButton label={t('agentTasks.start')} onPress={() => { void start() }} busy={busy} disabled={busy || loading || error || !agentId || !text.trim()} />
     </IslePanel> : <Text style={body}>{t('agentTasks.openConversation')}</Text>}
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.ui.section.divider }}>

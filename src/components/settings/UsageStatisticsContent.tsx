@@ -1,7 +1,8 @@
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { UsageRequestDetail } from './UsageRequestDetail'
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Modal } from '@/components/ui/AppModal'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { FlashList } from '@shopify/flash-list'
@@ -1048,18 +1049,21 @@ function RequestDetail({ detail, redactedLabel }: { detail: RedactedUsageRequest
 
 function UsageSheet({ visible, title, closeLabel, onClose, children, keyboardAware = false }: { visible: boolean; title: string; closeLabel: string; onClose: () => void; children: ReactNode; keyboardAware?: boolean }) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference(true)
+  const motion = useThemeMotion('overlay', { readable: true })
+  const rootStyle = [styles.modalRoot, { backgroundColor: colors.backdrop }]
   const content = (
     <View style={styles.modalFrame}>
       <Pressable accessible={false} accessibilityRole="none" style={StyleSheet.absoluteFill} onPress={onClose} />
       <MotiView
-        from={motion === 'full' ? { opacity: 0, translateY: 16 } : { opacity: 1, translateY: 0 }}
-        animate={{ opacity: 1, translateY: 0 }}
-        transition={{ type: 'timing', duration: motion === 'full' ? 160 : 1 }}
-        style={[styles.modalSheet, { backgroundColor: colors.ui.semantic.chrome.sheet, borderColor: colors.ui.semantic.chrome.border }]}
+        testID="usage-sheet"
+        from={motion.from}
+        animate={motion.animate}
+        transition={motion.transition}
+        style={[styles.modalSheet, { backgroundColor: colors.ui.semantic.chrome.sheet, borderColor: colors.ui.semantic.chrome.border,
+          borderTopLeftRadius: colors.ui.radius.panel, borderTopRightRadius: colors.ui.radius.panel }]}
         accessibilityViewIsModal
       >
-        <View style={styles.modalHeader}>
+        <View testID="usage-sheet-header" style={[styles.modalHeader, { borderBottomColor: colors.ui.section.divider }]}>
           <Text style={[styles.sheetTitle, { color: colors.text }]}>{title}</Text>
           <IsleButton compact label={closeLabel} icon={<AppIcon name="close" color={colors.textSecondary} size={15} />} onPress={onClose} />
         </View>
@@ -1071,7 +1075,7 @@ function UsageSheet({ visible, title, closeLabel, onClose, children, keyboardAwa
   )
   return (
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
-      {keyboardAware ? <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>{content}</KeyboardAvoidingView> : <View style={styles.modalRoot}>{content}</View>}
+      {keyboardAware ? <KeyboardAvoidingView testID="usage-sheet-backdrop" style={rootStyle} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>{content}</KeyboardAvoidingView> : <View testID="usage-sheet-backdrop" style={rootStyle}>{content}</View>}
     </Modal>
   )
 }
@@ -1123,7 +1127,7 @@ function UsageStateView({ icon, label, actionLabel, onAction, danger = false, lo
   const color = danger ? colors.ui.tone.danger.foreground : colors.textSecondary
   return (
     <View style={[styles.stateView, compact && styles.stateViewCompact]}>
-      {loading && motion === 'full' ? <ActivityIndicator color={color} size="small" /> : <AppIcon name={icon} color={color} size={18} />}
+      {loading && motion === 'full' ? <AppLoadingIndicator color={color} size="small" /> : <AppIcon name={icon} color={color} size={18} />}
       <Text style={[styles.stateLabel, { color }]}>{label}</Text>
       {actionLabel && onAction ? <IsleButton compact label={actionLabel} icon={<AppIcon name="retry" color={colors.textSecondary} size={14} />} onPress={onAction} /> : null}
     </View>
@@ -1560,7 +1564,6 @@ const styles = StyleSheet.create({
   },
   modalRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.38)',
   },
   modalFrame: {
     flex: 1,
@@ -1585,7 +1588,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(127, 127, 127, 0.22)',
   },
   modalContent: {
     paddingHorizontal: 12,

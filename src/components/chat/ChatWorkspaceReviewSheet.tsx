@@ -1,4 +1,5 @@
-import { ActivityIndicator, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
+import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
@@ -226,7 +227,7 @@ export function ChatWorkspaceReviewSheet({
 
             {loading && !presentation ? (
               <View accessibilityRole="progressbar" accessibilityLabel={labels.loading} style={styles.loadingState}>
-                <ActivityIndicator color={colors.ui.icon.accentForeground} size="small" />
+                <AppLoadingIndicator color={colors.ui.icon.accentForeground} size="small" />
                 <Text style={[styles.loadingText, { color: colors.textSecondary }]}>{labels.loading}</Text>
               </View>
             ) : presentation ? (
@@ -459,7 +460,7 @@ function IconAction({
       }}
     >
       {busy
-        ? <ActivityIndicator color={colors.textSecondary} size="small" />
+        ? <AppLoadingIndicator color={colors.textSecondary} size="small" />
         : <AppIcon name={icon} color={colors.textSecondary} size={17} strokeWidth={appIconStroke.strong} />}
     </IslePressable>
   )
@@ -528,7 +529,7 @@ function ActionButton({
       }}
     >
       {busy
-        ? <ActivityIndicator color={foreground} size="small" />
+        ? <AppLoadingIndicator color={foreground} size="small" />
         : <AppIcon name={icon} color={foreground} size={14} strokeWidth={appIconStroke.strong} />}
       <Text numberOfLines={1} style={[styles.actionLabel, { color: foreground }]}>{label}</Text>
     </IslePressable>

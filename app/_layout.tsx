@@ -1,3 +1,4 @@
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import '../src/devLogFilters'
 import '../src/theme/webGlobalStyles'
 import 'react-native-gesture-handler'
@@ -8,7 +9,7 @@ import type { ErrorBoundaryProps, NativeStackNavigationOptions } from 'expo-rout
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { ActivityIndicator, AppState, Platform, View } from 'react-native'
+import { AppState, Platform, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
@@ -286,7 +287,7 @@ function BootFallback({
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-        <ActivityIndicator color={colors.primary} />
+        <AppLoadingIndicator color={colors.primary} />
         <Text accessibilityRole="text" style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '800', marginTop: 12, textAlign: 'center' }}>
           {t('app.starting')}
         </Text>
@@ -387,6 +388,8 @@ function useWebThemeBridge({
       ['--color-inputDisabledBackground', colors.ui.input.disabledBackground],
       ['--color-inputBorder', colors.ui.input.border],
       ['--color-inputFocus', colors.ui.input.focus],
+      ['--theme-selection-background', design.semantic.color.selection],
+      ['--theme-selection-foreground', colors.text],
       ['--color-inputShadow', colors.ui.input.shadow],
       ['--color-switchTrackOn', colors.ui.switch.trackOn],
       ['--color-switchTrackOff', colors.ui.switch.trackOff],

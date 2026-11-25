@@ -622,8 +622,8 @@ export function MessageInput({
           >
             {toolMode === 'formatting' ? formattingTools : moreTools}
           </ScrollView>
-          <View pointerEvents="none" style={[styles.toolEdgeHint, { left: 0 }]} />
-          <View pointerEvents="none" style={[styles.toolEdgeHint, { right: 0 }]} />
+          <View pointerEvents="none" style={[styles.toolEdgeHint, { left: 0, backgroundColor: colors.ui.section.divider }]} />
+          <View pointerEvents="none" style={[styles.toolEdgeHint, { right: 0, backgroundColor: colors.ui.section.divider }]} />
         </View>
         {renderToolButton({
           key: toolMode === 'formatting' ? 'more' : 'back',
@@ -944,6 +944,12 @@ export function ModelMenu({
             {
               backgroundColor: colors.ui.semantic.surface.raised,
               borderColor: colors.ui.semantic.chrome.border,
+              borderRadius: colors.ui.radius.panel,
+              shadowColor: colors.shadowTint,
+              shadowOpacity: colors.ui.card.shadowOpacity,
+              shadowRadius: colors.ui.card.shadowRadius,
+              shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
+              elevation: colors.ui.minimal ? 0 : 8,
             },
             menuMotionStyle,
             colors.ui.liquidGlass ? glassShadowStyle(colors, 'floating') : null,
@@ -1124,7 +1130,6 @@ const styles = StyleSheet.create({
     top: 8,
     bottom: 8,
     width: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(127, 127, 127, 0.28)',
   },
   menuRoot: {
     flex: 1,
@@ -1134,7 +1139,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
-    shadowColor: '#000',
     shadowOpacity: 0.16,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },

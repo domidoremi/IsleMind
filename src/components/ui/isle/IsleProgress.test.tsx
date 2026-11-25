@@ -1,5 +1,6 @@
 import { act, render } from '@testing-library/react-native'
 import { useEffect, useState } from 'react'
+import * as ReactNative from 'react-native'
 import { AccessibilityInfo, Animated, StyleSheet, View } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -113,6 +114,21 @@ describe.each(CANONICAL_THEME_IDS)('%s host progress', family => {
 })
 
 describe.each(localThemes)('%s host progress timing', family => {
+  it.each(['small', 'middle', 'large'] as const)('keeps the %s inside percentage within the track at enlarged text sizes', async size => {
+    setTheme(family)
+    const dimensions = ReactNative.Dimensions.get('window')
+    const window = jest.spyOn(ReactNative, 'useWindowDimensions')
+    for (const fontScale of [1, 2]) for (const percent of [0, 42]) {
+      window.mockReturnValue({ ...dimensions, fontScale })
+      const screen = await render(<IsleThemeProvider><IsleProgress percent={percent} size={size} /></IsleThemeProvider>)
+      const bar = StyleSheet.flatten(screen.getByRole('progressbar').props.style)
+      const label = StyleSheet.flatten(screen.getByText(`${percent}%`).props.style)
+      expect(bar.height).toBeGreaterThanOrEqual(label.lineHeight * fontScale)
+      if (percent === 0) expect(label.top + label.lineHeight * fontScale).toBeLessThanOrEqual(bar.height)
+      await screen.unmount()
+    }
+  })
+
   it.each(['reduced', 'none'] as const)('does not let caller timing override %s motion or delay current values', async motion => {
     setTheme(family)
     jest.mocked(useMotionPreference).mockReturnValue(motion)

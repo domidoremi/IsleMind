@@ -1,5 +1,6 @@
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import { useEffect, useState } from 'react'
-import { ActivityIndicator, View } from 'react-native'
+import { View } from 'react-native'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { Text } from '@/components/ui/AppText'
@@ -33,7 +34,7 @@ export function ProviderLocalUsage({ providerId, active }: { providerId: string;
   return <View testID="provider-local-usage" style={{ gap: 12, paddingVertical: 12 }}>
     <Text accessibilityRole="header" style={[typography.title, { color: colors.text }]}>{t('usage.connectionLocalUsage')}</Text>
     <Text style={[typography.body, { color: colors.textSecondary }]}>{t('usage.localUsageHint')}</Text>
-    {state === 'loading' ? <ActivityIndicator color={colors.textSecondary} /> : state === 'error' ?
+    {state === 'loading' ? <AppLoadingIndicator color={colors.textSecondary} /> : state === 'error' ?
       <IsleButton label={t('common.retry')} onPress={() => setRefresh(value => value + 1)} /> : snapshot ?
       <View style={{ gap: 8 }}>
         <Text style={[typography.body, { color: colors.text }]}>{t('usage.executionCounts', {

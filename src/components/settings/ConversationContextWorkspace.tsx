@@ -1,5 +1,6 @@
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import type { Conversation } from '@/types/chatContracts'
@@ -117,7 +118,7 @@ export function ConversationContextWorkspace({
     }
   }
 
-  if (state === 'loading') return <View style={styles.placeholder}><ActivityIndicator color={colors.textSecondary} /><Text>{t('common.loading')}</Text></View>
+  if (state === 'loading') return <View style={styles.placeholder}><AppLoadingIndicator color={colors.textSecondary} /><Text>{t('common.loading')}</Text></View>
   if (state !== 'ready' || !conversation) return <View testID="context-conversation-unavailable" style={styles.section}>
     <Text accessibilityRole="header" style={[typography.title, { color: colors.text }]}>{t('usage.unavailableConversation')}</Text>
     <Text style={[typography.body, { color: colors.textSecondary }]}>{t(state === 'error' ? 'usage.loadFailed' : 'usage.contextNoConversation')}</Text>

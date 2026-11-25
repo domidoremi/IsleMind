@@ -1,7 +1,7 @@
 .composer-input-no-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;
-  outline: none !important;
+  outline: none;
   box-shadow: none !important;
 }
 
@@ -15,6 +15,55 @@
   display: none;
   width: 0;
   height: 0;
+}
+
+/* Browser chrome uses the same semantic roles as application controls. */
+:root {
+  accent-color: var(--color-primary);
+  scrollbar-color: var(--color-borderStrong) var(--background-canvas);
+  scrollbar-width: thin;
+}
+
+html,
+body {
+  color: var(--color-text);
+  background-color: var(--background-canvas);
+}
+
+input,
+textarea {
+  appearance: none;
+  -webkit-appearance: none;
+  caret-color: var(--color-inputFocus);
+}
+
+:where(button, input, textarea, select, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-inputFocus) !important;
+  outline-offset: 2px;
+}
+
+::selection {
+  background-color: var(--theme-selection-background, var(--color-primary));
+  color: var(--theme-selection-foreground, var(--color-primaryForeground));
+}
+
+input:autofill,
+input:-webkit-autofill {
+  -webkit-text-fill-color: var(--color-text);
+  caret-color: var(--color-inputFocus);
+  box-shadow: 0 0 0 100vmax var(--color-inputBackground, var(--color-surfaceSecondary)) inset;
+}
+
+::-webkit-scrollbar {
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  background-color: var(--background-canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-borderStrong);
+  border: 2px solid var(--background-canvas);
+  border-radius: var(--theme-radius-chip, 0.5rem);
 }
 
 /* Canonical pre-hydration fallbacks. Runtime values use the same token registry. */

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react'
-import { Platform, Pressable, StyleSheet, View, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
+import { Platform, Pressable, StyleSheet, View, useWindowDimensions, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { AppFontContext, Text, TextInput } from '@/components/ui/AppText'
 import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import { resolveWebTextMetricsStyle } from '@/components/ui/webTextMetrics'
@@ -1061,10 +1061,15 @@ export function IsleProgress({
 }: IsleProgressProps) {
   const palette = useIslePalette()
   const motion = useMotionPreference(true)
+  const { fontScale } = useWindowDimensions()
   const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0
   const visualPercent = indeterminate ? Math.max(PROGRESS_INSIDE_MIN_FILL, safePercent || PROGRESS_INSIDE_MIN_FILL) : safePercent
-  const trackHeight = size === 'small' ? 7 : size === 'large' ? 12 : 9
   const infoFontSize = size === 'small' ? 10 : size === 'large' ? 12 : 11
+  const infoLineHeight = Math.max(12, infoFontSize + 2)
+  const scaledInfoHeight = infoLineHeight * Math.max(1, fontScale)
+  const isInside = showInfo && infoPosition === 'inside'
+  const trackHeight = Math.max(size === 'small' ? 7 : size === 'large' ? 12 : 9,
+    isInside ? Math.ceil(scaledInfoHeight + 4) : 0)
   const requestedDuration = durationMs ?? (palette.themeId === 'animal-island-ui' ? 250 : 176)
   const safeDuration = Number.isFinite(requestedDuration) && requestedDuration >= 0 ? Math.min(requestedDuration, 2147483647) : 0
   if (palette.themeId === 'animal-island-ui') {
@@ -1073,7 +1078,6 @@ export function IsleProgress({
       aria-label={accessibilityLabel} testID={testID} style={style} />
   }
   const info = infoFormat ? infoFormat(safePercent) : indeterminate ? '' : `${Math.round(safePercent)}%`
-  const isInside = showInfo && infoPosition === 'inside'
   const infoInsideVisible = isInside && visualPercent >= PROGRESS_INSIDE_MIN_FILL
   const resolvedDuration = motion === 'full' ? safeDuration : 1
   const progressBackground = palette.ui.section.divider
@@ -1096,13 +1100,13 @@ export function IsleProgress({
         style={{ height: trackHeight, borderRadius: palette.ui.radius.chip, backgroundColor: progressFill, alignItems: 'flex-end', justifyContent: 'center', paddingRight: infoInsideVisible ? 6 : 0 }}
       >
         {infoInsideVisible ? (
-          <Text numberOfLines={1} style={{ color: insideInfoColor, fontSize: infoFontSize, lineHeight: Math.max(12, infoFontSize + 2), fontWeight: '900', includeFontPadding: false }}>
+          <Text numberOfLines={1} style={{ color: insideInfoColor, fontSize: infoFontSize, lineHeight: infoLineHeight, fontWeight: '900', includeFontPadding: false }}>
             {info}
           </Text>
         ) : null}
       </MotiView>
       {isInside && !infoInsideVisible ? (
-        <Text numberOfLines={1} style={{ position: 'absolute', right: 6, top: Math.max(0, (trackHeight - Math.max(12, infoFontSize + 2)) / 2), color: infoColor, fontSize: infoFontSize, lineHeight: Math.max(12, infoFontSize + 2), fontWeight: '900', includeFontPadding: false }}>
+        <Text numberOfLines={1} style={{ position: 'absolute', right: 6, top: Math.max(0, (trackHeight - scaledInfoHeight) / 2), color: infoColor, fontSize: infoFontSize, lineHeight: infoLineHeight, fontWeight: '900', includeFontPadding: false }}>
           {info}
         </Text>
       ) : null}

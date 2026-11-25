@@ -1,5 +1,6 @@
+import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import { useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, FlatList, View } from 'react-native'
+import { FlatList, View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleChip, IslePressable } from '@/components/ui/isle'
@@ -79,7 +80,7 @@ export function CanonicalSourceReader({ conversationId, messageId, messageTimest
             {updatedAt !== undefined && updatedAt > messageTimestamp ? (
               <Text accessibilityRole="alert" style={captionStyle}>{t('source.updatedAfterResponse')}</Text>
             ) : null}
-            {status === 'loading' ? <ActivityIndicator accessibilityLabel={t('source.loadingSavedSource')} style={{ marginTop: 12 }} /> : null}
+            {status === 'loading' ? <AppLoadingIndicator accessibilityLabel={t('source.loadingSavedSource')} style={{ marginTop: 12 }} /> : null}
             {status === 'missing' || status === 'unlinked' || status === 'error' ? (
               <Text accessibilityRole="alert" style={{ ...textStyle, marginTop: 12 }}>
                 {t(status === 'missing' ? 'source.savedSourceMissing' : status === 'unlinked' ? 'source.savedSourceUnlinked' : 'source.savedSourceReadFailed')}
