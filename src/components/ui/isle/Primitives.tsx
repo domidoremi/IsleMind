@@ -190,7 +190,7 @@ export function IsleField({
   return (
     <View style={style}>
       {labelAccessory ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 20, marginBottom: 6 }}>
-        <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+        <Text style={{ ...colors.design?.semantic.typography.label, flex: 1, minWidth: 0, color: colors.textSecondary }}>{label}</Text>
         {labelAccessory}
       </View> : null}
       <IsleInput
@@ -200,7 +200,7 @@ export function IsleField({
         size="middle"
         inputStyle={inputProps.style}
       />
-      {note ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 6, includeFontPadding: false }}>{note}</Text> : null}
+      {note ? <Text style={{ ...colors.design?.semantic.typography.body, color: colors.textSecondary, marginTop: 6, includeFontPadding: false }}>{note}</Text> : null}
     </View>
   )
 }
