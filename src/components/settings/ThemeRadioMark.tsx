@@ -44,7 +44,7 @@ export function ThemeRadioMark({ active, disabled = false, size = 20 }: { active
       accessible={false}
       pointerEvents="none"
       importantForAccessibility="no-hide-descendants"
-      animate={{ backgroundColor, borderColor, opacity: disabled ? 0.58 : 1 }}
+      animate={{ backgroundColor, borderColor, opacity: disabled ? colors.ui.control.disabledOpacity : 1 }}
       transition={selectionMotion.transition}
       style={{
         width: size,
