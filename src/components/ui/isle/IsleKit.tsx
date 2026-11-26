@@ -906,6 +906,7 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
     // The fork owns its menu state; remount it to retire an open menu on disable.
     return <NativeSelect key={disabled ? 'disabled' : 'enabled'} options={options.map((option) => ({ key: option.value, label: option.label, disabled: option.disabled }))}
       value={value ?? ''} placeholder={placeholder} disabled={disabled} onChange={select} style={style}
+      textStyle={[palette.colors.design?.semantic.typography.label, resolveWebTextMetricsStyle(palette.colors.design?.semantic.typography.label)]}
       aria-label={accessibilityLabel} testID={testID} />
   }
   const selectExpression = palette.colors.design ? resolveThemeComponentExpression(palette.colors.design.family, 'dropdown') : null
@@ -961,7 +962,7 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
                       transition={accentMotion.transition}
                       style={{ minHeight: 34, borderRadius: Math.min(palette.ui.radius.controlSmall, 8), paddingHorizontal: 10, justifyContent: 'center', marginHorizontal: -10, borderWidth: optionActive || optionDisabled ? StyleSheet.hairlineWidth : 0, borderColor: optionDisabled ? disabledStyle.borderColor : activeOptionBorder }}
                     >
-                      <Text style={{ color: optionDisabled ? disabledStyle.foreground : optionActive ? activeOptionForeground : palette.colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{option.label}</Text>
+                      <Text style={{ color: optionDisabled ? disabledStyle.foreground : optionActive ? activeOptionForeground : palette.colors.textSecondary, ...palette.colors.design?.semantic.typography.label, includeFontPadding: false, textAlignVertical: 'center' }}>{option.label}</Text>
                     </MotiView>
                   </PressableScale>
                 )

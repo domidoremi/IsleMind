@@ -67,7 +67,7 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
           borderColor: disabled ? colors.ui.control.disabledBorder : colors.ui.input.border,
         }]}
       >
-        <Text style={[styles.value, { color: disabled ? colors.ui.control.disabledForeground : selected ? colors.text : colors.ui.input.placeholderForeground }]}>
+        <Text style={[styles.value, colors.design?.semantic.typography.label, { color: disabled ? colors.ui.control.disabledForeground : selected ? colors.text : colors.ui.input.placeholderForeground }]}>
           {selected?.label ?? placeholder}
         </Text>
         <View style={{ transform: [{ rotate: open ? '180deg' : '0deg' }] }}>
@@ -131,9 +131,8 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
                         {option.value === value ? <AppIcon name="check" size={18}
                           color={option.disabled ? colors.textTertiary : colors.ui.tone.success.foreground} /> : null}
                       </View>
-                      <Text style={[styles.optionLabel, {
+                      <Text style={[styles.optionLabel, colors.design?.semantic.typography.label, {
                         color: option.disabled ? colors.textTertiary : option.value === value ? colors.ui.tone.success.foreground : colors.text,
-                        fontWeight: option.value === value || pressed ? '700' : '500',
                       }]}>{option.label}</Text>
                     </>}
                   </IslePressable>
@@ -153,7 +152,7 @@ const styles = StyleSheet.create({
     minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
     paddingVertical: 8, paddingHorizontal: 13, borderWidth: 2, borderRadius: 12,
   },
-  value: { flexShrink: 1, fontSize: 14, fontWeight: '600' },
+  value: { flexShrink: 1 },
   dropdown: {
     position: 'absolute', padding: 8, borderRadius: 24, borderWidth: 1,
     shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 12, elevation: 8,
@@ -163,5 +162,5 @@ const styles = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 12, borderRadius: 16,
   },
   selectionMark: { width: 18, flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
-  optionLabel: { flex: 1, flexShrink: 1, fontSize: 14 },
+  optionLabel: { flex: 1, flexShrink: 1 },
 })
