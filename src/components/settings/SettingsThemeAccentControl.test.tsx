@@ -176,3 +176,43 @@ it.each(['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as 
     expect(screen.getAllByRole('radio', { checked: true })).toHaveLength(1)
   }
 })
+
+it('retains the actual accent input and radio hosts through every theme, mode, accent and disabled transition', async () => {
+  const draftRef = { current: {} as ThemeAccentDraft }
+  const onChange = jest.fn()
+  const tree = (value?: string, disabled = false) => <IsleThemeProvider>
+    <SettingsThemeAccentControl value={value} disabled={disabled} draftRef={draftRef} onChange={onChange} />
+  </IsleThemeProvider>
+  const screen = await render(tree())
+  const field = screen.getByTestId('settings-theme-accent-input')
+  const swatches = screen.getAllByRole('radio')
+  const radioMarks = () => screen.getByTestId('settings-theme-accent-group').queryAll(node => node.props.pointerEvents === 'none' && node.props.importantForAccessibility === 'no-hide-descendants')
+  const marks = radioMarks()
+  expect(marks).toHaveLength(6)
+  await fireEvent.changeText(field, '#12 unfinished 草稿 下書き')
+  try {
+    for (const family of ['minimal', 'monet', 'material', 'liquid-glass', 'animal-island-ui'] as const) {
+      for (const mode of ['light', 'dark'] as const) {
+        for (const accent of [undefined, '#0F766E', '#4F46A5', '#B94B3F', '#A96A12', '#000000', '#FFFFFF']) {
+          setTheme(family, mode, accent)
+          for (const disabled of [true, false]) {
+            await screen.rerender(tree(accent, disabled))
+            expect(screen.getByTestId('settings-theme-accent-input')).toBe(field)
+            expect(field.props.value).toBe('#12 unfinished 草稿 下書き')
+            expect(field.props.editable).toBe(!disabled)
+            expect(field.props.submitBehavior).toBe('submit')
+            expect(field.props.blurOnSubmit).toBe(false)
+            screen.getAllByRole('radio').forEach((swatch, index) => expect(swatch).toBe(swatches[index]))
+            const currentMarks = radioMarks()
+            expect(currentMarks).toHaveLength(6)
+            currentMarks.forEach((mark, index) => expect(mark).toBe(marks[index]))
+            expect(screen.getAllByRole('radio', { checked: true })).toHaveLength(1)
+          }
+        }
+      }
+    }
+    expect(onChange).not.toHaveBeenCalled()
+  } finally {
+    await screen.unmount()
+  }
+})

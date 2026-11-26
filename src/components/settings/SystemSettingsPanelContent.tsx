@@ -2238,7 +2238,7 @@ function ThemeModeCard({ label, active, onPress, testID, disabled = false }: { l
         }}
       >
         <View style={{ position: 'absolute', top: 8, right: 8 }}>
-          <ThemeRadioMark active={active} disabled={disabled} size={18} />
+          <ThemeRadioMark active={active} disabled={disabled} size={18} surface={active && radioExpression.surface !== 'boundary' ? 'primary' : 'default'} />
         </View>
         <View style={{ width: 38, height: 16, borderRadius: 8, overflow: 'hidden', borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
           <View style={{ flex: 1, flexDirection: 'row' }}>
