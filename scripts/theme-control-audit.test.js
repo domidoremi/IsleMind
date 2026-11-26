@@ -7,6 +7,20 @@ it.each([
   ["window.confirm('Delete')", 'window.confirm'],
   ["globalThis['prompt']('Name')", 'globalThis.prompt'],
   ["const { ActivityIndicator: Waiting } = require('react-native')", 'ActivityIndicator'],
+  ["const Waiting = require('react-native').ActivityIndicator", 'react-native.ActivityIndicator'],
+  ["require('react-native').Alert.alert('Delete')", 'react-native.Alert'],
+  ["const toast = require('react-native')['ToastAndroid'].show('Saved', 0)", 'react-native.ToastAndroid'],
+  ["import Native = require('react-native'); Native.ProgressViewIOS", 'react-native.ProgressViewIOS'],
+  ["async function load() { const Native = await import('react-native'); return Native.ActivityIndicator }", 'react-native.ActivityIndicator'],
+  ["async function load() { const { Alert } = await import('react-native'); Alert.alert('Delete') }", 'Alert'],
+  ["import { Button as NativeButton } from 'react-native-web'; const view = <NativeButton />", 'Button'],
+  ["import * as Web from 'react-native-web'; Web['Switch']", 'react-native-web.Switch'],
+  ["import { TextInput as WebInput } from 'react-native-web'; const view = <WebInput />", 'TextInput'],
+  ["import * as Web from 'react-native-web'; const view = <Web.TextInput />", 'react-native-web.TextInput'],
+  ["const Web = require('react-native-web'); const view = <Web.Picker />", 'react-native-web.Picker'],
+  ["const { ActivityIndicator: Busy } = require('react-native-web')", 'ActivityIndicator'],
+  ["import Picker from '@react-native-picker/picker'; const view = <Picker />", 'Picker'],
+  ["const Picker = require('@react-native-picker/picker').Picker", '@react-native-picker/picker.Picker'],
   ["const Native = require('react-native'); Native.Switch", 'react-native.Switch'],
   ["import * as Native from 'react-native'; const control = <Native.Switch />", 'react-native.Switch'],
   ["import Native from 'react-native'; const control = <Native.Button title='Save' />", 'react-native.Button'],
@@ -25,7 +39,8 @@ it('reports a namespace control once for an opening and closing pair', () => {
 it('allows theme namespaces and native layout or text hosts', () => {
   expect(auditThemeControls(`import * as Native from 'react-native';
     import * as Theme from '@/components/ui/isle';
-    const control = <Native.View><Theme.Button /><Native.TextInput /></Native.View>`, 'fixture.tsx')).toEqual([])
+    import { Text as WebText } from 'react-native-web';
+    const control = <Native.View><Theme.Button /><Native.TextInput /><WebText>Readable text</WebText></Native.View>`, 'fixture.tsx')).toEqual([])
 })
 
 it('keeps native text hosts, type-only references and application controls available', () => {

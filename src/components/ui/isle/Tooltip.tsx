@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react'
-import { StyleSheet, View, type ViewStyle } from 'react-native'
-import { Text } from '@/components/ui/AppText'
+import { useContext, type ReactNode } from 'react'
+import { StyleSheet, Text as NativeText, View, type ViewStyle } from 'react-native'
+import { AppFontContext, Text } from '@/components/ui/AppText'
 import { AnimatePresence, MotiView } from 'moti'
 import { Tooltip as NativeTooltip } from 'animal-island-ui-rn'
 
@@ -43,10 +43,11 @@ export function IsleTooltip({
   testID,
 }: IsleTooltipProps) {
   const { colors, canonicalThemeId, design } = useAppTheme()
+  const fontFamily = useContext(AppFontContext)
   const tooltipMotion = useThemeMotion('accent', { readable: true })
   if (canonicalThemeId === 'animal-island-ui') {
-    // Keep the fork's text color and metrics inherited while AppText supplies the theme font.
-    return <NativeTooltip title={<Text style={{ color: undefined }}>{label}</Text>} open={visible} placement={placement} testID={testID}><View>{children}</View></NativeTooltip>
+    // Keep the fork's text metrics and color inherited while applying only the selected theme font.
+    return <NativeTooltip title={<NativeText style={{ fontFamily }}>{label}</NativeText>} open={visible} placement={placement} testID={testID}><View>{children}</View></NativeTooltip>
   }
   const expression = resolveThemeComponentExpression(canonicalThemeId, 'tooltip')
   const metrics = TOOLTIP_METRICS[canonicalThemeId]

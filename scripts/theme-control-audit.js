@@ -4,6 +4,13 @@ const parser = require('@babel/parser')
 const traverse = require('@babel/traverse').default
 
 const nativeControls = new Set(['Alert', 'ActionSheetIOS', 'ToastAndroid', 'ActivityIndicator', 'Button', 'Switch', 'Picker', 'ProgressBarAndroid', 'ProgressViewIOS'])
+const webControls = new Set(['ActivityIndicator', 'Button', 'Picker', 'Switch', 'TextInput'])
+const pickerControls = new Set(['Picker'])
+const controlsByModule = new Map([
+  ['react-native', nativeControls],
+  ['react-native-web', webControls],
+  ['@react-native-picker/picker', pickerControls],
+])
 const htmlControls = new Set(['button', 'input', 'textarea', 'select', 'progress', 'meter'])
 const browserDialogs = new Set(['alert', 'confirm', 'prompt'])
 
@@ -24,16 +31,30 @@ function isImportedComponent(name, exported, sourcePattern, scope) {
 function auditThemeControls(source, file) {
   const ast = parser.parse(source, { sourceType: 'unambiguous', plugins: ['typescript', 'jsx'] })
   const issues = []
-  const namespaces = new Set()
-  const isNativeRequire = node => node?.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require' && node.arguments[0]?.value === 'react-native'
+  const namespaces = new Map()
+  const moduleSourceForLoad = node => {
+    if (node?.type === 'AwaitExpression') return moduleSourceForLoad(node.argument)
+    if (node?.type === 'ImportExpression') return node.source?.value
+    if (node?.type !== 'CallExpression') return undefined
+    const isRequire = node.callee.type === 'Identifier' && node.callee.name === 'require'
+    const isDynamicImport = node.callee.type === 'Import'
+    return isRequire || isDynamicImport ? node.arguments[0]?.value : undefined
+  }
   const add = (node, control) => issues.push({ file, line: node.loc.start.line, control })
   for (const node of ast.program.body) {
+    if (node.type === 'TSImportEqualsDeclaration' && node.importKind !== 'type'
+      && node.moduleReference.type === 'TSExternalModuleReference'
+      && node.moduleReference.expression.type === 'StringLiteral'
+      && controlsByModule.has(node.moduleReference.expression.value)) {
+      namespaces.set(node.id.name, node.moduleReference.expression.value)
+    }
     if (node.type !== 'ImportDeclaration' || node.importKind === 'type') continue
-    if (node.source.value === 'react-native') {
-      for (const specifier of node.specifiers) {
-        if (specifier.type === 'ImportNamespaceSpecifier' || specifier.type === 'ImportDefaultSpecifier') namespaces.add(specifier.local.name)
-        if (specifier.type === 'ImportSpecifier' && specifier.importKind !== 'type' && nativeControls.has(specifier.imported.name)) add(specifier, specifier.imported.name)
-      }
+    const controls = controlsByModule.get(node.source.value)
+    if (!controls) continue
+    for (const specifier of node.specifiers) {
+      if (specifier.type === 'ImportNamespaceSpecifier' || specifier.type === 'ImportDefaultSpecifier') namespaces.set(specifier.local.name, node.source.value)
+      if (specifier.type === 'ImportSpecifier' && specifier.importKind !== 'type' && controls.has(specifier.imported.name)) add(specifier, specifier.imported.name)
+      if (specifier.type === 'ImportDefaultSpecifier' && node.source.value === '@react-native-picker/picker') add(specifier, 'Picker')
     }
   }
   traverse(ast, {
@@ -61,10 +82,12 @@ function auditThemeControls(source, file) {
       }
     },
     VariableDeclarator({ node }) {
-      if (!isNativeRequire(node.init)) return
-      if (node.id.type === 'Identifier') namespaces.add(node.id.name)
+      const moduleSource = moduleSourceForLoad(node.init)
+      const controls = controlsByModule.get(moduleSource)
+      if (!controls) return
+      if (node.id.type === 'Identifier') namespaces.set(node.id.name, moduleSource)
       if (node.id.type === 'ObjectPattern') for (const property of node.id.properties) {
-        if (property.type === 'ObjectProperty' && nativeControls.has(property.key.name ?? property.key.value)) add(property, property.key.name ?? property.key.value)
+        if (property.type === 'ObjectProperty' && controls.has(property.key.name ?? property.key.value)) add(property, property.key.name ?? property.key.value)
       }
     },
     CallExpression(call) {
@@ -76,12 +99,19 @@ function auditThemeControls(source, file) {
     if (!node || typeof node !== 'object') return
     if (node.type === 'JSXOpeningElement' && node.name.type === 'JSXIdentifier' && htmlControls.has(node.name.name)) add(node, '<' + node.name.name + '>')
     if (node.type === 'JSXOpeningElement' && node.name.type === 'JSXMemberExpression'
-      && node.name.object.type === 'JSXIdentifier' && namespaces.has(node.name.object.name)
-      && nativeControls.has(node.name.property.name)) add(node, 'react-native.' + node.name.property.name)
-    if ((node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') && node.object.type === 'Identifier') {
+      && node.name.object.type === 'JSXIdentifier') {
+      const moduleSource = namespaces.get(node.name.object.name)
+      if (controlsByModule.get(moduleSource)?.has(node.name.property.name)) add(node, moduleSource + '.' + node.name.property.name)
+    }
+    if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') {
       const property = node.computed ? node.property.value : node.property.name
-      if (namespaces.has(node.object.name) && nativeControls.has(property)) add(node, 'react-native.' + property)
-      if (['window', 'globalThis', 'global'].includes(node.object.name) && browserDialogs.has(property)) add(node, node.object.name + '.' + property)
+      if (node.object.type === 'Identifier') {
+        const moduleSource = namespaces.get(node.object.name)
+        if (controlsByModule.get(moduleSource)?.has(property)) add(node, moduleSource + '.' + property)
+        if (['window', 'globalThis', 'global'].includes(node.object.name) && browserDialogs.has(property)) add(node, node.object.name + '.' + property)
+      }
+      const moduleSource = moduleSourceForLoad(node.object)
+      if (controlsByModule.get(moduleSource)?.has(property)) add(node, moduleSource + '.' + property)
     }
     for (const [key, value] of Object.entries(node)) {
       if (['loc', 'start', 'end', 'tokens', 'comments'].includes(key)) continue

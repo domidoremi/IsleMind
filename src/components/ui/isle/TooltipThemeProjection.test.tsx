@@ -42,6 +42,8 @@ it.each(cases)('projects the $family/$mode/$language font while retaining the ac
     expect(StyleSheet.flatten(label.props.style).color).toBeUndefined()
     expect(StyleSheet.flatten(label.props.style).fontSize).toBeUndefined()
     expect(StyleSheet.flatten(label.props.style).lineHeight).toBeUndefined()
+    expect(StyleSheet.flatten(label.props.style).fontWeight).toBeUndefined()
+    expect(StyleSheet.flatten(label.props.style).letterSpacing).toBeUndefined()
     const host = screen.getByTestId('host-tooltip-content', { includeHiddenElements: true })
     const reference = screen.getByTestId('fork-reference-content', { includeHiddenElements: true })
     expect(StyleSheet.flatten(host.props.style)).toEqual(StyleSheet.flatten(reference.props.style))
