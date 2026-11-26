@@ -303,8 +303,8 @@ export function IsleToggle({
             </MotiView>
           ) : null}
           <View style={{ flex: 1, minWidth: 0, minHeight: description ? 38 : 40, justifyContent: 'center' }}>
-          <Text style={{ color: disabled ? colors.ui.control.disabledForeground : colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
-            {description ? <Text style={{ color: disabled ? colors.ui.control.disabledForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
+          <Text style={{ ...colors.design?.semantic.typography.label, color: disabled ? colors.ui.control.disabledForeground : colors.text, includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+            {description ? <Text style={{ ...colors.design?.semantic.typography.body, color: disabled ? colors.ui.control.disabledForeground : colors.textSecondary, marginTop: 3, includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
           </View>
           <View accessible={false} pointerEvents="none" style={{ height: 44, justifyContent: 'center' }}>
             <IsleSwitch active={active} disabled={disabled} />
