@@ -46,3 +46,11 @@
 已保留各次真实失败和修复记录。共享 Modal 既有的内外双 dialog 语义问题尚未解决，不因本次主题修复获得弹窗语义资格。系统界面仍遵守前述边界。
 
 本专项完整目标仍为实施中。`fullAcceptance`、`nativeVerified`、`visualAcceptance`、广义 `loadedRuntimeVerified` 均保持 false；公共组件或静态门禁通过不等于全应用验收。
+
+## 2026-11-26 验证增量
+
+- 当前工作区的 UI 与展示层测试筛选集通过：298 suites、6,983 tests。筛选覆盖 `src/components/ui`、`chat`、`settings`、`providers` 与 `src/presentation`；同次 TypeScript `--noEmit` 通过。
+- 主题控件源码审计为 1,282 个应用文件、0 个问题；主题系统审计 49 项通过。根布局新增静态契约，检查路由栈和对话宿主位于主题 Provider 内、导航背景使用当前主题表面色。
+- 上述运行使用了包含并发未提交改动的当前工作区，因此结果只证明该次源码快照下这些模拟/组件测试通过，不代表干净 main 候选，也不代表浏览器实际路由渲染或原生视觉矩阵。
+- 路由、原型及环境/键盘/字号/恢复矩阵、原生视觉验证和完整应用视觉验收仍未完成；`fullAcceptance`、`nativeVerified`、`visualAcceptance`、`loadedRuntimeVerified` 继续保持 false。新路由不因组件测试通过而获得整页资格。
+- 主题 Provider 路由守护及受影响测试已精确提交并推送至 main：`6fb663c91c0dfc9312d286f3f5623c8bcdd89644`。本条仅记录新增验证结果，不改变全应用验收状态。
