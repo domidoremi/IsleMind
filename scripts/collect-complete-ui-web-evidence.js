@@ -24,6 +24,13 @@ function routeTemplate(route) {
   return route.replace(/\/settings\/category\/[^/]+$/, '/settings/category/[category]')
     .replace(/\/settings\/system\/[^/]+$/, '/settings/system/[panel]')
 }
+function concreteRoute(route) {
+  const parameters = { id: 'qa-ui-missing', runId: 'qa-ui-missing', slug: 'chat', documentId: 'qa-ui-missing' }
+  return route.replace(/\[([^\]]+)\]/g, (_match, name) => {
+    if (!Object.hasOwn(parameters, name)) throw new Error(`Unknown dynamic route parameter: ${name}`)
+    return encodeURIComponent(parameters[name])
+  })
+}
 function validateWorklist() {
   const actual = sourceRoutes(path.join(root, 'app'))
   const covered = new Set(worklist.routes.map(routeTemplate))
@@ -31,6 +38,7 @@ function validateWorklist() {
   const stale = [...covered].filter(route => !actual.includes(route))
   if (missing.length || stale.length) throw new Error(JSON.stringify({ missing, stale }))
   if (new Set(worklist.routes).size !== worklist.routes.length) throw new Error('Duplicate route coverage')
+  for (const route of worklist.routes) concreteRoute(route)
   const contracts = fs.readFileSync(path.join(root, 'src/types/settingsContracts.ts'), 'utf8')
   for (const family of worklist.families) if (!contracts.includes(`'${family}'`)) throw new Error(`Unknown family: ${family}`)
 }
@@ -130,7 +138,7 @@ async function main() {
       page.on('pageerror', error => errors.push(error.message.slice(0, 200)))
       for (const template of routes) {
         errors = []
-        const route = template.replace('[id]', 'qa-ui-missing').replace('[runId]', 'qa-ui-missing').replace('[slug]', 'chat')
+        const route = concreteRoute(template)
         let measured
         let failure
         try {
@@ -166,5 +174,5 @@ async function main() {
   if (failed.length || !sourceStable) process.exitCode = 1
 }
 
-module.exports = { validateWorklist, sourceRoutes, routeTemplate, settle, layout }
+module.exports = { validateWorklist, sourceRoutes, routeTemplate, concreteRoute, settle, layout }
 if (require.main === module) main().catch(error => { console.error(error.message.slice(0, 1000)); process.exitCode = 1 })
