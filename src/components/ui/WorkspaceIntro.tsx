@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react'
+import { useContext, type ReactNode } from 'react'
 import { StyleSheet, View } from 'react-native'
-import { Text } from './AppText'
+import { AppFontContext, Text } from './AppText'
 import { AppIcon, type AppIconName } from './AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
@@ -19,6 +19,7 @@ interface WorkspaceIntroProps {
 export function WorkspaceIntro({ title, description, eyebrow, icon, status, action, compact = false, testID }: WorkspaceIntroProps) {
   const { colors, canonicalThemeId } = useAppTheme()
   const typography = colors.design?.semantic.typography
+  const fontFamily = useContext(AppFontContext)
   const editorial = canonicalThemeId === 'monet'
   const journal = canonicalThemeId === 'animal-island-ui'
   return <View testID={testID} style={[styles.root, compact ? styles.compact : null]}>
@@ -28,13 +29,13 @@ export function WorkspaceIntro({ title, description, eyebrow, icon, status, acti
         <AppIcon name={icon} size={18} color={colors.ui.icon.accentForeground} />
       </View> : null}
       <View style={styles.copy}>
-        {eyebrow ? <Text style={[typography?.caption, styles.eyebrow, { color: colors.textTertiary }]}>{eyebrow}</Text> : null}
-        <Text accessibilityRole="header" style={[compact ? typography?.title : typography?.headline, { color: colors.text }]}>{title}</Text>
+        {eyebrow ? <Text style={[typography?.caption, styles.eyebrow, { fontFamily, color: colors.textTertiary }]}>{eyebrow}</Text> : null}
+        <Text accessibilityRole="header" style={[compact ? typography?.title : typography?.headline, { fontFamily, color: colors.text }]}>{title}</Text>
       </View>
       {status}
       {action}
     </View>
-    {description ? <Text selectable style={[typography?.body, styles.description, { color: colors.textSecondary }]}>{description}</Text> : null}
+    {description ? <Text selectable style={[typography?.body, { fontFamily, color: colors.textSecondary }]}>{description}</Text> : null}
   </View>
 }
 
@@ -45,5 +46,4 @@ const styles = StyleSheet.create({
   copy: { flex: 1, minWidth: 0, gap: 4 },
   icon: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   eyebrow: { letterSpacing: 1.2 },
-  description: { fontSize: 14, lineHeight: 22 },
 })
