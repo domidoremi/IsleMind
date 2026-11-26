@@ -50,6 +50,52 @@ function auditThemeControls(source, file) {
     const isDynamicImport = node.callee.type === 'Import'
     return isRequire || isDynamicImport ? node.arguments[0]?.value : undefined
   }
+  const staticPropertyName = (property, computed) => property?.type === 'StringLiteral' ? property.value
+    : !computed && property?.type === 'Identifier' ? property.name : undefined
+  const reactCreateElementBinding = (name, scope, visited) => {
+    const binding = scope.getBinding(name)
+    if (!binding || visited.has(binding)) return undefined
+    visited.add(binding)
+    const node = binding?.path.node
+    const declaration = binding?.path.parentPath.node
+    if (declaration?.type === 'ImportDeclaration' && declaration.importKind !== 'type' && declaration.source.value === 'react') {
+      if (node.type === 'ImportSpecifier' && node.importKind !== 'type'
+        && (node.imported.name ?? node.imported.value) === 'createElement') return 'factory'
+      if (node.type === 'ImportDefaultSpecifier' || node.type === 'ImportNamespaceSpecifier') return 'namespace'
+    }
+    if (node.type === 'TSImportEqualsDeclaration' && node.importKind !== 'type'
+      && node.moduleReference.type === 'TSExternalModuleReference'
+      && node.moduleReference.expression.type === 'StringLiteral'
+      && node.moduleReference.expression.value === 'react') return 'namespace'
+    if (node?.type !== 'VariableDeclarator') return undefined
+    const bindingScope = binding.path.scope
+    if (node.id.type === 'Identifier') return reactCreateElementReference(node.init, bindingScope, visited)
+    if (node.id.type === 'ObjectPattern'
+      && node.id.properties.some(property => property.type === 'ObjectProperty'
+        && staticPropertyName(property.key, property.computed) === 'createElement'
+        && property.value.type === 'Identifier' && property.value.name === name)
+      && reactCreateElementReference(node.init, bindingScope, visited) === 'namespace') return 'factory'
+    return undefined
+  }
+  const reactCreateElementReference = (node, scope, visited = new Set()) => {
+    if (node?.type === 'Identifier') return reactCreateElementBinding(node.name, scope, visited)
+    if (node?.type === 'AwaitExpression') return reactCreateElementReference(node.argument, scope, visited)
+    if (node?.type === 'MemberExpression' || node?.type === 'OptionalMemberExpression') {
+      if (staticPropertyName(node.property, node.computed) === 'createElement'
+        && reactCreateElementReference(node.object, scope, visited) === 'namespace') return 'factory'
+    }
+    if (node?.type === 'ImportExpression' && node.source?.value === 'react') return 'namespace'
+    if (node?.type !== 'CallExpression' || node.arguments[0]?.type !== 'StringLiteral'
+      || node.arguments[0].value !== 'react') return undefined
+    const isRequire = node.callee.type === 'Identifier' && node.callee.name === 'require'
+      && !scope.getBinding('require')
+    if (isRequire || node.callee.type === 'Import') return 'namespace'
+  }
+  const inspectReactHtmlControl = call => {
+    const tag = call.node.arguments[0]
+    if (tag?.type === 'StringLiteral' && htmlControls.has(tag.value)
+      && reactCreateElementReference(call.node.callee, call.scope) === 'factory') add(call.node, `<${tag.value}>`)
+  }
   const add = (node, control) => issues.push({ file, line: node.loc.start.line, control })
   for (const node of ast.program.body) {
     if (node.type === 'TSImportEqualsDeclaration' && node.importKind !== 'type'
@@ -113,8 +159,10 @@ function auditThemeControls(source, file) {
     },
     CallExpression(call) {
       const callee = call.node.callee
+      inspectReactHtmlControl(call)
       if (callee.type === 'Identifier' && browserDialogs.has(callee.name) && !call.scope.getBinding(callee.name)) add(callee, callee.name)
     },
+    OptionalCallExpression: inspectReactHtmlControl,
   })
   function visit(node) {
     if (!node || typeof node !== 'object') return

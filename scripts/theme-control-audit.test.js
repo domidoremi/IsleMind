@@ -150,3 +150,77 @@ it('allows state-aware wrapped icons and ignores shadowed nested icon components
     function Preview({ AppIcon }) { return <IsleButton icon={<View><AppIcon color='red' /></View>} /> }`, 'fixture.tsx'))
     .toEqual([])
 })
+
+it.each(['button', 'input', 'textarea', 'select', 'progress', 'meter'])(
+  'rejects default HTML controls created through the React factory: %s', tag => {
+    expect(auditThemeControls(`import { createElement } from 'react'; createElement('${tag}')`, 'fixture.tsx'))
+      .toEqual([{ file: 'fixture.tsx', line: 1, control: `<${tag}>` }])
+  },
+)
+
+it.each([
+  "import React from 'react'; React.createElement('input')",
+  "import * as React from 'react'; React['createElement']('input')",
+  "import { createElement as h } from 'react'; h('input')",
+  "const React = require('react'); React.createElement('input')",
+  "const React = require('react'); React['createElement']('input')",
+  "require('react').createElement('input')",
+  "require('react')['createElement']('input')",
+  "const h = require('react').createElement; h('input')",
+  "const h = require('react')['createElement']; h('input')",
+  "const { createElement: h } = require('react'); h('input')",
+  "const { 'createElement': h } = require('react'); h('input')",
+  "const { ['createElement']: h } = require('react'); h('input')",
+  "async function load() { const React = await import('react'); return React.createElement('input') }",
+  "async function load() { const { createElement: h } = await import('react'); return h('input') }",
+  "async function load() { return (await import('react')).createElement('input') }",
+  "async function load() { const h = (await import('react'))['createElement']; return h('input') }",
+  "import React from 'react'; const Alias = React; Alias.createElement('input')",
+  "import React from 'react'; const { createElement: h } = React; h('input')",
+  "import React from 'react'; const { ['createElement']: h } = React; h('input')",
+  "import React from 'react'; const h = React.createElement; h('input')",
+  "import { createElement } from 'react'; const h = createElement; const render = h; render('input')",
+  "import React from 'react'; const h = React.createElement; function preview(React) { return h('input') }",
+  "const h = require('react').createElement; function preview(require) { return h('input') }",
+  "import React = require('react'); React.createElement('input')",
+  "import React from 'react'; React?.createElement('input')",
+  "import React from 'react'; React.createElement?.('input')",
+  "import { createElement as h } from 'react'; h?.('input')",
+])('resolves React factory imports, aliases and optional calls: %s', source => {
+  expect(auditThemeControls(source, 'fixture.tsx'))
+    .toEqual([{ file: 'fixture.tsx', line: 1, control: '<input>' }])
+})
+
+it.each([
+  "const React = { createElement: tag => tag }; React.createElement('input')",
+  "const createElement = tag => tag; createElement('input')",
+  "import { createElement as h } from 'other-renderer'; h('input')",
+  "import * as React from 'other-renderer'; React.createElement('input')",
+  "import type React from 'react'; React.createElement('input')",
+  "import { type createElement as h } from 'react'; h('input')",
+  "import React from 'react'; function preview(React) { return React.createElement('input') }",
+  "import { createElement as h } from 'react'; function preview(h) { return h('input') }",
+  "function preview(require) { return require('react').createElement('input') }",
+  "function preview(require) { const h = require('react').createElement; return h('input') }",
+  "import React from 'react'; const createElement = 'other'; React[createElement]('input')",
+  "const createElement = 'other'; const h = require('react')[createElement]; h('input')",
+  "const createElement = 'other'; const { [createElement]: h } = require('react'); h('input')",
+  "const require = () => ({ createElement: tag => tag }); require('react').createElement('input')",
+  "import React from 'react'; React.createElement('canvas')",
+  "import React from 'react'; React.createElement('div')",
+  "import React from 'react'; React.createElement(IsleButton)",
+  "const h = render; const render = h; h('input')",
+  "const React = Alias; const Alias = React; React.createElement('input')",
+])('does not mistake unrelated or shadowed factories for React HTML controls: %s', source => {
+  expect(auditThemeControls(source, 'fixture.tsx')).toEqual([])
+})
+
+it('reports each React HTML creation once at its call line', () => {
+  expect(auditThemeControls(`import React from 'react'
+const h = React.createElement
+h('input')
+React['createElement']('select')`, 'fixture.tsx')).toEqual([
+    { file: 'fixture.tsx', line: 3, control: '<input>' },
+    { file: 'fixture.tsx', line: 4, control: '<select>' },
+  ])
+})
