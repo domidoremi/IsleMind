@@ -68,7 +68,7 @@ async function settle(page) {
   await page.waitForLoadState('networkidle', { timeout: 30_000 })
 }
 async function layout(page) {
-  return page.evaluate(() => {
+  const measured = await page.evaluate(() => {
     const visible = element => {
       for (let node = element; node && node !== document.body; node = node.parentElement) {
         const style = getComputedStyle(node)
@@ -76,22 +76,35 @@ async function layout(page) {
       }
       return true
     }
-    const overflow = [...document.querySelectorAll('button,input,textarea,[role="button"],[role="radio"],[role="switch"]')]
+    const overflow = [...document.querySelectorAll('button,input,textarea,select,progress,meter,[role="button"],[role="radio"],[role="switch"]')]
       .filter(visible).flatMap(element => {
         const rect = element.getBoundingClientRect()
         if (!rect.width || rect.right <= innerWidth + 2 && rect.left >= -2) return []
         return [{ label: (element.getAttribute('aria-label') || element.getAttribute('data-testid') || element.textContent || '').slice(0, 80), left: Math.round(rect.left), right: Math.round(rect.right) }]
       }).slice(0, 8)
+    const controlStyles = [...document.querySelectorAll('button,input,textarea,select,progress,meter')]
+      .filter(visible).map(element => ({
+        tag: element.tagName,
+        label: (element.getAttribute('aria-label') || element.getAttribute('data-testid') || element.textContent || '').slice(0, 80),
+        appearance: getComputedStyle(element).appearance,
+      }))
     const text = document.body.innerText.trim()
     return {
       family: document.documentElement.dataset.themeId,
       mode: document.documentElement.dataset.themeMode,
       overflow,
+      controlStyles,
       documentOverflow: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) > innerWidth + 2,
       textLength: text.length,
       excerpt: text.slice(0, 140),
     }
   })
+  const { controlStyles, ...result } = measured
+  return { ...result, defaultControls: findDefaultControls(controlStyles) }
+}
+function findDefaultControls(controls) {
+  const nativeHosts = new Set(['BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'PROGRESS', 'METER'])
+  return controls.filter(control => nativeHosts.has(control.tag) && control.appearance !== 'none')
 }
 async function main() {
   validateWorklist()
@@ -147,7 +160,7 @@ async function main() {
           measured = await layout(page)
         } catch (error) { failure = error.message.slice(0, 250) }
         const passed = !failure && !errors.length && measured.family === family && measured.mode === mode
-          && !measured.overflow.length && !measured.documentOverflow && measured.textLength > 0
+          && !measured.overflow.length && !measured.defaultControls.length && !measured.documentOverflow && measured.textLength > 0
         const result = { route: template, family, mode, viewport: viewport.id, passed, ...measured, errors, failure }
         checks.push(result)
         fs.writeFileSync(path.join(output, 'progress.json'), JSON.stringify({ completed: checks.length, failed: checks.filter(check => !check.passed).length, latest: result }, null, 2))
@@ -174,5 +187,5 @@ async function main() {
   if (failed.length || !sourceStable) process.exitCode = 1
 }
 
-module.exports = { validateWorklist, sourceRoutes, routeTemplate, concreteRoute, settle, layout }
+module.exports = { validateWorklist, sourceRoutes, routeTemplate, concreteRoute, findDefaultControls, settle, layout }
 if (require.main === module) main().catch(error => { console.error(error.message.slice(0, 1000)); process.exitCode = 1 })
