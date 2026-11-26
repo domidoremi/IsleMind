@@ -51,7 +51,7 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
   }, [open, disabled, window.width, window.height, insets.top, insets.right, insets.bottom, insets.left])
 
   return (
-    <View style={[styles.wrapper, disabled && { opacity: 0.5 }, style]} testID={testID}>
+    <View style={[styles.wrapper, disabled && { opacity: colors.ui.control.disabledOpacity }, style]} testID={testID}>
       <IslePressable
         ref={trigger}
         testID={testID ? `${testID}-trigger` : undefined}

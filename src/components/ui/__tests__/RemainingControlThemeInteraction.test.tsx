@@ -183,7 +183,11 @@ it.each(nativeCases)('themes the island $platform/$mode/$language select without
   await screen.rerender(tree())
   expect(trigger()).toBeDisabled()
   expect(trigger()).toHaveStyle({ opacity: 1 })
-  expect(screen.getByTestId('native-choice')).toHaveStyle({ opacity: 0.5 })
+  const disabledColors = getColors(mockMode, mockFamily)
+  expect(screen.getByTestId('native-choice')).toHaveStyle({ opacity: disabledColors.ui.control.disabledOpacity })
+  expect(trigger()).toHaveStyle({ backgroundColor: disabledColors.ui.control.disabledBackground, borderColor: disabledColors.ui.control.disabledBorder })
+  expect(within(trigger()).getByText(labels[language][1])).toHaveStyle({ color: disabledColors.ui.control.disabledForeground })
+  expect(within(trigger()).getByTestId('control-icon-collapse')).toHaveStyle({ color: disabledColors.ui.control.disabledForeground })
   await fireEvent.press(trigger())
   expect(screen.queryByTestId('native-choice-listbox')).toBeNull()
   disabled = false
