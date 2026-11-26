@@ -1093,8 +1093,9 @@ export function IsleProgress({
   const { fontScale } = useWindowDimensions()
   const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0
   const visualPercent = indeterminate ? Math.max(PROGRESS_INSIDE_MIN_FILL, safePercent || PROGRESS_INSIDE_MIN_FILL) : safePercent
-  const infoFontSize = size === 'small' ? 10 : size === 'large' ? 12 : 11
-  const infoLineHeight = Math.max(12, infoFontSize + 2)
+  const infoTypography = { ...palette.colors.design?.semantic.typography.caption, fontFamily }
+  const infoFontSize = infoTypography.fontSize ?? (size === 'small' ? 10 : size === 'large' ? 12 : 11)
+  const infoLineHeight = infoTypography.lineHeight ?? Math.max(12, infoFontSize + 2)
   const scaledInfoHeight = infoLineHeight * Math.max(1, fontScale)
   const isInside = showInfo && infoPosition === 'inside'
   const trackHeight = Math.max(size === 'small' ? 7 : size === 'large' ? 12 : 9,
@@ -1102,7 +1103,7 @@ export function IsleProgress({
   const requestedDuration = durationMs ?? (palette.themeId === 'animal-island-ui' ? 250 : 176)
   const safeDuration = Number.isFinite(requestedDuration) && requestedDuration >= 0 ? Math.min(requestedDuration, 2147483647) : 0
   if (palette.themeId === 'animal-island-ui') {
-    return <NativeProgress percent={safePercent} size={size} showInfo={showInfo} infoFormat={infoFormat} indeterminate={indeterminate} infoTextStyle={{ fontFamily }}
+    return <NativeProgress percent={safePercent} size={size} showInfo={showInfo} infoFormat={infoFormat} indeterminate={indeterminate} infoTextStyle={[infoTypography, resolveWebTextMetricsStyle(infoTypography)]}
       fillColor={fillColor} duration={motion === 'full' ? safeDuration / 1000 : 0}
       aria-label={accessibilityLabel} testID={testID} style={style} />
   }
@@ -1129,13 +1130,13 @@ export function IsleProgress({
         style={{ height: trackHeight, borderRadius: palette.ui.radius.chip, backgroundColor: progressFill, alignItems: 'flex-end', justifyContent: 'center', paddingRight: infoInsideVisible ? 6 : 0 }}
       >
         {infoInsideVisible ? (
-          <Text numberOfLines={1} style={{ color: insideInfoColor, fontSize: infoFontSize, lineHeight: infoLineHeight, fontWeight: '900', includeFontPadding: false }}>
+          <Text numberOfLines={1} style={{ color: insideInfoColor, fontSize: infoFontSize, lineHeight: infoLineHeight, fontWeight: '900', ...infoTypography, includeFontPadding: false }}>
             {info}
           </Text>
         ) : null}
       </MotiView>
       {isInside && !infoInsideVisible ? (
-        <Text numberOfLines={1} style={{ position: 'absolute', right: 6, top: Math.max(0, (trackHeight - scaledInfoHeight) / 2), color: infoColor, fontSize: infoFontSize, lineHeight: infoLineHeight, fontWeight: '900', includeFontPadding: false }}>
+        <Text numberOfLines={1} style={{ position: 'absolute', right: 6, top: Math.max(0, (trackHeight - scaledInfoHeight) / 2), color: infoColor, fontSize: infoFontSize, lineHeight: infoLineHeight, fontWeight: '900', ...infoTypography, includeFontPadding: false }}>
           {info}
         </Text>
       ) : null}
@@ -1145,7 +1146,7 @@ export function IsleProgress({
   if (infoPosition === 'top') {
     return (
       <View style={[{ gap: 5 }, style]}>
-        {showInfo ? <Text style={{ color: infoColor, fontSize: infoFontSize, lineHeight: Math.max(14, infoFontSize + 4), fontWeight: '900', includeFontPadding: false }}>{info}</Text> : null}
+        {showInfo ? <Text style={{ color: infoColor, fontSize: infoFontSize, lineHeight: Math.max(14, infoFontSize + 4), fontWeight: '900', ...infoTypography, includeFontPadding: false }}>{info}</Text> : null}
         {track}
       </View>
     )
@@ -1155,7 +1156,7 @@ export function IsleProgress({
     return (
       <View style={[{ flexDirection: 'row', alignItems: 'center', gap: 8 }, style]}>
         {track}
-        <Text numberOfLines={1} style={{ color: infoColor, fontSize: infoFontSize, lineHeight: Math.max(14, infoFontSize + 4), fontWeight: '900', includeFontPadding: false }}>
+        <Text numberOfLines={1} style={{ color: infoColor, fontSize: infoFontSize, lineHeight: Math.max(14, infoFontSize + 4), fontWeight: '900', ...infoTypography, includeFontPadding: false }}>
           {info}
         </Text>
       </View>
