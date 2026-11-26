@@ -1396,30 +1396,10 @@ function DragRail({
 }
 
 function MoveButton({ label, icon, disabled, onPress }: { label: string; icon: 'arrow-up' | 'arrow-down'; disabled: boolean; onPress: () => void }) {
-  const { colors } = useAppTheme()
-  const { subtleBorderWidth, mutedSurface, chromeBorder } = resolveProviderChrome(colors)
   return (
-    <IslePressable
-      haptic
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      hitSlop={8}
-      style={{
-        width: 44,
-        height: 44,
-        borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: mutedSurface,
-        borderWidth: subtleBorderWidth,
-        borderColor: chromeBorder,
-        opacity: disabled ? 0.42 : 1,
-      }}
-    >
-      <AppIcon name={icon} color={disabled ? colors.textTertiary : colors.textSecondary} size={16} />
-    </IslePressable>
+    <IsleIconButton label={label} disabled={disabled} onPress={onPress} hitSlop={8}>
+      {(foreground) => <AppIcon name={icon} color={foreground} size={16} />}
+    </IsleIconButton>
   )
 }
 

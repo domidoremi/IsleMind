@@ -20,6 +20,7 @@ export function IsleIconButton({
   label,
   children,
   onPress,
+  hitSlop,
   tone = 'default',
   disabled = false,
   size = 'md',
@@ -28,6 +29,7 @@ export function IsleIconButton({
   label: string
   children: IsleButtonIcon
   onPress?: () => void
+  hitSlop?: Parameters<typeof PressableScale>[0]['hitSlop']
   tone?: IsleTone
   disabled?: boolean
   size?: IsleSize
@@ -71,6 +73,7 @@ export function IsleIconButton({
         accessibilityLabel={label}
         disabled={disabled}
         onPress={onPress}
+        hitSlop={hitSlop}
         testID={`theme-icon-button-${canonicalThemeId}-${size}`}
         style={[{ width: dimension, height: dimension, minHeight: dimension, borderRadius: radius }, style]}
       >
@@ -89,6 +92,7 @@ export function IsleIconButton({
       danger={tone === 'danger'}
       disabled={disabled}
       onPress={onPress}
+      hitSlop={hitSlop}
       label={label}
       icon={children}
       testID={`theme-icon-button-${canonicalThemeId}-${size}`}

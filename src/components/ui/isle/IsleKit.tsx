@@ -138,6 +138,7 @@ export function IsleButton({
   disabled = false,
   multiline = false,
   onPress,
+  hitSlop,
   style,
   textStyle,
 }: {
@@ -157,6 +158,7 @@ export function IsleButton({
   disabled?: boolean
   multiline?: boolean
   onPress?: NonNullable<PressableProps['onPress']>
+  hitSlop?: PressableProps['hitSlop']
   style?: StyleProp<ViewStyle>
   textStyle?: StyleProp<TextStyle>
 }) {
@@ -231,7 +233,7 @@ export function IsleButton({
     const labelStyle = [labelTypography, { fontSize, lineHeight: Math.max(labelTypography?.lineHeight ?? 16, fontSize + 4), textAlign: 'center' as const }, textStyle, disabled && !loading ? { color: disabledStyle.foreground } : null]
     const metrics = resolveWebTextMetricsStyle(labelStyle)
     return <NativeButton type={type} size={size} danger={danger} ghost={ghost} block={block} loading={loading} disabled={disabled} multiline={multiline}
-      icon={icon} onPress={onPress} accessibilityLabel={accessibilityLabel ?? label} accessibilityRole={accessibilityRole}
+      icon={icon} onPress={onPress} hitSlop={hitSlop} accessibilityLabel={accessibilityLabel ?? label} accessibilityRole={accessibilityRole}
       accessibilityState={buttonAccessibilityState} testID={testID} textStyle={metrics ? [...labelStyle, metrics] : labelStyle} style={[{ minWidth: 0, maxWidth: '100%', flexShrink: 1 }, style, disabled && !loading ? { backgroundColor: background, borderColor, opacity: disabledStyle.opacity } : null, { minHeight: minimumButtonHeight }]}>
       {children ?? label}
     </NativeButton>
@@ -264,6 +266,7 @@ export function IsleButton({
       }
       disabled={disabled || loading}
       onPress={onPress}
+      hitSlop={hitSlop}
       accessibilityRole={accessibilityRole}
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={buttonAccessibilityState}
