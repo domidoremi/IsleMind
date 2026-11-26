@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Text } from '@/components/ui/AppText'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
+import { IsleButton } from '@/components/ui/isle/IsleKit'
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { ProviderModelSource } from '@/utils/providerModelSources'
 
@@ -88,12 +89,9 @@ export function ProviderModelPagination({
         { label: t('providerSettings.previousModelPage'), next: page - 1, disabled: page === 0 },
         { label: t('providerSettings.nextModelPage'), next: page + 1, disabled: (page + 1) * PROVIDER_MODEL_PAGE_SIZE >= total },
       ].map(action => (
-        <IslePressable key={action.label} accessibilityRole="button" accessibilityLabel={action.label}
-          disabled={action.disabled} accessibilityState={{ disabled: action.disabled }}
-          onPress={() => onChange(action.next)}
-          style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center', paddingHorizontal: 8 }}>
-          <Text style={{ color: action.disabled ? colors.textTertiary : colors.primary, fontSize: 13 }}>{action.label}</Text>
-        </IslePressable>
+        <IsleButton key={action.label} type="link" size="small" label={action.label}
+          disabled={action.disabled} onPress={() => onChange(action.next)}
+          style={{ paddingHorizontal: 8 }} />
       ))}
     </View>
   )
