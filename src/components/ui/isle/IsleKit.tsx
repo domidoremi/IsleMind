@@ -467,7 +467,7 @@ export function IsleInput({
   const inputMinimumHeight = multiline ? multilineMinHeight : Math.max(height, ISLE_MIN_TOUCH_TARGET)
   return (
     <View style={wrapperStyle}>
-      {label ? <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{label}</Text> : null}
+      {label ? <Text style={{ ...design?.semantic.typography.label, color: palette.colors.textSecondary, marginBottom: 6 }}>{label}</Text> : null}
       <MotiView
         testID={palette.liquidGlass ? 'theme-input-focus-liquid-glass' : undefined}
         animate={{
