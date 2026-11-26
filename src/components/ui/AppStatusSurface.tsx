@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react'
+import { useContext, type ReactNode } from 'react'
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
-import { Text } from '@/components/ui/AppText'
+import { AppFontContext, Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MotiView } from 'moti'
@@ -67,6 +67,7 @@ export function AppStatusSurface({
   children,
 }: AppStatusSurfaceProps) {
   const { colors } = useAppTheme()
+  const fontFamily = useContext(AppFontContext)
   const motion = useMotionPreference(true)
   const insets = useSafeAreaInsets()
   const { t } = useTranslation()
@@ -99,9 +100,9 @@ export function AppStatusSurface({
             <AppIcon name={iconName} color={toneToken.foreground} size={compact ? 16 : 18} strokeWidth={appIconStroke.strong} />
           </View>
           <View style={styles.copy}>
-            <Text numberOfLines={2} style={[styles.title, { color: colors.text }]}>{title}</Text>
-            {message ? <Text selectable={selectableMessage} numberOfLines={compact ? 3 : 8} style={[styles.message, { color: colors.textSecondary }]}>{message}</Text> : null}
-            {detail ? <Text selectable={selectableMessage} numberOfLines={compact ? 2 : 3} style={[styles.detail, { color: colors.textTertiary }]}>{detail}</Text> : null}
+            <Text numberOfLines={2} style={[styles.title, colors.design?.semantic.typography.title, { fontFamily, color: colors.text }]}>{title}</Text>
+            {message ? <Text selectable={selectableMessage} numberOfLines={compact ? 3 : 8} style={[styles.message, colors.design?.semantic.typography.body, { fontFamily, color: colors.textSecondary }]}>{message}</Text> : null}
+            {detail ? <Text selectable={selectableMessage} numberOfLines={compact ? 2 : 3} style={[styles.detail, colors.design?.semantic.typography.caption, { fontFamily, color: colors.textTertiary }]}>{detail}</Text> : null}
           </View>
           {disclosureVisible ? <AppIcon name="arrow-right" color={colors.textTertiary} size={16} strokeWidth={appIconStroke.strong} /> : null}
         </View>
@@ -115,7 +116,7 @@ export function AppStatusSurface({
                 onPress={onAction}
                 style={[styles.action, { borderColor: colors.ui.control.primaryBorder, backgroundColor: colors.ui.control.primaryBackground }]}
               >
-                <Text numberOfLines={2} style={[styles.actionText, { color: colors.ui.control.primaryForeground }]}>{actionLabel}</Text>
+                <Text numberOfLines={2} style={[styles.actionText, colors.design?.semantic.typography.label, { fontFamily, color: colors.ui.control.primaryForeground }]}>{actionLabel}</Text>
               </IslePressable>
             ) : null}
             {hasDismiss ? (

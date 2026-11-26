@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AccessibilityInfo, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useTranslation } from 'react-i18next'
-import { Text } from './AppText'
+import { AppFontContext, Text } from './AppText'
 import type { ToastOptions } from './isle/isleDialogTypes'
 import { IsleLocalFeedbackProvider } from './isle/isleDialogContext'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -111,6 +111,7 @@ export function PageFeedbackRegion({ style, testID = 'page-action-feedback' }: {
 }) {
   const context = useContext(PageFeedbackContext)
   const { colors } = useAppTheme()
+  const fontFamily = useContext(AppFontContext)
   const { t } = useTranslation()
   const item = context?.item
   if (!item || !context || isRoutineSuccess(item)) return null
@@ -124,18 +125,18 @@ export function PageFeedbackRegion({ style, testID = 'page-action-feedback' }: {
       <View style={styles.copy} accessible accessibilityRole={failed ? 'alert' : 'text'}
         accessibilityLiveRegion={failed ? 'assertive' : 'polite'}
         accessibilityLabel={[item.title, item.message].filter(Boolean).join('. ')}>
-        <Text style={[styles.title, { color: colors.text }]}>{item.title}</Text>
-        {item.message ? <Text selectable style={[styles.message, { color: colors.textSecondary }]}>{item.message}</Text> : null}
+        <Text style={[styles.title, colors.design?.semantic.typography.title, { fontFamily, color: colors.text }]}>{item.title}</Text>
+        {item.message ? <Text selectable style={[styles.message, colors.design?.semantic.typography.body, { fontFamily, color: colors.textSecondary }]}>{item.message}</Text> : null}
       </View>
     </View>
     <View style={styles.actions}>
-      {context.pendingCount ? <Text style={[styles.message, styles.pending, { color: colors.textSecondary }]}>{t('dialog.pendingFeedback', { count: context.pendingCount })}</Text> : null}
+      {context.pendingCount ? <Text style={[styles.message, styles.pending, colors.design?.semantic.typography.caption, { fontFamily, color: colors.textSecondary }]}>{t('dialog.pendingFeedback', { count: context.pendingCount })}</Text> : null}
       {item.actionLabel && item.onAction ? <IslePressable accessibilityRole="button" accessibilityLabel={item.actionLabel} style={styles.action} onPress={() => {
         item.onAction?.()
         context.dismiss(item.id)
-      }}><Text style={[styles.actionLabel, { color: tone.foreground }]}>{item.actionLabel}</Text></IslePressable> : null}
+      }}><Text style={[styles.actionLabel, colors.design?.semantic.typography.label, { fontFamily, color: tone.foreground }]}>{item.actionLabel}</Text></IslePressable> : null}
       <IslePressable accessibilityRole="button" accessibilityLabel={t('common.close')} style={styles.action} onPress={() => context.dismiss(item.id)}>
-        <Text style={[styles.actionLabel, { color: colors.textSecondary }]}>{t('common.close')}</Text>
+        <Text style={[styles.actionLabel, colors.design?.semantic.typography.label, { fontFamily, color: colors.textSecondary }]}>{t('common.close')}</Text>
       </IslePressable>
     </View>
   </IsleMotionFrame>

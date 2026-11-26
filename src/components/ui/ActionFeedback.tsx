@@ -1,5 +1,6 @@
+import { useContext } from 'react'
 import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native'
-import { Text } from './AppText'
+import { AppFontContext, Text } from './AppText'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import type { ActionFeedbackPhase } from '@/hooks/useActionFeedback'
 import { FeedbackAnnouncement } from './FeedbackGlyph'
@@ -13,12 +14,13 @@ export function ActionFeedback({ phase, successLabel, errorLabel, style, testID 
   testID?: string
 }) {
   const { colors } = useAppTheme()
+  const fontFamily = useContext(AppFontContext)
   if (phase !== 'error') return successLabel
     ? <FeedbackAnnouncement message={phase === 'success' ? successLabel : undefined} testID={testID} />
     : null
   return <IsleMotionFrame role="section" testID={testID} style={[styles.frame, { borderLeftColor: colors.ui?.tone?.danger?.foreground ?? colors.text }, style]}>
     <Text accessibilityRole="alert" accessibilityLiveRegion="assertive"
-      style={[styles.label, { color: colors.ui?.tone?.danger?.foreground ?? colors.text }]}>
+      style={[styles.label, colors.design?.semantic.typography.body, { fontFamily, color: colors.ui?.tone?.danger?.foreground ?? colors.text }]}>
       {errorLabel}
     </Text>
   </IsleMotionFrame>
