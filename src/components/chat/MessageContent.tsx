@@ -1,6 +1,7 @@
 import { APP_FONT_FAMILY } from '@/theme/font'
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { StyleSheet, View, useWindowDimensions } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text } from '@/components/ui/AppText'
 import * as Clipboard from 'expo-clipboard'
 import Markdown from 'react-native-markdown-display'
@@ -298,6 +299,9 @@ function RichMarkdown({
           heading1: { ...typography?.headline, color: isUser ? userMessage.userForeground : colors.text, marginTop: 6, marginBottom: 5 },
           heading2: { ...typography?.title, color: isUser ? userMessage.userForeground : colors.text, marginTop: 5, marginBottom: 4 },
           heading3: { ...typography?.body, color: isUser ? userMessage.userForeground : colors.text, marginTop: 4, marginBottom: 3, fontWeight: typography?.title.fontWeight ?? '600' },
+          heading4: { ...typography?.label, color: isUser ? userMessage.userForeground : colors.text },
+          heading5: { ...typography?.caption, color: isUser ? userMessage.userForeground : colors.text },
+          heading6: { ...typography?.caption, color: isUser ? userMessage.userForeground : colors.text },
           paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 5 },
           link: { color: isUser ? userMessage.userForeground : colors.ui.control.link, fontWeight: '600' },
           bullet_list: {
@@ -360,8 +364,11 @@ function RichMarkdown({
           em: { color: isUser ? userMessage.userForeground : colors.textSecondary, fontStyle: 'italic' },
           s: { color: mutedForeground, textDecorationLine: 'line-through' },
           code_inline: {
+            fontFamily: typography?.code.fontFamily,
             color: isUser ? userMessage.userForeground : colors.text,
             backgroundColor: inlineCodeBackground,
+            borderColor: isUser ? 'transparent' : blockBorder,
+            borderWidth: isUser ? 0 : colors.ui.monet ? 1 : StyleSheet.hairlineWidth,
             borderRadius: 7,
             paddingHorizontal: 5,
             paddingVertical: 0,
@@ -369,6 +376,7 @@ function RichMarkdown({
             lineHeight: 19,
           },
           code_block: {
+            ...typography?.code,
             color: isUser ? userMessage.userForeground : colors.ui.code.text,
             backgroundColor: codeSurface,
             borderColor: isUser ? 'transparent' : colors.ui.code.border,
@@ -377,6 +385,7 @@ function RichMarkdown({
             padding: 8,
           },
           fence: {
+            ...typography?.code,
             color: isUser ? userMessage.userForeground : colors.ui.code.text,
             backgroundColor: codeSurface,
             borderColor: isUser ? 'transparent' : colors.ui.code.border,

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { AnimatePresence, MotiView } from 'moti'
@@ -472,13 +473,13 @@ function AppBannerViewport({
                   {banner.message ? <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 1 }}>{banner.message}</Text> : null}
                 </View>
                 {banner.actionLabel ? (
-                  <Pressable accessibilityRole="button" onPress={() => onAction(banner)} style={({ pressed }) => ({ minHeight: 44, justifyContent: 'center', paddingHorizontal: 8, opacity: pressed ? 0.68 : 1 })}>
+                  <IslePressable accessibilityRole="button" onPress={() => onAction(banner)} style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 }}>
                     <Text numberOfLines={2} style={{ maxWidth: 112, color: colors.ui.control.link, fontSize: 12, lineHeight: 16, fontWeight: '900', textAlign: 'center' }}>{banner.actionLabel}</Text>
-                  </Pressable>
+                  </IslePressable>
                 ) : null}
-                <Pressable accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={() => onDismiss(banner)} style={({ pressed }) => ({ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.6 : 1 })}>
+                <IslePressable accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={() => onDismiss(banner)} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
                   <AppIcon name="close" color={colors.textTertiary} size={17} strokeWidth={appIconStroke.strong} />
-                </Pressable>
+                </IslePressable>
               </View>
             )
           })}

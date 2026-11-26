@@ -379,7 +379,7 @@ export function McpSettingsContent() {
           <View style={{ gap: 10 }}>
             <IsleField label={t('mcp.name')} inputProps={{ editable: !saving, value: name, onChangeText: setName, placeholder: 'Local tools' }} />
             <IsleField label={t('mcp.url')} inputProps={{ editable: !saving, value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', keyboardType: 'url', autoCapitalize: 'none', autoCorrect: false }} />
-            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={saving || pendingServerId !== null || installingPresetId !== null} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
+            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'settingsWorkspace.save')} disabled={saving || pendingServerId !== null || installingPresetId !== null} icon={foreground => <AppIcon name="add" color={foreground} size={16} />} tone="primary" onPress={() => void addServer()} style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
             <IsleButton label={t('settingsWorkspace.cancel')} disabled={saving} onPress={() => void requestCloseDraft(() => undefined)} />
           </View>
         </View></SettingsSection> },
@@ -399,7 +399,7 @@ export function McpSettingsContent() {
                               label={t(installed ? 'mcp.presetInstalledState' : installing ? 'mcp.presetInstalling' : 'mcp.installPreset')}
                               compact
                               disabled={installed || saving || pendingServerId !== null || installingPresetId !== null}
-                              icon={<AppIcon name={installed ? 'check' : 'add'} color={colors.textSecondary} size={14} />}
+                              icon={foreground => <AppIcon name={installed ? 'check' : 'add'} color={foreground} size={14} />}
                               onPress={() => void installPreset(preset)}
                               style={actionCompact ? { alignSelf: 'stretch' } : undefined}
                             />
@@ -502,8 +502,8 @@ function McpServerDetails({
   const actions = (
     <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, justifyContent: 'flex-end', alignItems: actionCompact ? 'stretch' : 'center' }}>
       {!readonly ? <IsleButton label={t(server.enabled ? 'mcp.disableServer' : 'mcp.enableServer')} disabled={busy} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} style={actionButtonStyle} /> : null}
-      <IsleButton label={t(busy ? 'mcp.refreshing' : 'settingsSubsystem.refreshManifest')} disabled={busy || !server.enabled} compact icon={<AppIcon name="refresh" color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} style={actionButtonStyle} />
-      {!readonly ? <IsleButton label={t('common.delete')} disabled={busy} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void onDelete(server)} style={actionButtonStyle} /> : null}
+      <IsleButton label={t(busy ? 'mcp.refreshing' : 'settingsSubsystem.refreshManifest')} disabled={busy || !server.enabled} compact icon={foreground => <AppIcon name="refresh" color={foreground} size={14} />} onPress={() => void onRefresh(server)} style={actionButtonStyle} />
+      {!readonly ? <IsleButton label={t('common.delete')} disabled={busy} compact tone="danger" icon={foreground => <AppIcon name="delete" color={foreground} size={14} />} onPress={() => void onDelete(server)} style={actionButtonStyle} /> : null}
     </View>
   )
   return (

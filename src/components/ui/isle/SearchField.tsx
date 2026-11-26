@@ -1,6 +1,7 @@
 import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { TextInput } from '@/components/ui/AppText'
+import { resolveAppInputThemeProps } from '@/components/ui/appInputTheme'
 import { MotiView } from 'moti'
 import { Input as NativeInput } from 'animal-island-ui-rn'
 
@@ -65,12 +66,15 @@ export function IsleSearchField({
   testID,
   ...props
 }: IsleSearchFieldProps) {
-  const { colors, canonicalThemeId, design } = useAppTheme()
+  const { colors, canonicalThemeId, design, isDark } = useAppTheme()
+  const themedInputProps = resolveAppInputThemeProps(colors, isDark ? 'dark' : 'light', Platform.OS, props)
   const focusMotion = useThemeMotion('accent')
   const [focused, setFocused] = useState(false)
   const [clearHintVisible, setClearHintVisible] = useState(false)
   const nativeInputRef = useRef<TextInput>(null)
   const usesNativeInput = canonicalThemeId === 'animal-island-ui'
+  const disabled = editable === false
+  const visuallyFocused = focused && !disabled
   const setNativeInputRef = useCallback((input: TextInput | null) => {
     const previousInput = nativeInputRef.current
     if (previousInput !== input && previousInput?.isFocused?.()) previousInput.blur()
@@ -84,9 +88,9 @@ export function IsleSearchField({
   }, [])
   if (usesNativeInput) {
     return <NativeInput value={value} defaultValue={defaultValue} disabled={!editable} onChangeText={onChangeText} onFocus={onFocus} onBlur={onBlur}
-      allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={[design?.semantic.typography.body, inputStyle]}
-      inputProps={{ ...props, disableFullscreenUI, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={setNativeInputRef} style={[{ minHeight: 44 }, containerStyle]}
-      prefix={<AppIcon name="search" color={colors.textSecondary} size={18} />}
+      allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={[design?.semantic.typography.body, inputStyle, disabled ? { color: colors.ui.input.disabledForeground } : null]}
+      inputProps={{ ...props, ...themedInputProps, disableFullscreenUI, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={setNativeInputRef} style={[{ minHeight: 44 }, containerStyle]}
+      prefix={<AppIcon name="search" color={disabled ? colors.ui.input.disabledForeground : colors.textSecondary} size={18} />}
       suffix={pending ? <HighFrameSpinner color={colors.textSecondary} size={16} /> : undefined} />
   }
   const expression = resolveThemeComponentExpression(canonicalThemeId, 'search')
@@ -95,7 +99,6 @@ export function IsleSearchField({
   const monet = canonicalThemeId === 'monet'
   const material = canonicalThemeId === 'material'
   const glass = canonicalThemeId === 'liquid-glass'
-  const disabled = editable === false
   const hasValue = typeof value === 'string' && value.length > 0
   const minHeight = compact ? Math.max(44, metrics.minHeight - 4) : metrics.minHeight
   const radius = glass
@@ -109,12 +112,12 @@ export function IsleSearchField({
       ? 'transparent'
       : glass
         ? colors.ui.semantic.chrome.background
-        : focused
+        : visuallyFocused
           ? colors.ui.input.backgroundFocused
           : colors.ui.input.background
   const borderColor = disabled
     ? colors.ui.input.border
-    : focused
+    : visuallyFocused
       ? colors.ui.input.focus
       : minimal
         ? colors.material.strokeStrong
@@ -140,12 +143,12 @@ export function IsleSearchField({
           alignItems: 'center',
           gap: metrics.gap,
           borderWidth: minimal ? 0 : expression.border === 'none' ? 0 : 1,
-          borderBottomWidth: minimal ? (focused ? 2 : StyleSheet.hairlineWidth) : undefined,
+          borderBottomWidth: minimal ? (visuallyFocused ? 2 : StyleSheet.hairlineWidth) : undefined,
           shadowColor: monet || glass ? colors.shadowTint : undefined,
-          shadowOpacity: focused ? (glass ? 0.08 : monet ? 0.03 : 0) : glass ? 0.04 : 0,
-          shadowRadius: focused ? (glass ? 10 : monet ? 6 : 0) : glass ? 6 : 0,
+          shadowOpacity: visuallyFocused ? (glass ? 0.08 : monet ? 0.03 : 0) : glass ? 0.04 : 0,
+          shadowRadius: visuallyFocused ? (glass ? 10 : monet ? 6 : 0) : glass ? 6 : 0,
           shadowOffset: { width: 0, height: glass ? 3 : 2 },
-          elevation: glass ? (focused ? 1 : 0) : 0,
+          elevation: glass ? (visuallyFocused ? 1 : 0) : 0,
           overflow: 'visible',
         },
         webGlassStyle,
@@ -153,7 +156,7 @@ export function IsleSearchField({
         glass ? glassShadowStyle(colors, 'control') : null,
       ]}
     >
-      {minimal && focused ? (
+      {minimal && visuallyFocused ? (
         <View
           accessible={false}
           importantForAccessibility="no-hide-descendants"
@@ -166,10 +169,10 @@ export function IsleSearchField({
           accessible={false}
           importantForAccessibility="no-hide-descendants"
           pointerEvents="none"
-          style={{ position: 'absolute', top: -8, right: 18, width: 54, height: 28, borderRadius: 28, backgroundColor: colors.ui.icon.accentBackground, opacity: focused ? 0.34 : 0.18 }}
+          style={{ position: 'absolute', top: -8, right: 18, width: 54, height: 28, borderRadius: 28, backgroundColor: colors.ui.icon.accentBackground, opacity: visuallyFocused ? 0.34 : 0.18 }}
         />
       ) : null}
-      {material && focused ? (
+      {material && visuallyFocused ? (
         <View
           accessible={false}
           importantForAccessibility="no-hide-descendants"
@@ -180,15 +183,16 @@ export function IsleSearchField({
       <View style={{ width: metrics.iconSize + 2, height: minHeight, alignItems: 'center', justifyContent: 'center' }}>
         <AppIcon
           name="search"
-          color={focused ? colors.ui.icon.accentForeground : colors.textTertiary}
+          color={disabled ? colors.ui.input.disabledForeground : visuallyFocused ? colors.ui.icon.accentForeground : colors.textTertiary}
           size={metrics.iconSize}
           strokeWidth={minimal ? appIconStroke.fine : appIconStroke.regular}
         />
       </View>
       <TextInput
         {...props}
+        {...themedInputProps}
         disableFullscreenUI={disableFullscreenUI}
-        underlineColorAndroid={glass ? 'transparent' : props.underlineColorAndroid}
+        underlineColorAndroid={glass ? 'transparent' : themedInputProps.underlineColorAndroid}
         ref={setNativeInputRef}
         value={value}
         defaultValue={defaultValue}
@@ -221,6 +225,7 @@ export function IsleSearchField({
           },
           inputStyle,
           glass ? { backgroundColor: 'transparent', borderWidth: 0, elevation: 0 } : null,
+          disabled ? { color: colors.ui.input.disabledForeground } : null,
         ]}
       />
       {pending ? (

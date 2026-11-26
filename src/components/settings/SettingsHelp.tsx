@@ -1,6 +1,7 @@
 import { APP_FONT_FAMILY } from '@/theme/font'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Keyboard, Linking, Platform, ScrollView, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native'
+import { Keyboard, Linking, Platform, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import Markdown, { type RenderFunction } from 'react-native-markdown-display'
@@ -26,6 +27,7 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
   const { t, i18n } = useTranslation()
   const { colors } = useAppTheme()
   const typography = colors.design?.semantic.typography
+  const spacing = colors.design!.semantic.spacing
   const motion = useMotionPreference(true)
   const { width, height, fontScale } = useWindowDimensions()
   const illustrationWidth = Math.max(120, Math.min(720, width - 32) - 40)
@@ -101,6 +103,11 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
     if ((!file || /^[a-z0-9-]+\.md$/.test(file)) && (file || slug)) open(file ? file.replace(/\.md$/, '') : slug!, anchor)
     return false
   }
+  const codeStyle = {
+    ...typography?.code, color: colors.text, backgroundColor: colors.ui.semantic.surface.muted,
+    borderColor: colors.ui.section.divider, borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: colors.ui.radius.controlSmall, padding: spacing.md,
+  }
   const markdownStyle = {
     body: { fontFamily: APP_FONT_FAMILY, fontSize: 16, lineHeight: 26, ...typography?.body, color: colors.text },
     heading1: { fontSize: 28, lineHeight: 36, ...typography?.headline, marginBottom: 16, color: colors.text },
@@ -111,6 +118,19 @@ export function GuideReader({ initialSlug, initialAnchor, onClose }: { initialSl
     heading6: { fontSize: 16, lineHeight: 26, ...typography?.body, color: colors.text },
     link: { color: colors.primary, textDecorationLine: 'underline' as const },
     paragraph: { marginBottom: 12 },
+    code_inline: {
+      ...typography?.code, color: colors.text, backgroundColor: colors.ui.semantic.surface.muted,
+      borderColor: colors.ui.section.divider, borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: colors.ui.radius.controlSmall, paddingHorizontal: spacing.xs, paddingVertical: spacing.xxs,
+    },
+    code_block: codeStyle,
+    fence: codeStyle,
+    table: { borderColor: colors.ui.section.divider, borderWidth: StyleSheet.hairlineWidth, borderRadius: colors.ui.radius.controlSmall },
+    th: { flex: 1, padding: spacing.md, backgroundColor: colors.ui.semantic.surface.muted },
+    td: { flex: 1, padding: spacing.md },
+    tr: { borderColor: colors.ui.section.divider, borderBottomWidth: StyleSheet.hairlineWidth },
+    blockquote: { backgroundColor: colors.ui.semantic.surface.muted, borderColor: colors.ui.icon.accentForeground },
+    hr: { backgroundColor: colors.ui.section.divider },
   }
   return <IsleScreen padded={false}>
     <View testID="guide-frame" ref={keyboardViewport.frameRef} collapsable={false} style={{ flex: 1, minHeight: 0 }} onLayout={keyboardViewport.onFrameLayout}>

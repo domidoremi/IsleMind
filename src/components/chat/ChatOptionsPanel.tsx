@@ -1,6 +1,7 @@
 import { getConversationReasoningEffortOptions as getReasoningEffortOptions } from '@/bootstrap/providerConversationGeneration'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Keyboard, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Keyboard, Platform, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text, TextInput } from '@/components/ui/AppText'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'

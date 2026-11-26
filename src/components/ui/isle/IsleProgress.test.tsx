@@ -233,3 +233,28 @@ it('keeps the current host value and unrelated mounted owner state through all f
   expect(mounted).toHaveBeenCalledTimes(1)
   await screen.unmount()
 })
+
+
+const progressFontCases = (['light', 'dark'] as const).flatMap(mode =>
+  (['en', 'ja', 'zh-CN'] as const).map(language => ({ mode, language })))
+
+it.each(progressFontCases)('keeps the selected progress font, value and native host through context updates in $mode/$language', async ({ mode, language }) => {
+  const { AppFontContext } = jest.requireActual<typeof import('@/components/ui/AppText')>('@/components/ui/AppText')
+  setTheme('animal-island-ui', mode)
+  const labels = { en: 'Processing', ja: '処理中', 'zh-CN': '处理中' }
+  const infoFormat = jest.fn((percent: number) => `${labels[language]} ${percent}`)
+  const tree = (font: string) => <IsleThemeProvider><AppFontContext.Provider value={font}>
+    <IsleProgress percent={35} infoFormat={infoFormat} testID="font-progress" />
+  </AppFontContext.Provider></IsleThemeProvider>
+  const screen = await render(tree('Context A'))
+  try {
+    const host = screen.getByTestId('font-progress')
+    for (const font of ['Context A', 'Context B', 'Context C']) {
+      await screen.rerender(tree(font))
+      expect(screen.getByTestId('font-progress')).toBe(host)
+      expect(screen.getByText(`${labels[language]} 35`)).toHaveStyle({ fontFamily: font })
+      expect(value(screen)).toEqual({ now: 35, text: `${labels[language]} 35` })
+    }
+    expect(infoFormat).toHaveBeenCalledTimes(1)
+  } finally { await screen.unmount() }
+})

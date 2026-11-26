@@ -1,6 +1,7 @@
 import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import { useRef, useState, type ReactNode } from 'react'
-import { FlatList, View } from 'react-native'
+import { View } from 'react-native'
+import { FlatList } from '@/components/ui/AppScrollView'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleChip, IslePressable } from '@/components/ui/isle'

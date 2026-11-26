@@ -78,7 +78,7 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
               {strings.description}
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 10 }}>
-              <IsleButton compact label={strings.retryRender} icon={<AppIcon name="retry" color={colors.textSecondary} size={13} />} onPress={this.reset} />
+              <IsleButton compact label={strings.retryRender} icon={foreground => <AppIcon name="retry" color={foreground} size={13} />} onPress={this.reset} />
               {this.props.fallbackText?.trim() ? (
                 <RenderGuardCopyAction text={this.props.fallbackText} label={strings.copyRaw} />
               ) : null}
@@ -98,7 +98,7 @@ function RenderGuardCopyAction({ text, label }: { text: string; label: string })
   const copied = feedback.phase === 'success'
   return <View style={{ minWidth: 0, flexShrink: 1, alignItems: 'flex-start' }}>
     <IsleButton compact testID="render-guard-copy" label={copied ? t('common.copied') : label}
-      icon={<AppIcon name={copied ? 'check' : 'copy'} color={colors.textSecondary} size={13} />}
+      icon={foreground => <AppIcon name={copied ? 'check' : 'copy'} color={foreground} size={13} />}
       busy={pending} disabled={pending} onPress={() => void feedback.run(async () => await Clipboard.setStringAsync(text) === true)} />
     <ActionFeedback testID="render-guard-copy-feedback" phase={feedback.phase} errorLabel={t('common.copyFailed')} />
   </View>

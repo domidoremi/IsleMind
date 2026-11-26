@@ -88,6 +88,9 @@ describe('CanonicalSourceReader', () => {
     expect(view.getByText(source.chunks[1].content).props.selectable).toBe(true)
     expect(view.queryByText(source.chunks[0].content)).toBeNull()
     expect(view.getByText('Captured excerpt')).toBeTruthy()
+    expect(view.getByText('source.currentSavedSourceSummary')).toBeTruthy()
+    expect(view.queryByText('source.currentSavedSourceNotice')).toBeNull()
+    await fireEvent.press(view.getByTestId('source-reader-details'))
     expect(view.getByText('source.currentSavedSourceNotice')).toBeTruthy()
     expect(view.getByText('source.updatedAfterResponse')).toBeTruthy()
     await fireEvent.press(view.getByRole('button', { name: 'source.showAllSavedSections' }))
@@ -189,6 +192,34 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
   })
   afterEach(() => jest.restoreAllMocks())
 
+  it('retains the loading status and wrapping across layouts, then retires the status when the source is ready', async () => {
+    const dimensions = jest.spyOn(require('react-native').Dimensions, 'get')
+    const windowDimensions = jest.spyOn(require('react-native'), 'useWindowDimensions')
+    const pending = deferred<KnowledgeLocalSource | undefined>()
+    const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockReturnValue(pending.promise)
+    let size = { width: 1280, height: 900, fontScale: 1, scale: 1 }
+    dimensions.mockReturnValue(size); windowDimensions.mockReturnValue(size)
+    const view = await render(<SourceDetailScreen readLocalSource={read} />)
+    const label = view.getByTestId('source-reader-label')
+    expect(label).toHaveTextContent('source.currentSavedSource')
+    expect(label).toHaveStyle({ flexBasis: 'auto' })
+    for (size of [
+      { width: 780, height: 900, fontScale: 1, scale: 1 },
+      { width: 1280, height: 900, fontScale: 1.6, scale: 1 },
+      { width: 1280, height: 900, fontScale: 1, scale: 1 },
+    ]) {
+      dimensions.mockReturnValue(size); windowDimensions.mockReturnValue(size)
+      await view.rerender(<SourceDetailScreen readLocalSource={read} />)
+      expect(view.getByTestId('source-reader-label')).toBe(label)
+      expect(label).toHaveStyle({ flexBasis: size.width === 1280 && size.fontScale === 1 ? 'auto' : '100%' })
+      expect(view.getByTestId('source-reader-commands')).toHaveStyle({ minWidth: 0, flexDirection: 'row', flexWrap: 'wrap' })
+    }
+    await act(async () => pending.resolve(documentSource()))
+    expect(view.queryByTestId('source-reader-label')).toBeNull()
+    expect(view.getByTestId('source-reader-actions')).toBeTruthy()
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the selected reader and expanded sections across wide, compact and large-text layouts without rereading', async () => {
     const dimensions = jest.spyOn(require('react-native'), 'useWindowDimensions')
     dimensions.mockReturnValue({ width: 1280, height: 900, fontScale: 1, scale: 1 })
@@ -197,7 +228,8 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
     const read = jest.fn<ReturnType<Read>, Parameters<Read>>().mockResolvedValue(source)
     const view = await render(<SourceDetailScreen readLocalSource={read} />)
     const column = view.getByTestId('source-reading-column')
-    const label = view.getByTestId('source-reader-label')
+    expect(view.queryByTestId('source-reader-label')).toBeNull()
+    const commands = view.getByTestId('source-reader-commands')
     const actions = view.getByTestId('source-reader-actions')
     expect(within(actions).queryByText('source.currentSavedSource')).toBeNull()
     expect(view.getByTestId('source-workspace')).toHaveStyle({ flexDirection: 'row' })
@@ -212,8 +244,9 @@ describe('SourceDetailScreen identity and URL boundaries', () => {
       await view.rerender(<SourceDetailScreen readLocalSource={read} />)
       expect(view.getByTestId('source-workspace')).toHaveStyle({ flexDirection: size.width === 1280 && size.fontScale === 1 ? 'row' : 'column' })
       expect(view.getByTestId('source-reading-column')).toBe(column)
-      expect(view.getByTestId('source-reader-label')).toBe(label)
-      expect(label).toHaveStyle({ flexBasis: size.width === 1280 && size.fontScale === 1 ? 'auto' : '100%' })
+      expect(view.queryByTestId('source-reader-label')).toBeNull()
+      expect(view.getByTestId('source-reader-commands')).toBe(commands)
+      expect(commands).toHaveStyle({ minWidth: 0, flexDirection: 'row', flexWrap: 'wrap' })
       expect(view.getByTestId('source-reader-actions')).toBe(actions)
       expect(view.getByText(source.chunks[0].content)).toBe(section)
       expect(view.getByTestId('source-citation-0', { includeHiddenElements: true }).props.accessibilityState.selected).toBe(true)

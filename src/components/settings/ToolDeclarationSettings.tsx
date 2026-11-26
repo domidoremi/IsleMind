@@ -46,7 +46,7 @@ export function ToolDeclarationSettings({ session }: { session: ReturnType<typeo
     {entry ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       <IsleButton label={t('settingsWorkspace.save')} disabled={session.busy} busy={session.savingKey === 'toolDeclarationMode'}
         feedbackPhase={session.savingKey === 'toolDeclarationMode' ? 'pending' : 'idle'}
-        icon={<AppIcon name="check" size={16} color={colors.text} />}
+        icon={foreground => <AppIcon name="check" size={16} color={foreground} />}
         onPress={() => void session.save('toolDeclarationMode',
           mode => updateSettings({ toolDeclarationMode: normalizeSettingsToolDeclarationMode(mode) }),
           normalizeSettingsToolDeclarationMode)} />

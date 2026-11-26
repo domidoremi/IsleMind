@@ -3,6 +3,7 @@ import { Platform, Text as NativeText, TextInput as NativeTextInput, type TextPr
 import { APP_FONT_FAMILY } from '@/theme/font'
 import { getColors, type AppPalette } from '@/theme/colors'
 import { resolveWebTextMetricsStyle } from './webTextMetrics'
+import { resolveAppInputThemeProps } from './appInputTheme'
 import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 
 export const AppFontContext = createContext(APP_FONT_FAMILY)
@@ -54,11 +55,7 @@ export const TextInput = Object.assign(forwardRef<NativeTextInput, TextInputProp
   }, [])
   const metrics = resolveWebTextMetricsStyle(style)
   return <NativeTextInput
-    placeholderTextColor={colors.ui.input.placeholderForeground}
-    selectionColor={Platform.OS === 'ios' ? colors.ui.input.focus : colors.design?.semantic.color.selection ?? colors.ui.input.focus}
-    cursorColor={colors.ui.input.focus} selectionHandleColor={colors.ui.input.focus}
-    keyboardAppearance={mode} underlineColorAndroid="transparent"
-    {...props} ref={setInputRef}
+    {...props} {...resolveAppInputThemeProps(colors, mode, Platform.OS, props)} ref={setInputRef}
     onFocus={(event) => { setFocused(true); onFocus?.(event) }}
     onBlur={(event) => { setFocused(false); onBlur?.(event) }}
     style={metrics ? [{ fontFamily, color: colors.text }, style, metrics] : [{ fontFamily, color: colors.text }, style]} />

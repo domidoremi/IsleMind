@@ -1,6 +1,7 @@
 import { formatReportedTokens, reportedTotalTokens, reportedCacheTokens } from '@/presentation/features/settings/usageTokenPresentation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Platform, ScrollView, View } from 'react-native'
+import { Platform, View } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import * as Clipboard from 'expo-clipboard'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as Sharing from 'expo-sharing'

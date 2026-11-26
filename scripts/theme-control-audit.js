@@ -7,6 +7,20 @@ const nativeControls = new Set(['Alert', 'ActionSheetIOS', 'ToastAndroid', 'Acti
 const htmlControls = new Set(['button', 'input', 'textarea', 'select', 'progress', 'meter'])
 const browserDialogs = new Set(['alert', 'confirm', 'prompt'])
 
+function isImportedComponent(name, exported, sourcePattern, scope) {
+  const member = name?.type === 'JSXMemberExpression'
+  const local = member ? name.object : name
+  if (local?.type !== 'JSXIdentifier') return false
+  const binding = scope.getBinding(local.name)
+  const specifier = binding?.path.node
+  const declaration = binding?.path.parentPath.node
+  if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type'
+    || !sourcePattern.test(declaration.source.value)) return false
+  return member
+    ? specifier.type === 'ImportNamespaceSpecifier' && name.property.name === exported
+    : specifier.type === 'ImportSpecifier' && specifier.importKind !== 'type' && (specifier.imported.name ?? specifier.imported.value) === exported
+}
+
 function auditThemeControls(source, file) {
   const ast = parser.parse(source, { sourceType: 'unambiguous', plugins: ['typescript', 'jsx'] })
   const issues = []
@@ -23,6 +37,29 @@ function auditThemeControls(source, file) {
     }
   }
   traverse(ast, {
+    JSXOpeningElement(element) {
+      const { node, scope } = element
+      const button = isImportedComponent(node.name, 'IsleButton', /(?:^|\/)(?:isle(?:\/(?:index|Controls|IsleKit))?|Controls|IsleKit)(?:\.[jt]sx?)?$/, scope)
+      const iconButton = isImportedComponent(node.name, 'IsleIconButton', /(?:^|\/)(?:isle(?:\/(?:index|Primitives))?|Primitives)(?:\.[jt]sx?)?$/, scope)
+      const iconAttribute = button && element.get('attributes').find(attribute => attribute.node.type === 'JSXAttribute' && attribute.node.name.name === 'icon')
+      const icons = button
+        ? iconAttribute?.node.value?.type === 'JSXExpressionContainer' ? [iconAttribute.get('value.expression')] : []
+        : iconButton ? element.parentPath.get('children') : []
+      const inspect = icon => {
+        for (const exported of ['AppIcon', 'AnimatedNavigationIcon']) {
+          const iconSource = new RegExp('(?:^|/)' + exported + '(?:\\.[jt]sx?)?$')
+          if (isImportedComponent(icon.node.openingElement.name, exported, iconSource, icon.scope)) {
+            add(icon.node, (button ? 'IsleButton.icon' : 'IsleIconButton.children') + ' must render ' + exported + ' with the current foreground')
+          }
+        }
+      }
+      for (const child of icons) {
+        const icon = child.isJSXExpressionContainer() ? child.get('expression') : child
+        if (icon.isFunction()) continue
+        if (icon.isJSXElement()) inspect(icon)
+        icon.traverse({ Function(callback) { callback.skip() }, JSXElement: inspect })
+      }
+    },
     VariableDeclarator({ node }) {
       if (!isNativeRequire(node.init)) return
       if (node.id.type === 'Identifier') namespaces.add(node.id.name)

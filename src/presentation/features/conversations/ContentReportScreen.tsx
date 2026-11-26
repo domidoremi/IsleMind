@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { AppState, Linking, ScrollView, View } from 'react-native'
+import { AppState, Linking, View } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleInput, IslePressable } from '@/components/ui/isle'

@@ -723,7 +723,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
           {operationError ? <Text accessibilityRole="alert" style={{ color: colors.ui.tone.warning.foreground }}>{t(operationError)}</Text> : null}
           <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 10 }}>
             <IsleButton label={t('common.cancel')} disabled={saving} onPress={() => void requestDiscard(() => undefined)} style={actionButtonStyle} />
-            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'skills.saveSkill')} disabled={saving} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void saveSkill()} style={actionButtonStyle} />
+            <IsleButton label={t(saving ? 'settingsWorkspace.saving' : 'skills.saveSkill')} disabled={saving} icon={foreground => <AppIcon name="add" color={foreground} size={16} />} tone="primary" onPress={() => void saveSkill()} style={actionButtonStyle} />
           </View>
           </View>
         </MotiView> },
@@ -738,10 +738,10 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                 leading={<IsleChip active>{t(`skills.layer.${skill.layer}`)}</IsleChip>}
                 trailing={
                   <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, alignItems: actionCompact ? 'stretch' : 'center' }}>
-                    {!registeredToolchainSkillIds.has(createPortableSkillToolchainManifest(skill).id) ? <IsleButton label={t('skills.registerToolchain')} disabled={saving} compact icon={<AppIcon name="workflow" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => registerSkillInToolchain(skill))} style={actionButtonStyle} /> : <IsleChip active tone="mint">{t('skills.toolchainRegistered')}</IsleChip>}
-                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
-                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill), 'skills.exportFailed')} style={actionButtonStyle} />
-                    <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
+                    {!registeredToolchainSkillIds.has(createPortableSkillToolchainManifest(skill).id) ? <IsleButton label={t('skills.registerToolchain')} disabled={saving} compact icon={foreground => <AppIcon name="workflow" color={foreground} size={14} />} onPress={() => void runOperation(() => registerSkillInToolchain(skill))} style={actionButtonStyle} /> : <IsleChip active tone="mint">{t('skills.toolchainRegistered')}</IsleChip>}
+                    <IsleButton label={t('common.edit')} compact icon={foreground => <AppIcon name="edit" color={foreground} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={foreground => <AppIcon name="download" color={foreground} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill), 'skills.exportFailed')} style={actionButtonStyle} />
+                    <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={foreground => <AppIcon name="delete" color={foreground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
                   </View>
                 }
               />
@@ -752,8 +752,8 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
         { id: 'import', title: t('skills.importExport'), description: t('skills.importExportCollapsedDetail'), icon: 'upload', content: <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
           <SkillFoldoutHeader title={t('skills.importExport')} />
           <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 10 }}>
-            <IsleButton label={t('skills.importClipboard')} disabled={saving} icon={<AppIcon name="upload" color={colors.textSecondary} size={16} />} onPress={() => void runOperation(() => importFromClipboard())} style={actionButtonStyle} />
-            <IsleButton label={t('settings.chooseFile')} disabled={saving} icon={<AppIcon name="json" color={colors.textSecondary} size={16} />} onPress={() => void runOperation(() => importFromFile())} style={actionButtonStyle} />
+            <IsleButton label={t('skills.importClipboard')} disabled={saving} icon={foreground => <AppIcon name="upload" color={foreground} size={16} />} onPress={() => void runOperation(() => importFromClipboard())} style={actionButtonStyle} />
+            <IsleButton label={t('settings.chooseFile')} disabled={saving} icon={foreground => <AppIcon name="json" color={foreground} size={16} />} onPress={() => void runOperation(() => importFromFile())} style={actionButtonStyle} />
           </View>
         </MotiView> },
         { id: 'templates', title: t('skills.workflowTemplates'), description: t('skills.workflowTemplatesSubtitle'), icon: 'list-check', content: <MotiView from={motion === 'full' ? { opacity: 0, translateY: -6 } : undefined} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: motion === 'full' ? 144 : 0 }} style={foldoutPanelStyle}>
@@ -772,7 +772,7 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                       label={t(installed ? 'skills.workflowTemplateAlreadyInstalled' : 'skills.installWorkflowTemplate')}
                       compact
                       disabled={saving || installed}
-                      icon={<AppIcon name="add" color={colors.textSecondary} size={14} />}
+                      icon={foreground => <AppIcon name="add" color={foreground} size={14} />}
                       onPress={() => void runOperation(() => installWorkflowTemplate(workflow.id))}
                       style={actionCompact ? { alignSelf: 'stretch' } : undefined}
                     />
@@ -876,13 +876,13 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
                       label={t(reviewRequired ? 'skills.reviewAndEnableWorkflow' : enabled ? 'skills.disableWorkflow' : 'skills.enableWorkflow')}
                       disabled={saving}
                       compact
-                      icon={enabled ? <AppIcon name="toggle-on" color={colors.textSecondary} size={14} /> : <AppIcon name="toggle-off" color={colors.textSecondary} size={14} />}
+                      icon={foreground => <AppIcon name={enabled ? 'toggle-on' : 'toggle-off'} color={foreground} size={14} />}
                       onPress={() => void runOperation(() => updateWorkflowSkillState(skill))}
                       style={actionButtonStyle}
                     />
-                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
-                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill), 'skills.exportFailed')} style={actionButtonStyle} />
-                    <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t('common.edit')} compact icon={foreground => <AppIcon name="edit" color={foreground} size={14} />} onPress={() => void requestDiscard(() => editSkill(skill))} style={actionButtonStyle} />
+                    <IsleButton label={t(Platform.OS === 'web' ? 'skills.exportFile' : 'common.share')} disabled={saving} compact icon={foreground => <AppIcon name="download" color={foreground} size={14} />} onPress={() => void runOperation(() => exportSkillFile(skill), 'skills.exportFailed')} style={actionButtonStyle} />
+                    <IsleButton label={t('common.delete')} disabled={saving} compact tone="danger" icon={foreground => <AppIcon name="delete" color={foreground} size={14} />} onPress={() => void runOperation(() => removeSkill(skill))} style={actionButtonStyle} />
                   </View>
                 }
               />

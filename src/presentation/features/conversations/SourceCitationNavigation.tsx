@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ScrollView, StyleSheet, View, type LayoutRectangle } from 'react-native'
+import { StyleSheet, View, type LayoutRectangle } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { useTranslation } from 'react-i18next'
 import { Text } from '@/components/ui/AppText'
 import { IslePressable } from '@/components/ui/isle'

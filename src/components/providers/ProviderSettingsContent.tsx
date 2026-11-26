@@ -2,7 +2,8 @@ import { flushPersistedSettings } from '@/presentation/features/settings/setting
 import { SettingsEditBoundary, useSettingsDraft, useSettingsLeave, useSettingsLifetime } from '@/components/settings/SettingsEditBoundary'
 import { SettingsHelpButton } from '@/components/settings/SettingsHelp'
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AppState, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type KeyboardEvent, type LayoutChangeEvent } from 'react-native'
+import { AppState, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View, useWindowDimensions, type KeyboardEvent, type LayoutChangeEvent } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Modal } from '@/components/ui/AppModal'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
@@ -1467,7 +1468,7 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
           </View>
           {done ? (
             <IsleIconButton label={t('dialog.close')} size="sm" onPress={onDismiss}>
-              <AppIcon name="close" color={colors.textSecondary} size={15} />
+              {foreground => <AppIcon name="close" color={foreground} size={15} />}
             </IsleIconButton>
           ) : null}
         </View>
@@ -1943,7 +1944,7 @@ export function ProviderFormModal({
                 </View>
                 <SettingsHelpButton compact topic="models" />
                 <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit}>
-                  <AppIcon name="close" color={colors.textSecondary} size={18} />
+                  {foreground => <AppIcon name="close" color={foreground} size={18} />}
                 </IsleIconButton>
               </View>
               <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }}>{t(step === 'connection' ? 'settingsUx.connectionStep' : 'settingsUx.modelStep')}</Text>
@@ -2409,7 +2410,7 @@ export function ProviderImportModal({
                 <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('providerSettings.importConfiguration')}</Text>
               </View>
               <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit} disabled={importBusy}>
-                <AppIcon name="close" color={colors.textSecondary} size={18} />
+                {foreground => <AppIcon name="close" color={foreground} size={18} />}
               </IsleIconButton>
             </View>
             <ScrollView
@@ -2429,7 +2430,7 @@ export function ProviderImportModal({
                       label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settingsUx.pasteConfig')}
                       tone="primary"
                       compact
-                      icon={<AppIcon name="paste" color={colors.textSecondary} size={16} />}
+                      icon={foreground => <AppIcon name="paste" color={foreground} size={16} />}
                       onPress={() => void pasteFromClipboard()}
                       disabled={clipboardBusy || importBusy || persistencePending}
                       style={modalActionStyle}
@@ -2437,7 +2438,7 @@ export function ProviderImportModal({
                     <IsleButton
                       label={t('settings.chooseFile')}
                       compact
-                      icon={<AppIcon name="json" color={colors.textSecondary} size={16} />}
+                      icon={foreground => <AppIcon name="json" color={foreground} size={16} />}
                       onPress={() => void importFromFile()}
                       disabled={importBusy || persistencePending}
                       style={modalActionStyle}

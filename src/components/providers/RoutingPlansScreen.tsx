@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BackHandler, Platform, ScrollView, StyleSheet, View } from 'react-native'
+import { BackHandler, Platform, StyleSheet, View } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { Text } from '@/components/ui/AppText'

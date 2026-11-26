@@ -1,9 +1,10 @@
 import { Suspense, lazy, type ComponentProps, type ComponentType, type ReactNode } from 'react'
-import { Pressable, View } from 'react-native'
+import { View } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
+import { IslePressable } from '@/components/ui/isle/Pressable'
 
 /**
  * 懒加载加载指示器
@@ -31,6 +32,7 @@ export function LazyLoadingFallback({ dismissLabel, onDismiss }: LazyLoadingFall
       }}
     >
       <View
+        accessible
         accessibilityRole="progressbar"
         accessibilityLabel={t('common.loading')}
         accessibilityState={{ busy: true }}
@@ -46,11 +48,11 @@ export function LazyLoadingFallback({ dismissLabel, onDismiss }: LazyLoadingFall
         </Text>
       </View>
       {onDismiss ? (
-        <Pressable
+        <IslePressable
           accessibilityRole="button"
           accessibilityLabel={dismissLabel ?? t('common.back')}
           onPress={onDismiss}
-          style={({ pressed }) => ({
+          style={{
             minHeight: 44,
             minWidth: 88,
             paddingHorizontal: 14,
@@ -60,13 +62,12 @@ export function LazyLoadingFallback({ dismissLabel, onDismiss }: LazyLoadingFall
             borderWidth: 1,
             borderColor: colors.ui.control.primaryBorder,
             backgroundColor: colors.ui.control.defaultBackground,
-            opacity: pressed ? 0.7 : 1,
-          })}
+          }}
         >
           <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>
             {dismissLabel ?? t('common.back')}
           </Text>
-        </Pressable>
+        </IslePressable>
       ) : null}
     </View>
   )

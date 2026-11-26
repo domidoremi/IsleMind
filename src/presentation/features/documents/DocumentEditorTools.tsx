@@ -29,7 +29,7 @@ export function DocumentEditorToolbar({ preview, onPreviewChange, copyPhase, onC
         onPress={() => onPreviewChange(isPreview)} style={styles.tab} />)}
     </View>
     <IsleButton compact label={t('documents.copyText')} testID="document-copy"
-      icon={<AppIcon name="copy" size={16} color={colors.text} />}
+      icon={foreground => <AppIcon name="copy" size={16} color={foreground} />}
       feedbackPhase={copyPhase} feedbackLabel={t('common.copied')}
       disabled={copyDisabled || copyPhase === 'pending'} onPress={onCopy} style={styles.copy} />
   </View>

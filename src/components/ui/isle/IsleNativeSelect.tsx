@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentRef } from 'react'
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { KeyboardAvoidingView, Platform, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { MotiView } from 'moti'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Modal } from '@/components/ui/AppModal'
@@ -8,6 +9,7 @@ import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveNativeSelectLayout } from './nativeSelectLayout'
+import { IsleOverlayPressable, IslePressable } from './Pressable'
 
 interface Option { label: string; value: string; disabled?: boolean }
 interface Size { width: number; height: number }
@@ -50,7 +52,7 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
 
   return (
     <View style={[styles.wrapper, disabled && { opacity: 0.5 }, style]} testID={testID}>
-      <Pressable
+      <IslePressable
         ref={trigger}
         testID={testID ? `${testID}-trigger` : undefined}
         accessibilityRole="combobox"
@@ -58,6 +60,7 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
         accessibilityValue={{ text: selected?.label ?? placeholder }}
         accessibilityState={{ disabled, expanded: open && !disabled }}
         disabled={disabled}
+        disabledOpacity={1}
         onPress={() => setOpen(current => !current)}
         style={[styles.trigger, {
           backgroundColor: disabled ? colors.ui.control.disabledBackground : colors.ui.input.background,
@@ -68,9 +71,9 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
           {selected?.label ?? placeholder}
         </Text>
         <View style={{ transform: [{ rotate: open ? '180deg' : '0deg' }] }}>
-          <AppIcon name="collapse" size={12} color={open ? colors.ui.input.focus : colors.ui.input.placeholderForeground} />
+          <AppIcon name="collapse" size={12} color={disabled ? colors.ui.control.disabledForeground : open ? colors.ui.input.focus : colors.ui.input.placeholderForeground} />
         </View>
-      </Pressable>
+      </IslePressable>
       {open && !disabled ? (
         <Modal transparent visible animationType="none" statusBarTranslucent navigationBarTranslucent
           onRequestClose={close} testID={testID ? `${testID}-modal` : undefined}>
@@ -83,7 +86,8 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
                 previous?.width === width && previous.height === height ? previous : { width, height })
             }}
           >
-            <Pressable style={StyleSheet.absoluteFill} onPress={close}
+            <IsleOverlayPressable accessible={false} accessibilityRole="none" focusable={false}
+              importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill} onPress={close}
               testID={testID ? `${testID}-backdrop` : undefined} />
             <MotiView
               role="list"
@@ -106,13 +110,14 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
               <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled"
                 testID={testID ? `${testID}-options` : undefined}>
                 {options.map(option => (
-                  <Pressable
+                  <IslePressable
                     key={option.value}
                     role="option"
                     accessibilityLabel={option.label}
                     accessibilityState={{ disabled: !!option.disabled, selected: option.value === value }}
                     focusable={!option.disabled}
                     disabled={option.disabled}
+                    disabledOpacity={1}
                     onPress={option.disabled ? undefined : () => { onChange(option.value); close() }}
                     style={({ pressed }) => [styles.option, {
                       backgroundColor: option.value === value ? colors.ui.tone.success.background
@@ -131,7 +136,7 @@ export function IsleNativeSelect({ options, value, placeholder, disabled, onChan
                         fontWeight: option.value === value || pressed ? '700' : '500',
                       }]}>{option.label}</Text>
                     </>}
-                  </Pressable>
+                  </IslePressable>
                 ))}
               </ScrollView>
             </MotiView>

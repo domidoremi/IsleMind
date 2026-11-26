@@ -8,7 +8,8 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated'
-import { Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent, type TextInputSubmitEditingEvent, type TextInputProps } from 'react-native'
+import { Platform, Pressable, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent, type TextInputSubmitEditingEvent, type TextInputProps } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Modal } from '@/components/ui/AppModal'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'

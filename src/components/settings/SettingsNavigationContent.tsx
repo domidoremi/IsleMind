@@ -1,6 +1,7 @@
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Keyboard, ScrollView, StyleSheet, View } from 'react-native'
+import { Keyboard, StyleSheet, View } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text } from '@/components/ui/AppText'
 import { router, type Href } from 'expo-router'
 import { useTranslation } from 'react-i18next'

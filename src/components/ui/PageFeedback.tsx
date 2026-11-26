@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AccessibilityInfo, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
+import { AccessibilityInfo, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { Text } from './AppText'
 import type { ToastOptions } from './isle/isleDialogTypes'
@@ -9,6 +9,7 @@ import { dismissActiveAppToast, EMPTY_APP_TOAST_QUEUE, enqueueAppToast, type App
 import { resolveAppFeedbackTimeout } from './appFeedbackTimeout'
 import { FeedbackAnnouncement, FeedbackGlyph } from './FeedbackGlyph'
 import { IsleMotionFrame } from './isle/ThemeMotion'
+import { IslePressable } from './isle/Pressable'
 
 type FeedbackContext = {
   item: AppFeedbackItem | null
@@ -93,12 +94,12 @@ export function PageFeedbackIndicator({ testID = 'page-feedback-indicator', acti
   const success = Boolean(item && isRoutineSuccess(item))
   const label = success ? [item!.title, item!.message].filter(Boolean).join('. ') : undefined
   return <View testID={testID} style={styles.indicator}>
-    {action ?? <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityHint={t('common.close')}
+    {action ?? <IslePressable accessibilityRole="button" accessibilityLabel={label} accessibilityHint={t('common.close')}
       accessible={success} importantForAccessibility={success ? 'auto' : 'no-hide-descendants'}
       aria-hidden={!success} disabled={!success} onPress={() => { if (item) context.dismiss(item.id) }}
       style={[styles.indicator, success ? { borderRadius: 22, backgroundColor: colors.ui.tone.success.background } : null]}>
       <FeedbackGlyph phase={success ? 'success' : 'idle'} receiptKey={item?.id} announce={false} />
-    </Pressable>}
+    </IslePressable>}
     <FeedbackAnnouncement message={label} receiptKey={item?.id} testID={`${testID}-announcement`} />
   </View>
 }
@@ -129,13 +130,13 @@ export function PageFeedbackRegion({ style, testID = 'page-action-feedback' }: {
     </View>
     <View style={styles.actions}>
       {context.pendingCount ? <Text style={[styles.message, styles.pending, { color: colors.textSecondary }]}>{t('dialog.pendingFeedback', { count: context.pendingCount })}</Text> : null}
-      {item.actionLabel && item.onAction ? <Pressable accessibilityRole="button" accessibilityLabel={item.actionLabel} style={({ pressed }) => [styles.action, { opacity: pressed ? 0.7 : 1 }]} onPress={() => {
+      {item.actionLabel && item.onAction ? <IslePressable accessibilityRole="button" accessibilityLabel={item.actionLabel} style={styles.action} onPress={() => {
         item.onAction?.()
         context.dismiss(item.id)
-      }}><Text style={[styles.actionLabel, { color: tone.foreground }]}>{item.actionLabel}</Text></Pressable> : null}
-      <Pressable accessibilityRole="button" accessibilityLabel={t('common.close')} style={({ pressed }) => [styles.action, { opacity: pressed ? 0.7 : 1 }]} onPress={() => context.dismiss(item.id)}>
+      }}><Text style={[styles.actionLabel, { color: tone.foreground }]}>{item.actionLabel}</Text></IslePressable> : null}
+      <IslePressable accessibilityRole="button" accessibilityLabel={t('common.close')} style={styles.action} onPress={() => context.dismiss(item.id)}>
         <Text style={[styles.actionLabel, { color: colors.textSecondary }]}>{t('common.close')}</Text>
-      </Pressable>
+      </IslePressable>
     </View>
   </IsleMotionFrame>
 }

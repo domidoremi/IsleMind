@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { BackHandler, Linking, Platform, ScrollView, View, useWindowDimensions } from 'react-native'
+import { BackHandler, Linking, Platform, View, useWindowDimensions } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text } from '@/components/ui/AppText'
 import type { WebViewProps } from 'react-native-webview'
 import * as Clipboard from 'expo-clipboard'
@@ -162,16 +163,16 @@ export default function SourceScreen({ readLocalSource }: Pick<KnowledgeLocalSou
         <View style={{ flexDirection: 'row', gap: 7 }}>
           <IsleIconButton label={t(copyFeedback.phase === 'success' ? 'common.copied' : 'common.copy')} size="sm"
             disabled={copyFeedback.phase === 'pending'} onPress={() => void copyCurrent()}>
-            <AppIcon name={copyFeedback.phase === 'success' ? 'check' : 'copy'} color={copyFeedback.phase === 'success' ? colors.ui.tone.success.foreground : colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
+            {foreground => <AppIcon name={copyFeedback.phase === 'success' ? 'check' : 'copy'} color={copyFeedback.phase === 'success' ? colors.ui.tone.success.foreground : foreground} size={17} strokeWidth={appIconStroke.fine} />}
           </IsleIconButton>
           {webUrl && webPreviewSupported ? (
               <IsleIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
-                <AppIcon name="refresh" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
+                {foreground => <AppIcon name="refresh" color={foreground} size={17} strokeWidth={appIconStroke.fine} />}
               </IsleIconButton>
           ) : null}
           {externalUrl ? (
               <IsleIconButton label={t('source.openOriginal')} size="sm" onPress={() => void openExternal()}>
-                <AppIcon name="external-link" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
+                {foreground => <AppIcon name="external-link" color={foreground} size={17} strokeWidth={appIconStroke.fine} />}
               </IsleIconButton>
           ) : null}
         </View>

@@ -45,7 +45,8 @@ export function IsleTooltip({
   const { colors, canonicalThemeId, design } = useAppTheme()
   const tooltipMotion = useThemeMotion('accent', { readable: true })
   if (canonicalThemeId === 'animal-island-ui') {
-    return <NativeTooltip title={label} open={visible} placement={placement} testID={testID}><View>{children}</View></NativeTooltip>
+    // Keep the fork's text color and metrics inherited while AppText supplies the theme font.
+    return <NativeTooltip title={<Text style={{ color: undefined }}>{label}</Text>} open={visible} placement={placement} testID={testID}><View>{children}</View></NativeTooltip>
   }
   const expression = resolveThemeComponentExpression(canonicalThemeId, 'tooltip')
   const metrics = TOOLTIP_METRICS[canonicalThemeId]

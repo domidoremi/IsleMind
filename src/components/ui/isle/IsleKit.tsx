@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react'
 import { Platform, Pressable, StyleSheet, View, useWindowDimensions, type PressableProps, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { AppFontContext, Text, TextInput } from '@/components/ui/AppText'
+import { resolveAppInputThemeProps } from '@/components/ui/appInputTheme'
 import { useAppUpdateBlocker } from '@/hooks/useAppUpdateBlocker'
 import { resolveWebTextMetricsStyle } from '@/components/ui/webTextMetrics'
 import { MotiView } from 'moti'
@@ -375,6 +376,7 @@ export function IsleInput({
 }) {
   const palette = useIslePalette()
   const fontFamily = useContext(AppFontContext)
+  const themedInputProps = resolveAppInputThemeProps(palette.colors, palette.isDark ? 'dark' : 'light', Platform.OS, props)
   const focusMotion = useThemeMotion('accent')
   const { t } = useTranslation()
   const [focused, setFocused] = useState(false)
@@ -495,7 +497,7 @@ export function IsleInput({
         <ThemeInputExpressionBody
           family={design?.family ?? 'minimal'}
           colors={palette.colors}
-          focused={focused}
+          focused={focused && !disabled}
           multiline={!!multiline}
           prefix={prefix}
           input={(
@@ -523,7 +525,8 @@ export function IsleInput({
               placeholderTextColor={input.placeholderForeground}
               inputProps={{
                 ...props,
-                underlineColorAndroid: palette.liquidGlass ? 'transparent' : props.underlineColorAndroid,
+                ...themedInputProps,
+                underlineColorAndroid: palette.liquidGlass ? 'transparent' : themedInputProps.underlineColorAndroid,
                 scrollEnabled: multiline ? scrollEnabled ?? true : scrollEnabled,
                 onContentSizeChange: handleContentSizeChange,
                 accessibilityState: { ...props.accessibilityState, disabled: disabled || props.accessibilityState?.disabled === true },
@@ -551,6 +554,7 @@ export function IsleInput({
                 palette.liquidGlass ? { backgroundColor: 'transparent', borderWidth: 0, elevation: 0 } : null,
                 textInputStyle,
                 multiline ? { height: multilineShellHeight, minHeight: multilineMinHeight, maxHeight: multilineMaxHeight } : null,
+                disabled ? { color: input.disabledForeground } : null,
               ]}
             />
           )}
@@ -651,6 +655,7 @@ export function IsleSwitch({
         importantForAccessibility: 'no-hide-descendants' as const,
       } : {
         haptic: true, onPress: toggle, disabled: disabled || loading,
+        disabledOpacity: disabledStyle.opacity,
         accessibilityRole: 'switch' as const,
         accessibilityState: loading ? { checked: active, busy: true } : { checked: active },
         interactionProfile: switchExpression?.motion ?? 'default',
@@ -913,15 +918,15 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
         type="default"
         disabled={disabled}
         accessibilityState={{ expanded: open && !disabled }}
-        icon={
+        icon={foreground => (
           <MotiView
             animate={{ rotate: open ? '180deg' : '0deg' }}
             transition={motion === 'full' ? accentMotion.transition : { type: 'timing', duration: 1 }}
             style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}
           >
-            <AppIcon name="collapse" color={palette.colors.textSecondary} size={15} />
+            <AppIcon name="collapse" color={foreground} size={15} />
           </MotiView>
-        }
+        )}
         onPress={() => { if (mounted.current && selection.current === reviewedSelection && !selection.current.disabled) setOpen((current) => !current) }}
         style={{ alignSelf: 'stretch', justifyContent: 'space-between' }}
       />
@@ -1079,6 +1084,7 @@ export function IsleProgress({
   style,
 }: IsleProgressProps) {
   const palette = useIslePalette()
+  const fontFamily = useContext(AppFontContext)
   const motion = useMotionPreference(true)
   const { fontScale } = useWindowDimensions()
   const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0
@@ -1092,7 +1098,7 @@ export function IsleProgress({
   const requestedDuration = durationMs ?? (palette.themeId === 'animal-island-ui' ? 250 : 176)
   const safeDuration = Number.isFinite(requestedDuration) && requestedDuration >= 0 ? Math.min(requestedDuration, 2147483647) : 0
   if (palette.themeId === 'animal-island-ui') {
-    return <NativeProgress percent={safePercent} size={size} showInfo={showInfo} infoFormat={infoFormat} indeterminate={indeterminate}
+    return <NativeProgress percent={safePercent} size={size} showInfo={showInfo} infoFormat={infoFormat} indeterminate={indeterminate} infoTextStyle={{ fontFamily }}
       fillColor={fillColor} duration={motion === 'full' ? safeDuration / 1000 : 0}
       aria-label={accessibilityLabel} testID={testID} style={style} />
   }

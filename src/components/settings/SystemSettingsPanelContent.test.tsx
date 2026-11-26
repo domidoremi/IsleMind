@@ -559,3 +559,70 @@ it.each(['monet', 'liquid-glass'])(
     }
   },
 )
+
+const disabledAppearanceCases = CANONICAL_THEME_IDS.flatMap(family => (['light', 'dark'] as const).flatMap(mode =>
+  (['en', 'ja', 'zh-CN'] as const).map(language => ({ family, mode, language }))))
+
+it.each(disabledAppearanceCases)('projects disabled appearance radio marks through a pending save in $family/$mode/$language', async appearance => {
+  mockState.settings.themeId = appearance.family
+  mockState.settings.theme = appearance.mode
+  mockMotion = 'none'
+  const themeSpy = jest.spyOn(require('@/hooks/useAppTheme'), 'useAppTheme').mockImplementation(() => {
+    const family = mockState.settings.themeId
+    const mode = mockState.settings.theme === 'light' ? 'light' : 'dark'
+    const colors = require('@/theme/colors').getColors(mode, family)
+    const backgroundEnvironment = require('@/theme/backgroundEnvironment').resolveBackgroundEnvironment({ family, mode, motion: 'none' })
+    return { colors, design: colors.design, canonicalThemeId: family, backgroundEnvironment, mode, isDark: mode === 'dark' }
+  })
+  const select = jest.fn(async selection => { mockUpdateSettings(selection); return true })
+  const selectionSpy = jest.spyOn(require('@/hooks/useThemeSelection'), 'useThemeSelection').mockReturnValue(select)
+  const translationSpy = jest.spyOn(require('react-i18next'), 'useTranslation').mockReturnValue({
+    i18n: { language: appearance.language }, t: (key: string) => {
+      const resources = appearance.language === 'en' ? require('@/i18n/resources/en.json')
+        : appearance.language === 'ja' ? require('@/i18n/resources/ja.json') : require('@/i18n/resources/zh-CN.json')
+      return key.split('.').reduce((current: any, part) => current?.[part], resources) ?? key
+    },
+  })
+  const disk = deferred<void>()
+  jest.mocked(flushPersistedSettings).mockReturnValueOnce(disk.promise)
+  let screen: Awaited<ReturnType<typeof render>> | undefined
+  try {
+    screen = await render(<IsleThemeProvider><SystemSettingsPanelContent panel="appearance" /></IsleThemeProvider>)
+    const owner = screen.getByTestId('settings-appearance-page')
+    const nextMode = appearance.mode === 'light' ? 'dark' : 'light'
+    await fireEvent.press(screen.getByTestId(`settings-theme-mode-${nextMode}`))
+    await waitFor(() => expect(flushPersistedSettings).toHaveBeenCalledTimes(1))
+    const colors = require('@/theme/colors').getColors(nextMode, appearance.family)
+    for (const [id, size] of [
+      ...CANONICAL_THEME_IDS.map(family => [`settings-theme-family-${family}`, 20] as const),
+      ...(['light', 'dark', 'system'] as const).map(mode => [`settings-theme-mode-${mode}`, 18] as const),
+    ]) {
+      const radio = screen.getByTestId(id)
+      expect(radio).toBeDisabled()
+      const marks = screen.container.queryAll(node => {
+        if (typeof node.type !== 'string' || node.props.style?.width !== size || !node.props.animate?.borderColor) return false
+        for (let parent = node.parent; parent; parent = parent.parent) if (parent === radio) return true
+        return false
+      })
+      expect(marks).toHaveLength(1)
+      expect(marks[0].props.animate).toEqual(expect.objectContaining({
+        backgroundColor: colors.ui.control.disabledBackground, borderColor: colors.ui.control.disabledBorder,
+      }))
+      await fireEvent.press(radio)
+    }
+    expect(select).toHaveBeenCalledTimes(1)
+    expect(mockUpdateSettings).toHaveBeenCalledTimes(1)
+    await act(async () => { disk.resolve(); await disk.promise })
+    expect(screen.getByTestId('settings-appearance-page')).toBe(owner)
+    expect(screen.getByTestId(`settings-theme-mode-${appearance.mode}`)).not.toBeDisabled()
+    await fireEvent.press(screen.getByTestId(`settings-theme-mode-${appearance.mode}`))
+    await waitFor(() => expect(flushPersistedSettings).toHaveBeenCalledTimes(2))
+    expect(select).toHaveBeenCalledTimes(2)
+    expect(mockState.settings.theme).toBe(appearance.mode)
+  } finally {
+    await screen?.unmount()
+    await act(async () => { disk.resolve(); await disk.promise })
+    themeSpy.mockRestore(); selectionSpy.mockRestore(); translationSpy.mockRestore()
+    mockState.settings.theme = 'dark'
+  }
+})

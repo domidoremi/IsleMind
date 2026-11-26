@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { ScrollView, View } from 'react-native'
+import { View } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { useTranslation } from 'react-i18next'
 import { Text } from '@/components/ui/AppText'
 import { IsleButton } from '@/components/ui/isle'

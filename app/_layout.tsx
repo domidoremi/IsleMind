@@ -532,7 +532,8 @@ function firstQueryParam(value?: string | string[]): string | undefined {
 }
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
-  const { colors } = useAppTheme()
+  const { canonicalThemeId, colors, design, mode, themeMode, themeAccent, backgroundEnvironment } = useAppTheme()
+  useWebThemeBridge({ canonicalThemeId, colors, design, mode, themeMode, themeAccent, backgroundEnvironment, ready: true })
   const { t } = useTranslation()
   const reference = useRef(`ERR-${Date.now().toString(36).toUpperCase()}`)
   const errorDetails = formatErrorBoundaryMessage(error)
@@ -544,6 +545,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
+      <IsleThemeProvider>
       <IsleScreen padded={false} background="surface" backgroundState="error">
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
           <IslePanel elevated radius={colors.ui.radius.card} contentStyle={{ padding: 18 }}>
@@ -563,13 +565,14 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
               {t('app.pageUnavailableDetails', { details: errorDetails })}
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginTop: 16 }}>
-              <IsleButton label={t('common.retry')} tone="primary" icon={<AppIcon name="retry" color={colors.surface} size={15} strokeWidth={appIconStroke.strong} />} onPress={() => void retry()} />
-              <IsleButton label={t('common.back')} icon={<AnimatedNavigationIcon glyph="back" active={backNavigation.active} color={colors.textSecondary} size={18} />} onPress={backNavigation.trigger} />
-              <IsleButton label={t('app.copyPageError')} icon={<AppIcon name="copy" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.strong} />} onPress={() => void Clipboard.setStringAsync(errorReport)} />
+              <IsleButton label={t('common.retry')} tone="primary" icon={foreground => <AppIcon name="retry" color={foreground} size={15} strokeWidth={appIconStroke.strong} />} onPress={() => void retry()} />
+              <IsleButton label={t('common.back')} icon={foreground => <AnimatedNavigationIcon glyph="back" active={backNavigation.active} color={foreground} size={18} />} onPress={backNavigation.trigger} />
+              <IsleButton label={t('app.copyPageError')} icon={foreground => <AppIcon name="copy" color={foreground} size={15} strokeWidth={appIconStroke.strong} />} onPress={() => void Clipboard.setStringAsync(errorReport)} />
             </View>
           </IslePanel>
         </View>
       </IsleScreen>
+      </IsleThemeProvider>
     </GestureHandlerRootView>
   )
 }

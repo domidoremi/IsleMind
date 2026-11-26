@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { BackHandler, Keyboard, Platform, ScrollView, View, useWindowDimensions } from 'react-native'
+import { BackHandler, Keyboard, Platform, View, useWindowDimensions } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { router, useLocalSearchParams, useNavigation, usePathname } from 'expo-router'
 import { useIsFocused } from 'expo-router/react-navigation'

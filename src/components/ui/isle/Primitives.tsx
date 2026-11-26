@@ -9,7 +9,7 @@ import { useThemeMotion } from '@/hooks/useThemeMotion'
 import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { IslePanel, type IsleMaterial } from './Panel'
-import { IsleButton, IsleInput, IsleSwitch as IsleStyledSwitch } from './IsleKit'
+import { IsleButton, IsleInput, IsleSwitch as IsleStyledSwitch, type IsleButtonIcon } from './IsleKit'
 import { switchKeyboardProps } from './switchKeyboard'
 import { GlassSurface } from './GlassSurface'
 import { PageFeedbackIndicator } from '@/components/ui/PageFeedback'
@@ -26,7 +26,7 @@ export function IsleIconButton({
   style,
 }: {
   label: string
-  children: ReactNode
+  children: IsleButtonIcon
   onPress?: () => void
   tone?: IsleTone
   disabled?: boolean
@@ -77,7 +77,7 @@ export function IsleIconButton({
         <GlassSurface colors={colors} variant="navigation" borderRadius={radius} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           {/* Inline SVGs otherwise paint underneath the positioned Web blur. */}
           <View testID="glass-icon-content" pointerEvents="none" style={{ position: 'relative', zIndex: 1 }}>
-            {children}
+            {typeof children === 'function' ? children(disabled ? colors.ui.control.disabledForeground : colors.text) : children}
           </View>
         </GlassSurface>
       </PressableScale>
@@ -212,7 +212,7 @@ export function IsleToggle({
   title: string
   description?: string
   active: boolean
-  icon?: ReactNode
+  icon?: ReactNode | ((foreground: string) => ReactNode)
   onPress: () => void
   disabled?: boolean
 }) {
@@ -221,14 +221,18 @@ export function IsleToggle({
   const playful = colors.ui.monet && colors.ui.ornamented
   const family = colors.design?.family ?? 'minimal'
   const switchExpression = resolveThemeComponentExpression(family, 'switch')
-  const toggleSurface = active
+  const toggleSurface = disabled
+    ? colors.ui.control.disabledBackground
+    : active
     ? colors.ui.liquidGlass
       ? colors.ui.semantic.chrome.background
       : colors.design?.semantic.color.surfaceContainer ?? colors.ui.semantic.surface.muted
     : colors.ui.liquidGlass || playful
       ? colors.ui.actionBar.itemBackground
       : 'transparent'
-  const toggleBorder = active
+  const toggleBorder = disabled
+    ? colors.ui.control.disabledBorder
+    : active
     ? colors.ui.control.primaryBorder
     : colors.ui.liquidGlass || playful
       ? colors.ui.actionBar.itemBorder
@@ -238,7 +242,11 @@ export function IsleToggle({
       ? colors.ui.card.shadowOpacity
       : 0
     : 0
-  const iconBackground = active
+  const iconForeground = disabled ? colors.ui.control.disabledForeground : active ? colors.ui.control.primaryForeground : colors.ui.icon.accentForeground
+  const iconNode = typeof icon === 'function' ? icon(iconForeground) : icon
+  const iconBackground = disabled
+    ? colors.ui.control.disabledBackground
+    : active
     ? colors.ui.control.primaryBackground
     : colors.ui.liquidGlass
       ? colors.ui.actionBar.itemActiveBackground
@@ -248,6 +256,7 @@ export function IsleToggle({
       haptic
       onPress={onPress}
       disabled={disabled}
+      disabledOpacity={colors.ui.control.disabledOpacity}
       interactionProfile={switchExpression.motion}
       {...switchKeyboardProps(onPress, disabled)}
       accessibilityRole="switch"
@@ -280,18 +289,18 @@ export function IsleToggle({
         }}
       >
         <View style={{ minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          {icon ? (
+          {iconNode ? (
             <MotiView
               animate={{ backgroundColor: iconBackground, rotate: '0deg' }}
               transition={accentMotion.transition}
               style={{ width: 32, height: 32, borderRadius: family === 'minimal' ? 2 : Math.min(colors.ui.radius.controlLarge, 10), alignItems: 'center', justifyContent: 'center' }}
             >
-              {icon}
+              {iconNode}
             </MotiView>
           ) : null}
           <View style={{ flex: 1, minWidth: 0, minHeight: description ? 38 : 40, justifyContent: 'center' }}>
-          <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
-            {description ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
+          <Text style={{ color: disabled ? colors.ui.control.disabledForeground : colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+            {description ? <Text style={{ color: disabled ? colors.ui.control.disabledForeground : colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
           </View>
           <View accessible={false} pointerEvents="none" style={{ height: 44, justifyContent: 'center' }}>
             <IsleSwitch active={active} disabled={disabled} />

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ScrollView, View, useWindowDimensions } from 'react-native'
+import { View, useWindowDimensions } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { router } from 'expo-router'

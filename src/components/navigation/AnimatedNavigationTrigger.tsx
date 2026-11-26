@@ -127,12 +127,12 @@ export function AnimatedNavigationTrigger(props: AnimatedNavigationTriggerProps)
   const { colors } = useAppTheme()
   const { active, running, trigger } = useNavigationTrigger(props.onNavigate, { durationMs: props.durationMs })
   const color = props.color ?? colors.text
-  const icon = (
+  const renderIcon = (foreground = color, accent = props.accentColor ?? colors.ui.icon.accentForeground) => (
     <AnimatedNavigationIcon
       glyph={props.glyph}
       active={active || props.externalActive}
-      color={color}
-      accentColor={props.accentColor ?? colors.ui.icon.accentForeground}
+      color={foreground}
+      accentColor={accent}
       size={props.variant === 'iconButton' && props.size === 'lg' ? 23 : 22}
     />
   )
@@ -147,7 +147,10 @@ export function AnimatedNavigationTrigger(props: AnimatedNavigationTriggerProps)
         onPress={trigger}
         style={props.style}
       >
-        {icon}
+        {foreground => renderIcon(
+          props.disabled || running ? foreground : props.color ?? foreground,
+          props.disabled || running ? foreground : props.accentColor ?? colors.ui.icon.accentForeground,
+        )}
       </IsleIconButton>
     )
   }
@@ -156,7 +159,7 @@ export function AnimatedNavigationTrigger(props: AnimatedNavigationTriggerProps)
     <IsleListItem
       title={props.title}
       description={props.description}
-      leading={<NavigationIconBadge>{icon}</NavigationIconBadge>}
+      leading={<NavigationIconBadge>{renderIcon()}</NavigationIconBadge>}
       trailing={props.trailing}
       danger={props.danger}
       onPress={trigger}

@@ -353,7 +353,7 @@ function PreferenceNumericField({ session, settingKey, label, value, range, kind
         <Text style={{ fontSize: 14, color: colors.textSecondary }}>{range.min}–{range.max}</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <IsleButton label={t('settingsWorkspace.save')} feedbackPhase={session.savingKey === settingKey ? 'pending' : 'idle'}
-            icon={<AppIcon name="check" size={16} color={colors.text} />} busy={session.savingKey === settingKey}
+            icon={foreground => <AppIcon name="check" size={16} color={foreground} />} busy={session.savingKey === settingKey}
             disabled={session.busy || invalid} onPress={() => void session.save(settingKey, text => apply(commitNumericDraft(text, range, kind)!), text => text)} />
           <IsleButton label={t('settingsWorkspace.reload')} disabled={session.busy} onPress={() => session.discard(settingKey)} />
         </View>

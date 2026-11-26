@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import Markdown from 'react-native-markdown-display'
@@ -37,7 +38,7 @@ export default function DocumentEditorScreen({ repository, revision }: { reposit
     actions={<View style={styles.headerActions}>
       <DocumentSaveStatus status={busy ? 'saving' : editor.saveStatus} />
       <IsleButton testID="document-save-action" label={t('common.save')} compact tone="primary" busy={busy}
-        feedbackPhase={busy ? 'pending' : 'idle'} icon={<AppIcon name="check" size={16} color={colors.ui.control.primaryForeground} />}
+        feedbackPhase={busy ? 'pending' : 'idle'} icon={foreground => <AppIcon name="check" size={16} color={foreground} />}
         disabled={loading || !editor.canSave} onPress={() => void editor.save()} />
     </View>}>
     <View style={{ flex: 1, minHeight: 0 }}>

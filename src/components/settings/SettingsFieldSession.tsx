@@ -83,7 +83,7 @@ export function SavedSettingsField({ session, settingKey, value, onCommit, norma
     {entry?.error ? <Text accessibilityRole="alert" style={{ fontSize: 14, lineHeight: 21, color: colors.ui.tone.danger.foreground }}>{t(`settingsWorkspace.${entry.error}`)}</Text> : null}
     {entry ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       <IsleButton label={t('settingsWorkspace.save')} feedbackPhase={session.savingKey === settingKey ? 'pending' : 'idle'}
-        icon={<AppIcon name="check" size={16} color={colors.text} />} busy={session.savingKey === settingKey}
+        icon={foreground => <AppIcon name="check" size={16} color={foreground} />} busy={session.savingKey === settingKey}
         disabled={session.busy} onPress={() => void session.save(settingKey, onCommit, normalize)} />
       <IsleButton label={t('settingsWorkspace.reload')} disabled={session.busy} onPress={() => session.discard(settingKey)} />
     </View> : null}

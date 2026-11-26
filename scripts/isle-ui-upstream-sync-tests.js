@@ -238,7 +238,9 @@ check('install builds declarations and release freshness includes the fork', () 
     assert.ok(prepare >= 0 && prepare < source.indexOf('bun install --frozen-lockfile'))
     assert.ok(source.includes('ANIMAL_ISLAND_UI_REF: ${{ vars.ANIMAL_ISLAND_UI_REF }}'), 'each runner must pass the optional paired UI revision override')
   }
-  assert.ok(collectReleaseInputFiles(root).includes(path.resolve(fork, 'src/components/Button/Button.tsx')))
+  // A linked workspace and Node resolution can name the same physical fork differently.
+  const releaseInputs = collectReleaseInputFiles(root).filter(file => fs.existsSync(file)).map(file => fs.realpathSync(file))
+  assert.ok(releaseInputs.includes(fs.realpathSync(path.resolve(fork, 'src/components/Button/Button.tsx'))))
 })
 
 check('CI bootstrap preserves existing work and rejects the Web branch', () => {

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { router } from 'expo-router'
-import { FlatList, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { FlatList } from '@/components/ui/AppScrollView'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { IsleButton, IsleMotionFrame } from '@/components/ui/isle'

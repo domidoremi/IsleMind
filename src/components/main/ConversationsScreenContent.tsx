@@ -20,6 +20,7 @@ import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavig
 import type { AIProvider } from '@/types/providerContracts'
 import { HistoryEmptyStateFrame, HistoryHeaderFrame, type HistoryVisualTokens } from './history/HistoryPresentation'
 import { PageFeedbackBoundary, PageFeedbackRegion } from '@/components/ui/PageFeedback'
+import { useAppScrollIndicatorStyle } from '@/hooks/useAppScrollIndicatorStyle'
 
 interface ConversationsScreenContentProps {
   active?: boolean
@@ -118,6 +119,7 @@ export function ConversationsScreenContent(props: ConversationsScreenContentProp
 }
 
 function ConversationsScreenBody({ active = true, shellNavigation = false, onHome }: ConversationsScreenContentProps) {
+  const scrollIndicatorStyle = useAppScrollIndicatorStyle()
   const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -1219,7 +1221,7 @@ function ConversationsScreenBody({ active = true, shellNavigation = false, onHom
         summary={historySummary}
       />
       <PageFeedbackRegion style={{ marginHorizontal: 14, marginBottom: 8 }} />
-      <FlashList
+      <FlashList indicatorStyle={scrollIndicatorStyle}
         ref={listRef}
         data={filteredConversations}
         extraData={conversationListExtraData}

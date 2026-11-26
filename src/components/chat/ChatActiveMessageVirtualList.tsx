@@ -17,6 +17,7 @@ import type { ChatActiveWorkspaceActions } from './chatActiveWorkspaceActions'
 import { renderConversationHeaderSpacer } from './chatScreenFrame'
 import type { ComposerPanel } from './FloatingComposer'
 import { getMessageItemType } from './messageListNavigation'
+import { useAppScrollIndicatorStyle } from '@/hooks/useAppScrollIndicatorStyle'
 
 type ApplyStarterDraft = (draft: string, attachments?: Attachment[], restoreIfEmpty?: boolean) => void
 
@@ -77,6 +78,7 @@ export function ChatActiveMessageVirtualList({
   confirmActionFromMessage,
   feedState,
 }: ChatActiveMessageVirtualListProps) {
+  const scrollIndicatorStyle = useAppScrollIndicatorStyle()
   const {
     editUserMessage,
     handleListContentSizeChange,
@@ -121,7 +123,7 @@ export function ChatActiveMessageVirtualList({
   }), [conversation.model, messageListExtraData, provider?.id])
 
   return (
-    <FlashList
+    <FlashList indicatorStyle={scrollIndicatorStyle}
       ref={listRef}
       style={{ flex: 1 }}
       data={conversation.messages}

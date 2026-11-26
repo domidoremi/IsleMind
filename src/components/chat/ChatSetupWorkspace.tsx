@@ -1,4 +1,5 @@
-import { Keyboard, ScrollView, View, useWindowDimensions } from 'react-native'
+import { Keyboard, View, useWindowDimensions } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { useState, type Dispatch, type SetStateAction } from 'react'

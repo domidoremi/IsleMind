@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Platform, ScrollView, StyleSheet, View } from 'react-native'
+import { Platform, StyleSheet, View } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
@@ -285,7 +286,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
             <IsleButton
               label={t('providerSettings.usageQueryUseExample')}
               compact
-              icon={<AppIcon name="json" color={colors.textSecondary} size={14} />}
+              icon={foreground => <AppIcon name="json" color={foreground} size={14} />}
               onPress={applySafeExample}
               disabled={busy}
               style={{ minHeight: 44 }}
@@ -294,7 +295,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
               <IsleButton
                 label={t('common.cancel')}
                 compact
-                icon={<AppIcon name="undo" color={colors.textSecondary} size={14} />}
+                icon={foreground => <AppIcon name="undo" color={foreground} size={14} />}
                 onPress={restoreSavedConfiguration}
                 disabled={busy}
                 style={{ minHeight: 44 }}
@@ -306,7 +307,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
               compact
               tone="primary"
               busy={busy}
-              icon={<AppIcon name="refresh" color={colors.ui.control.primaryForeground} size={14} />}
+              icon={foreground => <AppIcon name="refresh" color={foreground} size={14} />}
               onPress={() => void saveConfiguration()}
               disabled={!dirty || busy || !validation.valid}
               style={{ minHeight: 44, flexGrow: 1 }}
@@ -321,7 +322,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
               <IsleButton
                 label={t('common.cancel')}
                 compact
-                icon={<AppIcon name="undo" color={colors.textSecondary} size={14} />}
+                icon={foreground => <AppIcon name="undo" color={foreground} size={14} />}
                 onPress={restoreSavedConfiguration}
                 disabled={busy}
                 style={{ minHeight: 44 }}
@@ -332,7 +333,7 @@ export function ProviderUsageQueryEditor({ provider, onDirtyChange }: { provider
                 compact
                 tone="primary"
                 busy={busy}
-                icon={<AppIcon name="refresh" color={colors.ui.control.primaryForeground} size={14} />}
+                icon={foreground => <AppIcon name="refresh" color={foreground} size={14} />}
                 onPress={() => void saveConfiguration()}
                 disabled={busy}
                 style={{ minHeight: 44, flexGrow: 1 }}

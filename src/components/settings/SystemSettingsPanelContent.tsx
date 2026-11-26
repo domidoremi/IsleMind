@@ -1179,7 +1179,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>{t('settings.appearancePreviewHint')}</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               <IsleButton testID="settings-appearance-apply" label={t('settings.applyAppearance')} busy={appearance.busy}
-                feedbackPhase={appearance.busy ? 'pending' : 'idle'} icon={<AppIcon name="check" size={16} color={colors.text} />}
+                feedbackPhase={appearance.busy ? 'pending' : 'idle'} icon={foreground => <AppIcon name="check" size={16} color={foreground} />}
                 disabled={appearance.busy || !appearance.dirty || appearance.error === 'conflict'} onPress={(event) => { void appearance.apply(event) }} />
               {appearance.dirty || appearance.error ? <IsleButton label={t('settingsWorkspace.reload')} disabled={appearance.busy} onPress={appearance.discard} /> : null}
             </View>
@@ -1266,8 +1266,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             style={foldoutBodyStyle}
           >
 <View style={{ flexDirection: actionCompact ? 'column' : 'row', gap: 10, marginBottom: 16 }}>
-  <DataButton label={t('settings.exportJson')} icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />} disabled={dataBusy} onPress={() => void runDataOperation(() => exportJson())} />
-  <DataButton label={t('settings.importJson')} icon={<AppIcon name="upload" color={colors.ui.control.primaryForeground} size={18} />} disabled={dataBusy} onPress={() => void runDataOperation(importJson)} />
+  <DataButton label={t('settings.exportJson')} icon={foreground => <AppIcon name="download" color={foreground} size={18} />} disabled={dataBusy} onPress={() => void runDataOperation(() => exportJson())} />
+  <DataButton label={t('settings.importJson')} icon={foreground => <AppIcon name="upload" color={foreground} size={18} />} disabled={dataBusy} onPress={() => void runDataOperation(importJson)} />
 </View>
 {dataBusy || dataFailed ? <Text accessibilityLiveRegion="polite" style={{ color: dataFailed ? colors.ui.tone.danger.foreground : colors.textSecondary }}>{t(dataFailed ? 'settingsSubsystem.operationFailed' : 'common.loading')}</Text> : null}
 <SettingsTaskWorkspace inline tasks={[
@@ -1294,7 +1294,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             </View>
             <DataButton
               label={t('settings.exportSelectedJson')}
-              icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />}
+              icon={foreground => <AppIcon name="download" color={foreground} size={18} />}
               disabled={dataBusy || !portableBackupCategories.length}
               onPress={() => void runDataOperation(exportSelectedJson)}
             />
@@ -1334,7 +1334,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 <IsleButton
                   compact
                   label={t('settings.systemStatusNotificationsOpenSettings')}
-                  icon={<AppIcon name="settings" color={colors.textSecondary} size={14} />}
+                  icon={foreground => <AppIcon name="settings" color={foreground} size={14} />}
                   onPress={() => void openSystemStatusNotificationSettings('notifications')}
                   style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }}
                 />
@@ -1343,7 +1343,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 <IsleButton
                   compact
                   label={t('settings.systemStatusNotificationsOpenPromotedSettings')}
-                  icon={<AppIcon name="settings" color={colors.textSecondary} size={14} />}
+                  icon={foreground => <AppIcon name="settings" color={foreground} size={14} />}
                   onPress={() => void openSystemStatusNotificationSettings('promoted')}
                   style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }}
                 />
@@ -1393,7 +1393,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                   label={refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsRun')}
                   compact
                   disabled={refreshingDiagnostics}
-                  icon={<AppIcon name="activity" color={colors.ui.control.primaryForeground} size={15} />}
+                  icon={foreground => <AppIcon name="activity" color={foreground} size={15} />}
                   onPress={() => void refreshRuntimeDiagnostics()}
                 />
               </View>
@@ -1411,10 +1411,10 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               </Text>
             </View>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              <IsleButton label={refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsRefresh')} compact icon={<AppIcon name="activity" color={colors.textSecondary} size={15} />} onPress={() => void refreshRuntimeDiagnostics()} disabled={refreshingDiagnostics} />
-              <IsleButton label={t('settings.runtimeLogCopy')} compact icon={<AppIcon name="json" color={colors.textSecondary} size={15} />} onPress={() => void copyRuntimeLogTail()} />
-              <IsleButton label={t('settings.runtimeLogShare')} compact icon={<AppIcon name="upload" color={colors.textSecondary} size={15} />} onPress={() => void shareRuntimeLogFile()} />
-              <IsleButton label={t('settings.runtimeLogClear')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={15} />} onPress={() => void clearRuntimeLogFile()} />
+              <IsleButton label={refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsRefresh')} compact icon={foreground => <AppIcon name="activity" color={foreground} size={15} />} onPress={() => void refreshRuntimeDiagnostics()} disabled={refreshingDiagnostics} />
+              <IsleButton label={t('settings.runtimeLogCopy')} compact icon={foreground => <AppIcon name="json" color={foreground} size={15} />} onPress={() => void copyRuntimeLogTail()} />
+              <IsleButton label={t('settings.runtimeLogShare')} compact icon={foreground => <AppIcon name="upload" color={foreground} size={15} />} onPress={() => void shareRuntimeLogFile()} />
+              <IsleButton label={t('settings.runtimeLogClear')} compact tone="danger" icon={foreground => <AppIcon name="delete" color={foreground} size={15} />} onPress={() => void clearRuntimeLogFile()} />
             </View>
           </MotiView>
         ) : null}
@@ -1577,7 +1577,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               <IsleButton
                 label={savingObservabilitySinkApiKey ? t('settings.observabilitySinkApiKeySaving') : t('settings.observabilitySinkApiKeySave')}
                 compact
-                icon={<AppIcon name="provider-key" color={colors.textSecondary} size={15} />}
+                icon={foreground => <AppIcon name="provider-key" color={foreground} size={15} />}
                 onPress={() => void saveObservabilitySinkApiKey()}
                 disabled={savingObservabilitySinkApiKey}
               />
@@ -1585,7 +1585,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
                 label={t('settings.observabilitySinkApiKeyClear')}
                 compact
                 tone="danger"
-                icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={15} />}
+                icon={foreground => <AppIcon name="delete" color={foreground} size={15} />}
                 onPress={() => void clearObservabilitySinkApiKey()}
                 disabled={savingObservabilitySinkApiKey || (!observabilitySinkApiKeyDraft && settings.observabilitySinkApiKeyConfigured !== true)}
               />
@@ -1785,7 +1785,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
             {googlePlayDistribution ? (
               <>
                 <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('updates.googlePlayManaged')}</Text>
-                <DataButton label={t('updates.openGooglePlay')} icon={<AppIcon name="external-link" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => {
+                <DataButton label={t('updates.openGooglePlay')} icon={foreground => <AppIcon name="external-link" color={foreground} size={18} />} onPress={() => {
                   void openGooglePlayListing().catch(() => dialog.toast({ title: t('updates.storeOpenFailed'), tone: 'danger' }))
                 }} />
               </>
@@ -1795,7 +1795,7 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
               <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: narrowLayout ? '100%' : '45%', minWidth: 0 }}>
                 <DataButton
                   label={updateActionLabel}
-                  icon={updatingApk ? <HighFrameSpinner color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.ui.control.primaryForeground} size={18} />}
+                  icon={foreground => updatingApk ? <HighFrameSpinner color={foreground} size={16} /> : <AppIcon name="device" color={foreground} size={18} />}
                   onPress={() => void checkApkUpdate()}
                   disabled={updatingApk}
                 />
@@ -1879,8 +1879,8 @@ const SystemSettingsPanelBody = memo(function SystemSettingsPanelBody({ panel }:
           >
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               <DeleteAllConversationsButton />
-              <DangerButton label={t('settings.resetSettings')} icon={<AppIcon name="retry" color={colors.ui.control.dangerForeground} size={18} />} onPress={confirmResetSettings} />
-              <DangerButton label={t('settings.clearData')} icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={18} />} onPress={() => void dialog.confirm({
+              <DangerButton label={t('settings.resetSettings')} icon={foreground => <AppIcon name="retry" color={foreground} size={18} />} onPress={confirmResetSettings} />
+              <DangerButton label={t('settings.clearData')} icon={foreground => <AppIcon name="delete" color={foreground} size={18} />} onPress={() => void dialog.confirm({
                 title: t('settings.clearData'),
                 message: t('settings.clearDataConfirm'),
                 tone: 'danger',
@@ -1949,7 +1949,7 @@ function RuntimeRepairTaskActions({
               label={formatRuntimeRepairTaskButtonLabel(task, t)}
               compact
               tone={tone}
-              icon={<AppIcon name={runtimeRepairTaskIconName(task.target.kind)} color={runtimeRepairTaskIconColor(colors, tone)} size={14} />}
+              icon={foreground => <AppIcon name={runtimeRepairTaskIconName(task.target.kind)} color={foreground} size={14} />}
               onPress={() => onOpenTask(task)}
               style={{ flexGrow: 1, flexShrink: 1, flexBasis: actionCompact ? '100%' : '47%', minWidth: 0, alignSelf: 'stretch' }}
               textStyle={{ textAlign: 'center' }}
@@ -2139,7 +2139,7 @@ function ThemeFamilyCard({
           <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '800' }}>
             {label}
           </Text>
-          <ThemeRadioMark active={active} />
+          <ThemeRadioMark active={active} disabled={disabled} />
         </View>
         <Text numberOfLines={2} style={{ minHeight: 40, color: colors.textSecondary, fontSize: 14, lineHeight: 20, fontWeight: '600' }}>
           {detail}
@@ -2238,7 +2238,7 @@ function ThemeModeCard({ label, active, onPress, testID, disabled = false }: { l
         }}
       >
         <View style={{ position: 'absolute', top: 8, right: 8 }}>
-          <ThemeRadioMark active={active} size={18} />
+          <ThemeRadioMark active={active} disabled={disabled} size={18} />
         </View>
         <View style={{ width: 38, height: 16, borderRadius: 8, overflow: 'hidden', borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
           <View style={{ flex: 1, flexDirection: 'row' }}>
@@ -2369,15 +2369,6 @@ function runtimeRepairTaskButtonTone(task: RuntimeRepairTask): 'danger' | 'amber
   return 'soft'
 }
 
-function runtimeRepairTaskIconColor(
-  colors: ReturnType<typeof useAppTheme>['colors'],
-  tone: ReturnType<typeof runtimeRepairTaskButtonTone>,
-): string {
-  if (tone === 'danger') return colors.ui.control.dangerForeground
-  if (tone === 'amber') return colors.ui.control.primaryForeground
-  return colors.textSecondary
-}
-
 function runtimeRepairTaskIconName(kind: RuntimeRepairTask['target']['kind']) {
   switch (kind) {
     case 'provider-settings':
@@ -2450,7 +2441,7 @@ function VersionRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function DataButton({ label, icon, onPress, disabled = false }: { label: string; icon: ReactNode; onPress: () => void; disabled?: boolean }) {
+function DataButton({ label, icon, onPress, disabled = false }: { label: string; icon: Parameters<typeof IsleButton>[0]['icon']; onPress: () => void; disabled?: boolean }) {
   const { colors } = useAppTheme()
   return (
     <IsleButton
@@ -2466,7 +2457,7 @@ function DataButton({ label, icon, onPress, disabled = false }: { label: string;
   )
 }
 
-function DangerButton({ label, icon, onPress }: { label: string; icon: ReactNode; onPress: () => void }) {
+function DangerButton({ label, icon, onPress }: { label: string; icon: Parameters<typeof IsleButton>[0]['icon']; onPress: () => void }) {
   const { colors } = useAppTheme()
   return <IsleButton label={label} icon={icon} tone="danger" onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, minHeight: 48, borderRadius: Math.min(colors.ui.radius.controlLarge, 8) }} />
 }

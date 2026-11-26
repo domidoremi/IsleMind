@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ScrollView, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text } from '@/components/ui/AppText'
 import { MotiView } from 'moti'
 import { Easing } from 'react-native-reanimated'

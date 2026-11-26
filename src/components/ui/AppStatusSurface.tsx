@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -16,6 +16,7 @@ import {
   type AppStatusTone,
 } from './appStatusSurfaceState'
 import { IslePanel } from './isle/Panel'
+import { IslePressable } from './isle/Pressable'
 
 export interface AppStatusSurfaceProps {
   title: string
@@ -108,24 +109,24 @@ export function AppStatusSurface({
         {hasAction || hasDismiss ? (
           <View style={styles.actions}>
             {hasAction ? (
-              <Pressable
+              <IslePressable
                 accessibilityRole="button"
                 accessibilityLabel={actionLabel}
                 onPress={onAction}
-                style={({ pressed }) => [styles.action, { borderColor: colors.ui.control.primaryBorder, backgroundColor: colors.ui.control.primaryBackground, opacity: pressed ? 0.7 : 1 }]}
+                style={[styles.action, { borderColor: colors.ui.control.primaryBorder, backgroundColor: colors.ui.control.primaryBackground }]}
               >
                 <Text numberOfLines={2} style={[styles.actionText, { color: colors.ui.control.primaryForeground }]}>{actionLabel}</Text>
-              </Pressable>
+              </IslePressable>
             ) : null}
             {hasDismiss ? (
-              <Pressable
+              <IslePressable
                 accessibilityRole="button"
                 accessibilityLabel={dismissLabel ?? t('common.close')}
                 onPress={onDismiss}
-                style={({ pressed }) => [styles.dismiss, { opacity: pressed ? 0.6 : 1 }]}
+                style={styles.dismiss}
               >
                 <AppIcon name="close" color={colors.textTertiary} size={17} strokeWidth={appIconStroke.strong} />
-              </Pressable>
+              </IslePressable>
             ) : null}
           </View>
         ) : null}
@@ -134,16 +135,15 @@ export function AppStatusSurface({
   )
 
   const surface = onPress ? (
-    <Pressable
+    <IslePressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
       accessibilityLiveRegion={accessibilityLiveRegion}
       onPress={onPress}
-      style={({ pressed }) => ({ opacity: pressed ? 0.88 : 1 })}
     >
       {panel}
-    </Pressable>
+    </IslePressable>
   ) : panel
 
   const content = shouldAnimate ? (

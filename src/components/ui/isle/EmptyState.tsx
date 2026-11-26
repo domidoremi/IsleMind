@@ -115,7 +115,7 @@ export function IsleEmptyState({ title, description, actionLabel, actionGlyph, a
           <IsleButton
             label={actionLabel}
             tone="primary"
-            icon={actionGlyph ? <AnimatedNavigationIcon glyph={actionGlyph} active={navigation.active} color={colors.ui.control.primaryForeground} size={18} /> : undefined}
+            icon={actionGlyph ? foreground => <AnimatedNavigationIcon glyph={actionGlyph} active={navigation.active} color={foreground} size={18} /> : undefined}
             busy={actionBusy}
             disabled={actionDisabled}
             onPress={actionPress}

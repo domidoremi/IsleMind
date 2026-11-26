@@ -1,5 +1,5 @@
-import { useEffect, type Ref } from 'react'
-import { Platform, Pressable, type PressableProps, type PressableStateCallbackType, type View } from 'react-native'
+import { useEffect, useState, type Ref } from 'react'
+import { Platform, Pressable, type PressableProps, type View } from 'react-native'
 import * as Haptics from 'expo-haptics'
 import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -137,6 +137,7 @@ export function PressableScale({
   const resolvedFocusOpacity = focusOpacity ?? profile.focusOpacity
   const resolvedDisabledOpacity = disabledOpacity ?? profile.disabledOpacity
   const disabled = !!props.disabled
+  const [pressed, setPressedStyle] = useState(false)
   const accessibilityState = disabled
     ? { ...props.accessibilityState, disabled: true }
     : props.accessibilityState
@@ -150,6 +151,7 @@ export function PressableScale({
     cancelAnimation(focusProgress)
   }, [pressProgress, hoverProgress, focusProgress])
   useEffect(() => {
+    if (disabled) setPressedStyle(false)
     if (!disabled && motion === 'full') return
     // A loading/disabled transition or OS preference change can interrupt a
     // press before onPressOut arrives. Never leave a recycled control depressed.
@@ -212,6 +214,7 @@ export function PressableScale({
 
   function setPressed(pressed: boolean) {
     if (disabled) return
+    if (typeof style === 'function') setPressedStyle(pressed)
     pressProgress.value = feedbackTransition(pressed, pressed ? profile.pressInDuration : profile.pressOutDuration)
   }
 
@@ -224,12 +227,9 @@ export function PressableScale({
     if (disabled) return
     focusProgress.value = feedbackTransition(focused, profile.focusDuration)
   }
-  const pressableStyle = typeof style === 'function'
-    ? (state: PressableStateCallbackType) => {
-      const resolvedStyle = style(state)
-      return Array.isArray(resolvedStyle) ? [...resolvedStyle, animatedStyle] : [resolvedStyle, animatedStyle]
-    }
-    : [style, animatedStyle]
+  // Resolve callback styles before the animated host so menu rows retain
+  // their geometry, selected surface and pressed state.
+  const pressableStyle = [typeof style === 'function' ? style({ pressed: !disabled && pressed }) : style, animatedStyle]
 
   return (
     <AnimatedPressable

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { ScrollView, View } from 'react-native'
+import { View } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Text } from '@/components/ui/AppText'
 import { useTranslation } from 'react-i18next'
 import { isProviderCitationSupportCurrent, parseProviderCitationSupport } from '@/core'

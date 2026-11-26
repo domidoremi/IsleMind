@@ -1,6 +1,7 @@
 import type { ReactNode, RefObject } from 'react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { Platform, Pressable, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Modal } from '@/components/ui/AppModal'
 import { Text } from '@/components/ui/AppText'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'

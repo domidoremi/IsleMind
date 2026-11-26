@@ -2,7 +2,8 @@ import { AppLoadingIndicator } from '@/components/ui/AppLoadingIndicator'
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { UsageRequestDetail } from './UsageRequestDetail'
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native'
+import { ScrollView } from '@/components/ui/AppScrollView'
 import { Modal } from '@/components/ui/AppModal'
 import { Text, TextInput } from '@/components/ui/AppText'
 import { FlashList } from '@shopify/flash-list'
@@ -20,6 +21,7 @@ import { SettingsHelpButton } from './SettingsHelp'
 import type { RedactedUsageRequestDetail, UsageRequestDetailState, UsageRequestStatus } from './usageRequestDetailTypes'
 
 import { USAGE_PRICING_CONFLICT } from '@/modules/diagnostics'
+import { useAppScrollIndicatorStyle } from '@/hooks/useAppScrollIndicatorStyle'
 
 export type { RedactedUsageDetailField, RedactedUsageRequestDetail, UsageRequestDetailState, UsageRequestStatus } from './usageRequestDetailTypes'
 export type UsageStatisticsTab = 'overview' | 'conversations' | 'requests' | 'providers' | 'models'
@@ -375,6 +377,7 @@ export function UsageStatisticsContent({
   onRetry,
   copy: copyOverrides,
 }: UsageStatisticsContentProps) {
+  const scrollIndicatorStyle = useAppScrollIndicatorStyle()
   const { colors } = useAppTheme()
   const motion = useMotionPreference(true)
   const { t } = useTranslation()
@@ -501,7 +504,7 @@ export function UsageStatisticsContent({
             accessibilityLabel={refreshing ? copy.refreshing : copy.refresh}
             busy={refreshing}
             feedbackPhase={refreshing ? 'pending' : 'idle'}
-            icon={<AppIcon name="refresh" color={colors.textSecondary} size={14} />}
+            icon={foreground => <AppIcon name="refresh" color={foreground} size={14} />}
             disabled={refreshing}
             onPress={onRefresh}
           />
@@ -639,7 +642,7 @@ export function UsageStatisticsContent({
           ) : state === 'error' ? (
             <UsageStateView icon="warning" label={errorMessage ?? copy.detailUnavailable} actionLabel={onRetry ? copy.retry : undefined} onAction={onRetry} danger />
           ) : activeTab === 'requests' ? (
-            <FlashList
+            <FlashList indicatorStyle={scrollIndicatorStyle}
               data={requests}
               keyExtractor={(item) => item.id}
               accessibilityRole="list"
@@ -659,7 +662,7 @@ export function UsageStatisticsContent({
                 />
               )}
             />
-          ) : activeTab === 'conversations' ? <FlashList
+          ) : activeTab === 'conversations' ? <FlashList indicatorStyle={scrollIndicatorStyle}
               data={conversations} keyExtractor={item => item.id} accessibilityRole="list"
               accessibilityLabel={t('usage.conversationsTab')} nestedScrollEnabled drawDistance={listHeight}
               contentContainerStyle={styles.listContent}
@@ -670,7 +673,7 @@ export function UsageStatisticsContent({
                 <BreakdownRow item={item} compact={stackedRows} copy={copy} includeEstimates={filters.includeEstimates} />
               </IslePressable>}
             /> : (
-            <FlashList
+            <FlashList indicatorStyle={scrollIndicatorStyle}
               data={providerBreakdown ? providers : models}
               keyExtractor={(item) => item.id}
               accessibilityRole="list"
@@ -696,7 +699,7 @@ export function UsageStatisticsContent({
           <IsleButton
             compact
             label={copy.addOverride}
-            icon={<AppIcon name="add" color={colors.textSecondary} size={14} />}
+            icon={foreground => <AppIcon name="add" color={foreground} size={14} />}
             disabled={!pricingProviderOptions.length || !pricingModelOptions.length}
             onPress={openNewPricingOverride}
           />
@@ -719,8 +722,8 @@ export function UsageStatisticsContent({
                   <Text style={[styles.rowMeta, { color: colors.textTertiary }]}>{item.currencyLabel} · {copy.perMillionTokens}</Text>
                 </View>
                 <View style={[styles.rowActions, compact && styles.rowActionsCompact]}>
-                  <IsleButton compact label={copy.editOverride} icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => openExistingPricingOverride(item)} />
-                  <IsleButton compact tone="danger" label={copy.deleteOverride} icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => onDeletePricingOverride(item.id)} />
+                  <IsleButton compact label={copy.editOverride} icon={foreground => <AppIcon name="edit" color={foreground} size={14} />} onPress={() => openExistingPricingOverride(item)} />
+                  <IsleButton compact tone="danger" label={copy.deleteOverride} icon={foreground => <AppIcon name="delete" color={foreground} size={14} />} onPress={() => onDeletePricingOverride(item.id)} />
                 </View>
               </View>
             ))}
@@ -741,7 +744,7 @@ export function UsageStatisticsContent({
             accessibilityLabel={exportingFormat === 'csv' ? copy.exporting : copy.exportCsv}
             feedbackPhase={exportingFormat === 'csv' ? 'pending' : 'idle'}
             busy={exportingFormat === 'csv'}
-            icon={<AppIcon name="table" color={colors.textSecondary} size={14} />}
+            icon={foreground => <AppIcon name="table" color={foreground} size={14} />}
             disabled={!!exportingFormat}
             onPress={() => onExport('csv')}
           />
@@ -751,7 +754,7 @@ export function UsageStatisticsContent({
             accessibilityLabel={exportingFormat === 'json' ? copy.exporting : copy.exportJson}
             feedbackPhase={exportingFormat === 'json' ? 'pending' : 'idle'}
             busy={exportingFormat === 'json'}
-            icon={<AppIcon name="json" color={colors.textSecondary} size={14} />}
+            icon={foreground => <AppIcon name="json" color={foreground} size={14} />}
             disabled={!!exportingFormat}
             onPress={() => onExport('json')}
           />
@@ -760,7 +763,7 @@ export function UsageStatisticsContent({
           compact
           tone="danger"
           label={clearing ? copy.clearing : copy.clear}
-          icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />}
+          icon={foreground => <AppIcon name="delete" color={foreground} size={14} />}
           disabled={clearing}
           onPress={() => setClearConfirmationOpen(true)}
         />
@@ -802,7 +805,7 @@ export function UsageStatisticsContent({
           <IsleButton
             tone="danger"
             label={clearing ? copy.clearing : copy.confirmClear}
-            icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={15} />}
+            icon={foreground => <AppIcon name="delete" color={foreground} size={15} />}
             disabled={clearing}
             onPress={() => {
               onClear()
@@ -875,7 +878,7 @@ export function UsageStatisticsContent({
               <IsleButton
                 tone="primary"
                 label={pricingSaving ? copy.saving : copy.saveOverride}
-                icon={<AppIcon name="check" color={colors.ui.control.primaryForeground} size={15} />}
+                icon={foreground => <AppIcon name="check" color={foreground} size={15} />}
                 disabled={!canSavePricing || pricingSaving}
                 onPress={savePricingOverride}
               />
@@ -1065,7 +1068,7 @@ function UsageSheet({ visible, title, closeLabel, onClose, children, keyboardAwa
       >
         <View testID="usage-sheet-header" style={[styles.modalHeader, { borderBottomColor: colors.ui.section.divider }]}>
           <Text style={[styles.sheetTitle, { color: colors.text }]}>{title}</Text>
-          <IsleButton compact label={closeLabel} icon={<AppIcon name="close" color={colors.textSecondary} size={15} />} onPress={onClose} />
+          <IsleButton compact label={closeLabel} icon={foreground => <AppIcon name="close" color={foreground} size={15} />} onPress={onClose} />
         </View>
         <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled contentContainerStyle={styles.modalContent}>
           {children}
@@ -1129,7 +1132,7 @@ function UsageStateView({ icon, label, actionLabel, onAction, danger = false, lo
     <View style={[styles.stateView, compact && styles.stateViewCompact]}>
       {loading && motion === 'full' ? <AppLoadingIndicator color={color} size="small" /> : <AppIcon name={icon} color={color} size={18} />}
       <Text style={[styles.stateLabel, { color }]}>{label}</Text>
-      {actionLabel && onAction ? <IsleButton compact label={actionLabel} icon={<AppIcon name="retry" color={colors.textSecondary} size={14} />} onPress={onAction} /> : null}
+      {actionLabel && onAction ? <IsleButton compact label={actionLabel} icon={foreground => <AppIcon name="retry" color={foreground} size={14} />} onPress={onAction} /> : null}
     </View>
   )
 }
