@@ -31,6 +31,30 @@ it.each([
   expect(auditThemeControls(source, 'fixture.tsx')).toContainEqual({ file: 'fixture.tsx', line: 1, control })
 })
 
+it.each([
+  ["import { Text } from 'react-native'; const view = <Text>Unprojected</Text>", 'react-native.Text (use AppText)'],
+  ["import { Text as NativeText } from 'react-native'; NativeText", 'react-native.Text (use AppText)'],
+  ["import * as Native from 'react-native'; const view = <Native.Text />", 'react-native.Text (use AppText)'],
+  ["const Native = require('react-native'); Native['Text']", 'react-native.Text (use AppText)'],
+  ["require('react-native').Text", 'react-native.Text (use AppText)'],
+  ["async function load() { const Native = await import('react-native'); return Native.Text }", 'react-native.Text (use AppText)'],
+  ["const { Text: NativeText } = require('react-native'); NativeText", 'react-native.Text (use AppText)'],
+  ["const Native = require('react-native'); const { Text: NativeText } = Native; NativeText", 'react-native.Text (use AppText)'],
+  ["import { Text as WebText } from 'react-native-web'; const view = <WebText />", 'react-native-web.Text (use AppText)'],
+  ["import * as Web from 'react-native-web'; const view = <Web.Text />", 'react-native-web.Text (use AppText)'],
+  ["const Web = require('react-native-web'); Web['Text']", 'react-native-web.Text (use AppText)'],
+  ["require('react-native-web').Text", 'react-native-web.Text (use AppText)'],
+  ["const Web = require('react-native-web'); const { Text: WebText } = Web; WebText", 'react-native-web.Text (use AppText)'],
+  ["async function load() { const { Text: WebText } = await import('react-native-web'); return WebText }", 'react-native-web.Text (use AppText)'],
+])('rejects unprojected renderer text hosts: %s', (source, control) => {
+  expect(auditThemeControls(source, 'fixture.tsx')).toContainEqual({ file: 'fixture.tsx', line: 1, control })
+})
+
+it('allows only the AppText and Animal Island tooltip host imports to bypass AppText', () => {
+  expect(auditThemeControls("import { Text as NativeText } from 'react-native';", 'src/components/ui/AppText.tsx')).toEqual([])
+  expect(auditThemeControls("import { Text as NativeText } from 'react-native';", 'src/components/ui/isle/Tooltip.tsx')).toEqual([])
+})
+
 it('reports a namespace control once for an opening and closing pair', () => {
   expect(auditThemeControls("import * as Native from 'react-native'; const control = <Native.Button>Save</Native.Button>", 'fixture.tsx'))
     .toEqual([{ file: 'fixture.tsx', line: 1, control: 'react-native.Button' }])
@@ -39,8 +63,8 @@ it('reports a namespace control once for an opening and closing pair', () => {
 it('allows theme namespaces and native layout or text hosts', () => {
   expect(auditThemeControls(`import * as Native from 'react-native';
     import * as Theme from '@/components/ui/isle';
-    import { Text as WebText } from 'react-native-web';
-    const control = <Native.View><Theme.Button /><Native.TextInput /><WebText>Readable text</WebText></Native.View>`, 'fixture.tsx')).toEqual([])
+    import { Text as AppText } from '@/components/ui/AppText';
+    const control = <Native.View><Theme.Button /><Native.TextInput /><AppText>Readable text</AppText></Native.View>`, 'fixture.tsx')).toEqual([])
 })
 
 it('keeps native text hosts, type-only references and application controls available', () => {

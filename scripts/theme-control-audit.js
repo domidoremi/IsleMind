@@ -11,6 +11,16 @@ const controlsByModule = new Map([
   ['react-native-web', webControls],
   ['@react-native-picker/picker', pickerControls],
 ])
+// Raw renderer text hosts bypass AppText defaults. These two infrastructure
+// components deliberately use React Native's host directly and project its font.
+const textHostIssues = new Map([
+  ['react-native', 'react-native.Text (use AppText)'],
+  ['react-native-web', 'react-native-web.Text (use AppText)'],
+])
+const textHostExemptions = new Map([
+  ['src/components/ui/AppText.tsx', 'NativeText'],
+  ['src/components/ui/isle/Tooltip.tsx', 'NativeText'],
+])
 const htmlControls = new Set(['button', 'input', 'textarea', 'select', 'progress', 'meter'])
 const browserDialogs = new Set(['alert', 'confirm', 'prompt'])
 
@@ -56,6 +66,13 @@ function auditThemeControls(source, file) {
       if (specifier.type === 'ImportSpecifier' && specifier.importKind !== 'type' && controls.has(specifier.imported.name)) add(specifier, specifier.imported.name)
       if (specifier.type === 'ImportDefaultSpecifier' && node.source.value === '@react-native-picker/picker') add(specifier, 'Picker')
     }
+    const textHostIssue = textHostIssues.get(node.source.value)
+    if (textHostIssue) for (const specifier of node.specifiers) {
+      if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type' || specifier.imported.name !== 'Text') continue
+      const relativeFile = file.replaceAll('\\', '/')
+      const approvedAlias = node.source.value === 'react-native' && textHostExemptions.get(relativeFile) === specifier.local.name
+      if (!approvedAlias) add(specifier, textHostIssue)
+    }
   }
   traverse(ast, {
     JSXOpeningElement(element) {
@@ -83,11 +100,15 @@ function auditThemeControls(source, file) {
     },
     VariableDeclarator({ node }) {
       const moduleSource = moduleSourceForLoad(node.init)
+        ?? (node.init?.type === 'Identifier' ? namespaces.get(node.init.name) : undefined)
       const controls = controlsByModule.get(moduleSource)
       if (!controls) return
       if (node.id.type === 'Identifier') namespaces.set(node.id.name, moduleSource)
       if (node.id.type === 'ObjectPattern') for (const property of node.id.properties) {
-        if (property.type === 'ObjectProperty' && controls.has(property.key.name ?? property.key.value)) add(property, property.key.name ?? property.key.value)
+        if (property.type !== 'ObjectProperty') continue
+        const imported = property.key.name ?? property.key.value
+        if (textHostIssues.has(moduleSource) && imported === 'Text') add(property, textHostIssues.get(moduleSource))
+        if (controls.has(imported)) add(property, imported)
       }
     },
     CallExpression(call) {
@@ -102,16 +123,19 @@ function auditThemeControls(source, file) {
       && node.name.object.type === 'JSXIdentifier') {
       const moduleSource = namespaces.get(node.name.object.name)
       if (controlsByModule.get(moduleSource)?.has(node.name.property.name)) add(node, moduleSource + '.' + node.name.property.name)
+      if (textHostIssues.has(moduleSource) && node.name.property.name === 'Text') add(node, textHostIssues.get(moduleSource))
     }
     if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') {
       const property = node.computed ? node.property.value : node.property.name
       if (node.object.type === 'Identifier') {
         const moduleSource = namespaces.get(node.object.name)
         if (controlsByModule.get(moduleSource)?.has(property)) add(node, moduleSource + '.' + property)
+        if (textHostIssues.has(moduleSource) && property === 'Text') add(node, textHostIssues.get(moduleSource))
         if (['window', 'globalThis', 'global'].includes(node.object.name) && browserDialogs.has(property)) add(node, node.object.name + '.' + property)
       }
       const moduleSource = moduleSourceForLoad(node.object)
       if (controlsByModule.get(moduleSource)?.has(property)) add(node, moduleSource + '.' + property)
+      if (textHostIssues.has(moduleSource) && property === 'Text') add(node, textHostIssues.get(moduleSource))
     }
     for (const [key, value] of Object.entries(node)) {
       if (['loc', 'start', 'end', 'tokens', 'comments'].includes(key)) continue
