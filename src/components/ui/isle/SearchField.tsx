@@ -2,6 +2,7 @@ import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState, ty
 import { Platform, StyleSheet, View, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle } from 'react-native'
 import { TextInput } from '@/components/ui/AppText'
 import { resolveAppInputThemeProps } from '@/components/ui/appInputTheme'
+import { resolveWebTextMetricsStyle } from '@/components/ui/webTextMetrics'
 import { MotiView } from 'moti'
 import { Input as NativeInput } from 'animal-island-ui-rn'
 
@@ -34,15 +35,13 @@ const SEARCH_METRICS: Readonly<Record<CanonicalThemeId, Readonly<{
   horizontalPadding: number
   gap: number
   iconSize: number
-  fontSize: number
-  fontWeight: '500' | '600' | '700'
   radius: number
 }>>> = Object.freeze({
-  'animal-island-ui': { minHeight: 48, horizontalPadding: 16, gap: 8, iconSize: 18, fontSize: 14, fontWeight: '500', radius: 50 },
-  minimal: { minHeight: 44, horizontalPadding: 2, gap: 9, iconSize: 16, fontSize: 14, fontWeight: '500', radius: 0 },
-  monet: { minHeight: 48, horizontalPadding: 12, gap: 10, iconSize: 17, fontSize: 15, fontWeight: '600', radius: 14 },
-  material: { minHeight: 52, horizontalPadding: 16, gap: 12, iconSize: 18, fontSize: 15, fontWeight: '500', radius: 24 },
-  'liquid-glass': { minHeight: 50, horizontalPadding: 14, gap: 10, iconSize: 18, fontSize: 15, fontWeight: '600', radius: 24 },
+  'animal-island-ui': { minHeight: 48, horizontalPadding: 16, gap: 8, iconSize: 18, radius: 50 },
+  minimal: { minHeight: 44, horizontalPadding: 2, gap: 9, iconSize: 16, radius: 0 },
+  monet: { minHeight: 48, horizontalPadding: 12, gap: 10, iconSize: 17, radius: 14 },
+  material: { minHeight: 52, horizontalPadding: 16, gap: 12, iconSize: 18, radius: 24 },
+  'liquid-glass': { minHeight: 50, horizontalPadding: 14, gap: 10, iconSize: 18, radius: 24 },
 })
 
 export function IsleSearchField({
@@ -87,8 +86,9 @@ export function IsleSearchField({
     if (input?.isFocused?.()) input.blur()
   }, [])
   if (usesNativeInput) {
+    const nativeInputStyle: StyleProp<TextStyle> = [design?.semantic.typography.body, inputStyle]
     return <NativeInput value={value} defaultValue={defaultValue} disabled={!editable} onChangeText={onChangeText} onFocus={onFocus} onBlur={onBlur}
-      allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={[design?.semantic.typography.body, inputStyle, disabled ? { color: colors.ui.input.disabledForeground } : null]}
+      allowClear clearAriaLabel={clearAccessibilityLabel} onClear={onClear} testID={testID} inputStyle={[nativeInputStyle, resolveWebTextMetricsStyle(nativeInputStyle), disabled ? { color: colors.ui.input.disabledForeground } : null]}
       inputProps={{ ...props, ...themedInputProps, disableFullscreenUI, accessibilityState: { ...accessibilityState, busy: pending || accessibilityState?.busy } }} inputRef={setNativeInputRef} style={[{ minHeight: 44 }, containerStyle]}
       prefix={<AppIcon name="search" color={disabled ? colors.ui.input.disabledForeground : colors.textSecondary} size={18} />}
       suffix={pending ? <HighFrameSpinner color={colors.textSecondary} size={16} /> : undefined} />
@@ -216,10 +216,6 @@ export function IsleSearchField({
             minHeight: 44,
             padding: 0,
             color: disabled ? colors.ui.input.disabledForeground : colors.text,
-            fontSize: compact ? Math.max(12, metrics.fontSize - 1) : metrics.fontSize,
-            lineHeight: compact ? 18 : 20,
-            fontWeight: design?.semantic.typography.label.fontWeight ?? metrics.fontWeight,
-            letterSpacing: minimal ? 0.1 : 0,
             includeFontPadding: false,
             textAlignVertical: 'center',
           },
