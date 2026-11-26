@@ -80,7 +80,7 @@ function dialogBorderWidth(colors: ReturnType<typeof useAppTheme>['colors']) {
 }
 
 export function IsleDialogProvider({ children, updateNotice }: { children: ReactNode; updateNotice?: string | null }) {
-  const { colors, canonicalThemeId, design } = useAppTheme()
+  const { colors, canonicalThemeId, design, isDark } = useAppTheme()
   const overlayMotion = useThemeMotion('overlay', { readable: true })
   const feedbackMotion = useThemeMotion('accent', { readable: true })
   const motion = overlayMotion.intensity
@@ -246,7 +246,7 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
         onRequestClose={() => closeDialog(false)}
         statusBarTranslucent
       >
-        <StatusBar style="light" />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{
