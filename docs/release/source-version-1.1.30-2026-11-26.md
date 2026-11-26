@@ -14,4 +14,8 @@
 
 31 路由、55 原型的完整视觉、原生及环境矩阵尚未验收。浏览器与原生执行曾返回 CreateProcess rejected: blocked by policy；用户跳过当前受阻步骤，未重试或绕过，跳过不构成通过。fullAcceptance、nativeVerified、visualAcceptance、loadedRuntimeVerified 均为 false。没有构建、导出或安装 APK，没有派发 Actions、创建 PR、操作设备音频、TalkBack 或音量，也没有模型请求。安装包目录仍保持原身份。
 
-实际发布回执在发布并独立核对后补充。
+## 实际发布
+
+v1.1.30 于 2026-11-26 11:22:58（台北）公开发布，标签指向 8169c28c89cf724d2a0c9d89cde9e9bf2d82b49e。源码版本为 1.1.30／155。已从 GitHub 独立读回三语正文、公开稳定状态、latest 和零附件；原有 56 份 Release 与 56 个标签均保留。六个工作流、41 条历史运行未变化，活动为零。下一周期 0/5。安装包目录仍为 1.1.2／127。
+
+[发布回执](./source-release-1.1.30-2026-11-26.md)
