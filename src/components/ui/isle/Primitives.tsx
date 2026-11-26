@@ -362,8 +362,8 @@ export function IsleListItem({
       <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 12, flex: stackTrailing ? undefined : 1, minWidth: 0 }}>
         {leading ? <View style={{ flexShrink: 0, maxWidth: compact ? '42%' : undefined }}>{leading}</View> : null}
         <View style={{ flex: 1, minWidth: 0, minHeight: description ? 40 : 44, justifyContent: 'center' }}>
-        <Text numberOfLines={1} style={{ color: danger ? colors.ui.tone.danger.foreground : colors.text, fontSize: 15, lineHeight: 21, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
-          {description ? <Text numberOfLines={compact ? 3 : 2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
+        <Text numberOfLines={1} style={{ ...colors.design?.semantic.typography.label, color: danger ? colors.ui.tone.danger.foreground : colors.text, includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+          {description ? <Text numberOfLines={compact ? 3 : 2} style={{ ...colors.design?.semantic.typography.body, color: colors.textSecondary, marginTop: 3, includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
         </View>
       </View>
       {trailing ? (
