@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.30 source version checkpoint](./release/source-version-1.1.30-2026-11-26.md): theme typography and feedback, disabled controls, Markdown colors, and dialog status bar appearance.
 - [1.1.29 source version checkpoint](./release/source-version-1.1.29-2026-11-25.md): themed controls and Web buttons, keyboard switches, credential scope, and provider confirmation focus.
 - [1.1.28 source version checkpoint](./release/source-version-1.1.28-2026-11-25.md): guide anchor positioning, readable headers, duplicate import handling, and connection checks after routing consent.
 - [1.1.27 source version checkpoint](./release/source-version-1.1.27-2026-11-24.md): selection markers, concise assistant settings, distinct skill connections, matching priority defaults, and accessible skill choices.
