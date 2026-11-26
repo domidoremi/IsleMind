@@ -91,7 +91,6 @@ export function ComposerToolButton({
           justifyContent: 'center',
           gap: iconOnly ? 0 : compact ? 4 : 7,
           borderWidth: active ? subtleBorderWidth : 0,
-          opacity: disabled ? 0.68 : 1,
         }}
       >
         {children}
