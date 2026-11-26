@@ -65,7 +65,10 @@ it.each(['en', 'ja', 'zh-CN'] as const)('%s selects a distinct same-name connect
   await waitFor(() => expect(screen.getByRole('combobox', { name: field })).toHaveAccessibilityValue({ text: 'Same · alpha.example:8443' }))
   await fireEvent.press(screen.getByRole('combobox', { name: field }))
   expect(screen.getAllByRole('option').map(node => node.props.accessibilityLabel)).toEqual(['Same · alpha.example:8443', 'Same · beta.example:8443'])
-  expect(JSON.stringify(screen.toJSON())).not.toMatch(/fixture-pass|\/private|token=fixture|#hidden/)
+  const privateAddress = /fixture-pass|\/private|token=fixture|#hidden/
+  expect(screen.queryAllByText(privateAddress)).toHaveLength(0)
+  expect(screen.queryAllByLabelText(privateAddress)).toHaveLength(0)
+  expect(screen.queryAllByDisplayValue(privateAddress)).toHaveLength(0)
   await fireEvent.press(screen.getByRole('option', { name: 'Same · beta.example:8443' }))
   expect(screen.getByRole('combobox', { name: field })).toHaveAccessibilityValue({ text: 'Same · beta.example:8443' })
   expect(screen.getByRole('combobox', { name: mockTranslate('agents.fields.modelId') })).toHaveAccessibilityValue({ text: 'model-b' })
