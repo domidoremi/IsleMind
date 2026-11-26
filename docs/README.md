@@ -29,6 +29,7 @@ chapters do not expire. Do not hand-edit `src/generated/userGuide.ts`.
 
 ## Engineering documentation
 
+- [1.1.33 source version checkpoint](./release/source-version-1.1.33-2026-11-27.md): theme typography for search, progress, feedback, workspace introductions, tooltips and provider excerpts, plus selected radio contrast.
 - [1.1.32 source version checkpoint](./release/source-version-1.1.32-2026-11-26.md): theme typography for input labels, list rows, field descriptions, reference fields, and select menus.
 - [1.1.31 source version checkpoint](./release/source-version-1.1.31-2026-11-26.md): themed radio marks, provider sorting and pagination, composer tools, and toggle typography.
 - [1.1.30 source version checkpoint](./release/source-version-1.1.30-2026-11-26.md): theme typography and feedback, disabled controls, Markdown colors, and dialog status bar appearance.
