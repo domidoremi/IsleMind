@@ -34,14 +34,14 @@ export function SettingsReferenceField({ label, labelAccessory, value, options, 
   }
   return <View style={{ gap: 8 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 20 }}>
-      <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: '700' }}>{label}</Text>
+      <Text style={{ ...colors.design?.semantic.typography.label, flex: 1, minWidth: 0, color: colors.text }}>{label}</Text>
       {labelAccessory}
     </View>
     {selected.map(id => {
       const option = unique.find(item => item.value === id)
       const name = option?.label ?? (catalogReady ? `${id} · ${t('agents.unresolved')}` : id)
       return <View key={id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text selectable style={{ flex: 1, minWidth: 0, color: option || !catalogReady ? colors.textSecondary : colors.ui.tone.warning.foreground, fontSize: 14, lineHeight: 20 }}>{name}</Text>
+        <Text selectable style={{ ...colors.design?.semantic.typography.body, flex: 1, minWidth: 0, color: option || !catalogReady ? colors.textSecondary : colors.ui.tone.warning.foreground }}>{name}</Text>
         <IsleButton compact label={t('settingsReferences.remove')} accessibilityLabel={`${t('settingsReferences.remove')} ${name}`} disabled={disabled}
           onPress={() => change(selected.filter(item => item !== id).join('\n'))} />
       </View>
@@ -49,10 +49,10 @@ export function SettingsReferenceField({ label, labelAccessory, value, options, 
     {unique.length > 8 ? <IsleInput accessibilityLabel={`${t('common.search')} ${label}`} placeholder={t('common.search')} value={query} onChangeText={setQuery} editable={!disabled} /> : null}
     <IsleSelect placeholder={t('settingsReferences.choose', { label })} disabled={disabled || !catalogReady || !candidates.length} options={candidates}
       onChange={id => { if (catalogReady && candidates.some(option => option.value === id) && change(multiple ? [...selected, id].join('\n') : id)) setQuery('') }} />
-    {catalogReady && !unique.length ? <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 20 }}>{t('settingsReferences.empty')}</Text> : null}
+    {catalogReady && !unique.length ? <Text style={{ ...colors.design?.semantic.typography.body, color: colors.textSecondary }}>{t('settingsReferences.empty')}</Text> : null}
     <IslePressable accessibilityRole="button" accessibilityLabel={`${t('settingsReferences.manual')} ${label}`} accessibilityState={{ expanded: manual, disabled }} disabled={disabled}
       onPress={() => setManual(open => !open)} style={{ minHeight: 44, justifyContent: 'center' }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('settingsReferences.manual')} {manual ? '−' : '+'}</Text>
+      <Text style={{ ...colors.design?.semantic.typography.label, color: colors.textSecondary }}>{t('settingsReferences.manual')} {manual ? '−' : '+'}</Text>
     </IslePressable>
     {manual ? <IsleInput accessibilityLabel={label} value={value} onChangeText={change} editable={!disabled} multiline={multiple} autoCapitalize="none" autoCorrect={false} /> : null}
   </View>
